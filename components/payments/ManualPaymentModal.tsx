@@ -104,7 +104,7 @@ export function ManualPaymentModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/50"
@@ -112,10 +112,10 @@ export function ManualPaymentModal({
       />
 
       {/* Modal */}
-      <div className="relative z-10 w-full max-w-md rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900">
+      <div className="relative z-10 w-full sm:max-w-md h-full sm:h-auto rounded-none sm:rounded-lg bg-white px-4 sm:px-6 py-4 sm:py-6 shadow-xl dark:bg-gray-900 overflow-y-auto">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Record Manual Payment</h2>
+        <div className="mb-4 sm:mb-6 flex items-center justify-between">
+          <h2 className="text-base sm:text-lg font-semibold">Record Manual Payment</h2>
           <button
             onClick={onClose}
             className="rounded-full p-1 hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -125,11 +125,11 @@ export function ManualPaymentModal({
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
           {/* Amount and Currency */}
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1">
-              <label className="mb-1 block text-sm font-medium">Amount</label>
+              <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Amount</label>
               <Input
                 type="number"
                 step="0.01"
@@ -140,8 +140,8 @@ export function ManualPaymentModal({
                 required
               />
             </div>
-            <div className="w-28">
-              <label className="mb-1 block text-sm font-medium">Currency</label>
+            <div className="w-full sm:w-28">
+              <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Currency</label>
               <Select value={currency} onValueChange={setCurrency}>
                 <SelectTrigger>
                   <SelectValue />
@@ -159,7 +159,7 @@ export function ManualPaymentModal({
 
           {/* Payment Method */}
           <div>
-            <label className="mb-1 block text-sm font-medium">Payment Method</label>
+            <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Payment Method</label>
             <Select value={method} onValueChange={setMethod}>
               <SelectTrigger>
                 <SelectValue />
@@ -182,7 +182,7 @@ export function ManualPaymentModal({
 
           {/* Received Date */}
           <div>
-            <label className="mb-1 block text-sm font-medium">Date Received</label>
+            <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Date Received</label>
             <Input
               type="date"
               value={receivedAt}
@@ -192,7 +192,7 @@ export function ManualPaymentModal({
 
           {/* Notes */}
           <div>
-            <label className="mb-1 block text-sm font-medium">Notes (optional)</label>
+            <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Notes (optional)</label>
             <textarea
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
@@ -203,7 +203,7 @@ export function ManualPaymentModal({
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-3 pt-2 sm:pt-2">
             <Button
               type="button"
               variant="outline"

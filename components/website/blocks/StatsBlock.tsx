@@ -212,7 +212,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 className={`text-3xl sm:text-4xl lg:text-5xl font-bold ${useGradientBg ? 'text-white' : (styles?.text_color || 'text-gray-900')}`}
-                style={{ fontFamily: theme?.fonts.heading }}
+                style={{ fontFamily: 'var(--website-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -224,7 +224,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
                 className={`mt-4 text-lg max-w-2xl mx-auto ${useGradientBg ? 'text-white/80' : 'text-gray-600'}`}
-                style={{ fontFamily: theme?.fonts.body }}
+                style={{ fontFamily: 'var(--website-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -267,7 +267,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
                   <p
                     className={`text-4xl sm:text-5xl lg:text-6xl font-bold ${useGradientBg ? 'text-white' : (styles?.text_color || 'text-gray-900')}`}
-                    style={{ fontFamily: theme?.fonts.heading }}
+                    style={{ fontFamily: 'var(--website-font-heading)' }}
                   >
                     {animate_numbers ? (
                       <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -277,7 +277,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                   </p>
                   <p
                     className={`mt-3 text-sm sm:text-base font-medium ${useGradientBg ? 'text-white/80' : 'text-gray-500'}`}
-                    style={{ fontFamily: theme?.fonts.body }}
+                    style={{ fontFamily: 'var(--website-font-body)' }}
                   >
                     {stat.label}
                   </p>
@@ -341,7 +341,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
                     <p
                       className="text-3xl sm:text-4xl font-bold"
-                      style={{ fontFamily: theme?.fonts.heading, color: primaryColor }}
+                      style={{ fontFamily: 'var(--website-font-heading)', color: primaryColor }}
                     >
                       {animate_numbers ? (
                         <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -351,14 +351,14 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                     </p>
                     <p
                       className="mt-2 font-semibold text-gray-800 dark:text-white"
-                      style={{ fontFamily: theme?.fonts.heading }}
+                      style={{ fontFamily: 'var(--website-font-heading)' }}
                     >
                       {stat.label}
                     </p>
                     {stat.description && (
                       <p
                         className="mt-2 text-sm text-gray-500 dark:text-gray-400"
-                        style={{ fontFamily: theme?.fonts.body }}
+                        style={{ fontFamily: 'var(--website-font-body)' }}
                       >
                         {stat.description}
                       </p>
@@ -431,7 +431,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
                     <p
                       className="text-3xl sm:text-4xl lg:text-5xl font-bold"
-                      style={{ fontFamily: theme?.fonts.heading, color: primaryColor }}
+                      style={{ fontFamily: 'var(--website-font-heading)', color: primaryColor }}
                     >
                       {animate_numbers ? (
                         <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -441,14 +441,14 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                     </p>
                     <p
                       className={`mt-3 font-semibold ${isDark ? 'text-white' : 'text-gray-800'}`}
-                      style={{ fontFamily: theme?.fonts.heading }}
+                      style={{ fontFamily: 'var(--website-font-heading)' }}
                     >
                       {stat.label}
                     </p>
                     {stat.description && (
                       <p
                         className="mt-2 text-sm text-gray-500 dark:text-gray-400"
-                        style={{ fontFamily: theme?.fonts.body }}
+                        style={{ fontFamily: 'var(--website-font-body)' }}
                       >
                         {stat.description}
                       </p>
@@ -511,7 +511,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
                     <p
                       className="text-4xl sm:text-5xl font-bold text-white"
-                      style={{ fontFamily: theme?.fonts.heading }}
+                      style={{ fontFamily: 'var(--website-font-heading)' }}
                     >
                       {animate_numbers ? (
                         <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -521,14 +521,14 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                     </p>
                     <p
                       className="mt-3 font-semibold text-white/90"
-                      style={{ fontFamily: theme?.fonts.heading }}
+                      style={{ fontFamily: 'var(--website-font-heading)' }}
                     >
                       {stat.label}
                     </p>
                     {stat.description && (
                       <p
                         className="mt-2 text-sm text-white/70"
-                        style={{ fontFamily: theme?.fonts.body }}
+                        style={{ fontFamily: 'var(--website-font-body)' }}
                       >
                         {stat.description}
                       </p>

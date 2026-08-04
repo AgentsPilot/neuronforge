@@ -21,7 +21,9 @@ const logger = createLogger({ module: 'WebsiteBookingFinalizeAPI' });
 
 const FinalizeSchema = z.object({
   subdomain: z.string().optional(),
-  booking_id: z.string().uuid('Invalid booking ID')
+  booking_id: z.string().uuid('Invalid booking ID'),
+  payment_intent_id: z.string().optional(),
+  payment_status: z.enum(['pending', 'paid', 'failed']).optional()
 });
 
 export async function POST(request: NextRequest) {
@@ -174,14 +176,60 @@ export async function POST(request: NextRequest) {
       .eq('id', booking.service_id)
       .single();
 
-    // Update booking with contact_id and confirmed status
+    // Get service details for payment transaction record
+    const { data: serviceDetails } = await supabaseServer
+      .from('scheduling_services')
+      .select('price, currency')
+      .eq('id', booking.service_id)
+      .single();
+
+    // Create payment transaction record if we have a payment_intent_id
+    let paymentTransactionId: string | null = null;
+    if (data.payment_intent_id && serviceDetails?.price) {
+      const { data: paymentTransaction, error: paymentError } = await supabaseServer
+        .from('payment_transactions')
+        .insert({
+          user_id: ownerId,
+          contact_id: contactId,
+          stripe_payment_intent_id: data.payment_intent_id,
+          amount: serviceDetails.price,
+          currency: serviceDetails.currency || 'USD',
+          status: data.payment_status === 'paid' ? 'succeeded' : 'pending',
+          payment_method: 'card',
+          description: `Booking: ${service?.service_name || 'Service'}`,
+          metadata: {
+            booking_id: booking.id,
+            service_id: booking.service_id,
+            source: 'website_booking'
+          },
+          paid_at: data.payment_status === 'paid' ? new Date().toISOString() : null
+        })
+        .select('id')
+        .single();
+
+      if (paymentError) {
+        requestLogger.warn({ err: paymentError }, 'Failed to create payment transaction (non-blocking)');
+      } else {
+        paymentTransactionId = paymentTransaction?.id || null;
+        requestLogger.info({ paymentTransactionId, paymentIntentId: data.payment_intent_id }, 'Payment transaction created');
+      }
+    }
+
+    // Update booking with contact_id, confirmed status, and payment transaction reference
+    const updateData: Record<string, string | null> = {
+      contact_id: contactId,
+      status: 'confirmed',
+      payment_status: data.payment_status || 'paid'
+    };
+
+    // Store payment transaction ID reference (UUID) instead of Stripe intent ID
+    if (paymentTransactionId) {
+      updateData.payment_id = paymentTransactionId;
+    }
+
     const { error: updateError } = await supabaseServer
       .from('scheduling_bookings')
-      .update({
-        contact_id: contactId,
-        status: 'confirmed',
-        payment_status: 'paid'
-      })
+      .update(updateData)
       .eq('id', data.booking_id);
 
     if (updateError) {
@@ -193,8 +241,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Create CRM activity (non-blocking)
+    // Handle both scheduled bookings (with start_time) and non-scheduled (courses, products)
     if (contactId) {
-      const startTime = new Date(booking.start_time);
+      const startTime = booking.start_time ? new Date(booking.start_time) : null;
+      const activityDescription = startTime
+        ? `Booked via website for ${startTime.toLocaleString()} (paid)`
+        : `Purchased via website (paid)`;
+      const activityDate = startTime?.toISOString() || new Date().toISOString();
+
       supabaseServer
         .from('crm_activities')
         .insert({
@@ -202,8 +256,8 @@ export async function POST(request: NextRequest) {
           contact_id: contactId,
           activity_type: 'booking',
           title: `Booking: ${service?.service_name || 'Service'}`,
-          description: `Booked via website for ${startTime.toLocaleString()} (paid)`,
-          activity_date: startTime.toISOString(),
+          description: activityDescription,
+          activity_date: activityDate,
           auto_logged: true,
           source_capability: 'scheduling',
           source_entity_id: booking.id
@@ -225,21 +279,14 @@ export async function POST(request: NextRequest) {
     BookingEmailService.sendIntakeFormRequest(booking.id, ownerId)
       .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
 
-    // Send payment receipt (non-blocking)
-    // Get service price for receipt
-    const { data: serviceForReceipt } = await supabaseServer
-      .from('scheduling_services')
-      .select('price, currency')
-      .eq('id', booking.service_id)
-      .single();
-
-    if (serviceForReceipt?.price && serviceForReceipt.price > 0) {
+    // Send payment receipt (non-blocking) - reuse serviceDetails from earlier
+    if (serviceDetails?.price && serviceDetails.price > 0) {
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
       BookingEmailService.sendPaymentReceipt(ownerId, {
         customerEmail: booking.client_email,
         customerName: clientName,
-        amount: serviceForReceipt.price,
-        currency: serviceForReceipt.currency,
+        amount: serviceDetails.price,
+        currency: serviceDetails.currency,
         bookingId: booking.id
       }).catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Payment receipt email failed'));
     }

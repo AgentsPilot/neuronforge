@@ -65,8 +65,50 @@ export interface PageTheme {
   spacing: 'compact' | 'normal' | 'spacious';
 }
 
-/** Client flow steps - defines what happens when a client clicks on a service */
-export type FlowStep = 'booking' | 'payment' | 'intake' | 'confirmation';
+/**
+ * Client flow steps - defines what happens when a client clicks on a service
+ *
+ * New steps (recommended):
+ * - 'scheduling' = Date/time slot selection (optional - not needed for courses/products)
+ * - 'client_info' = Client information collection (name, email, phone)
+ * - 'payment' = Payment processing
+ * - 'intake' = Intake form
+ * - 'confirmation' = Success confirmation
+ *
+ * Legacy step (deprecated, for backward compatibility):
+ * - 'booking' = Maps to ['scheduling', 'client_info']
+ */
+export type FlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+
+/**
+ * Normalizes a client flow array by expanding legacy 'booking' step
+ * into ['scheduling', 'client_info'] for backward compatibility.
+ *
+ * @param flow - The original flow steps array
+ * @returns Normalized flow with 'booking' expanded to 'scheduling' + 'client_info'
+ */
+export function normalizeClientFlow(flow: FlowStep[]): FlowStep[] {
+  return flow.flatMap(step =>
+    step === 'booking' ? ['scheduling', 'client_info'] as FlowStep[] : [step]
+  );
+}
+
+/**
+ * Checks if the flow includes scheduling (date/time selection)
+ * This is true if flow has 'scheduling' or legacy 'booking'
+ */
+export function flowHasScheduling(flow: FlowStep[]): boolean {
+  return flow.includes('scheduling') || flow.includes('booking');
+}
+
+/**
+ * Checks if the flow includes client info collection
+ * This is true if flow has 'client_info', 'scheduling', or legacy 'booking'
+ * (scheduling implies client info is needed)
+ */
+export function flowHasClientInfo(flow: FlowStep[]): boolean {
+  return flow.includes('client_info') || flow.includes('scheduling') || flow.includes('booking');
+}
 
 export interface BlockRendererProps {
   content: Record<string, unknown>;

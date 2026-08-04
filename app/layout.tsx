@@ -1,13 +1,13 @@
 // app/layout.tsx
 
 import './globals.css'
-import { Inter } from 'next/font/google'
+import { Heebo } from 'next/font/google'
 import { UserProvider } from '@/components/UserProvider'
 import { Toaster } from 'sonner'
 import { SafeSystemInitializer } from '@/components/SafeSystemInitializer'
 import { SessionHandler } from '@/components/SessionHandler'
 
-const inter = Inter({ subsets: ['latin'] })
+const heebo = Heebo({ subsets: ['latin', 'hebrew'] })
 
 export const metadata = {
   title: 'NeuronForge',
@@ -17,7 +17,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={heebo.className}>
         <SessionHandler />
         <UserProvider>
           <SafeSystemInitializer />

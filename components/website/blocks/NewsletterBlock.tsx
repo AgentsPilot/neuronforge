@@ -122,14 +122,14 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
 
             <h3
               className="text-2xl font-bold text-gray-900 dark:text-white mb-3"
-              style={{ fontFamily: theme?.fonts.heading }}
+              style={{ fontFamily: 'var(--website-font-heading)' }}
             >
               {title || labels.title}
             </h3>
 
             <p
               className="text-gray-600 dark:text-gray-300 mb-6"
-              style={{ fontFamily: theme?.fonts.body }}
+              style={{ fontFamily: 'var(--website-font-body)' }}
             >
               {description || labels.description}
             </p>
@@ -197,14 +197,14 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
         >
           <h3
             className={`text-2xl sm:text-3xl font-bold mb-3 ${isGradientBg ? 'text-white' : 'text-gray-900 dark:text-white'}`}
-            style={{ fontFamily: theme?.fonts.heading }}
+            style={{ fontFamily: 'var(--website-font-heading)' }}
           >
             {title || labels.title}
           </h3>
 
           <p
             className={`mb-8 ${isGradientBg ? 'text-white/80' : 'text-gray-600 dark:text-gray-300'}`}
-            style={{ fontFamily: theme?.fonts.body }}
+            style={{ fontFamily: 'var(--website-font-body)' }}
           >
             {description || labels.description}
           </p>

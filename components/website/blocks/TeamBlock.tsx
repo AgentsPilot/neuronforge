@@ -43,7 +43,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: theme?.fonts.heading }}
+                style={{ fontFamily: 'var(--website-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -55,7 +55,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
                 className="mt-4 text-lg text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: theme?.fonts.body }}
+                style={{ fontFamily: 'var(--website-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -91,7 +91,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 )}
                 <h3
                   className="mt-6 text-xl font-semibold text-gray-900 dark:text-white"
-                  style={{ fontFamily: theme?.fonts.heading }}
+                  style={{ fontFamily: 'var(--website-font-heading)' }}
                 >
                   {member.name}
                 </h3>
@@ -104,7 +104,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 {member.bio && (
                   <p
                     className="mt-3 text-gray-600 dark:text-gray-400"
-                    style={{ fontFamily: theme?.fonts.body }}
+                    style={{ fontFamily: 'var(--website-font-body)' }}
                   >
                     {member.bio}
                   </p>
@@ -178,7 +178,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 <div className="p-6">
                   <h3
                     className="text-xl font-semibold text-gray-900 dark:text-white"
-                    style={{ fontFamily: theme?.fonts.heading }}
+                    style={{ fontFamily: 'var(--website-font-heading)' }}
                   >
                     {member.name}
                   </h3>
@@ -191,7 +191,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                   {member.bio && (
                     <p
                       className="mt-3 text-sm text-gray-600 dark:text-gray-400 line-clamp-3"
-                      style={{ fontFamily: theme?.fonts.body }}
+                      style={{ fontFamily: 'var(--website-font-body)' }}
                     >
                       {member.bio}
                     </p>
@@ -232,7 +232,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 <div className="flex-1 min-w-0">
                   <h3
                     className="text-lg font-semibold text-gray-900 dark:text-white"
-                    style={{ fontFamily: theme?.fonts.heading }}
+                    style={{ fontFamily: 'var(--website-font-heading)' }}
                   >
                     {member.name}
                   </h3>
@@ -245,7 +245,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                   {member.bio && (
                     <p
                       className="mt-2 text-gray-600 dark:text-gray-400"
-                      style={{ fontFamily: theme?.fonts.body }}
+                      style={{ fontFamily: 'var(--website-font-body)' }}
                     >
                       {member.bio}
                     </p>

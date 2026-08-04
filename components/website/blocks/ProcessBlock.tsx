@@ -143,7 +143,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                 viewport={{ once: true }}
                 className="text-3xl sm:text-4xl lg:text-5xl font-bold"
                 style={{
-                  fontFamily: theme?.fonts.heading,
+                  fontFamily: 'var(--website-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -158,7 +158,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                 transition={{ delay: 0.1 }}
                 className="mt-5 text-lg max-w-2xl mx-auto"
                 style={{
-                  fontFamily: theme?.fonts.body,
+                  fontFamily: 'var(--website-font-body)',
                   color: isDark ? '#9ca3af' : '#6b7280'
                 }}
               >
@@ -230,7 +230,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <h3
                       className="text-xl font-semibold mb-2"
                       style={{
-                        fontFamily: theme?.fonts.heading,
+                        fontFamily: 'var(--website-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -238,7 +238,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     </h3>
                     <p
                       style={{
-                        fontFamily: theme?.fonts.body,
+                        fontFamily: 'var(--website-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >
@@ -336,7 +336,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <h3
                       className="text-xl font-bold mb-3"
                       style={{
-                        fontFamily: theme?.fonts.heading,
+                        fontFamily: 'var(--website-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -345,7 +345,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <p
                       className="leading-relaxed"
                       style={{
-                        fontFamily: theme?.fonts.body,
+                        fontFamily: 'var(--website-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >
@@ -443,7 +443,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <h3
                     className="mt-8 text-lg font-bold"
                     style={{
-                      fontFamily: theme?.fonts.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -452,7 +452,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <p
                     className="mt-3 text-sm leading-relaxed"
                     style={{
-                      fontFamily: theme?.fonts.body,
+                      fontFamily: 'var(--website-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -541,7 +541,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <h3
                     className="text-xl font-bold mb-3"
                     style={{
-                      fontFamily: theme?.fonts.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -550,7 +550,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <p
                     className="leading-relaxed"
                     style={{
-                      fontFamily: theme?.fonts.body,
+                      fontFamily: 'var(--website-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -648,7 +648,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <h3
                       className="text-2xl font-bold mb-3"
                       style={{
-                        fontFamily: theme?.fonts.heading,
+                        fontFamily: 'var(--website-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -657,7 +657,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <p
                       className="text-base leading-relaxed"
                       style={{
-                        fontFamily: theme?.fonts.body,
+                        fontFamily: 'var(--website-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >

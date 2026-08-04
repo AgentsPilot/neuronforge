@@ -291,8 +291,8 @@ export const pluginList: PluginDefinition[] = [
   {
     pluginKey: 'stripe',
     name: 'Stripe',
-    description: 'Transaction summaries, customer billing',
-    detailedDescription: 'Payment processing platform for online transactions and billing. Enables payment collection, subscription management, customer billing, transaction monitoring, and financial reporting with extensive API capabilities.',
+    description: 'Accept payments, manage subscriptions, process refunds',
+    detailedDescription: 'Connect your Stripe account to accept payments, create checkout sessions, manage recurring subscriptions, process refunds, and automate payment workflows. Supports both new Stripe account creation and connecting existing accounts.',
     icon: <CreditCard className="w-5 h-5 text-purple-600" />,
     category: 'finance',
     isPopular: true,

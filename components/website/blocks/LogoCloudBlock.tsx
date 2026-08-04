@@ -52,7 +52,7 @@ export function LogoCloudBlock({ content, styles, theme, isRTL, className }: Blo
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
                 className="mt-2 text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: theme?.fonts.body }}
+                style={{ fontFamily: 'var(--website-font-body)' }}
               >
                 {subtitle}
               </motion.p>

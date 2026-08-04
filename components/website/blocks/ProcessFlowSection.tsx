@@ -23,7 +23,9 @@ import {
   ClipboardList
 } from 'lucide-react';
 import type { BlockRendererProps, FlowStep, FormField } from './types';
+import { flowHasScheduling, flowHasClientInfo } from './types';
 import { IntakeFormStep, type IntakeTemplate } from './IntakeFormStep';
+import { StripePaymentForm } from './StripePaymentForm';
 
 // ============================================================================
 // TYPES
@@ -107,6 +109,10 @@ const LABELS = {
     duration: 'Duration',
     bookAnotherService: 'Book Another Service',
     minutes: 'min',
+    hours: 'hours',
+    hour: 'hour',
+    days: 'days',
+    day: 'day',
     free: 'Free'
   },
   es: {
@@ -149,6 +155,10 @@ const LABELS = {
     duration: 'Duración',
     bookAnotherService: 'Reservar Otro Servicio',
     minutes: 'min',
+    hours: 'horas',
+    hour: 'hora',
+    days: 'días',
+    day: 'día',
     free: 'Gratis'
   },
   he: {
@@ -191,9 +201,59 @@ const LABELS = {
     duration: 'משך',
     bookAnotherService: 'הזמן שירות נוסף',
     minutes: 'דק׳',
+    hours: 'שעות',
+    hour: 'שעה',
+    days: 'ימים',
+    day: 'יום',
     free: 'חינם'
   }
 };
+
+// Helper function to format duration in days/hours/minutes
+function formatDuration(minutes: number, labels: typeof LABELS['en']): string {
+  if (minutes < 60) {
+    return `${minutes} ${labels.minutes}`;
+  }
+
+  const days = Math.floor(minutes / (24 * 60));
+  const remainingMinutes = minutes % (24 * 60);
+  const hours = Math.floor(remainingMinutes / 60);
+  const mins = remainingMinutes % 60;
+
+  const parts: string[] = [];
+
+  if (days > 0) {
+    parts.push(`${days} ${days === 1 ? labels.day : labels.days}`);
+  }
+  if (hours > 0) {
+    parts.push(`${hours} ${hours === 1 ? labels.hour : labels.hours}`);
+  }
+  if (mins > 0 && days === 0) { // Only show minutes if no days (avoid too much detail)
+    parts.push(`${mins} ${labels.minutes}`);
+  }
+
+  return parts.join(' ');
+}
+
+// Helper function to format amount with currency
+function formatAmount(amount: number | null, currency: string, locale: string, freeLabel: string): string {
+  if (amount === null || amount === 0) return freeLabel;
+  // Map currency symbols to ISO codes
+  const currencyMap: Record<string, string> = {
+    '₪': 'ILS', '$': 'USD', '€': 'EUR', '£': 'GBP',
+    'ILS': 'ILS', 'USD': 'USD', 'EUR': 'EUR', 'GBP': 'GBP'
+  };
+  const isoCode = currencyMap[currency] || currency.toUpperCase();
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: isoCode
+    }).format(amount);
+  } catch {
+    // Fallback if currency code is still invalid
+    return `${currency}${amount.toFixed(2)}`;
+  }
+}
 
 // ============================================================================
 // STEP INDICATOR (from existing design pattern)
@@ -301,7 +361,7 @@ function ServicesStep({ services, loading, primaryColor, onSelect, isRTL, labels
     <div className="space-y-3" dir={isRTL ? 'rtl' : 'ltr'}>
       <h3
         className="text-lg font-semibold text-gray-900 dark:text-white mb-4"
-        style={{ fontFamily: theme?.fonts?.heading }}
+        style={{ fontFamily: 'var(--website-font-heading)' }}
       >
         {labels.chooseService}
       </h3>
@@ -316,14 +376,14 @@ function ServicesStep({ services, loading, primaryColor, onSelect, isRTL, labels
             <div className="flex-1">
               <h4
                 className="font-medium text-gray-900 dark:text-white group-hover:opacity-80"
-                style={{ fontFamily: theme?.fonts?.heading }}
+                style={{ fontFamily: 'var(--website-font-heading)' }}
               >
                 {service.name}
               </h4>
               {service.description && (
                 <p
                   className="text-sm text-gray-600 dark:text-gray-300 mt-1 line-clamp-2"
-                  style={{ fontFamily: theme?.fonts?.body }}
+                  style={{ fontFamily: 'var(--website-font-body)' }}
                 >
                   {service.description}
                 </p>
@@ -503,7 +563,7 @@ function DateTimeStep({
 
 interface DetailsStepProps {
   service: Service;
-  slot: TimeSlot;
+  slot: TimeSlot | null; // Optional - null when flow doesn't include scheduling
   name: string;
   email: string;
   phone: string;
@@ -522,6 +582,8 @@ interface DetailsStepProps {
   theme?: BlockRendererProps['theme'];
   locale?: string;
   nextStepLabel: string;
+  /** Whether flow includes scheduling (shows back to datetime vs back to services) */
+  hasScheduling?: boolean;
 }
 
 function DetailsStep({
@@ -544,7 +606,8 @@ function DetailsStep({
   labels,
   theme,
   locale = 'en',
-  nextStepLabel
+  nextStepLabel,
+  hasScheduling = true
 }: DetailsStepProps) {
   const formatFullDate = (isoString: string) => {
     const date = new Date(isoString);
@@ -574,27 +637,41 @@ function DetailsStep({
         className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm"
       >
         {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-        {labels.backToDateTime}
+        {hasScheduling ? labels.backToDateTime : labels.backToServices}
       </button>
 
-      {/* Booking summary */}
+      {/* Service/Booking summary */}
       <div
         className="p-4 bg-gray-50 dark:bg-slate-700 rounded-xl"
         style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
       >
-        <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-lg flex items-center justify-center"
-            style={{ backgroundColor: `${primaryColor}15` }}
-          >
-            <Calendar className="w-5 h-5" style={{ color: primaryColor }} />
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center"
+              style={{ backgroundColor: `${primaryColor}15` }}
+            >
+              <Calendar className="w-5 h-5" style={{ color: primaryColor }} />
+            </div>
+            <div>
+              <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
+              {slot ? (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {formatFullDate(slot.start)} at {formatTime(slot.start)}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {formatDuration(service.duration_minutes, labels)}
+                </p>
+              )}
+            </div>
           </div>
-          <div>
-            <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {formatFullDate(slot.start)} at {formatTime(slot.start)}
-            </p>
-          </div>
+          {/* Show price if service has one */}
+          {service.price !== null && service.price > 0 && (
+            <div className="text-lg font-bold" style={{ color: primaryColor }}>
+              {formatAmount(service.price, service.currency, locale, labels.free)}
+            </div>
+          )}
         </div>
       </div>
 
@@ -722,79 +799,183 @@ interface PaymentStepProps {
   isPreview?: boolean;
 }
 
+// Track payment intents created per booking to prevent duplicates across re-renders
+// Using a global object that survives HMR better than Map
+if (typeof window !== 'undefined' && !(window as unknown as Record<string, unknown>).__paymentIntentsCache) {
+  (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache = {};
+}
+
+function getPaymentIntentCache(): Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }> {
+  if (typeof window === 'undefined') return {};
+  return (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache || {};
+}
+
 function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, submitting: parentSubmitting, error: parentError, isRTL, labels, theme, locale = 'en', subdomain, customerName, customerEmail, isPreview }: PaymentStepProps) {
   const [processing, setProcessing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [paymentReady, setPaymentReady] = useState(false);
+  const [paymentData, setPaymentData] = useState<{
+    clientSecret: string;
+    publishableKey: string;
+    connectedAccountId?: string;
+  } | null>(() => {
+    // Initialize from cache if available
+    if (bookingId) {
+      const cached = getPaymentIntentCache()[bookingId];
+      if (cached) return cached;
+    }
+    return null;
+  });
 
   // Use parent error if provided, otherwise local error
   const displayError = parentError || localError;
   // Use parent submitting if provided (for booking confirmation), otherwise local processing
   const isProcessing = parentSubmitting || processing;
 
-  const handlePayment = async () => {
-    setProcessing(true);
-    setLocalError(null);
+  // Initialize Stripe PaymentIntent when component mounts
+  // Use bookingId as the key dependency - it's stable and unique per booking
+  useEffect(() => {
+    // Skip if no bookingId
+    if (!bookingId) {
+      return;
+    }
 
+    // Check if we already have payment data (from initial state or previous render)
+    if (paymentData) {
+      setPaymentReady(true);
+      return;
+    }
+
+    // Check cache again (in case it was set by another instance)
+    const cached = getPaymentIntentCache()[bookingId];
+    if (cached) {
+      setPaymentData(cached);
+      setPaymentReady(true);
+      return;
+    }
+
+    // Skip payment initialization for free services
+    if (!service.price || service.price <= 0) {
+      setPaymentReady(true);
+      return;
+    }
+
+    let cancelled = false;
+
+    const initializePayment = async () => {
+      // Double-check cache before API call (race condition protection)
+      const cachedBeforeCall = getPaymentIntentCache()[bookingId];
+      if (cachedBeforeCall) {
+        setPaymentData(cachedBeforeCall);
+        setPaymentReady(true);
+        return;
+      }
+
+      try {
+        setProcessing(true);
+        // In preview mode, don't pass subdomain - use authenticated user instead
+        const response = await fetch('/api/website/payment-intent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subdomain: isPreview ? '' : (subdomain || ''),
+            booking_id: bookingId,
+            service_id: service.id,
+            amount: service.price,
+            currency: service.currency,
+            customer_email: customerEmail,
+            description: service.name,
+            metadata: {
+              customer_name: customerName
+            }
+          })
+        });
+
+        if (cancelled) return;
+
+        const data = await response.json();
+
+        if (data.success && data.clientSecret && data.publishableKey) {
+          const paymentInfo = {
+            clientSecret: data.clientSecret,
+            publishableKey: data.publishableKey,
+            connectedAccountId: data.connectedAccountId
+          };
+
+          // Store in window cache to survive HMR and re-renders
+          getPaymentIntentCache()[bookingId] = paymentInfo;
+
+          setPaymentData(paymentInfo);
+          setPaymentReady(true);
+        } else if (data.error?.includes('Payment processing is not set up') || data.error?.includes('Payment processing is not configured')) {
+          // Stripe not configured - allow skip for testing
+          setPaymentReady(true);
+        } else {
+          setLocalError(data.error || 'Failed to initialize payment');
+        }
+      } catch {
+        if (!cancelled) {
+          setLocalError('Failed to initialize payment. Please try again.');
+        }
+      } finally {
+        if (!cancelled) {
+          setProcessing(false);
+        }
+      }
+    };
+
+    initializePayment();
+
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookingId]); // Only depend on bookingId - it's the unique identifier for this payment
+
+  const handlePaymentSuccess = async (paymentIntentId: string) => {
+    // Payment succeeded - finalize the booking
+    setProcessing(true);
     try {
-      // Try to create Stripe checkout session
-      const response = await fetch('/api/payments/create-checkout', {
+      // Update booking payment status via finalize endpoint
+      const response = await fetch('/api/website/booking/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subdomain: subdomain || '',
+          subdomain: isPreview ? '' : (subdomain || ''),
           booking_id: bookingId,
-          service_id: service.id,
-          amount: service.price,
-          currency: service.currency,
-          customer_name: customerName,
-          customer_email: customerEmail,
-          description: service.name,
-          success_url: `${window.location.href}?payment=success`,
-          cancel_url: window.location.href
+          payment_intent_id: paymentIntentId,
+          payment_status: 'paid'
         })
       });
 
-      const data = await response.json();
-
-      if (data.checkout_url) {
-        // Stripe is configured - redirect to checkout
-        window.location.href = data.checkout_url;
-      } else if (data.success && !data.checkout_url) {
-        // No payment required (free service)
-        setProcessing(false);
-        await onComplete();
-      } else if (data.error?.includes('Payment processor not configured')) {
-        // Stripe not configured - simulate successful payment for testing
-        // This allows testing the full flow before Stripe integration
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setProcessing(false);
-        await onComplete();
-      } else {
-        setLocalError(data.error || 'Failed to process payment');
+      const result = await response.json();
+      if (!result.success) {
+        // Payment succeeded but finalization failed - still show success
+        // The booking can be reconciled later
+        console.error('Booking finalization failed:', result.error);
       }
-    } catch {
-      setLocalError('Failed to process payment. Please try again.');
+
+      await onComplete();
+    } catch (err) {
+      console.error('Failed to finalize booking:', err);
+      // Still proceed to confirmation since payment was successful
+      await onComplete();
     } finally {
       setProcessing(false);
     }
   };
 
-  const formatAmount = (amount: number | null, currency: string) => {
-    if (amount === null) return labels.free;
-    // Map currency symbols to ISO codes
-    const currencyMap: Record<string, string> = {
-      '₪': 'ILS', '$': 'USD', '€': 'EUR', '£': 'GBP',
-      'ILS': 'ILS', 'USD': 'USD', 'EUR': 'EUR', 'GBP': 'GBP'
-    };
-    const isoCode = currencyMap[currency] || currency.toUpperCase();
+  const handlePaymentError = (error: string) => {
+    setLocalError(error);
+  };
+
+  const handleSkipPayment = async () => {
+    // For free services or when Stripe is not configured
+    setProcessing(true);
     try {
-      return new Intl.NumberFormat(locale, {
-        style: 'currency',
-        currency: isoCode
-      }).format(amount);
-    } catch {
-      // Fallback if currency code is still invalid
-      return `${currency}${amount.toFixed(2)}`;
+      await onComplete();
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -818,7 +999,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         </div>
         <h3
           className="text-xl font-semibold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: theme?.fonts?.heading }}
+          style={{ fontFamily: 'var(--website-font-heading)' }}
         >
           {labels.completePayment}
         </h3>
@@ -833,46 +1014,71 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         <div className="flex items-center justify-between">
           <div>
             <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
-            <p className="text-sm text-gray-500 dark:text-gray-400">{service.duration_minutes} {labels.minutes}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{formatDuration(service.duration_minutes, labels)}</p>
           </div>
           <div className="text-xl font-bold" style={{ color: primaryColor }}>
-            {formatAmount(service.price, service.currency)}
+            {formatAmount(service.price, service.currency, locale, labels.free)}
           </div>
         </div>
       </div>
 
       {displayError && <p className="text-sm text-red-600 text-center">{displayError}</p>}
 
-      <button
-        onClick={handlePayment}
-        disabled={isProcessing}
-        className="w-full flex items-center justify-center gap-2 px-4 py-3 text-white font-medium rounded-lg transition-all hover:opacity-90 disabled:opacity-50"
-        style={{ backgroundColor: primaryColor, borderRadius: theme?.borderRadius || '0.5rem' }}
-      >
-        {isProcessing ? (
-          <>
-            <Loader2 className="w-5 h-5 animate-spin" />
-            {parentSubmitting ? labels.confirmingBooking || 'Confirming booking...' : labels.processing}
-          </>
-        ) : (
-          <>
-            <CreditCard className="w-5 h-5" />
-            {labels.pay} {formatAmount(service.price, service.currency)}
-          </>
-        )}
-      </button>
+      {/* Payment form - show embedded Stripe Elements or fallback button */}
+      {!paymentReady ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+        </div>
+      ) : paymentData ? (
+        // Embedded Stripe payment form
+        <StripePaymentForm
+          publishableKey={paymentData.publishableKey}
+          clientSecret={paymentData.clientSecret}
+          connectedAccountId={paymentData.connectedAccountId}
+          amount={service.price || 0}
+          currency={service.currency}
+          onSuccess={handlePaymentSuccess}
+          onError={handlePaymentError}
+          primaryColor={primaryColor}
+          locale={(locale || 'en') as 'en' | 'es' | 'he'}
+          isRTL={isRTL}
+          borderRadius={theme?.borderRadius || '0.5rem'}
+        />
+      ) : (
+        // Fallback: Free service or Stripe not configured
+        <>
+          <button
+            onClick={handleSkipPayment}
+            disabled={isProcessing}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 text-white font-medium rounded-lg transition-all hover:opacity-90 disabled:opacity-50"
+            style={{ backgroundColor: primaryColor, borderRadius: theme?.borderRadius || '0.5rem' }}
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                {parentSubmitting ? labels.confirmingBooking || 'Confirming booking...' : labels.processing}
+              </>
+            ) : (
+              <>
+                <Check className="w-5 h-5" />
+                {service.price && service.price > 0 ? labels.continueToPayment : labels.confirmBooking}
+              </>
+            )}
+          </button>
 
-      {/* Security badges */}
-      <div className="flex items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
-        <div className="flex items-center gap-1">
-          <Lock className="w-4 h-4" />
-          <span>{labels.securePaymentLabel}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Shield className="w-4 h-4" />
-          <span>{labels.poweredByStripe}</span>
-        </div>
-      </div>
+          {/* Security badges */}
+          <div className="flex items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-1">
+              <Lock className="w-4 h-4" />
+              <span>{labels.securePaymentLabel}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Shield className="w-4 h-4" />
+              <span>{labels.poweredByStripe}</span>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -941,7 +1147,7 @@ function IntakeStep({
         </div>
         <h3
           className="text-xl font-semibold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: theme?.fonts?.heading }}
+          style={{ fontFamily: 'var(--website-font-heading)' }}
         >
           {labels.aFewQuestions}
         </h3>
@@ -1022,7 +1228,7 @@ function IntakeStep({
 
 interface ConfirmationStepProps {
   service: Service;
-  slot: TimeSlot;
+  slot: TimeSlot | null; // Optional - null when flow doesn't include scheduling
   clientEmail: string;
   primaryColor: string;
   onReset: () => void;
@@ -1070,7 +1276,7 @@ function ConfirmationStep({ service, slot, clientEmail, primaryColor, onReset, i
       >
         <h3
           className="text-2xl font-bold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: theme?.fonts?.heading }}
+          style={{ fontFamily: 'var(--website-font-heading)' }}
         >
           {labels.bookingConfirmed}
         </h3>
@@ -1088,17 +1294,22 @@ function ConfirmationStep({ service, slot, clientEmail, primaryColor, onReset, i
               <span className="text-gray-500 dark:text-gray-400">{labels.service}</span>
               <span className="font-medium text-gray-900 dark:text-white">{service.name}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500 dark:text-gray-400">{labels.date}</span>
-              <span className="font-medium text-gray-900 dark:text-white">{formatFullDate(slot.start)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500 dark:text-gray-400">{labels.time}</span>
-              <span className="font-medium text-gray-900 dark:text-white">{formatTime(slot.start)}</span>
-            </div>
+            {/* Only show date/time if slot exists (scheduled booking) */}
+            {slot && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 dark:text-gray-400">{labels.date}</span>
+                  <span className="font-medium text-gray-900 dark:text-white">{formatFullDate(slot.start)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 dark:text-gray-400">{labels.time}</span>
+                  <span className="font-medium text-gray-900 dark:text-white">{formatTime(slot.start)}</span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between">
               <span className="text-gray-500 dark:text-gray-400">{labels.duration}</span>
-              <span className="font-medium text-gray-900 dark:text-white">{service.duration_minutes} {labels.minutes}</span>
+              <span className="font-medium text-gray-900 dark:text-white">{formatDuration(service.duration_minutes, labels)}</span>
             </div>
           </div>
         </div>
@@ -1131,7 +1342,8 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const {
     title,
     subtitle,
-    flow = ['booking', 'confirmation'],
+    // Default to new split steps - scheduling + client_info for bookable services
+    flow = ['scheduling', 'client_info', 'confirmation'],
     intake_fields = [],
     initialService
   } = typedContent;
@@ -1140,13 +1352,25 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const labels = LABELS[locale as keyof typeof LABELS] || LABELS.en;
 
   // Flow configuration determines which steps to show
+  // Use helper functions to handle both legacy 'booking' and new 'scheduling'/'client_info' steps
+  const hasScheduling = flowHasScheduling(flow);
+  const hasClientInfo = flowHasClientInfo(flow);
   const hasPayment = flow.includes('payment');
 
   // Determine initial step - skip to datetime if service is pre-selected
   const hasInitialService = !!initialService;
 
-  // State - start from datetime if we have an initial service
-  const [currentStep, setCurrentStep] = useState<CurrentStep>(hasInitialService ? 'datetime' : 'services');
+  // State - start from appropriate step based on initial service and flow configuration
+  // If we have an initial service:
+  //   - If flow has scheduling, start from datetime
+  //   - If no scheduling but has client_info, start from details
+  const getInitialStep = (): CurrentStep => {
+    if (!hasInitialService) return 'services';
+    if (hasScheduling) return 'datetime';
+    if (hasClientInfo) return 'details';
+    return 'services';
+  };
+  const [currentStep, setCurrentStep] = useState<CurrentStep>(getInitialStep());
   const [completedSteps, setCompletedSteps] = useState<CurrentStep[]>(hasInitialService ? ['services'] : []);
   const [slideDirection, setSlideDirection] = useState<'forward' | 'backward'>('forward');
 
@@ -1187,19 +1411,30 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Intake is shown if capability is enabled (intakeTemplate fetched) OR legacy intake_fields exist
-  const hasIntake = !!intakeTemplate || (flow.includes('intake') && intake_fields.length > 0);
+  // Check if intake is part of the flow configuration (must be defined before hasIntake)
+  const flowIncludesIntake = flow.includes('intake');
+
+  // Intake is shown ONLY if 'intake' is in the flow AND (template fetched OR legacy intake_fields exist)
+  // The flow configuration from the landing page/website is the source of truth
+  const hasIntake = flowIncludesIntake && (!!intakeTemplate || intake_fields.length > 0);
 
   // Build step sequence dynamically based on capabilities
-  const stepSequence: CurrentStep[] = ['services', 'datetime', 'details'];
+  // - 'services' is always first (unless pre-selected)
+  // - 'datetime' is included only if scheduling is needed
+  // - 'details' (client info) is included if client_info is in flow OR scheduling is in flow
+  const stepSequence: CurrentStep[] = ['services'];
+  if (hasScheduling) stepSequence.push('datetime');
+  if (hasClientInfo) stepSequence.push('details');
   if (hasPayment) stepSequence.push('payment');
   if (hasIntake) stepSequence.push('intake');
   stepSequence.push('confirmation');
 
-  // When initialService changes, reset state to start from datetime with pre-selected service
+  // When initialService changes, reset state to start from appropriate step with pre-selected service
   useEffect(() => {
     if (initialService) {
-      setCurrentStep('datetime');
+      // Determine starting step based on flow configuration
+      const startStep = hasScheduling ? 'datetime' : (hasClientInfo ? 'details' : 'services');
+      setCurrentStep(startStep);
       setCompletedSteps(['services']);
       setSelectedService({
         id: initialService.id,
@@ -1214,7 +1449,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       setSlots([]);
       setLoadingServices(false);
     }
-  }, [initialService]);
+  }, [initialService, hasScheduling, hasClientInfo]);
 
   // Sync step changes with parent (for BookingModal sticky header)
   useEffect(() => {
@@ -1230,8 +1465,14 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
     }
   }, [hasInitialService]);
 
-  // Fetch intake template from capability API
+  // Fetch intake template from capability API - ONLY if intake is in the flow
   useEffect(() => {
+    // Skip fetch if intake is not part of the client journey
+    if (!flowIncludesIntake) {
+      setIntakeTemplate(null);
+      return;
+    }
+
     const fetchIntakeTemplate = async () => {
       try {
         // In preview mode (no subdomain), use authenticated endpoint
@@ -1267,7 +1508,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       }
     };
     fetchIntakeTemplate();
-  }, [subdomain]);
+  }, [subdomain, flowIncludesIntake]);
 
   const fetchServices = async () => {
     setLoadingServices(true);
@@ -1347,7 +1588,15 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const handleSelectService = (service: Service) => {
     setSelectedService(service);
     markStepComplete('services');
-    goToStep('datetime', 'forward');
+    // Go to datetime if scheduling is needed, otherwise go to details (client info)
+    if (hasScheduling) {
+      goToStep('datetime', 'forward');
+    } else if (hasClientInfo) {
+      goToStep('details', 'forward');
+    } else {
+      // No booking or client info - unlikely but handle gracefully
+      goToStep('confirmation', 'forward');
+    }
   };
 
   const handleSelectDate = (date: string) => {
@@ -1362,8 +1611,13 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   };
 
   const handleSubmitDetails = async () => {
-    if (!selectedService || !selectedSlot || !clientName || !clientEmail) {
+    // For scheduled flows, require slot; for non-scheduled flows, slot is optional
+    if (!selectedService || !clientName || !clientEmail) {
       setError('Please fill in all required fields');
+      return;
+    }
+    if (hasScheduling && !selectedSlot) {
+      setError('Please select a date and time');
       return;
     }
 
@@ -1371,6 +1625,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
 
     console.log('[ProcessFlowSection] handleSubmitDetails:', {
       hasPayment,
+      hasScheduling,
       price: selectedService.price,
       requiresPayment,
       skip_contact: !!requiresPayment
@@ -1382,18 +1637,22 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
     setError(null);
 
     try {
-      // Convert wall-clock time to ISO datetime
-      const startTimeISO = selectedSlot.start.includes('Z')
-        ? selectedSlot.start
-        : new Date(selectedSlot.start).toISOString();
+      // Convert wall-clock time to ISO datetime (only if slot exists)
+      const startTimeISO = selectedSlot
+        ? (selectedSlot.start.includes('Z')
+          ? selectedSlot.start
+          : new Date(selectedSlot.start).toISOString())
+        : undefined;
 
+      // In preview mode, don't pass subdomain - use authenticated user instead
+      // This avoids 404 errors if subdomain in sessionStorage is stale/deleted
       const response = await fetch('/api/website/booking/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subdomain: subdomain || '',
+          subdomain: isPreview ? '' : (subdomain || ''),
           service_id: selectedService.id,
-          start_time: startTimeISO,
+          start_time: startTimeISO, // Optional - undefined for non-scheduled bookings
           name: clientName,
           email: clientEmail,
           phone: clientPhone || undefined,
@@ -1433,11 +1692,12 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
     setError(null);
 
     try {
+      // In preview mode, don't pass subdomain - use authenticated user instead
       const response = await fetch('/api/website/booking/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subdomain: subdomain || '',
+          subdomain: isPreview ? '' : (subdomain || ''),
           booking_id: bookingId
         })
       });
@@ -1483,11 +1743,12 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         return;
       }
 
+      // In preview mode, don't pass subdomain - use authenticated user instead
       const response = await fetch('/api/website/booking/intake', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subdomain: subdomain || '',
+          subdomain: isPreview ? '' : (subdomain || ''),
           bookingId,
           templateId: intakeTemplate.id,
           templateKey: intakeTemplate.template_key,
@@ -1524,11 +1785,12 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         return;
       }
 
+      // In preview mode, don't pass subdomain - use authenticated user instead
       const response = await fetch('/api/website/forms/intake', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subdomain: subdomain || '',
+          subdomain: isPreview ? '' : (subdomain || ''),
           booking_id: bookingId,
           name: clientName,
           email: clientEmail,
@@ -1608,7 +1870,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: theme?.fonts?.heading }}
+                style={{ fontFamily: 'var(--website-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -1620,7 +1882,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
                 className="mt-2 text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: theme?.fonts?.body }}
+                style={{ fontFamily: 'var(--website-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -1698,7 +1960,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                   />
                 )}
 
-                {currentStep === 'details' && selectedService && selectedSlot && (
+                {currentStep === 'details' && selectedService && (
                   <DetailsStep
                     service={selectedService}
                     slot={selectedSlot}
@@ -1710,7 +1972,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     onEmailChange={setClientEmail}
                     onPhoneChange={setClientPhone}
                     onNotesChange={setClientNotes}
-                    onBack={() => goToStep('datetime', 'backward')}
+                    onBack={() => goToStep(hasScheduling ? 'datetime' : 'services', 'backward')}
                     onSubmit={handleSubmitDetails}
                     submitting={submitting}
                     error={error}
@@ -1720,6 +1982,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     theme={theme}
                     locale={locale}
                     nextStepLabel={getNextStepLabel()}
+                    hasScheduling={hasScheduling}
                   />
                 )}
 
@@ -1782,7 +2045,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                   />
                 )}
 
-                {currentStep === 'confirmation' && selectedService && selectedSlot && (
+                {currentStep === 'confirmation' && selectedService && (
                   <ConfirmationStep
                     service={selectedService}
                     slot={selectedSlot}

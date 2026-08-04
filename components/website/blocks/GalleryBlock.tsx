@@ -61,7 +61,7 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                  style={{ fontFamily: theme?.fonts.heading }}
+                  style={{ fontFamily: 'var(--website-font-heading)' }}
                 >
                   {title}
                 </motion.h2>
@@ -73,7 +73,7 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                   viewport={{ once: true }}
                   transition={{ delay: 0.1 }}
                   className="mt-4 text-lg text-gray-600 dark:text-gray-300"
-                  style={{ fontFamily: theme?.fonts.body }}
+                  style={{ fontFamily: 'var(--website-font-body)' }}
                 >
                   {subtitle}
                 </motion.p>

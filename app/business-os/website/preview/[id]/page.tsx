@@ -135,10 +135,16 @@ export default function WebsitePreviewPage() {
   const locale = pageData?.website_language || 'en';
   const isRTL = getDirection(locale) === 'rtl';
 
+  // Heebo font link (platform standard)
+  const heeboFontLink = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&subset=hebrew,latin&display=swap';
+
   // Embedded mode: render only the content without toolbar/chrome
   if (isEmbedded) {
     return (
       <div className="min-h-full">
+        {/* Google Fonts - Heebo (platform standard) */}
+        {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+        <link rel="stylesheet" href={heeboFontLink} />
         {/* Apply theme styles */}
         <style>
           {`
@@ -151,8 +157,8 @@ export default function WebsitePreviewPage() {
               --website-text: ${theme?.colors?.text || '#111827'};
               --website-text-secondary: ${theme?.colors?.textSecondary || '#6B7280'};
               --website-border-radius: ${theme?.borderRadius || '0.5rem'};
-              --website-font-heading: ${theme?.fonts?.heading || 'Inter'}, sans-serif;
-              --website-font-body: ${theme?.fonts?.body || 'Inter'}, sans-serif;
+              --website-font-heading: Heebo, ${theme?.fonts?.heading || 'Inter'}, sans-serif;
+              --website-font-body: Heebo, ${theme?.fonts?.body || 'Inter'}, sans-serif;
             }
             body {
               margin: 0;
@@ -197,6 +203,9 @@ export default function WebsitePreviewPage() {
   // Full preview mode with toolbar
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
+      {/* Google Fonts - Heebo (platform standard) */}
+      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+      <link rel="stylesheet" href={heeboFontLink} />
       {/* Preview Toolbar */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
@@ -258,8 +267,8 @@ export default function WebsitePreviewPage() {
                 --website-text: ${theme?.colors?.text || '#111827'};
                 --website-text-secondary: ${theme?.colors?.textSecondary || '#6B7280'};
                 --website-border-radius: ${theme?.borderRadius || '0.5rem'};
-                --website-font-heading: ${theme?.fonts?.heading || 'Inter'}, sans-serif;
-                --website-font-body: ${theme?.fonts?.body || 'Inter'}, sans-serif;
+                --website-font-heading: Heebo, ${theme?.fonts?.heading || 'Inter'}, sans-serif;
+                --website-font-body: Heebo, ${theme?.fonts?.body || 'Inter'}, sans-serif;
               }
             `}
           </style>

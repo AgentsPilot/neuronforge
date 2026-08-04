@@ -23,14 +23,18 @@ import { z } from 'zod';
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
 // Subdomain is optional - if not provided, authenticated user is used (preview mode)
+// start_time is optional - if not provided, booking is created without scheduling (for courses, products, etc.)
 const BookingSchema = z.object({
-  subdomain: z.string().optional(),
+  // Transform empty strings to undefined so they're treated as "not provided"
+  subdomain: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   service_id: z.string().uuid('Invalid service ID'),
-  start_time: z.string().min(1, 'Start time is required'),
+  // Optional - when not provided or empty, creates non-scheduled booking (courses, products)
+  // Transform empty strings to undefined so they're treated as "not provided"
+  start_time: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   name: z.string().min(1, 'Name is required').max(200),
   email: z.string().email('Invalid email address'),
-  phone: z.string().optional(),
-  notes: z.string().max(2000).optional(),
+  phone: z.string().optional().transform(val => val && val.trim() ? val : undefined),
+  notes: z.string().max(2000).optional().transform(val => val && val.trim() ? val : undefined),
   timezone: z.string().optional().default('UTC'),
   // Skip contact creation for paid services - contact will be created after payment
   skip_contact: z.boolean().optional().default(false)
@@ -141,23 +145,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Calculate end time
-    const startTime = new Date(data.start_time);
-    const endTime = new Date(startTime.getTime() + service.duration_minutes * 60 * 1000);
+    // Determine if this is a scheduled booking (has start_time) or non-scheduled (course, product, etc.)
+    const isScheduledBooking = !!data.start_time;
+    let startTime: Date | null = null;
+    let endTime: Date | null = null;
 
-    // Check for conflicts
-    const { data: conflicts } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('id')
-      .eq('user_id', ownerId)
-      .neq('status', 'cancelled')
-      .or(`and(start_time.lt.${endTime.toISOString()},end_time.gt.${startTime.toISOString()})`);
+    if (isScheduledBooking) {
+      // Calculate end time for scheduled bookings
+      startTime = new Date(data.start_time!);
+      endTime = new Date(startTime.getTime() + service.duration_minutes * 60 * 1000);
 
-    if (conflicts && conflicts.length > 0) {
-      return NextResponse.json(
-        { success: false, error: 'This time slot is no longer available' },
-        { status: 409 }
-      );
+      // Check for conflicts (only for scheduled bookings)
+      const { data: conflicts } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('id')
+        .eq('user_id', ownerId)
+        .neq('status', 'cancelled')
+        .or(`and(start_time.lt.${endTime.toISOString()},end_time.gt.${startTime.toISOString()})`);
+
+      if (conflicts && conflicts.length > 0) {
+        return NextResponse.json(
+          { success: false, error: 'This time slot is no longer available' },
+          { status: 409 }
+        );
+      }
     }
 
     // Parse name into first_name and last_name
@@ -234,6 +245,7 @@ export async function POST(request: NextRequest) {
     // Create the booking
     // Note: scheduling_bookings uses client_first_name/client_last_name (not client_name), booking_source (not source)
     // For paid services: status is 'pending' until payment is confirmed
+    // For non-scheduled bookings (courses, products): start_time and end_time are null
     const { data: booking, error: bookingError } = await supabaseServer
       .from('scheduling_bookings')
       .insert({
@@ -244,8 +256,8 @@ export async function POST(request: NextRequest) {
         client_last_name: clientLastName,
         client_email: data.email,
         client_phone: data.phone || null,
-        start_time: startTime.toISOString(),
-        end_time: endTime.toISOString(),
+        start_time: startTime?.toISOString() || null,
+        end_time: endTime?.toISOString() || null,
         status: requiresPayment ? 'pending' : 'confirmed',
         payment_status: requiresPayment ? 'pending' : 'paid',
         notes: data.notes || null,
@@ -262,6 +274,11 @@ export async function POST(request: NextRequest) {
 
     // Create activity (non-blocking) for all bookings with a contact
     if (contactId) {
+      const activityDescription = startTime
+        ? `Booked via website for ${startTime.toLocaleString()}`
+        : `Purchased via website`;
+      const activityDate = startTime?.toISOString() || new Date().toISOString();
+
       supabaseServer
         .from('crm_activities')
         .insert({
@@ -269,8 +286,8 @@ export async function POST(request: NextRequest) {
           contact_id: contactId,
           activity_type: 'booking',
           title: `Booking: ${service.service_name}`,
-          description: `Booked via website for ${startTime.toLocaleString()}`,
-          activity_date: startTime.toISOString(),
+          description: activityDescription,
+          activity_date: activityDate,
           auto_logged: true,
           source_capability: 'scheduling',
           source_entity_id: booking.id
@@ -295,7 +312,7 @@ export async function POST(request: NextRequest) {
     }
 
     requestLogger.info(
-      { bookingId: booking.id, subdomain: data.subdomain, serviceId: data.service_id, requiresPayment },
+      { bookingId: booking.id, subdomain: data.subdomain, serviceId: data.service_id, requiresPayment, isScheduledBooking },
       'Booking created successfully'
     );
 
@@ -313,7 +330,8 @@ export async function POST(request: NextRequest) {
         price: service.price,
         currency: service.currency,
         requires_payment: requiresPayment,
-        status: requiresPayment ? 'pending' : 'confirmed'
+        status: requiresPayment ? 'pending' : 'confirmed',
+        is_scheduled: isScheduledBooking
       }
     });
   } catch (error) {

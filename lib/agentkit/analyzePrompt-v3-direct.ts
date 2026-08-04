@@ -1,7 +1,7 @@
 // lib/agentkit/analyzePrompt-v3-direct.ts
 // OPTION 3: Direct AgentKit Prompt Injection - Simplest approach
 
-import { openai, AGENTKIT_CONFIG } from './agentkitClient';
+import OpenAI from 'openai';
 import { convertPluginsToTools, getPluginContextPrompt } from './convertPlugins';
 
 export interface AnalyzedWorkflowStep {
@@ -857,6 +857,9 @@ CRITICAL: Every plugin_action step MUST have a "params" field with proper variab
     // Dynamic import to avoid bundling large schema at module load time
     const { PILOT_DSL_SCHEMA } = await import('@/lib/pilot/schema');
 
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
     const completion = await openai.chat.completions.create({
       model: modelToUse,
       messages: [

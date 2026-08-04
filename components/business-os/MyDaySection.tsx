@@ -1,10 +1,10 @@
 'use client';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { Check, Clock, Bell, ChevronDown } from 'lucide-react';
+import { Check, Clock, Bell, ChevronDown, Lightbulb, Sparkles } from 'lucide-react';
 
 export interface StoryBeat {
-  type: 'done' | 'next' | 'run';
+  type: 'done' | 'next' | 'run' | 'insight_offer' | 'insight_action';
   titleKey: string;
   titleParams?: Record<string, string | number>;
   subtitleKey: string;
@@ -25,6 +25,9 @@ interface MyDaySectionProps {
   loading?: boolean;
   isFullyCollapsed?: boolean;
   onFullyCollapsedChange?: (collapsed: boolean) => void;
+  onInsightClick?: (insightId: string) => void;
+  /** Children will be rendered inside the card, after the story beats grid */
+  children?: React.ReactNode;
 }
 
 const BEAT_STYLES = {
@@ -48,6 +51,22 @@ const BEAT_STYLES = {
     iconBg: 'rgba(249, 115, 22, 0.12)',
     iconColor: '#F97316',
     Icon: Bell
+  },
+  // Insight offer: pending insight that needs user action (Lightbulb, orange)
+  insight_offer: {
+    tagBg: 'rgba(249, 115, 22, 0.12)',
+    tagColor: '#F97316',
+    iconBg: 'rgba(249, 115, 22, 0.12)',
+    iconColor: '#F97316',
+    Icon: Lightbulb
+  },
+  // Insight action: completed insight-triggered work (Sparkles, green)
+  insight_action: {
+    tagBg: 'rgba(34, 197, 139, 0.13)',
+    tagColor: '#128a5e',
+    iconBg: 'rgba(34, 197, 139, 0.13)',
+    iconColor: '#22C58B',
+    Icon: Sparkles
   }
 };
 
@@ -58,7 +77,9 @@ export function MyDaySection({
   storyBeats,
   loading = false,
   isFullyCollapsed = false,
-  onFullyCollapsedChange
+  onFullyCollapsedChange,
+  onInsightClick,
+  children,
 }: MyDaySectionProps) {
   const { t, isRTL } = useLanguage();
 
@@ -276,9 +297,14 @@ export function MyDaySection({
           const style = BEAT_STYLES[beat.type];
           const Icon = style.Icon;
           const isRunning = beat.type === 'run';
+          const isInsightOffer = beat.type === 'insight_offer';
+          const isInsightAction = beat.type === 'insight_action';
+          const isAnyInsight = isInsightOffer || isInsightAction;
 
-          // Resolve translation with params
+          // Resolve translation with params (for insights, use raw title/subtitle)
           const resolveText = (key: string, params?: Record<string, string | number>): string => {
+            // For insights, the titleKey IS the title (not a translation key)
+            if (isAnyInsight) return key;
             let text = t(key);
             if (params) {
               Object.entries(params).forEach(([paramKey, value]) => {
@@ -291,11 +317,45 @@ export function MyDaySection({
           const title = resolveText(beat.titleKey, beat.titleParams);
           const subtitle = resolveText(beat.subtitleKey, beat.subtitleParams);
 
+          // Get insight-specific data from titleParams
+          const insightId = beat.titleParams?.insightId as string | undefined;
+          const impactUsd = beat.titleParams?.impactUsd as number | undefined;
+          const hasAction = beat.titleParams?.hasAction === 1;
+
+          const handleClick = () => {
+            if (isAnyInsight && insightId && onInsightClick) {
+              onInsightClick(insightId);
+            }
+          };
+
+          // Get tag label
+          const getTagLabel = () => {
+            switch (beat.type) {
+              case 'done': return t('myday.beat.done') || 'Done';
+              case 'next': return t('myday.beat.next') || 'Next';
+              case 'run': return t('myday.beat.running') || 'Running';
+              case 'insight_offer': return t('myday.beat.advisor') || 'Advisor';
+              case 'insight_action': return t('myday.beat.handled') || 'Handled';
+              default: return '';
+            }
+          };
+
           return (
             <div
               key={index}
-              className="relative bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-all hover:border-[#D6DAE6] hover:bg-[var(--v2-surface)] cursor-default"
-              style={{ borderRadius: '15px', padding: '14px 15px' }}
+              onClick={handleClick}
+              className={`relative bg-[var(--v2-bg)] border transition-all ${
+                isInsightOffer
+                  ? 'border-[#F97316]/40 hover:border-[#F97316] hover:shadow-lg cursor-pointer'
+                  : isInsightAction
+                  ? 'border-[#22C58B]/30 hover:border-[#22C58B] cursor-default'
+                  : 'border-[var(--v2-border)] hover:border-[#D6DAE6] hover:bg-[var(--v2-surface)] cursor-default'
+              }`}
+              style={{
+                borderRadius: '15px',
+                padding: '14px 15px',
+                background: isInsightOffer ? 'linear-gradient(135deg, rgba(249,115,22,0.03) 0%, rgba(249,115,22,0.08) 100%)' : undefined,
+              }}
             >
               {/* Tag */}
               <span
@@ -313,15 +373,13 @@ export function MyDaySection({
                   color: style.tagColor
                 }}
               >
-                {isRunning && (
+                {(isRunning || isInsightOffer) && (
                   <span
                     className="w-1.5 h-1.5 rounded-full animate-pulse"
                     style={{ background: style.iconColor }}
                   />
                 )}
-                {beat.type === 'done' && (t('myday.beat.done') || 'Done')}
-                {beat.type === 'next' && (t('myday.beat.next') || 'Next')}
-                {beat.type === 'run' && (t('myday.beat.running') || 'Running')}
+                {getTagLabel()}
               </span>
 
               {/* Icon */}
@@ -349,10 +407,40 @@ export function MyDaySection({
               >
                 {subtitle}
               </small>
+
+              {/* Insight offer: call to action */}
+              {isInsightOffer && (
+                <div className="mt-3 flex items-center justify-between">
+                  {impactUsd && impactUsd > 0 ? (
+                    <span
+                      className="text-xs font-semibold px-2 py-0.5 rounded"
+                      style={{ background: 'rgba(220, 38, 38, 0.1)', color: '#DC2626' }}
+                    >
+                      ${impactUsd.toLocaleString()} {t('myday.insight.at_risk') || 'at risk'}
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  <span
+                    className="text-xs font-semibold flex items-center gap-1"
+                    style={{ color: '#F97316' }}
+                  >
+                    {t('myday.insight.run_for_me') || 'Run this for me?'}
+                    <span className="text-base">→</span>
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}
       </div>
+
+      {/* Insight sections (rendered as children inside the card) */}
+      {children && (
+        <div className="mt-6 pt-6" style={{ borderTop: '1px solid var(--v2-border)' }}>
+          {children}
+        </div>
+      )}
 
       {/* Bottom collapse toggle */}
       <div className={`flex pt-4 mt-2 ${isRTL ? 'justify-start' : 'justify-end'}`}>

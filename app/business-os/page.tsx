@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
-import { MyDaySection, StoryBeat, SummaryData } from '@/components/business-os/MyDaySection';
+import { StoryBeat, SummaryData } from '@/components/business-os/MyDaySection';
+import { MyDayInsightSection } from '@/components/business-os/insight';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
 import { CapabilityCard, WebsiteStats, PeopleStats, ReportsStats, ConfigStats } from '@/components/business-os/CapabilityCard';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
@@ -683,12 +684,10 @@ function BusinessOSContent() {
       {/* Main Content */}
       <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-5 lg:py-6 max-w-7xl">
 
-        {/* My Day Section */}
-        <MyDaySection
+        {/* My Day Section with Insight Integration */}
+        <MyDayInsightSection
           userName={myDay.userName}
           greeting={myDay.greeting}
-          summaryData={myDay.summaryData}
-          storyBeats={myDay.storyBeats}
           loading={loading}
           isFullyCollapsed={isMyDayCollapsed}
           onFullyCollapsedChange={setIsMyDayCollapsed}
@@ -696,7 +695,7 @@ function BusinessOSContent() {
 
         {/* Row 3: Chat Panel + Capability Cards - matches mockup exactly */}
         <div
-          className="mt-5 grid"
+          className="mt-5 grid dashboard-main-grid"
           style={{
             gridTemplateColumns: '390px 1fr',
             gap: '20px',
@@ -715,7 +714,7 @@ function BusinessOSContent() {
 
           {/* Right: 4 Capability Cards (2x2 grid) - matches mockup: equal height cards */}
           <div
-            className="grid transition-all duration-300"
+            className="grid transition-all duration-300 capability-cards-grid"
             style={{
               gridTemplateColumns: '1fr 1fr',
               gridTemplateRows: '1fr 1fr',
@@ -824,10 +823,10 @@ function BusinessOSContent() {
               {language === 'he' ? 'ביטול' : 'Cancel'}
             </Button>
             <Button
-              variant="destructive"
+              variant="default"
               onClick={confirmDelete}
               disabled={isDeleting}
-              className="bg-red-500 hover:bg-red-600 text-white"
+              className="bg-red-500 hover:bg-red-600 text-white border-0"
             >
               {isDeleting ? (
                 language === 'he' ? 'מוחק...' : 'Deleting...'
@@ -858,16 +857,35 @@ function BusinessOSContent() {
           animation: fade-in 0.3s ease-out, slide-in-from-bottom-2 0.3s ease-out;
         }
 
-        /* Responsive adjustments - matches mockup */
-        @media (max-width: 920px) {
-          .grid[style*="390px"] {
+        /* Responsive adjustments - mobile-first */
+
+        /* Tablet and below - stack chat and cards vertically */
+        @media (max-width: 1024px) {
+          .dashboard-main-grid {
             grid-template-columns: 1fr !important;
+            gap: 16px !important;
+          }
+
+          .capability-cards-grid {
+            height: auto !important;
+            grid-template-rows: auto auto !important;
           }
         }
-        @media (max-width: 560px) {
-          .grid[style*="1fr 1fr"] {
+
+        /* Mobile - single column capability cards */
+        @media (max-width: 640px) {
+          .capability-cards-grid {
             grid-template-columns: 1fr !important;
             grid-template-rows: auto !important;
+            gap: 12px !important;
+          }
+        }
+
+        /* Small mobile - reduce padding */
+        @media (max-width: 480px) {
+          .container {
+            padding-left: 12px !important;
+            padding-right: 12px !important;
           }
         }
       `}</style>

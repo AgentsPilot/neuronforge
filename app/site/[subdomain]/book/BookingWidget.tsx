@@ -53,6 +53,8 @@ interface BookingWidgetProps {
   timezone: string;
   primaryColor: string;
   locale?: 'en' | 'es' | 'he';
+  /** Pre-select a service by ID (e.g., from landing page link) */
+  initialServiceId?: string;
 }
 
 type Step = 'service' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
@@ -81,7 +83,6 @@ const translations = {
     total: 'Total',
     pay: 'Pay',
     processing: 'Processing...',
-    payment_simulated: 'Payment is simulated until Stripe integration is complete',
     booking_confirmed: 'Booking Confirmed!',
     confirmation_email: "We've sent a confirmation email to",
     booking_details: 'Booking Details',
@@ -118,7 +119,6 @@ const translations = {
     total: 'Total',
     pay: 'Pagar',
     processing: 'Procesando...',
-    payment_simulated: 'El pago es simulado hasta que se complete la integración con Stripe',
     booking_confirmed: '¡Reserva Confirmada!',
     confirmation_email: 'Hemos enviado un correo de confirmación a',
     booking_details: 'Detalles de la Reserva',
@@ -155,7 +155,6 @@ const translations = {
     total: 'סה"כ',
     pay: 'שלם',
     processing: 'מעבד...',
-    payment_simulated: 'התשלום מדומה עד להשלמת האינטגרציה עם Stripe',
     booking_confirmed: 'ההזמנה אושרה!',
     confirmation_email: 'שלחנו אימייל אישור אל',
     booking_details: 'פרטי ההזמנה',
@@ -172,7 +171,7 @@ const translations = {
   }
 };
 
-export function BookingWidget({ subdomain, services, timezone, primaryColor, locale = 'en' }: BookingWidgetProps) {
+export function BookingWidget({ subdomain, services, timezone, primaryColor, locale = 'en', initialServiceId }: BookingWidgetProps) {
   // Get translations for current locale
   const t = translations[locale] || translations.en;
   const isRTL = locale === 'he';
@@ -230,6 +229,17 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     return date.toISOString().split('T')[0];
   });
 
+  // Auto-select service if initialServiceId is provided (e.g., from landing page)
+  useEffect(() => {
+    if (initialServiceId && services.length > 0) {
+      const service = services.find(s => s.id === initialServiceId);
+      if (service) {
+        setSelectedService(service);
+        setStep('datetime');
+      }
+    }
+  }, [initialServiceId, services]);
+
   // Fetch intake template on mount
   useEffect(() => {
     const fetchIntakeTemplate = async () => {
@@ -246,6 +256,62 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     };
     fetchIntakeTemplate();
   }, [subdomain]);
+
+  // Handle return from Stripe checkout
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentStatus = urlParams.get('payment');
+    const bookingIdFromUrl = urlParams.get('booking_id');
+
+    if (paymentStatus === 'success' && bookingIdFromUrl) {
+      // Payment succeeded, finalize the booking
+      setBookingId(bookingIdFromUrl);
+      setProcessingPayment(true);
+
+      const finalizeBooking = async () => {
+        try {
+          const response = await fetch('/api/website/booking/finalize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              subdomain,
+              booking_id: bookingIdFromUrl
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.success) {
+            // Clean URL
+            window.history.replaceState({}, '', window.location.pathname);
+
+            // Go to intake or confirmation
+            if (hasIntake && intakeTemplate) {
+              setStep('intake');
+            } else {
+              setStep('confirmation');
+            }
+          } else {
+            setError(data.error || 'Failed to finalize booking');
+          }
+        } catch {
+          setError('Failed to finalize booking. Please contact support.');
+        } finally {
+          setProcessingPayment(false);
+        }
+      };
+
+      finalizeBooking();
+    } else if (paymentStatus === 'cancelled' && bookingIdFromUrl) {
+      // Payment cancelled, show payment step again
+      setBookingId(bookingIdFromUrl);
+      setStep('payment');
+      setError('Payment was cancelled. Please try again.');
+
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [subdomain, hasIntake, intakeTemplate]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -316,6 +382,13 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
 
     // Determine if payment is required
     const requiresPayment = selectedService.price !== null && selectedService.price > 0;
+    console.log('📋 Booking submission:', {
+      service: selectedService.name,
+      price: selectedService.price,
+      requiresPayment,
+      hasIntake,
+      intakeTemplate: !!intakeTemplate
+    });
 
     try {
       const response = await fetch('/api/website/booking/create', {
@@ -342,14 +415,18 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
         setBookingId(data.booking?.id || null);
 
         // Determine next step based on payment requirement
+        console.log('📋 Next step decision:', { requiresPayment, hasIntake, intakeTemplate: !!intakeTemplate });
         if (requiresPayment) {
           // Go to payment step - contact will be created after payment
+          console.log('📋 Going to PAYMENT step');
           setStep('payment');
         } else if (hasIntake && intakeTemplate) {
           // Free service with intake - go to intake
+          console.log('📋 Going to INTAKE step');
           setStep('intake');
         } else {
           // Free service without intake - go to confirmation
+          console.log('📋 Going to CONFIRMATION step');
           setStep('confirmation');
         }
       } else {
@@ -364,40 +441,66 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
 
   // Handle payment completion - creates contact and finalizes booking
   const handlePaymentComplete = async () => {
-    if (!bookingId) {
+    if (!bookingId || !selectedService) {
       setError('Missing booking information');
       return;
     }
+
+    console.log('💳 Starting payment flow...', {
+      bookingId,
+      service: selectedService.name,
+      price: selectedService.price,
+      currency: selectedService.currency
+    });
 
     setProcessingPayment(true);
     setError(null);
 
     try {
-      // Call finalize endpoint to create contact and confirm booking
-      const response = await fetch('/api/website/booking/finalize', {
+      // Build success/cancel URLs
+      const baseUrl = window.location.origin;
+      const bookUrl = `${baseUrl}/site/${subdomain}/book`;
+      const successUrl = `${bookUrl}?booking_id=${bookingId}&payment=success`;
+      const cancelUrl = `${bookUrl}?booking_id=${bookingId}&payment=cancelled`;
+
+      console.log('💳 Calling checkout API...');
+
+      // Create Stripe checkout session
+      const response = await fetch('/api/website/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain,
-          booking_id: bookingId
+          amount: selectedService.price,
+          currency: selectedService.currency,
+          description: `${selectedService.name} - ${formatDate(selectedDate!)} at ${formatTime(selectedSlot!.start)}`,
+          customer_email: email,
+          booking_id: bookingId,
+          service_id: selectedService.id,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          metadata: {
+            customer_name: name,
+            customer_phone: phone
+          }
         })
       });
 
       const data = await response.json();
+      console.log('💳 Checkout API response:', data);
 
-      if (data.success) {
-        // Go to intake or confirmation
-        if (hasIntake && intakeTemplate) {
-          setStep('intake');
-        } else {
-          setStep('confirmation');
-        }
+      if (data.success && data.checkoutUrl) {
+        console.log('💳 Redirecting to Stripe:', data.checkoutUrl);
+        // Redirect to Stripe checkout
+        window.location.href = data.checkoutUrl;
       } else {
-        setError(data.error || 'Failed to process payment');
+        console.error('💳 Checkout failed:', data.error);
+        setError(data.error || 'Failed to create checkout session');
+        setProcessingPayment(false);
       }
-    } catch {
+    } catch (err) {
+      console.error('💳 Payment error:', err);
       setError('Failed to process payment. Please try again.');
-    } finally {
       setProcessingPayment(false);
     }
   };
@@ -1023,8 +1126,8 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           )}
         </button>
 
-        <p className="text-xs text-center text-gray-400">
-          {t.payment_simulated}
+        <p className="text-xs text-center text-gray-500">
+          Secure payment powered by Stripe
         </p>
       </div>
     );

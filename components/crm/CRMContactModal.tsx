@@ -221,11 +221,11 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden">
+      <DialogContent className="w-full sm:max-w-3xl h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden">
         {/* Sticky Header */}
-        <div className="flex-shrink-0 border-b border-[var(--v2-border)] p-6 bg-[var(--v2-bg)]">
+        <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 bg-[var(--v2-bg)]">
           <DialogHeader className="rtl:text-right">
-            <DialogTitle className="text-xl font-semibold text-[var(--v2-text-primary)]">
+            <DialogTitle className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
               {contact ? t('crm.modal.edit_contact') : t('crm.modal.new_contact')}
             </DialogTitle>
           </DialogHeader>
@@ -233,7 +233,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
           {/* Success/Error Messages */}
           {successMessage && (
             <div className="p-4 bg-green-500/20 border border-green-500/40 text-green-600 dark:text-green-400 text-sm font-medium" style={{ borderRadius: 'var(--v2-radius-button)' }}>
@@ -252,9 +252,9 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
               {t('crm.modal.personal_info')}
             </h3>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
               <div>
-                <Label htmlFor="first_name" className="text-[var(--v2-text-secondary)] mb-2 block">
+                <Label htmlFor="first_name" className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mb-1.5 sm:mb-2 block">
                   {t('crm.modal.first_name')} <span className="text-red-500 dark:text-red-400">*</span>
                 </Label>
                 <Input
@@ -267,7 +267,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
                 />
               </div>
               <div>
-                <Label htmlFor="last_name" className="text-[var(--v2-text-secondary)] mb-2 block">
+                <Label htmlFor="last_name" className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mb-1.5 sm:mb-2 block">
                   {t('crm.modal.last_name')} <span className="text-red-500 dark:text-red-400">*</span>
                 </Label>
                 <Input
@@ -282,11 +282,11 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
             </div>
 
             <div>
-              <Label htmlFor="email" className="text-[var(--v2-text-secondary)] mb-2 block">
+              <Label htmlFor="email" className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mb-1.5 sm:mb-2 block">
                 {t('crm.modal.email')} <span className="text-red-500 dark:text-red-400">*</span>
               </Label>
               <div className="relative">
-                <Mail className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
+                <Mail className="absolute start-2.5 sm:start-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 sm:h-4 sm:w-4 text-[var(--v2-text-muted)]" />
                 <Input
                   id="email"
                   type="email"
@@ -294,7 +294,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
                   onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                   placeholder={t('crm.modal.email_placeholder')}
                   required
-                  className={`ps-10 pe-10 bg-[var(--v2-surface)] border-[var(--v2-border)] focus:border-[#8B5CF6] focus:ring-[#8B5CF6] ${
+                  className={`ps-9 sm:ps-10 pe-9 sm:pe-10 text-sm bg-[var(--v2-surface)] border-[var(--v2-border)] focus:border-[#8B5CF6] focus:ring-[#8B5CF6] ${
                     duplicateContact ? 'border-amber-500 focus:border-amber-500 focus:ring-amber-500' : ''
                   }`}
                 />

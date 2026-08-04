@@ -117,13 +117,19 @@ export default async function PublicWebsitePage({ params }: PageProps) {
   const theme = data.page?.theme || undefined;
   const blocks = (data.blocks || []) as BlockData[];
 
-  // Build font links
+  // Build font links - always use Heebo as the primary font
   const fontFamilies = new Set<string>();
-  if (theme?.fonts?.heading) fontFamilies.add(theme.fonts.heading);
-  if (theme?.fonts?.body) fontFamilies.add(theme.fonts.body);
+  // Always include Heebo as the platform font
+  fontFamilies.add('Heebo');
+  // Add any additional theme fonts if specified and different from Heebo
+  if (theme?.fonts?.heading && theme.fonts.heading !== 'Heebo') fontFamilies.add(theme.fonts.heading);
+  if (theme?.fonts?.body && theme.fonts.body !== 'Heebo') fontFamilies.add(theme.fonts.body);
 
   const fontLinks = Array.from(fontFamilies)
-    .map(font => `https://fonts.googleapis.com/css2?family=${font.replace(/ /g, '+')}:wght@400;500;600;700&display=swap`)
+    .map(font => {
+      const subsets = font === 'Heebo' ? 'hebrew,latin' : 'latin';
+      return `https://fonts.googleapis.com/css2?family=${font.replace(/ /g, '+')}:wght@400;500;600;700&subset=${subsets}&display=swap`;
+    })
     .join(',');
 
   return (
@@ -146,8 +152,8 @@ export default async function PublicWebsitePage({ params }: PageProps) {
             --website-text: ${theme?.colors?.text || '#111827'};
             --website-text-secondary: ${theme?.colors?.textSecondary || '#6B7280'};
             --website-border-radius: ${theme?.borderRadius || '0.5rem'};
-            --website-font-heading: ${theme?.fonts?.heading || 'Inter'}, sans-serif;
-            --website-font-body: ${theme?.fonts?.body || 'Inter'}, sans-serif;
+            --website-font-heading: Heebo, ${theme?.fonts?.heading || 'Inter'}, sans-serif;
+            --website-font-body: Heebo, ${theme?.fonts?.body || 'Inter'}, sans-serif;
           }
 
           body {

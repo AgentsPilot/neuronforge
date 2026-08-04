@@ -987,21 +987,21 @@ export function WebsiteSetupWizard({
       {showFullPreview && pageId && (
         <div className="fixed inset-0 z-50 bg-gray-900">
           {/* Toolbar */}
-          <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-4">
+          <div className="bg-gray-800 border-b border-gray-700 px-2 sm:px-4 py-2 sm:py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
               <button
                 onClick={() => setShowFullPreview(false)}
-                className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all"
+                className="p-1.5 sm:p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-all flex-shrink-0"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4 sm:w-5 sm:h-5" />
               </button>
-              <div>
-                <h1 className="text-white font-medium">{labels.preview}</h1>
-                <p className="text-gray-500 text-sm">{subdomain || 'yoursite'}.agentspilot.com</p>
+              <div className="min-w-0">
+                <h1 className="text-white font-medium text-sm sm:text-base truncate">{labels.preview}</h1>
+                <p className="text-gray-500 text-xs sm:text-sm hidden xs:block truncate">{subdomain || 'yoursite'}.agentspilot.com</p>
               </div>
             </div>
             {/* Device Toggle */}
-            <div className="flex items-center gap-1 bg-gray-700 rounded-lg p-1">
+            <div className="flex items-center gap-0.5 sm:gap-1 bg-gray-700 rounded-lg p-0.5 sm:p-1 flex-shrink-0">
               {[
                 { mode: 'desktop' as const, icon: Monitor },
                 { mode: 'tablet' as const, icon: Tablet },
@@ -1010,19 +1010,19 @@ export function WebsiteSetupWizard({
                 <button
                   key={mode}
                   onClick={() => setDeviceMode(mode)}
-                  className={`p-2 rounded-md transition-all ${
+                  className={`p-1.5 sm:p-2 rounded-md transition-all ${
                     deviceMode === mode
                       ? 'bg-blue-600 text-white'
                       : 'text-gray-400 hover:text-white'
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
+                  <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
                 </button>
               ))}
             </div>
           </div>
           {/* Preview Frame */}
-          <div className="flex-1 overflow-auto p-4 flex justify-center" style={{ height: 'calc(100vh - 64px)' }}>
+          <div className="flex-1 overflow-auto p-2 sm:p-4 flex justify-center" style={{ height: 'calc(100vh - 48px)' }}>
             <div
               className="bg-white shadow-2xl transition-all duration-300 overflow-hidden"
               style={{

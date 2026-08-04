@@ -1,0 +1,998 @@
+{
+  "plugin": {
+    "name": "stripe",
+    "version": "1.0.0",
+    "description": "Accept payments, manage subscriptions, process refunds, and automate payment workflows with your Stripe account",
+    "context": "Use for creating payment links, processing refunds, managing recurring subscriptions, collecting customer payments, and integrating Stripe payment operations into agent workflows. Supports both new Stripe account creation and connecting existing accounts.",
+    "icon": "<CreditCard className='w-5 h-5 text-purple-600'/>",
+    "category": "payment",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2_stripe_connect",
+      "supports_express_account": true,
+      "client_id": "${NEXT_PUBLIC_STRIPE_CLIENT_ID}",
+      "client_secret": "${STRIPE_SECRET_KEY}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/stripe",
+      "auth_url": "https://connect.stripe.com/oauth/authorize",
+      "token_url": "https://connect.stripe.com/oauth/token",
+      "required_scopes": ["read_write"],
+      "profile_url": "https://api.stripe.com/v1/account",
+      "profile_method": "GET"
+    },
+    "provider_family": "stripe"
+  },
+  "actions": {
+    "create_checkout_session": {
+      "description": "Create a hosted checkout page for collecting payments",
+      "usage_context": "Use to generate payment links for customers. Stripe hosts the checkout page and handles payment collection. Returns a URL to send to customers.",
+      "idempotent": false,
+      "domain": "payment",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "transaction",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": ["session_id", "url", "amount", "currency"],
+      "required_params": ["amount", "currency", "success_url"],
+      "optional_params": ["customer_email", "cancel_url", "line_items"],
+      "must_support": ["hosted_checkout"],
+      "parameters": {
+        "type": "object",
+        "required": ["amount", "currency", "success_url"],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "Amount to charge in smallest currency unit (cents for USD, pence for GBP, etc.)"
+          },
+          "currency": {
+            "type": "string",
+            "description": "Three-letter ISO currency code (e.g., 'usd', 'eur', 'gbp')",
+            "default": "usd"
+          },
+          "customer_email": {
+            "type": "string",
+            "description": "Pre-fill customer email address on checkout page"
+          },
+          "success_url": {
+            "type": "string",
+            "description": "URL to redirect customer after successful payment"
+          },
+          "cancel_url": {
+            "type": "string",
+            "description": "URL to redirect customer if they cancel payment"
+          },
+          "description": {
+            "type": "string",
+            "description": "Description of the payment (appears on receipt)"
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_amount": {
+            "condition": "amount > 99999999",
+            "action": "block",
+            "message": "Amount cannot exceed $999,999.99"
+          }
+        },
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether checkout session was created"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "type": "string",
+                "description": "Stripe checkout session ID"
+              },
+              "url": {
+                "type": "string",
+                "description": "Hosted checkout page URL to send to customer"
+              },
+              "amount": {
+                "type": "number",
+                "description": "Amount in cents"
+              },
+              "currency": {
+                "type": "string",
+                "description": "Currency code"
+              },
+              "expires_at": {
+                "type": "string",
+                "description": "Session expiration timestamp"
+              }
+            }
+          },
+          "message": {
+            "type": "string",
+            "description": "Success message"
+          }
+        },
+        "required": ["session_id", "url"]
+      },
+      "output_guidance": {
+        "success_description": "Created checkout session",
+        "sample_output": {
+          "success": true,
+          "data": {
+            "session_id": "cs_test_a1b2c3",
+            "url": "https://checkout.stripe.com/c/pay/cs_test_a1b2c3",
+            "amount": 5000,
+            "currency": "usd",
+            "expires_at": "2026-08-01T12:00:00Z"
+          },
+          "message": "Checkout session created successfully"
+        },
+        "common_errors": {
+          "invalid_currency": "Currency code must be a valid 3-letter ISO code (e.g., 'usd', 'eur')",
+          "invalid_amount": "Amount must be a positive integer in smallest currency unit",
+          "account_not_ready": "Stripe account is not fully onboarded. Complete setup in Stripe Dashboard.",
+          "api_error": "Stripe API error. Check your account status and try again."
+        }
+      }
+    },
+    "create_payment_intent": {
+      "description": "Create a payment intent for direct payment collection",
+      "usage_context": "Use for custom payment flows where you control the payment UI. Requires payment method collection on your end. More flexible than checkout sessions.",
+      "idempotent": true,
+      "domain": "payment",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "transaction",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": ["payment_intent_id", "client_secret", "status"],
+      "required_params": ["amount", "currency"],
+      "optional_params": ["customer_id", "payment_method_id", "description"],
+      "must_support": ["payment_intents"],
+      "parameters": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": {
+            "type": "number",
+            "description": "Amount in smallest currency unit (cents)"
+          },
+          "currency": {
+            "type": "string",
+            "description": "Three-letter ISO currency code",
+            "default": "usd"
+          },
+          "customer_id": {
+            "type": "string",
+            "description": "Existing Stripe customer ID"
+          },
+          "payment_method_id": {
+            "type": "string",
+            "description": "Saved payment method ID to charge"
+          },
+          "description": {
+            "type": "string",
+            "description": "Payment description (appears on statement)"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "Automatically confirm the payment intent",
+            "default": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "payment_intent_id": {"type": "string"},
+              "client_secret": {"type": "string"},
+              "status": {"type": "string"},
+              "amount": {"type": "number"},
+              "currency": {"type": "string"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["payment_intent_id", "client_secret"]
+      },
+      "output_guidance": {
+        "success_description": "Created payment intent",
+        "common_errors": {
+          "customer_not_found": "Customer ID not found in your Stripe account",
+          "payment_method_invalid": "Payment method is invalid or not attached to customer"
+        }
+      }
+    },
+    "charge_saved_method": {
+      "description": "Charge a customer's saved payment method",
+      "usage_context": "Use to charge customers who have saved payment methods on file. Requires customer_id and payment_method_id.",
+      "idempotent": false,
+      "domain": "payment",
+      "capability": "create",
+      "input_entity": "customer",
+      "output_entity": "transaction",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["charge_id", "status", "receipt_url"],
+      "required_params": ["customer_id", "payment_method_id", "amount", "currency"],
+      "optional_params": ["description"],
+      "must_support": ["saved_payment_methods"],
+      "parameters": {
+        "type": "object",
+        "required": ["customer_id", "payment_method_id", "amount", "currency"],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Stripe customer ID"
+          },
+          "payment_method_id": {
+            "type": "string",
+            "description": "ID of saved payment method to charge"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Amount in smallest currency unit"
+          },
+          "currency": {
+            "type": "string",
+            "description": "Three-letter ISO currency code"
+          },
+          "description": {
+            "type": "string",
+            "description": "Charge description"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "large_amount": {
+            "condition": "amount > 100000",
+            "message": "You are about to charge ${amount/100}. Proceed?"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "charge_id": {"type": "string"},
+              "status": {"type": "string"},
+              "receipt_url": {"type": "string"},
+              "amount": {"type": "number"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["charge_id", "status"]
+      },
+      "output_guidance": {
+        "success_description": "Charged saved payment method",
+        "common_errors": {
+          "card_declined": "Customer's card was declined. Contact customer for updated payment method.",
+          "insufficient_funds": "Customer has insufficient funds.",
+          "payment_method_not_found": "Payment method not found or not attached to this customer."
+        }
+      }
+    },
+    "refund_payment": {
+      "description": "Process a full refund for a payment",
+      "usage_context": "Use to refund customers for canceled services, returns, or disputes. Processes full refund of the original charge amount.",
+      "idempotent": true,
+      "domain": "payment",
+      "capability": "refund",
+      "input_entity": "transaction",
+      "output_entity": "transaction",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["refund_id", "status", "amount"],
+      "required_params": ["payment_intent_id"],
+      "optional_params": ["reason"],
+      "must_support": ["refunds"],
+      "parameters": {
+        "type": "object",
+        "required": ["payment_intent_id"],
+        "properties": {
+          "payment_intent_id": {
+            "type": "string",
+            "description": "Payment intent ID to refund"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Refund reason: 'duplicate', 'fraudulent', or 'requested_by_customer'",
+            "default": "requested_by_customer"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "refund_confirmation": {
+            "condition": "amount > 50000",
+            "message": "Refund ${amount/100} to customer? This cannot be undone."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "refund_id": {"type": "string"},
+              "status": {"type": "string"},
+              "amount": {"type": "number"},
+              "currency": {"type": "string"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["refund_id", "status"]
+      },
+      "output_guidance": {
+        "success_description": "Refund processed",
+        "common_errors": {
+          "already_refunded": "Payment has already been fully refunded",
+          "charge_not_found": "Payment not found. Verify the payment intent ID.",
+          "refund_failed": "Refund failed. Payment may be too old or already disputed."
+        }
+      }
+    },
+    "refund_partial": {
+      "description": "Process a partial refund for a payment",
+      "usage_context": "Use to refund a portion of the original charge amount. Useful for partial returns or pro-rated refunds.",
+      "idempotent": false,
+      "domain": "payment",
+      "capability": "refund",
+      "input_entity": "transaction",
+      "output_entity": "transaction",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["refund_id", "amount_refunded", "amount_remaining"],
+      "required_params": ["payment_intent_id", "amount"],
+      "optional_params": ["reason"],
+      "must_support": ["partial_refunds"],
+      "parameters": {
+        "type": "object",
+        "required": ["payment_intent_id", "amount"],
+        "properties": {
+          "payment_intent_id": {
+            "type": "string",
+            "description": "Payment intent ID"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Amount to refund in smallest currency unit (must be less than original charge)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Refund reason",
+            "default": "requested_by_customer"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "refund_id": {"type": "string"},
+              "amount_refunded": {"type": "number"},
+              "amount_remaining": {"type": "number"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["refund_id", "amount_refunded"]
+      },
+      "output_guidance": {
+        "success_description": "Partial refund processed",
+        "common_errors": {
+          "amount_too_large": "Refund amount exceeds remaining refundable amount",
+          "invalid_amount": "Amount must be positive and less than original charge"
+        }
+      }
+    },
+    "create_subscription": {
+      "description": "Create a recurring subscription for a customer",
+      "usage_context": "Use to set up recurring billing for monthly/yearly plans. Requires a Stripe Price ID (created in Stripe Dashboard) and customer ID.",
+      "idempotent": false,
+      "domain": "subscription",
+      "capability": "create",
+      "input_entity": "customer",
+      "output_entity": "subscription",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["subscription_id", "status", "current_period_end"],
+      "required_params": ["customer_id", "price_id"],
+      "optional_params": ["trial_days", "payment_method_id"],
+      "must_support": ["subscriptions"],
+      "parameters": {
+        "type": "object",
+        "required": ["customer_id", "price_id"],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Stripe customer ID"
+          },
+          "price_id": {
+            "type": "string",
+            "description": "Stripe price ID for recurring plan (e.g., price_1ABC...)"
+          },
+          "trial_days": {
+            "type": "number",
+            "description": "Number of days for free trial (0 for no trial)",
+            "default": 0
+          },
+          "payment_method_id": {
+            "type": "string",
+            "description": "Default payment method for subscription"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "subscription_id": {"type": "string"},
+              "status": {"type": "string"},
+              "current_period_end": {"type": "string"},
+              "trial_end": {"type": "string"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["subscription_id", "status"]
+      },
+      "output_guidance": {
+        "success_description": "Subscription created",
+        "common_errors": {
+          "price_not_found": "Price ID not found. Create price in Stripe Dashboard first.",
+          "no_payment_method": "Customer must have a default payment method for subscriptions.",
+          "customer_not_found": "Customer ID not found in your Stripe account"
+        }
+      }
+    },
+    "update_subscription": {
+      "description": "Modify an existing subscription",
+      "usage_context": "Use to change subscription plan, update billing cycle, or schedule cancellation. Can upgrade/downgrade plans or adjust quantities.",
+      "idempotent": true,
+      "domain": "subscription",
+      "capability": "update",
+      "input_entity": "subscription",
+      "output_entity": "subscription",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["subscription_id", "status", "new_price"],
+      "required_params": ["subscription_id"],
+      "optional_params": ["new_price_id", "cancel_at_period_end"],
+      "must_support": ["subscription_changes"],
+      "parameters": {
+        "type": "object",
+        "required": ["subscription_id"],
+        "properties": {
+          "subscription_id": {
+            "type": "string",
+            "description": "Subscription ID to update"
+          },
+          "new_price_id": {
+            "type": "string",
+            "description": "New price ID to switch to (for plan changes)"
+          },
+          "cancel_at_period_end": {
+            "type": "boolean",
+            "description": "Schedule cancellation at end of current period",
+            "default": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "subscription_id": {"type": "string"},
+              "status": {"type": "string"},
+              "current_period_end": {"type": "string"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["subscription_id"]
+      },
+      "output_guidance": {
+        "success_description": "Subscription updated",
+        "common_errors": {
+          "subscription_not_found": "Subscription ID not found",
+          "already_canceled": "Subscription is already canceled"
+        }
+      }
+    },
+    "cancel_subscription": {
+      "description": "Cancel a subscription immediately or at period end",
+      "usage_context": "Use to cancel recurring billing. Can cancel immediately or schedule for end of current billing period (prorated refunds apply if immediate).",
+      "idempotent": true,
+      "domain": "subscription",
+      "capability": "delete",
+      "input_entity": "subscription",
+      "output_entity": "subscription",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["subscription_id", "canceled_at", "ended_at"],
+      "required_params": ["subscription_id"],
+      "optional_params": ["immediate"],
+      "must_support": ["subscription_cancellation"],
+      "parameters": {
+        "type": "object",
+        "required": ["subscription_id"],
+        "properties": {
+          "subscription_id": {
+            "type": "string",
+            "description": "Subscription ID to cancel"
+          },
+          "immediate": {
+            "type": "boolean",
+            "description": "Cancel immediately (true) or at period end (false)",
+            "default": false
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {
+          "immediate_cancel": {
+            "condition": "immediate === true",
+            "message": "Cancel subscription immediately? Customer will lose access now."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "subscription_id": {"type": "string"},
+              "status": {"type": "string"},
+              "canceled_at": {"type": "string"},
+              "ended_at": {"type": "string"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["subscription_id", "status"]
+      },
+      "output_guidance": {
+        "success_description": "Subscription canceled",
+        "common_errors": {
+          "already_canceled": "Subscription is already canceled",
+          "subscription_not_found": "Subscription ID not found"
+        }
+      }
+    },
+    "list_subscriptions": {
+      "description": "Get all subscriptions with optional filters",
+      "usage_context": "Use to retrieve active, canceled, or past_due subscriptions. Can filter by customer or status.",
+      "idempotent": true,
+      "domain": "subscription",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "subscription",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "customer_id", "status", "current_period_end"],
+      "required_params": [],
+      "optional_params": ["customer_id", "status", "limit"],
+      "must_support": ["subscription_list"],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Filter by customer ID"
+          },
+          "status": {
+            "type": "string",
+            "description": "Filter by status: 'active', 'canceled', 'past_due', 'all'",
+            "default": "all"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Max number of subscriptions to return (1-100)",
+            "default": 50
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_limit": {
+            "condition": "limit > 100",
+            "action": "block",
+            "message": "Limit cannot exceed 100 subscriptions"
+          }
+        },
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "subscriptions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "subscription_id": {"type": "string"},
+                    "customer_id": {"type": "string"},
+                    "status": {"type": "string"},
+                    "current_period_end": {"type": "string"},
+                    "plan_name": {"type": "string"}
+                  }
+                }
+              },
+              "total_count": {"type": "number"},
+              "has_more": {"type": "boolean"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["subscriptions"]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved subscriptions",
+        "common_errors": {}
+      }
+    },
+    "create_customer": {
+      "description": "Create a new customer in your Stripe account",
+      "usage_context": "Use to add customers before charging them or creating subscriptions. Stores customer email, name, and metadata.",
+      "idempotent": false,
+      "domain": "customer",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "customer",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": ["customer_id", "email", "name"],
+      "required_params": ["email"],
+      "optional_params": ["name", "phone", "metadata"],
+      "must_support": ["customer_management"],
+      "parameters": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Customer email address"
+          },
+          "name": {
+            "type": "string",
+            "description": "Customer full name"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Customer phone number"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Custom key-value data (e.g., {crm_id: '12345'})"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "customer_id": {"type": "string"},
+              "email": {"type": "string"},
+              "name": {"type": "string"},
+              "created_at": {"type": "string"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["customer_id", "email"]
+      },
+      "output_guidance": {
+        "success_description": "Customer created",
+        "common_errors": {
+          "invalid_email": "Email address format is invalid",
+          "duplicate_email": "Customer with this email may already exist (Stripe allows duplicates)"
+        }
+      }
+    },
+    "get_customer": {
+      "description": "Retrieve customer details by ID",
+      "usage_context": "Use to fetch customer information including payment methods, subscriptions, and balance.",
+      "idempotent": true,
+      "domain": "customer",
+      "capability": "get",
+      "input_entity": "customer",
+      "output_entity": "customer",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["customer_id", "email", "name", "default_payment_method"],
+      "required_params": ["customer_id"],
+      "optional_params": [],
+      "must_support": ["customer_retrieval"],
+      "parameters": {
+        "type": "object",
+        "required": ["customer_id"],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Stripe customer ID"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "customer_id": {"type": "string"},
+              "email": {"type": "string"},
+              "name": {"type": "string"},
+              "phone": {"type": "string"},
+              "default_payment_method": {"type": "string"},
+              "balance": {"type": "number"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["customer_id"]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved customer",
+        "common_errors": {
+          "customer_not_found": "Customer ID not found in your Stripe account"
+        }
+      }
+    },
+    "list_customers": {
+      "description": "List all customers with optional email filter",
+      "usage_context": "Use to search for customers by email or retrieve your customer list.",
+      "idempotent": true,
+      "domain": "customer",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "customer",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "email", "name", "created_at"],
+      "required_params": [],
+      "optional_params": ["email", "limit"],
+      "must_support": ["customer_list"],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Filter by email address"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Max customers to return (1-100)",
+            "default": 50
+          }
+        }
+      },
+      "rules": {
+        "limits": {
+          "max_limit": {
+            "condition": "limit > 100",
+            "action": "block",
+            "message": "Limit cannot exceed 100 customers"
+          }
+        },
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "customers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "customer_id": {"type": "string"},
+                    "email": {"type": "string"},
+                    "name": {"type": "string"},
+                    "created_at": {"type": "string"}
+                  }
+                }
+              },
+              "total_count": {"type": "number"},
+              "has_more": {"type": "boolean"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["customers"]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved customers",
+        "common_errors": {}
+      }
+    },
+    "list_payment_methods": {
+      "description": "Get saved payment methods for a customer",
+      "usage_context": "Use to retrieve cards and bank accounts saved on a customer's account. Required before charging saved methods.",
+      "idempotent": true,
+      "domain": "customer",
+      "capability": "list",
+      "input_entity": "customer",
+      "output_entity": "payment_method",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "output_fields": ["id", "type", "card_brand", "last4"],
+      "required_params": ["customer_id"],
+      "optional_params": ["type"],
+      "must_support": ["payment_methods"],
+      "parameters": {
+        "type": "object",
+        "required": ["customer_id"],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "Stripe customer ID"
+          },
+          "type": {
+            "type": "string",
+            "description": "Filter by type: 'card' or 'us_bank_account'",
+            "default": "card"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "payment_methods": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "payment_method_id": {"type": "string"},
+                    "type": {"type": "string"},
+                    "card_brand": {"type": "string"},
+                    "last4": {"type": "string"},
+                    "exp_month": {"type": "number"},
+                    "exp_year": {"type": "number"}
+                  }
+                }
+              },
+              "total_count": {"type": "number"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["payment_methods"]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved payment methods",
+        "common_errors": {
+          "customer_not_found": "Customer ID not found"
+        }
+      }
+    },
+    "get_payment": {
+      "description": "Retrieve payment details and status",
+      "usage_context": "Use to check payment status, get receipt URL, or retrieve payment details. Essential for confirming successful payments.",
+      "idempotent": true,
+      "domain": "payment",
+      "capability": "get",
+      "input_entity": "transaction",
+      "output_entity": "transaction",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["payment_intent_id", "status", "amount", "receipt_url"],
+      "required_params": ["payment_intent_id"],
+      "optional_params": [],
+      "must_support": ["payment_retrieval"],
+      "parameters": {
+        "type": "object",
+        "required": ["payment_intent_id"],
+        "properties": {
+          "payment_intent_id": {
+            "type": "string",
+            "description": "Payment intent ID to retrieve"
+          }
+        }
+      },
+      "rules": {
+        "limits": {},
+        "confirmations": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "data": {
+            "type": "object",
+            "properties": {
+              "payment_intent_id": {"type": "string"},
+              "status": {"type": "string"},
+              "amount": {"type": "number"},
+              "currency": {"type": "string"},
+              "customer_id": {"type": "string"},
+              "receipt_url": {"type": "string"},
+              "created_at": {"type": "string"}
+            }
+          },
+          "message": {"type": "string"}
+        },
+        "required": ["payment_intent_id", "status"]
+      },
+      "output_guidance": {
+        "success_description": "Retrieved payment",
+        "common_errors": {
+          "payment_not_found": "Payment intent ID not found in your Stripe account"
+        }
+      }
+    }
+  }
+}

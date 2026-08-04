@@ -244,6 +244,9 @@ export class UserPluginConnections {
       // Calculate expiration
       const expiresAt = calculateExpiresAt(tokens.expires_in);
 
+
+      
+
       // Build connection data for upsert
       const connectionData: UpsertPluginConnectionInput = {
         user_id,

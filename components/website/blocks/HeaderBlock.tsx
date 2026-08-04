@@ -142,7 +142,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                   <span
                     className={`text-xl sm:text-2xl font-bold ${getTextColor()}`}
                     style={{
-                      fontFamily: theme?.fonts?.heading,
+                      fontFamily: 'var(--website-font-heading)',
                       color: style === 'transparent' && !isScrolled ? undefined : primaryColor
                     }}
                   >
@@ -164,7 +164,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                     ${getTextColor()}
                     hover:bg-gray-100 dark:hover:bg-slate-800
                   `}
-                  style={{ fontFamily: theme?.fonts?.body }}
+                  style={{ fontFamily: 'var(--website-font-body)' }}
                 >
                   {item.label}
                 </button>
@@ -185,7 +185,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                   className="px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-200 hover:opacity-90 hover:shadow-lg"
                   style={{
                     backgroundColor: primaryColor,
-                    fontFamily: theme?.fonts?.body
+                    fontFamily: 'var(--website-font-body)'
                   }}
                 >
                   {cta_button.text}
@@ -246,7 +246,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                     <span
                       className="text-xl font-bold"
                       style={{
-                        fontFamily: theme?.fonts?.heading,
+                        fontFamily: 'var(--website-font-heading)',
                         color: primaryColor
                       }}
                     >
@@ -274,7 +274,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                       transition={{ delay: index * 0.05 }}
                       onClick={() => handleNavClick(item.anchor)}
                       className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-base font-medium text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
-                      style={{ fontFamily: theme?.fonts?.body }}
+                      style={{ fontFamily: 'var(--website-font-body)' }}
                     >
                       <span>{item.label}</span>
                       <ChevronRight className={`w-4 h-4 text-gray-400 ${isRTL ? 'rotate-180' : ''}`} />
@@ -301,7 +301,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                       className="block w-full px-4 py-3 rounded-lg text-center text-base font-semibold text-white transition-all duration-200 hover:opacity-90"
                       style={{
                         backgroundColor: primaryColor,
-                        fontFamily: theme?.fonts?.body
+                        fontFamily: 'var(--website-font-body)'
                       }}
                     >
                       {cta_button.text}

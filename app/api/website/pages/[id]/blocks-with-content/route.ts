@@ -95,27 +95,36 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, error: 'Page not found' }, { status: 404 });
     }
 
+    const page = pageResult.data;
+    const isLandingPage = page.page_type === 'landing';
+
     // Get blocks for this page
     const blocksResult = await blockRepo.findByPageId(pageId);
     if (blocksResult.error) {
       throw blocksResult.error;
     }
 
-    // Get central content
-    const contentResult = await contentRepo.getOrCreate(user.id);
-    if (contentResult.error) {
-      throw contentResult.error;
-    }
-
-    const centralContent = contentResult.data as WebsiteContent;
     const blocks = blocksResult.data || [];
 
-    // Always fetch live services from Scheduling capability for services blocks
+    // For landing pages, use block content directly (AI-generated content is stored in blocks)
+    // Only fetch central content for homepage/main website pages
+    let centralContent: WebsiteContent | null = null;
+    if (!isLandingPage) {
+      const contentResult = await contentRepo.getOrCreate(user.id);
+      if (contentResult.error) {
+        throw contentResult.error;
+      }
+      centralContent = contentResult.data as WebsiteContent;
+    }
+
+    // Always fetch live services from Scheduling capability for services/pricing blocks
     // This ensures only active services are shown and reflects any changes in real-time
     let liveServices: Array<{ id: string; name: string; description: string; icon: string; price?: string; priceRaw?: number; currency?: string; duration?: string; durationMinutes?: number }> = [];
     const hasServicesBlock = blocks.some(b => b.block_type === 'services');
+    const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
 
-    if (hasServicesBlock) {
+    // Fetch live services if we have services block OR pricing block (for landing pages)
+    if (hasServicesBlock || hasPricingBlock) {
       try {
         const schedulingRepo = new SchedulingServiceRepository(supabaseServer);
         const servicesResult = await schedulingRepo.listAll(user.id, true); // active only
@@ -138,8 +147,75 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Merge central content into blocks
+    // Merge central content into blocks (only for homepage/main website, not landing pages)
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {
+      // For landing pages, use block content directly (AI-generated content stored in blocks)
+      // BUT inject live service data for pricing blocks so prices stay current
+      if (isLandingPage) {
+        // For pricing blocks, inject live service data from Scheduling
+        if (block.block_type === 'pricing' && liveServices.length > 0) {
+          const blockContent = block.content as Record<string, unknown>;
+          const serviceId = blockContent.serviceId as string | undefined;
+
+          // Find the matching service from live data
+          if (serviceId) {
+            const matchingService = liveServices.find(s => s.id === serviceId);
+            if (matchingService) {
+              // Update the pricing plan with live service data
+              const existingPlans = (blockContent.plans as Array<Record<string, unknown>>) || [];
+              const updatedPlans = existingPlans.map(plan => ({
+                ...plan,
+                priceRaw: matchingService.priceRaw,
+                price: matchingService.price || plan.price,
+                currency: matchingService.currency,
+                durationMinutes: matchingService.durationMinutes,
+                serviceId: matchingService.id,
+                serviceName: matchingService.name
+              }));
+
+              return {
+                ...block,
+                content: {
+                  ...blockContent,
+                  plans: updatedPlans,
+                  // Also update block-level service info
+                  priceRaw: matchingService.priceRaw,
+                  currency: matchingService.currency,
+                  durationMinutes: matchingService.durationMinutes,
+                  serviceName: matchingService.name,
+                  // Include all services for landing pages that show service list
+                  allServices: liveServices
+                }
+              };
+            }
+          }
+        }
+
+        // For CTA blocks (used instead of booking for courses), inject live service data
+        if (block.block_type === 'cta' && liveServices.length > 0) {
+          const blockContent = block.content as Record<string, unknown>;
+          const serviceId = blockContent.serviceId as string | undefined;
+
+          if (serviceId) {
+            const matchingService = liveServices.find(s => s.id === serviceId);
+            if (matchingService) {
+              return {
+                ...block,
+                content: {
+                  ...blockContent,
+                  priceRaw: matchingService.priceRaw,
+                  currency: matchingService.currency,
+                  durationMinutes: matchingService.durationMinutes,
+                  serviceName: matchingService.name
+                }
+              };
+            }
+          }
+        }
+
+        return block;
+      }
+
       const sectionName = BLOCK_TO_SECTION_MAP[block.block_type];
 
       // SERVICES: Always use live services from Scheduling capability
@@ -190,7 +266,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         };
       }
 
-      if (sectionName && centralContent[sectionName]) {
+      if (sectionName && centralContent && centralContent[sectionName]) {
         // Get central content for this section
         const sectionContent = centralContent[sectionName] as Record<string, unknown>;
 
@@ -228,15 +304,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     });
 
     requestLogger.info(
-      { pageId, userId: user.id, blockCount: blocksWithContent.length },
-      'Fetched blocks with central content'
+      { pageId, userId: user.id, blockCount: blocksWithContent.length, isLandingPage },
+      isLandingPage ? 'Fetched blocks for landing page (no central content merge)' : 'Fetched blocks with central content'
     );
 
     return NextResponse.json({
       success: true,
       page: pageResult.data,
       blocks: blocksWithContent,
-      centralContentId: centralContent.id
+      centralContentId: centralContent?.id || null
     });
   } catch (error) {
     requestLogger.error({ err: error, pageId }, 'Failed to get blocks with content');

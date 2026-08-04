@@ -1,6 +1,7 @@
 // app/api/plugin-connections/route.ts
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabaseServer'
+import { getUser } from '@/lib/auth'
 import { encryptCredentials, decryptCredentials } from '@/lib/encryptCredentials'
 
 // Force dynamic rendering
@@ -77,10 +78,22 @@ export async function DELETE(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const plugin_key = searchParams.get('plugin_key')
-    const user_id = searchParams.get('user_id')
+    let user_id = searchParams.get('user_id')
 
-    if (!plugin_key || !user_id) {
-      return new Response(JSON.stringify({ error: 'Missing plugin_key or user_id' }), { status: 400 })
+    // If user_id not provided, get from authenticated user
+    if (!user_id) {
+      const user = await getUser()
+      if (!user) {
+        return NextResponse.json(
+          { success: false, error: 'Unauthorized' },
+          { status: 401 }
+        )
+      }
+      user_id = user.id
+    }
+
+    if (!plugin_key) {
+      return new Response(JSON.stringify({ error: 'Missing plugin_key' }), { status: 400 })
     }
 
     const { error } = await supabase
@@ -152,49 +165,16 @@ export async function GET(req: NextRequest) {
       return new Response(JSON.stringify({ credentials: decrypted }), { status: 200 })
     }
 
-    // For getting all connected plugins, try multiple authentication approaches
-    console.log('🔍 Attempting to get current user...')
-    console.log('📋 Request headers:', Object.fromEntries(req.headers.entries()))
-    
-    let currentUserId = null
-    
-    // Method 1: Check for x-user-id header (from ConversationalAgentBuilder)
-    const headerUserId = req.headers.get('x-user-id')
-    if (headerUserId) {
-      console.log('✅ Found user ID in header:', headerUserId)
-      currentUserId = headerUserId
-    } else {
-      console.log('❌ No x-user-id header found')
-      
-      // Method 2: Try to get user from session
-      try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
-        console.log('👤 Session auth attempt:', { user: user?.id, error: authError })
-        
-        if (user && !authError) {
-          currentUserId = user.id
-          console.log('✅ Got user from session:', currentUserId)
-        } else {
-          console.log('❌ Session auth failed:', authError)
-        }
-      } catch (e) {
-        console.log('❌ Session auth exception:', e)
-      }
-    }
-    
-    if (!currentUserId) {
-      console.log('❌ No user found after all auth attempts')
-      return new Response(JSON.stringify({ 
-        error: 'Unauthorized - could not authenticate user',
-        debug: {
-          hasHeaderUserId: !!headerUserId,
-          hasCookies: req.headers.has('cookie'),
-          hasAuth: req.headers.has('authorization')
-        }
-      }), { status: 401 })
+    // For getting all connected plugins, use standard auth pattern
+    const user = await getUser()
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      )
     }
 
-    console.log('✅ Using user ID:', currentUserId)
+    const currentUserId = user.id
 
     const { data: pluginRows, error } = await supabase
       .from('plugin_connections')
@@ -219,10 +199,9 @@ export async function GET(req: NextRequest) {
 
     console.log('✅ Formatted plugins:', plugins)
 
-    return new Response(JSON.stringify({ 
+    return new Response(JSON.stringify({
       plugins,
-      count: plugins.length,
-      debug: { userId: currentUserId, authMethod: headerUserId ? 'header' : 'session' }
+      count: plugins.length
     }), { status: 200 })
 
   } catch (err: any) {

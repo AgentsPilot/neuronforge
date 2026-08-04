@@ -7,9 +7,11 @@
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { BookingWidget } from './BookingWidget';
+import { isValidLocale, getDirection, type Locale } from '@/lib/i18n/config';
 
 interface PageProps {
   params: Promise<{ subdomain: string }>;
+  searchParams: Promise<{ service?: string }>;
 }
 
 interface BusinessData {
@@ -89,8 +91,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   };
 }
 
-export default async function PublicBookingPage({ params }: PageProps) {
+export default async function PublicBookingPage({ params, searchParams }: PageProps) {
   const { subdomain } = await params;
+  const { service: initialServiceId } = await searchParams;
   const [businessData, websiteData] = await Promise.all([
     getBusinessData(subdomain),
     getWebsiteData(subdomain)
@@ -101,10 +104,18 @@ export default async function PublicBookingPage({ params }: PageProps) {
   }
 
   const primaryColor = websiteData?.theme?.colors?.primary || '#4F6EF7';
-  const language = websiteData?.language || 'en';
+  const language = (websiteData?.language || 'en') as Locale;
+  const isRTL = isValidLocale(language) && getDirection(language) === 'rtl';
+
+  // Always use Heebo font (platform standard)
+  const heeboFontLink = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&subset=hebrew,latin&display=swap';
 
   return (
     <>
+      {/* Google Fonts - Heebo (platform standard) */}
+      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+      <link rel="stylesheet" href={heeboFontLink} />
+
       {/* Global styles from theme */}
       <style>
         {`
@@ -112,10 +123,13 @@ export default async function PublicBookingPage({ params }: PageProps) {
             --booking-primary: ${primaryColor};
             --booking-primary-hover: ${primaryColor}dd;
           }
+          body {
+            font-family: 'Heebo', sans-serif;
+          }
         `}
       </style>
 
-      <main className="min-h-screen bg-gray-50">
+      <main className="min-h-screen bg-gray-50" dir={isRTL ? 'rtl' : 'ltr'}>
         {/* Header */}
         <header className="bg-white border-b border-gray-200 py-6">
           <div className="max-w-3xl mx-auto px-4">
@@ -136,6 +150,7 @@ export default async function PublicBookingPage({ params }: PageProps) {
             timezone={businessData.timezone}
             primaryColor={primaryColor}
             locale={language}
+            initialServiceId={initialServiceId}
           />
         </div>
 

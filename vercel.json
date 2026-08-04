@@ -19,6 +19,18 @@
     {
       "path": "/api/cron/calendar-sync",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/insight-metrics",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/insight-detect",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/insight-automations",
+      "schedule": "*/5 * * * *"
     }
   ],
   "rewrites": [

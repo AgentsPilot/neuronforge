@@ -6,7 +6,7 @@ import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { CRMPipelineView } from '@/components/crm/CRMPipelineView';
 import { CRMContactList } from '@/components/crm/CRMContactList';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
-import { CRMContactDrawer } from '@/components/crm/CRMContactDrawer';
+import { CRMContactDrawerV2 } from '@/components/crm/contact-drawer';
 import { Plus, Search, ArrowLeft, Users, Download, LayoutGrid, List } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -251,36 +251,36 @@ export default function CRMPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
 
         {/* Page Header with purple theme (CRM capability color) */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}>
-              <Users className="w-6 h-6" style={{ color: '#8B5CF6' }} />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'rgba(139, 92, 246, 0.2)' }}>
+              <Users className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: '#8B5CF6' }} />
             </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-[var(--v2-text-primary)]">{t('capability.crm.name')}</h1>
-              <p className="text-sm text-[var(--v2-text-secondary)] mt-1">{t('crm.subtitle')}</p>
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-semibold text-[var(--v2-text-primary)] truncate">{t('capability.crm.name')}</h1>
+              <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mt-0.5 sm:mt-1 hidden sm:block">{t('crm.subtitle')}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
             {/* Back to Dashboard */}
             <button
               onClick={() => router.push('/business-os')}
-              className="p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all"
+              className="p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all flex-shrink-0"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
               title={t('crm.back_to_dashboard')}
             >
               <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
             </button>
 
-            <div className="relative">
+            <div className="relative hidden md:block">
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
               <input
                 type="text"
                 placeholder={t('crm.search_placeholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-10 pe-4 py-2 w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
+                className="ps-10 pe-4 py-2 w-48 lg:w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               />
             </div>
@@ -288,21 +288,21 @@ export default function CRMPage() {
             <button
               onClick={handleExportCSV}
               disabled={contacts.length === 0}
-              className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
               title={t('crm.export.tooltip')}
             >
-              <Download className="h-4 w-4" />
-              {t('crm.export.button')}
+              <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">{t('crm.export.button')}</span>
             </button>
 
             {/* View Mode Tabs */}
             <div
-              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-1 inline-flex gap-1"
+              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-0.5 sm:p-1 inline-flex gap-0.5 sm:gap-1 flex-shrink-0"
               style={{ borderRadius: 'var(--v2-radius-card)' }}
             >
               <button
-                className={`p-2 transition-all border ${
+                className={`p-1.5 sm:p-2 transition-all border ${
                   viewMode === 'pipeline'
                     ? 'text-[#8B5CF6] border-[#8B5CF6] bg-[#8B5CF6]/10'
                     : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -311,10 +311,10 @@ export default function CRMPage() {
                 onClick={() => setViewMode('pipeline')}
                 title={t('crm.tab_pipeline')}
               >
-                <LayoutGrid className="h-4 w-4" />
+                <LayoutGrid className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </button>
               <button
-                className={`p-2 transition-all border ${
+                className={`p-1.5 sm:p-2 transition-all border ${
                   viewMode === 'contacts'
                     ? 'text-[#8B5CF6] border-[#8B5CF6] bg-[#8B5CF6]/10'
                     : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -323,19 +323,33 @@ export default function CRMPage() {
                 onClick={() => setViewMode('contacts')}
                 title={t('crm.tab_contacts')}
               >
-                <List className="h-4 w-4" />
+                <List className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </button>
             </div>
 
             <button
               onClick={() => setIsNewContactModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 text-[#8B5CF6] text-sm font-medium border border-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 transition-all"
+              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[#8B5CF6] text-xs sm:text-sm font-medium border border-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 transition-all whitespace-nowrap"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
-              <Plus className="h-4 w-4" />
-              {t('crm.add_contact')}
+              <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline">{t('crm.add_contact')}</span>
+              <span className="xs:hidden">Add</span>
             </button>
           </div>
+        </div>
+
+        {/* Mobile Search Bar - Only visible on mobile */}
+        <div className="md:hidden relative">
+          <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
+          <input
+            type="text"
+            placeholder={t('crm.search_placeholder')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="ps-10 pe-4 py-2 w-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+          />
         </div>
 
         {/* Content */}
@@ -372,7 +386,7 @@ export default function CRMPage() {
 
       {/* Contact Edit Drawer */}
       {selectedContact && (
-        <CRMContactDrawer
+        <CRMContactDrawerV2
           contact={selectedContact}
           stages={pipelineStages}
           enabledCapabilities={enabledCapabilities}
@@ -382,7 +396,6 @@ export default function CRMPage() {
             setDrawerDefaultTab(undefined); // Reset default tab when closing
           }}
           onContactUpdated={handleContactUpdated}
-          defaultTab={drawerDefaultTab}
         />
       )}
 

@@ -103,21 +103,32 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const contentResult = await contentRepo.getOrCreate(userId);
     const centralContent = contentResult.data as WebsiteContent | null;
 
-    // Fetch live services from Scheduling capability
-    let liveServices: Array<{ name: string; description: string; icon: string; price?: string; duration?: string }> = [];
-    const hasServicesBlock = blocks.some(b => b.block_type === 'services');
+    // Check page type for landing page specific logic
+    const isLandingPage = pageResult.data.page_type === 'landing';
 
-    if (hasServicesBlock) {
+    // Fetch live services from Scheduling capability
+    // Needed for services blocks AND pricing/CTA blocks (for live pricing data)
+    let liveServices: Array<{ id: string; name: string; description: string; icon: string; price?: string; priceRaw?: number; currency?: string; duration?: string; durationMinutes?: number }> = [];
+    const hasServicesBlock = blocks.some(b => b.block_type === 'services');
+    const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
+    const hasCtaBlock = blocks.some(b => b.block_type === 'cta');
+
+    // Fetch live services if we have services, pricing, or CTA blocks
+    if (hasServicesBlock || hasPricingBlock || hasCtaBlock) {
       try {
         const schedulingRepo = new SchedulingServiceRepository(supabaseServer);
         const servicesResult = await schedulingRepo.listAll(userId, true); // active only
         if (servicesResult.data && servicesResult.data.length > 0) {
           liveServices = servicesResult.data.map(s => ({
+            id: s.id,
             name: s.service_name,
             description: s.description || '',
             icon: getServiceIcon(s.service_name),
             price: s.price ? formatPrice(s.price, s.currency) : undefined,
+            priceRaw: s.price || undefined,
+            currency: s.currency,
             duration: s.duration_minutes ? `${s.duration_minutes} min` : undefined,
+            durationMinutes: s.duration_minutes,
             hidden: false
           }));
         }
@@ -129,6 +140,67 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // Merge central content into blocks
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {
       const sectionName = BLOCK_TO_SECTION_MAP[block.block_type];
+
+      // For landing pages, inject live service data into pricing and CTA blocks
+      if (isLandingPage) {
+        // PRICING: Inject live service data for accurate pricing
+        if (block.block_type === 'pricing' && liveServices.length > 0) {
+          const blockContent = block.content as Record<string, unknown>;
+          const serviceId = blockContent.serviceId as string | undefined;
+
+          if (serviceId) {
+            const matchingService = liveServices.find(s => s.id === serviceId);
+            if (matchingService) {
+              // Update the pricing plan with live service data
+              const existingPlans = (blockContent.plans as Array<Record<string, unknown>>) || [];
+              const updatedPlans = existingPlans.map(plan => ({
+                ...plan,
+                priceRaw: matchingService.priceRaw,
+                price: matchingService.price || plan.price,
+                currency: matchingService.currency,
+                durationMinutes: matchingService.durationMinutes,
+                serviceId: matchingService.id,
+                serviceName: matchingService.name
+              }));
+
+              return {
+                ...block,
+                content: {
+                  ...blockContent,
+                  plans: updatedPlans,
+                  priceRaw: matchingService.priceRaw,
+                  currency: matchingService.currency,
+                  durationMinutes: matchingService.durationMinutes,
+                  serviceName: matchingService.name,
+                  allServices: liveServices
+                }
+              };
+            }
+          }
+        }
+
+        // CTA: Inject live service data for courses/products
+        if (block.block_type === 'cta' && liveServices.length > 0) {
+          const blockContent = block.content as Record<string, unknown>;
+          const serviceId = blockContent.serviceId as string | undefined;
+
+          if (serviceId) {
+            const matchingService = liveServices.find(s => s.id === serviceId);
+            if (matchingService) {
+              return {
+                ...block,
+                content: {
+                  ...blockContent,
+                  priceRaw: matchingService.priceRaw,
+                  currency: matchingService.currency,
+                  durationMinutes: matchingService.durationMinutes,
+                  serviceName: matchingService.name
+                }
+              };
+            }
+          }
+        }
+      }
 
       // SERVICES: Always use live services from Scheduling capability
       if (block.block_type === 'services') {

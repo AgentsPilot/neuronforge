@@ -396,6 +396,31 @@ export class WebsiteAnalyticsRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * Check if a page has activity (views)
+   * Used to determine whether to warn user before deletion
+   */
+  async hasPageActivity(pageId: string, userId: string): Promise<RepositoryResult<{ hasActivity: boolean; viewCount: number }>> {
+    try {
+      const { count, error } = await this.supabase
+        .from('website_page_views')
+        .select('id', { count: 'exact', head: true })
+        .eq('page_id', pageId)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      const viewCount = count || 0;
+      return {
+        data: { hasActivity: viewCount > 0, viewCount },
+        error: null
+      };
+    } catch (error) {
+      logger.error({ err: error, pageId, userId }, 'Failed to check page activity');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Singleton export

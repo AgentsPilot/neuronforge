@@ -1,28 +1,42 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import type { BlockRendererProps } from './types';
+import { ArrowRight, Calendar } from 'lucide-react';
+import type { BlockRendererProps, SelectedServiceData } from './types';
 
 interface CTAContent {
   title: string;
   description?: string;
-  button_text: string;
+  button_text?: string;
+  cta_text?: string; // Alternative field name used by landing pages
   button_link?: string;
+  cta_link?: string; // Alternative field name used by landing pages
   secondary_button_text?: string;
   secondary_button_link?: string;
   style?: 'primary' | 'subtle' | 'gradient' | 'dark';
+  // Service info for booking integration
+  serviceId?: string;
+  serviceName?: string;
+  priceRaw?: number;
+  currency?: string;
+  durationMinutes?: number;
 }
 
-export function CTABlock({ content, styles, theme, isRTL, className }: BlockRendererProps) {
+export function CTABlock({ content, styles, theme, isRTL, className, locale = 'en', bookingUrl, isPreview, onOpenBooking }: BlockRendererProps) {
+  const rawContent = content as CTAContent;
+
+  // Support both button_text and cta_text field names
+  const buttonText = rawContent.button_text || rawContent.cta_text ||
+    (locale === 'he' ? 'התחל עכשיו' : locale === 'es' ? 'Comenzar' : 'Get Started');
+  const buttonLink = rawContent.button_link || rawContent.cta_link || '#contact';
+
   const {
     title,
     description,
-    button_text,
-    button_link = '#contact',
     secondary_button_text,
     secondary_button_link,
-    style = 'primary'
-  } = content as CTAContent;
+    style = 'gradient' // Default to gradient for better visibility
+  } = rawContent;
 
   const primaryColor = theme?.colors.primary || '#4F6EF7';
 
@@ -59,6 +73,40 @@ export function CTABlock({ content, styles, theme, isRTL, className }: BlockRend
 
   const variant = styleVariants[style];
 
+  // UUID regex for validation
+  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  // Check if we have a valid service linked for booking (must be valid UUID)
+  const hasServiceLinked = !!rawContent.serviceId && UUID_REGEX.test(rawContent.serviceId);
+  const hasBookingCapability = !!(bookingUrl || (isPreview && onOpenBooking));
+
+  // Helper to convert to SelectedServiceData for booking modal
+  const toSelectedServiceData = (): SelectedServiceData | null => {
+    // Only allow booking if we have a valid serviceId (required for booking API)
+    if (!rawContent.serviceId || !UUID_REGEX.test(rawContent.serviceId)) {
+      console.warn('[CTABlock] No valid serviceId - booking disabled');
+      return null;
+    }
+
+    return {
+      id: rawContent.serviceId,
+      name: rawContent.serviceName || title,
+      description: description || null,
+      duration_minutes: rawContent.durationMinutes || 60,
+      price: rawContent.priceRaw ?? null,
+      currency: rawContent.currency || 'USD'
+    };
+  };
+
+  const handleBookingClick = () => {
+    if (onOpenBooking) {
+      const serviceData = toSelectedServiceData();
+      if (serviceData) {
+        onOpenBooking(serviceData);
+      }
+    }
+  };
+
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
@@ -70,7 +118,7 @@ export function CTABlock({ content, styles, theme, isRTL, className }: BlockRend
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           className={`text-2xl sm:text-3xl lg:text-4xl font-bold ${variant.text}`}
-          style={{ fontFamily: theme?.fonts.heading }}
+          style={{ fontFamily: 'var(--website-font-heading)' }}
         >
           {title}
         </motion.h2>
@@ -82,7 +130,7 @@ export function CTABlock({ content, styles, theme, isRTL, className }: BlockRend
             viewport={{ once: true }}
             transition={{ delay: 0.1 }}
             className={`mt-4 text-lg ${style === 'primary' || style === 'gradient' || style === 'dark' ? 'text-white/80' : 'text-gray-600 dark:text-gray-300'}`}
-            style={{ fontFamily: theme?.fonts.body }}
+            style={{ fontFamily: 'var(--website-font-body)' }}
           >
             {description}
           </motion.p>
@@ -95,19 +143,61 @@ export function CTABlock({ content, styles, theme, isRTL, className }: BlockRend
           transition={{ delay: 0.2 }}
           className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4"
         >
-          <a
-            href={button_link}
-            className={`inline-flex items-center justify-center px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all ${
-              style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
-            }`}
-            style={{
-              backgroundColor: style === 'subtle' || style === 'dark' ? primaryColor : undefined,
-              color: variant.buttonText,
-              borderRadius: theme?.borderRadius || '0.5rem'
-            }}
-          >
-            {button_text}
-          </a>
+          {/* Primary CTA Button - uses booking modal if available */}
+          {/* Only show booking button if we have a valid serviceId (required for booking API) */}
+          {hasServiceLinked && ((isPreview && onOpenBooking) || hasBookingCapability) ? (
+            // Has booking capability - use booking modal or link
+            isPreview && onOpenBooking ? (
+              <button
+                type="button"
+                onClick={handleBookingClick}
+                className={`inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all hover:scale-105 ${
+                  style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
+                }`}
+                style={{
+                  backgroundColor: style === 'subtle' || style === 'dark' ? primaryColor : undefined,
+                  color: variant.buttonText,
+                  borderRadius: theme?.borderRadius || '0.5rem'
+                }}
+              >
+                <Calendar className="w-5 h-5" />
+                {buttonText}
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            ) : bookingUrl ? (
+              <a
+                href={bookingUrl}
+                className={`inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all hover:scale-105 ${
+                  style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
+                }`}
+                style={{
+                  backgroundColor: style === 'subtle' || style === 'dark' ? primaryColor : undefined,
+                  color: variant.buttonText,
+                  borderRadius: theme?.borderRadius || '0.5rem'
+                }}
+              >
+                <Calendar className="w-5 h-5" />
+                {buttonText}
+                <ArrowRight className="w-4 h-4" />
+              </a>
+            ) : null
+          ) : (
+            // No service linked - use regular link
+            <a
+              href={buttonLink}
+              className={`inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all hover:scale-105 ${
+                style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
+              }`}
+              style={{
+                backgroundColor: style === 'subtle' || style === 'dark' ? primaryColor : undefined,
+                color: variant.buttonText,
+                borderRadius: theme?.borderRadius || '0.5rem'
+              }}
+            >
+              {buttonText}
+              <ArrowRight className="w-4 h-4" />
+            </a>
+          )}
 
           {secondary_button_text && (
             <a

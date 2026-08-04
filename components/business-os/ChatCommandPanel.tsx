@@ -93,31 +93,31 @@ function EntityCardMessage({
   const entityName = getEntityDisplayName(entityCard.entity, entityCard.entityType);
 
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-start gap-1.5 sm:gap-2">
       <div
-        className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-        style={{ background: 'linear-gradient(135deg, #FFB454 0%, #F97316 100%)' }}
+        className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
+        style={{ background: 'rgba(249, 115, 22, 0.12)' }}
       >
-        <Bot className="w-3.5 h-3.5 text-white" strokeWidth={2.2} />
+        <Bot className="w-3 h-3 sm:w-3.5 sm:h-3.5" style={{ color: '#F97316' }} strokeWidth={2} />
       </div>
       <div
-        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-sm overflow-hidden w-full max-w-[320px]"
-        style={{ borderRadius: '12px' }}
+        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-sm overflow-hidden w-full max-w-[280px] sm:max-w-[320px]"
+        style={{ borderRadius: '10px' }}
       >
         {/* Entity Header */}
         <div
-          className="px-4 py-3 border-b border-[var(--v2-border)]"
+          className="px-3 sm:px-4 py-2 sm:py-3 border-b border-[var(--v2-border)]"
           style={{ background: 'linear-gradient(135deg, rgba(249,115,22,0.05) 0%, rgba(255,180,84,0.05) 100%)' }}
         >
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <div
-              className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm"
+              className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-white font-semibold text-xs sm:text-sm"
               style={{ background: 'linear-gradient(135deg, #F97316 0%, #EA580C 100%)' }}
             >
               {entityName.charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-semibold text-[var(--v2-text-primary)] truncate">
+              <div className="font-semibold text-sm sm:text-base text-[var(--v2-text-primary)] truncate">
                 {entityName}
               </div>
               <div className="text-xs text-[var(--v2-text-muted)] capitalize">
@@ -128,7 +128,7 @@ function EntityCardMessage({
         </div>
 
         {/* Entity Details - varies by entity type */}
-        <div className="px-4 py-3 space-y-2">
+        <div className="px-3 sm:px-4 py-2 sm:py-3 space-y-1.5 sm:space-y-2">
           {/* Contact fields */}
           {entityCard.entity.email && (
             <div className="flex items-center gap-2 text-sm">
@@ -310,7 +310,7 @@ function EntityCardMessage({
 
         {/* Actions */}
         {entityCard.actions.length > 0 && (
-          <div className="px-3 py-2 border-t border-[var(--v2-border)] bg-[var(--v2-bg)] flex flex-wrap gap-1.5">
+          <div className="px-2 sm:px-3 py-1.5 sm:py-2 border-t border-[var(--v2-border)] bg-[var(--v2-bg)] flex flex-wrap gap-1">
             {entityCard.actions.map((action, actionIndex) => {
               const isDestructive = action.type === 'delete' || action.type === 'deactivate';
               const actionLabel = action.labelHe && isHebrew ? action.labelHe : action.label;
@@ -357,7 +357,7 @@ function EntityCardMessage({
                       onMarkInvoicePaid(entityCard.entity.id as string);
                     }
                   }}
-                  className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors ${
+                  className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-md transition-colors ${
                     isDestructive
                       ? 'text-red-600 hover:bg-red-500/10 dark:hover:bg-red-500/20'
                       : 'text-[var(--v2-text-secondary)] hover:bg-[var(--v2-bg)] hover:text-[#F97316]'
@@ -401,16 +401,16 @@ function BookingListMessage({
   };
 
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-start gap-1.5 sm:gap-2">
       <div
-        className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-        style={{ background: 'linear-gradient(135deg, #FFB454 0%, #F97316 100%)' }}
+        className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
+        style={{ background: 'rgba(249, 115, 22, 0.12)' }}
       >
-        <Bot className="w-3.5 h-3.5 text-white" strokeWidth={2.2} />
+        <Bot className="w-3 h-3 sm:w-3.5 sm:h-3.5" style={{ color: '#F97316' }} strokeWidth={2} />
       </div>
-      <div className="flex-1 space-y-2 max-w-[340px]">
+      <div className="flex-1 space-y-1.5 sm:space-y-2 max-w-[300px] sm:max-w-[340px]">
         {/* Header */}
-        <div className="text-sm font-medium text-[var(--v2-text-primary)]">
+        <div className="text-xs sm:text-sm font-medium text-[var(--v2-text-primary)]">
           {isHebrew ? 'הפגישות הקרובות שלך:' : 'Your upcoming meetings:'}
         </div>
 
@@ -424,12 +424,12 @@ function BookingListMessage({
               key={booking.id}
               onClick={() => onOpenBooking?.(booking.id)}
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden cursor-pointer hover:border-[#F97316] transition-colors group"
-              style={{ borderRadius: '10px' }}
+              style={{ borderRadius: '8px' }}
             >
-              <div className="px-3 py-2.5 flex items-center gap-3">
+              <div className="px-2 sm:px-3 py-2 sm:py-2.5 flex items-center gap-2 sm:gap-3">
                 {/* Avatar/Number */}
                 <div
-                  className="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold text-sm flex-shrink-0"
+                  className="w-7 h-7 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-white font-semibold text-xs sm:text-sm flex-shrink-0"
                   style={{ background: 'linear-gradient(135deg, #F97316 0%, #EA580C 100%)' }}
                 >
                   {displayName.charAt(0).toUpperCase()}
@@ -437,47 +437,47 @@ function BookingListMessage({
 
                 {/* Details */}
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-[var(--v2-text-primary)] truncate group-hover:text-[#F97316] transition-colors">
+                  <div className="font-medium text-xs sm:text-sm text-[var(--v2-text-primary)] truncate group-hover:text-[#F97316] transition-colors">
                     {displayName}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
-                    <div className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
-                      <span>{date}</span>
+                  <div className="flex items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-[var(--v2-text-muted)]">
+                    <div className="flex items-center gap-0.5 sm:gap-1">
+                      <Calendar className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                      <span className="truncate">{date}</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Clock className="w-3 h-3" />
+                    <div className="flex items-center gap-0.5 sm:gap-1">
+                      <Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                       <span>{time}</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Arrow indicator */}
-                <ExternalLink className="w-4 h-4 text-[var(--v2-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
+                <ExternalLink className="w-3 h-3 sm:w-4 sm:h-4 text-[var(--v2-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity hidden sm:block" />
               </div>
 
               {/* Action buttons - opens booking modal where user can reschedule or cancel */}
               {booking.status === 'confirmed' && (
-                <div className="px-3 pb-2.5 flex gap-2">
+                <div className="px-2 sm:px-3 pb-2 sm:pb-2.5 flex gap-1.5 sm:gap-2">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onOpenBooking?.(booking.id);
                     }}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors text-[var(--v2-text-secondary)] hover:bg-[var(--v2-bg)] hover:text-[#F97316] border border-[var(--v2-border)]"
+                    className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] sm:text-xs font-medium px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-md transition-colors text-[var(--v2-text-secondary)] hover:bg-[var(--v2-bg)] hover:text-[#F97316] border border-[var(--v2-border)]"
                   >
-                    <RefreshCw className="w-3 h-3" />
-                    {isHebrew ? 'שנה מועד' : 'Reschedule'}
+                    <RefreshCw className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                    <span className="hidden xs:inline">{isHebrew ? 'שנה מועד' : 'Reschedule'}</span>
                   </button>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       onOpenBooking?.(booking.id);
                     }}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md transition-colors text-red-600 hover:bg-red-500/10 dark:hover:bg-red-500/20 border border-[var(--v2-border)]"
+                    className="flex-1 inline-flex items-center justify-center gap-1 text-[10px] sm:text-xs font-medium px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-md transition-colors text-red-600 hover:bg-red-500/10 dark:hover:bg-red-500/20 border border-[var(--v2-border)]"
                   >
-                    <X className="w-3 h-3" />
-                    {isHebrew ? 'בטל' : 'Cancel'}
+                    <X className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                    <span className="hidden xs:inline">{isHebrew ? 'בטל' : 'Cancel'}</span>
                   </button>
                 </div>
               )}
@@ -925,14 +925,14 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     inputRef.current?.focus();
   };
 
-  // Calculate height based on expanded state (when MyDay section is collapsed)
+  // Calculate height based on expanded state
   const panelHeight = expanded ? '640px' : '460px';
 
   return (
     <section
       className="bg-[var(--v2-surface)] border border-[var(--v2-border)] flex flex-col overflow-hidden transition-all duration-300"
       style={{
-        borderRadius: '22px',
+        borderRadius: '16px',
         boxShadow: '0 20px 50px -34px rgba(20, 26, 43, 0.4)',
         height: panelHeight,
         maxHeight: panelHeight
@@ -940,37 +940,25 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     >
       {/* Header */}
       <div
-        className="flex-shrink-0 border-b border-[var(--v2-border)]"
-        style={{ padding: '18px 20px 14px' }}
+        className="flex-shrink-0 border-b border-[var(--v2-border)] px-3 sm:px-5 py-3 sm:py-4"
       >
-        <div className="flex items-center gap-3">
-          {/* AI Orb */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* AI Icon - tinted background matching platform standard */}
           <div
-            className="w-9 h-9 flex items-center justify-center flex-none"
+            className="w-8 h-8 sm:w-9 sm:h-9 flex items-center justify-center flex-none"
             style={{
-              borderRadius: '10px',
-              background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-              boxShadow: '0 8px 18px -8px rgba(249, 115, 22, 0.6)'
+              borderRadius: '11px',
+              background: 'rgba(249, 115, 22, 0.12)'
             }}
           >
-            <svg
-              viewBox="0 0 24 24"
-              className="w-5 h-5"
-              stroke="#fff"
-              strokeWidth={2.2}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 3l2.5 5.5L20 11l-5.5 2.5L12 19l-2.5-5.5L4 11l5.5-2.5z" />
-            </svg>
+            <Bot className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: '#F97316' }} strokeWidth={2} />
           </div>
-          <div>
+          <div className="min-w-0">
             <b
-              className="block"
+              className="block truncate"
               style={{
                 fontFamily: '"Space Grotesk", system-ui, sans-serif',
-                fontSize: '16px',
+                fontSize: '14px',
                 fontWeight: 600,
                 letterSpacing: '-0.01em',
                 color: 'var(--v2-text-primary)'
@@ -978,7 +966,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             >
               {t('chat.title') || 'Just tell me'}
             </b>
-            <small className="text-xs text-[var(--v2-text-muted)]">
+            <small className="text-xs text-[var(--v2-text-muted)] hidden sm:block truncate">
               {t('chat.subtitle') || "Change anything, anywhere — I'll handle it"}
             </small>
           </div>
@@ -988,9 +976,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       {/* Messages - scrollable area with fixed height */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-3 scrollbar-thin"
+        className="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2 sm:gap-3 scrollbar-thin px-3 sm:px-4 py-3 sm:py-4"
         style={{
-          padding: '16px 18px',
           scrollbarWidth: 'thin',
           scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
         }}
@@ -998,7 +985,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         {messages.map((msg, index) => (
           <div
             key={index}
-            className={`max-w-[88%] text-sm leading-relaxed animate-in fade-in slide-in-from-bottom-2 duration-300 ${
+            className={`max-w-[90%] sm:max-w-[88%] text-xs sm:text-sm leading-relaxed animate-in fade-in slide-in-from-bottom-2 duration-300 ${
               msg.type === 'user'
                 ? 'self-end'
                 : 'self-start'
@@ -1006,46 +993,46 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             style={{ animationDelay: `${index * 50}ms` }}
           >
             {msg.type === 'ai' && (
-              <div className="flex items-start gap-2">
+              <div className="flex items-start gap-1.5 sm:gap-2">
                 <div
-                  className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                  style={{ background: 'linear-gradient(135deg, #FFB454 0%, #F97316 100%)' }}
+                  className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
+                  style={{ background: 'rgba(249, 115, 22, 0.12)' }}
                 >
-                  <Bot className="w-3.5 h-3.5 text-white" strokeWidth={2.2} />
+                  <Bot className="w-3 h-3 sm:w-3.5 sm:h-3.5" style={{ color: '#F97316' }} strokeWidth={2} />
                 </div>
                 <div
                   className="bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] [&_a]:text-[#F97316] [&_a]:underline [&_a]:hover:text-[#EA580C] [&_strong]:text-[var(--v2-text-primary)] whitespace-pre-wrap"
-                  style={{ borderRadius: '4px 14px 14px 14px', padding: '11px 13px' }}
+                  style={{ borderRadius: '4px 12px 12px 12px', padding: '9px 11px' }}
                   dangerouslySetInnerHTML={{ __html: msg.content }}
                 />
               </div>
             )}
             {msg.type === 'user' && (
-              <div className="flex items-start gap-2 justify-end">
+              <div className="flex items-start gap-1.5 sm:gap-2 justify-end">
                 <div
                   className="text-white font-medium"
                   style={{
                     background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-                    borderRadius: '14px 14px 4px 14px',
-                    padding: '10px 14px'
+                    borderRadius: '12px 12px 4px 12px',
+                    padding: '8px 12px'
                   }}
                 >
                   {msg.content}
                 </div>
-                <div className="w-6 h-6 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <User className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" strokeWidth={2} />
+                <div className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <User className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[var(--v2-text-muted)]" strokeWidth={2} />
                 </div>
               </div>
             )}
             {msg.type === 'success' && (
               <div
-                className="inline-flex items-center gap-2 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-500/10 dark:bg-green-500/20 border border-green-500/20 dark:border-green-500/30"
+                className="inline-flex items-center gap-1.5 sm:gap-2 text-xs font-semibold text-green-600 dark:text-green-400 bg-green-500/10 dark:bg-green-500/20 border border-green-500/20 dark:border-green-500/30"
                 style={{
-                  borderRadius: '20px',
-                  padding: '6px 12px'
+                  borderRadius: '16px',
+                  padding: '5px 10px'
                 }}
               >
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" strokeWidth={2} />
+                <CheckCircle2 className="w-3 h-3 sm:w-3.5 sm:h-3.5 flex-shrink-0" strokeWidth={2} />
                 <span dangerouslySetInnerHTML={{ __html: msg.content }} />
               </div>
             )}
@@ -1074,20 +1061,20 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         ))}
         {loading && (
           <div className="self-start">
-            <div className="flex items-start gap-2">
+            <div className="flex items-start gap-1.5 sm:gap-2">
               <div
-                className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                style={{ background: 'linear-gradient(135deg, #FFB454 0%, #F97316 100%)' }}
+                className="w-5 h-5 sm:w-6 sm:h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5"
+                style={{ background: 'rgba(249, 115, 22, 0.12)' }}
               >
-                <Bot className="w-3.5 h-3.5 text-white" strokeWidth={2.2} />
+                <Bot className="w-3 h-3 sm:w-3.5 sm:h-3.5" style={{ color: '#F97316' }} strokeWidth={2} />
               </div>
               <div
                 className="bg-[var(--v2-bg)] border border-[var(--v2-border)] flex gap-1.5"
-                style={{ borderRadius: '4px 14px 14px 14px', padding: '14px 18px' }}
+                style={{ borderRadius: '4px 12px 12px 12px', padding: '12px 16px' }}
               >
-                <span className="w-2 h-2 rounded-full bg-[var(--v2-text-muted)] animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 rounded-full bg-[var(--v2-text-muted)] animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 rounded-full bg-[var(--v2-text-muted)] animate-bounce" style={{ animationDelay: '300ms' }} />
+                <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[var(--v2-text-muted)] animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[var(--v2-text-muted)] animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-[var(--v2-text-muted)] animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           </div>
@@ -1095,18 +1082,15 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       </div>
 
       {/* Dock */}
-      <div
-        className="flex-shrink-0 border-t border-[var(--v2-border)]"
-        style={{ padding: '12px 16px 16px' }}
-      >
-        {/* Example chips */}
-        <div className="flex flex-wrap gap-2 mb-3">
+      <div className="flex-shrink-0 border-t border-[var(--v2-border)] px-3 sm:px-4 py-2 sm:py-3">
+        {/* Example chips - scroll on mobile, wrap on desktop */}
+        <div className="flex overflow-x-auto sm:overflow-x-visible sm:flex-wrap gap-1.5 sm:gap-2 mb-2 sm:mb-3 scrollbar-none pb-1 sm:pb-0">
           {examples.slice(0, 4).map((example, index) => (
             <button
               key={index}
               onClick={() => handleExampleClick(example)}
-              className="text-xs font-medium text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-all hover:border-[#F97316] hover:text-[#F97316]"
-              style={{ borderRadius: '16px', padding: '7px 12px' }}
+              className="text-xs font-medium text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-all hover:border-[#F97316] hover:text-[#F97316] whitespace-nowrap flex-shrink-0 sm:flex-shrink"
+              style={{ borderRadius: '12px', padding: '6px 10px' }}
             >
               {example}
             </button>
@@ -1115,8 +1099,8 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
 
         {/* Input bar */}
         <div
-          className="flex gap-2 items-center bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all focus-within:border-[#F97316] focus-within:shadow-[0_0_0_4px_rgba(249,115,22,0.08)]"
-          style={{ borderRadius: '14px', padding: '5px 5px 5px 14px', borderWidth: '1.5px' }}
+          className="flex gap-1.5 sm:gap-2 items-center bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all focus-within:border-[#F97316] focus-within:shadow-[0_0_0_3px_rgba(249,115,22,0.08)]"
+          style={{ borderRadius: '12px', padding: '4px 4px 4px 10px', borderWidth: '1.5px' }}
         >
           <input
             ref={inputRef}
@@ -1125,19 +1109,19 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
             placeholder={t('chat.placeholder') || 'e.g. add a 90 min session for $150…'}
-            className="flex-1 border-0 bg-transparent text-sm focus:outline-none text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)]"
+            className="flex-1 border-0 bg-transparent text-xs sm:text-sm focus:outline-none text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)]"
             disabled={loading}
           />
           <button
             onClick={handleSend}
             disabled={loading || !input.trim()}
-            className="w-10 h-10 flex items-center justify-center flex-none transition-transform active:scale-95 disabled:opacity-50"
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center flex-none transition-transform active:scale-95 disabled:opacity-50"
             style={{
-              borderRadius: '10px',
+              borderRadius: '8px',
               background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)'
             }}
           >
-            <Send className="w-4 h-4 text-white" strokeWidth={2.2} />
+            <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" strokeWidth={2.2} />
           </button>
         </div>
       </div>

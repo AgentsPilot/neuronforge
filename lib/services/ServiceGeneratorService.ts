@@ -10,7 +10,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
 import type { SchedulingServiceInsert } from '@/lib/repositories/SchedulingRepository';
 
 const logger = createLogger({ service: 'ServiceGeneratorService' });
@@ -272,8 +272,7 @@ export class ServiceGeneratorService {
     services: GeneratedService[];
     tokensUsed?: number;
   }> {
-    const factory = getProviderFactory();
-    const provider = factory.getProvider('openai');
+    const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
 
     const systemPrompt = `You are a Business Architect configuring scheduling services for a business.
 

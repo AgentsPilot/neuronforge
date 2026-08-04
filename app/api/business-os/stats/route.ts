@@ -178,6 +178,8 @@ export async function GET(request: NextRequest) {
       { count: servicesCount },
       { count: activeServicesCount },
       businessProfileResult,
+      stripeConnectResult,
+      stripePluginResult,
       // Payments stats
       { data: paymentsData },
       { count: pendingInvoices },
@@ -261,11 +263,23 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .eq('status', 'active'),
       // Business profile for availability (use maybeSingle to avoid error when no profile exists)
-      // Note: stripe_account_id column may not exist in all environments yet
       supabaseServer
         .from('business_profiles')
         .select('scheduling_availability')
         .eq('user_id', user.id)
+        .maybeSingle(),
+      // Stripe connection check - stripe_connect_accounts table
+      supabaseServer
+        .from('stripe_connect_accounts')
+        .select('stripe_account_id, onboarding_completed')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      // Stripe connection check - plugin_connections table (OAuth)
+      supabaseServer
+        .from('plugin_connections')
+        .select('profile_data, status, access_token')
+        .eq('user_id', user.id)
+        .eq('plugin_key', 'stripe')
         .maybeSingle(),
       // Payments: revenue in last 30 days (status='succeeded' per migration)
       supabaseServer
@@ -494,8 +508,21 @@ export async function GET(request: NextRequest) {
     const { data: businessProfile } = businessProfileResult;
 
     const openDaysCount = countOpenDays(businessProfile?.scheduling_availability);
-    // stripe_account_id column may not exist in all environments yet - default to false
-    const stripeConnected = !!(businessProfile as any)?.stripe_account_id;
+
+    // Check Stripe connection from multiple sources:
+    // 1. stripe_connect_accounts table (Express/Standard accounts with onboarding completed)
+    // 2. plugin_connections table (OAuth connected accounts)
+    const { data: stripeConnectAccount } = stripeConnectResult;
+    const { data: stripePluginConnection } = stripePluginResult;
+
+    const hasStripeConnectAccount = !!(stripeConnectAccount?.stripe_account_id && stripeConnectAccount?.onboarding_completed);
+    // For plugin_connections (OAuth), check if:
+    // 1. Status is active AND
+    // 2. There's an access_token (OAuth connected) OR profile_data has stripe_account_id
+    const hasStripePluginConnection = !!(stripePluginConnection?.status === 'active' &&
+      (stripePluginConnection?.access_token || stripePluginConnection?.profile_data?.stripe_account_id));
+
+    const stripeConnected = hasStripeConnectAccount || hasStripePluginConnection;
     // Calendar sync status from business profile
     const calendarSynced = !!(businessProfile as any)?.calendar_sync_enabled;
     const calendarProvider = (businessProfile as any)?.calendar_sync_provider || null;

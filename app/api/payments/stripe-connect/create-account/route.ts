@@ -150,6 +150,20 @@ export async function POST(request: NextRequest) {
     }
 
     requestLogger.error({ err: error }, 'Failed to create Stripe Connect account');
+
+    // Check if this is a Stripe Connect not enabled error
+    const errorMessage = (error as any)?.message || '';
+    if (errorMessage.includes('signed up for Connect')) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Stripe Connect is not enabled. Please enable it in your Stripe Dashboard: https://dashboard.stripe.com/connect',
+          needsConnectSetup: true
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { success: false, error: 'Failed to create payment account' },
       { status: 500 }

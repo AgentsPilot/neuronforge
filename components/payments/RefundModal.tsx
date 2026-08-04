@@ -102,7 +102,7 @@ export function RefundModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/50"
@@ -110,12 +110,12 @@ export function RefundModal({
       />
 
       {/* Modal */}
-      <div className="relative z-10 w-full max-w-md rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900">
+      <div className="relative z-10 w-full sm:max-w-md h-full sm:h-auto rounded-none sm:rounded-lg bg-white px-4 sm:px-6 py-4 sm:py-6 shadow-xl dark:bg-gray-900 overflow-y-auto">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-4 sm:mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <RotateCcw className="h-5 w-5 text-orange-500" />
-            <h2 className="text-lg font-semibold">Process Refund</h2>
+            <RotateCcw className="h-4 w-4 sm:h-5 sm:w-5 text-orange-500" />
+            <h2 className="text-base sm:text-lg font-semibold">Process Refund</h2>
           </div>
           <button
             onClick={onClose}
@@ -126,8 +126,8 @@ export function RefundModal({
         </div>
 
         {/* Transaction Info */}
-        <div className="mb-6 rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-          <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="mb-4 sm:mb-6 rounded-lg bg-gray-50 p-3 sm:p-4 dark:bg-gray-800">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs sm:text-sm">
             <div>
               <span className="text-gray-500 dark:text-gray-400">Original Amount</span>
               <p className="font-semibold">{formatCurrency(originalAmount)}</p>
@@ -152,11 +152,11 @@ export function RefundModal({
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
           {/* Refund Type */}
           <div>
-            <label className="mb-2 block text-sm font-medium">Refund Type</label>
-            <div className="flex gap-4">
+            <label className="mb-1.5 sm:mb-2 block text-xs sm:text-sm font-medium">Refund Type</label>
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
               <label className="flex cursor-pointer items-center gap-2">
                 <input
                   type="radio"
@@ -185,7 +185,7 @@ export function RefundModal({
           {/* Partial Amount */}
           {refundType === 'partial' && (
             <div>
-              <label className="mb-1 block text-sm font-medium">Refund Amount</label>
+              <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Refund Amount</label>
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">{currency}</span>
                 <Input
@@ -207,7 +207,7 @@ export function RefundModal({
 
           {/* Reason */}
           <div>
-            <label className="mb-1 block text-sm font-medium">Reason (optional)</label>
+            <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Reason (optional)</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -239,7 +239,7 @@ export function RefundModal({
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-3 pt-2">
             <Button
               type="button"
               variant="outline"

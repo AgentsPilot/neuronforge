@@ -81,7 +81,7 @@ export const v2Tokens = {
    */
   typography: {
     fontFamily: {
-      sans: 'var(--font-geist-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)',
+      sans: '"Heebo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       mono: 'var(--font-geist-mono, "SF Mono", Monaco, "Courier New", monospace)',
     },
     fontSize: {

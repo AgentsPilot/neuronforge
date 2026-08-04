@@ -64,6 +64,8 @@ export type {
   // Config types
   SystemConfig,
   RewardConfig,
+  // Plugin connection types
+  UpsertPluginConnectionInput,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';
