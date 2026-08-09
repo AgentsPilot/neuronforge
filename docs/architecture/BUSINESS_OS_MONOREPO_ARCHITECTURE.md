@@ -600,7 +600,7 @@ packages:
   - "packages/*"
 ```
 
-> 🟡 **The npm → pnpm switch is its own risk**, independent of the monorepo. pnpm's strict, non-flat `node_modules` surfaces phantom dependencies that npm's hoisting hides. With this dependency list (`canvas`, `pdfjs-dist`, `pdf-parse`, `googleapis`, `officeparser`) expect at least one package to need `node-linker=hoisted` or an explicit `public-hoist-pattern`. **Do this phase on its own and let it settle.** Do not combine it with Phase 2.
+> 🟡 **The npm → pnpm switch is its own risk**, independent of the monorepo. pnpm's strict, non-flat `node_modules` surfaces phantom dependencies that npm's hoisting hides. With this dependency list (`canvas`, `pdfjs-dist`, `pdf-parse`, `googleapis`) expect at least one package to need `node-linker=hoisted` or an explicit `public-hoist-pattern`. **Do this phase on its own and let it settle.** Do not combine it with Phase 2.
 
 **Verification gate:** app still builds and boots with pnpm, from the repo root, unchanged. Vercel preview deploy succeeds.
 **Rollback:** delete workspace files, restore `package-lock.json`. One commit.
