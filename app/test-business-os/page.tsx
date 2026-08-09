@@ -31,13 +31,17 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/components/UserProvider';
+import { BosModuleTester, type BosModule } from '@/components/test-business-os/BosModuleTester';
+import type { ActionSchema } from '@/lib/plugins/tester/tester-types';
+import type { ExecutionResult } from '@/lib/types/plugin-types';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
 const TABS = [
   { id: 'overview', label: 'Overview' },
+  { id: 'modules', label: 'Modules' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -72,6 +76,10 @@ export default function TestBusinessOSPage() {
   // ── Account-setup state ────────────────────────────────────────────────────
   const [seedVertical, setSeedVertical] = useState<string>('coach');
   const [seedCompanyName, setSeedCompanyName] = useState<string>('Test Co');
+
+  // ── Modules tab state ──────────────────────────────────────────────────────
+  const [modules, setModules] = useState<BosModule[]>([]);
+  const [modulesLoaded, setModulesLoaded] = useState(false);
 
   const addDebugLog = useCallback((type: DebugLog['type'], message: string) => {
     setDebugLogs((prev) => [
@@ -168,6 +176,62 @@ export default function TestBusinessOSPage() {
     });
   };
 
+  // ── Modules tab: list business_os modules + run operations as the session user ──
+  // Reuses the existing plugin endpoints (Option A — no new APIs):
+  //   list    → GET /api/plugins/available?includeBusinessOs=true (filtered to business_os)
+  //   schema  → GET /api/plugins/action-schema?plugin=<key>
+  //   execute → POST /api/plugins/execute (session user's id in the body)
+  const loadModules = useCallback(async () => {
+    const data = await callApi('/api/plugins/available?includeBusinessOs=true', {
+      method: 'GET',
+      label: 'List Business OS modules',
+    });
+    const plugins =
+      (data as { plugins?: Array<{ key: string; name: string; description?: string; visibility?: string }> })
+        ?.plugins || [];
+    setModules(
+      plugins
+        .filter((p) => p.visibility === 'business_os')
+        .map((p) => ({ key: p.key, name: p.name, description: p.description }))
+    );
+    setModulesLoaded(true);
+  }, [callApi]);
+
+  // Load modules the first time the Modules tab is opened (once signed in).
+  useEffect(() => {
+    if (activeTab === 'modules' && !modulesLoaded && user) {
+      void loadModules();
+    }
+  }, [activeTab, modulesLoaded, user, loadModules]);
+
+  const getModuleActionSchema = useCallback(
+    async (pluginKey: string): Promise<{ actions: ActionSchema[] }> => {
+      const data = await callApi(
+        `/api/plugins/action-schema?plugin=${encodeURIComponent(pluginKey)}`,
+        { method: 'GET', label: `Schema: ${pluginKey}` }
+      );
+      return { actions: (data as { actions?: ActionSchema[] })?.actions || [] };
+    },
+    [callApi]
+  );
+
+  const executeModuleAction = useCallback(
+    async (
+      pluginKey: string,
+      actionName: string,
+      params: Record<string, unknown>
+    ): Promise<ExecutionResult | null> => {
+      if (!user) return null;
+      const data = await callApi('/api/plugins/execute', {
+        method: 'POST',
+        body: { userId: user.id, pluginName: pluginKey, actionName, parameters: params },
+        label: `Run ${pluginKey}.${actionName}`,
+      });
+      return (data as ExecutionResult | null) ?? null;
+    },
+    [callApi, user]
+  );
+
   // ── Styling helpers (inline, matching /test-plugins-v2) ────────────────────
   const panelStyle: React.CSSProperties = {
     marginBottom: '30px',
@@ -208,6 +272,11 @@ export default function TestBusinessOSPage() {
         ))}
       </div>
 
+      {/* Current User + Account Setup live on the Overview tab only — they are
+          account-level setup, not repeated on every feature tab. Seed a profile from
+          Overview, then switch to a feature tab (e.g. Modules) to use it. */}
+      {activeTab === 'overview' && (
+        <>
       {/* Current User (session) panel */}
       <div style={panelStyle}>
         <h2 style={{ marginTop: 0 }}>Current User (session)</h2>
@@ -288,6 +357,8 @@ export default function TestBusinessOSPage() {
           </button>
         </div>
       </div>
+        </>
+      )}
 
       {/* ── Tab content region ─────────────────────────────────────────────── */}
       {activeTab === 'overview' && (
@@ -304,9 +375,47 @@ export default function TestBusinessOSPage() {
             <li>A shared <strong>&quot;Last API Response&quot;</strong> viewer and <strong>debug log</strong> panel below.</li>
           </ul>
           <p style={{ fontSize: '14px', color: '#666' }}>
-            No feature tabs are wired up yet — tell me the first tab you want to
-            build and it&apos;ll drop into this shell.
+            The <strong>Modules</strong> tab exercises the internal Business OS
+            modules (repository-backed plugins) as your session user.
           </p>
+        </div>
+      )}
+
+      {/* Tab: Modules — run internal Business OS module operations */}
+      {activeTab === 'modules' && (
+        <div style={panelStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ marginTop: 0 }}>Business OS Modules</h2>
+            <button
+              onClick={() => void loadModules()}
+              disabled={isLoading || !user}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '3px',
+                cursor: isLoading || !user ? 'not-allowed' : 'pointer',
+                opacity: isLoading || !user ? 0.6 : 1,
+                fontSize: '14px',
+              }}
+            >
+              {modulesLoaded ? 'Reload modules' : 'Load modules'}
+            </button>
+          </div>
+          <p style={{ color: '#666', fontSize: '14px', marginTop: 0 }}>
+            Internal, repository-backed modules — hidden from the general plugin
+            list (<code>visibility: business_os</code>) but runnable here by key.
+            CRM is the first. Each operation runs against your seeded profile;
+            without one you&apos;ll get <code>access_denied</code> (seed via
+            <strong> Account Setup</strong> on the <strong>Overview</strong> tab).
+          </p>
+          <BosModuleTester
+            sessionUserId={user?.id ?? null}
+            modules={modules}
+            getActionSchema={getModuleActionSchema}
+            executeAction={executeModuleAction}
+          />
         </div>
       )}
 

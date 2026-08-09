@@ -35,7 +35,8 @@ export async function GET(request: NextRequest) {
       auth_config: definition.plugin.auth_config, // Include processed auth config
       actions: Object.keys(definition.actions),
       action_count: Object.keys(definition.actions).length,
-      isSystem: definition.plugin.isSystem || false // Include system flag
+      isSystem: definition.plugin.isSystem || false, // Include system flag
+      visibility: definition.plugin.visibility || 'public' // Discovery visibility (public | business_os)
     }));
 
     return NextResponse.json({

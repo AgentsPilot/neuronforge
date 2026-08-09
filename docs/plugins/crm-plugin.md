@@ -1,6 +1,6 @@
 # CRM Plugin - User Documentation
 
-> **Last Updated**: 2026-08-06
+> **Last Updated**: 2026-08-09
 
 ## Overview
 
@@ -15,6 +15,10 @@ Use it to create and find contacts, move them through your pipeline, add and com
 **No connection required.** The CRM plugin is a built-in internal capability — there is no OAuth login and no token to manage.
 
 It is available to any **active Business OS account** (an account that has completed initial setup and has a business profile). Access is checked automatically on the server each time an action runs; if an account is not an active Business OS tenant, the action returns an `access_denied` result. Every operation is automatically scoped to your own account's data.
+
+### Where it appears (visibility)
+
+CRM is a **Business-OS-only** internal module: it is **hidden by default from the general plugin catalog** (Settings → Connected Apps, the agent-builder capability hints, and the V6 binder) — its `visibility` is `business_os`. It remains fully **resolvable and executable by key** for Business OS surfaces, the AI assistant, and automations. Promoting CRM platform-wide later is a one-line change (`visibility: public`). See [PLUGIN_VISIBILITY_SCOPING.md](/docs/PLUGIN_VISIBILITY_SCOPING.md).
 
 ---
 
@@ -118,6 +122,17 @@ Some contact-timeline activities are created **automatically** by the system whe
 
 ---
 
+## Testing
+
+Run CRM operations interactively from the **Modules** tab of the internal `/test-business-os` page (session-based, so operations run as your logged-in account):
+
+1. On the **Overview** tab, use **Account Setup** → **Seed Profile** to make your account an active tenant (creates a `business_profiles` row + seeds pipeline stages).
+2. Go to **Modules** → **Load modules** → select **CRM** → pick an operation → fill the auto-generated form → **Run**.
+
+Without a seeded profile you'll get `access_denied` (the `db_active` guard). See [BUSINESS_OS_TEST_PAGE_SCOPE.md](/docs/BUSINESS_OS_TEST_PAGE_SCOPE.md) § Tab: Modules.
+
+---
+
 ## Notes
 
 - Every action is automatically scoped to your own account — you can only read and write your own CRM data.
@@ -131,3 +146,4 @@ Some contact-timeline activities are created **automatically** by the system whe
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-08-06 | Initial documentation | Documented the internal CRM plugin: no-connection (`db_active`) access model, the 17 contact/task/activity/pipeline operations, and the automatically-logged activities. |
+| 2026-08-09 | Visibility + testing | Added the "Where it appears (visibility)" note (`visibility: business_os` — hidden from the general plugin catalog, runnable by key) and a "Testing" section pointing to the `/test-business-os` Modules tab. |
