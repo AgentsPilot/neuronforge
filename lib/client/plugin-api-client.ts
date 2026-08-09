@@ -16,11 +16,14 @@ export class PluginAPIClient {
   }
 
   // Get all available plugins
-  async getAvailablePlugins(): Promise<PluginInfo[]> {
+  async getAvailablePlugins(options?: { includeBusinessOs?: boolean }): Promise<PluginInfo[]> {
     clientLogger.debug('Getting available plugins');
 
     try {
-      const response = await fetch(`${this.baseUrl}/api/plugins/available`);
+      // Business-OS-only plugins are hidden by default; internal surfaces (e.g. the plugin
+      // test page) opt in. See docs/PLUGIN_VISIBILITY_SCOPING.md.
+      const qs = options?.includeBusinessOs ? '?includeBusinessOs=true' : '';
+      const response = await fetch(`${this.baseUrl}/api/plugins/available${qs}`);
       const result = await response.json();
 
       if (!result.success) {

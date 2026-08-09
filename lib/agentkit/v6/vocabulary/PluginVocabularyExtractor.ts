@@ -7,6 +7,7 @@
 
 import type { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { PluginDefinition, ActionDefinition } from '@/lib/types/plugin-types'
+import { isPluginDiscoverable } from '@/lib/plugins/plugin-visibility'
 import { createLogger } from '@/lib/logger'
 import { summarizeOutputSchema, formatSummaryForPrompt } from './outputSchemaSummarizer'
 
@@ -80,10 +81,14 @@ export class PluginVocabularyExtractor {
 
     const connectedPlugins = await this.pluginManager.getExecutablePlugins(userId)
 
-    // Also get system plugins that are always available
+    // Also get system plugins that are always available. Discovery-scoped: a `business_os`
+    // plugin (e.g. internal CRM) is injected only when its key is explicitly grounded in
+    // servicesInvolved. See docs/PLUGIN_VISIBILITY_SCOPING.md.
+    const requestedServices = new Set(options?.servicesInvolved ?? [])
     const allPlugins = this.pluginManager.getAvailablePlugins()
     const systemPlugins = Object.entries(allPlugins)
       .filter(([_, plugin]) => plugin.plugin.isSystem === true)
+      .filter(([key, plugin]) => isPluginDiscoverable(plugin, requestedServices.has(key)))
       .filter(([key, _]) => !connectedPlugins[key]) // Don't duplicate
 
     // Merge system plugins into connectedPlugins
