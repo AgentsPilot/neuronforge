@@ -45,7 +45,27 @@ export interface PluginDefinition {
     category: PluginCategory;  // Optional category for grouping
     isPopular?: boolean; // Optional flag for popular plugins
     isSystem?: boolean; // Optional flag for system plugins (no user OAuth required)
+
+    /**
+     * Discovery visibility — who may DISCOVER/enumerate this plugin. Orthogonal to `isSystem`
+     * (auth rail) and `access_strategy` (eligibility to run). `business_os` plugins are hidden
+     * from the general discovery surfaces (public plugin list, agent-creation capability hints,
+     * V6 binder/vocabulary) unless a caller explicitly opts in, but stay resolvable/executable
+     * by key. Defaults to `public` when absent. See docs/PLUGIN_VISIBILITY_SCOPING.md.
+     */
+    visibility?: PluginVisibility;
+
     auth_config: PluginAuthConfig;
+
+    /**
+     * Pluggable access / eligibility strategy — "can this user use this plugin right now?"
+     * OAuth is one strategy among several. Internal (repository-backed) plugins declare
+     * `db_active` to gate on active-BOS-tenant membership; `license_tier` is a designed-but-
+     * unbuilt seam. When omitted, the resolver infers the legacy behavior from `auth_config`
+     * (`platform_key` → system virtual connection, otherwise `oauth`), so existing plugins
+     * are unaffected. See lib/server/access-strategy.ts.
+     */
+    access_strategy?: PluginAccessStrategy;
 
     // ----- V6 CAPABILITY BINDING METADATA -----
     /**
@@ -82,6 +102,19 @@ export interface IPluginDefinitionContext extends PluginDefinition {
 export interface ActionablePlugin {
   definition: PluginDefinition;
   connection: UserConnection;
+}
+
+// Discovery visibility (see docs/PLUGIN_VISIBILITY_SCOPING.md). `public` = discoverable in the
+// general plugin surfaces; `business_os` = hidden by default, resolvable/executable by key.
+export type PluginVisibility = 'public' | 'business_os';
+
+// Pluggable access / eligibility strategy declaration (see lib/server/access-strategy.ts)
+export type PluginAccessStrategyType = 'oauth' | 'db_active' | 'license_tier';
+
+export interface PluginAccessStrategy {
+  type: PluginAccessStrategyType;
+  // Strategy-specific config (none required for v1 `db_active`); left open for future strategies.
+  [key: string]: unknown;
 }
 
 // OAuth/Authentication configuration

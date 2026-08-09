@@ -27,6 +27,7 @@ import { SalesforcePluginExecutor } from './salesforce-plugin-executor';
 import { MetaAdsPluginExecutor } from './meta-ads-plugin-executor';
 import { DropboxPluginExecutor } from './dropbox-plugin-executor';
 import { StripePluginExecutor } from './stripe-plugin-executor';
+import { CRMPluginExecutor } from './crm-plugin-executor';
 
 const logger = createLogger({ module: 'PluginExecuter', service: 'plugin-system' });
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
@@ -60,6 +61,7 @@ export class PluginExecuterV2 {
     'meta-ads': MetaAdsPluginExecutor,
     'dropbox': DropboxPluginExecutor,
     'stripe': StripePluginExecutor,
+    'crm': CRMPluginExecutor, // Internal (repository-backed) plugin — db_active access strategy
     // Add new plugin executors here
   };
 

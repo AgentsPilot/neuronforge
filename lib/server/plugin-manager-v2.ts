@@ -3,6 +3,7 @@
 import { UserPluginConnections } from './user-plugin-connections';
 import { PluginDefinition, ActionDefinition, ValidationResult, RuleDefinition, ActionablePlugin, UserConnection, ActionRuleDefinition } from '@/lib/types/plugin-types'
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
+import { isPluginDiscoverable } from '@/lib/plugins/plugin-visibility';
 import { createLogger } from '@/lib/logger';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -31,6 +32,7 @@ const corePluginFiles = [
       'outlook-plugin-v2.json',
       'salesforce-plugin-v2.json',
       'stripe-plugin-v2.json',
+      'crm-plugin-v2.json',
     ];
 
 // Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)
@@ -279,13 +281,19 @@ export class PluginManagerV2 {
     return summaries;
   }
 
-  // Get actionable system plugins (no OAuth required, auto-available for all users)
-  getActionableSystemPlugins(userId: string): Record<string, ActionablePlugin> {
+  // Get actionable system plugins (no OAuth required, auto-available for all users).
+  // Discovery-scoped: `business_os` plugins are excluded unless the caller opts in via
+  // `includeBusinessOs` (see docs/PLUGIN_VISIBILITY_SCOPING.md).
+  getActionableSystemPlugins(
+    userId: string,
+    options: { includeBusinessOs?: boolean } = {}
+  ): Record<string, ActionablePlugin> {
+    const { includeBusinessOs = false } = options;
     const systemPlugins: Record<string, ActionablePlugin> = {};
 
     for (const [pluginKey, definition] of this.plugins.entries()) {
-      // Check if this is a system plugin
-      if (definition.plugin.isSystem) {
+      // Check if this is a system plugin (and discoverable for this caller)
+      if (definition.plugin.isSystem && isPluginDiscoverable(definition, includeBusinessOs)) {
         // Create a virtual connection for system plugins (no database record needed)
         systemPlugins[pluginKey] = {
           definition,
@@ -315,13 +323,16 @@ export class PluginManagerV2 {
 
   // Get all active plugin keys (including expired tokens) + system plugins
   // Use for: Showing users all their active services regardless of token status
-  async getAllActivePluginKeys(userId: string): Promise<string[]> {
+  async getAllActivePluginKeys(
+    userId: string,
+    options: { includeBusinessOs?: boolean } = {}
+  ): Promise<string[]> {
     // Get ALL active OAuth plugins (including those with expired tokens)
     const allActiveOAuthConnections = await this.userConnections.getAllActivePlugins(userId);
     const activeOAuthKeys = allActiveOAuthConnections.map(conn => conn.plugin_key);
 
-    // Get system plugins
-    const systemPlugins = this.getActionableSystemPlugins(userId);
+    // Get system plugins (discovery-scoped)
+    const systemPlugins = this.getActionableSystemPlugins(userId, options);
     const systemPluginKeys = Object.keys(systemPlugins);
 
     // Combine both (deduplicate in case of overlap)
@@ -334,9 +345,9 @@ export class PluginManagerV2 {
   // @param options.includeSystemPlugins - Whether to include system plugins (default: true)
   async getConnectedPlugins(
     userId: string,
-    options: { includeSystemPlugins?: boolean } = {}
+    options: { includeSystemPlugins?: boolean; includeBusinessOs?: boolean } = {}
   ): Promise<Record<string, ActionablePlugin>> {
-    const { includeSystemPlugins = true } = options;
+    const { includeSystemPlugins = true, includeBusinessOs = false } = options;
 
     const actionablePlugins: Record<string, ActionablePlugin> = {};
 
@@ -361,7 +372,7 @@ export class PluginManagerV2 {
     // Add system plugins (no database connection required, always available)
     // Only if includeSystemPlugins is true (default)
     if (includeSystemPlugins) {
-      const systemPlugins = this.getActionableSystemPlugins(userId);
+      const systemPlugins = this.getActionableSystemPlugins(userId, { includeBusinessOs });
       for (const [pluginKey, systemPlugin] of Object.entries(systemPlugins)) {
         // Only add if not already present (OAuth connection takes precedence)
         if (!actionablePlugins[pluginKey]) {
@@ -727,11 +738,21 @@ export class PluginManagerV2 {
     if (!definition.plugin?.name) {
       throw new Error('Plugin definition missing required field: plugin.name');
     }
-    
-    if (!definition.plugin?.auth_config) {
-      throw new Error('Plugin definition missing required field: plugin.auth_config');
+
+    // Access gating may be declared either via a full OAuth `auth_config` (external plugins) or
+    // an explicit `access_strategy` (internal / repository-backed plugins, which carry only a
+    // minimal internal auth_config stub). Require at least one so every plugin has a resolvable
+    // gate; existing external plugins are unaffected since they still declare auth_config.
+    if (!definition.plugin?.auth_config && !definition.plugin?.access_strategy) {
+      throw new Error('Plugin definition must declare either plugin.auth_config or plugin.access_strategy');
     }
-    
+
+    // A `db_active` internal plugin runs on the non-OAuth execution rail (no DB connection),
+    // which is only reached when the plugin is a system plugin.
+    if (definition.plugin?.access_strategy?.type === 'db_active' && !definition.plugin?.isSystem) {
+      throw new Error('Plugin with access_strategy "db_active" must set plugin.isSystem = true');
+    }
+
     if (!definition.actions || Object.keys(definition.actions).length === 0) {
       throw new Error('Plugin definition must have at least one action');
     }
