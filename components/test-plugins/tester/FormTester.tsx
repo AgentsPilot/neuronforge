@@ -26,6 +26,7 @@ import {
 import {
   evaluateConnectionGate,
   REQUIRED_GOOGLE_SUITE_PLUGIN_KEYS,
+  INTERNAL_TESTER_PLUGIN_KEYS,
   type ConnectionStatusLike,
 } from '@/lib/plugins/tester/connection-gate';
 import { useSideConsole } from '@/hooks/useSideConsole';
@@ -250,8 +251,12 @@ export function FormTester({
     void doRun();
   }, [advanced, confirmation, doRun, fields, values]);
 
-  // ── Gate not satisfied: show the connection panel only ──────────────────────
-  if (!gate.enabled) {
+  // ── No userId at all: show the connection panel only ────────────────────────
+  // Internal (db_active) plugins are usable with just a userId, so the FULL block is now
+  // only "userId required". The Google Suite OAuth completeness gate still governs which
+  // Google plugins are selectable (below) — it no longer hides the whole tester, since that
+  // would also hide the internal plugins that don't need those connections.
+  if (gate.userIdRequired) {
     return (
       <div>
         <SectionTitle />
@@ -272,12 +277,27 @@ export function FormTester({
     gate.perPlugin.find((p) => p.key === k)?.connected
   );
 
+  // Google Suite plugins stay behind the all-five completeness gate (FR12); internal
+  // db_active plugins (e.g. crm) are always selectable once a userId is present.
+  const selectablePluginKeys: string[] = [
+    ...(gate.enabled ? connectedGoogleKeys : []),
+    ...INTERNAL_TESTER_PLUGIN_KEYS,
+  ];
+
   const runDisabled = running || (!advanced && !canRun(fields, values));
 
   return (
     <div>
       <SectionTitle />
-      <ConnectionGatePanel gate={gate} pluginLabels={pluginLabels} />
+      {/* Keep the panel interactive (connect/refresh) until the Google gate is satisfied,
+          so Google testing can still be unlocked; read-only once all five are connected. */}
+      <ConnectionGatePanel
+        gate={gate}
+        pluginLabels={pluginLabels}
+        {...(gate.enabled
+          ? {}
+          : { onConnect, onRefresh, onRefreshAll, connectDisabled, refreshAllProgress })}
+      />
 
       <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
         {/* Left: selectors + form */}
@@ -297,7 +317,7 @@ export function FormTester({
               style={{ width: 320, padding: 8, fontSize: 13 }}
             >
               <option value="">-- select plugin --</option>
-              {connectedGoogleKeys.map((key) => (
+              {selectablePluginKeys.map((key) => (
                 <option key={key} value={key}>
                   {pluginLabels[key] || key}
                 </option>
