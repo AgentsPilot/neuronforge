@@ -177,8 +177,8 @@ export function isPresenceCheckCondition(condition: string): boolean {
  * - requiresConfirm === true  → at least one presence-check confirm → block Run
  *   until the user confirms; render that rule's authored message.
  * - advisories                → threshold/boolean confirms surfaced non-blocking.
- * - isDestructiveStyle        → red-flag visual (capability delete OR non-idempotent),
- *   independent of the gate.
+ * - isDestructiveStyle        → red-flag visual, reserved for genuine data-loss
+ *   (capability === 'delete'). Non-idempotent create/update actions are NOT flagged.
  */
 export function getConfirmation(actionSchema: ActionSchema): ConfirmationDecision {
   const confirmations = actionSchema.rules?.confirmations || {};
@@ -196,8 +196,11 @@ export function getConfirmation(actionSchema: ActionSchema): ConfirmationDecisio
     }
   }
 
-  const isDestructiveStyle =
-    actionSchema.capability === 'delete' || actionSchema.idempotent === false;
+  // Red "DESTRUCTIVE" badge is reserved for genuine data-loss operations (delete capability).
+  // Non-idempotent create/update/send actions are NOT destructive — re-running one may create a
+  // duplicate, but that is not a data-loss/red-flag concern, so they are not badged here. (This
+  // is why e.g. create_contact, which is legitimately `idempotent: false`, is not flagged.)
+  const isDestructiveStyle = actionSchema.capability === 'delete';
 
   return {
     requiresConfirm: blockingMessage !== undefined,

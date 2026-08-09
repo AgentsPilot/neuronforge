@@ -21,16 +21,6 @@ export const REQUIRED_GOOGLE_SUITE_PLUGIN_KEYS = [
 ] as const;
 
 /**
- * Internal (repository-backed) plugins the Form Tester exposes. These use a `db_active`
- * access strategy rather than OAuth, so they are NOT part of the Google Suite OAuth
- * completeness gate — they are runnable whenever a `userId` is present, and the real
- * eligibility check (active tenant) is enforced server-side at execute time (a non-tenant
- * gets `access_denied` back). Like the Google set above, this is a scope boundary held in
- * ONE named constant — extending coverage later is a one-line edit, not per-plugin logic.
- */
-export const INTERNAL_TESTER_PLUGIN_KEYS = ['crm'] as const;
-
-/**
  * Minimal shape of the connection status the gate needs (subset of UserPluginStatus).
  * `active_expired` mirrors the page's `userStatus.active_expired` so the panel aligns
  * with the User Configuration section's "expired" count (single source of truth).

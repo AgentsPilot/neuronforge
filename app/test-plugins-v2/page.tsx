@@ -988,9 +988,7 @@ export default function TestPluginsPage() {
   const loadAvailablePlugins = async () => {
     try {
       addDebugLog('info', 'Loading available plugins...');
-      // Internal test page: opt in to business_os plugins (e.g. internal CRM) so the Form
-      // Tester has their labels/schema. See docs/PLUGIN_VISIBILITY_SCOPING.md.
-      const plugins = await apiClient.getAvailablePlugins({ includeBusinessOs: true });
+      const plugins = await apiClient.getAvailablePlugins();
       setAvailablePlugins(plugins);
       addDebugLog('success', `Loaded ${plugins.length} available plugins`);
     } catch (error: any) {

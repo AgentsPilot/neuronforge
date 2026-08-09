@@ -374,6 +374,7 @@ export interface PluginInfo {
   actions: string[];
   action_count: number;
   isSystem?: boolean; // Flag for system plugins (no user OAuth required)
+  visibility?: PluginVisibility; // Discovery visibility (public | business_os); returned by /api/plugins/available
 }
 
 export interface ConnectedPluginInfo extends PluginInfo {
