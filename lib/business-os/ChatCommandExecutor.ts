@@ -13,8 +13,16 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
+import type { CRMTaskListOptions } from '@/lib/repositories/CRMTaskRepository';
+import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 
 const logger = createLogger({ module: 'ChatCommandExecutor' });
+
+// R8: single plugin-name literal for the internal CRM plugin path. Centralized so future
+// callers don't scatter the string; replace with the capability resolver when CRM goes
+// platform-wide. TODO(R7): route via capability resolver instead of a hardcoded key.
+const CRM_PLUGIN_KEY = 'crm';
 
 // Multilingual response templates
 const RESPONSES: Record<string, Record<string, string>> = {
@@ -1777,7 +1785,13 @@ async function executeBookingCreate(
 
     // Step 2: Find contact by name using multilingual matching
     // Fetch contacts from DB if not in context
-    let contactsForMatching = (context.existingContacts || []).map(c => ({
+    let contactsForMatching: Array<{
+      id: string;
+      name: string;
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+    }> = (context.existingContacts || []).map(c => ({
       id: c.id,
       name: c.name,
       first_name: c.name.split(' ')[0],
@@ -1786,10 +1800,7 @@ async function executeBookingCreate(
     }));
 
     if (contactsForMatching.length === 0 && contactName) {
-      const { data: dbContacts } = await supabaseServer
-        .from('crm_contacts')
-        .select('id, first_name, last_name, email, phone')
-        .eq('user_id', context.userId);
+      const { data: dbContacts } = await crmContactRepository.listBasic(context.userId);
 
       if (dbContacts) {
         contactsForMatching = dbContacts.map(c => ({
@@ -1949,12 +1960,8 @@ async function executeBookingCreate(
 
       // If confirmed, create the booking
       if (entities._confirmed) {
-        // Get full contact details from DB
-        const { data: fullContact } = await supabaseServer
-          .from('crm_contacts')
-          .select('id, first_name, last_name, email, phone')
-          .eq('id', contact.id)
-          .single();
+        // Get full contact details from DB (user-scoped via the repository)
+        const { data: fullContact } = await crmContactRepository.findById(contact.id, context.userId);
 
         const contactData = fullContact || contact;
 
@@ -2775,15 +2782,9 @@ async function executeContactQuery(
 
     // Query for contacts with overdue tasks
     if (entities.has_overdue_tasks || entities.has_due_tasks) {
-      // Fetch overdue tasks first
-      const { data: tasks } = await supabaseServer
-        .from('crm_tasks')
-        .select('contact_id')
-        .eq('user_id', context.userId)
-        .lt('due_date', new Date().toISOString())
-        .in('status', ['pending', 'in_progress']);
-
-      const contactIds = Array.from(new Set(tasks?.map(t => t.contact_id).filter(Boolean) || []));
+      // Fetch contact ids with overdue, still-open tasks (deduped by the repository)
+      const { data: overdueContactIds } = await crmTaskRepository.getOverdueContactIds(context.userId);
+      const contactIds = overdueContactIds || [];
 
       if (contactIds.length === 0) {
         return {
@@ -2794,12 +2795,17 @@ async function executeContactQuery(
       }
 
       // Fetch contacts with overdue tasks
-      const { data: contacts } = await supabaseServer
-        .from('crm_contacts')
-        .select('id, first_name, last_name, email, stage')
-        .eq('user_id', context.userId)
-        .in('id', contactIds)
-        .limit(10);
+      const { data: contactsBasic } = await crmContactRepository.listBasic(context.userId, {
+        ids: contactIds,
+        limit: 10,
+      });
+      const contacts = (contactsBasic || []).map((c) => ({
+        id: c.id,
+        first_name: c.first_name ?? undefined,
+        last_name: c.last_name ?? undefined,
+        email: c.email ?? undefined,
+        stage: c.stage,
+      }));
 
       if (!contacts || contacts.length === 0) {
         return {
@@ -2822,19 +2828,18 @@ async function executeContactQuery(
     }
 
     // Regular contact query
-    let query = supabaseServer
-      .from('crm_contacts')
-      .select('id, first_name, last_name, email, stage')
-      .eq('user_id', context.userId);
-
-    if (filters.stage) {
-      query = query.eq('stage', filters.stage);
-    }
-    if (filters.search) {
-      query = query.or(`first_name.ilike.%${filters.search}%,last_name.ilike.%${filters.search}%,email.ilike.%${filters.search}%`);
-    }
-
-    const { data: contacts } = await query.limit(entities.limit || 10);
+    const { data: contactsBasic } = await crmContactRepository.listBasic(context.userId, {
+      stage: filters.stage,
+      search: filters.search,
+      limit: entities.limit || 10,
+    });
+    const contacts = (contactsBasic || []).map((c) => ({
+      id: c.id,
+      first_name: c.first_name ?? undefined,
+      last_name: c.last_name ?? undefined,
+      email: c.email ?? undefined,
+      stage: c.stage,
+    }));
 
     if (!contacts || contacts.length === 0) {
       const responseMsg = filters.search
@@ -2985,19 +2990,23 @@ async function executeTaskCreate(
         }
       }
 
-      // Create the task
-      const { error } = await supabaseServer
-        .from('crm_tasks')
-        .insert({
-          user_id: context.userId,
-          title: entities.description,
-          contact_id: contactId,
-          due_date: dueDate,
-          status: 'pending',
-          priority: entities.priority || 'medium',
-        });
+      // Create the task via the internal CRM plugin (R8: proves the internal plugin path
+      // end-to-end from a live caller — db_active access check → CRMPluginExecutor →
+      // crmTaskRepository. user_id is derived server-side from the resolved connection, so it
+      // is NOT passed here). Other CRM sites in this file still call repositories directly;
+      // migration is additive/gradual.
+      const pluginExecuter = await PluginExecuterV2.getInstance();
+      const taskResult = await pluginExecuter.execute(context.userId, CRM_PLUGIN_KEY, 'add_task', {
+        title: entities.description,
+        contact_id: contactId,
+        due_date: dueDate,
+        status: 'pending',
+        priority: entities.priority || 'medium',
+      });
 
-      if (error) throw error;
+      if (!taskResult.success) {
+        throw new Error(taskResult.message || taskResult.error || 'Failed to create task');
+      }
 
       // Build success message parts
       const locale = lang === 'he' ? 'he-IL' : lang === 'es' ? 'es-ES' : 'en-US';
@@ -3086,46 +3095,46 @@ async function executeTaskQuery(
     const status = entities.status?.toLowerCase();
     const duePeriod = entities.due_period?.toLowerCase();
 
-    let query = supabaseServer
-      .from('crm_tasks')
-      .select(`
-        id, title, due_date, status, priority, contact_id,
-        crm_contacts(first_name, last_name)
-      `)
-      .eq('user_id', context.userId);
+    // Build repository list options, preserving the original per-status/date filter shape.
+    const listOptions: CRMTaskListOptions = {
+      orderBy: 'due_date',
+      orderDirection: 'asc',
+      limit: entities.limit || 10,
+    };
 
     // Handle different query types
     if (status === 'overdue') {
-      query = query
-        .lt('due_date', new Date().toISOString())
-        .in('status', ['pending', 'in_progress']);
+      listOptions.status = ['pending', 'in_progress'];
+      listOptions.due_before = new Date().toISOString();
     } else if (status === 'completed') {
-      query = query.eq('status', 'completed');
+      listOptions.status = 'completed';
     } else if (status === 'pending' || status === 'upcoming') {
-      query = query.in('status', ['pending', 'in_progress']);
+      listOptions.status = ['pending', 'in_progress'];
 
       // Add date filter for upcoming
       if (duePeriod === 'today') {
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         tomorrow.setHours(0, 0, 0, 0);
-        query = query.lt('due_date', tomorrow.toISOString());
+        listOptions.due_before = tomorrow.toISOString();
       } else if (duePeriod === 'this_week') {
         const nextWeek = new Date();
         nextWeek.setDate(nextWeek.getDate() + 7);
-        query = query.lt('due_date', nextWeek.toISOString());
+        listOptions.due_before = nextWeek.toISOString();
       }
+    } else {
+      // No status specified → original query applied no status filter (all statuses).
+      // include_completed:true lifts the repository's default pending/in_progress restriction.
+      listOptions.include_completed = true;
     }
 
     // Filter by contact name if provided
     if (entities.contact_name) {
       // Would need to join and filter by contact name
-      // For now, skip this filter
+      // For now, skip this filter (unchanged from prior behavior)
     }
 
-    const { data: tasks } = await query
-      .order('due_date', { ascending: true })
-      .limit(entities.limit || 10);
+    const { data: tasks } = await crmTaskRepository.list(context.userId, listOptions);
 
     if (!tasks || tasks.length === 0) {
       if (status === 'overdue') {
@@ -3143,12 +3152,12 @@ async function executeTaskQuery(
     }
 
     // Format tasks for response
-    const formattedTasks = tasks.map(task => ({
+    const formattedTasks = (tasks || []).map(task => ({
       id: task.id,
       title: task.title,
-      due_date: task.due_date,
+      due_date: task.due_date ?? undefined,
       status: task.status,
-      contact_id: task.contact_id,
+      contact_id: task.contact_id ?? undefined,
     }));
 
     const responseKey = status === 'overdue'
@@ -3209,18 +3218,16 @@ async function executeInvoiceCreate(
 
       // If not found in cache, try direct DB lookup
       if (!contact) {
-        const { data: contacts } = await supabaseServer
-          .from('crm_contacts')
-          .select('id, first_name, last_name, email')
-          .eq('user_id', context.userId)
-          .or(`first_name.ilike.%${entities.contact_name}%,last_name.ilike.%${entities.contact_name}%,email.ilike.%${entities.contact_name}%`)
-          .limit(1);
+        const { data: contacts } = await crmContactRepository.listBasic(context.userId, {
+          search: entities.contact_name,
+          limit: 1,
+        });
 
         if (contacts && contacts.length > 0) {
           contact = {
             id: contacts[0].id,
-            name: `${contacts[0].first_name || ''} ${contacts[0].last_name || ''}`.trim() || contacts[0].email,
-            email: contacts[0].email,
+            name: `${contacts[0].first_name || ''} ${contacts[0].last_name || ''}`.trim() || contacts[0].email || '',
+            email: contacts[0].email ?? undefined,
           };
         }
       }
@@ -3474,12 +3481,10 @@ async function executePaymentRecord(
 
   try {
     // Find contact by name
-    const { data: contacts } = await supabaseServer
-      .from('crm_contacts')
-      .select('id, first_name, last_name, email')
-      .eq('user_id', context.userId)
-      .or(`first_name.ilike.%${contactName}%,last_name.ilike.%${contactName}%,email.ilike.%${contactName}%`)
-      .limit(1);
+    const { data: contacts } = await crmContactRepository.listBasic(context.userId, {
+      search: contactName,
+      limit: 1,
+    });
 
     if (!contacts || contacts.length === 0) {
       return {

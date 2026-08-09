@@ -259,7 +259,9 @@ export class CRMPipelineStagesRepository {
     try {
       logger.info({ userId, stageIds }, 'Reordering pipeline stages');
 
-      // Update each stage with its new position
+      // Update each stage with its new position. Supabase update() resolves to a
+      // { data, error } result rather than throwing, so inspect each result and surface the
+      // first error instead of silently swallowing a failed reorder.
       const updates = stageIds.map((id, index) =>
         this.supabase
           .from('crm_pipeline_stages')
@@ -268,7 +270,9 @@ export class CRMPipelineStagesRepository {
           .eq('user_id', userId)
       );
 
-      await Promise.all(updates);
+      const results = await Promise.all(updates);
+      const firstError = results.find(r => r.error)?.error;
+      if (firstError) throw firstError;
 
       // Return updated list
       return this.list(userId);

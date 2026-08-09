@@ -756,6 +756,7 @@ npm run lint       # ESLint
 | [V2_Thread-Based-Agent-Creation-Flow.md](/docs/V2_Thread-Based-Agent-Creation-Flow.md) | Thread-based agent creation flow diagram | 2026-01-16 |
 | [V2_AGENT_CREATION_AND_SAVE_IMPLEMENTATION.md](/docs/V2_AGENT_CREATION_AND_SAVE_IMPLEMENTATION.md) | V2 agent creation & save implementation (Phase 1-14) | 2025-11-25 |
 | [V2_TEST_PAGE_SCOPE.md](/docs/V2_TEST_PAGE_SCOPE.md) | Test page functionality (`/test-plugins-v2`) | 2026-01-21 |
+| [BUSINESS_OS_TEST_PAGE_SCOPE.md](/docs/BUSINESS_OS_TEST_PAGE_SCOPE.md) | Business OS test page scope (`/test-business-os`) — session-based harness; grows one section per tab | 2026-08-09 |
 | [REPOSITORY_STRATEGY.md](/docs/REPOSITORY_STRATEGY.md) | Repository pattern guidelines and architecture | 2026-01-15 |
 | [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) | Pino logging standards and best practices | 2025-11-28 |
 | [USER_CONTEXT.md](/docs/USER_CONTEXT.md) | User context module for LLM personalization | not tracked |
