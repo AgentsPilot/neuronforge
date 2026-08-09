@@ -15,6 +15,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 
 const logger = createLogger({ service: 'PaymentReminderService' });
 
@@ -297,13 +298,8 @@ export class PaymentReminderService {
         channel: params.channel
       }, 'Sending payment reminder');
 
-      // Get contact info
-      const { data: contact } = await this.supabase
-        .from('crm_contacts')
-        .select('email, phone, first_name, last_name')
-        .eq('id', params.contactId)
-        .eq('user_id', userId)
-        .single();
+      // Get contact info (user-scoped via the repository)
+      const { data: contact } = await crmContactRepository.findById(params.contactId, userId);
 
       if (!contact) {
         throw new Error('Contact not found');
@@ -381,10 +377,19 @@ export class PaymentReminderService {
       try {
         switch (params.channel) {
           case 'email':
-            sent = await this.sendEmailReminder(userId, contact, entityDetails, params);
+            sent = await this.sendEmailReminder(
+              userId,
+              {
+                email: contact.email ?? '',
+                first_name: contact.first_name ?? '',
+                last_name: contact.last_name ?? '',
+              },
+              entityDetails,
+              params
+            );
             break;
           case 'sms':
-            sent = await this.sendSmsReminder(contact, entityDetails);
+            sent = await this.sendSmsReminder({ phone: contact.phone ?? '' }, entityDetails);
             break;
           case 'in_app':
             sent = await this.sendInAppReminder(userId, params.contactId, entityDetails);

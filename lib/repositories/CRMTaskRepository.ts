@@ -294,6 +294,37 @@ export class CRMTaskRepository {
   }
 
   /**
+   * Contact ids that have at least one overdue, still-open task (deduped, no limit).
+   *
+   * Scalar `contact_id`-only select for the chat "contacts needing follow-up" path.
+   * Behavior-preserving replacement for the inline `crm_tasks` select in ChatCommandExecutor
+   * (the caller previously deduped the ids itself — that is now done here).
+   */
+  async getOverdueContactIds(
+    userId: string
+  ): Promise<CRMTaskRepositoryResult<string[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('crm_tasks')
+        .select('contact_id')
+        .eq('user_id', userId)
+        .lt('due_date', new Date().toISOString())
+        .in('status', ['pending', 'in_progress']);
+
+      if (error) throw error;
+
+      const ids = Array.from(
+        new Set((data || []).map((t) => t.contact_id).filter(Boolean))
+      ) as string[];
+
+      return { data: ids, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to get overdue task contact ids');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Count tasks by status
    */
   async countByStatus(

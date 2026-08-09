@@ -5,6 +5,7 @@
  * Following the repository pattern defined in REPOSITORY_STRATEGY.md
  */
 
+import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 
@@ -77,6 +78,14 @@ export interface ContactDocumentListOptions {
 }
 
 export class ContactDocumentsRepository {
+  private supabase: SupabaseClient;
+
+  // Constructor-injected client (defaults to the service-role server client), matching the
+  // other CRM repositories so this repo is uniformly testable and monorepo-extractable.
+  constructor(supabaseClient: SupabaseClient = supabaseServer) {
+    this.supabase = supabaseClient;
+  }
+
   /**
    * Create a new document record
    */
@@ -89,7 +98,7 @@ export class ContactDocumentsRepository {
         'Creating contact document'
       );
 
-      const { data, error } = await supabaseServer
+      const { data, error } = await this.supabase
         .from('contact_documents')
         .insert({
           user_id: document.user_id,
@@ -132,7 +141,7 @@ export class ContactDocumentsRepository {
     userId: string
   ): Promise<ContactDocumentRepositoryResult<ContactDocument>> {
     try {
-      const { data, error } = await supabaseServer
+      const { data, error } = await this.supabase
         .from('contact_documents')
         .select('*')
         .eq('id', id)
@@ -162,7 +171,7 @@ export class ContactDocumentsRepository {
     try {
       const { document_type, status = 'active', limit = 50, offset = 0 } = options;
 
-      let query = supabaseServer
+      let query = this.supabase
         .from('contact_documents')
         .select('*')
         .eq('contact_id', contactId)
@@ -200,7 +209,7 @@ export class ContactDocumentsRepository {
     try {
       const { document_type, status = 'active' } = options;
 
-      let query = supabaseServer
+      let query = this.supabase
         .from('contact_documents')
         .select('id', { count: 'exact', head: true })
         .eq('contact_id', contactId)
@@ -235,7 +244,7 @@ export class ContactDocumentsRepository {
     try {
       logger.info({ documentId: id, userId }, 'Updating contact document');
 
-      const { data, error } = await supabaseServer
+      const { data, error } = await this.supabase
         .from('contact_documents')
         .update({
           ...update,
@@ -269,7 +278,7 @@ export class ContactDocumentsRepository {
     try {
       logger.info({ documentId: id, userId }, 'Soft deleting contact document');
 
-      const { error } = await supabaseServer
+      const { error } = await this.supabase
         .from('contact_documents')
         .update({
           status: 'deleted',
@@ -299,7 +308,7 @@ export class ContactDocumentsRepository {
     userId: string
   ): Promise<ContactDocumentRepositoryResult<ContactDocument>> {
     try {
-      const { data, error } = await supabaseServer
+      const { data, error } = await this.supabase
         .from('contact_documents')
         .select('*')
         .eq('storage_path', storagePath)
@@ -320,4 +329,4 @@ export class ContactDocumentsRepository {
 }
 
 // Export singleton instance
-export const contactDocumentsRepository = new ContactDocumentsRepository();
+export const contactDocumentsRepository = new ContactDocumentsRepository(supabaseServer);
