@@ -69,7 +69,10 @@ export async function POST(request: NextRequest) {
       company_name: profile.company_name || null,
       services: profile.services || [],
       clients_per_week: profile.clients_per_week || null,
-      tools: profile.tools || [],
+      // NOTE: `business_profiles` has no `tools` column (only `connected_plugins`).
+      // Writing `tools` caused PostgREST PGRST204 → the whole upsert 500'd. The
+      // request may still carry `tools` (accepted by the schema for BC), but it
+      // is not persisted here. See BusinessProfileRepository / 20260721 migration.
       website_url: profile.website_url || null,
       profile_completeness: profile.profile_completeness || 0,
       onboarding_completed: true,
