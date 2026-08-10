@@ -35,6 +35,7 @@ const corePluginFiles = [
       'crm-plugin-v2.json',
       'scheduling-plugin-v2.json',
       'payments-plugin-v2.json',
+      'intake-plugin-v2.json',
     ];
 
 // Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)

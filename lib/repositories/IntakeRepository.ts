@@ -4,6 +4,7 @@
  * Handles CRUD operations for intake forms configuration
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 
@@ -70,7 +71,9 @@ export interface IntakeRepositoryResult<T> {
 // ============================================
 
 export class IntakeRepository {
-  private supabase = supabaseServer;
+  // Constructor DI (I0.1): defaults to the service-role client so the singleton export stays
+  // byte-compatible, while tests / callers can inject a scoped client. Query logic is unchanged.
+  constructor(private supabase: SupabaseClient = supabaseServer) {}
 
   // ============================================
   // Template Methods
@@ -261,8 +264,10 @@ export class IntakeRepository {
       const { data, error } = await this.supabase
         .from('user_intake_settings')
         .insert({
-          user_id: userId,
-          ...settings
+          // M1 defense-in-depth: spread first so a stray `settings.user_id` can never
+          // override the authenticated id (user_id lands AFTER the spread).
+          ...settings,
+          user_id: userId
         })
         .select()
         .single();
@@ -321,8 +326,12 @@ export class IntakeRepository {
         .from('user_intake_settings')
         .upsert(
           {
-            user_id: userId,
+            // M1 defense-in-depth: spread first so a stray `settings.user_id` can never
+            // override the authenticated id (user_id lands AFTER the spread). Combined with
+            // the executor's explicit allow-list, a caller-supplied params.user_id cannot
+            // reach the onConflict:'user_id' target and overwrite another tenant's row.
             ...settings,
+            user_id: userId,
             updated_at: new Date().toISOString()
           },
           { onConflict: 'user_id' }
@@ -526,5 +535,5 @@ export class IntakeRepository {
   }
 }
 
-// Singleton export
-export const intakeRepository = new IntakeRepository();
+// Singleton export (byte-compatible with the previous no-arg construction)
+export const intakeRepository = new IntakeRepository(supabaseServer);
