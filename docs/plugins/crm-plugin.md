@@ -133,6 +133,15 @@ Without a seeded profile you'll get `access_denied` (the `db_active` guard). See
 
 ---
 
+## Known limitations & open items
+
+- ⬜ **Website forms / intake still write phantom columns** (tracked as `task_dda5f400`) — the public website form-submission path writes `crm_contacts` / `crm_activities` fields that don't exist in the schema, pending a data-model decision. This is a **website-route** concern outside the CRM plugin itself; the booking-route portion was already closed by the Scheduling work.
+- ⬜ **Read dashboards not yet repo-routed** — aggregate CRM reads behind `app/api/business-os/{stats,my-day}` are a fast-follow (CRM workplan item 1.2.c).
+- ℹ️ **`company` is stored in `custom_fields`** — `crm_contacts` has no dedicated `company` column; the AI assistant stores a supplied company name under `custom_fields.company`.
+- ℹ️ **Hard deletes** — `delete_contact` / `delete_task` are permanent (no soft-delete / restore).
+
+---
+
 ## Notes
 
 - Every action is automatically scoped to your own account — you can only read and write your own CRM data.

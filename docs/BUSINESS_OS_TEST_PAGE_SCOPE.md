@@ -104,7 +104,9 @@ _(Feature tabs will be inserted above/around this section as they are implemente
 
 ### Tab: Modules
 
-**Purpose:** exercise the internal **Business OS modules** — the repository-backed plugins with `visibility: 'business_os'` (CRM is the first) — with a schema-driven form, running as the logged-in session user.
+**Purpose:** exercise the internal **Business OS modules** — the repository-backed plugins with `visibility: 'business_os'` — with a schema-driven form, running as the logged-in session user. The module list is **data-driven** (no hardcoded module names): every `business_os`-visibility plugin appears automatically. As of 2026-08-10 that is **CRM**, **Scheduling**, and **Payments**; any future internal module surfaces here with no page changes.
+
+> **Registry caching:** the plugin registry is loaded at server cold-start, so a newly added internal plugin appears in the module list only after a **dev-server restart**.
 
 **Why it's a distinct surface from `/test-plugins-v2`'s Form Tester:** internal modules have **no OAuth/connection gate** (they use the `db_active` access strategy, enforced server-side), and this page is **session-based** — so operations run as *you*, not a typed userId. That pairs with **Account Setup** above: seed a profile, then run modules as the same account.
 
@@ -125,8 +127,12 @@ _(Feature tabs will be inserted above/around this section as they are implemente
 
 **Use cases:**
 - Seed a profile via Account Setup, then in Modules → **CRM** → `create_contact` / `list_contacts` / `add_task` / `move_stage` / `log_activity`.
-- Confirm the guard: run a CRM op as an account with **no** profile → `access_denied`.
-- Confirm no double-logging: after `create_contact`, inspect the contact's `crm_activities` — exactly one `contact_created` (the trigger's), none added by the executor.
+- **Scheduling** → `create_service` → `create_booking` → `reschedule_booking` / `cancel_booking`; `check_availability`.
+- **Payments** → `create_invoice` → `record_manual_payment` (referencing that invoice) → confirm it flips to `paid`; `get_revenue`.
+- Confirm the guard: run any module op as an account with **no** profile → `access_denied`.
+- Confirm no double-logging: after `create_contact`, inspect the contact's `crm_activities` — exactly one `contact_created` (the trigger's), none added by the executor. The same delegate-only rule holds for Scheduling (booking → CRM activity via T1/T2) and Payments (succeeded payment → CRM activity via T3, invoice paid via T4).
+
+**Per-module user docs:** [crm-plugin.md](/docs/plugins/crm-plugin.md) · [scheduling-plugin.md](/docs/plugins/scheduling-plugin.md) · [payments-plugin.md](/docs/plugins/payments-plugin.md).
 
 ---
 
@@ -224,3 +230,4 @@ Could not run a live session/DB. The following need a manual pass on `/test-busi
 | 2026-08-09 | Initial version | Created `/test-business-os` shell: session-based account model, Current User panel, Account Setup (seed profile) helper, shared Last API Response viewer + Debug Logs, and a placeholder Overview tab. Added the route to the middleware `skipOnboardingCheck` allowlist. Also fixed `POST /api/onboarding/build` (which Account Setup depends on): it wrote a non-existent `tools` column to `business_profiles`, causing PostgREST `PGRST204` → 500; the write was removed (the request still accepts `tools` for backward-compat but no longer persists it). No feature tabs yet. |
 | 2026-08-09 | Modules tab | Added the **Modules** tab: a schema-driven tester for internal Business OS modules (`visibility: 'business_os'` plugins; CRM first), running as the session user. Reuses existing endpoints only (Option A — no new APIs): `available?includeBusinessOs=true` (now returns `visibility`), `action-schema`, `execute`. New component `components/test-business-os/BosModuleTester.tsx`. |
 | 2026-08-09 | Chrome layout | Moved the **Current User** panel and **Account Setup** helper to render on the **Overview tab only** (previously always-visible chrome) — they are one-time account setup, not repeated per feature tab. The **Last API Response** viewer and **Debug Logs** remain always-visible. |
+| 2026-08-10 | Scheduling + Payments modules | The Modules tab now also lists **Scheduling** and **Payments** (both `visibility: business_os`) — no page changes required; the module list is data-driven. Updated the Modules section, use cases (Scheduling/Payments flows + delegate-only trigger notes), and linked the per-module user docs. |
