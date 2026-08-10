@@ -65,7 +65,7 @@ Proposed order (rationale below the table — this is a **recommendation**, re-p
 | 2 | **Scheduling** | `Scheduling`, `ExternalCalendarEvent` | 🟢 Implemented — QA PASS; awaiting user code review before RM | 🟡 | High value ("book an appointment"); the primary feeder of CRM side-effects (triggers T1/T2/T9). Repos exist. Natural successor. |
 | 3 | **Email** | `EmailAutomation` | 🅿️ **Parked** (user, 2026-08-10) | 🟡 | Repo-clean but automation engine doesn't exist (no drip cron; chat capability unwired) → v1 would be config-only. Revisit on product demand. See section. |
 | 4 | **Payments** | `Payment`, `PaymentPlan` (12 tables) | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🔴 | High value (invoices/checkout) but highest risk — money, Stripe Connect external path, triggers T3/T4. Do after the pattern is proven on 2–3 modules. |
-| 5 | **Intake** | `Intake` (`intake_form_templates`, `user_intake_settings`) | ⬜ Not started | 🟢 | Small, CRM-adjacent (form templates config). Quick win or fold into CRM. |
+| 5 | **Intake** | `Intake` (`intake_form_templates`, `user_intake_settings`) | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🟢 | Small, CRM-adjacent (form templates config). Simplest conversion yet — no cross-capability triggers on the config surface. |
 | 6 | **Website** | `WebsitePage`, `WebsiteBlock`, `WebsiteContent`, `WebsiteAnalytics` | ⬜ Not started | 🟡 | Content management — lower "capability to invoke" value for agents. Has a known repo gap to fix first (see its section). |
 | 7 | **Insights** | `Insight` (+ `lib/business-os/insight/**`) | ⬜ Blocked | 🔴 | Read-only analytics, not standard CRUD. **Needs insight-subsystem repository remediation first** (direct DB access). Separate track. |
 
@@ -150,9 +150,17 @@ These affect every internal module, not just one. Fix once, benefits all.
 
 ### Intake
 
-**Repositories:** `IntakeRepository` (`intake_form_templates`, `user_intake_settings`).
+**Status:** 🔵 Assessed (2026-08-10) — **the simplest conversion yet (🟢 confirmed)**. Workplan drafted, awaiting SA review: [Intake internal-plugin workplan](/docs/workplans/BUSINESS_OS_INTAKE_INTERNAL_PLUGIN_WORKPLAN.md).
+**Repositories:** `IntakeRepository` owns `intake_form_templates` (global **read-only seed catalog** — no `user_id`, 7 templates across verticals) + `user_intake_settings` (per-user config, `UNIQUE(user_id)`, one row). It also has booking-**response** methods over `scheduling_bookings` — **out of scope** (Scheduling's response flow).
+**Triggers to respect:** none of concern — only an `updated_at` timestamp trigger on `user_intake_settings`. **The config surface has ZERO cross-capability side-effects** (no double-log risk).
 
-**Open issues:** _None tracked yet — assess during conversion._ Note: the intake **form-submission** path (which writes CRM contacts/activities) lives in the website routes and is covered by the CRM `task_dda5f400` drift item — this module is the **template/settings config**, which is smaller and cleaner.
+**Open issues:**
+- ⬜ **`IntakeRepository` is not constructor-DI** — uses hardcoded `private supabase = supabaseServer` (`:73`); refactor to `SupabaseClient` injection to match CRM/Scheduling/Payments.
+- ⬜ **Dead / unused repo methods** — `saveIntakeResponses` (`:403`, the two public submit routes reimplement it inline) has no callers; `listAllTemplates`, `getTemplateByKey`, `getSettings`, `createSettings`, `updateSettings` are unused. Decide prune vs wire.
+- ⬜ **Not declared, not wired** — no `intake` capability in `capabilities-schema.ts` and no `SafeExecutionLayer` caller (more absent than Email). The plugin + Modules tab would be the **first executable surface** — no pre-existing P4 caller to reuse.
+- ℹ️ **`user_id` isolation for settings** — the executor must always pass the authenticated `user_id` to `upsertSettings` (the `UNIQUE(user_id)` upsert would otherwise let one user overwrite another's row); and must **NOT** inject a phantom `user_id` filter on the global template catalog (no such column).
+- ℹ️ **No template authoring in v1** — users *select* a seed template + toggle settings; custom template CRUD is a future, larger scope.
+- ✅ **Owned tables are clean** — accessed exclusively through `IntakeRepository` (no direct `.from()` outside the repo), no phantom columns. The 5 phantom-column writes in `app/api/website/forms/intake/route.ts` (`crm_contacts.name`/`.status`, `crm_activities.type`/`.metadata`, `scheduling_bookings.intake_completed`) belong to **CRM `task_dda5f400`**, not this module.
 
 ### Website
 

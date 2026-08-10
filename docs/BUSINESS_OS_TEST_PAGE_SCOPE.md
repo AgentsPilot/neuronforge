@@ -104,7 +104,7 @@ _(Feature tabs will be inserted above/around this section as they are implemente
 
 ### Tab: Modules
 
-**Purpose:** exercise the internal **Business OS modules** — the repository-backed plugins with `visibility: 'business_os'` — with a schema-driven form, running as the logged-in session user. The module list is **data-driven** (no hardcoded module names): every `business_os`-visibility plugin appears automatically. As of 2026-08-10 that is **CRM**, **Scheduling**, and **Payments**; any future internal module surfaces here with no page changes.
+**Purpose:** exercise the internal **Business OS modules** — the repository-backed plugins with `visibility: 'business_os'` — with a schema-driven form, running as the logged-in session user. The module list is **data-driven** (no hardcoded module names): every `business_os`-visibility plugin appears automatically. As of 2026-08-10 that is **CRM**, **Scheduling**, **Payments**, and **Intake**; any future internal module surfaces here with no page changes.
 
 > **Registry caching:** the plugin registry is loaded at server cold-start, so a newly added internal plugin appears in the module list only after a **dev-server restart**.
 
@@ -132,7 +132,7 @@ _(Feature tabs will be inserted above/around this section as they are implemente
 - Confirm the guard: run any module op as an account with **no** profile → `access_denied`.
 - Confirm no double-logging: after `create_contact`, inspect the contact's `crm_activities` — exactly one `contact_created` (the trigger's), none added by the executor. The same delegate-only rule holds for Scheduling (booking → CRM activity via T1/T2) and Payments (succeeded payment → CRM activity via T3, invoice paid via T4).
 
-**Per-module user docs:** [crm-plugin.md](/docs/plugins/crm-plugin.md) · [scheduling-plugin.md](/docs/plugins/scheduling-plugin.md) · [payments-plugin.md](/docs/plugins/payments-plugin.md).
+**Per-module user docs:** [crm-plugin.md](/docs/plugins/crm-plugin.md) · [scheduling-plugin.md](/docs/plugins/scheduling-plugin.md) · [payments-plugin.md](/docs/plugins/payments-plugin.md) · [intake-plugin.md](/docs/plugins/intake-plugin.md).
 
 ---
 
