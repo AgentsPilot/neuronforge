@@ -249,27 +249,10 @@ export class CRMActivityRepository {
     });
   }
 
-  /**
-   * Log payment activity (auto-logged from payments capability)
-   */
-  async logPayment(
-    userId: string,
-    contactId: string,
-    paymentId: string,
-    amount: number,
-    description?: string
-  ): Promise<CRMActivityRepositoryResult<CRMActivity>> {
-    return this.create({
-      user_id: userId,
-      contact_id: contactId,
-      activity_type: 'payment',
-      title: `Payment Received: $${amount}`,
-      description: description || null,
-      auto_logged: true,
-      source_capability: 'payments',
-      source_entity_id: paymentId
-    });
-  }
+  // NOTE (Payments plugin P0.4): a `logPayment` helper used to live here. It was DEAD
+  // (zero callers) and a double-log footgun — the `log_payment_activity` Postgres trigger
+  // (T3) is the sole owner of the `crm_activities` payment row on the succeeded-transaction
+  // path. Removed to prevent any future caller from double-logging alongside the trigger.
 
   /**
    * Log email activity (auto-logged from email capability)

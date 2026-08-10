@@ -416,13 +416,14 @@ export class SchedulingServiceRepository {
     userId: string
   ): Promise<SchedulingRepositoryResult<number>> {
     try {
-      // Count all bookings for this service (the service ownership is already verified by user_id)
-      // We don't filter by user_id here since bookings are linked to service_id,
-      // and the service ownership is enforced in the delete method
+      // Count bookings for this service, scoped to the owner. `user_id` is included (not just
+      // `service_id`) so this method is safe to call standalone — e.g. as the `count_bookings`
+      // plugin operation — without leaking another tenant's counts for a guessed service_id.
       const { count, error } = await this.supabase
         .from('scheduling_bookings')
         .select('*', { count: 'exact', head: true })
-        .eq('service_id', serviceId);
+        .eq('service_id', serviceId)
+        .eq('user_id', userId);
 
       if (error) throw error;
 
@@ -589,7 +590,7 @@ export class SchedulingBookingRepository {
     options: {
       serviceId?: string;
       contactId?: string;
-      status?: string;
+      status?: string | string[];
       startDate?: string;
       endDate?: string;
       search?: string;
@@ -623,7 +624,7 @@ export class SchedulingBookingRepository {
       }
 
       if (status) {
-        query = query.eq('status', status);
+        query = Array.isArray(status) ? query.in('status', status) : query.eq('status', status);
       }
 
       if (startDate) {

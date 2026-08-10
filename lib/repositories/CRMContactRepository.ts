@@ -22,6 +22,7 @@ export interface CRMContact {
   tags: string[];
   custom_fields: Record<string, any>;
   source: string | null; // 'website_form', 'manual', 'import', 'booking', 'campaign'
+  notes: string | null;
   created_at: string;
   updated_at: string;
   // Aggregated fields (optional, populated by list queries)
@@ -39,6 +40,7 @@ export interface CRMContactInsert {
   tags?: string[];
   custom_fields?: Record<string, any>;
   source?: string | null;
+  notes?: string | null;
 }
 
 export interface CRMContactUpdate {
@@ -49,6 +51,7 @@ export interface CRMContactUpdate {
   stage?: string;
   tags?: string[];
   custom_fields?: Record<string, any>;
+  notes?: string | null;
 }
 
 export interface CRMContactRepositoryResult<T> {

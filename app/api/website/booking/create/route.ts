@@ -272,32 +272,9 @@ export async function POST(request: NextRequest) {
       throw bookingError || new Error('Failed to create booking');
     }
 
-    // Create activity (non-blocking) for all bookings with a contact
-    if (contactId) {
-      const activityDescription = startTime
-        ? `Booked via website for ${startTime.toLocaleString()}`
-        : `Purchased via website`;
-      const activityDate = startTime?.toISOString() || new Date().toISOString();
-
-      supabaseServer
-        .from('crm_activities')
-        .insert({
-          user_id: ownerId,
-          contact_id: contactId,
-          activity_type: 'booking',
-          title: `Booking: ${service.service_name}`,
-          description: activityDescription,
-          activity_date: activityDate,
-          auto_logged: true,
-          source_capability: 'scheduling',
-          source_entity_id: booking.id
-        })
-        .then(({ error }) => {
-          if (error) {
-            requestLogger.warn({ err: error }, 'Failed to create activity (non-blocking)');
-          }
-        });
-    }
+    // NOTE: the booking `crm_activities` row is logged automatically by Postgres trigger T2
+    // (log_booking_activity_trigger) on the booking INSERT when contact_id is set. We do NOT
+    // insert it here — doing so double-logged the activity. (Scheduling plugin workplan §2 0.2.)
 
     // Send booking confirmation email (non-blocking)
     // Only for FREE bookings - paid bookings get confirmation after payment in Stripe webhook

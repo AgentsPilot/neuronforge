@@ -12,6 +12,10 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
+import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { schedulingServiceRepository, schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteAvailabilityAPI' });
@@ -179,11 +183,8 @@ export async function GET(request: NextRequest) {
     // If subdomain is provided, look up website owner (public access)
     // Otherwise, use authenticated user (preview mode)
     if (subdomain) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('id, user_id')
-        .eq('subdomain', subdomain)
-        .single();
+      const pageRepo = new WebsitePageRepository(supabaseServer);
+      const { data: websitePage, error: pageError } = await pageRepo.findBySubdomainAny(subdomain);
 
       if (pageError || !websitePage) {
         return NextResponse.json(
@@ -226,12 +227,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get service details (for duration)
-    const { data: service, error: serviceError } = await supabaseServer
-      .from('scheduling_services')
-      .select('id, service_name, duration_minutes, is_active')
-      .eq('id', service_id)
-      .eq('user_id', ownerId)
-      .single();
+    const { data: service, error: serviceError } = await schedulingServiceRepository.findById(service_id, ownerId);
 
     if (serviceError || !service) {
       return NextResponse.json(
@@ -256,11 +252,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get business profile with availability
-    const { data: profile, error: profileError } = await supabaseServer
-      .from('business_profiles')
-      .select('scheduling_availability')
-      .eq('user_id', ownerId)
-      .single();
+    const { data: profile, error: profileError } = await businessProfileRepository.findByUserId(ownerId);
 
     if (profileError || !profile || !profile.scheduling_availability) {
       return NextResponse.json({
@@ -316,22 +308,21 @@ export async function GET(request: NextRequest) {
     const dayStart = date + 'T00:00:00.000Z';
     const dayEnd = date + 'T23:59:59.999Z';
 
-    const { data: existingBookings } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('start_time, end_time')
-      .eq('user_id', ownerId)
-      .neq('status', 'cancelled')
-      .gte('start_time', dayStart)
-      .lte('start_time', dayEnd);
+    // All non-cancelled bookings block their slot. The status enum is exhaustive
+    // ('confirmed' | 'cancelled' | 'completed' | 'no_show'), so listing the three
+    // non-cancelled states is equivalent to the prior `.neq('status', 'cancelled')`.
+    const { data: existingBookings } = await schedulingBookingRepository.list(ownerId, {
+      status: ['confirmed', 'completed', 'no_show'],
+      startDate: dayStart,
+      endDate: dayEnd,
+      limit: 500,
+    });
 
-    // Get external calendar events for this date
-    const { data: externalEvents } = await supabaseServer
-      .from('external_calendar_events')
-      .select('start_time, end_time')
-      .eq('user_id', ownerId)
-      .eq('blocks_availability', true)
-      .gte('start_time', dayStart)
-      .lte('start_time', dayEnd);
+    // Get external calendar events overlapping this day via the repository. getBusySlots uses
+    // proper overlap semantics (start < dayEnd AND end > dayStart), so multi-hour/all-day events
+    // spanning into the day are correctly treated as busy. Every synced event is a busy block.
+    const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(ownerId, dayStart, dayEnd);
+    const externalEvents = (busySlots || []).map(slot => ({ start_time: slot.start, end_time: slot.end }));
 
     // Generate available slots
     const slots = generateTimeSlots(
@@ -339,7 +330,7 @@ export async function GET(request: NextRequest) {
       dayAvailability,
       service.duration_minutes,
       existingBookings || [],
-      externalEvents || [],
+      externalEvents,
       timezone
     );
 
