@@ -1,0 +1,210 @@
+{
+  "plugin": {
+    "name": "website",
+    "displayName": "Website",
+    "version": "1.0.0",
+    "description": "Internal Website: the content-management surface for the current Business OS account's site — its pages (read/create/edit/publish) and each page's on-page blocks (list/toggle/edit content), plus read-only traffic analytics. Backed by the internal Business OS data store (no external account required).",
+    "context": "Use to inspect and manage the account's website. Pages: list_pages / get_page read the account's pages; create_page / update_page author or edit a page (only a fixed set of editable fields is applied — ownership is never caller-supplied); publish_page / unpublish_page flip a page between live and draft. Blocks: list_blocks reads a page's on-page sections; toggle_block shows/hides a block; update_block_content edits a block's content. Analytics: get_analytics_summary reads site-wide traffic, get_page_analytics reads one page's traffic. Every operation is scoped to the current account — a page or block belonging to another account is never returned or modified. Editor-grade plumbing (block reordering, deletion, domain/subdomain setup, templates, page archival/deletion) is out of scope and handled by the website UI.",
+    "category": "productivity",
+    "isSystem": true,
+    "visibility": "business_os",
+    "provider_family": "internal-bos",
+    "access_strategy": { "type": "db_active" },
+    "domain": "web",
+    "auth_config": {
+      "auth_type": "internal",
+      "client_id": "internal",
+      "client_secret": "internal",
+      "redirect_uri": "",
+      "auth_url": "",
+      "token_url": "",
+      "refresh_url": "",
+      "profile_url": "",
+      "required_scopes": []
+    }
+  },
+  "actions": {
+    "list_pages": {
+      "description": "List this account's website pages (excludes archived pages). Returns each page's id, type, slug, title, status, and metadata.",
+      "usage_context": "When the user wants to see the pages that make up their website.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "list",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": { "type": "object", "required": [], "properties": {} },
+      "output_guidance": { "success_description": "Website pages listed", "common_errors": { "access_denied": "No Business OS profile for this account.", "invalid_request": "Could not list website pages." } }
+    },
+    "get_page": {
+      "description": "Fetch a single website page owned by this account by id, with its full metadata (type, slug, title, SEO fields, theme, status).",
+      "usage_context": "When you need the full definition of one page.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Page id." } } },
+      "output_guidance": { "success_description": "Website page retrieved", "common_errors": { "access_denied": "That page does not belong to this account.", "not_found": "No page with that id." } }
+    },
+    "create_page": {
+      "description": "Create a new website page for this account. Only a fixed set of editable fields is applied (title, slug, page type, SEO, theme, language). Ownership is set from the authenticated account and can never be supplied by the caller. New pages start in draft.",
+      "usage_context": "When the user wants to add a new page to their website.",
+      "idempotent": false,
+      "domain": "web",
+      "capability": "create",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["page_type", "slug", "title"],
+        "properties": {
+          "page_type": { "type": "string", "description": "Page type: homepage, landing, about, services, or blog_post." },
+          "slug": { "type": "string", "description": "URL slug for the page." },
+          "title": { "type": "string", "description": "Page title." },
+          "meta_description": { "type": "string", "description": "SEO meta description." },
+          "seo_keywords": { "type": "array", "items": { "type": "string" }, "description": "SEO keywords." },
+          "theme": { "type": "object", "description": "Page theme (colors, fonts, spacing)." },
+          "subdomain": { "type": "string", "description": "Subdomain for the page." },
+          "favicon_url": { "type": "string", "description": "Favicon URL." },
+          "og_image_url": { "type": "string", "description": "Open Graph image URL." },
+          "website_language": { "type": "string", "description": "Content language: en, es, or he." }
+        }
+      },
+      "output_guidance": { "success_description": "Website page created", "common_errors": { "access_denied": "No Business OS profile for this account.", "invalid_request": "Could not create the page (check required fields / slug uniqueness)." } }
+    },
+    "update_page": {
+      "description": "Update an existing website page owned by this account. Only a fixed set of editable fields is applied (title, slug, page type, SEO, theme, subdomain, custom domain, favicon, OG image, language). Ownership and publish state are never changed through this action.",
+      "usage_context": "When the user wants to edit a page's title, slug, SEO, theme, or other editable metadata.",
+      "idempotent": false,
+      "domain": "web",
+      "capability": "update",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Page id to update." },
+          "page_type": { "type": "string", "description": "Page type: homepage, landing, about, services, or blog_post." },
+          "slug": { "type": "string", "description": "URL slug for the page." },
+          "title": { "type": "string", "description": "Page title." },
+          "meta_description": { "type": "string", "description": "SEO meta description." },
+          "seo_keywords": { "type": "array", "items": { "type": "string" }, "description": "SEO keywords." },
+          "theme": { "type": "object", "description": "Page theme (colors, fonts, spacing)." },
+          "subdomain": { "type": "string", "description": "Subdomain for the page." },
+          "custom_domain": { "type": "string", "description": "Custom domain for the page." },
+          "favicon_url": { "type": "string", "description": "Favicon URL." },
+          "og_image_url": { "type": "string", "description": "Open Graph image URL." },
+          "website_language": { "type": "string", "description": "Content language: en, es, or he." }
+        }
+      },
+      "output_guidance": { "success_description": "Website page updated", "common_errors": { "access_denied": "That page does not belong to this account.", "invalid_request": "Could not update the page." } }
+    },
+    "publish_page": {
+      "description": "Publish a website page owned by this account — sets its status to live so it is served publicly.",
+      "usage_context": "When the user wants to make a page live.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "update",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Page id to publish." } } },
+      "output_guidance": { "success_description": "Website page published", "common_errors": { "access_denied": "That page does not belong to this account.", "invalid_request": "Could not publish the page." } }
+    },
+    "unpublish_page": {
+      "description": "Unpublish a website page owned by this account — returns it to draft so it is no longer served publicly.",
+      "usage_context": "When the user wants to take a page offline.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "update",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Page id to unpublish." } } },
+      "output_guidance": { "success_description": "Website page unpublished", "common_errors": { "access_denied": "That page does not belong to this account.", "invalid_request": "Could not unpublish the page." } }
+    },
+    "list_blocks": {
+      "description": "List the on-page content blocks (sections) of a page owned by this account, ordered by position. Optionally return only enabled blocks.",
+      "usage_context": "When the user wants to see the sections that make up a page.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "list",
+      "input_entity": "record",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": ["page_id"],
+        "properties": {
+          "page_id": { "type": "string", "description": "Id of the page whose blocks to list." },
+          "enabled_only": { "type": "boolean", "description": "When true, return only enabled blocks." }
+        }
+      },
+      "output_guidance": { "success_description": "Page blocks listed", "common_errors": { "access_denied": "That page does not belong to this account.", "invalid_request": "Could not list page blocks." } }
+    },
+    "toggle_block": {
+      "description": "Show or hide a single content block. The block's parent page must belong to this account. Sets the block's enabled flag.",
+      "usage_context": "When the user wants to show or hide a section on a page.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "update",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["block_id", "enabled"],
+        "properties": {
+          "block_id": { "type": "string", "description": "Id of the block to show/hide." },
+          "enabled": { "type": "boolean", "description": "True to show the block, false to hide it." }
+        }
+      },
+      "output_guidance": { "success_description": "Block visibility updated", "common_errors": { "access_denied": "That block's page does not belong to this account.", "invalid_request": "Could not toggle the block." } }
+    },
+    "update_block_content": {
+      "description": "Update the content of a single block (merged into its existing content). The block's parent page must belong to this account.",
+      "usage_context": "When the user wants to edit the content of a section — e.g. change a headline, service list, or FAQ.",
+      "idempotent": false,
+      "domain": "web",
+      "capability": "update",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["block_id", "content"],
+        "properties": {
+          "block_id": { "type": "string", "description": "Id of the block to edit." },
+          "content": { "type": "object", "description": "Partial content object to merge into the block's existing content." }
+        }
+      },
+      "output_guidance": { "success_description": "Block content updated", "common_errors": { "access_denied": "That block's page does not belong to this account.", "invalid_request": "Could not update the block content." } }
+    },
+    "get_analytics_summary": {
+      "description": "Get site-wide traffic analytics for this account (total views, unique visitors, and today / this-month / 30-day / 7-day rollups). Optionally scope to a single subdomain.",
+      "usage_context": "When the user wants an overview of their website traffic.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "get",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": { "subdomain": { "type": "string", "description": "Optional subdomain to scope the summary to." } }
+      },
+      "output_guidance": { "success_description": "Website analytics summary retrieved", "common_errors": { "access_denied": "No Business OS profile for this account.", "invalid_request": "Could not fetch analytics summary." } }
+    },
+    "get_page_analytics": {
+      "description": "Get traffic analytics for a single page owned by this account (same rollups as the site-wide summary, scoped to the page). A page not owned by this account returns a zeroed summary.",
+      "usage_context": "When the user wants traffic stats for one specific page.",
+      "idempotent": true,
+      "domain": "web",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["page_id"], "properties": { "page_id": { "type": "string", "description": "Id of the page to get analytics for." } } },
+      "output_guidance": { "success_description": "Page analytics retrieved", "common_errors": { "access_denied": "No Business OS profile for this account.", "invalid_request": "Could not fetch page analytics." } }
+    }
+  }
+}

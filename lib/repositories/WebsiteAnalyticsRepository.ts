@@ -151,14 +151,8 @@ export class WebsiteAnalyticsRepository {
 
       const { data, error } = await query;
 
-      console.log('[Analytics Repo] Query result:', {
-        dataLength: data?.length,
-        error,
-        userId,
-        subdomain,
-        firstRecord: data?.[0],
-        serverTime: new Date().toISOString()
-      });
+      // Log counts/ids only — never full row bodies (M4).
+      logger.debug({ recordCount: data?.length ?? 0, userId, subdomain }, 'Analytics summary query result');
 
       if (error) throw error;
 
@@ -239,7 +233,10 @@ export class WebsiteAnalyticsRepository {
         visitors_7d: sevenDayIpHashes.size
       };
 
-      console.log('[Analytics Repo] Computed stats:', result);
+      logger.debug(
+        { userId, subdomain, totalViews: result.total_views, uniqueVisitors: result.unique_visitors },
+        'Computed analytics summary stats'
+      );
 
       return {
         data: result,
