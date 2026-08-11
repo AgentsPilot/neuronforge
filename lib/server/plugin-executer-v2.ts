@@ -31,6 +31,7 @@ import { CRMPluginExecutor } from './crm-plugin-executor';
 import { SchedulingPluginExecutor } from './scheduling-plugin-executor';
 import { PaymentsPluginExecutor } from './payments-plugin-executor';
 import { IntakePluginExecutor } from './intake-plugin-executor';
+import { WebsitePluginExecutor } from './website-plugin-executor';
 
 const logger = createLogger({ module: 'PluginExecuter', service: 'plugin-system' });
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
@@ -68,6 +69,7 @@ export class PluginExecuterV2 {
     'scheduling': SchedulingPluginExecutor, // Internal (repository-backed) plugin — db_active
     'payments': PaymentsPluginExecutor, // Internal (repository-backed) plugin — db_active
     'intake': IntakePluginExecutor, // Internal (repository-backed) plugin — db_active
+    'website': WebsitePluginExecutor, // Internal (repository-backed) plugin — db_active
     // Add new plugin executors here
   };
 
