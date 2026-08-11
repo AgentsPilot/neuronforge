@@ -241,33 +241,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Create CRM activity (non-blocking)
-    // Handle both scheduled bookings (with start_time) and non-scheduled (courses, products)
-    if (contactId) {
-      const startTime = booking.start_time ? new Date(booking.start_time) : null;
-      const activityDescription = startTime
-        ? `Booked via website for ${startTime.toLocaleString()} (paid)`
-        : `Purchased via website (paid)`;
-      const activityDate = startTime?.toISOString() || new Date().toISOString();
-
-      supabaseServer
-        .from('crm_activities')
-        .insert({
-          user_id: ownerId,
-          contact_id: contactId,
-          activity_type: 'booking',
-          title: `Booking: ${service?.service_name || 'Service'}`,
-          description: activityDescription,
-          activity_date: activityDate,
-          auto_logged: true,
-          source_capability: 'scheduling',
-          source_entity_id: booking.id
-        })
-        .then(({ error }) => {
-          if (error) {
-            requestLogger.warn({ err: error }, 'Failed to create activity (non-blocking)');
-          }
-        });
-    }
+    // NOTE: the booking `crm_activities` row is logged automatically by Postgres trigger T2 on
+    // the booking UPDATE-to-confirmed (contact_id set) — not inserted here (was double-logging).
+    // (Scheduling plugin workplan §2 0.2.)
 
     // Send booking confirmation email (non-blocking)
     // skipInvoice=true since payment is already completed

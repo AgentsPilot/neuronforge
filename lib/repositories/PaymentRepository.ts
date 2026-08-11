@@ -1,3 +1,4 @@
+import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 
@@ -91,7 +92,13 @@ export type PaymentRepositoryResult<T> = {
 
 // Transaction Repository
 export class PaymentTransactionRepository {
-  private supabase = supabaseServer;
+  private supabase: SupabaseClient;
+
+  // Constructor injection (matches PaymentPlanRepository/Scheduling/CRM). The singleton export
+  // below passes `supabaseServer`, keeping existing importers byte-compatible.
+  constructor(supabase: SupabaseClient = supabaseServer) {
+    this.supabase = supabase;
+  }
 
   async create(transaction: Omit<PaymentTransaction, 'id' | 'created_at' | 'updated_at'>): Promise<PaymentRepositoryResult<PaymentTransaction>> {
     try {
@@ -369,7 +376,13 @@ export class PaymentTransactionRepository {
 
 // Invoice Repository
 export class PaymentInvoiceRepository {
-  private supabase = supabaseServer;
+  private supabase: SupabaseClient;
+
+  // Constructor injection (matches PaymentPlanRepository/Scheduling/CRM). The singleton export
+  // below passes `supabaseServer`, keeping existing importers byte-compatible.
+  constructor(supabase: SupabaseClient = supabaseServer) {
+    this.supabase = supabase;
+  }
 
   async create(invoice: Omit<PaymentInvoice, 'id' | 'created_at' | 'updated_at'>): Promise<PaymentRepositoryResult<PaymentInvoice>> {
     try {
@@ -525,6 +538,29 @@ export class PaymentInvoiceRepository {
       return { data: 'INV-00001', error: null };
     } catch (error) {
       logger.error({ err: error }, 'Failed to get next invoice number');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Count invoices for a user, optionally filtered by status. Uses a head-only exact count
+   * (no rows fetched). Backs the `count_invoices` plugin op.
+   */
+  async count(userId: string, opts?: { status?: string }): Promise<PaymentRepositoryResult<number>> {
+    try {
+      let query = this.supabase
+        .from('payment_invoices')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+
+      if (opts?.status) query = query.eq('status', opts.status);
+
+      const { count, error } = await query;
+      if (error) throw error;
+
+      return { data: count || 0, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to count invoices');
       return { data: null, error: error as Error };
     }
   }
@@ -724,7 +760,13 @@ export class PaymentInvoiceRepository {
 
 // Stripe Connect Repository
 export class StripeConnectRepository {
-  private supabase = supabaseServer;
+  private supabase: SupabaseClient;
+
+  // Constructor injection (matches PaymentPlanRepository/Scheduling/CRM). The singleton export
+  // below passes `supabaseServer`, keeping existing importers byte-compatible.
+  constructor(supabase: SupabaseClient = supabaseServer) {
+    this.supabase = supabase;
+  }
 
   async create(account: Omit<StripeConnectAccount, 'id' | 'created_at' | 'updated_at'>): Promise<PaymentRepositoryResult<StripeConnectAccount>> {
     try {

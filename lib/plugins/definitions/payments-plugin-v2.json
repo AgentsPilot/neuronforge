@@ -1,0 +1,492 @@
+{
+  "plugin": {
+    "name": "payments",
+    "displayName": "Payments",
+    "version": "1.0.0",
+    "description": "Internal Payments: invoices, recorded transactions, refund records, and payment plans (installments) for the current Business OS account. Database-record operations only — it never moves money.",
+    "context": "Use to manage the user's own billing records — create/list/update/send/cancel invoices, record payments that happened externally or manually (cash/check/bank transfer), record refunds, report revenue, and manage payment plans and their installments. Backed by the internal Business OS data store (no external account required). It performs NO charging, checkout, card refunds, or Stripe Connect calls — those stay in the external Stripe flow. record_manual_payment is a bookkeeping entry, not a fund transfer. Payment-received side-effects (invoice→paid, CRM activity) are handled automatically by the system.",
+    "category": "productivity",
+    "isSystem": true,
+    "visibility": "business_os",
+    "provider_family": "internal-bos",
+    "access_strategy": { "type": "db_active" },
+    "auth_config": {
+      "auth_type": "internal",
+      "client_id": "internal",
+      "client_secret": "internal",
+      "redirect_uri": "",
+      "auth_url": "",
+      "token_url": "",
+      "refresh_url": "",
+      "profile_url": "",
+      "required_scopes": []
+    }
+  },
+  "actions": {
+    "create_invoice": {
+      "description": "Create a new draft invoice for the current account. The invoice number is generated automatically.",
+      "usage_context": "When the user wants to bill a client. Optionally link a contact and provide line items; otherwise a single line item is built from the amount.",
+      "idempotent": false,
+      "domain": "payments",
+      "capability": "create",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["amount"],
+        "properties": {
+          "amount": { "type": "number", "description": "Invoice total amount." },
+          "currency": { "type": "string", "enum": ["USD", "EUR", "ILS", "GBP"], "description": "Currency (defaults to ILS)." },
+          "contact_id": { "type": "string", "description": "Optional CRM contact id to bill." },
+          "description": { "type": "string", "description": "Line-item description (used when line_items is not provided)." },
+          "line_items": {
+            "type": "array",
+            "description": "Explicit line items. If omitted, one line item is built from amount + description.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "description": { "type": "string" },
+                "quantity": { "type": "number" },
+                "unit_price": { "type": "number" },
+                "total": { "type": "number" }
+              }
+            }
+          },
+          "due_date": { "type": "string", "description": "Due date (ISO 8601)." },
+          "payment_terms": { "type": "string", "description": "Payment terms (default due_on_receipt)." },
+          "notes": { "type": "string", "description": "Client-facing notes." },
+          "internal_notes": { "type": "string", "description": "Internal notes." }
+        }
+      },
+      "output_guidance": { "success_description": "Invoice created", "common_errors": { "invalid_request": "Invoice could not be created. Check the fields." } }
+    },
+    "list_invoices": {
+      "description": "List/filter invoices for the account.",
+      "usage_context": "When the user wants to see their invoices, optionally by status or contact.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "list",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "status": { "type": "string", "enum": ["draft", "sent", "paid", "overdue", "cancelled"], "description": "Filter by status." },
+          "contact_id": { "type": "string", "description": "Filter by contact." },
+          "search": { "type": "string", "description": "Search by invoice number." },
+          "include_contact": { "type": "boolean", "default": false, "description": "Include basic contact info." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." }
+        }
+      },
+      "output_guidance": { "success_description": "Invoices listed", "common_errors": { "invalid_request": "Could not list invoices." } }
+    },
+    "get_invoice": {
+      "description": "Fetch a single invoice by id.",
+      "usage_context": "When you need one invoice's full record.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Invoice id." } } },
+      "output_guidance": { "success_description": "Invoice retrieved", "common_errors": { "not_found": "No invoice with that id for this account." } }
+    },
+    "update_invoice": {
+      "description": "Update fields on an invoice (status, amount, due date, notes).",
+      "usage_context": "When the user wants to edit an invoice. Prefer send_invoice / cancel_invoice / mark_invoice_paid for those specific transitions.",
+      "idempotent": false,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Invoice id." },
+          "status": { "type": "string", "enum": ["draft", "sent", "paid", "overdue", "cancelled"] },
+          "amount": { "type": "number" },
+          "due_date": { "type": "string", "description": "Due date (ISO 8601)." },
+          "notes": { "type": "string" },
+          "internal_notes": { "type": "string" }
+        }
+      },
+      "output_guidance": { "success_description": "Invoice updated", "common_errors": { "not_found": "No invoice with that id for this account." } }
+    },
+    "send_invoice": {
+      "description": "Mark an invoice as sent (status → sent). Status-only: no email is dispatched by this op.",
+      "usage_context": "When the user wants to mark an invoice as sent to the client. Actual email delivery is a separate external step.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Invoice id." } } },
+      "output_guidance": { "success_description": "Invoice marked as sent (no email dispatched — delivery is a separate step)", "common_errors": { "not_found": "No invoice with that id for this account." } }
+    },
+    "cancel_invoice": {
+      "description": "Cancel an invoice (status → cancelled). Invoices are financial records and are never hard-deleted.",
+      "usage_context": "When the user wants to void/cancel an invoice.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Invoice id." } } },
+      "output_guidance": { "success_description": "Invoice cancelled", "common_errors": { "not_found": "No invoice with that id for this account." } }
+    },
+    "mark_invoice_paid": {
+      "description": "STATUS-ONLY reconciliation: set an invoice's status to paid without creating a transaction. Does NOT count toward revenue and fires no CRM activity. Use only to correct/override invoice status. For a real payment received, use record_manual_payment instead.",
+      "usage_context": "When the user needs to correct an invoice's status to paid (e.g. it was paid through a channel already recorded elsewhere). Do NOT use this to log a newly received payment — that under-reports revenue; use record_manual_payment.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id", "payment_method"],
+        "properties": {
+          "id": { "type": "string", "description": "Invoice id." },
+          "payment_method": { "type": "string", "description": "Payment method label (e.g. cash, bank_transfer, check)." },
+          "processor_type": { "type": "string", "description": "Processor type (default manual)." },
+          "notes": { "type": "string", "description": "Payment notes." },
+          "received_at": { "type": "string", "description": "When payment was received (ISO 8601; default now)." }
+        }
+      },
+      "output_guidance": { "success_description": "Invoice status set to paid (status-only — this does NOT create a transaction and is NOT counted in revenue; use record_manual_payment for real payments)", "common_errors": { "not_found": "No invoice with that id for this account." } }
+    },
+    "count_invoices": {
+      "description": "Count invoices for the account, optionally filtered by status.",
+      "usage_context": "When the user wants how many invoices exist (optionally by status).",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "aggregate",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "status": { "type": "string", "enum": ["draft", "sent", "paid", "overdue", "cancelled"], "description": "Optional status filter." }
+        }
+      },
+      "output_guidance": { "success_description": "Invoices counted", "common_errors": { "invalid_request": "Could not count invoices." } }
+    },
+    "list_transactions": {
+      "description": "List/filter payment transactions for the account.",
+      "usage_context": "When the user wants to see recorded payments, optionally by status or contact.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "list",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "status": { "type": "string", "enum": ["pending", "succeeded", "failed", "refunded"], "description": "Filter by status." },
+          "contact_id": { "type": "string", "description": "Filter by contact." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." }
+        }
+      },
+      "output_guidance": { "success_description": "Transactions listed", "common_errors": { "invalid_request": "Could not list transactions." } }
+    },
+    "get_transaction": {
+      "description": "Fetch a single payment transaction by id.",
+      "usage_context": "When you need one transaction's full record.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Transaction id." } } },
+      "output_guidance": { "success_description": "Transaction retrieved", "common_errors": { "not_found": "No transaction with that id for this account." } }
+    },
+    "record_manual_payment": {
+      "description": "Canonical 'payment received' path (REVENUE-BEARING): records a succeeded transaction for a payment that happened externally or manually (cash/check/bank transfer). This counts toward revenue; the system automatically marks a linked invoice as paid and logs a CRM activity when a contact is present. It moves NO money — it is a bookkeeping entry only.",
+      "usage_context": "When the user reports that a client paid (in cash/check/transfer/etc.). Always use this — not mark_invoice_paid — for real payments so revenue is reported correctly. Optionally link an invoice_id and/or contact_id.",
+      "idempotent": false,
+      "domain": "payments",
+      "capability": "create",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["amount", "payment_method"],
+        "properties": {
+          "amount": { "type": "number", "description": "Amount received." },
+          "currency": { "type": "string", "enum": ["USD", "EUR", "ILS", "GBP"], "description": "Currency (defaults to ILS)." },
+          "payment_method": { "type": "string", "enum": ["cash", "bank_transfer", "check", "other"], "description": "How the payment was received." },
+          "invoice_id": { "type": "string", "description": "Optional invoice this payment settles (ownership is verified; a linked invoice is auto-marked paid by the system)." },
+          "contact_id": { "type": "string", "description": "Optional CRM contact who paid (ownership is verified; a CRM activity is auto-logged by the system when present)." },
+          "description": { "type": "string", "description": "Payment description." },
+          "notes": { "type": "string", "description": "Internal notes." },
+          "received_at": { "type": "string", "description": "When payment was received (ISO 8601; default now)." }
+        }
+      },
+      "output_guidance": { "success_description": "Payment recorded (counts toward revenue; a linked invoice is marked paid and a CRM activity is logged automatically)", "common_errors": { "access_denied": "The linked invoice or contact does not belong to this account.", "invalid_request": "Payment could not be recorded. Check the fields." } }
+    },
+    "create_refund_record": {
+      "description": "Record a refund against an existing transaction (database record only — it does NOT refund a card or call any processor). A partial refund keeps the transaction succeeded; a full refund sets it to refunded.",
+      "usage_context": "When the user wants to log that a refund was issued (externally/manually). The actual money-back-to-card is a separate external step.",
+      "idempotent": false,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["transaction_id", "amount"],
+        "properties": {
+          "transaction_id": { "type": "string", "description": "Transaction being refunded." },
+          "amount": { "type": "number", "description": "Refund amount." },
+          "is_full_refund": { "type": "boolean", "default": false, "description": "True for a full refund (transaction → refunded); false for partial (stays succeeded)." },
+          "reason": { "type": "string", "description": "Refund reason." },
+          "processor_refund_id": { "type": "string", "description": "Optional external processor refund id, for reconciliation." }
+        }
+      },
+      "output_guidance": { "success_description": "Refund record created (no money moved — external refund is a separate step)", "common_errors": { "not_found": "No transaction with that id for this account.", "invalid_request": "Refund could not be recorded." } }
+    },
+    "get_revenue": {
+      "description": "Total succeeded-transaction revenue for the account, optionally within a date range.",
+      "usage_context": "When the user wants their revenue total. Only succeeded transactions count (payments recorded via record_manual_payment or the external processor); mark_invoice_paid alone does not contribute.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "aggregate",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "start_date": { "type": "string", "description": "Only transactions on/after this ISO date." },
+          "end_date": { "type": "string", "description": "Only transactions on/before this ISO date." }
+        }
+      },
+      "output_guidance": { "success_description": "Revenue computed", "common_errors": { "invalid_request": "Could not compute revenue." } }
+    },
+    "create_plan": {
+      "description": "Create a payment plan template (total split into installments).",
+      "usage_context": "When the user wants to offer a payment plan for a service or amount.",
+      "idempotent": false,
+      "domain": "payments",
+      "capability": "create",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["name", "total_amount", "currency", "installment_count", "installment_amount", "installment_frequency"],
+        "properties": {
+          "name": { "type": "string", "description": "Plan name." },
+          "total_amount": { "type": "number", "description": "Total amount across all installments." },
+          "currency": { "type": "string", "enum": ["USD", "EUR", "ILS", "GBP"], "description": "Base currency." },
+          "installment_count": { "type": "integer", "minimum": 1, "description": "Number of installments." },
+          "installment_amount": { "type": "number", "description": "Amount per installment." },
+          "installment_frequency": { "type": "string", "enum": ["weekly", "biweekly", "monthly"], "description": "Installment cadence." },
+          "service_id": { "type": "string", "description": "Optional service this plan applies to." },
+          "description": { "type": "string", "description": "Plan description." },
+          "supported_currencies": { "type": "array", "items": { "type": "string" }, "description": "Currencies the plan accepts (defaults to [currency])." },
+          "allowed_processors": { "type": "array", "items": { "type": "string" }, "description": "Allowed processors (default stripe/paypal/square/manual)." },
+          "preferred_processor": { "type": "string", "description": "Preferred processor." },
+          "is_active": { "type": "boolean", "description": "Whether the plan is active (default true)." }
+        }
+      },
+      "output_guidance": { "success_description": "Payment plan created", "common_errors": { "invalid_request": "Plan could not be created. Check the fields." } }
+    },
+    "list_plans": {
+      "description": "List/filter payment plans for the account.",
+      "usage_context": "When the user wants to see their payment plans.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "list",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "service_id": { "type": "string", "description": "Filter by service." },
+          "is_active": { "type": "boolean", "description": "Filter by active flag." },
+          "currency": { "type": "string", "description": "Only plans supporting this currency." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." }
+        }
+      },
+      "output_guidance": { "success_description": "Payment plans listed", "common_errors": { "invalid_request": "Could not list plans." } }
+    },
+    "get_plan": {
+      "description": "Fetch a single payment plan by id.",
+      "usage_context": "When you need one plan's full record.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Plan id." } } },
+      "output_guidance": { "success_description": "Plan retrieved", "common_errors": { "not_found": "No plan with that id for this account." } }
+    },
+    "update_plan": {
+      "description": "Update fields on a payment plan.",
+      "usage_context": "When the user wants to edit a plan's details.",
+      "idempotent": false,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Plan id." },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "total_amount": { "type": "number" },
+          "currency": { "type": "string", "enum": ["USD", "EUR", "ILS", "GBP"] },
+          "installment_count": { "type": "integer", "minimum": 1 },
+          "installment_amount": { "type": "number" },
+          "installment_frequency": { "type": "string", "enum": ["weekly", "biweekly", "monthly"] },
+          "supported_currencies": { "type": "array", "items": { "type": "string" } },
+          "allowed_processors": { "type": "array", "items": { "type": "string" } },
+          "preferred_processor": { "type": "string" },
+          "is_active": { "type": "boolean" }
+        }
+      },
+      "output_guidance": { "success_description": "Plan updated", "common_errors": { "not_found": "No plan with that id for this account." } }
+    },
+    "deactivate_plan": {
+      "description": "Deactivate a payment plan (soft delete — is_active → false). The plan record is retained.",
+      "usage_context": "When the user wants to stop offering a plan without deleting its history.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Plan id." } } },
+      "output_guidance": { "success_description": "Plan deactivated", "common_errors": { "not_found": "No plan with that id for this account." } }
+    },
+    "create_installments": {
+      "description": "Generate the installment schedule for a plan applied to a contact (and optional booking).",
+      "usage_context": "When a client signs up for a payment plan and the installment schedule should be created.",
+      "idempotent": false,
+      "domain": "payments",
+      "capability": "create",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": ["plan_id", "contact_id", "start_date"],
+        "properties": {
+          "plan_id": { "type": "string", "description": "Plan to apply." },
+          "contact_id": { "type": "string", "description": "Contact the plan is applied to." },
+          "start_date": { "type": "string", "description": "First installment date (ISO 8601)." },
+          "booking_id": { "type": "string", "description": "Optional booking this plan is tied to." },
+          "currency": { "type": "string", "description": "Currency for the installments (must be supported by the plan; defaults to the plan currency)." },
+          "custom_amount": { "type": "number", "description": "Override total amount to split (defaults to the plan total)." }
+        }
+      },
+      "output_guidance": { "success_description": "Installments created", "common_errors": { "not_found": "No plan with that id for this account.", "invalid_request": "Installments could not be created. Check the currency and amounts." } }
+    },
+    "list_installments": {
+      "description": "List installments for a plan, optionally filtered by contact, booking, or status.",
+      "usage_context": "When the user wants to see the installments for a plan.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "list",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": ["plan_id"],
+        "properties": {
+          "plan_id": { "type": "string", "description": "Plan id." },
+          "contact_id": { "type": "string", "description": "Filter by contact." },
+          "booking_id": { "type": "string", "description": "Filter by booking." },
+          "status": { "type": "string", "enum": ["pending", "paid", "overdue", "cancelled"], "description": "Filter by installment status." }
+        }
+      },
+      "output_guidance": { "success_description": "Installments listed", "common_errors": { "invalid_request": "Could not list installments." } }
+    },
+    "mark_installment_paid": {
+      "description": "STATUS-ONLY: mark a single installment as paid. Like mark_invoice_paid, this writes no payment transaction and does NOT contribute to revenue on its own; pass a transaction_id to link a recorded payment.",
+      "usage_context": "When an installment has been paid. If the payment was recorded via record_manual_payment, pass its transaction_id to link them.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["installment_id", "payment_method"],
+        "properties": {
+          "installment_id": { "type": "string", "description": "Installment id." },
+          "payment_method": { "type": "string", "description": "Payment method label." },
+          "processor_type": { "type": "string", "description": "Processor type." },
+          "transaction_id": { "type": "string", "description": "Optional linked transaction id (the revenue-bearing record)." }
+        }
+      },
+      "output_guidance": { "success_description": "Installment marked paid (status-only — link a transaction_id from record_manual_payment for revenue)", "common_errors": { "not_found": "No installment with that id for this account." } }
+    },
+    "cancel_installments": {
+      "description": "Cancel all pending installments for a plan applied to a contact.",
+      "usage_context": "When a client drops out of a payment plan and remaining installments should be cancelled.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "update",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["plan_id", "contact_id"],
+        "properties": {
+          "plan_id": { "type": "string", "description": "Plan id." },
+          "contact_id": { "type": "string", "description": "Contact whose pending installments to cancel." }
+        }
+      },
+      "output_guidance": { "success_description": "Pending installments cancelled", "common_errors": { "invalid_request": "Could not cancel installments." } }
+    },
+    "get_plan_summary": {
+      "description": "Summarize a plan's progress for a contact (paid/pending/overdue counts, totals, next due date).",
+      "usage_context": "When the user wants the status of a contact's payment plan.",
+      "idempotent": true,
+      "domain": "payments",
+      "capability": "aggregate",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["plan_id", "contact_id"],
+        "properties": {
+          "plan_id": { "type": "string", "description": "Plan id." },
+          "contact_id": { "type": "string", "description": "Contact id." }
+        }
+      },
+      "output_guidance": { "success_description": "Plan summary computed", "common_errors": { "not_found": "No plan with that id for this account." } }
+    }
+  }
+}

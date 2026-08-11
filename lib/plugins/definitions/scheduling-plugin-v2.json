@@ -1,0 +1,332 @@
+{
+  "plugin": {
+    "name": "scheduling",
+    "displayName": "Scheduling",
+    "version": "1.0.0",
+    "description": "Internal Scheduling: services (offerings) and bookings for the current Business OS account, plus availability checks.",
+    "context": "Use to manage the user's own scheduling — create/list/update services, create/list/reschedule/cancel/complete bookings, and check availability. Backed by the internal Business OS data store (no external account required). Booking-created contact/activity side-effects are handled automatically by the system.",
+    "category": "productivity",
+    "isSystem": true,
+    "visibility": "business_os",
+    "provider_family": "internal-bos",
+    "access_strategy": { "type": "db_active" },
+    "auth_config": {
+      "auth_type": "internal",
+      "client_id": "internal",
+      "client_secret": "internal",
+      "redirect_uri": "",
+      "auth_url": "",
+      "token_url": "",
+      "refresh_url": "",
+      "profile_url": "",
+      "required_scopes": []
+    }
+  },
+  "actions": {
+    "create_service": {
+      "description": "Create a new bookable service (offering) for the current account.",
+      "usage_context": "When the user wants to add a service clients can book (name + duration, optionally price and booking rules).",
+      "idempotent": false,
+      "domain": "calendar",
+      "capability": "create",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["service_name", "duration_minutes"],
+        "properties": {
+          "service_name": { "type": "string", "description": "Service name." },
+          "duration_minutes": { "type": "integer", "minimum": 1, "description": "Duration in minutes." },
+          "description": { "type": "string", "description": "Service description." },
+          "price": { "type": "number", "description": "Price (in the given currency)." },
+          "currency": { "type": "string", "enum": ["USD", "EUR", "ILS", "GBP"], "description": "Currency (defaults to ILS)." },
+          "buffer_minutes": { "type": "integer", "minimum": 0, "description": "Buffer between bookings (default 15)." },
+          "max_bookings_per_day": { "type": "integer", "description": "Optional daily cap." },
+          "advance_booking_days": { "type": "integer", "description": "How far ahead clients can book (default 30)." },
+          "min_notice_hours": { "type": "integer", "description": "Minimum notice before a booking (default 24)." },
+          "status": { "type": "string", "enum": ["draft", "active", "inactive"], "description": "Initial status (default active)." }
+        }
+      },
+      "output_guidance": { "success_description": "Service created", "common_errors": { "invalid_request": "Service could not be created. Check the fields." } }
+    },
+    "list_services": {
+      "description": "List the account's services.",
+      "usage_context": "When the user wants to see their bookable services.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "list",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "active_only": { "type": "boolean", "default": false, "description": "Only active + published services." }
+        }
+      },
+      "output_guidance": { "success_description": "Services listed", "common_errors": { "invalid_request": "Could not list services." } }
+    },
+    "get_service": {
+      "description": "Fetch a single service by id.",
+      "usage_context": "When you need one service's full record.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Service id." } } },
+      "output_guidance": { "success_description": "Service retrieved", "common_errors": { "not_found": "No service with that id for this account." } }
+    },
+    "update_service": {
+      "description": "Update fields on a service.",
+      "usage_context": "When the user wants to edit a service's details or booking rules.",
+      "idempotent": false,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Service id." },
+          "service_name": { "type": "string" },
+          "description": { "type": "string" },
+          "duration_minutes": { "type": "integer", "minimum": 1 },
+          "price": { "type": "number" },
+          "currency": { "type": "string", "enum": ["USD", "EUR", "ILS", "GBP"] },
+          "buffer_minutes": { "type": "integer", "minimum": 0 },
+          "max_bookings_per_day": { "type": "integer" },
+          "advance_booking_days": { "type": "integer" },
+          "min_notice_hours": { "type": "integer" },
+          "is_active": { "type": "boolean" },
+          "status": { "type": "string", "enum": ["draft", "active", "inactive"] }
+        }
+      },
+      "output_guidance": { "success_description": "Service updated", "common_errors": { "not_found": "No service with that id for this account." } }
+    },
+    "publish_service": {
+      "description": "Publish a draft service (make it active/bookable).",
+      "usage_context": "When the user wants to make a draft service live.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Draft service id." } } },
+      "output_guidance": { "success_description": "Service published", "common_errors": { "not_found": "No draft service with that id for this account." } }
+    },
+    "delete_service": {
+      "description": "Delete a service (only if it has no bookings).",
+      "usage_context": "When the user wants to remove a service. Blocked if bookings exist (cancel/remove them first).",
+      "idempotent": false,
+      "domain": "calendar",
+      "capability": "delete",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Service id to delete." } } },
+      "output_guidance": { "success_description": "Service deleted (or blocked by existing bookings)", "common_errors": { "not_found": "No service with that id for this account." } }
+    },
+    "create_booking": {
+      "description": "Create a booking for a service.",
+      "usage_context": "When the user wants to book a client into a service at a time. A contact + booking activity are logged automatically by the system — do not create them separately.",
+      "idempotent": false,
+      "domain": "calendar",
+      "capability": "create",
+      "output_entity": "event",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["service_id", "client_first_name", "client_email", "start_time", "end_time"],
+        "properties": {
+          "service_id": { "type": "string", "description": "Service being booked." },
+          "client_first_name": { "type": "string", "description": "Client first name." },
+          "client_last_name": { "type": "string", "description": "Client last name." },
+          "client_email": { "type": "string", "description": "Client email." },
+          "client_phone": { "type": "string", "description": "Client phone." },
+          "contact_id": { "type": "string", "description": "Optional existing CRM contact id to link (otherwise the system links/creates one)." },
+          "start_time": { "type": "string", "description": "Start time (ISO 8601)." },
+          "end_time": { "type": "string", "description": "End time (ISO 8601)." },
+          "timezone": { "type": "string", "description": "IANA timezone (default UTC)." },
+          "status": { "type": "string", "enum": ["confirmed", "cancelled", "completed", "no_show"], "description": "Initial status (default confirmed)." },
+          "notes": { "type": "string", "description": "Client-facing notes." },
+          "internal_notes": { "type": "string", "description": "Internal notes." },
+          "booking_source": { "type": "string", "description": "Where the booking came from (default manual)." }
+        }
+      },
+      "output_guidance": { "success_description": "Booking created", "common_errors": { "invalid_request": "Booking could not be created. Check the fields." } }
+    },
+    "list_bookings": {
+      "description": "List/filter bookings.",
+      "usage_context": "When the user wants to see bookings, optionally by service, contact, status, or date range.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "list",
+      "output_entity": "event",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "service_id": { "type": "string", "description": "Filter by service." },
+          "contact_id": { "type": "string", "description": "Filter by contact." },
+          "status": { "type": "string", "enum": ["confirmed", "cancelled", "completed", "no_show"], "description": "Filter by status." },
+          "start_date": { "type": "string", "description": "Only bookings starting on/after this ISO time." },
+          "end_date": { "type": "string", "description": "Only bookings starting on/before this ISO time." },
+          "search": { "type": "string", "description": "Search client first/last name." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." }
+        }
+      },
+      "output_guidance": { "success_description": "Bookings listed", "common_errors": { "invalid_request": "Could not list bookings." } }
+    },
+    "get_booking": {
+      "description": "Fetch a single booking by id.",
+      "usage_context": "When you need one booking's full record.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "get",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Booking id." } } },
+      "output_guidance": { "success_description": "Booking retrieved", "common_errors": { "not_found": "No booking with that id for this account." } }
+    },
+    "update_booking": {
+      "description": "Update fields on a booking.",
+      "usage_context": "When the user wants to edit booking details, status, or payment status. To move a booking's time, prefer reschedule_booking (it checks conflicts + availability).",
+      "idempotent": false,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Booking id." },
+          "status": { "type": "string", "enum": ["confirmed", "cancelled", "completed", "no_show"] },
+          "cancellation_reason": { "type": "string" },
+          "payment_status": { "type": "string", "enum": ["pending", "paid", "refunded"] },
+          "internal_notes": { "type": "string" },
+          "start_time": { "type": "string", "description": "New start (ISO 8601) — no conflict/availability check; prefer reschedule_booking." },
+          "end_time": { "type": "string", "description": "New end (ISO 8601)." }
+        }
+      },
+      "output_guidance": { "success_description": "Booking updated", "common_errors": { "not_found": "No booking with that id for this account." } }
+    },
+    "cancel_booking": {
+      "description": "Cancel a booking.",
+      "usage_context": "When the user wants to cancel a booking, optionally with a reason.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Booking id." },
+          "reason": { "type": "string", "description": "Optional cancellation reason." }
+        }
+      },
+      "output_guidance": { "success_description": "Booking cancelled", "common_errors": { "not_found": "No booking with that id for this account." } }
+    },
+    "complete_booking": {
+      "description": "Mark a booking as completed.",
+      "usage_context": "When a session/appointment has happened.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Booking id." } } },
+      "output_guidance": { "success_description": "Booking completed", "common_errors": { "not_found": "No booking with that id for this account." } }
+    },
+    "mark_no_show": {
+      "description": "Mark a booking as a no-show.",
+      "usage_context": "When the client did not attend.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Booking id." } } },
+      "output_guidance": { "success_description": "Booking marked no-show", "common_errors": { "not_found": "No booking with that id for this account." } }
+    },
+    "reschedule_booking": {
+      "description": "Move a booking to a new time (checks conflicts and availability).",
+      "usage_context": "When the user wants to move a booking. Keeps the same duration; rejects the move if it overlaps another booking or falls outside configured availability.",
+      "idempotent": false,
+      "domain": "calendar",
+      "capability": "update",
+      "input_entity": "event",
+      "output_entity": "event",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id", "new_start_time"],
+        "properties": {
+          "id": { "type": "string", "description": "Booking id." },
+          "new_start_time": { "type": "string", "description": "New start time (ISO 8601); the end time is derived from the booking's duration." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Booking rescheduled",
+        "common_errors": {
+          "not_found": "No booking with that id for this account.",
+          "conflict": "The new time overlaps an existing booking.",
+          "unavailable": "The new time is outside configured availability."
+        }
+      }
+    },
+    "count_bookings": {
+      "description": "Count the bookings for a service.",
+      "usage_context": "When the user wants how many bookings a service has (e.g. before deleting it).",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "aggregate",
+      "output_entity": "event",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["service_id"], "properties": { "service_id": { "type": "string", "description": "Service id." } } },
+      "output_guidance": { "success_description": "Bookings counted", "common_errors": { "invalid_request": "Could not count bookings." } }
+    },
+    "check_availability": {
+      "description": "Check whether a time slot is bookable (no overlap + within configured availability).",
+      "usage_context": "When the user wants to know if a specific time range is free and within business hours before booking.",
+      "idempotent": true,
+      "domain": "calendar",
+      "capability": "custom",
+      "output_entity": "event",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["start_time", "end_time"],
+        "properties": {
+          "start_time": { "type": "string", "description": "Slot start (ISO 8601)." },
+          "end_time": { "type": "string", "description": "Slot end (ISO 8601)." }
+        }
+      },
+      "output_guidance": { "success_description": "Availability checked", "common_errors": { "invalid_request": "Could not check availability." } }
+    }
+  }
+}

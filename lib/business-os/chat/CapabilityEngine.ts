@@ -8,13 +8,14 @@
 import { getCapability, Capability } from './CapabilityRegistry';
 import type { CommandSession } from './CommandSessionRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
-import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
+import { crmTaskRepository, type TaskPriority } from '@/lib/repositories/CRMTaskRepository';
 import {
   schedulingServiceRepository,
   schedulingBookingRepository
 } from '@/lib/repositories/SchedulingRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
+import type { EntityType } from '@/lib/audit/types';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ service: 'CapabilityEngine' });
@@ -75,11 +76,13 @@ export class CapabilityEngine {
         // Audit log (non-blocking)
         auditTrail.log({
           action: `CHAT_${capability.action.toUpperCase()}_${capability.entity.toUpperCase()}`,
-          entityType: capability.entity,
+          // The chat capability taxonomy (contact/task/service/booking/invoice) is broader
+          // than the audit EntityType vocabulary; store the chat entity label as-is.
+          entityType: capability.entity as EntityType,
           entityId: (result.data?.id as string) || session.resolved_params[`${capability.entity}_id`] as string,
           userId: this.userId,
           resourceName: capability.id,
-          metadata: {
+          details: {
             params: session.resolved_params,
             result: result.data
           }
@@ -184,7 +187,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async updateContact(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -206,7 +209,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async deleteContact(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -227,7 +230,7 @@ export class CapabilityEngine {
       user_id: this.userId,
       title: params.title as string,
       due_date: (params.due_date as string) || null,
-      priority: (params.priority as string) || 'medium',
+      priority: ((params.priority as string) || 'medium') as TaskPriority,
       status: 'pending',
       contact_id: (params.contact_id as string) || null
     });
@@ -236,7 +239,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async completeTask(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -249,7 +252,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async updateTask(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -271,7 +274,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async deleteTask(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -298,7 +301,9 @@ export class CapabilityEngine {
       }
     }
 
-    const result = await schedulingServiceRepository.create(this.userId, {
+    // Repo `create` takes a SINGLE SchedulingServiceInsert (user_id lives inside the object).
+    const result = await schedulingServiceRepository.create({
+      user_id: this.userId,
       service_name: params.service_name as string,
       duration_minutes: params.duration_minutes as number,
       price,
@@ -310,7 +315,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async updateService(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -338,7 +343,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async deactivateService(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -351,7 +356,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async activateService(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -364,7 +369,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   // ============== BOOKING EXECUTORS ==============
@@ -412,13 +417,15 @@ export class CapabilityEngine {
       };
     }
 
-    // Create booking
-    const result = await schedulingBookingRepository.create(this.userId, {
+    // Create booking. Repo `create` takes a SINGLE SchedulingBookingInsert (user_id inside).
+    // client_first_name/client_email are NOT NULL, so coerce the nullable contact fields.
+    const result = await schedulingBookingRepository.create({
+      user_id: this.userId,
       service_id: params.service_id as string,
       contact_id: params.contact_id as string,
       start_time: startTime.toISOString(),
       end_time: endTime.toISOString(),
-      client_first_name: contact.first_name,
+      client_first_name: contact.first_name || '',
       client_last_name: contact.last_name || '',
       client_email: contact.email || '',
       client_phone: contact.phone || '',
@@ -429,7 +436,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async rescheduleBooking(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -437,7 +444,7 @@ export class CapabilityEngine {
     const newStartTime = new Date(params.new_start_time as string);
 
     // Get existing booking
-    const bookingResult = await schedulingBookingRepository.getById(bookingId, this.userId);
+    const bookingResult = await schedulingBookingRepository.findById(bookingId, this.userId);
     if (bookingResult.error || !bookingResult.data) {
       return { success: false, error: 'Booking not found' };
     }
@@ -473,7 +480,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async cancelBooking(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -487,7 +494,7 @@ export class CapabilityEngine {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   // ============== INVOICE EXECUTORS ==============
@@ -505,10 +512,21 @@ export class CapabilityEngine {
       amount = params.amount as number;
     }
 
-    const result = await paymentInvoiceRepository.create(this.userId, {
-      contact_id: params.contact_id as string,
+    // The repo's `create` takes a SINGLE invoice object (not `(userId, invoice)`), and
+    // `user_id` + `invoice_number` are NOT NULL. Generate the number first and pass a
+    // complete payload — mirrors SafeExecutionLayer.mutateInvoice('create').
+    const invoiceNumberResult = await paymentInvoiceRepository.getNextInvoiceNumber(this.userId);
+    if (invoiceNumberResult.error || !invoiceNumberResult.data) {
+      return { success: false, error: 'Failed to generate invoice number' };
+    }
+
+    const result = await paymentInvoiceRepository.create({
+      user_id: this.userId,
+      contact_id: (params.contact_id as string) || null,
+      invoice_number: invoiceNumberResult.data,
       amount,
       currency,
+      status: 'draft',
       line_items: [{
         description: params.description as string,
         quantity: 1,
@@ -516,14 +534,29 @@ export class CapabilityEngine {
         total: amount
       }],
       due_date: (params.due_date as string) || null,
-      status: 'draft'
+      payment_terms: 'due_on_receipt',
+      notes: null,
+      internal_notes: null,
+      sent_at: null,
+      paid_at: null,
+      payment_method: null,
+      payment_received_at: null,
+      payment_notes: null,
+      processor_type: null,
+      processor_checkout_id: null,
+      processor_payment_id: null,
+      processor_customer_id: null,
+      processor_payment_method_id: null,
+      retry_count: 0,
+      last_retry_at: null,
+      next_retry_at: null
     });
 
     if (result.error) {
       return { success: false, error: result.error.message };
     }
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   private async sendInvoice(params: Record<string, unknown>): Promise<ExecutionResult> {
@@ -541,7 +574,7 @@ export class CapabilityEngine {
 
     // TODO: Actually send the invoice email via BookingEmailService
 
-    return { success: true, data: result.data as Record<string, unknown> };
+    return { success: true, data: this.toData(result.data) };
   }
 
   // ============== EMAIL EXECUTOR ==============
@@ -584,6 +617,17 @@ export class CapabilityEngine {
   }
 
   // ============== HELPERS ==============
+
+  /**
+   * Coerce a repository entity (a plain data object, or null after an error check)
+   * into the loosely-typed `ExecutionResult.data` shape. Repository row interfaces
+   * have no index signature, so a direct `as Record<string, unknown>` is rejected;
+   * routing through `unknown` here is the sanctioned widening and avoids repeating
+   * the double-cast at every call site.
+   */
+  private toData(value: unknown): Record<string, unknown> {
+    return (value ?? {}) as Record<string, unknown>;
+  }
 
   /**
    * Interpolate template with parameters
