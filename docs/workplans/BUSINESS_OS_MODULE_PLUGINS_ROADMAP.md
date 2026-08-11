@@ -66,7 +66,7 @@ Proposed order (rationale below the table — this is a **recommendation**, re-p
 | 3 | **Email** | `EmailAutomation` | 🅿️ **Parked** (user, 2026-08-10) | 🟡 | Repo-clean but automation engine doesn't exist (no drip cron; chat capability unwired) → v1 would be config-only. Revisit on product demand. See section. |
 | 4 | **Payments** | `Payment`, `PaymentPlan` (12 tables) | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🔴 | High value (invoices/checkout) but highest risk — money, Stripe Connect external path, triggers T3/T4. Do after the pattern is proven on 2–3 modules. |
 | 5 | **Intake** | `Intake` (`intake_form_templates`, `user_intake_settings`) | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🟢 | Small, CRM-adjacent (form templates config). Simplest conversion yet — no cross-capability triggers on the config surface. |
-| 6 | **Website** | `WebsitePage`, `WebsiteBlock`, `WebsiteContent`, `WebsiteAnalytics` | ⬜ Not started | 🟡 | Content management — lower "capability to invoke" value for agents. Has a known repo gap to fix first (see its section). |
+| 6 | **Website** | `WebsitePage`, `WebsiteBlock`, `WebsiteContent`, `WebsiteAnalytics` | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🟡 | Content management — lower "capability to invoke" value for agents. G3 ownership-scoping fix (Option A) + trimmed v1 op set. |
 | 7 | **Insights** | `Insight` (+ `lib/business-os/insight/**`) | ⬜ Blocked | 🔴 | Read-only analytics, not standard CRUD. **Needs insight-subsystem repository remediation first** (direct DB access). Separate track. |
 
 **Priority rationale:** CRM first because it is the side-effect hub. Then **Scheduling** and **Email** — high-value, agent-invokable, repos ready, moderate complexity — to harden the pattern on simpler surfaces. **Payments** after that (highest risk: money + external Stripe). **Intake** is a small CRM-adjacent quick win slot-able anywhere. **Website** is lower priority for the agent-invocation goal and carries a data-scoping gap. **Insights** is a separate, later track that first needs its subsystem moved onto repositories.
@@ -164,10 +164,19 @@ These affect every internal module, not just one. Fix once, benefits all.
 
 ### Website
 
-**Repositories:** `WebsitePageRepository`, `WebsiteBlockRepository`, `WebsiteContentRepository`, `WebsiteAnalyticsRepository`.
+**Status:** 🔵 Assessed (2026-08-10) — workplan drafted, awaiting SA review: [Website internal-plugin workplan](/docs/workplans/BUSINESS_OS_WEBSITE_INTERNAL_PLUGIN_WORKPLAN.md). **Complexity: medium.** No cross-capability triggers (only `updated_at` bumps — cleanest trigger picture yet); Page/Content/Analytics repos are clean + `user_id`-scoped; not declared/wired (plugin + Modules tab = first executable surface, like Intake). The work is G3 + trimming a large content-management op surface.
+**Repositories:** `WebsitePageRepository` (the **ownership oracle** — `findById(id, userId)` user-scoped ✅), `WebsiteBlockRepository` (**G3 gap** — see below), `WebsiteContentRepository` (user-scoped ✅), `WebsiteAnalyticsRepository` (user-scoped reads ✅; 2 stray `console.log`).
+**Triggers to respect:** none of concern — only `updated_at` timestamp triggers on `website_pages`/`website_content`. Publishing is a plain `status='live'` column update (no fan-out). Analytics is a plain insert.
 
 **Open issues:**
-- ⬜ **`WebsiteBlockRepository` scopes by `page_id` only, not `user_id`** (Document 1 gap **G3**) — relies on RLS + the caller passing an owned `pageId`. Must be closed (scope by `user_id`, or documented+enforced parent-derived ownership) **before** this module can be a conformant internal plugin.
+- 🔴 **G3 (core work) — `WebsiteBlockRepository` has no ownership scoping.** `website_blocks` has no `user_id` column (ownership is `page_id → website_pages.user_id`, enforced only by RLS — which the service-role plugin **bypasses**). Id-only methods (`findById`/`update`/`updateContent`/`toggleEnabled`/`delete`/`updateCapabilityConfig`) take just a block id; page-scoped methods trust the caller's `pageId`. **Fix = Option A (executor-level ownership pre-check)** via `WebsitePageRepository.findById(pageId, userId)` before delegating — the exact pattern `app/api/website/pages/[id]/blocks/[blockId]/route.ts:83-98` already uses. (Deeper repo-layer fix = threading `userId`/denormalizing `user_id` — deferred follow-up.)
+- ⬜ **Trim the v1 op surface** — Website is a large content-management module with low agent-invocation value; v1 exposes ~11 high-value ops (page list/get/create/update/publish/unpublish; block list/toggle/update-content; analytics summary/page) and **defers** reorder, bulkCreate, capability_config wiring, content-section CRUD, domain setters, template apply, upload to the REST/UI layer.
+- ⬜ **`clear_block_positions` RPC is phantom** (not defined in any migration) — `reorder` silently runs a slow O(n) fallback. Reason to defer `reorder` from v1.
+- ⬜ **`bulkCreate` accepts mixed `page_id`s** — if ever exposed, must validate every page_id; recommend single-page constraint or defer.
+- ⬜ **Repo singleton caching** — `get*Repository()` caches the first-injected client; the executor must instantiate `new X(supabaseServer)` directly (as the REST routes do), not the getter.
+- ⬜ **Parallel surface** — `lib/business-os/actions/WebsiteActionHandler.ts` (Control Center regex chat handler) duplicates much of the op set; candidate to retire once the plugin lands (avoid drift).
+- ℹ️ **Dual publish flags** — `status` vs legacy `published` boolean; `publish()`/`unpublish()` keep both in sync (any new write must too).
+- ℹ️ **Analytics `console.log`** — `WebsiteAnalyticsRepository.getSummary` has 2 `console.log` (`:154`,`:242`); convert to Pino if the file is touched (CLAUDE.md standard).
 
 ### Insights
 
