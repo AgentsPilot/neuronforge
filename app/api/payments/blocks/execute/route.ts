@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
+import type { EntityType } from '@/lib/audit/types';
 import {
   getBlock,
   validateBlockParameters,
@@ -37,6 +38,7 @@ import {
   paymentInvoiceRepository
 } from '@/lib/repositories/PaymentRepository';
 import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import { paymentReminderRepository } from '@/lib/repositories/PaymentReminderRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'PaymentBlockExecuteAPI' });
@@ -635,22 +637,18 @@ async function executeScheduleReminder(
   const { invoice_id, installment_id, contact_id, scheduled_at, reminder_type, channel } = params;
 
   // Insert reminder into database
-  const { data, error } = await supabaseServer
-    .from('payment_reminders')
-    .insert({
-      user_id: userId,
-      invoice_id: invoice_id || null,
-      installment_id: installment_id || null,
-      contact_id: contact_id,
-      reminder_type: reminder_type,
-      scheduled_at: scheduled_at,
-      channel: channel,
-      status: 'pending'
-    })
-    .select()
-    .single();
+  const { data, error } = await paymentReminderRepository.create({
+    user_id: userId,
+    invoice_id: (invoice_id as string | undefined) || null,
+    installment_id: (installment_id as string | undefined) || null,
+    contact_id: contact_id as string,
+    reminder_type: reminder_type as string,
+    scheduled_at: scheduled_at as string,
+    channel: channel as string,
+    status: 'pending'
+  });
 
-  if (error) throw error;
+  if (error || !data) throw (error ?? new Error('Failed to schedule reminder'));
 
   await emitPaymentEvent(userId, {
     eventType: 'reminder.scheduled',
@@ -686,32 +684,29 @@ async function executeCancelReminder(
 ): Promise<{ result: unknown; events: PaymentEventType[] }> {
   const { reminder_id, invoice_id, installment_id } = params;
 
-  let query = supabaseServer
-    .from('payment_reminders')
-    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-    .eq('user_id', userId)
-    .eq('status', 'pending');
-
+  // Route to the appropriate user-scoped cancel (repo drops the phantom updated_at).
+  let cancelResult;
   if (reminder_id) {
-    query = query.eq('id', reminder_id);
+    cancelResult = await paymentReminderRepository.cancel(reminder_id as string, userId);
   } else if (invoice_id) {
-    query = query.eq('invoice_id', invoice_id);
+    cancelResult = await paymentReminderRepository.cancelByInvoice(invoice_id as string, userId);
   } else if (installment_id) {
-    query = query.eq('installment_id', installment_id);
+    cancelResult = await paymentReminderRepository.cancelByInstallment(installment_id as string, userId);
   } else {
     throw new Error('Must provide reminder_id, invoice_id, or installment_id');
   }
 
-  const { data, error } = await query.select();
-  if (error) throw error;
+  if (cancelResult.error) throw cancelResult.error;
 
-  const cancelledCount = data?.length || 0;
+  const cancelledCount = cancelResult.data || 0;
 
   if (cancelledCount > 0) {
     await emitPaymentEvent(userId, {
       eventType: 'reminder.cancelled',
       entityType: 'reminder',
-      entityId: reminder_id || invoice_id || installment_id || '',
+      // These come from a z.record(z.unknown()) body, so `unknown || …` narrows to `{}`;
+      // cast to string to match the `as string` pattern used at the cancel calls above.
+      entityId: (reminder_id as string) || (invoice_id as string) || (installment_id as string) || '',
       metadata: { cancelledCount }
     });
   }
@@ -957,7 +952,9 @@ export async function POST(request: NextRequest) {
     // 8. Audit log (non-blocking)
     auditTrail.log({
       action: 'PAYMENT_BLOCK_EXECUTED',
-      entityType: 'payment_block',
+      // 'payment_block' is a Business-OS entity outside the audit EntityType vocabulary;
+      // store the label as-is (same taxonomy gap as the chat CapabilityEngine audit).
+      entityType: 'payment_block' as EntityType,
       entityId: block_id,
       userId: user.id,
       changes: { parameters, result, events_emitted: events },
