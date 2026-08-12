@@ -67,7 +67,7 @@ Proposed order (rationale below the table — this is a **recommendation**, re-p
 | 4 | **Payments** | `Payment`, `PaymentPlan` (12 tables) | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🔴 | High value (invoices/checkout) but highest risk — money, Stripe Connect external path, triggers T3/T4. Do after the pattern is proven on 2–3 modules. |
 | 5 | **Intake** | `Intake` (`intake_form_templates`, `user_intake_settings`) | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🟢 | Small, CRM-adjacent (form templates config). Simplest conversion yet — no cross-capability triggers on the config surface. |
 | 6 | **Website** | `WebsitePage`, `WebsiteBlock`, `WebsiteContent`, `WebsiteAnalytics` | 🟢 Implemented — SA + QA PASS; awaiting user code review before RM | 🟡 | Content management — lower "capability to invoke" value for agents. G3 ownership-scoping fix (Option A) + trimmed v1 op set. |
-| 7 | **Insights** | `Insight` (+ `lib/business-os/insight/**`) | ⬜ Blocked | 🔴 | Read-only analytics, not standard CRUD. **Needs insight-subsystem repository remediation first** (direct DB access). Separate track. |
+| 7 | **Insights** | `Insight` (+ `lib/business-os/insight/**`) | 🟢 Service (not a plugin, user decision) — **minimal G2 slice** implemented + SA + QA PASS; awaiting user review before RM | 🔴 | Compute-and-persist analytics, not CRUD. Stays a service. Minimal G2 slice done (3 foreign reads → repos, 2 latent bugs fixed). Full plugin revisit deferred to post-Step-3. |
 
 **Priority rationale:** CRM first because it is the side-effect hub. Then **Scheduling** and **Email** — high-value, agent-invokable, repos ready, moderate complexity — to harden the pattern on simpler surfaces. **Payments** after that (highest risk: money + external Stripe). **Intake** is a small CRM-adjacent quick win slot-able anywhere. **Website** is lower priority for the agent-invocation goal and carries a data-scoping gap. **Insights** is a separate, later track that first needs its subsystem moved onto repositories.
 
@@ -180,11 +180,19 @@ These affect every internal module, not just one. Fix once, benefits all.
 
 ### Insights
 
-**Repositories:** `InsightRepository` (now under `lib/repositories/`), plus the `lib/business-os/insight/**` subsystem.
+**Status:** 🟠 **Assessed (2026-08-11) — go/no-go + shape decision pending user (NOT a clean plugin candidate).** It's a cron-driven **compute-and-persist analytics** subsystem, not user-invokable CRUD. Three decisions are open (below); the assessment **recommends NOT building it as a plugin now** — do the small valuable G2 slice, keep it a service, revisit after Step 3.
 
-**Open issues (blockers before this can be a plugin):**
-- ⬜ **Insight subsystem uses direct DB access** (Document 1 gap **G2**) — `insight/metrics/*`, `insight/events/*`, `insight/detectors/**` construct a raw `SupabaseClient` and run `.from()` against CRM/scheduling/payments/event tables. Must move onto repositories (aggregate methods) first.
-- ⬜ **Shape mismatch with the plugin model** — Insights is read-only cross-table analytics, not CRUD; the internal-plugin CRUD shape may not fit. Decide whether it becomes a plugin at all or stays a repository-backed service. (Separate track.)
+**Repositories / subsystem:**
+- **The real Business OS insight repo** is `lib/business-os/insight/repository/InsightRepository.ts` (owns `insights` + `owner_insight_history`) — **already fully conformant** ({data,error}, Pino, user_id-scoped, DI). The roadmap previously mis-pointed at `lib/repositories/InsightRepository.ts`, which is a **different, older PILOT execution-insight repo** (non-conformant) — **out of scope for this module.**
+- Subsystem `lib/business-os/insight/**`: events, metrics, detectors (5), prioritizer, kernel, automation, projection, reporting. Live via 3 Vercel crons (`insight-detect` 15min, `insight-metrics` daily, `insight-automations` 5min).
+
+**Key findings:**
+- **Liveness / build-but-dark:** the event-driven detectors (`SalesStalled`, `SalesReplySlow`, `RetNoShowSpike`) + most of metrics read `business_events`, which has **ZERO emitters** today — they compute over an empty table. Only `CashArOverdueDetector` (payment_invoices) + `OpsUtilizationLowDetector` (scheduling_availability) fire on real data. **Step 3 (event-driven architecture) is what lights this up** and explicitly overrides the insight emission mechanism ([event-driven arch §1 override](/docs/architecture/BUSINESS_OS_EVENT_DRIVEN_ARCHITECTURE.md), lines 37/44-53).
+- **G2 quantified:** ~50 direct `.from()` sites, but **no raw client construction** (all DI-clean). Only **3 sites touch FOREIGN modules** — `payment_invoices` ×2 (`CashArOverdueDetector.ts:87`, `MetricsComputeService.ts:404`), `scheduling_availability` ×1 (`OpsUtilizationLowDetector.ts:104`). The other ~42 are the subsystem reading its **own** tables (`business_events` via `BusinessEventService`, `derived_metrics`, `insight_automations`, kernel) — repo-wrapping those is only worth it if Insights becomes a plugin.
+- **Not declared/wired** (no `insights` capability, no `SafeExecutionLayer`). Domain enum has no `analytics`/`insights` member (closest: `internal`); `Capability` enum already has `aggregate`.
+- ⚠️ **Data-integrity flag:** `CashArOverdueDetector.ts:88` reads `payment_invoices.amount`; `MetricsComputeService.ts:405` reads `payment_invoices.total_amount` — **different column names for the same value; at least one is a phantom column** (masked by the missing `@/types/database`). Verify before routing either through `PaymentRepository`.
+
+**Decisions (RESOLVED — user, 2026-08-11):** **(1) Shape → service, not a plugin.** **(2) G2 scope → minimal slice done** ([Insights G2 minimal workplan](/docs/workplans/BUSINESS_OS_INSIGHTS_G2_MINIMAL_WORKPLAN.md): the 3 foreign reads routed through repos via a generalized `PaymentInvoiceRepository.getOverdueInvoices` + a DI'd `BusinessProfileRepository`, fixing 2 latent bugs — `payment_invoices.total_amount` phantom → `amount`, `scheduling_availability` phantom table → `business_profiles` JSONB. SA + QA PASS). **(3) Timing → full plugin re-evaluation deferred to post-Step-3.** Remaining ~42 subsystem self-reads stay deferred. This **closes the "Insight G2 direct-DB reads" note under Payments** and overlaps CRM 1.2.c.
 
 ---
 

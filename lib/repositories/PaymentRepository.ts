@@ -703,18 +703,32 @@ export class PaymentInvoiceRepository {
   }
 
   /**
-   * Get overdue invoices
+   * Get overdue invoices.
+   *
+   * Generalized to serve both the AR-overdue detector and the ar_overdue_usd metric.
+   * All filters default to sensible values so existing narrow use cases remain valid:
+   *  - statuses:  unpaid states (defaults to pending/sent/overdue)
+   *  - asOfDate:  due before this ISO timestamp (defaults to now)
+   *  - minAmount: exclusive lower bound on `amount` (defaults to 0)
+   *
+   * Value column is `amount` (never the phantom `total_amount`). Always `user_id`-scoped.
    */
-  async getOverdueInvoices(userId: string): Promise<PaymentRepositoryResult<PaymentInvoice[]>> {
+  async getOverdueInvoices(
+    userId: string,
+    opts?: { asOfDate?: string; statuses?: string[]; minAmount?: number }
+  ): Promise<PaymentRepositoryResult<PaymentInvoice[]>> {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const statuses = opts?.statuses ?? ['pending', 'sent', 'overdue'];
+      const asOfDate = opts?.asOfDate ?? new Date().toISOString();
+      const minAmount = opts?.minAmount ?? 0;
 
       const { data, error } = await this.supabase
         .from('payment_invoices')
         .select('*')
         .eq('user_id', userId)
-        .eq('status', 'sent')
-        .lt('due_date', today)
+        .in('status', statuses)
+        .lt('due_date', asOfDate)
+        .gt('amount', minAmount)
         .order('due_date', { ascending: true });
 
       if (error) throw error;
