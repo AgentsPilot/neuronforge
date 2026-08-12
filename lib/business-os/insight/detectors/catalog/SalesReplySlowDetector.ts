@@ -54,12 +54,14 @@ export class SalesReplySlowDetector extends BaseDetector {
       return null;
     }
 
-    // Get baseline for reply time
+    // Get baseline for reply time.
+    // avg_reply_time_hours is stored at daily/weekly granularity; 'weekly' matches this
+    // detector's weekly impact framing (impactPeriod 'weekly', last-week enquiry window).
     const baseline = await this.baselineCalculator.computeBaseline(
       userId,
       'sales.avg_reply_time_hours',
-      this.getBaselineLookbackDays(),
-      this.definition.minSamples
+      'weekly',
+      this.getBaselineLookbackDays()
     );
 
     // Not enough data
@@ -87,7 +89,16 @@ export class SalesReplySlowDetector extends BaseDetector {
     }
 
     // Calculate delta and severity
-    const percentChange = this.baselineCalculator.getPercentChange(currentValue, baseline.mean);
+    // getPercentChange returns { percentChange: number | null, baseline }; coalesce the
+    // null case (insignificant/zero baseline) to 0 since DetectionResult.percentChange is number.
+    const { percentChange: computedPercentChange } = await this.baselineCalculator.getPercentChange(
+      userId,
+      'sales.avg_reply_time_hours',
+      'weekly',
+      currentValue,
+      this.getBaselineLookbackDays()
+    );
+    const percentChange = computedPercentChange ?? 0;
     const severity = this.definition.severityFn(currentValue, baseline.mean);
 
     // Estimate impact - slower replies mean lower conversion
