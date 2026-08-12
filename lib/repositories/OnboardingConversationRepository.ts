@@ -6,12 +6,38 @@
 
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import type { Database } from '@/types/database';
 
 const logger = createLogger({ service: 'OnboardingConversationRepository' });
 
-type OnboardingConversation = Database['public']['Tables']['onboarding_conversations']['Row'];
-type OnboardingConversationInsert = Database['public']['Tables']['onboarding_conversations']['Insert'];
+/**
+ * Row shape for the `onboarding_conversations` table (base CREATE 20260721 — no
+ * later ALTERs). Hand-written to mirror generated Supabase types the rest of the
+ * repo layer avoids depending on. NOT NULL columns: user_id, message_sequence,
+ * role, content.
+ */
+export interface OnboardingConversation {
+  id: string;
+  user_id: string;
+  message_sequence: number;
+  role: string;
+  content: string;
+  metadata: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+/**
+ * Insert shape for `onboarding_conversations`. Only NOT NULL columns without a
+ * default are required; id/metadata/created_at are optional.
+ */
+export interface OnboardingConversationInsert {
+  id?: string;
+  user_id: string;
+  message_sequence: number;
+  role: string;
+  content: string;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string | null;
+}
 
 export interface OnboardingConversationRepositoryResult<T> {
   data: T | null;

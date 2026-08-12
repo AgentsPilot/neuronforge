@@ -279,7 +279,10 @@ export async function GET(request: NextRequest) {
         });
       }
     } else {
-      availability = profile.scheduling_availability as WeeklyAvailability;
+      // scheduling_availability is typed as Record<string, {start,end}[]>; the
+      // local WeeklyAvailability is a fixed-key interface, so TS needs the
+      // double assertion to narrow (interfaces get no implicit index signature).
+      availability = profile.scheduling_availability as unknown as WeeklyAvailability;
     }
     const timezone = 'UTC'; // TODO: Add timezone column to business_profiles if needed
 
