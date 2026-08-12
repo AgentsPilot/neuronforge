@@ -16,6 +16,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { PaymentReminderRepository } from '@/lib/repositories/PaymentReminderRepository';
 
 const logger = createLogger({ service: 'PaymentReminderService' });
 
@@ -40,7 +41,7 @@ export interface PaymentReminder {
   metadata: Record<string, unknown>;
   error_message: string | null;
   created_at: string;
-  updated_at: string;
+  // NOTE: `payment_reminders` has no `updated_at` column (M5) — do not add one.
 }
 
 export interface ReminderConfig {
@@ -90,9 +91,11 @@ const DEFAULT_REMINDER_CONFIG: ReminderConfig = {
 
 export class PaymentReminderService {
   private supabase: SupabaseClient;
+  private reminderRepo: PaymentReminderRepository;
 
   constructor(supabaseClient: SupabaseClient) {
     this.supabase = supabaseClient;
+    this.reminderRepo = new PaymentReminderRepository(supabaseClient);
   }
 
   // ==================== SCHEDULING ====================
@@ -122,22 +125,18 @@ export class PaymentReminderService {
 
       const channel = params.channel || config.defaultChannel;
 
-      const { data, error } = await this.supabase
-        .from('payment_reminders')
-        .insert({
-          user_id: userId,
-          invoice_id: params.invoiceId || null,
-          installment_id: params.installmentId || null,
-          contact_id: params.contactId,
-          reminder_type: params.reminderType,
-          scheduled_at: params.scheduledAt,
-          channel,
-          template_id: params.templateId || null,
-          status: 'pending',
-          metadata: params.metadata || {}
-        })
-        .select()
-        .single();
+      const { data, error } = await this.reminderRepo.create({
+        user_id: userId,
+        invoice_id: params.invoiceId || null,
+        installment_id: params.installmentId || null,
+        contact_id: params.contactId,
+        reminder_type: params.reminderType,
+        scheduled_at: params.scheduledAt,
+        channel,
+        template_id: params.templateId || null,
+        status: 'pending',
+        metadata: params.metadata || {}
+      });
 
       if (error) throw error;
 
@@ -145,7 +144,7 @@ export class PaymentReminderService {
       await emitPaymentEvent(userId, {
         eventType: 'reminder.scheduled',
         entityType: 'reminder',
-        entityId: data.id,
+        entityId: data!.id,
         contactId: params.contactId,
         metadata: {
           reminderType: params.reminderType,
@@ -156,7 +155,7 @@ export class PaymentReminderService {
         }
       });
 
-      logger.info({ reminderId: data.id }, 'Reminder scheduled');
+      logger.info({ reminderId: data!.id }, 'Reminder scheduled');
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId, params }, 'Failed to schedule reminder');
@@ -347,28 +346,24 @@ export class PaymentReminderService {
       }
 
       // Create reminder record
-      const { data: reminder, error: createError } = await this.supabase
-        .from('payment_reminders')
-        .insert({
-          user_id: userId,
-          invoice_id: params.invoiceId || null,
-          installment_id: params.installmentId || null,
-          contact_id: params.contactId,
-          reminder_type: 'upcoming_due',
-          scheduled_at: new Date().toISOString(),
-          channel: params.channel,
-          template_id: params.templateId || null,
-          status: 'pending',
-          metadata: {
-            ...params.metadata,
-            ...entityDetails,
-            includePaymentLink: params.includePaymentLink ?? true
-          }
-        })
-        .select()
-        .single();
+      const { data: reminder, error: createError } = await this.reminderRepo.create({
+        user_id: userId,
+        invoice_id: params.invoiceId || null,
+        installment_id: params.installmentId || null,
+        contact_id: params.contactId,
+        reminder_type: 'upcoming_due',
+        scheduled_at: new Date().toISOString(),
+        channel: params.channel,
+        template_id: params.templateId || null,
+        status: 'pending',
+        metadata: {
+          ...params.metadata,
+          ...entityDetails,
+          includePaymentLink: params.includePaymentLink ?? true
+        }
+      });
 
-      if (createError) throw createError;
+      if (createError || !reminder) throw (createError ?? new Error('Failed to create reminder'));
 
       // Send based on channel
       let sent = false;
@@ -400,16 +395,20 @@ export class PaymentReminderService {
         logger.error({ err: sendError, reminderId: reminder.id }, 'Failed to send reminder');
       }
 
-      // Update reminder status
-      await this.supabase
-        .from('payment_reminders')
-        .update({
-          status: sent ? 'sent' : 'failed',
-          sent_at: sent ? new Date().toISOString() : null,
-          error_message: errorMessage,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', reminder.id);
+      // Update reminder status (B1: user-scoped in the repo; B2: no phantom updated_at).
+      // M3: non-fatal — the reminder was already dispatched, so a failed status write
+      // must log-and-continue, never abort the send flow.
+      const { error: statusError } = await this.reminderRepo.updateStatus(reminder.id, userId, {
+        status: sent ? 'sent' : 'failed',
+        sent_at: sent ? new Date().toISOString() : null,
+        error_message: errorMessage
+      });
+      if (statusError) {
+        logger.error(
+          { err: statusError, reminderId: reminder.id },
+          'Failed to persist reminder status (non-fatal — reminder already dispatched)'
+        );
+      }
 
       // Emit event
       await emitPaymentEvent(userId, {
@@ -513,15 +512,7 @@ export class PaymentReminderService {
     userId: string
   ): Promise<PaymentReminderServiceResult<void>> {
     try {
-      const { error } = await this.supabase
-        .from('payment_reminders')
-        .update({
-          status: 'cancelled',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', reminderId)
-        .eq('user_id', userId)
-        .eq('status', 'pending');
+      const { error } = await this.reminderRepo.cancel(reminderId, userId);
 
       if (error) throw error;
 
@@ -548,20 +539,11 @@ export class PaymentReminderService {
     userId: string
   ): Promise<PaymentReminderServiceResult<number>> {
     try {
-      const { data, error } = await this.supabase
-        .from('payment_reminders')
-        .update({
-          status: 'cancelled',
-          updated_at: new Date().toISOString()
-        })
-        .eq('invoice_id', invoiceId)
-        .eq('user_id', userId)
-        .eq('status', 'pending')
-        .select();
+      const { data, error } = await this.reminderRepo.cancelByInvoice(invoiceId, userId);
 
       if (error) throw error;
 
-      const cancelledCount = data?.length || 0;
+      const cancelledCount = data || 0;
       logger.info({ invoiceId, cancelledCount }, 'Invoice reminders cancelled');
       return { data: cancelledCount, error: null };
     } catch (error) {
@@ -578,20 +560,11 @@ export class PaymentReminderService {
     userId: string
   ): Promise<PaymentReminderServiceResult<number>> {
     try {
-      const { data, error } = await this.supabase
-        .from('payment_reminders')
-        .update({
-          status: 'cancelled',
-          updated_at: new Date().toISOString()
-        })
-        .eq('installment_id', installmentId)
-        .eq('user_id', userId)
-        .eq('status', 'pending')
-        .select();
+      const { data, error } = await this.reminderRepo.cancelByInstallment(installmentId, userId);
 
       if (error) throw error;
 
-      const cancelledCount = data?.length || 0;
+      const cancelledCount = data || 0;
       logger.info({ installmentId, cancelledCount }, 'Installment reminders cancelled');
       return { data: cancelledCount, error: null };
     } catch (error) {
@@ -616,14 +589,8 @@ export class PaymentReminderService {
     logger.info('Processing due reminders');
 
     try {
-      // Get pending reminders that are due
-      const { data: reminders } = await this.supabase
-        .from('payment_reminders')
-        .select('*')
-        .eq('status', 'pending')
-        .lte('scheduled_at', now)
-        .order('scheduled_at', { ascending: true })
-        .limit(100);
+      // Get pending reminders that are due (cross-user cron read)
+      const { data: reminders } = await this.reminderRepo.findDue(now, 100);
 
       if (!reminders || reminders.length === 0) {
         logger.info('No due reminders to process');
@@ -648,10 +615,7 @@ export class PaymentReminderService {
 
           // Delete the pending reminder since we created a new one during send
           if (reminder.id) {
-            await this.supabase
-              .from('payment_reminders')
-              .delete()
-              .eq('id', reminder.id);
+            await this.reminderRepo.deleteById(reminder.id);
           }
 
           if (result.data?.sent) {
@@ -663,15 +627,11 @@ export class PaymentReminderService {
           logger.error({ err: error, reminderId: reminder.id }, 'Error processing reminder');
           stats.failed++;
 
-          // Mark as failed
-          await this.supabase
-            .from('payment_reminders')
-            .update({
-              status: 'failed',
-              error_message: error instanceof Error ? error.message : String(error),
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', reminder.id);
+          // Mark as failed (cross-user cron; B2: no phantom updated_at)
+          await this.reminderRepo.markFailedById(
+            reminder.id,
+            error instanceof Error ? error.message : String(error)
+          );
         }
       }
 
@@ -717,14 +677,12 @@ export class PaymentReminderService {
 
           // Check if we should send an overdue reminder
           if (config.overdueDays.includes(overdueDays)) {
-            // Check if we haven't already sent one for this day
-            const { data: existingReminder } = await this.supabase
-              .from('payment_reminders')
-              .select('id')
-              .eq('invoice_id', invoice.id)
-              .eq('reminder_type', 'overdue')
-              .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-              .limit(1);
+            // Check if we haven't already sent one for this day (cross-user cron dedup)
+            const { data: existingReminder } = await this.reminderRepo.findRecentByInvoice(
+              invoice.id,
+              'overdue',
+              new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+            );
 
             if (!existingReminder || existingReminder.length === 0) {
               if (invoice.contact_id) {
@@ -772,13 +730,11 @@ export class PaymentReminderService {
           const config = await this.getUserReminderConfig(installment.user_id);
 
           if (config.overdueDays.includes(overdueDays)) {
-            const { data: existingReminder } = await this.supabase
-              .from('payment_reminders')
-              .select('id')
-              .eq('installment_id', installment.id)
-              .eq('reminder_type', 'overdue')
-              .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-              .limit(1);
+            const { data: existingReminder } = await this.reminderRepo.findRecentByInstallment(
+              installment.id,
+              'overdue',
+              new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+            );
 
             if (!existingReminder || existingReminder.length === 0) {
               if (installment.contact_id) {
@@ -906,23 +862,7 @@ export class PaymentReminderService {
     } = {}
   ): Promise<PaymentReminderServiceResult<PaymentReminder[]>> {
     try {
-      const { invoiceId, installmentId, contactId, status, limit = 50, offset = 0 } = options;
-
-      let query = this.supabase
-        .from('payment_reminders')
-        .select('*')
-        .eq('user_id', userId);
-
-      if (invoiceId) query = query.eq('invoice_id', invoiceId);
-      if (installmentId) query = query.eq('installment_id', installmentId);
-      if (contactId) query = query.eq('contact_id', contactId);
-      if (status) query = query.eq('status', status);
-
-      query = query
-        .order('scheduled_at', { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      const { data, error } = await query;
+      const { data, error } = await this.reminderRepo.list(userId, options);
 
       if (error) throw error;
 

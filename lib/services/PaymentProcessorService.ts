@@ -16,6 +16,10 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { PaymentProcessorType } from '@/lib/services/PaymentEventService';
+import {
+  PaymentProcessorRepository,
+  SavedPaymentMethodRepository,
+} from '@/lib/repositories/PaymentProcessorRepository';
 
 const logger = createLogger({ service: 'PaymentProcessorService' });
 
@@ -176,9 +180,13 @@ export function getProcessorExecutor(processorType: PaymentProcessorType): IPaym
 
 export class PaymentProcessorService {
   private supabase: SupabaseClient;
+  private processorRepo: PaymentProcessorRepository;
+  private savedMethodRepo: SavedPaymentMethodRepository;
 
   constructor(supabaseClient: SupabaseClient) {
     this.supabase = supabaseClient;
+    this.processorRepo = new PaymentProcessorRepository(supabaseClient);
+    this.savedMethodRepo = new SavedPaymentMethodRepository(supabaseClient);
   }
 
   // ==================== PROCESSOR MANAGEMENT ====================
@@ -187,59 +195,26 @@ export class PaymentProcessorService {
    * Get all connected processors for a user
    */
   async getConnectedProcessors(userId: string): Promise<PaymentProcessorServiceResult<PaymentProcessor[]>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('payment_processors')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .eq('connection_status', 'connected');
-
-      if (error) throw error;
-
-      return { data: data || [], error: null };
-    } catch (error) {
+    const { data, error } = await this.processorRepo.findConnected(userId);
+    if (error) {
       logger.error({ err: error, userId }, 'Failed to get connected processors');
-      return { data: null, error: error as Error };
+      return { data: null, error };
     }
+    return { data: data || [], error: null };
   }
 
   /**
    * Get the default processor for a user
    */
   async getDefaultProcessor(userId: string): Promise<PaymentProcessorServiceResult<PaymentProcessor | null>> {
-    try {
-      // First try to get the default processor
-      const { data: defaultProcessor, error: defaultError } = await this.supabase
-        .from('payment_processors')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_default', true)
-        .eq('is_active', true)
-        .eq('connection_status', 'connected')
-        .single();
-
-      if (!defaultError && defaultProcessor) {
-        return { data: defaultProcessor, error: null };
-      }
-
-      // If no default, get any connected processor
-      const { data: anyProcessor, error: anyError } = await this.supabase
-        .from('payment_processors')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('is_active', true)
-        .eq('connection_status', 'connected')
-        .limit(1)
-        .single();
-
-      if (anyError && anyError.code !== 'PGRST116') throw anyError;
-
-      return { data: anyProcessor || null, error: null };
-    } catch (error) {
+    // Repo folds the "default row → else any-connected" fallback and returns a
+    // graceful null (never an error) when the user has no connected processor.
+    const { data, error } = await this.processorRepo.findDefault(userId);
+    if (error) {
       logger.error({ err: error, userId }, 'Failed to get default processor');
-      return { data: null, error: error as Error };
+      return { data: null, error };
     }
+    return { data: data || null, error: null };
   }
 
   /**
@@ -249,21 +224,13 @@ export class PaymentProcessorService {
     userId: string,
     processorType: PaymentProcessorType
   ): Promise<PaymentProcessorServiceResult<PaymentProcessor | null>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('payment_processors')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('processor_type', processorType)
-        .single();
-
-      if (error && error.code !== 'PGRST116') throw error;
-
-      return { data: data || null, error: null };
-    } catch (error) {
+    // Repo returns a graceful null on not-found (never an error).
+    const { data, error } = await this.processorRepo.findByType(userId, processorType);
+    if (error) {
       logger.error({ err: error, userId, processorType }, 'Failed to get processor');
-      return { data: null, error: error as Error };
+      return { data: null, error };
     }
+    return { data: data || null, error: null };
   }
 
   /**
@@ -281,46 +248,35 @@ export class PaymentProcessorService {
       const existing = await this.getProcessor(userId, processorType);
       if (existing.data) {
         // Update existing
-        const { data, error } = await this.supabase
-          .from('payment_processors')
-          .update({
-            credentials,
-            is_active: true,
-            connection_status: 'connected',
-            last_verified_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existing.data.id)
-          .eq('user_id', userId)
-          .select()
-          .single();
+        const { data, error } = await this.processorRepo.update(existing.data.id, userId, {
+          credentials,
+          is_active: true,
+          connection_status: 'connected',
+          last_verified_at: new Date().toISOString(),
+        });
 
         if (error) throw error;
         return { data, error: null };
       }
 
       // Create new
-      const { data, error } = await this.supabase
-        .from('payment_processors')
-        .insert({
-          user_id: userId,
-          processor_type: processorType,
-          is_active: true,
-          is_default: false,
-          credentials,
-          supports_checkout: true,
-          supports_saved_methods: processorType !== 'manual',
-          supports_refunds: true,
-          supports_partial_refunds: processorType !== 'manual',
-          connection_status: 'connected',
-          last_verified_at: new Date().toISOString()
-        })
-        .select()
-        .single();
+      const { data, error } = await this.processorRepo.create({
+        user_id: userId,
+        processor_type: processorType,
+        is_active: true,
+        is_default: false,
+        credentials,
+        supports_checkout: true,
+        supports_saved_methods: processorType !== 'manual',
+        supports_refunds: true,
+        supports_partial_refunds: processorType !== 'manual',
+        connection_status: 'connected',
+        last_verified_at: new Date().toISOString(),
+      });
 
       if (error) throw error;
 
-      logger.info({ userId, processorType, processorId: data.id }, 'Payment processor connected');
+      logger.info({ userId, processorType, processorId: data!.id }, 'Payment processor connected');
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId, processorType }, 'Failed to connect processor');
@@ -338,16 +294,11 @@ export class PaymentProcessorService {
     try {
       logger.info({ userId, processorType }, 'Disconnecting payment processor');
 
-      const { error } = await this.supabase
-        .from('payment_processors')
-        .update({
-          is_active: false,
-          connection_status: 'disconnected',
-          credentials: {},
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .eq('processor_type', processorType);
+      const { error } = await this.processorRepo.updateByType(userId, processorType, {
+        is_active: false,
+        connection_status: 'disconnected',
+        credentials: {},
+      });
 
       if (error) throw error;
 
@@ -367,18 +318,10 @@ export class PaymentProcessorService {
   ): Promise<PaymentProcessorServiceResult<void>> {
     try {
       // Clear existing default
-      await this.supabase
-        .from('payment_processors')
-        .update({ is_default: false, updated_at: new Date().toISOString() })
-        .eq('user_id', userId)
-        .eq('is_default', true);
+      await this.processorRepo.clearDefault(userId);
 
       // Set new default
-      const { error } = await this.supabase
-        .from('payment_processors')
-        .update({ is_default: true, updated_at: new Date().toISOString() })
-        .eq('user_id', userId)
-        .eq('processor_type', processorType);
+      const { error } = await this.processorRepo.setDefaultByType(userId, processorType);
 
       if (error) throw error;
 
@@ -444,15 +387,13 @@ export class PaymentProcessorService {
     try {
       // Get saved method to determine processor
       if (request.savedMethodId) {
-        const { data: method, error: methodError } = await this.supabase
-          .from('saved_payment_methods')
-          .select('processor_type')
-          .eq('id', request.savedMethodId)
-          .eq('user_id', userId)
-          .single();
+        const { data: method, error: methodError } = await this.savedMethodRepo.findById(
+          request.savedMethodId,
+          userId
+        );
 
         if (methodError) throw methodError;
-        processorType = method.processor_type as PaymentProcessorType;
+        processorType = method!.processor_type as PaymentProcessorType;
       }
 
       // Get processor
@@ -528,14 +469,7 @@ export class PaymentProcessorService {
     contactId: string
   ): Promise<PaymentProcessorServiceResult<SavedPaymentMethod[]>> {
     try {
-      const { data, error } = await this.supabase
-        .from('saved_payment_methods')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('contact_id', contactId)
-        .eq('is_valid', true)
-        .order('is_default', { ascending: false })
-        .order('created_at', { ascending: false });
+      const { data, error } = await this.savedMethodRepo.findValidByContact(userId, contactId);
 
       if (error) throw error;
 
@@ -611,50 +545,41 @@ export class PaymentProcessorService {
 
       // If setting as default, clear other defaults first
       if (methodData.setAsDefault) {
-        await this.supabase
-          .from('saved_payment_methods')
-          .update({ is_default: false, updated_at: new Date().toISOString() })
-          .eq('user_id', userId)
-          .eq('contact_id', methodData.contactId)
-          .eq('is_default', true);
+        await this.savedMethodRepo.clearContactDefaults(userId, methodData.contactId);
       }
 
-      const { data, error } = await this.supabase
-        .from('saved_payment_methods')
-        .insert({
-          user_id: userId,
-          contact_id: methodData.contactId,
-          processor_type: methodData.processorType,
-          processor_customer_id: methodData.processorCustomerId,
-          processor_method_id: methodData.processorMethodId,
-          method_type: methodData.methodType,
-          last_four: methodData.lastFour || null,
-          brand: methodData.brand || null,
-          expiry_month: methodData.expiryMonth || null,
-          expiry_year: methodData.expiryYear || null,
-          is_default: methodData.setAsDefault || false,
-          is_valid: true
-        })
-        .select()
-        .single();
+      const { data, error } = await this.savedMethodRepo.create({
+        user_id: userId,
+        contact_id: methodData.contactId,
+        processor_type: methodData.processorType,
+        processor_customer_id: methodData.processorCustomerId,
+        processor_method_id: methodData.processorMethodId,
+        method_type: methodData.methodType,
+        last_four: methodData.lastFour || null,
+        brand: methodData.brand || null,
+        expiry_month: methodData.expiryMonth || null,
+        expiry_year: methodData.expiryYear || null,
+        is_default: methodData.setAsDefault || false,
+        is_valid: true,
+      });
 
       if (error) throw error;
 
-      logger.info({ savedMethodId: data.id }, 'Payment method saved');
+      logger.info({ savedMethodId: data!.id }, 'Payment method saved');
       return {
         data: {
-          id: data.id,
-          contactId: data.contact_id,
-          processorType: data.processor_type,
-          processorCustomerId: data.processor_customer_id,
-          processorMethodId: data.processor_method_id,
-          methodType: data.method_type,
-          lastFour: data.last_four,
-          brand: data.brand,
-          expiryMonth: data.expiry_month,
-          expiryYear: data.expiry_year,
-          isDefault: data.is_default,
-          isValid: data.is_valid
+          id: data!.id,
+          contactId: data!.contact_id,
+          processorType: data!.processor_type,
+          processorCustomerId: data!.processor_customer_id,
+          processorMethodId: data!.processor_method_id,
+          methodType: data!.method_type,
+          lastFour: data!.last_four,
+          brand: data!.brand,
+          expiryMonth: data!.expiry_month,
+          expiryYear: data!.expiry_year,
+          isDefault: data!.is_default,
+          isValid: data!.is_valid
         },
         error: null
       };
@@ -672,11 +597,7 @@ export class PaymentProcessorService {
     methodId: string
   ): Promise<PaymentProcessorServiceResult<void>> {
     try {
-      const { error } = await this.supabase
-        .from('saved_payment_methods')
-        .update({ is_valid: false, updated_at: new Date().toISOString() })
-        .eq('id', methodId)
-        .eq('user_id', userId);
+      const { error } = await this.savedMethodRepo.invalidate(methodId, userId);
 
       if (error) throw error;
 

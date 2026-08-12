@@ -23,6 +23,8 @@ import {
   emitPaymentEvent
 } from '@/lib/services/PaymentEventService';
 import { getBlock, PAYMENT_BUILDING_BLOCKS } from '@/lib/payments/PaymentBuildingBlocks';
+import { PaymentAutomationRuleRepository } from '@/lib/repositories/PaymentAutomationRepository';
+import { PaymentEventRepository } from '@/lib/repositories/PaymentEventRepository';
 
 const logger = createLogger({ service: 'PaymentAutomationEngine' });
 
@@ -96,10 +98,14 @@ export class PaymentAutomationEngine {
   private supabase: SupabaseClient;
   private isRunning: boolean = false;
   private eventService: PaymentEventService;
+  private ruleRepo: PaymentAutomationRuleRepository;
+  private eventRepo: PaymentEventRepository;
 
   constructor(supabaseClient: SupabaseClient) {
     this.supabase = supabaseClient;
     this.eventService = new PaymentEventService(supabaseClient);
+    this.ruleRepo = new PaymentAutomationRuleRepository(supabaseClient);
+    this.eventRepo = new PaymentEventRepository(supabaseClient);
   }
 
   // ==================== ENGINE LIFECYCLE ====================
@@ -469,12 +475,7 @@ export class PaymentAutomationEngine {
     eventType: PaymentEventType
   ): Promise<AutomationEngineResult<AutomationRule[]>> {
     try {
-      const { data, error } = await this.supabase
-        .from('payment_automation_rules')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('trigger_event', eventType)
-        .eq('is_active', true);
+      const { data, error } = await this.ruleRepo.findActiveForEvent(userId, eventType);
 
       if (error) throw error;
 
@@ -493,22 +494,7 @@ export class PaymentAutomationEngine {
     options: { isActive?: boolean; limit?: number; offset?: number } = {}
   ): Promise<AutomationEngineResult<AutomationRule[]>> {
     try {
-      const { isActive, limit = 50, offset = 0 } = options;
-
-      let query = this.supabase
-        .from('payment_automation_rules')
-        .select('*')
-        .eq('user_id', userId);
-
-      if (isActive !== undefined) {
-        query = query.eq('is_active', isActive);
-      }
-
-      query = query
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      const { data, error } = await query;
+      const { data, error } = await this.ruleRepo.list(userId, options);
 
       if (error) throw error;
 
@@ -533,18 +519,11 @@ export class PaymentAutomationEngine {
         throw new Error(`Unknown action block: ${rule.action_block}`);
       }
 
-      const { data, error } = await this.supabase
-        .from('payment_automation_rules')
-        .insert({
-          user_id: userId,
-          ...rule
-        })
-        .select()
-        .single();
+      const { data, error } = await this.ruleRepo.create(userId, rule);
 
       if (error) throw error;
 
-      logger.info({ ruleId: data.id, userId, name: rule.name }, 'Automation rule created');
+      logger.info({ ruleId: data!.id, userId, name: rule.name }, 'Automation rule created');
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to create automation rule');
@@ -569,16 +548,7 @@ export class PaymentAutomationEngine {
         }
       }
 
-      const { data, error } = await this.supabase
-        .from('payment_automation_rules')
-        .update({
-          ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', ruleId)
-        .eq('user_id', userId)
-        .select()
-        .single();
+      const { data, error } = await this.ruleRepo.update(ruleId, userId, updates);
 
       if (error) throw error;
 
@@ -595,11 +565,7 @@ export class PaymentAutomationEngine {
    */
   async deleteRule(ruleId: string, userId: string): Promise<AutomationEngineResult<void>> {
     try {
-      const { error } = await this.supabase
-        .from('payment_automation_rules')
-        .delete()
-        .eq('id', ruleId)
-        .eq('user_id', userId);
+      const { error } = await this.ruleRepo.delete(ruleId, userId);
 
       if (error) throw error;
 
@@ -837,12 +803,8 @@ export class PaymentAutomationEngine {
 
     for (const execution of result.data) {
       try {
-        // Get the original event
-        const { data: eventData } = await this.supabase
-          .from('payment_events')
-          .select('*')
-          .eq('id', execution.trigger_event_id)
-          .single();
+        // Get the original event (cross-user cron read — unscoped by design)
+        const { data: eventData } = await this.eventRepo.findByIdUnscoped(execution.trigger_event_id);
 
         if (!eventData) {
           logger.warn({ executionId: execution.id }, 'Original event not found');
@@ -853,12 +815,8 @@ export class PaymentAutomationEngine {
           continue;
         }
 
-        // Get the rule
-        const { data: ruleData } = await this.supabase
-          .from('payment_automation_rules')
-          .select('*')
-          .eq('id', execution.rule_id)
-          .single();
+        // Get the rule (cross-user cron read — unscoped by design)
+        const { data: ruleData } = await this.ruleRepo.findByIdUnscoped(execution.rule_id);
 
         if (!ruleData) {
           logger.warn({ executionId: execution.id }, 'Rule not found');
