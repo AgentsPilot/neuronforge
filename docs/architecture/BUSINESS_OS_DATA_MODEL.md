@@ -52,7 +52,7 @@ Every Business OS table at a glance. "RLS user-scoped?" is the platform's securi
 | External Cal Event | Scheduling | `external_calendar_events` | ExternalCalendarEventRepository | Y (+ service-role ALL) |
 | Invoice | Payments | `payment_invoices` | PaymentRepository | Y |
 | Transaction | Payments | `payment_transactions` | PaymentRepository | Y |
-| Payment Method (Stripe) | Payments | `payment_methods` | PaymentRepository | Y |
+| Payment Method (Stripe) | Payments | `payment_methods` | _(none — dead table, unowned; flagged for a future DROP migration)_ | Y |
 | Stripe Connect Acct | Payments | `stripe_connect_accounts` | PaymentRepository | Y (1:1 user) |
 | Processor | Payments | `payment_processors` | PaymentRepository | Y |
 | Payment Plan | Payments | `payment_plans` | PaymentPlanRepository | Y |
