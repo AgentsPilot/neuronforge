@@ -88,11 +88,21 @@ Method surfaces derived from the assessment's per-service call-site inventory (f
 
 ---
 
-## 5. Deferred / out of scope
+## 5. Deferred / out of scope + open follow-ups
 
-- `payment_automation_executions` repo + the `trigger_event_id` phantom + the broken in-process pub/sub (engine subscribes on its own `PaymentEventService` instance vs the global singleton) → separate investigation.
-- `payment_methods` DROP migration + confirming no prod rows.
-- Wrapping the reminder/retry services' `payment_plan_installments` / `business_profiles` direct reads.
+### Liveness of the wrapped tables (finding, 2026-08-12)
+Traced during review — the 5 wrapped tables split into three tiers:
+- **Live:** `payment_events`, `payment_processors`, `saved_payment_methods` — exercised by the payment UI blocks (`collect_payment` / `record_manual_payment` / `refund_*` → `POST /api/payments/blocks/execute`) and by booking creation (`scheduling/bookings` emits events + schedules reminders).
+- **Half-dark:** `payment_reminders` — rows are created live (bookings + `schedule_reminder` block), **but never sent** (see follow-up F1).
+- **Fully dark:** `payment_automation_rules` / `payment_automation_executions` (see follow-up F2).
+
+### Open follow-ups (spawned as tasks + in the roadmap Payments section)
+- **F1 ⬜ Wire the dormant payment crons** — `task_65f25a21`. `app/api/cron/payment-reminders/route.ts` + `payment-retry/route.ts` exist but are **NOT registered in `vercel.json`**, so scheduled reminders never send and retries never run. Add cron entries + verify auth gating. (B2 already stopped the reminder status writes from silently failing; sending still needs this cron.)
+- **F2 ⬜ Decide + fix the dormant automation engine** — `task_39e0280d`. No rule-management API/UI, no scheduled execution cron, broken in-process pub/sub (engine subscribes on its own `PaymentEventService` instance vs the global singleton), and the phantom `payment_automation_executions.trigger_event_id` (written `:710`, read `:844`, absent from schema) → `createExecution` fails at runtime. **This is where the deferred `PaymentAutomationExecutionRepository` + the `trigger_event_id` migration + status-vocab reconciliation + pub/sub fix live.** Build-vs-remove decision first; overlaps Step-3 event-driven architecture.
+- **F3 ⬜ `payment_methods` DROP migration** — dead table (0 `.from()` refs); confirm no prod rows first.
+
+### Out of scope (this phase, no task)
+- Wrapping the reminder/retry services' `payment_plan_installments` / `business_profiles` direct reads (installments already has `PaymentPlanRepository`; a wider cleanup).
 - Semi-dead `payment_automation_rules` columns (`processor_filter`/`execution_count`/`last_executed_at`) — leave as-is.
 
 ---
