@@ -148,6 +148,11 @@ These affect every internal module, not just one. Fix once, benefits all.
 - ⬜ **Insight G2 direct-DB reads** of payment tables (`MetricsComputeService`, `CashArOverdueDetector`, stats/my-day routes) — overlaps this module; tracked under Insights.
 - ✅ **No phantom columns** on the payments path (verified). External **Stripe** (Connect/checkout/webhook/`IPaymentProcessorExecutor`) confirmed as the delivery leaf — out of the internal op contract; the webhook remains the legitimate producer of `succeeded` transactions that fires T3/T4.
 
+**Tracked follow-ups from phase-2 (liveness findings — 2026-08-12):** the 5 wrapped tables split by liveness: `payment_events`/`payment_processors`/`saved_payment_methods` are **live** (payment UI blocks: collect_payment/record_manual_payment/refund → `blocks/execute`; + booking events); `payment_reminders` is **half-dark** (rows created on bookings, but the sending cron isn't scheduled); automation is **fully dark**.
+- ⬜ **Wire the payment crons** (spawned task `task_65f25a21`) — `app/api/cron/payment-reminders/route.ts` + `payment-retry/route.ts` exist but are **NOT in `vercel.json`**, so scheduled reminders never send and retries never run. Add cron entries + verify auth gating.
+- ⬜ **Payment automation engine is dormant** (spawned task `task_39e0280d`) — no rule-management surface, no scheduled execution cron, a broken in-process pub/sub (engine subscribes on its own `PaymentEventService` instance vs the global singleton), and the phantom `payment_automation_executions.trigger_event_id`. Decide build-vs-remove; if build, this is where the **deferred `PaymentAutomationExecutionRepository`** + the `trigger_event_id` migration + pub/sub fix live. Overlaps Step-3 event-driven architecture.
+- ⬜ **`payment_methods`** dead table → separate DROP migration (confirm no prod rows first).
+
 ### Intake
 
 **Status:** 🔵 Assessed (2026-08-10) — **the simplest conversion yet (🟢 confirmed)**. Workplan drafted, awaiting SA review: [Intake internal-plugin workplan](/docs/workplans/BUSINESS_OS_INTAKE_INTERNAL_PLUGIN_WORKPLAN.md).
