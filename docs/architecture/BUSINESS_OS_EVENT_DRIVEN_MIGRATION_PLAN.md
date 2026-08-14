@@ -1,7 +1,7 @@
 # Business OS — Trigger → Rule-Engine Migration Plan
 
 > **Last Updated**: 2026-08-12
-> **Status**: 🟠 Draft (v0.3) — **SA-ratified with changes** (§15, 2026-08-13); RC1–RC7 + the four deep-design answers (concurrency/ordering, event-carried state, cron model, rule-engine mechanics) folded into the body. Awaiting user review, then re-submit the revised §3–§9 for SA sign-off (M0 blocking). This is the **implementation companion** to the locked design.
+> **Status**: 🟢 v0.4 — **M0 gate SATISFIED. SA final sign-off: APPROVED-WITH-MINOR-EDITS** (§16, 2026-08-14; minor edits applied). Cleared to **scope Phase-0** at design altitude. Does **not** authorize the Phase-0 build — RC1/RC2/RC3 remain M1 execution gates that must land per-entity before any trigger is dropped. This is the **implementation companion** to the locked design.
 
 ## Overview
 
@@ -132,7 +132,7 @@ This is the **#1 correctness risk** of the migration (§12 R1). Emission coverag
 | Component | What it is | Notes |
 |---|---|---|
 | **Emission hook** | A function repos call on state-changing methods → normalizes + `businessEventService.emit()`. Driven by declarative `method→event` metadata. | §4. Start with the CRM/scheduling/payment repos touched by T1–T9. |
-| **Taxonomy additions** | Add `task.completed`, `document.uploaded`, `contact.deleted` to `BusinessEventType` + `EVENT_TYPE_TO_CATEGORY`. **RC5:** also add `task` + `document` to `BusinessEntityType` (missing today), and audit `SourceCapability` coverage. | Needed for T6/T7/T9 — event type alone is insufficient. |
+| **Taxonomy additions** | Add `task.completed`, `document.uploaded`, `contact.deleted`, and **`booking.contact_linked`** (the RC4 ordering event, §9) to `BusinessEventType` + `EVENT_TYPE_TO_CATEGORY`. **RC5:** also add `task` + `document` to `BusinessEntityType` (missing today), and audit `SourceCapability` coverage. | `task.*`/`document.*`/`contact.deleted` for T6/T7/T9; `booking.contact_linked` for the T1→T2 chain. Event type alone is insufficient. |
 | **Reaction-op catalog + resolution** (RC3) | Audit that every reaction is a real **plugin operation** (`crm.log_activity`, `crm.find_or_create_contact`, `payments.mark_invoice_paid`, `scheduling.cancel_future_bookings`); build any missing; specify the **interim single-provider capability→plugin resolution** so Phase-1 reactions execute *as ops via `PluginExecuterV2.execute`* (per locked §3.7), not by calling repos directly. | Config-driven selection (R7) is Phase 4, but Phase-1 reactions still need to resolve to *some* executor op today. |
 | **`event_reactions` queue table** | Durable queue rows: `event_id`, `rule_id`, `lane`, `status` (pending/running/done/failed), `attempts`, `next_attempt_at`, `dedupe_key`, timestamps. RLS by `user_id`. | The DB-backed queue (C1). One row per matched rule per event. |
 | **`processed_reactions` table** | Exactly-once guard for non-idempotent reactions, keyed `(event_id, rule_id)`. | C5. |
@@ -224,7 +224,7 @@ Per-trigger specifics (event, reaction, lane, condition to preserve):
 > 2. **Paid bookings** — the trigger *skips* (its `20260728` redefinition skips `payment_status='pending'`); the contact is created **later, in the `booking/finalize` route by raw app code** (the RC1 bypass). So the paid path already isn't trigger-driven — it must be routed through the repo and made event-source-able as part of the cutover.
 > The event-backed reaction: `find_or_create_contact` returns the contact id, then a second idempotent step links it via the scheduling repo. Do T1 **after** the pure-logging cutovers.
 >
-> **⚠️ RC4 — inter-reaction causal ordering (T1 → T2).** T2's guardrail is "only if `contact_id` present," and **T1 is what sets it.** Today trigger order is deterministic within the booking transaction; the queue model is **not** — T1 (fast) and T2 (delayed) both key off `booking.created` across two lanes with no ordering guarantee, so T2 can observe a not-yet-linked booking and skip, **changing behavior**. Resolve before cutting over T1/T2: e.g. T2 keys off a **`booking.contact_linked`** event emitted by T1's link step (not off `booking.created`), or the T2 reaction re-reads and re-evaluates the booking's current `contact_id`. This ordering dependency must be in the risk register and the T1/T2 playbook.
+> **⚠️ RC4 — inter-reaction causal ordering (T1 → T2).** T2's guardrail is "only if `contact_id` present," and **T1 is what sets it.** Today trigger order is deterministic within the booking transaction; the queue model is **not** — T1 (fast) and T2 (delayed) both key off `booking.created` across two lanes with no ordering guarantee, so T2 can observe a not-yet-linked booking and skip, **changing behavior**. **Chosen resolution (the §9 event-chaining principle):** T2 keys off a **`booking.contact_linked`** event emitted by T1's link step, **not** off `booking.created`. (A re-read-and-re-evaluate variant is a possible fallback, but event-chaining is the preferred, generalizable approach per §9.) This ordering dependency is in the risk register (R1d) and gates the T1/T2 cutover.
 
 ---
 
@@ -334,6 +334,7 @@ Many runners drain `event_reactions` in parallel (multiple cron invocations, the
 |------|--------|---------|
 | 2026-08-12 | Created (v0.1 draft) | First-pass migration/implementation plan companion to the locked event-driven design. Grounded the 9 side-effect triggers (T1–T9, file:line) vs the maintenance triggers that stay; proposed resolutions for the design's 5 deferred implementation choices (DB-backed queue, at-least-once post-write emit, hybrid rules storage, declarative repo-layer emission, dedicated dedupe table); surfaced the **emission-point crux** (repo-layer emission as the universal internal chokepoint enabled by the just-completed repository-conformance work, reconciled with the design's executor-layer external-readiness); defined components, a 5-phase incremental no-double-fire sequence (CRM-first, T8→…→T9), the per-trigger cutover playbook, the Vercel fast(inline+sweep)/delayed(insight-crons) execution model, idempotency discipline, parity/rollback, observability, risks, and milestones. **Draft for review — §3/§4 recommendations need SA/user ratification.** |
 | 2026-08-13 | SA ratification appended (§15) | Overall verdict RATIFY-WITH-CHANGES. Grounded §4 against code; found the "repos are the single internal chokepoint" premise materially incomplete (finalize route + payment-block raw writes bypass both executor and repo for T1–T9 entities). Per-decision table (C1–C5 + §4). Flagged emit-durability gap (C2), reaction-op/capability-resolution gap, inter-reaction causal ordering (T1→T2), and taxonomy entity-type gap. |
+| 2026-08-14 | v0.4 — SA final sign-off (M0) | SA final sign-off pass: **APPROVED-WITH-MINOR-EDITS, M0 gate satisfied** (§16). Confirmed all RC1–RC7 + the four deep-design answers are faithfully/completely/consistently folded (no drift, no over-reach). Applied the 3 minor edits: enumerated `booking.contact_linked` in the §5 taxonomy additions; aligned §7's RC4 note firmness to §9's event-chaining principle (chaining preferred, re-read a fallback); verified §8.2's "8 crons on Pro" against `vercel.json` (correct — 8 total, of which 3 are insight crons). Sign-off authorizes **scoping Phase-0**, not the Phase-0 build (RC1–RC3 remain M1 execution gates). |
 | 2026-08-14 | v0.3 — deep-design feedback folded in | Folded SA's answers to four user design questions: **§8.1 runner coordination** (batched `FOR UPDATE SKIP LOCKED` claim in an RPC, lease > `maxDuration` = provably-dead reaper, partial index, dead-letter, MVCC-is-isolation-not-correctness); **§9 ordering-by-event-chaining** principle (T2 keys off `booking.contact_linked`) + per-entity advisory lock; **§5.2 event-carried state** (per-field snapshot-vs-reread, `schema_version`, PII/erasure); **§8.2 trigger sources** (retire the in-process `subscribe()` bus, heartbeat-cron + per-rule due-logic, `pg_cron`/`pg_net` option, push-queue escape hatch); **§5.1 rule-engine mechanics** (typed system rules + table user rules, closed-operator/JSONLogic eval never `eval()`, capability-op allowlist for user rules, guardrails at the runner choke point, fan-out cap/circuit breaker, versioning/audit/golden-parity tests). Added §6 legacy-drain retirement dependency (ties to `task_65f25a21`/`task_39e0280d`); risk register R8–R12 (legacy-drain double-engine, cross-deploy in-flight, fan-out storm, reaper mis-tune, PII/erasure); §11 concurrency-health metrics. |
 | 2026-08-13 | v0.2 — RC1–RC7 folded into body | Reframed §4 emission coverage from a verify-step to a **Phase-0 remediation prerequisite** (RC1) with the `booking/finalize` bypass as the concrete counterexample + a static no-`.from()`-outside-repos assertion; added the **emit-durability net** (RC2) and **reaction-op catalog + interim capability→plugin resolution** (RC3) as Phase-0 High prerequisites; distinguished **zero-fire vs double-fire** and added the `crm_activities` single-writer convergence invariant (§9); added **T1 two-path** handling + **T1→T2 causal ordering** (RC4) to §7; added `task`/`document` **entity-type** additions (RC5), the **dual event log** reconciliation (RC6), and the **queue-table service-role scoping + persist-before-attempt ordering** (RC7). Risk register upgraded (R1/R1b/R1c/R1d). **Next: user review → re-submit revised §3/§4 for SA sign-off (M0 blocking).** |
 
@@ -398,4 +399,51 @@ None of C1–C5 or §4 *contradict* the design's locked decisions (two-lane §3.
 
 ### Approval
 
-- [ ] **Not yet approved to build.** Address RC1–RC3 (High) in the plan before M1/Phase-0 scaffolding; RC4–RC7 can be folded into the per-phase playbooks. Re-submit for SA sign-off on the revised §3/§4 (M0 remains blocking, per the plan's own Milestones).
+- [x] **Required changes addressed in the plan (RC1–RC7 folded into §3–§9, verified in §16, 2026-08-14).** RC1–RC3 (High) are now Phase-0 prerequisites in §4/§6/§7/§12; RC4–RC7 are in the per-phase playbooks. Final M0 sign-off rendered in **§16**. *(This checkbox = "the plan is ratified"; it is **not** build authorization — Phase-0 build is gated on the RC1–RC3 remediation actually landing, per §13 M1.)*
+
+---
+
+## 16. SA Final Sign-off (2026-08-14)
+
+**Second-pass review of the v0.3 fold-in.** Re-read §3–§9, §11–§13, and my own §15 against the locked design. This is the plan's own **M0 gate** — verifying the fold-in is faithful, complete, and internally consistent, not re-litigating the decisions.
+
+### Overall verdict: ✅ **APPROVED-WITH-MINOR-EDITS — M0 gate is satisfied; cleared to scope Phase-0.**
+
+The fold-in is faithful and complete: every RC1–RC7 required change is now materialized in the body (not merely referenced), all four deep-design answers are captured without drift from what I advised, and nothing contradicts the locked design (two-lane §3.4, Option-B lane-not-sync §3.5, provider-agnostic §3.7 plugin-op reactions). The three residual edits below are **tightening, not blocking** — they can be applied in-place without another SA round.
+
+### Per-area confirmation
+
+**RC1–RC7 folded into the body (✓ all):**
+
+| RC | Folded where | ✓ |
+|---|---|---|
+| RC1 — coverage = remediation, not verify; static `.from()` assertion | §4 (RC1 block), §6 Phase 0, §7 step 1 (a GATE), §12 R1 | ✓ |
+| RC2 — emit-durability net (retry + reconciliation sweep) | §3 C2, §6 Phase 0, §12 R1b | ✓ |
+| RC3 — reaction-op catalog + interim capability→plugin resolution | §5 (catalog component), §6 Phase 0, §7 step 3, §12 R1c | ✓ |
+| RC4 — T1→T2 causal ordering | §7 (RC4 note), §9 (event-chaining), §12 R1d | ✓ |
+| RC5 — `BusinessEntityType` `task`/`document` additions | §5 taxonomy component | ✓ |
+| RC6 — pre-existing dual event log (`payment_events`) | §6 Phase 2 | ✓ |
+| RC7 — service-role scoping + persist-before-attempt ordering | §8 (RC7 block) | ✓ |
+
+**Four deep-design answers captured accurately (✓ all, no drift):**
+- **Q1 concurrency/ordering (✓)** — §8.1 has batched `FOR UPDATE SKIP LOCKED` in an RPC, **lease > `maxDuration` + margin = provably-dead reaper** (as advised, not a guessed timeout), partial index, dead-letter, and the "MVCC-is-isolation-not-correctness" framing. §9 encodes **ordering-by-event-chaining, not queue-ordering** (T2 keys off `booking.contact_linked`), with a per-entity advisory lock as the narrow fallback. Exactly what I advised.
+- **Q2 event-carried state (✓)** — §5.2 is **per-field snapshot-vs-reread** (not per-event), with `schema_version` for cross-deploy rows and the **PII/right-to-erasure** gap called out (reference-not-value, never log metadata values). Faithful.
+- **Q3 cron model (✓)** — §8.2 retires the in-process `subscribe()` bus as **heartbeat-driven, not app-startup**, keeps one heartbeat + per-rule due-logic, records the **`pg_cron`/`pg_net`** option, and keeps the push-queue escape hatch. Faithful.
+- **Q4 rule-engine mechanics (✓)** — §5.1 is **closed-operator eval / JSONLogic, never `eval()`**, a **capability-op allowlist** for user rules, **guardrails enforced at the runner choke point** (not the distributor), plus fan-out cap / circuit breaker and the versioning/audit/golden-parity gate. Faithful.
+
+**Internal consistency (✓):** R8–R12 all resolve and are cross-referenced from their source sections; the §5.1/§5.2/§8.1/§8.2 ToC anchors exist; the "§12 R12" PII ref points to a real row; the T1→T2 `booking.contact_linked` chaining is referenced consistently in §7, §9, and R1d; the new concurrency/ordering material does not contradict §7's per-trigger playbook or §9's xor discipline (xor guards double-fire, RC1 guards zero-fire — kept distinct); §13 milestones and §6 phases align with the added prerequisites (M1 explicitly bundles RC1–RC3).
+
+**No over-reach (✓):** the plan stays design-altitude — the still-open items (final queue tech push-vs-DB in C1, `pg_cron` adoption in §8.2, fast-lane push-queue escape hatch) are correctly left as **choices to evaluate in Phase-0**, not silently decided. No unratified commitment slipped in.
+
+### Minor edits still wanted (apply in-place; do not block M0)
+
+1. **Add `booking.contact_linked` to the §5 taxonomy-additions list.** The RC4 event-chaining resolution (§9 canonical case) introduces this event type, but the §5 taxonomy component still lists only `task.completed`/`document.uploaded`/`contact.deleted`. If event-chaining is adopted (§9 states it as the canonical approach), the new type + its `EVENT_TYPE_TO_CATEGORY` entry must be enumerated alongside the others.
+2. **Align the §7 T2 row and RC4 note firmness.** §9 states event-chaining as *the* principle ("canonical case"), while §7's RC4 note still frames it as one of two options ("or re-evaluates"). Add a footnote on the §7 T2 table row (driving event `booking.created`) pointing to RC4, and let §7 defer to §9 as the recommended resolution so the two sections read consistently.
+3. **Verify the "8 crons on Pro" claim (§8.2).** New in the fold-in (not in §2.3, which cites 3 insight crons). It's not load-bearing — the design point is only that Vercel crons are static/capped/best-effort — but confirm the count against `vercel.json` before it's quoted as fact, or soften to "the existing crons."
+
+### What this sign-off DOES and does NOT authorize
+
+- **DOES (M0 gate):** ratifies §3–§9 as the buildable plan. The revised §3 resolutions (C1–C5), the §4 emission-point decision (repo-for-internal / executor-for-external), and the folded deep-design mechanics are **signed off at design altitude.** Phase-0 may now be **scoped** (task breakdown, sizing, migration/test scaffolding design).
+- **Does NOT (not build authorization):** this is **not** approval that Phase-0 is done, and it does not waive Phase-0's own prerequisites. RC1 (bypass remediation + static `.from()` assertion), RC2 (emit-durability net), and RC3 (reaction-op catalog + interim resolution) are **build work** that must actually land — per-entity, before that entity's trigger is dropped (§13 M1, §7 step 1 GATE). Those are execution gates for M1, not doc blockers for M0. The distinction the task draws — "the plan is signed off" vs "Phase-0 is done" — holds: the former is granted here, the latter is not.
+
+**Residual blockers for M0: none.** The three minor edits above are tightening, not gates.
