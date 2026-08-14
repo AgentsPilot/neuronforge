@@ -3,6 +3,8 @@
 > **Last Updated**: 2026-08-05
 
 > **Scope banner — READ FIRST.** This is **Step 3 of the CRM-first plugin plan**. It is **designed now, but OUT of the CRM-pilot v1 scope, and built later.** v1 ships on the existing Postgres triggers unchanged (see [SA Feasibility Review §2.4](/docs/architecture/BUSINESS_OS_MODULE_PLUGIN_SA_FEASIBILITY_REVIEW.md#24-recommendation)). This document captures the **locked** target architecture so the eventual trigger→event migration is an incremental switch, not a rewrite. It is design altitude — architecture, locked decisions, and concrete shapes — **not** an implementation workplan.
+>
+> 📘 **Implementation companion:** the *how* (phased migration, resolved implementation choices, per-trigger cutover playbook) lives in **[BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md](/docs/architecture/BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md)** (draft). It notably refines the emission-point question — repo-layer emission as the universal internal chokepoint enabled by the completed repository-conformance work.
 
 ## Overview
 
