@@ -2,31 +2,38 @@
  * Payment Automation Engine
  *
  * Central engine for evaluating and executing payment automation rules.
- * This service:
- * 1. Subscribes to payment events
- * 2. Evaluates matching automation rules for each event
- * 3. Executes building blocks based on rule actions
- * 4. Respects cooldowns and execution limits
  *
- * The engine is designed to work with the AI kernel, allowing:
- * - Dynamic rule creation/modification
- * - Intelligent triggering based on patterns
- * - Learning from user behavior
+ * As of the queue-drain cycle the engine owns ONLY the durable DRAIN:
+ * `processScheduledExecutions` claims due `payment_automation_executions` rows
+ * (SELECT ... FOR UPDATE SKIP LOCKED via RPC), enforces the per-entity guardrails
+ * at that single choke point, executes the action block, and marks the claimed row
+ * terminal. The old in-process subscribe()/notifySubscribers() bus + immediate
+ * `executeRuleAction`/`scheduleExecution` paths are retired — reactions are now
+ * durably enqueued at emit time (see lib/payments/paymentReactionEnqueuer.ts).
+ *
+ * Pure rule-evaluation helpers live in lib/payments/ruleEvaluation.ts (shared with
+ * the enqueuer). The default rule literals live in lib/payments/defaultPaymentRules.ts.
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { PaymentEvent, PaymentEventType } from '@/lib/services/PaymentEventService';
+import { getBlock } from '@/lib/payments/PaymentBuildingBlocks';
 import {
-  PaymentEventService,
-  PaymentEvent,
-  PaymentEventType,
-  emitPaymentEvent
-} from '@/lib/services/PaymentEventService';
-import { getBlock, PAYMENT_BUILDING_BLOCKS } from '@/lib/payments/PaymentBuildingBlocks';
-import { PaymentAutomationRuleRepository } from '@/lib/repositories/PaymentAutomationRepository';
+  PaymentAutomationRuleRepository,
+  paymentAutomationExecutionRepository,
+} from '@/lib/repositories/PaymentAutomationRepository';
 import { PaymentEventRepository } from '@/lib/repositories/PaymentEventRepository';
+import { buildActionParameters } from '@/lib/payments/ruleEvaluation';
+import { ensureDefaultPaymentRules } from '@/lib/payments/defaultPaymentRules';
 
 const logger = createLogger({ service: 'PaymentAutomationEngine' });
+
+// Durable-queue drain constants (Q1). Lease > the cron's maxDuration (60s) so any
+// row still `running` past the lease is provably dead (the serverless gift).
+const LEASE_SECONDS = 90;
+const MAX_ATTEMPTS = 5;
+const BATCH = 100;
 
 // ==================== TYPES ====================
 
@@ -71,11 +78,19 @@ export interface RuleExecution {
   entity_type: string;
   entity_id: string;
   trigger_event_id: string;
-  status: 'pending' | 'scheduled' | 'executing' | 'completed' | 'failed';
+  // Reconciled vocab (M4): pending (enqueued) → running (claimed) → completed | failed;
+  // cancelled (user), dead_letter (reaper-declared poison). Legacy scheduled/executing/executed dropped.
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'dead_letter';
   scheduled_at: string | null;
   executed_at: string | null;
   result: Record<string, unknown> | null;
   error_message: string | null;
+  // Claim/lease columns (§8.1 durable-queue pattern; added by the
+  // 2026-08-14_payment_automation_executions_claim migration).
+  claimed_by: string | null;
+  claimed_at: string | null;
+  attempts: number;
+  next_attempt_at: string | null;
   created_at: string;
 }
 
@@ -95,362 +110,32 @@ export interface RuleEvaluationContext {
 // ==================== ENGINE ====================
 
 export class PaymentAutomationEngine {
-  private supabase: SupabaseClient;
-  private isRunning: boolean = false;
-  private eventService: PaymentEventService;
   private ruleRepo: PaymentAutomationRuleRepository;
   private eventRepo: PaymentEventRepository;
 
   constructor(supabaseClient: SupabaseClient) {
-    this.supabase = supabaseClient;
-    this.eventService = new PaymentEventService(supabaseClient);
     this.ruleRepo = new PaymentAutomationRuleRepository(supabaseClient);
     this.eventRepo = new PaymentEventRepository(supabaseClient);
   }
 
-  // ==================== ENGINE LIFECYCLE ====================
+  // ==================== EXECUTION (block executor) ====================
 
   /**
-   * Start the automation engine
-   * Subscribes to payment events and begins processing
-   */
-  start(): void {
-    if (this.isRunning) {
-      logger.warn('PaymentAutomationEngine is already running');
-      return;
-    }
-
-    logger.info('Starting PaymentAutomationEngine');
-    this.isRunning = true;
-
-    // Subscribe to all payment events
-    this.eventService.subscribe(async (event) => {
-      try {
-        await this.processEvent(event);
-      } catch (error) {
-        logger.error({ err: error, eventId: event.id }, 'Error processing event in automation engine');
-      }
-    });
-
-    logger.info('PaymentAutomationEngine started');
-  }
-
-  /**
-   * Stop the automation engine
-   */
-  stop(): void {
-    logger.info('Stopping PaymentAutomationEngine');
-    this.isRunning = false;
-  }
-
-  // ==================== EVENT PROCESSING ====================
-
-  /**
-   * Process an incoming payment event
-   * Finds matching rules and schedules/executes actions
-   */
-  async processEvent(event: PaymentEvent): Promise<void> {
-    logger.info({
-      eventId: event.id,
-      eventType: event.event_type,
-      entityId: event.entity_id
-    }, 'Processing event for automation');
-
-    // Get active rules for this event type
-    const rulesResult = await this.getActiveRulesForEvent(event.user_id, event.event_type);
-    if (rulesResult.error || !rulesResult.data) {
-      logger.error({ err: rulesResult.error }, 'Failed to get automation rules');
-      return;
-    }
-
-    const matchingRules = rulesResult.data;
-    logger.info({ eventId: event.id, matchingRules: matchingRules.length }, 'Found matching rules');
-
-    // Evaluate and execute each matching rule
-    for (const rule of matchingRules) {
-      try {
-        await this.evaluateAndExecuteRule(rule, event);
-      } catch (error) {
-        logger.error({
-          err: error,
-          ruleId: rule.id,
-          eventId: event.id
-        }, 'Error executing automation rule');
-      }
-    }
-  }
-
-  /**
-   * Evaluate if a rule should execute and do so if conditions are met
-   */
-  private async evaluateAndExecuteRule(rule: AutomationRule, event: PaymentEvent): Promise<void> {
-    const context: RuleEvaluationContext = {
-      event,
-      entityType: event.entity_type,
-      entityId: event.entity_id,
-      contactId: event.contact_id,
-      metadata: event.metadata as Record<string, unknown>
-    };
-
-    // Check conditions
-    if (rule.trigger_conditions && rule.trigger_conditions.length > 0) {
-      const conditionsMet = this.evaluateConditions(rule.trigger_conditions, context);
-      if (!conditionsMet) {
-        logger.debug({ ruleId: rule.id, eventId: event.id }, 'Rule conditions not met');
-        return;
-      }
-    }
-
-    // Check execution limits
-    if (rule.max_executions_per_entity) {
-      const executionCount = await this.getExecutionCountForEntity(
-        rule.id,
-        event.entity_type,
-        event.entity_id
-      );
-      if (executionCount >= rule.max_executions_per_entity) {
-        logger.debug({
-          ruleId: rule.id,
-          entityId: event.entity_id,
-          executionCount,
-          maxExecutions: rule.max_executions_per_entity
-        }, 'Max executions reached for entity');
-        return;
-      }
-    }
-
-    // Check cooldown
-    if (rule.cooldown_hours) {
-      const recentExecution = await this.hasRecentExecution(
-        rule.id,
-        event.entity_type,
-        event.entity_id,
-        rule.cooldown_hours
-      );
-      if (recentExecution) {
-        logger.debug({
-          ruleId: rule.id,
-          entityId: event.entity_id,
-          cooldownHours: rule.cooldown_hours
-        }, 'Rule on cooldown for entity');
-        return;
-      }
-    }
-
-    // Schedule or execute
-    if (rule.delay_minutes > 0) {
-      await this.scheduleExecution(rule, event);
-    } else {
-      await this.executeRuleAction(rule, event);
-    }
-  }
-
-  /**
-   * Evaluate trigger conditions against the event context
-   */
-  private evaluateConditions(
-    conditions: TriggerCondition[],
-    context: RuleEvaluationContext
-  ): boolean {
-    for (const condition of conditions) {
-      const value = this.getValueFromContext(condition.field, context);
-      if (!this.evaluateCondition(condition, value)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  /**
-   * Get a value from the context by field path
-   */
-  private getValueFromContext(field: string, context: RuleEvaluationContext): unknown {
-    const parts = field.split('.');
-    let value: unknown = context;
-
-    for (const part of parts) {
-      if (value && typeof value === 'object') {
-        value = (value as Record<string, unknown>)[part];
-      } else {
-        return undefined;
-      }
-    }
-
-    return value;
-  }
-
-  /**
-   * Evaluate a single condition
-   */
-  private evaluateCondition(condition: TriggerCondition, actualValue: unknown): boolean {
-    const { operator, value: expectedValue } = condition;
-
-    switch (operator) {
-      case 'eq':
-        return actualValue === expectedValue;
-      case 'neq':
-        return actualValue !== expectedValue;
-      case 'gt':
-        return (actualValue as number) > (expectedValue as number);
-      case 'gte':
-        return (actualValue as number) >= (expectedValue as number);
-      case 'lt':
-        return (actualValue as number) < (expectedValue as number);
-      case 'lte':
-        return (actualValue as number) <= (expectedValue as number);
-      case 'in':
-        return Array.isArray(expectedValue) && expectedValue.includes(actualValue);
-      case 'contains':
-        return typeof actualValue === 'string' && actualValue.includes(expectedValue as string);
-      default:
-        return false;
-    }
-  }
-
-  // ==================== EXECUTION ====================
-
-  /**
-   * Execute a rule's action immediately
-   */
-  private async executeRuleAction(rule: AutomationRule, event: PaymentEvent): Promise<void> {
-    logger.info({
-      ruleId: rule.id,
-      ruleName: rule.name,
-      actionBlock: rule.action_block,
-      eventId: event.id
-    }, 'Executing automation rule');
-
-    // Create execution record
-    const executionResult = await this.createExecution(rule, event, 'executing');
-    if (executionResult.error || !executionResult.data) {
-      logger.error({ err: executionResult.error }, 'Failed to create execution record');
-      return;
-    }
-
-    const execution = executionResult.data;
-
-    try {
-      // Build parameters with event data substitution
-      const parameters = this.buildActionParameters(rule.action_parameters, event);
-
-      // Call block execution API internally
-      const result = await this.callBlockExecutor(
-        rule.user_id,
-        rule.action_block,
-        parameters
-      );
-
-      // Update execution as completed
-      await this.updateExecution(execution.id, {
-        status: 'completed',
-        executed_at: new Date().toISOString(),
-        result
-      });
-
-      logger.info({
-        ruleId: rule.id,
-        executionId: execution.id,
-        blockId: rule.action_block
-      }, 'Rule executed successfully');
-
-    } catch (error) {
-      // Update execution as failed
-      await this.updateExecution(execution.id, {
-        status: 'failed',
-        executed_at: new Date().toISOString(),
-        error_message: error instanceof Error ? error.message : String(error)
-      });
-
-      logger.error({
-        err: error,
-        ruleId: rule.id,
-        executionId: execution.id
-      }, 'Rule execution failed');
-    }
-  }
-
-  /**
-   * Schedule a rule execution for later
-   */
-  private async scheduleExecution(rule: AutomationRule, event: PaymentEvent): Promise<void> {
-    const scheduledAt = new Date(Date.now() + rule.delay_minutes * 60 * 1000);
-
-    logger.info({
-      ruleId: rule.id,
-      eventId: event.id,
-      scheduledAt: scheduledAt.toISOString(),
-      delayMinutes: rule.delay_minutes
-    }, 'Scheduling rule execution');
-
-    await this.createExecution(rule, event, 'scheduled', scheduledAt.toISOString());
-  }
-
-  /**
-   * Build action parameters, substituting event values
-   */
-  private buildActionParameters(
-    templateParams: Record<string, unknown>,
-    event: PaymentEvent
-  ): Record<string, unknown> {
-    const params: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(templateParams)) {
-      if (typeof value === 'string' && value.startsWith('{{') && value.endsWith('}}')) {
-        // Template substitution
-        const path = value.slice(2, -2).trim();
-        params[key] = this.getEventValue(path, event);
-      } else if (value === '$entity_id') {
-        params[key] = event.entity_id;
-      } else if (value === '$contact_id') {
-        params[key] = event.contact_id;
-      } else if (value === '$user_id') {
-        params[key] = event.user_id;
-      } else {
-        params[key] = value;
-      }
-    }
-
-    return params;
-  }
-
-  /**
-   * Get a value from the event by path
-   */
-  private getEventValue(path: string, event: PaymentEvent): unknown {
-    if (path.startsWith('metadata.')) {
-      const metaKey = path.replace('metadata.', '');
-      return (event.metadata as Record<string, unknown>)?.[metaKey];
-    }
-
-    switch (path) {
-      case 'entity_id': return event.entity_id;
-      case 'entity_type': return event.entity_type;
-      case 'contact_id': return event.contact_id;
-      case 'user_id': return event.user_id;
-      case 'processor_type': return event.processor_type;
-      default: return undefined;
-    }
-  }
-
-  /**
-   * Call the block executor (internal)
+   * Call the block executor (internal).
+   *
+   * NOTE: still a placeholder — actual block execution is wired by the block
+   * execution API and is out of scope for this cycle.
    */
   private async callBlockExecutor(
     userId: string,
     blockId: string,
     parameters: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
-    // Import dynamically to avoid circular dependencies
-    // In production, this would call the actual block executors
-    // For now, we'll use a simple implementation
-
     const block = getBlock(blockId);
     if (!block) {
       throw new Error(`Unknown block: ${blockId}`);
     }
 
-    // The actual execution would be done by the block execution API
-    // This is a simplified internal call
     logger.info({
       blockId,
       userId,
@@ -465,7 +150,7 @@ export class PaymentAutomationEngine {
     };
   }
 
-  // ==================== DATABASE OPERATIONS ====================
+  // ==================== RULE CRUD ====================
 
   /**
    * Get active rules for an event type
@@ -578,263 +263,115 @@ export class PaymentAutomationEngine {
   }
 
   /**
-   * Create default rules for a new user
+   * Create default rules for a user (idempotent — delegates to the shared seed).
    */
-  async createDefaultRules(userId: string): Promise<AutomationEngineResult<AutomationRule[]>> {
+  async createDefaultRules(userId: string): Promise<AutomationEngineResult<void>> {
     try {
-      const defaultRules = [
-        {
-          name: 'Send reminder 3 days before due',
-          description: 'Automatically send a payment reminder 3 days before an installment is due',
-          trigger_event: 'installment.due_approaching' as PaymentEventType,
-          trigger_conditions: [
-            { field: 'metadata.days_until_due', operator: 'eq' as TriggerConditionOperator, value: 3 }
-          ],
-          action_block: 'send_payment_reminder',
-          action_parameters: {
-            installment_id: '$entity_id',
-            contact_id: '$contact_id',
-            channel: 'email'
-          },
-          delay_minutes: 0,
-          max_executions_per_entity: 1,
-          cooldown_hours: 24,
-          is_active: true
-        },
-        {
-          name: 'Auto-retry failed payment after 4 hours',
-          description: 'Schedule a retry when a payment fails',
-          trigger_event: 'payment.failed' as PaymentEventType,
-          trigger_conditions: null,
-          action_block: 'schedule_retry',
-          action_parameters: {
-            invoice_id: '$entity_id',
-            delay_hours: 4
-          },
-          delay_minutes: 0,
-          max_executions_per_entity: 3,
-          cooldown_hours: 4,
-          is_active: true
-        },
-        {
-          name: 'Send overdue notice after 1 day',
-          description: 'Send a reminder when an installment becomes overdue',
-          trigger_event: 'installment.overdue' as PaymentEventType,
-          trigger_conditions: [
-            { field: 'metadata.overdue_days', operator: 'eq' as TriggerConditionOperator, value: 1 }
-          ],
-          action_block: 'send_payment_reminder',
-          action_parameters: {
-            installment_id: '$entity_id',
-            contact_id: '$contact_id',
-            channel: 'email',
-            template: 'overdue_notice'
-          },
-          delay_minutes: 0,
-          max_executions_per_entity: 1,
-          cooldown_hours: 48,
-          is_active: true
-        }
-      ];
-
-      const createdRules: AutomationRule[] = [];
-
-      for (const rule of defaultRules) {
-        const result = await this.createRule(userId, rule);
-        if (result.data) {
-          createdRules.push(result.data);
-        }
-      }
-
-      logger.info({ userId, rulesCreated: createdRules.length }, 'Default automation rules created');
-      return { data: createdRules, error: null };
+      await ensureDefaultPaymentRules(userId, this.ruleRepo);
+      return { data: null, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to create default rules');
       return { data: null, error: error as Error };
     }
   }
 
-  // ==================== EXECUTION TRACKING ====================
+  // ==================== CRON DRAIN ====================
 
   /**
-   * Create an execution record
-   */
-  private async createExecution(
-    rule: AutomationRule,
-    event: PaymentEvent,
-    status: 'pending' | 'scheduled' | 'executing',
-    scheduledAt?: string
-  ): Promise<AutomationEngineResult<RuleExecution>> {
-    try {
-      const { data, error } = await this.supabase
-        .from('payment_automation_executions')
-        .insert({
-          user_id: rule.user_id,
-          rule_id: rule.id,
-          entity_type: event.entity_type,
-          entity_id: event.entity_id,
-          trigger_event_id: event.id,
-          status,
-          scheduled_at: scheduledAt || null
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      return { data, error: null };
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to create execution record');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Update an execution record
-   */
-  private async updateExecution(
-    executionId: string,
-    updates: Partial<RuleExecution>
-  ): Promise<void> {
-    try {
-      const { error } = await this.supabase
-        .from('payment_automation_executions')
-        .update(updates)
-        .eq('id', executionId);
-
-      if (error) throw error;
-    } catch (error) {
-      logger.error({ err: error, executionId }, 'Failed to update execution');
-    }
-  }
-
-  /**
-   * Get execution count for an entity
-   */
-  private async getExecutionCountForEntity(
-    ruleId: string,
-    entityType: string,
-    entityId: string
-  ): Promise<number> {
-    try {
-      const { count, error } = await this.supabase
-        .from('payment_automation_executions')
-        .select('*', { count: 'exact', head: true })
-        .eq('rule_id', ruleId)
-        .eq('entity_type', entityType)
-        .eq('entity_id', entityId)
-        .in('status', ['completed', 'executing', 'scheduled']);
-
-      if (error) throw error;
-
-      return count || 0;
-    } catch (error) {
-      logger.error({ err: error, ruleId, entityId }, 'Failed to get execution count');
-      return 0;
-    }
-  }
-
-  /**
-   * Check if there's a recent execution within cooldown period
-   */
-  private async hasRecentExecution(
-    ruleId: string,
-    entityType: string,
-    entityId: string,
-    cooldownHours: number
-  ): Promise<boolean> {
-    try {
-      const threshold = new Date(Date.now() - cooldownHours * 60 * 60 * 1000).toISOString();
-
-      const { data, error } = await this.supabase
-        .from('payment_automation_executions')
-        .select('id')
-        .eq('rule_id', ruleId)
-        .eq('entity_type', entityType)
-        .eq('entity_id', entityId)
-        .in('status', ['completed', 'scheduled'])
-        .gte('created_at', threshold)
-        .limit(1);
-
-      if (error) throw error;
-
-      return (data?.length || 0) > 0;
-    } catch (error) {
-      logger.error({ err: error, ruleId, entityId }, 'Failed to check recent execution');
-      return false;
-    }
-  }
-
-  /**
-   * Get scheduled executions that are due
-   */
-  async getScheduledExecutionsDue(): Promise<AutomationEngineResult<RuleExecution[]>> {
-    try {
-      const now = new Date().toISOString();
-
-      const { data, error } = await this.supabase
-        .from('payment_automation_executions')
-        .select('*, payment_automation_rules(*)')
-        .eq('status', 'scheduled')
-        .lte('scheduled_at', now)
-        .order('scheduled_at', { ascending: true })
-        .limit(100);
-
-      if (error) throw error;
-
-      return { data: data || [], error: null };
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to get scheduled executions');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Process scheduled executions (called by cron)
+   * Process due automation executions (called by cron).
+   *
+   * Durable claim-based drain (§8.1): reap stale rows, atomically claim a batch of
+   * due `pending` rows, then for each — load its rule + trigger event, enforce the
+   * per-entity guardrails at THIS single choke point (so no path can bypass them),
+   * execute the block, and mark the claimed row terminal. The claimed row itself is
+   * the unit of work and of idempotency (fixes the old phantom-second-row bug).
    */
   async processScheduledExecutions(): Promise<void> {
-    const result = await this.getScheduledExecutionsDue();
-    if (result.error || !result.data) {
-      logger.error({ err: result.error }, 'Failed to get scheduled executions');
+    const runnerId = crypto.randomUUID();
+
+    // 1. Reaper first (safety-net sweep) — its own RPC (Q1).
+    const { data: reaped, error: reapError } = await paymentAutomationExecutionRepository.reapStale(
+      LEASE_SECONDS,
+      MAX_ATTEMPTS
+    );
+    if (reapError) {
+      logger.warn({ err: reapError }, 'Reaper sweep failed (non-fatal)');
+    } else if (reaped && reaped.length > 0) {
+      logger.info({ reclaimed: reaped.length }, 'Reaped stale automation executions');
+    }
+
+    // 2. Claim a batch of due pending rows.
+    const { data: claimed, error: claimError } = await paymentAutomationExecutionRepository.claimDue(
+      runnerId,
+      BATCH
+    );
+    if (claimError) {
+      logger.error({ err: claimError, runnerId }, 'Failed to claim due executions');
+      return;
+    }
+    if (!claimed || claimed.length === 0) {
+      logger.info('No due automation executions to process');
       return;
     }
 
-    logger.info({ count: result.data.length }, 'Processing scheduled executions');
+    logger.info({ count: claimed.length, runnerId }, 'Processing claimed automation executions');
 
-    for (const execution of result.data) {
+    // 3. Drain each claimed row.
+    for (const execution of claimed) {
       try {
-        // Get the original event (cross-user cron read — unscoped by design)
-        const { data: eventData } = await this.eventRepo.findByIdUnscoped(execution.trigger_event_id);
+        // Load rule + trigger event (cross-user cron reads — unscoped by design).
+        const { data: rule } = await this.ruleRepo.findByIdUnscoped(execution.rule_id);
+        const { data: event } = await this.eventRepo.findByIdUnscoped(execution.trigger_event_id);
 
-        if (!eventData) {
-          logger.warn({ executionId: execution.id }, 'Original event not found');
-          await this.updateExecution(execution.id, {
-            status: 'failed',
-            error_message: 'Original trigger event not found'
-          });
+        if (!rule || !event) {
+          await paymentAutomationExecutionRepository.fail(execution.id, 'rule/event not found');
           continue;
         }
 
-        // Get the rule (cross-user cron read — unscoped by design)
-        const { data: ruleData } = await this.ruleRepo.findByIdUnscoped(execution.rule_id);
-
-        if (!ruleData) {
-          logger.warn({ executionId: execution.id }, 'Rule not found');
-          await this.updateExecution(execution.id, {
-            status: 'failed',
-            error_message: 'Rule not found'
-          });
-          continue;
+        // M3 choke-point guardrail: max executions per entity (counts PRIOR terminal
+        // `completed` rows, excluding self, so the row being drained can't self-block).
+        if (rule.max_executions_per_entity) {
+          const { data: count } = await paymentAutomationExecutionRepository.countCompletedForEntity(
+            rule.id,
+            execution.entity_type,
+            execution.entity_id,
+            execution.id
+          );
+          if ((count ?? 0) >= rule.max_executions_per_entity) {
+            await paymentAutomationExecutionRepository.fail(execution.id, 'max executions reached');
+            continue;
+          }
         }
 
-        // Execute
-        await this.executeRuleAction(ruleData as AutomationRule, eventData as PaymentEvent);
+        // M3 choke-point guardrail: cooldown (excludes self).
+        if (rule.cooldown_hours) {
+          const since = new Date(Date.now() - rule.cooldown_hours * 60 * 60 * 1000).toISOString();
+          const { data: recent } = await paymentAutomationExecutionRepository.hasRecentForEntity(
+            rule.id,
+            execution.entity_type,
+            execution.entity_id,
+            since,
+            execution.id
+          );
+          if (recent) {
+            await paymentAutomationExecutionRepository.fail(execution.id, 'cooldown active');
+            continue;
+          }
+        }
+
+        // Execute the block on the claimed row.
+        const params = buildActionParameters(rule.action_parameters, event as PaymentEvent);
+        const result = await this.callBlockExecutor(rule.user_id, rule.action_block, params);
+        await paymentAutomationExecutionRepository.complete(execution.id, result);
+
+        logger.info(
+          { executionId: execution.id, ruleId: rule.id, blockId: rule.action_block },
+          'Automation execution completed'
+        );
       } catch (error) {
-        logger.error({ err: error, executionId: execution.id }, 'Error processing scheduled execution');
-        await this.updateExecution(execution.id, {
-          status: 'failed',
-          error_message: error instanceof Error ? error.message : String(error)
-        });
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error({ err: error, executionId: execution.id }, 'Automation execution failed');
+        await paymentAutomationExecutionRepository.fail(execution.id, message);
       }
     }
   }

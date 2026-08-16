@@ -20,6 +20,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { paymentReminderService } from '@/lib/services/PaymentReminderService';
 
+// The claim reaper's lease (90s) is set > maxDuration so an overrun function is
+// provably dead. Keep maxDuration aligned with the lease constant in the service.
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 const logger = createLogger({ module: 'PaymentRemindersCron' });
 
 // Verify cron secret to ensure only Vercel can call this
@@ -27,15 +32,18 @@ function verifyCronSecret(request: NextRequest): boolean {
   const authHeader = request.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET;
 
-  // In development, allow without secret
+  // In development, allow without a secret (local manual triggering).
   if (process.env.NODE_ENV === 'development') {
     return true;
   }
 
-  // If no secret configured, allow (but log warning)
+  // Fail CLOSED: in production a missing CRON_SECRET means the request cannot be
+  // authenticated, so refuse rather than run the drain unprotected. (This endpoint
+  // is a public URL; the bearer secret is the only thing distinguishing a Vercel
+  // cron invocation from an arbitrary caller.)
   if (!cronSecret) {
-    logger.warn('CRON_SECRET not configured - cron endpoint is unprotected');
-    return true;
+    logger.error('CRON_SECRET not configured - refusing cron request (fail-closed)');
+    return false;
   }
 
   return authHeader === `Bearer ${cronSecret}`;

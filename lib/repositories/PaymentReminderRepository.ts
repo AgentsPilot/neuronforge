@@ -208,66 +208,51 @@ export class PaymentReminderRepository {
   // ==================== CRON / BATCH (cross-user) ====================
 
   /**
-   * Pending reminders due at or before `now`, oldest first.
+   * Atomically claim a batch of due pending reminders (flips pending→processing).
    *
-   * ⟨unscoped-by-design⟩ — the reminders cron (processDueReminders) iterates every
-   * user's due reminders. Not user-scoped by design.
+   * Replaces the old findDue→dispatch→deleteById dance: the claim RPC selects due
+   * `pending` rows FOR UPDATE SKIP LOCKED and flips them to `processing` in one
+   * round-trip, so two overlapping cron runs never dispatch the same reminder.
+   *
+   * ⟨unscoped-by-design⟩ — the reminders cron drains every user's due rows via the
+   * SECURITY DEFINER RPC. Precedent: PluginConnectionRepository.markExpired.
    */
-  async findDue(now: string, limit = 100): Promise<PaymentRepositoryResult<PaymentReminderRow[]>> {
+  async claimDue(runnerId: string, batch: number): Promise<PaymentRepositoryResult<PaymentReminderRow[]>> {
     try {
-      const { data, error } = await this.supabase
-        .from('payment_reminders')
-        .select('*')
-        .eq('status', 'pending')
-        .lte('scheduled_at', now)
-        .order('scheduled_at', { ascending: true })
-        .limit(limit);
+      const { data, error } = await this.supabase.rpc('claim_due_payment_reminders', {
+        p_runner: runnerId,
+        p_batch: batch,
+      });
 
       if (error) throw error;
-      return { data: data || [], error: null };
+      return { data: (data as PaymentReminderRow[]) || [], error: null };
     } catch (error) {
-      logger.error({ err: error }, 'Failed to find due reminders');
+      logger.error({ err: error, runnerId }, 'Failed to claim due reminders');
       return { data: null, error: error as Error };
     }
   }
 
   /**
-   * Delete a reminder by id.
+   * Reap reminders stuck in `processing` past the lease (back to pending, or
+   * `failed` dead-letter at max attempts).
    *
-   * ⟨unscoped-by-design⟩ — the reminders cron deletes the original pending row after
-   * dispatching a fresh reminder record; iterates across all users.
+   * ⟨unscoped-by-design⟩ — cross-user safety-net sweep via SECURITY DEFINER RPC.
+   * Precedent: PluginConnectionRepository.markExpired.
    */
-  async deleteById(id: string): Promise<PaymentRepositoryResult<null>> {
+  async reapStale(
+    leaseSeconds: number,
+    maxAttempts: number
+  ): Promise<PaymentRepositoryResult<PaymentReminderRow[]>> {
     try {
-      const { error } = await this.supabase
-        .from('payment_reminders')
-        .delete()
-        .eq('id', id);
+      const { data, error } = await this.supabase.rpc('reap_stale_payment_reminders', {
+        p_lease_seconds: leaseSeconds,
+        p_max_attempts: maxAttempts,
+      });
 
       if (error) throw error;
-      return { data: null, error: null };
+      return { data: (data as PaymentReminderRow[]) || [], error: null };
     } catch (error) {
-      logger.error({ err: error, id }, 'Failed to delete reminder');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Mark a reminder failed by id. B2: no `updated_at`.
-   *
-   * ⟨unscoped-by-design⟩ — reminders cron failure path; iterates across all users.
-   */
-  async markFailedById(id: string, message: string): Promise<PaymentRepositoryResult<null>> {
-    try {
-      const { error } = await this.supabase
-        .from('payment_reminders')
-        .update({ status: 'failed', error_message: message })
-        .eq('id', id);
-
-      if (error) throw error;
-      return { data: null, error: null };
-    } catch (error) {
-      logger.error({ err: error, id }, 'Failed to mark reminder failed');
+      logger.error({ err: error, leaseSeconds, maxAttempts }, 'Failed to reap stale reminders');
       return { data: null, error: error as Error };
     }
   }
