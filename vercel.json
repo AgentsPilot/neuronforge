@@ -31,6 +31,14 @@
     {
       "path": "/api/cron/insight-automations",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/payment-reminders",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/payment-retry",
+      "schedule": "0 * * * *"
     }
   ],
   "rewrites": [

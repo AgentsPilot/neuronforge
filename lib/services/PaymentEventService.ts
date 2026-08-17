@@ -13,6 +13,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { PaymentEventRepository } from '@/lib/repositories/PaymentEventRepository';
+import { enqueuePaymentReactions } from '@/lib/payments/paymentReactionEnqueuer';
 
 const logger = createLogger({ service: 'PaymentEventService' });
 
@@ -116,11 +117,6 @@ export interface PaymentEventServiceResult<T> {
   error: Error | null;
 }
 
-// ==================== EVENT SUBSCRIBERS ====================
-
-type EventCallback = (event: PaymentEvent) => void | Promise<void>;
-const eventSubscribers: EventCallback[] = [];
-
 // ==================== SERVICE ====================
 
 export class PaymentEventService {
@@ -163,9 +159,10 @@ export class PaymentEventService {
 
       if (error) throw error;
 
-      // Notify subscribers (non-blocking)
-      this.notifySubscribers(data!).catch(err => {
-        logger.warn({ err, eventId: data!.id }, 'Event subscriber notification failed');
+      // Durably enqueue automation reactions (non-blocking, best-effort). Replaces
+      // the retired in-process subscribe() bus (§8.2). Never throws into emit().
+      enqueuePaymentReactions(data!).catch(err => {
+        logger.warn({ err, eventId: data!.id }, 'reaction enqueue failed (non-blocking)');
       });
 
       return { data, error: null };
@@ -202,10 +199,10 @@ export class PaymentEventService {
 
       if (error) throw error;
 
-      // Notify subscribers for each event (non-blocking)
+      // Durably enqueue automation reactions for each event (non-blocking).
       for (const event of data || []) {
-        this.notifySubscribers(event).catch(err => {
-          logger.warn({ err, eventId: event.id }, 'Event subscriber notification failed');
+        enqueuePaymentReactions(event).catch(err => {
+          logger.warn({ err, eventId: event.id }, 'reaction enqueue failed (non-blocking)');
         });
       }
 
@@ -282,34 +279,6 @@ export class PaymentEventService {
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to get event counts');
       return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Subscribe to events (for real-time processing like automation engine)
-   */
-  subscribe(callback: EventCallback): () => void {
-    eventSubscribers.push(callback);
-
-    // Return unsubscribe function
-    return () => {
-      const index = eventSubscribers.indexOf(callback);
-      if (index > -1) {
-        eventSubscribers.splice(index, 1);
-      }
-    };
-  }
-
-  /**
-   * Notify all subscribers of a new event
-   */
-  private async notifySubscribers(event: PaymentEvent): Promise<void> {
-    for (const callback of eventSubscribers) {
-      try {
-        await callback(event);
-      } catch (error) {
-        logger.warn({ err: error, eventId: event.id }, 'Event subscriber threw error');
-      }
     }
   }
 

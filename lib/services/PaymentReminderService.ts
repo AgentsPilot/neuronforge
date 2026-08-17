@@ -20,11 +20,16 @@ import { PaymentReminderRepository } from '@/lib/repositories/PaymentReminderRep
 
 const logger = createLogger({ service: 'PaymentReminderService' });
 
+// Durable-queue drain constants (Q1). Lease > the reminders cron's maxDuration (60s).
+const LEASE_SECONDS = 90;
+const MAX_ATTEMPTS = 5;
+
 // ==================== TYPES ====================
 
 export type ReminderType = 'upcoming_due' | 'due_today' | 'overdue' | 'retry_failed' | 'payment_received';
 export type ReminderChannel = 'email' | 'sms' | 'in_app';
-export type ReminderStatus = 'pending' | 'sent' | 'failed' | 'cancelled';
+// 'processing' = claimed/in-flight (durable-queue claim pattern). 'sent'/'failed'/'cancelled' terminal.
+export type ReminderStatus = 'pending' | 'processing' | 'sent' | 'failed' | 'cancelled';
 
 export interface PaymentReminder {
   id: string;
@@ -297,55 +302,7 @@ export class PaymentReminderService {
         channel: params.channel
       }, 'Sending payment reminder');
 
-      // Get contact info (user-scoped via the repository)
-      const { data: contact } = await crmContactRepository.findById(params.contactId, userId);
-
-      if (!contact) {
-        throw new Error('Contact not found');
-      }
-
-      // Get invoice/installment details
-      let entityDetails: Record<string, unknown> = {};
-
-      if (params.invoiceId) {
-        const { data: invoice } = await this.supabase
-          .from('payment_invoices')
-          .select('*')
-          .eq('id', params.invoiceId)
-          .eq('user_id', userId)
-          .single();
-
-        if (invoice) {
-          entityDetails = {
-            type: 'invoice',
-            invoiceNumber: invoice.invoice_number,
-            amount: invoice.amount,
-            currency: invoice.currency,
-            dueDate: invoice.due_date,
-            status: invoice.status
-          };
-        }
-      } else if (params.installmentId) {
-        const { data: installment } = await this.supabase
-          .from('payment_plan_installments')
-          .select('*')
-          .eq('id', params.installmentId)
-          .eq('user_id', userId)
-          .single();
-
-        if (installment) {
-          entityDetails = {
-            type: 'installment',
-            installmentNumber: installment.installment_number,
-            amount: installment.amount,
-            currency: installment.currency,
-            dueDate: installment.due_date,
-            status: installment.status
-          };
-        }
-      }
-
-      // Create reminder record
+      // Create the reminder record (ad-hoc callers get their own row).
       const { data: reminder, error: createError } = await this.reminderRepo.create({
         user_id: userId,
         invoice_id: params.invoiceId || null,
@@ -358,42 +315,14 @@ export class PaymentReminderService {
         status: 'pending',
         metadata: {
           ...params.metadata,
-          ...entityDetails,
           includePaymentLink: params.includePaymentLink ?? true
         }
       });
 
       if (createError || !reminder) throw (createError ?? new Error('Failed to create reminder'));
 
-      // Send based on channel
-      let sent = false;
-      let errorMessage: string | null = null;
-
-      try {
-        switch (params.channel) {
-          case 'email':
-            sent = await this.sendEmailReminder(
-              userId,
-              {
-                email: contact.email ?? '',
-                first_name: contact.first_name ?? '',
-                last_name: contact.last_name ?? '',
-              },
-              entityDetails,
-              params
-            );
-            break;
-          case 'sms':
-            sent = await this.sendSmsReminder({ phone: contact.phone ?? '' }, entityDetails);
-            break;
-          case 'in_app':
-            sent = await this.sendInAppReminder(userId, params.contactId, entityDetails);
-            break;
-        }
-      } catch (sendError) {
-        errorMessage = sendError instanceof Error ? sendError.message : String(sendError);
-        logger.error({ err: sendError, reminderId: reminder.id }, 'Failed to send reminder');
-      }
+      // Dispatch on the created row (shared with the cron drain).
+      const { sent, errorMessage } = await this.dispatchReminderRow(reminder);
 
       // Update reminder status (B1: user-scoped in the repo; B2: no phantom updated_at).
       // M3: non-fatal — the reminder was already dispatched, so a failed status write
@@ -435,13 +364,106 @@ export class PaymentReminderService {
   }
 
   /**
+   * Dispatch a single reminder ROW: resolve the contact, build entity details, and
+   * send on the row's channel. Returns the outcome WITHOUT mutating the row — the
+   * caller persists status. Shared by `sendReminder` (ad-hoc) and the cron drain
+   * (`processDueReminders`), which operates on a claimed row.
+   */
+  private async dispatchReminderRow(
+    reminder: PaymentReminder
+  ): Promise<{ sent: boolean; errorMessage: string | null }> {
+    const userId = reminder.user_id;
+
+    // Get contact info (user-scoped via the repository)
+    const { data: contact } = await crmContactRepository.findById(reminder.contact_id, userId);
+    if (!contact) {
+      return { sent: false, errorMessage: 'Contact not found' };
+    }
+
+    // Get invoice/installment details
+    let entityDetails: Record<string, unknown> = {};
+
+    if (reminder.invoice_id) {
+      const { data: invoice } = await this.supabase
+        .from('payment_invoices')
+        .select('*')
+        .eq('id', reminder.invoice_id)
+        .eq('user_id', userId)
+        .single();
+
+      if (invoice) {
+        entityDetails = {
+          type: 'invoice',
+          invoiceNumber: invoice.invoice_number,
+          amount: invoice.amount,
+          currency: invoice.currency,
+          dueDate: invoice.due_date,
+          status: invoice.status
+        };
+      }
+    } else if (reminder.installment_id) {
+      const { data: installment } = await this.supabase
+        .from('payment_plan_installments')
+        .select('*')
+        .eq('id', reminder.installment_id)
+        .eq('user_id', userId)
+        .single();
+
+      if (installment) {
+        entityDetails = {
+          type: 'installment',
+          installmentNumber: installment.installment_number,
+          amount: installment.amount,
+          currency: installment.currency,
+          dueDate: installment.due_date,
+          status: installment.status
+        };
+      }
+    }
+
+    const includePaymentLink = (reminder.metadata as Record<string, unknown>)?.includePaymentLink !== false;
+
+    // Send based on channel
+    let sent = false;
+    let errorMessage: string | null = null;
+
+    try {
+      switch (reminder.channel) {
+        case 'email':
+          sent = await this.sendEmailReminder(
+            userId,
+            {
+              email: contact.email ?? '',
+              first_name: contact.first_name ?? '',
+              last_name: contact.last_name ?? '',
+            },
+            entityDetails,
+            includePaymentLink
+          );
+          break;
+        case 'sms':
+          sent = await this.sendSmsReminder({ phone: contact.phone ?? '' }, entityDetails);
+          break;
+        case 'in_app':
+          sent = await this.sendInAppReminder(userId, reminder.contact_id, entityDetails);
+          break;
+      }
+    } catch (sendError) {
+      errorMessage = sendError instanceof Error ? sendError.message : String(sendError);
+      logger.error({ err: sendError, reminderId: reminder.id }, 'Failed to send reminder');
+    }
+
+    return { sent, errorMessage };
+  }
+
+  /**
    * Send email reminder (placeholder - integrate with email service)
    */
   private async sendEmailReminder(
     userId: string,
     contact: { email: string; first_name: string; last_name: string },
     entityDetails: Record<string, unknown>,
-    params: SendReminderParams
+    includePaymentLink: boolean
   ): Promise<boolean> {
     // TODO: Integrate with actual email service (SendGrid, Resend, etc.)
     // For now, log the email that would be sent
@@ -453,7 +475,7 @@ export class PaymentReminderService {
       amount: entityDetails.amount,
       currency: entityDetails.currency,
       dueDate: entityDetails.dueDate,
-      includePaymentLink: params.includePaymentLink
+      includePaymentLink
     }, 'Would send payment reminder email');
 
     // In production, this would send an actual email
@@ -583,55 +605,74 @@ export class PaymentReminderService {
     sent: number;
     failed: number;
   }> {
-    const now = new Date().toISOString();
     const stats = { processed: 0, sent: 0, failed: 0 };
+    const runnerId = crypto.randomUUID();
 
     logger.info('Processing due reminders');
 
     try {
-      // Get pending reminders that are due (cross-user cron read)
-      const { data: reminders } = await this.reminderRepo.findDue(now, 100);
+      // 1. Reaper first (safety-net sweep) — reclaim rows stuck in `processing`.
+      const { data: reaped } = await this.reminderRepo.reapStale(LEASE_SECONDS, MAX_ATTEMPTS);
+      if (reaped && reaped.length > 0) {
+        logger.info({ reclaimed: reaped.length }, 'Reaped stale reminders');
+      }
 
-      if (!reminders || reminders.length === 0) {
+      // 2. Atomically claim a batch of due pending reminders (flips pending→processing).
+      const { data: claimed, error: claimError } = await this.reminderRepo.claimDue(runnerId, 100);
+      if (claimError) throw claimError;
+
+      if (!claimed || claimed.length === 0) {
         logger.info('No due reminders to process');
         return stats;
       }
 
-      logger.info({ count: reminders.length }, 'Found due reminders');
+      logger.info({ count: claimed.length, runnerId }, 'Claimed due reminders');
 
-      for (const reminder of reminders) {
+      // 3. Dispatch each claimed row (the claimed row is the unit of work + idempotency).
+      for (const reminder of claimed) {
+        stats.processed++;
         try {
-          const result = await this.sendReminder(reminder.user_id, {
-            invoiceId: reminder.invoice_id || undefined,
-            installmentId: reminder.installment_id || undefined,
+          const { sent, errorMessage } = await this.dispatchReminderRow(reminder);
+
+          // Persist terminal status on the claimed row (B1 user-scoped; B2 no updated_at).
+          const { error: statusError } = await this.reminderRepo.updateStatus(
+            reminder.id,
+            reminder.user_id,
+            {
+              status: sent ? 'sent' : 'failed',
+              sent_at: sent ? new Date().toISOString() : null,
+              error_message: errorMessage
+            }
+          );
+          if (statusError) {
+            logger.error({ err: statusError, reminderId: reminder.id }, 'Failed to persist reminder status');
+          }
+
+          if (sent) stats.sent++;
+          else stats.failed++;
+
+          // Emit outcome event.
+          await emitPaymentEvent(reminder.user_id, {
+            eventType: sent ? 'reminder.sent' : 'reminder.failed',
+            entityType: 'reminder',
+            entityId: reminder.id,
             contactId: reminder.contact_id,
-            channel: reminder.channel as ReminderChannel,
-            templateId: reminder.template_id || undefined,
-            includePaymentLink: true,
-            metadata: reminder.metadata
+            metadata: {
+              channel: reminder.channel,
+              invoiceId: reminder.invoice_id,
+              installmentId: reminder.installment_id,
+              error: errorMessage
+            }
           });
-
-          stats.processed++;
-
-          // Delete the pending reminder since we created a new one during send
-          if (reminder.id) {
-            await this.reminderRepo.deleteById(reminder.id);
-          }
-
-          if (result.data?.sent) {
-            stats.sent++;
-          } else {
-            stats.failed++;
-          }
         } catch (error) {
           logger.error({ err: error, reminderId: reminder.id }, 'Error processing reminder');
           stats.failed++;
 
-          // Mark as failed (cross-user cron; B2: no phantom updated_at)
-          await this.reminderRepo.markFailedById(
-            reminder.id,
-            error instanceof Error ? error.message : String(error)
-          );
+          // Mark the claimed row failed (leave the reaper to retry/dead-letter otherwise).
+          await this.reminderRepo.updateStatus(reminder.id, reminder.user_id, {
+            status: 'failed',
+            error_message: error instanceof Error ? error.message : String(error)
+          });
         }
       }
 

@@ -1,0 +1,65 @@
+-- ============================================================================
+-- Drop the dead `payment_methods` table (Task C / phase-2 follow-up F3, M7)
+-- ============================================================================
+-- Migration date: 2026-08-14
+-- Workplan: docs/workplans/BUSINESS_OS_PAYMENT_QUEUE_DRAIN_WORKPLAN.md §5
+--
+-- `payment_methods` (the original Stripe-only table from 20260722_create_payment_tables.sql)
+-- is dead: it was superseded by the processor-agnostic `saved_payment_methods` table.
+-- Verified (SA §11.8): ZERO app `.from('payment_methods')` references — all string
+-- hits are Stripe SDK `paymentMethods` or the live `saved_payment_methods` table — and
+-- NO inbound `REFERENCES payment_methods` FK anywhere, so the DROP is FK-safe.
+--
+-- GATE: confirm zero prod rows before applying (see workplan §5/M7). Recommended
+-- pre-apply re-check:  SELECT count(*) FROM payment_methods;  (expect 0)
+-- STATUS: user confirmed payment_methods has 0 rows (2026-08-16) — gate satisfied.
+-- ============================================================================
+
+DROP TABLE IF EXISTS payment_methods;
+
+-- ============================================================================
+-- DOWN MIGRATION (manual — recreate the table from 20260722_create_payment_tables.sql)
+-- ============================================================================
+-- CREATE TABLE IF NOT EXISTS payment_methods (
+--   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+--   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+--
+--   -- Stripe details
+--   stripe_customer_id TEXT NOT NULL,
+--   stripe_payment_method_id TEXT NOT NULL UNIQUE,
+--
+--   -- Payment method details
+--   type TEXT NOT NULL, -- 'card', 'bank_account'
+--   card_brand TEXT, -- 'visa', 'mastercard', 'amex', etc.
+--   card_last4 TEXT,
+--   card_exp_month INT,
+--   card_exp_year INT,
+--
+--   -- Status
+--   is_default BOOLEAN DEFAULT false,
+--   is_active BOOLEAN DEFAULT true,
+--
+--   created_at TIMESTAMPTZ DEFAULT now()
+-- );
+--
+-- CREATE INDEX IF NOT EXISTS idx_payment_methods_user_id ON payment_methods(user_id);
+-- CREATE INDEX IF NOT EXISTS idx_payment_methods_stripe_customer ON payment_methods(stripe_customer_id);
+-- CREATE INDEX IF NOT EXISTS idx_payment_methods_default ON payment_methods(is_default);
+--
+-- ALTER TABLE payment_methods ENABLE ROW LEVEL SECURITY;
+--
+-- DROP POLICY IF EXISTS "Users can view their own payment methods" ON payment_methods;
+-- CREATE POLICY "Users can view their own payment methods"
+--   ON payment_methods FOR SELECT USING (auth.uid() = user_id);
+--
+-- DROP POLICY IF EXISTS "Users can insert their own payment methods" ON payment_methods;
+-- CREATE POLICY "Users can insert their own payment methods"
+--   ON payment_methods FOR INSERT WITH CHECK (auth.uid() = user_id);
+--
+-- DROP POLICY IF EXISTS "Users can update their own payment methods" ON payment_methods;
+-- CREATE POLICY "Users can update their own payment methods"
+--   ON payment_methods FOR UPDATE USING (auth.uid() = user_id);
+--
+-- DROP POLICY IF EXISTS "Users can delete their own payment methods" ON payment_methods;
+-- CREATE POLICY "Users can delete their own payment methods"
+--   ON payment_methods FOR DELETE USING (auth.uid() = user_id);
