@@ -1,6 +1,6 @@
 # Business OS Module → Internal Plugin Roadmap
 
-> **Last Updated**: 2026-08-09
+> **Last Updated**: 2026-08-14
 
 **Author:** Dev
 **Status:** Living roadmap — grows/updates as each module is converted.
@@ -80,7 +80,10 @@ These affect every internal module, not just one. Fix once, benefits all.
 - ⬜ **Execute-route hardening.** `POST /api/plugins/execute` reads `userId` from the request **body** with no `getUser()` — impersonation-style. Every internal-module caller inherits this. Harden it to derive identity server-side. (Tracked; flagged by SA on both the CRM pilot and the Modules-tab review.)
 - ⬜ **Missing `@/types/database`.** The generated Supabase `Database` type file is absent from the repo. The 2 repos that imported it (`BusinessProfileRepository`, `OnboardingConversationRepository`) are now fixed with **hand-written interfaces** (matching the rest of the codebase). Optional broader fix: **generate** the real file to restore column-level schema checking across all repositories (this is *why* phantom-column writes historically compiled without error).
 - ⬜ **Repository / type-hygiene follow-ups.** SA-flagged Low-severity cleanups left by the Insights G2 slice + the `@/types/database`→interfaces change: `BusinessProfileInsert.vertical` nullability, a redundant cast in `OpsUtilizationLowDetector`, the 3 phantom `business_profiles` fields (`currency`/`timezone`/`contact_email`), and an availability-route double cast. Full context: [BUSINESS_OS_REPOSITORY_TYPE_HYGIENE_FOLLOWUPS.md](/docs/workplans/BUSINESS_OS_REPOSITORY_TYPE_HYGIENE_FOLLOWUPS.md).
-- 🅿️ **Trigger → event-driven architecture (Step 3).** The 9 Postgres triggers remain the sole owner of cross-capability side-effects. Migrating them to an application event bus is **deferred** and only becomes necessary when the first *external* provider is introduced for a capability. Designed-not-built. See [SA feasibility review §2](/docs/architecture/BUSINESS_OS_MODULE_PLUGIN_SA_FEASIBILITY_REVIEW.md#2-deep-dive--cross-capability-side-effects-q5).
+- 🅿️ **Trigger → rule-engine migration (Step 3).** The 9 cross-capability Postgres triggers (T1–T9) are being migrated to an application-level, config-driven rule engine (durable `business_events` log → distributor → fast/delayed queues → provider-agnostic plugin-op reactions). **Designed + planned + SA-signed-off; not yet built** (only *required* once an external provider arrives, but Phase 0 has standalone value — it lights up Insights). The two authoritative trigger docs:
+  - **The locked design (what/why):** [BUSINESS_OS_EVENT_DRIVEN_ARCHITECTURE.md](/docs/architecture/BUSINESS_OS_EVENT_DRIVEN_ARCHITECTURE.md).
+  - **The implementation plan (how — T1–T9 cutover playbook, phases, concurrency/rule-engine mechanics, SA final sign-off §16, M0 satisfied):** [BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md](/docs/architecture/BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md). Next step = scope **Phase 0** (see §6; the RC1–RC3 build gates). Origin/context: [SA feasibility review §2](/docs/architecture/BUSINESS_OS_MODULE_PLUGIN_SA_FEASIBILITY_REVIEW.md#2-deep-dive--cross-capability-side-effects-q5).
+  - **Reusable patterns extracted:** the `durable-queue-drain` and `tenant-isolation-guard` skills (`.claude/skills/`) — pulled automatically when relevant.
 - 🅿️ **Config-driven capability selection (R7).** Which plugin serves a capability per tenant (`business_profiles.primary_*`) is parked — v1 uses the internal plugin only. Build when the first external provider for a domain is scoped.
 
 ---
@@ -150,9 +153,10 @@ These affect every internal module, not just one. Fix once, benefits all.
 - ✅ **No phantom columns** on the payments path (verified). External **Stripe** (Connect/checkout/webhook/`IPaymentProcessorExecutor`) confirmed as the delivery leaf — out of the internal op contract; the webhook remains the legitimate producer of `succeeded` transactions that fires T3/T4.
 
 **Tracked follow-ups from phase-2 (liveness findings — 2026-08-12):** the 5 wrapped tables split by liveness: `payment_events`/`payment_processors`/`saved_payment_methods` are **live** (payment UI blocks: collect_payment/record_manual_payment/refund → `blocks/execute`; + booking events); `payment_reminders` is **half-dark** (rows created on bookings, but the sending cron isn't scheduled); automation is **fully dark**.
-- ⬜ **Wire the payment crons** (spawned task `task_65f25a21`) — `app/api/cron/payment-reminders/route.ts` + `payment-retry/route.ts` exist but are **NOT in `vercel.json`**, so scheduled reminders never send and retries never run. Add cron entries + verify auth gating.
-- ⬜ **Payment automation engine is dormant** (spawned task `task_39e0280d`) — no rule-management surface, no scheduled execution cron, a broken in-process pub/sub (engine subscribes on its own `PaymentEventService` instance vs the global singleton), and the phantom `payment_automation_executions.trigger_event_id`. Decide build-vs-remove; if build, this is where the **deferred `PaymentAutomationExecutionRepository`** + the `trigger_event_id` migration + pub/sub fix live. Overlaps Step-3 event-driven architecture.
-- ⬜ **`payment_methods`** dead table → separate DROP migration (confirm no prod rows first).
+> ✅ **F1 + F2 addressed** in the **[Payment Queue-Drain workplan](/docs/workplans/BUSINESS_OS_PAYMENT_QUEUE_DRAIN_WORKPLAN.md)** (`fix/business-os-payment-queue-drain`, PR #27; SA APPROVE + QA PASS-WITH-NOTES) — both drains rebuilt on the durable-queue **claim pattern** ([migration plan §8.1](/docs/architecture/BUSINESS_OS_EVENT_DRIVEN_MIGRATION_PLAN.md)) then the crons wired; **first application of the `durable-queue-drain` skill.** A few QA notes are deferred to a Phase-0-convergent follow-up (see that workplan §6.6/§12).
+- ✅ **Wire the payment crons** (`task_65f25a21`) — done: `payment-reminders`/`payment-retry` drains claim-safe + registered in `vercel.json`. Detail in the queue-drain workplan.
+- ✅ **Payment automation engine** (`task_39e0280d`) — build chosen: `processScheduledExecutions` rebuilt on the claim pattern (fixes the unbounded re-execution + guardrail-bypass), pub/sub + `trigger_event_id` addressed. Detail in the queue-drain workplan. (User-rules surface still folds into Step-3 Phase 3.)
+- ⬜ **`payment_methods`** dead table → separate DROP migration (F3; confirm no prod rows first).
 
 ### Intake
 
