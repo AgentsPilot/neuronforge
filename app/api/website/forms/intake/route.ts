@@ -6,15 +6,37 @@
  * 1. Validates the intake form data (template-specific fields)
  * 2. Creates or updates a CRM contact with intake data
  * 3. Links to existing booking if booking_id is provided
- * 4. Triggers confirmation email sequence
+ * 4. Logs a CRM activity for the submission
+ *
+ * SERVICE ROLE / RLS BYPASS (intentional — CLAUDE.md security rules):
+ * this is a public, unauthenticated endpoint, so there is no user session to scope
+ * queries with. The tenant is resolved server-side from the `subdomain`
+ * (`website_pages.user_id`) and every subsequent repository call is scoped to that
+ * `ownerId`; no identity is ever taken from the request body.
+ *
+ * KNOWN CONTRACT GAP (tracked — see
+ * docs/workplans/BUSINESS_OS_WEBSITE_INTAKE_ROUTE_FIX_WORKPLAN.md §1/§2):
+ * the only caller (`ProcessFlowSection.handleIntakeSubmit`, the legacy `intake_fields`
+ * path) omits the required `template` and sends an `answers` object this schema strips,
+ * so its submissions fail validation with 400. Repairing or retiring that legacy path is
+ * a separate product decision; this module is correct if called correctly.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import type { CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteIntakeFormAPI' });
+
+// Instantiated directly rather than via getWebsitePageRepository(), which caches its
+// first-injected client (see the Website section of the module-plugins roadmap).
+const websitePageRepository = new WebsitePageRepository(supabaseServer);
 
 // Base intake form schema
 const IntakeFormBaseSchema = z.object({
@@ -79,6 +101,19 @@ const IntakeFormSchema = IntakeFormBaseSchema.and(
   ])
 );
 
+/**
+ * Split a single free-text name into first/last, mirroring the sibling contact-form
+ * route (app/api/website/forms/contact/route.ts) so both public capture surfaces
+ * populate `crm_contacts` identically.
+ */
+function splitName(name: string): { firstName: string; lastName: string | null } {
+  const parts = name.trim().split(/\s+/);
+  return {
+    firstName: parts[0] || name,
+    lastName: parts.length > 1 ? parts.slice(1).join(' ') : null
+  };
+}
+
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
@@ -98,12 +133,11 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
-    // Look up the website owner by subdomain
-    const { data: websitePage, error: pageError } = await supabaseServer
-      .from('website_pages')
-      .select('user_id')
-      .eq('subdomain', data.subdomain)
-      .single();
+    // Look up the website owner by subdomain (no status filter — intake must also work
+    // on draft/preview sites, matching the previous behaviour)
+    const { data: websitePage, error: pageError } = await websitePageRepository.findBySubdomainAny(
+      data.subdomain
+    );
 
     if (pageError || !websitePage) {
       requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');
@@ -127,60 +161,72 @@ export async function POST(request: NextRequest) {
       ...templateFields
     };
 
-    // Check if contact already exists
-    const { data: existingContact } = await supabaseServer
-      .from('crm_contacts')
-      .select('id, custom_fields')
-      .eq('user_id', ownerId)
-      .eq('email', email)
-      .single();
+    // Check if contact already exists (scoped to the site owner)
+    const { data: existingContact, error: lookupError } = await crmContactRepository.findByEmail(
+      email,
+      ownerId
+    );
+
+    // A real lookup failure must not fall through to the create branch — that would
+    // risk a duplicate contact whenever the read errors transiently.
+    if (lookupError) {
+      requestLogger.error({ err: lookupError }, 'Failed to look up contact');
+      throw lookupError;
+    }
 
     let contactId: string;
 
     if (existingContact) {
-      // Update existing contact with intake data
+      // Update existing contact with intake data.
+      // NOTE: `stage` is deliberately NOT written here — pipeline stage vocabulary is
+      // per-tenant (crm_pipeline_stages) and completing an intake is not a promotion
+      // event. `updated_at` is set by update_crm_contacts_updated_at_trigger.
       const updatedCustomFields = {
         ...(existingContact.custom_fields || {}),
         intake_data: intakeData,
         intake_submitted_at: new Date().toISOString()
       };
 
-      const { error: updateError } = await supabaseServer
-        .from('crm_contacts')
-        .update({
-          phone: phone || existingContact.custom_fields?.phone,
-          custom_fields: updatedCustomFields,
-          status: 'qualified', // Upgrade status when intake is submitted
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', existingContact.id);
+      // Only overwrite the stored phone when the submitter actually supplied one.
+      // Typed as CRMContactUpdate so excess/misspelled fields are a compile error.
+      const contactPatch: CRMContactUpdate = {
+        custom_fields: updatedCustomFields
+      };
+      if (phone) {
+        contactPatch.phone = phone;
+      }
 
-      if (updateError) {
+      const { data: updatedContact, error: updateError } = await crmContactRepository.update(
+        existingContact.id,
+        ownerId,
+        contactPatch
+      );
+
+      if (updateError || !updatedContact) {
         requestLogger.error({ err: updateError }, 'Failed to update contact');
-        throw updateError;
+        throw updateError || new Error('Failed to update contact');
       }
 
       contactId = existingContact.id;
       requestLogger.info({ contactId }, 'Contact updated with intake data');
     } else {
       // Create new contact with intake data
-      const { data: newContact, error: createError } = await supabaseServer
-        .from('crm_contacts')
-        .insert({
-          user_id: ownerId,
-          name,
-          email,
-          phone: phone || null,
-          source: 'website_intake',
-          status: 'qualified',
-          custom_fields: {
-            intake_data: intakeData,
-            intake_submitted_at: new Date().toISOString(),
-            page_url
-          }
-        })
-        .select('id')
-        .single();
+      const { firstName, lastName } = splitName(name);
+
+      const { data: newContact, error: createError } = await crmContactRepository.create({
+        user_id: ownerId,
+        first_name: firstName,
+        last_name: lastName,
+        email,
+        phone: phone || null,
+        source: 'website_intake',
+        stage: 'lead',
+        custom_fields: {
+          intake_data: intakeData,
+          intake_submitted_at: new Date().toISOString(),
+          page_url
+        }
+      });
 
       if (createError || !newContact) {
         requestLogger.error({ err: createError }, 'Failed to create contact');
@@ -191,42 +237,41 @@ export async function POST(request: NextRequest) {
       requestLogger.info({ contactId }, 'New contact created with intake data');
     }
 
-    // Link to booking if provided
+    // Link to booking if provided. `contactId` is owner-verified (it came from a
+    // user_id-scoped lookup or create above), which is the invariant linkIntakeContact
+    // requires; the booking itself is scoped to ownerId, so a foreign booking_id
+    // matches no row and simply warns.
     if (booking_id) {
-      const { error: bookingError } = await supabaseServer
-        .from('scheduling_bookings')
-        .update({
-          contact_id: contactId,
-          intake_completed: true,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', booking_id)
-        .eq('user_id', ownerId);
+      const { data: linkedBooking, error: bookingError } =
+        await schedulingBookingRepository.linkIntakeContact(booking_id, ownerId, contactId);
 
       if (bookingError) {
         requestLogger.warn({ err: bookingError, booking_id }, 'Failed to link booking (non-blocking)');
+      } else if (!linkedBooking) {
+        // Distinct from an error: the booking id is absent or belongs to another tenant,
+        // so the user_id-scoped update matched no row. Expected on a public endpoint.
+        requestLogger.warn({ booking_id }, 'Booking not found for this site owner (non-blocking)');
       } else {
         requestLogger.info({ booking_id, contactId }, 'Intake linked to booking');
       }
     }
 
-    // Create activity for intake submission
-    const { error: activityError } = await supabaseServer
-      .from('crm_activities')
-      .insert({
-        user_id: ownerId,
-        contact_id: contactId,
-        type: 'note',
-        title: `Intake Form Completed (${template})`,
-        description: `Client completed the ${template} intake form.`,
-        metadata: {
-          source: 'website_intake',
-          template,
-          subdomain,
-          booking_id,
-          intake_summary: templateFields
-        }
-      });
+    // Create activity for intake submission.
+    // The structured payload lives on the contact's custom_fields.intake_data —
+    // crm_activities has no metadata column; booking_id is carried in source_entity_id.
+    const description = `Client completed the ${template} intake form.\nSite: ${subdomain}`;
+
+    const { error: activityError } = await crmActivityRepository.create({
+      user_id: ownerId,
+      contact_id: contactId,
+      activity_type: 'note',
+      title: `Intake Form Completed (${template})`,
+      description,
+      auto_logged: true,
+      source_capability: 'website',
+      source_entity_id: booking_id || null,
+      activity_date: new Date().toISOString()
+    });
 
     if (activityError) {
       requestLogger.warn({ err: activityError }, 'Failed to create activity (non-blocking)');

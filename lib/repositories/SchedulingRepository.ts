@@ -718,6 +718,59 @@ export class SchedulingBookingRepository {
   }
 
   /**
+   * Link a booking to the contact who completed its intake form, and stamp
+   * `intake_completed_at`.
+   *
+   * Deliberately a dedicated method rather than fields on `SchedulingBookingUpdate`:
+   * `scheduling_bookings.contact_id` is `REFERENCES crm_contacts(id)` with **no
+   * same-tenant constraint**, so exposing it on the generic update would publish an
+   * API surface where a caller could link another tenant's contact to its own booking.
+   *
+   * INVARIANT — `contactId` must be **owner-verified**: it may only come from a
+   * `user_id`-scoped repository call (e.g. `CRMContactRepository.findByEmail(email, userId)`
+   * or a `create({ user_id: userId })`), never from caller-supplied input. The caller is
+   * the tenant-isolation boundary here (see the `tenant-isolation-guard` skill).
+   * The booking itself is scoped by `user_id`, so a foreign `bookingId` matches no row.
+   */
+  async linkIntakeContact(
+    bookingId: string,
+    userId: string,
+    contactId: string
+  ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
+    try {
+      logger.info({ bookingId, userId, contactId }, 'Linking intake contact to booking');
+
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .update({
+          contact_id: contactId,
+          intake_completed_at: new Date().toISOString()
+        })
+        .eq('id', bookingId)
+        .eq('user_id', userId)
+        .select()
+        // maybeSingle, not single: a booking id belonging to another tenant (or simply
+        // absent) is an expected outcome on a public endpoint, not an error condition.
+        // It returns { data: null, error: null } so the caller can treat it as a miss
+        // without this logging at error level.
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (!data) {
+        logger.warn({ bookingId, userId }, 'No booking matched for intake link (absent or not owned)');
+        return { data: null, error: null };
+      }
+
+      logger.info({ bookingId, userId, contactId }, 'Intake contact linked to booking');
+      return { data, error: null };
+    } catch (error) {
+      logger.error({ err: error, bookingId, userId }, 'Failed to link intake contact to booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Cancel booking
    */
   async cancel(
