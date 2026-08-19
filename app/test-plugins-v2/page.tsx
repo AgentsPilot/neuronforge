@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { PluginAPIClient } from '@/lib/client/plugin-api-client';
+import { useAuth } from '@/components/UserProvider';
 import { PluginInfo, UserPluginStatus, ExecutionResult } from '@/lib/types/plugin-types';
 import { v4 as uuidv4 } from 'uuid';
 import { useDebugStream, DebugState, StepStatus } from '@/hooks/useDebugStream';
@@ -782,8 +783,13 @@ export default function TestPluginsPage() {
   const [refreshAllProgress, setRefreshAllProgress] = useState<RefreshAllProgress | null>(null);
 
   // Core state
-  // Initialize userId from env variable if available (add NEXT_PUBLIC_TEST_PAGE_USER_ID to .env.local)
+  // These API routes now derive identity from the SESSION (lib/server/route-identity.ts).
+  // A User ID other than your own is an ACT-AS request and requires platform admin —
+  // anyone else gets a 403. So default the box to the logged-in user and only fall back
+  // to the env seed (add NEXT_PUBLIC_TEST_PAGE_USER_ID to .env.local) when signed out.
+  const { user: sessionUser, loading: sessionLoading } = useAuth();
   const [userId, setUserId] = useState(process.env.NEXT_PUBLIC_TEST_PAGE_USER_ID || '');
+  const [userIdTouched, setUserIdTouched] = useState(false);
   const [apiClient] = useState(() => new PluginAPIClient());
   
   // Plugin data
@@ -941,6 +947,16 @@ export default function TestPluginsPage() {
   useEffect(() => {
     loadAvailablePlugins();
   }, []);
+
+  // Seed the User ID box from the session once auth resolves (unless the operator typed
+  // their own value). Keeps the page working out of the box now that identity is
+  // server-derived and a foreign id needs admin.
+  useEffect(() => {
+    if (sessionLoading || userIdTouched || !sessionUser) return;
+    if (!userId || userId === process.env.NEXT_PUBLIC_TEST_PAGE_USER_ID) {
+      setUserId(sessionUser.id);
+    }
+  }, [sessionLoading, sessionUser, userIdTouched, userId]);
 
   // Load user status when userId changes
   useEffect(() => {
@@ -2775,10 +2791,30 @@ export default function TestPluginsPage() {
             id="userId"
             type="text"
             value={userId}
-            onChange={(e) => setUserId(e.target.value)}
+            onChange={(e) => { setUserIdTouched(true); setUserId(e.target.value); }}
             placeholder="Enter user ID"
             style={{ width: '300px', padding: '8px', fontSize: '14px' }}
           />
+        </div>
+        <div style={{ fontSize: '13px', marginBottom: '10px' }}>
+          {sessionLoading ? (
+            <span style={{ color: '#666' }}>Checking session…</span>
+          ) : !sessionUser ? (
+            <span style={{ color: '#b00' }}>
+              <strong>Not signed in.</strong> These endpoints now require a session — log into the app
+              in this browser, then reload. Requests will return 401 until you do.
+            </span>
+          ) : userId && userId !== sessionUser.id ? (
+            <span style={{ color: '#b36b00' }}>
+              Signed in as <code>{sessionUser.email ?? sessionUser.id}</code> — acting as another user
+              (<code>{userId}</code>). This requires <strong>platform admin</strong>, is audited, and
+              returns 403 otherwise.
+            </span>
+          ) : (
+            <span style={{ color: '#666' }}>
+              Signed in as <code>{sessionUser.email ?? sessionUser.id}</code> (acting as yourself).
+            </span>
+          )}
         </div>
         {userStatus && (
           <div style={{ fontSize: '14px', color: '#666' }}>

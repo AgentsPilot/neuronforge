@@ -1,30 +1,77 @@
 // app/api/plugins/disconnect/route.ts
+//
+// IDENTITY: both handlers resolve the acting user from the SESSION via
+// resolveActingUserIdentity(). A caller-supplied `userId` is not an identity claim — it
+// is an act-as request, honoured only for platform admins and audited. Before this
+// change POST took `userId` from the body with NO authentication, so an anonymous
+// caller could disconnect any user's plugin; GET disclosed any user's connection state.
+// See docs/workplans/BUSINESS_OS_PLUGIN_ROUTE_IDENTITY_HARDENING_WORKPLAN.md.
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { UserPluginConnections } from '@/lib/server/user-plugin-connections';
+import { resolveActingUserIdentity } from '@/lib/server/route-identity';
+import { createLogger } from '@/lib/logger';
 import { pluginStatusCache } from '../user-status/route';
 
-// POST /api/plugins/disconnect
-// Disconnects a plugin for a user
+const logger = createLogger({ module: 'PluginDisconnectAPI' });
+
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
-export async function POST(request: NextRequest) {
-  try {
-    // Parse request body
-    const body = await request.json();
-    const { userId, pluginKey } = body;
+const DisconnectSchema = z.object({
+  // Optional act-as target; identity still comes from the session.
+  userId: z.string().optional(),
+  pluginKey: z.string().min(1),
+});
 
-    // Validate required fields
-    if (!userId || !pluginKey) {
-      return NextResponse.json({
-        success: false,
-        error: 'Missing required fields',
-        message: 'userId and pluginKey are required'
-      }, { status: 400 });
+const StatusQuerySchema = z.object({
+  userId: z.string().optional(),
+  pluginKey: z.string().min(1),
+});
+
+function validationError(details: unknown) {
+  return NextResponse.json(
+    {
+      success: false,
+      error: 'Invalid request',
+      details: process.env.NODE_ENV === 'development' ? details : undefined,
+    },
+    { status: 400 }
+  );
+}
+
+// POST /api/plugins/disconnect
+// Disconnects a plugin for the acting user
+export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  try {
+    const body = await request.json().catch(() => null);
+    const parsed = DisconnectSchema.safeParse(body);
+    if (!parsed.success) {
+      requestLogger.warn({ errors: parsed.error.flatten() }, 'Validation failed');
+      return validationError(parsed.error.flatten());
     }
 
-    console.log(`DEBUG: API - Disconnecting plugin ${pluginKey} for user ${userId}`);
+    const { pluginKey } = parsed.data;
+
+    const identity = await resolveActingUserIdentity({
+      requestedUserId: parsed.data.userId,
+      route: 'POST /api/plugins/disconnect',
+      request,
+      details: { pluginKey },
+    });
+    if (!identity.ok) {
+      return NextResponse.json(
+        { success: false, error: identity.error },
+        { status: identity.status }
+      );
+    }
+    const userId = identity.userId;
+
+    requestLogger.info({ pluginKey, userId, actingAs: identity.actingAs }, 'Disconnecting plugin');
 
     // Get user connections instance
     const userConnections = UserPluginConnections.getInstance();
@@ -33,11 +80,10 @@ export async function POST(request: NextRequest) {
     const success = await userConnections.disconnectPlugin(userId, pluginKey, request);
 
     if (success) {
-      console.log(`DEBUG: API - Successfully disconnected ${pluginKey} for user ${userId}`);
-
-      // Invalidate cache so next request gets fresh data
+      // Invalidate cache so next request gets fresh data — keyed on the RESOLVED id, so
+      // an act-as call can never touch another user's cache entry.
       pluginStatusCache.invalidate(`plugin-status-${userId}`);
-      console.log(`DEBUG: API - Cache invalidated for user ${userId} after disconnect`);
+      requestLogger.info({ pluginKey, userId }, 'Plugin disconnected and status cache invalidated');
 
       return NextResponse.json({
         success: true,
@@ -46,67 +92,87 @@ export async function POST(request: NextRequest) {
         user_id: userId,
         disconnected_at: new Date().toISOString()
       });
-    } else {
-      console.error(`DEBUG: API - Failed to disconnect ${pluginKey} for user ${userId}`);
-      
-      return NextResponse.json({
-        success: false,
-        error: 'Disconnect failed',
-        message: `Failed to disconnect ${pluginKey}. The plugin may not be connected or there was a database error.`
-      }, { status: 400 });
     }
 
-  } catch (error: any) {
-    console.error('DEBUG: API - Error disconnecting plugin:', error);
-    
+    requestLogger.warn({ pluginKey, userId }, 'Disconnect did not affect any connection');
+
     return NextResponse.json({
       success: false,
       error: 'Disconnect failed',
-      message: error.message
+      message: `Failed to disconnect ${pluginKey}. The plugin may not be connected or there was a database error.`
+    }, { status: 400 });
+
+  } catch (error) {
+    requestLogger.error({ err: error }, 'Error disconnecting plugin');
+
+    return NextResponse.json({
+      success: false,
+      error: 'Disconnect failed',
+      message: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
     }, { status: 500 });
   }
 }
 
-// GET /api/plugins/disconnect?userId={userId}&pluginKey={pluginKey}
+// GET /api/plugins/disconnect?pluginKey={pluginKey}
 // Check if a plugin can be disconnected (for UI state)
 export async function GET(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get('userId');
-    const pluginKey = searchParams.get('pluginKey');
-
-    if (!userId || !pluginKey) {
-      return NextResponse.json({
-        success: false,
-        error: 'Missing required parameters',
-        message: 'userId and pluginKey are required'
-      }, { status: 400 });
+    const parsed = StatusQuerySchema.safeParse({
+      userId: searchParams.get('userId') ?? undefined,
+      pluginKey: searchParams.get('pluginKey') ?? undefined,
+    });
+    if (!parsed.success) {
+      return validationError(parsed.error.flatten());
     }
 
-    console.log(`DEBUG: API - Checking disconnect status for ${pluginKey}, user ${userId}`);
+    const { pluginKey } = parsed.data;
+
+    const identity = await resolveActingUserIdentity({
+      requestedUserId: parsed.data.userId,
+      route: 'GET /api/plugins/disconnect',
+      request,
+      details: { pluginKey },
+    });
+    if (!identity.ok) {
+      return NextResponse.json(
+        { success: false, error: identity.error },
+        { status: identity.status }
+      );
+    }
+    const userId = identity.userId;
+
+    requestLogger.debug({ pluginKey, userId }, 'Checking disconnect status');
 
     // Get user connections instance
     const userConnections = UserPluginConnections.getInstance();
-    
+
     // Check connection status
     const status = await userConnections.getConnectionStatus(userId, pluginKey);
-    
-    return NextResponse.json({
-      success: true,
-      plugin_key: pluginKey,
-      user_id: userId,
-      can_disconnect: status.connected,
-      current_status: status.reason,
-      expires_at: status.expires_at
-    });
 
-  } catch (error: any) {
-    console.error('DEBUG: API - Error checking disconnect status:', error);
-    
+    return NextResponse.json(
+      {
+        success: true,
+        plugin_key: pluginKey,
+        user_id: userId,
+        can_disconnect: status.connected,
+        current_status: status.reason,
+        expires_at: status.expires_at
+      },
+      // User-specific data: never store in a shared cache.
+      { headers: { 'Cache-Control': 'private, no-store', Vary: 'Cookie' } }
+    );
+
+  } catch (error) {
+    requestLogger.error({ err: error }, 'Error checking disconnect status');
+
     return NextResponse.json({
       success: false,
       error: 'Status check failed',
-      message: error.message
+      message: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
     }, { status: 500 });
   }
 }
