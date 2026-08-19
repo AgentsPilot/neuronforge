@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
+import { resolveActingUserIdentity } from '@/lib/server/route-identity';
 
 /**
  * POST /api/plugins/test-audit
@@ -14,14 +15,13 @@ import { AUDIT_EVENTS } from '@/lib/audit/events';
  * is left untouched as tracked security debt).
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * ACCEPTED LIMITATION (recorded per SA decision Q2):
- *   Because the /test-plugins-v2 surface is unauthenticated (F4 override, D6), this
- *   entry captures `targetUserId` — the account the action was run against — but does
- *   NOT capture a verified operator identity. That is a direct consequence of the
- *   consciously accepted cross-user-exposure risk. The entry still provides the
- *   "which account, what action, what outcome" traceability that matters. The
- *   server-side audit-in-execute-route remains the correct long-term home and rides
- *   the future F3 remediation cycle.
+ * RESOLVED (this is the F3 remediation cycle):
+ *   The limitation recorded here — "no verified operator identity, because the
+ *   /test-plugins-v2 surface is unauthenticated" — no longer holds. Identity is now
+ *   resolved server-side from the session (lib/server/route-identity.ts), so this entry
+ *   records BOTH the account acted upon (userId) and the verified operator (actorId),
+ *   and an anonymous caller can no longer forge tester-audit rows against someone else.
+ *   See docs/workplans/BUSINESS_OS_PLUGIN_ROUTE_IDENTITY_HARDENING_WORKPLAN.md.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * F1/CR3 compliance: Zod-validated body, Pino createLogger + correlationId, standard
@@ -68,7 +68,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { targetUserId, plugin, action, outcome, durationMs } = parsed.data;
+    const { plugin, action, outcome, durationMs } = parsed.data;
+
+    // The tester may run as another user only if the operator is a platform admin; the
+    // resolver enforces that and returns the verified operator alongside the target.
+    const identity = await resolveActingUserIdentity({
+      requestedUserId: parsed.data.targetUserId,
+      route: 'POST /api/plugins/test-audit',
+      request,
+      details: { plugin, action },
+    });
+    if (!identity.ok) {
+      return NextResponse.json(
+        { success: false, error: identity.error },
+        { status: identity.status }
+      );
+    }
+    const targetUserId = identity.userId;
 
     const auditTrail = AuditTrailService.getInstance();
     // Non-blocking: never let audit failures affect the response (CLAUDE.md §Audit Trail).
@@ -77,8 +93,9 @@ export async function POST(request: NextRequest) {
         action: AUDIT_EVENTS.PLUGIN_TESTER_EXECUTE,
         entityType: 'plugin',
         entityId: plugin,
-        // targetUserId = the account acted upon (no verified operator identity — see note above).
+        // userId = the account acted upon; actorId = the verified operator who ran it.
         userId: targetUserId,
+        actorId: identity.actingAs ? identity.sessionUserId : undefined,
         resourceName: `${plugin}.${action}`,
         severity: outcome === 'error' ? 'warning' : 'info',
         details: { plugin, action, outcome, durationMs, source: 'form-tester' },

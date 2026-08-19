@@ -10,7 +10,12 @@ export class PluginAPIClient {
   private oauthHandler: OAuthHandler;
 
   constructor() {
-    this.baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+    // In the browser, always use relative URLs. These routes authenticate from the
+    // session cookie, and fetch() defaults to credentials:'same-origin' — so if
+    // NEXT_PUBLIC_APP_URL ever differs from the browsing origin (preview deploys, the
+    // *.agentpilot.io subdomain rewrite in middleware.ts), an absolute URL silently
+    // drops the cookies and every call 401s.
+    this.baseUrl = typeof window !== 'undefined' ? '' : (process.env.NEXT_PUBLIC_APP_URL || '');
     this.oauthHandler = new OAuthHandler();
     clientLogger.debug('PluginAPIClient initialized');
   }

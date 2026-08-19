@@ -458,6 +458,10 @@ GET https://...supabase.../auth/v1/user 200 in 1880ms (cache skip)
 
 #### Solution A: Create Cached Auth Utility (Immediate Fix)
 
+> ⚠️ **SUPERSEDED / DO NOT IMPLEMENT AS WRITTEN (2026-08-19).** `lib/cachedAuth.ts` was built from this section and has been **deleted**. It looked the session up under a **single, unchunked** cookie name, but this project's Supabase auth cookies are **chunked** (`sb-<ref>-auth-token.0/.1/…`), so it returned `null` for genuinely logged-in users. Routes then "fell back" to a caller-supplied `userId`, which is how `/api/plugins/user-status` ended up disclosing any user's connected plugins to an anonymous caller. Identity is now resolved in one place — `lib/server/route-identity.ts` — using `getUser()`, with no auth-result caching, because it is a security boundary.
+>
+> If auth latency needs addressing, add a **chunk-aware** cache **inside that resolver**, with an explicit staleness/revocation decision — never a caller-supplied-id fallback, and never a second auth path. Tracked on the [module-plugins roadmap](/docs/workplans/BUSINESS_OS_MODULE_PLUGINS_ROADMAP.md) cross-cutting list. Full analysis: [Plugin Route Identity Hardening](/docs/workplans/BUSINESS_OS_PLUGIN_ROUTE_IDENTITY_HARDENING_WORKPLAN.md).
+
 Create a cached wrapper around `getUser()` that caches the result for 30 seconds using the access token as the cache key.
 
 **File to create:** `lib/server/cachedAuth.ts`
@@ -525,14 +529,13 @@ import { getCachedUser } from '@/lib/server/cachedAuth'
 const user = await getCachedUser()
 ```
 
-**Implementation checklist:**
-- [ ] Create `lib/server/cachedAuth.ts` with `getCachedUser()` function
-- [ ] Update high-traffic API routes to use `getCachedUser()`:
-  - [ ] `/api/plugins/user-status/route.ts`
-  - [ ] `/api/agents/[id]/intensity/route.ts`
-  - [ ] `/api/agents/[id]/memory/count/route.ts`
-- [ ] Test that auth still works correctly
-- [ ] Monitor cache hit rate in development
+**Implementation checklist — ❌ CANCELLED (2026-08-19), see the warning above:**
+- [x] ~~Create `lib/server/cachedAuth.ts` with `getCachedUser()` function~~ — built as `lib/cachedAuth.ts`, then **deleted**: chunk-unaware, and its only consumer was the route whose insecure fallback it caused
+- [ ] ~~Update high-traffic API routes to use `getCachedUser()`~~ — do **not** do this; `/api/plugins/user-status` now uses the shared identity resolver
+- [ ] ~~Test that auth still works correctly~~
+- [ ] ~~Monitor cache hit rate in development~~
+
+**If you pick this up again:** the measurement hook already exists — `resolveActingUserIdentity` logs `{ durationMs, route }` at debug level around every `getUser()` call. Get a number first.
 
 **Expected improvement:** Eliminates duplicate auth calls within 30s window (~200-1,880ms saved per cached call)
 
@@ -1775,6 +1778,7 @@ class PluginManagerV2 {
 | 2026-01-17 | #2A | Added `requestDeduplicator` to HelpBot's `loadPageContexts()` and `loadThemeColors()` in `components/v2/HelpBot.tsx` | ✅ Implemented |
 | 2026-01-17 | #3A | Combined `fetchTokensPerPilotCredit()` and `fetchSharingRewardAmount()` into single `fetchPageConfig()` in `app/v2/agents/[id]/page.tsx` | ✅ Implemented |
 | 2026-01-17 | #4A | Created `lib/cachedAuth.ts` with `getCachedUser()`, updated `/api/plugins/user-status` to use it | ✅ Implemented |
+| 2026-08-19 | #4A | **Reverted** — `lib/cachedAuth.ts` deleted (chunk-unaware cookie lookup → routes fell back to a caller-supplied `userId`, an unauthenticated disclosure). Auth now resolves once in `lib/server/route-identity.ts` with no caching. | ⛔ Superseded |
 | 2026-01-17 | #1B | Added `latestExecutionTime` prop to `AgentIntensityCardV2`, parent now passes execution time to avoid redundant `?limit=1` polling | ✅ Implemented |
 | 2026-01-17 | #5A | Added `requestDeduplicator` to `agentApi.getMemoryCount()` with 30s cache TTL in `lib/client/agent-api.ts` | ✅ Implemented |
 | 2026-01-17 | #6A | Parallelized queries in `/api/agents/[id]/intensity`: metrics+routingConfig in GET handler, and creationTokens+weights+ranges in buildIntensityBreakdown | ✅ Implemented |

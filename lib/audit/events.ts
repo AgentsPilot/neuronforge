@@ -99,6 +99,7 @@ export const AUDIT_EVENTS = {
   PLUGIN_PERMISSION_GRANTED: 'PLUGIN_PERMISSION_GRANTED',
   PLUGIN_PERMISSION_REVOKED: 'PLUGIN_PERMISSION_REVOKED',
   PLUGIN_TESTER_EXECUTE: 'PLUGIN_TESTER_EXECUTE', // A plugin action was run via the /test-plugins-v2 Form Tester
+  PLUGIN_ACT_AS: 'PLUGIN_ACT_AS', // An admin invoked a plugin route on behalf of another user
 
   // ==========================================
   // DATA EVENTS (GDPR compliance)
@@ -476,6 +477,11 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
   },
 
   // Admin events - all critical
+  [AUDIT_EVENTS.PLUGIN_ACT_AS]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'Admin executed a plugin route on behalf of another user',
+  },
   [AUDIT_EVENTS.ADMIN_IMPERSONATION_STARTED]: {
     severity: 'critical',
     complianceFlags: ['SOC2'],

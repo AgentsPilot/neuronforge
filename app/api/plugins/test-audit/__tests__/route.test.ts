@@ -1,13 +1,22 @@
 /**
  * POST /api/plugins/test-audit — isolated per-execution audit endpoint (SA Q2 / CR2).
  * Covers: happy path (non-blocking AuditTrailService.log invoked), invalid body (400),
- * invalid JSON (400).
+ * invalid JSON (400), and — since the identity-hardening cycle — that an unauthenticated
+ * caller can no longer forge tester-audit rows against another account.
  */
 
 const auditLog = jest.fn();
+const resolveActingUserIdentity = jest.fn();
+
 jest.mock('@/lib/services/AuditTrailService', () => ({
   AuditTrailService: { getInstance: () => ({ log: (i: unknown) => auditLog(i) }) },
 }));
+
+jest.mock('@/lib/server/route-identity', () => ({
+  resolveActingUserIdentity: (...args: unknown[]) => resolveActingUserIdentity(...args),
+}));
+
+const SESSION_ID = '11111111-1111-4111-8111-111111111111';
 
 import { NextRequest } from 'next/server';
 import { POST } from '../route';
@@ -24,12 +33,40 @@ describe('POST /api/plugins/test-audit', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     auditLog.mockResolvedValue(undefined);
+    resolveActingUserIdentity.mockResolvedValue({
+      ok: true,
+      userId: SESSION_ID,
+      sessionUserId: SESSION_ID,
+      sessionUserEmail: 'op@example.com',
+      actingAs: false,
+    });
+  });
+
+  it('refuses an unauthenticated caller and writes no audit row', async () => {
+    resolveActingUserIdentity.mockResolvedValue({
+      ok: false,
+      status: 401,
+      error: 'Authentication required',
+    });
+
+    const res = await POST(
+      makeRequest({
+        targetUserId: '22222222-2222-4222-8222-222222222222',
+        plugin: 'google-drive',
+        action: 'delete_file',
+        outcome: 'success',
+        durationMs: 1,
+      })
+    );
+
+    expect(res.status).toBe(401);
+    expect(auditLog).not.toHaveBeenCalled();
   });
 
   it('records a successful execution audit (happy path)', async () => {
     const res = await POST(
       makeRequest({
-        targetUserId: 'user-1',
+        targetUserId: SESSION_ID,
         plugin: 'google-drive',
         action: 'delete_file',
         outcome: 'success',
@@ -42,7 +79,8 @@ describe('POST /api/plugins/test-audit', () => {
     expect(auditLog).toHaveBeenCalledTimes(1);
     const entry = auditLog.mock.calls[0][0];
     expect(entry.action).toBe('PLUGIN_TESTER_EXECUTE');
-    expect(entry.userId).toBe('user-1');
+    // The RESOLVED id, never the raw body value — the body is only an act-as request.
+    expect(entry.userId).toBe(SESSION_ID);
     expect(entry.entityType).toBe('plugin');
     expect(entry.details.outcome).toBe('success');
   });

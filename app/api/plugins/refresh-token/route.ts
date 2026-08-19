@@ -1,64 +1,74 @@
 // app/api/plugins/refresh-token/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth';
+import { z } from 'zod';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
+import { resolveActingUserIdentity } from '@/lib/server/route-identity';
+import { createLogger } from '@/lib/logger';
 import { pluginStatusCache } from '@/app/api/plugins/user-status/route';
+
+const logger = createLogger({ module: 'PluginRefreshTokenAPI' });
+
+const BodySchema = z.object({
+  pluginKeys: z.array(z.string().min(1)).optional(),
+  // Optional act-as target; identity still comes from the session.
+  userId: z.string().optional(),
+});
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic';
 
 // POST /api/plugins/refresh-token
 // Body: { pluginKeys?: string[] } (optional - if not provided, refreshes all expired)
-// Auth: Cookie-based (primary) or userId query param (backward compatibility)
+//
+// IDENTITY: resolved from the SESSION. The previous "fall back to the userId query
+// param for backward compatibility" branch let an unauthenticated caller drive a token
+// refresh for any user, and is gone. A `userId` is now only an act-as request, honoured
+// for platform admins and audited. See
+// docs/workplans/BUSINESS_OS_PLUGIN_ROUTE_IDENTITY_HARDENING_WORKPLAN.md.
 //
 // Refreshes OAuth tokens for user's plugins:
 // - If pluginKeys provided: refresh those specific plugins (can be array of 1)
 // - If no pluginKeys: refresh all plugins with expired tokens
 export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
-    // Try cookie-based authentication first (preferred method)
-    let userId: string | null = null;
-    let authMethod = 'query-param'; // for logging
-
-    const supabase = await createAuthenticatedServerClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-    if (user && !authError) {
-      // Cookie auth successful
-      userId = user.id;
-      authMethod = 'cookie';
-    } else {
-      // Fall back to query parameter for backward compatibility
-      const { searchParams } = new URL(request.url);
-      userId = searchParams.get('userId');
-
-      if (!userId) {
-        return NextResponse.json({
-          success: false,
-          error: 'Authentication required. Please log in or provide userId parameter.'
-        }, { status: 401 });
-      }
+    // Body is optional on this route.
+    const rawBody = await request.json().catch(() => ({}));
+    const parsed = BodySchema.safeParse(rawBody ?? {});
+    if (!parsed.success) {
+      requestLogger.warn({ errors: parsed.error.flatten() }, 'Validation failed');
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid request',
+        details: process.env.NODE_ENV === 'development' ? parsed.error.flatten() : undefined,
+      }, { status: 400 });
     }
 
-    console.log(`DEBUG: API - Refreshing tokens for user ${userId} (auth: ${authMethod})`);
-
-    // Parse request body for optional pluginKeys
-    let pluginKeys: string[] | undefined;
-    try {
-      const body = await request.json();
-      pluginKeys = body.pluginKeys;
-    } catch {
-      // Body is optional, so no error if parsing fails
-      pluginKeys = undefined;
+    const identity = await resolveActingUserIdentity({
+      requestedUserId: parsed.data.userId,
+      route: 'POST /api/plugins/refresh-token',
+      request,
+    });
+    if (!identity.ok) {
+      return NextResponse.json(
+        { success: false, error: identity.error },
+        { status: identity.status }
+      );
     }
+    const userId = identity.userId;
+    const pluginKeys = parsed.data.pluginKeys;
+
+    requestLogger.info({ userId, actingAs: identity.actingAs }, 'Refreshing plugin tokens');
 
     // Get plugin manager instance
     const pluginManager = await PluginManagerV2.getInstance();
 
     if (pluginKeys && Array.isArray(pluginKeys) && pluginKeys.length > 0) {
       // Refresh specific plugin(s)
-      console.log(`DEBUG: API - Refreshing specific plugins: ${pluginKeys.join(', ')}`);
+      requestLogger.debug({ pluginKeys }, 'Refreshing specific plugins');
 
       const refreshResults = {
         refreshed: [] as string[],
@@ -75,14 +85,14 @@ export async function POST(request: NextRequest) {
         // Check if plugin exists in registry first
         const pluginDefinition = pluginManager.getPluginDefinition(currentPluginKey);
         if (!pluginDefinition) {
-          console.log(`DEBUG: Plugin ${currentPluginKey} not found in registry`);
+          requestLogger.debug({ pluginKey: currentPluginKey }, 'Plugin not found in registry');
           refreshResults.notFound.push(currentPluginKey);
           continue;
         }
 
         // Check if system plugin BEFORE checking connections (optimization)
         if (pluginDefinition.plugin.isSystem) {
-          console.log(`DEBUG: Plugin ${currentPluginKey} is a system plugin, skipping`);
+          requestLogger.debug({ pluginKey: currentPluginKey }, 'System plugin — skipping refresh');
           refreshResults.skipped.push(currentPluginKey);
           continue;
         }
@@ -91,7 +101,7 @@ export async function POST(request: NextRequest) {
         const connection = allActiveConnections.find(conn => conn.plugin_key === currentPluginKey);
 
         if (!connection) {
-          console.log(`DEBUG: Plugin ${currentPluginKey} is not connected for this user`);
+          requestLogger.debug({ pluginKey: currentPluginKey, userId }, 'Plugin not connected for this user');
           refreshResults.failed.push(currentPluginKey);
           continue;
         }
@@ -101,7 +111,7 @@ export async function POST(request: NextRequest) {
         const shouldRefresh = pluginManager['userConnections'].shouldRefreshToken(connection.expires_at, 5);
 
         if (!isExpired && !shouldRefresh) {
-          console.log(`DEBUG: Token for ${currentPluginKey} is still valid, no refresh needed`);
+          requestLogger.debug({ pluginKey: currentPluginKey }, 'Token still valid — no refresh needed');
           refreshResults.skipped.push(currentPluginKey);
           continue;
         }
@@ -111,10 +121,10 @@ export async function POST(request: NextRequest) {
         const refreshedConnection = await pluginManager['userConnections'].refreshToken(connection, authConfig);
 
         if (refreshedConnection) {
-          console.log(`DEBUG: Successfully refreshed token for ${currentPluginKey}`);
+          requestLogger.info({ pluginKey: currentPluginKey, userId }, 'Token refreshed');
           refreshResults.refreshed.push(currentPluginKey);
         } else {
-          console.log(`DEBUG: Failed to refresh token for ${currentPluginKey}`);
+          requestLogger.warn({ pluginKey: currentPluginKey, userId }, 'Token refresh failed');
           refreshResults.failed.push(currentPluginKey);
         }
       }
@@ -138,7 +148,7 @@ export async function POST(request: NextRequest) {
 
     } else {
       // Refresh all expired plugins
-      console.log(`DEBUG: API - Refreshing all expired plugins`);
+      requestLogger.debug({ userId }, 'Refreshing all expired plugins');
 
       // Get all active plugins (including expired)
       const allActiveConnections = await pluginManager['userConnections'].getAllActivePlugins(userId);
@@ -154,7 +164,7 @@ export async function POST(request: NextRequest) {
         const definition = pluginManager.getPluginDefinition(pluginKey);
 
         if (!definition) {
-          console.log(`DEBUG: Plugin ${pluginKey} connected but not in registry, skipping`);
+          requestLogger.debug({ pluginKey }, 'Plugin connected but not in registry — skipping');
           refreshResults.skipped.push(pluginKey);
           continue;
         }
@@ -206,12 +216,13 @@ export async function POST(request: NextRequest) {
     }
 
   } catch (error: any) {
-    console.error('DEBUG: API - Error refreshing tokens:', error);
+    requestLogger.error({ err: error }, 'Error refreshing tokens');
 
     return NextResponse.json({
       success: false,
       error: 'Failed to refresh tokens',
-      message: error.message
+      // Internal error text must not reach the client in production.
+      message: process.env.NODE_ENV === 'development' ? error.message : undefined
     }, { status: 500 });
   }
 }
