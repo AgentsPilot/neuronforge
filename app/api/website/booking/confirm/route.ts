@@ -130,16 +130,49 @@ export async function POST(request: NextRequest) {
     const clientFirstName = nameParts[0] || data.name;
     const clientLastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
 
+    // Get user's pipeline stages to find the best "active client" stage for paid customers
+    const { data: pipelineStages } = await supabaseServer
+      .from('crm_pipeline_stages')
+      .select('stage_key, position')
+      .eq('user_id', ownerId)
+      .order('position', { ascending: true });
+
+    // Find best "active client" stage - priority: 'active_client' > 'active' > 'client' > highest non-terminal
+    let activeClientStage = 'client'; // fallback
+    if (pipelineStages && pipelineStages.length > 0) {
+      const stageKeys = pipelineStages.map(s => s.stage_key);
+      if (stageKeys.includes('active_client')) {
+        activeClientStage = 'active_client';
+      } else if (stageKeys.includes('active')) {
+        activeClientStage = 'active';
+      } else if (stageKeys.includes('client')) {
+        activeClientStage = 'client';
+      } else {
+        // Use the stage with highest position but not terminal stages
+        const validStages = pipelineStages.filter(
+          s => !['completed', 'inactive', 'past_client'].includes(s.stage_key)
+        );
+        if (validStages.length > 0) {
+          activeClientStage = validStages[validStages.length - 1].stage_key;
+        }
+      }
+    }
+
+    requestLogger.debug({ activeClientStage, pipelineStages }, 'Determined active client stage for paid booking');
+
     // Create/update CRM contact
     let contactId: string | null = null;
 
-    // Check if contact already exists by email
-    const { data: existingContact } = await supabaseServer
+    // Check if contact already exists by email (use limit 1 to handle potential duplicates)
+    const { data: existingContacts } = await supabaseServer
       .from('crm_contacts')
       .select('id, first_name, last_name, phone')
       .eq('user_id', ownerId)
       .eq('email', data.email)
-      .single();
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    const existingContact = existingContacts?.[0] || null;
 
     if (existingContact) {
       contactId = existingContact.id;
@@ -172,29 +205,29 @@ export async function POST(request: NextRequest) {
           email: data.email,
           phone: data.phone || null,
           source: 'website_booking',
-          stage: 'client' // Mark as client since they paid
+          stage: activeClientStage // Use user's active client pipeline stage
         })
         .select('id')
         .single();
 
-      if (contactError) {
-        requestLogger.warn({ err: contactError }, 'Failed to create contact (proceeding without)');
-      } else if (newContact) {
-        contactId = newContact.id;
+      if (contactError || !newContact) {
+        requestLogger.error({ err: contactError }, 'Failed to create contact - cannot proceed without contact');
+        return NextResponse.json(
+          { success: false, error: 'Failed to create contact' },
+          { status: 500 }
+        );
       }
+      contactId = newContact.id;
     }
 
     // Create the booking - already confirmed since payment succeeded
+    // Note: client data is now stored only in crm_contacts (via contact_id)
     const { data: booking, error: bookingError } = await supabaseServer
       .from('scheduling_bookings')
       .insert({
         user_id: ownerId,
         service_id: data.service_id,
-        contact_id: contactId,
-        client_first_name: clientFirstName,
-        client_last_name: clientLastName,
-        client_email: data.email,
-        client_phone: data.phone || null,
+        contact_id: contactId, // Required - client data is in crm_contacts
         start_time: startTime.toISOString(),
         end_time: endTime.toISOString(),
         status: 'confirmed',
@@ -211,27 +244,7 @@ export async function POST(request: NextRequest) {
       throw bookingError || new Error('Failed to create booking');
     }
 
-    // Create activity (non-blocking)
-    if (contactId) {
-      supabaseServer
-        .from('crm_activities')
-        .insert({
-          user_id: ownerId,
-          contact_id: contactId,
-          activity_type: 'booking',
-          title: `Booking: ${service.service_name}`,
-          description: `Booked via website for ${startTime.toLocaleString()}${service.price ? ` - Paid ${service.currency}${service.price}` : ''}`,
-          activity_date: startTime.toISOString(),
-          auto_logged: true,
-          source_capability: 'scheduling',
-          source_entity_id: booking.id
-        })
-        .then(({ error }) => {
-          if (error) {
-            requestLogger.warn({ err: error }, 'Failed to create activity (non-blocking)');
-          }
-        });
-    }
+    // Note: Activity is auto-created by log_booking_activity_trigger (scheduling_bookings table trigger)
 
     // Send booking confirmation email (non-blocking)
     // skipInvoice=true since payment is already completed

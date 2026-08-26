@@ -5,9 +5,33 @@ import { Button } from '@/components/ui/button';
 import { createLogger } from '@/lib/logger';
 import { InvoiceModal } from './InvoiceModal';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { FileText, Plus } from 'lucide-react';
+import {
+  FileText,
+  Plus,
+  Send,
+  Download,
+  Link2,
+  X,
+  Loader2,
+  Check,
+  ExternalLink,
+  RefreshCw,
+  ChevronLeft,
+  ChevronRight,
+  Mail,
+  CreditCard,
+} from 'lucide-react';
 
 const logger = createLogger({ module: 'PaymentInvoiceList' });
+
+const PAGE_SIZE = 10;
+
+interface InvoiceLineItem {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+}
 
 interface PaymentInvoice {
   id: string;
@@ -16,15 +40,32 @@ interface PaymentInvoice {
   currency: string;
   status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
   contact_id: string | null;
+  client_name: string | null;
+  client_email: string | null;
   due_date: string | null;
   paid_at: string | null;
+  sent_at: string | null;
   created_at: string;
+  stripe_invoice_id: string | null;
+  stripe_hosted_invoice_url: string | null;
+  stripe_invoice_pdf: string | null;
+  line_items?: InvoiceLineItem[];
+  payment_terms?: string;
+}
+
+interface InvoiceStats {
+  draft: { count: number; total: number };
+  sent: { count: number; total: number };
+  paid: { count: number; total: number };
+  overdue: { count: number; total: number };
+  cancelled: { count: number; total: number };
+  all: { count: number; total: number };
 }
 
 interface PaymentInvoiceListProps {
   searchQuery?: string;
   onCreateInvoice?: () => void;
-  highlightId?: string | null; // Invoice ID to highlight/scroll to
+  highlightId?: string | null;
 }
 
 export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highlightId }: PaymentInvoiceListProps) {
@@ -33,8 +74,15 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'draft' | 'sent' | 'paid' | 'overdue'>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showSendModal, setShowSendModal] = useState<PaymentInvoice | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState<string | null>(null);
+  const [stats, setStats] = useState<InvoiceStats | null>(null);
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [hasStripeConnect, setHasStripeConnect] = useState<boolean | null>(null);
 
-  // External trigger for creating invoice (from parent's header button)
   const handleCreateInvoice = () => {
     if (onCreateInvoice) {
       onCreateInvoice();
@@ -44,41 +92,72 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
   };
 
   useEffect(() => {
-    fetchInvoices();
+    setPage(0);
+    // Fetch stats on initial load only
+    fetchInvoices(0, !stats);
   }, [filter]);
 
-  // Scroll to highlighted invoice when it loads
+  // Check if Stripe Connect is configured
   useEffect(() => {
-    if (highlightId && !loading) {
-      const element = document.getElementById(`invoice-${highlightId}`);
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const checkStripeConnect = async () => {
+      try {
+        const response = await fetch('/api/payments/stripe-connect/refresh-status');
+        const result = await response.json();
+        setHasStripeConnect(result.success && result.data?.charges_enabled === true);
+      } catch {
+        setHasStripeConnect(false);
       }
+    };
+    checkStripeConnect();
+  }, []);
+
+  useEffect(() => {
+    if (highlightId && !loading && invoices.length > 0) {
+      // Small delay to ensure DOM is fully rendered
+      const timer = setTimeout(() => {
+        const element = document.getElementById(`invoice-${highlightId}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [highlightId, loading, invoices]);
 
-  // Filter invoices by search query
   const filteredInvoices = invoices.filter((invoice) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
       invoice.invoice_number.toLowerCase().includes(query) ||
       invoice.amount.toString().includes(query) ||
-      invoice.status.toLowerCase().includes(query)
+      invoice.status.toLowerCase().includes(query) ||
+      invoice.client_name?.toLowerCase().includes(query) ||
+      invoice.client_email?.toLowerCase().includes(query)
     );
   });
 
-  const fetchInvoices = async () => {
+  const fetchInvoices = async (pageNum: number = 0, fetchStats: boolean = false) => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
       if (filter !== 'all') params.set('status', filter);
+      if (fetchStats) params.set('include_stats', 'true');
+      params.set('limit', String(PAGE_SIZE));
+      params.set('offset', String(pageNum * PAGE_SIZE));
 
       const response = await fetch(`/api/payments/invoices?${params}`);
       const result = await response.json();
 
       if (result.success) {
-        setInvoices(result.data || []);
+        const newData = result.data || [];
+        setInvoices(newData);
+        setHasMore(newData.length === PAGE_SIZE);
+        if (result.total !== undefined) {
+          setTotalCount(result.total);
+        }
+        if (result.stats) {
+          setStats(result.stats);
+        }
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch invoices');
@@ -87,17 +166,187 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
     }
   };
 
-  const getStatusBadge = (status: PaymentInvoice['status']) => {
-    const styles = {
-      draft: 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-300 border-gray-200 dark:border-gray-700',
-      sent: 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800',
-      paid: 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 border-green-200 dark:border-green-800',
-      overdue: 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300 border-red-200 dark:border-red-800',
-      cancelled: 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700',
-    };
+  // Open send modal to let user choose method
+  const handleSendInvoiceClick = (invoice: PaymentInvoice) => {
+    setShowSendModal(invoice);
+  };
 
+  // Send invoice with chosen method
+  const handleSendInvoice = async (invoiceId: string, useStripe: boolean) => {
+    try {
+      setActionLoading(invoiceId);
+      setShowSendModal(null);
+      const response = await fetch(`/api/payments/invoices/${invoiceId}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ use_stripe: useStripe }),
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        fetchInvoices(); // Refresh list
+      } else {
+        alert(result.error || 'Failed to send invoice');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to send invoice');
+      alert('Failed to send invoice');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Download PDF
+  const handleDownloadPDF = async (invoice: PaymentInvoice) => {
+    try {
+      setActionLoading(invoice.id);
+
+      // If we have a Stripe PDF URL, open it directly
+      if (invoice.stripe_invoice_pdf) {
+        window.open(invoice.stripe_invoice_pdf, '_blank');
+        return;
+      }
+
+      // Otherwise, fetch from our endpoint
+      const response = await fetch(`/api/payments/invoices/${invoice.id}/pdf`);
+
+      if (response.redirected) {
+        // Stripe PDF URL redirect
+        window.open(response.url, '_blank');
+      } else if (response.ok) {
+        // Custom PDF blob
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${invoice.invoice_number}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        const result = await response.json();
+        alert(result.error || 'Failed to download PDF');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to download PDF');
+      alert('Failed to download PDF');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Copy payment link
+  const handleCopyPaymentLink = async (invoice: PaymentInvoice) => {
+    try {
+      setActionLoading(invoice.id);
+
+      // If we have a hosted URL, copy it directly
+      if (invoice.stripe_hosted_invoice_url) {
+        await navigator.clipboard.writeText(invoice.stripe_hosted_invoice_url);
+        setCopiedLink(invoice.id);
+        setTimeout(() => setCopiedLink(null), 2000);
+        return;
+      }
+
+      // Otherwise, fetch from our endpoint
+      const response = await fetch(`/api/payments/invoices/${invoice.id}/payment-link`);
+      const result = await response.json();
+
+      if (result.success && result.data?.payment_url) {
+        await navigator.clipboard.writeText(result.data.payment_url);
+        setCopiedLink(invoice.id);
+        setTimeout(() => setCopiedLink(null), 2000);
+      } else {
+        alert(result.error || 'Failed to get payment link');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to copy payment link');
+      alert('Failed to copy payment link');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // Void/Cancel invoice
+  const handleVoidInvoice = async (invoiceId: string) => {
+    if (!confirm(t('payments.confirm_void') || 'Are you sure you want to void this invoice?')) {
+      return;
+    }
+
+    try {
+      setActionLoading(invoiceId);
+      const response = await fetch(`/api/payments/invoices/${invoiceId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'cancelled' }),
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        fetchInvoices();
+      } else {
+        alert(result.error || 'Failed to void invoice');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to void invoice');
+      alert('Failed to void invoice');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // View invoice in Stripe
+  const handleViewInStripe = (invoice: PaymentInvoice) => {
+    if (invoice.stripe_hosted_invoice_url) {
+      window.open(invoice.stripe_hosted_invoice_url, '_blank');
+    }
+  };
+
+  const getStatusConfig = (status: PaymentInvoice['status']) => {
+    const configs = {
+      draft: {
+        bg: 'bg-gray-100 dark:bg-gray-800/50',
+        text: 'text-gray-700 dark:text-gray-300',
+        border: 'border-gray-200 dark:border-gray-700',
+        dot: 'bg-gray-400',
+        accent: 'gray'
+      },
+      sent: {
+        bg: 'bg-blue-50 dark:bg-blue-900/20',
+        text: 'text-blue-700 dark:text-blue-300',
+        border: 'border-blue-200 dark:border-blue-800',
+        dot: 'bg-blue-500',
+        accent: 'blue'
+      },
+      paid: {
+        bg: 'bg-emerald-50 dark:bg-emerald-900/20',
+        text: 'text-emerald-700 dark:text-emerald-300',
+        border: 'border-emerald-200 dark:border-emerald-800',
+        dot: 'bg-emerald-500',
+        accent: 'emerald'
+      },
+      overdue: {
+        bg: 'bg-red-50 dark:bg-red-900/20',
+        text: 'text-red-700 dark:text-red-300',
+        border: 'border-red-200 dark:border-red-800',
+        dot: 'bg-red-500 animate-pulse',
+        accent: 'red'
+      },
+      cancelled: {
+        bg: 'bg-slate-100 dark:bg-slate-800/50',
+        text: 'text-slate-600 dark:text-slate-400',
+        border: 'border-slate-200 dark:border-slate-700',
+        dot: 'bg-slate-400',
+        accent: 'slate'
+      },
+    };
+    return configs[status];
+  };
+
+  const getStatusBadge = (status: PaymentInvoice['status']) => {
+    const config = getStatusConfig(status);
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${styles[status]}`}>
+      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.text}`}>
+        <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
         {t(`payments.invoice_status.${status}`)}
       </span>
     );
@@ -121,6 +370,62 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
     });
   };
 
+  const translatePaymentTerms = (terms: string | null | undefined): string => {
+    if (!terms) return '-';
+
+    // Try to match common payment term patterns
+    const termsLower = terms.toLowerCase();
+
+    // Check for exact matches with translation keys
+    const termMappings: Record<string, string> = {
+      'due on receipt': 'due_on_receipt',
+      'receipt': 'due_on_receipt',
+      'net 7': 'net_7',
+      'net 7 days': 'net_7',
+      'net 15': 'net_15',
+      'net 15 days': 'net_15',
+      'net 30': 'net_30',
+      'net 30 days': 'net_30',
+      'net 60': 'net_60',
+      'net 60 days': 'net_60',
+      'net 90': 'net_90',
+      'net 90 days': 'net_90',
+      'net7': 'net_7',
+      'net15': 'net_15',
+      'net30': 'net_30',
+      'net60': 'net_60',
+      'net90': 'net_90',
+      'net_7': 'net_7',
+      'net_15': 'net_15',
+      'net_30': 'net_30',
+      'net_60': 'net_60',
+      'net_90': 'net_90',
+      'due_on_receipt': 'due_on_receipt',
+      'custom': 'custom'
+    };
+
+    const mappedKey = termMappings[termsLower];
+    if (mappedKey) {
+      return t(`invoice.payment_terms_values.${mappedKey}`) || terms;
+    }
+
+    // Return original if no translation found
+    return terms;
+  };
+
+  // Format currency for stats
+  const formatStatAmount = (amount: number) => {
+    const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
+    // Default to ILS for Hebrew, USD otherwise
+    const currency = language === 'he' ? 'ILS' : 'USD';
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  };
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -136,101 +441,404 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
 
   return (
     <div className="space-y-4" dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* Filter Buttons */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium text-[var(--v2-text-secondary)]">{t('payments.filter')}:</span>
-        <div className="flex gap-2 flex-wrap">
-          {(['all', 'draft', 'sent', 'paid', 'overdue'] as const).map((filterOption) => (
-            <button
-              key={filterOption}
-              onClick={() => setFilter(filterOption)}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                filter === filterOption
-                  ? 'bg-[#F59E0B]/20 text-[#D97706] dark:text-[#F59E0B] border border-[#F59E0B]/30'
-                  : 'bg-[var(--v2-surface)] text-[var(--v2-text-secondary)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)]'
-              }`}
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              {t(`payments.invoice_filter.${filterOption}`)}
-            </button>
-          ))}
+      {/* Stats Summary Bar - Modern Design */}
+      {stats && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {/* Draft */}
+          <button
+            onClick={() => setFilter(filter === 'draft' ? 'all' : 'draft')}
+            className={`relative p-4 bg-[var(--v2-surface)] border-2 transition-all duration-200 text-start group overflow-hidden ${
+              filter === 'draft'
+                ? 'border-gray-400 dark:border-gray-500 shadow-md'
+                : 'border-transparent hover:border-gray-300 dark:hover:border-gray-600'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="absolute top-0 start-0 w-1 h-full bg-gray-400" />
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-gray-400" />
+              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                {t('payments.invoice_status.draft') || 'Draft'}
+              </span>
+            </div>
+            <div className="text-2xl font-bold text-[var(--v2-text-primary)] mb-0.5">
+              {formatStatAmount(stats.draft.total)}
+            </div>
+            <div className="text-xs text-[var(--v2-text-muted)]">
+              {stats.draft.count} {stats.draft.count === 1 ? t('payments.invoice_singular') || 'invoice' : t('payments.invoice_plural') || 'invoices'}
+            </div>
+          </button>
+
+          {/* Sent */}
+          <button
+            onClick={() => setFilter(filter === 'sent' ? 'all' : 'sent')}
+            className={`relative p-4 bg-[var(--v2-surface)] border-2 transition-all duration-200 text-start group overflow-hidden ${
+              filter === 'sent'
+                ? 'border-blue-400 dark:border-blue-500 shadow-md'
+                : 'border-transparent hover:border-blue-300 dark:hover:border-blue-600'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="absolute top-0 start-0 w-1 h-full bg-blue-500" />
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-blue-500" />
+              <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                {t('payments.invoice_status.sent') || 'Sent'}
+              </span>
+            </div>
+            <div className="text-2xl font-bold text-[var(--v2-text-primary)] mb-0.5">
+              {formatStatAmount(stats.sent.total)}
+            </div>
+            <div className="text-xs text-[var(--v2-text-muted)]">
+              {stats.sent.count} {stats.sent.count === 1 ? t('payments.invoice_singular') || 'invoice' : t('payments.invoice_plural') || 'invoices'}
+            </div>
+          </button>
+
+          {/* Paid */}
+          <button
+            onClick={() => setFilter(filter === 'paid' ? 'all' : 'paid')}
+            className={`relative p-4 bg-[var(--v2-surface)] border-2 transition-all duration-200 text-start group overflow-hidden ${
+              filter === 'paid'
+                ? 'border-emerald-400 dark:border-emerald-500 shadow-md'
+                : 'border-transparent hover:border-emerald-300 dark:hover:border-emerald-600'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="absolute top-0 start-0 w-1 h-full bg-emerald-500" />
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+                {t('payments.invoice_status.paid') || 'Paid'}
+              </span>
+            </div>
+            <div className="text-2xl font-bold text-[var(--v2-text-primary)] mb-0.5">
+              {formatStatAmount(stats.paid.total)}
+            </div>
+            <div className="text-xs text-[var(--v2-text-muted)]">
+              {stats.paid.count} {stats.paid.count === 1 ? t('payments.invoice_singular') || 'invoice' : t('payments.invoice_plural') || 'invoices'}
+            </div>
+          </button>
+
+          {/* Overdue */}
+          <button
+            onClick={() => setFilter(filter === 'overdue' ? 'all' : 'overdue')}
+            className={`relative p-4 bg-[var(--v2-surface)] border-2 transition-all duration-200 text-start group overflow-hidden ${
+              filter === 'overdue'
+                ? 'border-red-400 dark:border-red-500 shadow-md'
+                : 'border-transparent hover:border-red-300 dark:hover:border-red-600'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="absolute top-0 start-0 w-1 h-full bg-red-500" />
+            <div className="flex items-center gap-2 mb-2">
+              <div className={`w-2 h-2 rounded-full bg-red-500 ${stats.overdue.count > 0 ? 'animate-pulse' : ''}`} />
+              <span className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wider">
+                {t('payments.invoice_status.overdue') || 'Overdue'}
+              </span>
+            </div>
+            <div className="text-2xl font-bold text-[var(--v2-text-primary)] mb-0.5">
+              {formatStatAmount(stats.overdue.total)}
+            </div>
+            <div className="text-xs text-[var(--v2-text-muted)]">
+              {stats.overdue.count} {stats.overdue.count === 1 ? t('payments.invoice_singular') || 'invoice' : t('payments.invoice_plural') || 'invoices'}
+            </div>
+          </button>
         </div>
-      </div>
+      )}
+
+      {/* Active Filter Indicator */}
+      {filter !== 'all' && (
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-[var(--v2-text-muted)]">{t('payments.showing') || 'Showing'}:</span>
+          <button
+            onClick={() => setFilter('all')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-[var(--v2-bg)] text-[var(--v2-text-primary)] rounded-full border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors"
+          >
+            {t(`payments.invoice_status.${filter}`)}
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Invoices List */}
       {filteredInvoices.length === 0 ? (
-        <div className="text-center py-12">
-          <FileText className="mx-auto h-12 w-12 text-[var(--v2-text-muted)]" />
-          <h3 className="mt-2 text-sm font-medium text-[var(--v2-text-primary)]">{t('payments.no_invoices')}</h3>
-          <p className="mt-1 text-sm text-[var(--v2-text-secondary)]">
+        <div className="text-center py-12 bg-[var(--v2-surface)] border border-dashed border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[var(--v2-bg)] flex items-center justify-center">
+            <FileText className="h-6 w-6 text-[var(--v2-text-muted)]" />
+          </div>
+          <h3 className="text-sm font-medium text-[var(--v2-text-primary)]">{t('payments.no_invoices')}</h3>
+          <p className="mt-1 text-xs text-[var(--v2-text-muted)] max-w-xs mx-auto">
             {filter === 'all' ? t('payments.no_invoices_desc') : t('payments.no_filtered_invoices').replace('{status}', t(`payments.invoice_filter.${filter}`))}
           </p>
-          <div className="mt-6">
-            <Button
-              onClick={handleCreateInvoice}
-              className="flex items-center gap-2 text-white"
-              style={{ background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' }}
-            >
-              <Plus className="h-4 w-4" />
-              {t('payments.create_invoice')}
-            </Button>
-          </div>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filteredInvoices.map((invoice) => (
-            <div
-              key={invoice.id}
-              id={`invoice-${invoice.id}`}
-              className={`border p-4 transition-colors bg-[var(--v2-surface)] ${
-                highlightId === invoice.id
-                  ? 'border-[#F59E0B] ring-2 ring-[#F59E0B]/20 animate-pulse'
-                  : 'border-[var(--v2-border)] hover:border-[#F59E0B]/50'
-              }`}
-              style={{ borderRadius: 'var(--v2-radius-card)' }}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                      {invoice.invoice_number}
-                    </h3>
+        <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          {/* Table Header */}
+          <div className="hidden md:grid grid-cols-[120px_1fr_1fr_85px_85px_95px_80px_auto] gap-3 px-4 py-2.5 bg-[var(--v2-bg)] border-b border-[var(--v2-border)] text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+            <div className="text-start">{t('payments.invoice') || 'Invoice'}</div>
+            <div className="text-start">{t('payments.client') || 'Client'}</div>
+            <div className="text-start">{t('payments.service') || 'Service'}</div>
+            <div className={isRTL ? 'text-start' : 'text-end'}>{t('payments.due') || 'Due'}</div>
+            <div className={isRTL ? 'text-start' : 'text-end'}>{t('payments.paid') || 'Paid'}</div>
+            <div className={isRTL ? 'text-start' : 'text-end'}>{t('payments.amount') || 'Amount'}</div>
+            <div className="text-center">{t('payments.status') || 'Status'}</div>
+            <div className={isRTL ? 'text-start' : 'text-end'}>{t('payments.actions') || 'Actions'}</div>
+          </div>
+
+          {/* Table Body */}
+          {filteredInvoices.map((invoice, index) => {
+            const isHighlighted = highlightId === invoice.id;
+
+            return (
+              <div
+                key={invoice.id}
+                id={`invoice-${invoice.id}`}
+                className={`group ${index !== 0 ? 'border-t border-[var(--v2-border)]' : ''} ${
+                  isHighlighted ? 'bg-amber-50 dark:bg-amber-900/10' : 'hover:bg-[var(--v2-bg)]'
+                } transition-colors`}
+              >
+                {/* Desktop row */}
+                <div className="hidden md:grid grid-cols-[120px_1fr_1fr_85px_85px_95px_80px_auto] gap-3 px-4 py-3 items-center">
+                  {/* Invoice # */}
+                  <div className="min-w-0 text-start">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                        {invoice.invoice_number}
+                      </span>
+                      {invoice.stripe_invoice_id && (
+                        <span className="px-1 py-0.5 rounded text-[8px] font-semibold bg-violet-100 dark:bg-violet-900/30 text-violet-600 dark:text-violet-400">
+                          Stripe
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Client */}
+                  <div className="min-w-0 text-start">
+                    <p className="text-sm text-[var(--v2-text-primary)] truncate">
+                      {invoice.client_name || '-'}
+                    </p>
+                    {invoice.client_email && invoice.client_name && (
+                      <p className="text-[11px] text-[var(--v2-text-muted)] truncate">
+                        {invoice.client_email}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Service */}
+                  <div className="min-w-0 text-start">
+                    <p className="text-sm text-[var(--v2-text-primary)] truncate">
+                      {invoice.line_items && invoice.line_items.length > 0
+                        ? invoice.line_items[0].description
+                        : '-'}
+                    </p>
+                    {invoice.line_items && invoice.line_items.length > 1 && (
+                      <p className="text-[11px] text-[var(--v2-text-muted)]">
+                        +{invoice.line_items.length - 1} {t('payments.more_items') || 'more'}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Due Date */}
+                  <div className={`${isRTL ? 'text-start' : 'text-end'} text-sm whitespace-nowrap ${invoice.status === 'overdue' ? 'text-red-600 dark:text-red-400 font-medium' : 'text-[var(--v2-text-primary)]'}`}>
+                    {formatDate(invoice.due_date)}
+                  </div>
+
+                  {/* Paid Date */}
+                  <div className={`${isRTL ? 'text-start' : 'text-end'} text-sm whitespace-nowrap ${invoice.paid_at ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--v2-text-muted)]'}`}>
+                    {invoice.paid_at ? formatDate(invoice.paid_at) : '-'}
+                  </div>
+
+                  {/* Amount */}
+                  <div className={`${isRTL ? 'text-start' : 'text-end'} text-sm font-semibold text-[var(--v2-text-primary)] whitespace-nowrap`}>
+                    <bdi>{formatAmount(invoice.amount, invoice.currency)}</bdi>
+                  </div>
+
+                  {/* Status */}
+                  <div className="text-center whitespace-nowrap">
                     {getStatusBadge(invoice.status)}
                   </div>
-                  <div className="mt-2 flex items-center gap-4 flex-wrap">
-                    <span className="text-xl font-bold text-[var(--v2-text-primary)]">
-                      {formatAmount(invoice.amount, invoice.currency)}
-                    </span>
-                    <span className="text-sm text-[var(--v2-text-secondary)]">
-                      {t('payments.due')}: {formatDate(invoice.due_date)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-4 mt-2 text-xs text-[var(--v2-text-muted)] flex-wrap">
-                    <span>{t('payments.created')}: {formatDate(invoice.created_at)}</span>
-                    {invoice.paid_at && (
-                      <span className="text-green-600 dark:text-green-400 font-medium">
-                        {t('payments.paid')}: {formatDate(invoice.paid_at)}
-                      </span>
+
+                  {/* Actions */}
+                  <div className={`flex items-center ${isRTL ? 'justify-start' : 'justify-end'} gap-1.5 flex-shrink-0`}>
+                    {invoice.status === 'draft' && (
+                      <button
+                        onClick={() => handleSendInvoiceClick(invoice)}
+                        disabled={actionLoading === invoice.id}
+                        className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 transition-colors"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('payments.send') || 'Send'}
+                      >
+                        {actionLoading === invoice.id ? <Loader2 className="w-5 h-5 text-amber-500 animate-spin" /> : <Send className="w-5 h-5 text-amber-500" />}
+                      </button>
+                    )}
+                    {(invoice.status === 'sent' || invoice.status === 'overdue') && (hasStripeConnect || invoice.stripe_invoice_id) && (
+                      <button
+                        onClick={() => handleCopyPaymentLink(invoice)}
+                        disabled={actionLoading === invoice.id}
+                        className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 transition-colors"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('payments.copy_payment_link') || 'Copy payment link'}
+                      >
+                        {copiedLink === invoice.id ? <Check className="w-5 h-5 text-emerald-500" /> : actionLoading === invoice.id ? <Loader2 className="w-5 h-5 text-blue-500 animate-spin" /> : <Link2 className="w-5 h-5 text-blue-500" />}
+                      </button>
+                    )}
+                    {(invoice.status === 'sent' || invoice.status === 'overdue') && (
+                      <button
+                        onClick={() => handleSendInvoiceClick(invoice)}
+                        disabled={actionLoading === invoice.id}
+                        className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 transition-colors"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('payments.resend') || 'Resend'}
+                      >
+                        <Mail className="w-5 h-5 text-emerald-500" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDownloadPDF(invoice)}
+                      disabled={actionLoading === invoice.id}
+                      className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 transition-colors"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      title={t('payments.download_pdf') || 'Download PDF'}
+                    >
+                      <Download className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                    </button>
+                    {invoice.stripe_hosted_invoice_url && (
+                      <button
+                        onClick={() => handleViewInStripe(invoice)}
+                        className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('payments.view_in_stripe') || 'View in Stripe'}
+                      >
+                        <ExternalLink className="w-5 h-5 text-violet-500" />
+                      </button>
+                    )}
+                    {['draft', 'sent', 'overdue'].includes(invoice.status) && (
+                      <button
+                        onClick={() => handleVoidInvoice(invoice.id)}
+                        disabled={actionLoading === invoice.id}
+                        className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 transition-colors"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('payments.void_invoice') || 'Void Invoice'}
+                      >
+                        <X className="w-5 h-5 text-red-500" />
+                      </button>
                     )}
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
-                    {t('payments.view')}
-                  </Button>
-                  {invoice.status === 'draft' && (
-                    <Button
-                      size="sm"
-                      className="text-white"
-                      style={{ background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' }}
-                    >
-                      {t('payments.send')}
+
+                {/* Mobile row */}
+                <div className="md:hidden p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{invoice.invoice_number}</span>
+                      {getStatusBadge(invoice.status)}
+                    </div>
+                    <span className="text-sm font-bold text-[var(--v2-text-primary)]">
+                      <bdi>{formatAmount(invoice.amount, invoice.currency)}</bdi>
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-[var(--v2-text-muted)]">
+                    <span className="truncate">{invoice.client_name || invoice.client_email || t('payments.unknown_client')}</span>
+                    <span className={invoice.status === 'overdue' ? 'text-red-600' : ''}>{formatDate(invoice.due_date)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    {invoice.status === 'draft' && (
+                      <Button size="sm" onClick={() => handleSendInvoiceClick(invoice)} disabled={actionLoading === invoice.id} className="h-7 px-2.5 text-xs text-white flex-1" style={{ background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' }}>
+                        <Send className="h-3.5 w-3.5 me-1" />{t('payments.send')}
+                      </Button>
+                    )}
+                    {(invoice.status === 'sent' || invoice.status === 'overdue') && (hasStripeConnect || invoice.stripe_invoice_id) && (
+                      <Button size="sm" onClick={() => handleCopyPaymentLink(invoice)} disabled={actionLoading === invoice.id} className="h-7 px-2.5 text-xs bg-blue-600 hover:bg-blue-700 text-white flex-1">
+                        <Link2 className="h-3.5 w-3.5 me-1" />{t('payments.copy_link')}
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => handleDownloadPDF(invoice)} className="h-7 px-2.5 text-xs">
+                      <Download className="h-3.5 w-3.5" />
                     </Button>
-                  )}
+                    {['draft', 'sent', 'overdue'].includes(invoice.status) && (
+                      <Button variant="outline" size="sm" onClick={() => handleVoidInvoice(invoice.id)} className="h-7 px-2.5 text-xs text-red-600 border-red-200">
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {totalCount > PAGE_SIZE && (
+        <div className="flex items-center justify-between p-4 bg-[var(--v2-surface)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+              <div className="text-sm text-[var(--v2-text-muted)]">
+                {t('payments.pagination.showing')?.replace('{from}', String(page * PAGE_SIZE + 1)).replace('{to}', String(Math.min((page + 1) * PAGE_SIZE, totalCount))).replace('{total}', String(totalCount)) ||
+                  `${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, totalCount)} of ${totalCount}`}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const prevPage = page - 1;
+                    setPage(prevPage);
+                    fetchInvoices(prevPage);
+                  }}
+                  disabled={page === 0 || loading}
+                  className="h-8 px-2"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  <span className="hidden sm:inline ms-1">{t('payments.pagination.prev') || 'Previous'}</span>
+                </Button>
+                <div className="hidden sm:flex items-center gap-1">
+                  {(() => {
+                    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+                    const currentPage = page + 1;
+                    return Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum: number;
+                      if (totalPages <= 5) {
+                        pageNum = i + 1;
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1;
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i;
+                      } else {
+                        pageNum = currentPage - 2 + i;
+                      }
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={currentPage === pageNum ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => {
+                            setPage(pageNum - 1);
+                            fetchInvoices(pageNum - 1);
+                          }}
+                          disabled={loading}
+                          className={`h-8 w-8 p-0 ${currentPage === pageNum ? 'bg-[#22C58B] hover:bg-[#1ea677] text-white' : ''}`}
+                        >
+                          {pageNum}
+                        </Button>
+                      );
+                    });
+                  })()}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const nextPage = page + 1;
+                    setPage(nextPage);
+                    fetchInvoices(nextPage);
+                  }}
+                  disabled={!hasMore || loading}
+                  className="h-8 px-2"
+                >
+                  <span className="hidden sm:inline me-1">{t('payments.pagination.next') || 'Next'}</span>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
         </div>
       )}
 
@@ -243,6 +851,105 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
             fetchInvoices();
           }}
         />
+      )}
+
+      {/* Send Method Selection Modal */}
+      {showSendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+            onClick={() => setShowSendModal(null)}
+          />
+
+          {/* Modal */}
+          <div
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl w-full max-w-md"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+            dir={isRTL ? 'rtl' : 'ltr'}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-[var(--v2-border)]">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--v2-text-primary)]">
+                  {t('payments.send_method.title') || 'Send Invoice'}
+                </h2>
+                <p className="text-sm text-[var(--v2-text-muted)] mt-0.5">
+                  {showSendModal.invoice_number} • {formatAmount(showSendModal.amount, showSendModal.currency)}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSendModal(null)}
+                className="p-2 rounded-full hover:bg-[var(--v2-bg)] transition-colors"
+              >
+                <X className="h-5 w-5 text-[var(--v2-text-muted)]" />
+              </button>
+            </div>
+
+            {/* Options */}
+            <div className="p-5 space-y-3">
+              <p className="text-sm text-[var(--v2-text-muted)] mb-4">
+                {t('payments.send_method.description') || 'Choose how to send this invoice:'}
+              </p>
+
+              {/* Email with PDF option */}
+              <button
+                onClick={() => handleSendInvoice(showSendModal.id, false)}
+                className="w-full p-4 text-start bg-[var(--v2-bg)] border-2 border-[var(--v2-border)] hover:border-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-900/10 transition-all group"
+                style={{ borderRadius: 'var(--v2-radius-card)' }}
+              >
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/40 transition-colors">
+                    <Mail className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-[var(--v2-text-primary)] group-hover:text-blue-700 dark:group-hover:text-blue-300 transition-colors">
+                      {t('payments.send_method.email_title') || 'Email with PDF'}
+                    </h3>
+                    <p className="text-sm text-[var(--v2-text-muted)] mt-1">
+                      {t('payments.send_method.email_description') || 'Send an email with the invoice PDF attached. Client can pay via the payment link in the email.'}
+                    </p>
+                    <span className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium text-blue-600 dark:text-blue-400">
+                      <Check className="h-3.5 w-3.5" />
+                      {t('payments.send_method.recommended') || 'Recommended'}
+                    </span>
+                  </div>
+                </div>
+              </button>
+
+              {/* Stripe option */}
+              <button
+                onClick={() => handleSendInvoice(showSendModal.id, true)}
+                className="w-full p-4 text-start bg-[var(--v2-bg)] border-2 border-[var(--v2-border)] hover:border-violet-400 hover:bg-violet-50/50 dark:hover:bg-violet-900/10 transition-all group"
+                style={{ borderRadius: 'var(--v2-radius-card)' }}
+              >
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center flex-shrink-0 group-hover:bg-violet-200 dark:group-hover:bg-violet-800/40 transition-colors">
+                    <CreditCard className="h-6 w-6 text-violet-600 dark:text-violet-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-[var(--v2-text-primary)] group-hover:text-violet-700 dark:group-hover:text-violet-300 transition-colors flex items-center gap-2">
+                      {t('payments.send_method.stripe_title') || 'Stripe Invoice'}
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 uppercase">
+                        Stripe
+                      </span>
+                    </h3>
+                    <p className="text-sm text-[var(--v2-text-muted)] mt-1">
+                      {t('payments.send_method.stripe_description') || 'Create a Stripe invoice with professional payment page. Stripe will send the email and handle payment tracking.'}
+                    </p>
+                  </div>
+                </div>
+              </button>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-[var(--v2-border)] bg-[var(--v2-bg)]" style={{ borderRadius: '0 0 var(--v2-radius-card) var(--v2-radius-card)' }}>
+              <p className="text-xs text-[var(--v2-text-muted)] text-center">
+                {t('payments.send_method.client_info') || 'Invoice will be sent to'}: <span className="font-medium text-[var(--v2-text-primary)]">{showSendModal.client_email}</span>
+              </p>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

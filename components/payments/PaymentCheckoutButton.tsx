@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { CreditCard, Loader2, ExternalLink } from 'lucide-react';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 interface PaymentCheckoutButtonProps {
   invoiceId?: string;
@@ -31,7 +32,7 @@ export function PaymentCheckoutButton({
   bookingId,
   installmentId,
   amount,
-  currency = 'USD',
+  currency,
   onSuccess,
   onError,
   variant = 'default',
@@ -40,6 +41,10 @@ export function PaymentCheckoutButton({
   children,
   disabled
 }: PaymentCheckoutButtonProps) {
+  // Get user's currency from context as fallback when no currency is provided
+  const { currencyCode } = useLanguage();
+  const effectiveCurrency = currency || currencyCode;
+
   const [loading, setLoading] = useState(false);
 
   const handleClick = async () => {
@@ -58,7 +63,7 @@ export function PaymentCheckoutButton({
             booking_id: bookingId,
             installment_id: installmentId,
             amount,
-            currency,
+            currency: effectiveCurrency,
             success_url: `${window.location.origin}/payments/success`,
             cancel_url: `${window.location.origin}/payments/cancelled`
           }

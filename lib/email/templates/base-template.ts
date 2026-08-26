@@ -270,7 +270,8 @@ export function formatEmailDate(
     if (includeTime) {
       dateOptions.hour = 'numeric';
       dateOptions.minute = '2-digit';
-      dateOptions.hour12 = locale !== 'he'; // Hebrew typically uses 24h format
+      // Always use 12-hour format with AM/PM for client-facing emails
+      dateOptions.hour12 = true;
     }
 
     return new Intl.DateTimeFormat(intlLocale, dateOptions).format(date);
@@ -283,7 +284,8 @@ export function formatEmailDate(
       year: includeYear ? 'numeric' : undefined,
       hour: includeTime ? 'numeric' : undefined,
       minute: includeTime ? '2-digit' : undefined,
-      hour12: locale !== 'he'
+      // Always use 12-hour format with AM/PM for client-facing emails
+      hour12: true
     });
   }
 }

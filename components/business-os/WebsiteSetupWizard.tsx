@@ -317,7 +317,7 @@ export function WebsiteSetupWizard({
   onBeforePreview,
   embedded = false
 }: WebsiteSetupWizardProps) {
-  const { language } = useLanguage();
+  const { language, availableCurrencies } = useLanguage();
   const labels = LABELS[language] || LABELS.en;
   const isRTL = language === 'he';
 
@@ -750,7 +750,9 @@ export function WebsiteSetupWizard({
           <div className="space-y-3">
             {services.map((service) => {
               const isHidden = hiddenServiceIds.has(service.id);
-              const currencySymbol = service.currency === 'ILS' ? '₪' : service.currency === 'EUR' ? '€' : '$';
+              // Get currency symbol from centralized currency configs
+              const serviceCurrency = (service.currency || 'USD') as 'USD' | 'EUR' | 'ILS' | 'GBP';
+              const currencySymbol = availableCurrencies[serviceCurrency]?.symbol || '$';
               return (
                 <div
                   key={service.id}
@@ -895,7 +897,7 @@ export function WebsiteSetupWizard({
             {/* Open in new tab */}
             {pageId && (
               <a
-                href={`/business-os/website/preview/${pageId}`}
+                href={`/business-os/website/preview/${pageId}?lang=${language}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
@@ -929,7 +931,7 @@ export function WebsiteSetupWizard({
                 )}
                 <iframe
                   key={previewKey}
-                  src={`/business-os/website/preview/${pageId}?embedded=true`}
+                  src={`/business-os/website/preview/${pageId}?embedded=true&lang=${language}`}
                   className="w-full h-full border-0"
                   onLoad={() => setPreviewLoading(false)}
                   title="Website Preview"
@@ -1039,7 +1041,7 @@ export function WebsiteSetupWizard({
               }}
             >
               <iframe
-                src={`/business-os/website/preview/${pageId}?embedded=true`}
+                src={`/business-os/website/preview/${pageId}?embedded=true&lang=${language}`}
                 className="w-full h-full border-0"
                 title="Full Website Preview"
               />

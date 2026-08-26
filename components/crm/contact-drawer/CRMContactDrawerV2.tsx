@@ -7,13 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  User, FolderOpen, Trash2, UserX, Check, Calendar, X, Upload, File, FileText, MessageSquare
+  User, FolderOpen, Trash2, UserX, Check, Calendar, X, Upload, File, FileText, MessageSquare, Receipt
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { toast } from 'sonner';
 
 // Import modular sections
 import { ClientDetailsSection } from './ClientDetailsSection';
@@ -25,6 +26,8 @@ import { FilesTab } from './FilesTab';
 import { BookingsTab } from './BookingsTab';
 import { PaymentManagementModal } from './PaymentManagementModal';
 import { FormSubmissionsSection } from './FormSubmissionsSection';
+import { PaymentsSection } from './PaymentsSection';
+import { InvoiceModal } from '@/components/payments/InvoiceModal';
 
 import type {
   CRMContact,
@@ -127,25 +130,62 @@ function buildJourneySteps(
   }
 
   // Step 3: Payment (if applicable) - format amount properly with status
-  if (payment) {
-    const paymentDetails = payment.status === 'free'
-      ? undefined
-      : formatAmount(payment.amount, payment.currency);
+  // For free services, skip payment step entirely
+  if (payment && payment.status !== 'free') {
+    // Translations for payment statuses
+    const refundedText: Record<string, string> = {
+      en: 'Refunded',
+      es: 'Reembolsado',
+      he: 'הוחזר'
+    };
+    const overdueText: Record<string, string> = {
+      en: 'Overdue',
+      es: 'Vencido',
+      he: 'באיחור'
+    };
+
+    // Check if payment is overdue (invoice due date passed and not paid)
+    const isOverdue = payment.status === 'pending' &&
+                      payment.invoiceDueDate &&
+                      new Date(payment.invoiceDueDate) < new Date();
+
+    // Show refund status or overdue status in details if applicable
+    let paymentDetails = formatAmount(payment.amount, payment.currency);
+    if (payment.status === 'refunded') {
+      paymentDetails = `${paymentDetails} (${refundedText[language] || refundedText.en})`;
+    } else if (isOverdue) {
+      paymentDetails = `${paymentDetails} (${overdueText[language] || overdueText.en})`;
+    }
 
     steps.push({
       id: `${booking.id}-payment`,
       key: 'payment',
-      status: payment.status === 'paid' || payment.status === 'free' ? 'completed' :
+      status: payment.status === 'paid' ? 'completed' :
+              payment.status === 'refunded' ? 'completed' :  // Refunded is also "completed" (transaction done)
+              isOverdue ? 'failed' :  // Overdue payments show as failed (red)
               payment.status === 'pending' ? 'active' :
               payment.status === 'failed' ? 'failed' : 'pending',
       details: paymentDetails,
-      timestamp: payment.paidAt
+      timestamp: payment.refundedAt || payment.paidAt,  // Show refund time if available
+      // Pass invoice data for resend functionality
+      metadata: payment.invoiceId ? {
+        invoiceId: payment.invoiceId,
+        invoiceDueDate: payment.invoiceDueDate,
+        invoiceSentAt: payment.invoiceSentAt,
+        isOverdue,
+        canResend: payment.status === 'pending' && payment.invoiceId
+      } : undefined
     });
   }
 
-  // Step 4: Intake Form (only for services, not products)
-  // Note: details are not included here as BookingsTab renders intake specially with translated response count
-  if (!isProduct) {
+  // Step 4: Intake Form (only show if this booking has intake data)
+  // The intake step is only relevant if the booking was created with "send intake form" enabled
+  // We detect this by checking if intake_responses exists (even if empty object means intake was sent but not filled)
+  // or if intake_completed_at is set (meaning it was completed)
+  // Note: We check for both null and undefined because the data might come as either
+  const hasIntakeData = (booking.intake_responses != null) || (booking.intake_completed_at != null);
+
+  if (hasIntakeData) {
     steps.push({
       id: `${booking.id}-intake`,
       key: 'intake',
@@ -191,6 +231,8 @@ interface CRMContactDrawerV2Props {
   isOpen: boolean;
   onClose: () => void;
   onContactUpdated: () => void;
+  onTasksUpdated?: () => void;
+  initialSection?: 'details' | 'bookings' | 'tasks' | 'forms' | 'files' | 'payments';
 }
 
 // Document types for upload
@@ -428,7 +470,9 @@ export function CRMContactDrawerV2({
   enabledCapabilities = [],
   isOpen,
   onClose,
-  onContactUpdated
+  onContactUpdated,
+  onTasksUpdated,
+  initialSection = 'details'
 }: CRMContactDrawerV2Props) {
   const { t, isRTL, language } = useLanguage();
 
@@ -479,6 +523,20 @@ export function CRMContactDrawerV2({
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<SessionCardData | null>(null);
 
+  // Invoice modal state
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [paymentsKey, setPaymentsKey] = useState(0);
+
+  // Intake confirmation dialog state
+  const [showIntakeConfirm, setShowIntakeConfirm] = useState(false);
+  const [pendingIntakeBookingId, setPendingIntakeBookingId] = useState<string | null>(null);
+  const [sendingIntake, setSendingIntake] = useState(false);
+  // Invoice resend confirmation dialog state
+  const [showInvoiceConfirm, setShowInvoiceConfirm] = useState(false);
+  const [pendingInvoiceId, setPendingInvoiceId] = useState<string | null>(null);
+  const [pendingInvoiceBookingId, setPendingInvoiceBookingId] = useState<string | null>(null);
+  const [sendingInvoice, setSendingInvoice] = useState(false);
+
   // UI states
   const [activeTab, setActiveTab] = useState<'customer' | 'activities'>('customer');
   const [isEditingHeader, setIsEditingHeader] = useState(false);
@@ -490,15 +548,263 @@ export function CRMContactDrawerV2({
   const [showUploadModal, setShowUploadModal] = useState(false);
 
   // Accordion state - only one section open at a time
-  const [openSection, setOpenSection] = useState<'details' | 'bookings' | 'tasks' | 'forms' | 'files' | null>('bookings');
+  const [openSection, setOpenSection] = useState<'details' | 'bookings' | 'tasks' | 'forms' | 'files' | 'payments' | null>(initialSection);
 
   // Toggle section - closes others when opening one
-  const handleSectionToggle = (section: 'details' | 'bookings' | 'tasks' | 'forms' | 'files') => (isOpen: boolean) => {
+  const handleSectionToggle = (section: 'details' | 'bookings' | 'tasks' | 'forms' | 'files' | 'payments') => (isOpen: boolean) => {
     setOpenSection(isOpen ? section : null);
   };
 
   // File input ref
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Email record type for confirmation matching
+  interface EmailRecord {
+    id: string;
+    subject: string;
+    status: 'pending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+    sent_at: string | null;
+    opened_at: string | null;
+    created_at: string;
+  }
+
+  // Process bookings data into session cards (extracted for reuse)
+  const processBookingsData = (bookingsData: { bookings: SchedulingBooking[] }, emailsData: { emails?: EmailRecord[] }) => {
+    const emails: EmailRecord[] = emailsData.emails || [];
+
+    // Helper to find confirmation email for a booking
+    const findConfirmationEmail = (bookingCreatedAt: string, serviceName?: string): EmailRecord | undefined => {
+      const bookingTime = new Date(bookingCreatedAt).getTime();
+      const fiveMinutes = 5 * 60 * 1000;
+
+      return emails.find(email => {
+        const emailTime = new Date(email.created_at).getTime();
+        const isNearBookingTime = Math.abs(emailTime - bookingTime) < fiveMinutes;
+        const isConfirmation = email.subject.toLowerCase().includes('confirm') ||
+          email.subject.toLowerCase().includes('booking') ||
+          email.subject.toLowerCase().includes('אישור') ||
+          (serviceName && email.subject.toLowerCase().includes(serviceName.toLowerCase()));
+        return isNearBookingTime && isConfirmation;
+      });
+    };
+
+    const sessionCards: SessionCardData[] = bookingsData.bookings.map((booking: SchedulingBooking) => {
+      const bookingData: Appointment = {
+        id: booking.id,
+        service_id: booking.service_id,
+        client_first_name: booking.client_first_name,
+        client_last_name: booking.client_last_name,
+        client_email: booking.client_email || undefined,
+        client_phone: booking.client_phone || undefined,
+        start_time: booking.start_time,
+        end_time: booking.end_time,
+        timezone: booking.timezone || undefined,
+        status: booking.status,
+        notes: booking.notes || undefined,
+        intake_responses: booking.intake_responses || undefined,
+        intake_completed_at: booking.intake_completed_at || undefined,
+        created_at: booking.created_at || undefined,
+        service: (booking as SchedulingBooking & { service?: { service_name: string; price?: number; currency?: string; is_product?: boolean } }).service
+      };
+
+      // Map actual payment_status from booking to SessionPayment status
+      const mapPaymentStatus = (dbStatus?: string): 'paid' | 'pending' | 'failed' | 'free' | 'refunded' => {
+        if (dbStatus === 'paid') return 'paid';
+        if (dbStatus === 'refunded') return 'refunded';
+        if (dbStatus === 'pending') return 'pending';
+        return 'pending'; // default
+      };
+
+      // Check if this service is free (price 0 or null)
+      const bookingWithService = booking as SchedulingBooking & { service?: { service_name: string; price?: number; currency?: string } };
+      const servicePrice = bookingWithService.service?.price ?? 0;
+      const serviceCurrency = bookingWithService.service?.currency || 'USD';
+      const isFreeService = servicePrice === 0;
+
+      // Extract invoice data from booking if available
+      const bookingWithInvoice = booking as SchedulingBooking & { invoice?: { id: string; status: string; due_date: string | null; sent_at: string | null; paid_at: string | null } };
+      const invoiceData = bookingWithInvoice.invoice;
+
+      const paymentData: SessionPayment | null = isFreeService ? {
+        amount: 0,
+        currency: serviceCurrency,
+        status: 'free' as const
+      } : servicePrice > 0 ? {
+        id: booking.payment_id || undefined,
+        amount: servicePrice,
+        currency: serviceCurrency,
+        status: mapPaymentStatus(booking.payment_status),
+        paidAt: invoiceData?.paid_at || undefined,
+        // Invoice data for resend functionality and due date display
+        invoiceId: invoiceData?.id,
+        invoiceStatus: invoiceData?.status as SessionPayment['invoiceStatus'],
+        invoiceDueDate: invoiceData?.due_date || undefined,
+        invoiceSentAt: invoiceData?.sent_at || undefined
+      } : null;
+
+      // Find confirmation email for this booking
+      const confirmationEmail = findConfirmationEmail(booking.created_at, bookingWithService.service?.service_name);
+
+      return {
+        booking: bookingData,
+        payment: paymentData,
+        journeySteps: buildJourneySteps(
+          {
+            booking: bookingData,
+            payment: paymentData,
+            confirmationEmail: confirmationEmail ? {
+              status: confirmationEmail.status,
+              sentAt: confirmationEmail.sent_at || confirmationEmail.created_at,
+              openedAt: confirmationEmail.opened_at || undefined,
+              subject: confirmationEmail.subject
+            } : undefined
+          },
+          language
+        )
+      };
+    });
+    setSessions(sessionCards);
+
+    // Extract intake responses for Files tab
+    // Only include completed intakes (with actual responses), not pending ones
+    const intakes = sessionCards
+      .filter(s => {
+        const intake = s.booking.intake_responses;
+        // Check if intake exists and has actual responses (not just pending marker)
+        return intake &&
+               intake.responses &&
+               Object.keys(intake.responses).length > 0 &&
+               intake.template_key !== 'pending';
+      })
+      .map(s => ({
+        booking_id: s.booking.id,
+        booking_date: s.booking.start_time || s.booking.created_at || '',
+        service_name: s.booking.service?.service_name || '',
+        intake: s.booking.intake_responses as IntakeResponses
+      }));
+    setIntakeResponses(intakes);
+  };
+
+  // Load all contact data - prioritize bookings for faster initial render
+  const loadAllContactData = async (contactId: string) => {
+    // Set all loading states at once
+    setLoadingSessions(true);
+    setLoadingActivities(true);
+    setLoadingEmails(true);
+    setLoadingTasks(true);
+    setLoadingDocuments(true);
+
+    // Priority 1: Load bookings and emails first (needed for booking cards)
+    // These are the most important for the drawer UI
+    const priorityFetch = async () => {
+      try {
+        const [bookingsResponse, emailsResponse] = await Promise.all([
+          fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`),
+          fetch(`/api/crm/contacts/${contactId}/emails?limit=100`)
+        ]);
+
+        const [bookingsData, emailsData] = await Promise.all([
+          bookingsResponse.ok ? bookingsResponse.json() : { success: false },
+          emailsResponse.ok ? emailsResponse.json() : { emails: [] }
+        ]);
+
+        // Process bookings/sessions immediately
+        if (bookingsData.success && bookingsData.bookings) {
+          processBookingsData(bookingsData, emailsData);
+        }
+        setLoadingSessions(false);
+
+        // Process emails
+        if (emailsData.emails) {
+          setEmails(emailsData.emails || []);
+        }
+        setLoadingEmails(false);
+      } catch (error) {
+        console.error('Failed to load priority data:', error);
+        setLoadingSessions(false);
+        setLoadingEmails(false);
+      }
+    };
+
+    // Priority 2: Load remaining data in parallel (can take longer)
+    const secondaryFetch = async () => {
+      try {
+        const [
+          activitiesResponse,
+          tasksResponse,
+          documentsResponse,
+          servicesResponse,
+          availabilityResponse,
+          allBookingsResponse
+        ] = await Promise.all([
+          fetch(`/api/crm/activities?contact_id=${contactId}&limit=50`),
+          fetch(`/api/crm/tasks?contact_id=${contactId}&limit=50`),
+          fetch(`/api/crm/documents?contact_id=${contactId}&limit=50`),
+          fetch('/api/scheduling/services?activeOnly=true'),
+          fetch('/api/scheduling/availability'),
+          fetch('/api/scheduling/bookings?limit=100')
+        ]);
+
+        const [
+          activitiesData,
+          tasksData,
+          documentsData,
+          servicesData,
+          availabilityData,
+          allBookingsData
+        ] = await Promise.all([
+          activitiesResponse.ok ? activitiesResponse.json() : { success: false },
+          tasksResponse.ok ? tasksResponse.json() : { success: false },
+          documentsResponse.ok ? documentsResponse.json() : { success: false },
+          servicesResponse.ok ? servicesResponse.json() : { success: false },
+          availabilityResponse.ok ? availabilityResponse.json() : { success: false },
+          allBookingsResponse.ok ? allBookingsResponse.json() : { success: false }
+        ]);
+
+        // Process activities
+        if (activitiesData.success) {
+          setActivities(activitiesData.activities || []);
+        }
+        setLoadingActivities(false);
+
+        // Process tasks
+        if (tasksData.success) {
+          setTasks(tasksData.tasks || []);
+        }
+        setLoadingTasks(false);
+
+        // Process documents
+        if (documentsData.success) {
+          setDocuments(documentsData.documents || []);
+        }
+        setLoadingDocuments(false);
+
+        // Process services
+        if (servicesData.success) {
+          setServices(servicesData.services || []);
+        }
+
+        // Process availability
+        if (availabilityData.success && availabilityData.settings) {
+          setAvailability(availabilityData.settings.weekly_hours);
+          setTimezone(availabilityData.settings.timezone || 'UTC');
+        }
+
+        // Process all bookings (for calendar)
+        if (allBookingsData.success) {
+          setAllBookings(allBookingsData.bookings || []);
+        }
+      } catch (error) {
+        console.error('Failed to load secondary data:', error);
+        setLoadingActivities(false);
+        setLoadingTasks(false);
+        setLoadingDocuments(false);
+      }
+    };
+
+    // Start both fetches in parallel, but priority fetch will update UI first
+    await Promise.all([priorityFetch(), secondaryFetch()]);
+  };
 
   // Initialize form data when contact changes
   useEffect(() => {
@@ -520,19 +826,12 @@ export function CRMContactDrawerV2({
       setErrorMessage('');
       setSuccessMessage('');
 
-      // Fetch all data
-      fetchSessions(contact.id);
-      fetchActivities(contact.id);
-      fetchEmails(contact.id);
-      fetchTasks(contact.id);
-      fetchDocuments(contact.id);
-      fetchServices();
-      fetchAvailability();
-      fetchAllBookings();
+      // Fetch all data in parallel for better performance
+      loadAllContactData(contact.id);
     }
   }, [contact, isOpen]);
 
-  // Fetch sessions (bookings with payments and emails)
+  // Fetch sessions (bookings with payments and emails) - kept for individual refresh
   const fetchSessions = async (contactId: string) => {
     try {
       setLoadingSessions(true);
@@ -599,8 +898,9 @@ export function CRMContactDrawerV2({
           };
 
           // Map actual payment_status from booking to SessionPayment status
-          const mapPaymentStatus = (dbStatus?: string): 'paid' | 'pending' | 'failed' | 'free' => {
-            if (dbStatus === 'paid' || dbStatus === 'refunded') return 'paid';
+          const mapPaymentStatus = (dbStatus?: string): 'paid' | 'pending' | 'failed' | 'free' | 'refunded' => {
+            if (dbStatus === 'paid') return 'paid';
+            if (dbStatus === 'refunded') return 'refunded';
             if (dbStatus === 'pending') return 'pending';
             return 'pending'; // default
           };
@@ -610,6 +910,9 @@ export function CRMContactDrawerV2({
           const serviceCurrency = booking.service?.currency || 'USD';
           const isFreeService = servicePrice === 0;
 
+          // Extract invoice data from booking if available
+          const invoiceData = (booking as SchedulingBooking & { invoice?: { id: string; status: string; due_date: string | null; sent_at: string | null; paid_at: string | null } }).invoice;
+
           const paymentData: SessionPayment | null = isFreeService ? {
             amount: 0,
             currency: serviceCurrency,
@@ -618,7 +921,13 @@ export function CRMContactDrawerV2({
             id: booking.payment_id || undefined,  // Payment ID for refunds
             amount: servicePrice,
             currency: serviceCurrency,
-            status: mapPaymentStatus(booking.payment_status)
+            status: mapPaymentStatus(booking.payment_status),
+            paidAt: invoiceData?.paid_at || undefined,
+            // Invoice data for resend functionality and due date display
+            invoiceId: invoiceData?.id,
+            invoiceStatus: invoiceData?.status as SessionPayment['invoiceStatus'],
+            invoiceDueDate: invoiceData?.due_date || undefined,
+            invoiceSentAt: invoiceData?.sent_at || undefined
           } : null;
 
           // Find confirmation email for this booking
@@ -644,9 +953,15 @@ export function CRMContactDrawerV2({
         });
         setSessions(sessionCards);
 
-        // Extract intake responses for Files tab
+        // Extract intake responses for Files tab (exclude pending intakes with no actual data)
         const intakes = sessionCards
-          .filter(s => s.booking.intake_responses)
+          .filter(s => {
+            const intake = s.booking.intake_responses;
+            return intake &&
+                   intake.responses &&
+                   Object.keys(intake.responses).length > 0 &&
+                   intake.template_key !== 'pending';
+          })
           .map(s => ({
             booking_id: s.booking.id,
             booking_date: s.booking.start_time,
@@ -914,6 +1229,8 @@ export function CRMContactDrawerV2({
       const data = await response.json();
       if (data.success) {
         fetchTasks(contact.id);
+        // Notify parent to refresh task list
+        onTasksUpdated?.();
       }
     } catch (error) {
       console.error('Failed to create task:', error);
@@ -931,6 +1248,8 @@ export function CRMContactDrawerV2({
       const data = await response.json();
       if (data.success) {
         fetchTasks(contact.id);
+        // Notify parent to refresh task list
+        onTasksUpdated?.();
       }
     } catch (error) {
       console.error('Failed to toggle task:', error);
@@ -946,6 +1265,8 @@ export function CRMContactDrawerV2({
       const data = await response.json();
       if (data.success) {
         fetchTasks(contact.id);
+        // Notify parent to refresh task list
+        onTasksUpdated?.();
       }
     } catch (error) {
       console.error('Failed to delete task:', error);
@@ -977,8 +1298,13 @@ export function CRMContactDrawerV2({
 
   // Session handlers
   const handleNewSession = () => {
+    // Open modal immediately - services will load in background if needed
     setEditingBooking(undefined);
     setShowBookingModal(true);
+    // Trigger service fetch in background if needed (non-blocking)
+    if (services.length === 0) {
+      fetchServices().catch(err => console.error('Failed to fetch services:', err));
+    }
   };
 
   const handleEditSession = (bookingId: string) => {
@@ -1127,6 +1453,12 @@ export function CRMContactDrawerV2({
     return stage?.color || '#64748B';
   };
 
+  // Get stage label - uses stage_label from DB (which is the source of truth)
+  const getStageLabel = () => {
+    const stage = stages.find(s => s.stage_key === formData.stage);
+    return stage?.stage_label || formData.stage;
+  };
+
   // Get initials for avatar
   const getInitials = () => {
     const first = formData.first_name?.[0] || '';
@@ -1166,7 +1498,7 @@ export function CRMContactDrawerV2({
                     className="text-xs font-bold px-3 py-1 rounded-full text-white"
                     style={{ background: 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)' }}
                   >
-                    {t(`crm.stage.${formData.stage}`) || formData.stage}
+                    {getStageLabel()}
                   </Badge>
                 </div>
                 <div className="flex items-center gap-3 mt-1.5 text-xs text-[var(--v2-text-muted)] flex-wrap">
@@ -1188,14 +1520,17 @@ export function CRMContactDrawerV2({
                   )}
                 </div>
               </div>
-              {/* Close button */}
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-shrink-0 p-2 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface)] transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Close button */}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="p-2 rounded-lg text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface)] transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1260,6 +1595,17 @@ export function CRMContactDrawerV2({
                   fetchSessions(contact.id);
                   fetchActivities(contact.id);
                 }}
+                onSendIntake={async (bookingId) => {
+                  // Show confirmation dialog instead of sending directly
+                  setPendingIntakeBookingId(bookingId);
+                  setShowIntakeConfirm(true);
+                }}
+                onSendInvoice={async (invoiceId, bookingId) => {
+                  // Show confirmation dialog instead of sending directly
+                  setPendingInvoiceId(invoiceId);
+                  setPendingInvoiceBookingId(bookingId);
+                  setShowInvoiceConfirm(true);
+                }}
                 isLoading={loadingSessions}
                 intakeTemplates={intakeTemplates}
                 isOpen={openSection === 'bookings'}
@@ -1277,6 +1623,19 @@ export function CRMContactDrawerV2({
                 isLoading={loadingTasks}
                 isOpen={openSection === 'tasks'}
                 onToggle={handleSectionToggle('tasks')}
+              />
+
+              {/* Payments & Invoices Section */}
+              <PaymentsSection
+                key={paymentsKey}
+                contactId={contact.id}
+                contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
+                contactEmail={contact.email || undefined}
+                t={t}
+                isRTL={isRTL}
+                language={language}
+                isOpen={openSection === 'payments'}
+                onToggle={handleSectionToggle('payments')}
               />
 
               {/* Website Form Submissions Section */}
@@ -1508,7 +1867,154 @@ export function CRMContactDrawerV2({
         }}
         t={t}
         isRTL={isRTL}
+        startInRefundView={true}
       />
+
+      {/* Invoice Creation Modal */}
+      <InvoiceModal
+        isOpen={showInvoiceModal}
+        onClose={() => setShowInvoiceModal(false)}
+        onSave={() => {
+          setPaymentsKey(prev => prev + 1); // Trigger refresh of payments section
+          setShowInvoiceModal(false);
+        }}
+        contactId={contact.id}
+        contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
+        contactEmail={contact.email || undefined}
+      />
+
+      {/* Intake Send Confirmation Dialog */}
+      <Dialog open={showIntakeConfirm} onOpenChange={setShowIntakeConfirm}>
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle>
+              {t('crm.intake.send_confirmation_title') || 'Send Intake Form'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              {(t('crm.intake.send_confirmation_message') || 'Send intake form to {name}? They will receive a link to fill out the form before their appointment.')
+                .replace('{name}', contact.first_name)}
+            </p>
+          </div>
+          <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowIntakeConfirm(false);
+                setPendingIntakeBookingId(null);
+              }}
+              disabled={sendingIntake}
+            >
+              {t('common.cancel') || 'Cancel'}
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={async () => {
+                if (!pendingIntakeBookingId) return;
+                setSendingIntake(true);
+                try {
+                  const response = await fetch(`/api/scheduling/bookings/${pendingIntakeBookingId}/intake`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                  });
+                  const data = await response.json();
+                  if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to send intake form');
+                  }
+                  toast.success(t('crm.intake.email_sent') || 'Intake form email sent');
+                  fetchActivities(contact.id);
+                  setShowIntakeConfirm(false);
+                  setPendingIntakeBookingId(null);
+                } catch (err) {
+                  const errorMsg = err instanceof Error ? err.message : 'Failed to send intake form';
+                  toast.error(errorMsg);
+                } finally {
+                  setSendingIntake(false);
+                }
+              }}
+              disabled={sendingIntake}
+            >
+              {sendingIntake ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  {t('common.sending') || 'Sending...'}
+                </span>
+              ) : (
+                t('crm.intake.send') || 'Send'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Invoice Resend Confirmation Dialog */}
+      <Dialog open={showInvoiceConfirm} onOpenChange={setShowInvoiceConfirm}>
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle>
+              {t('crm.invoice.resend_confirmation_title') || 'Resend Invoice'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              {(t('crm.invoice.resend_confirmation_message') || 'Resend invoice to {name}? They will receive a new email with the payment link.')
+                .replace('{name}', contact.first_name)}
+            </p>
+          </div>
+          <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowInvoiceConfirm(false);
+                setPendingInvoiceId(null);
+                setPendingInvoiceBookingId(null);
+              }}
+              disabled={sendingInvoice}
+            >
+              {t('common.cancel') || 'Cancel'}
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={async () => {
+                if (!pendingInvoiceId) return;
+                setSendingInvoice(true);
+                try {
+                  const response = await fetch(`/api/payments/invoices/${pendingInvoiceId}/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                  });
+                  const data = await response.json();
+                  if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to send invoice');
+                  }
+                  toast.success(t('crm.invoice.email_sent') || 'Invoice email sent');
+                  fetchActivities(contact.id);
+                  fetchSessions(contact.id);
+                  setShowInvoiceConfirm(false);
+                  setPendingInvoiceId(null);
+                  setPendingInvoiceBookingId(null);
+                } catch (err) {
+                  const errorMsg = err instanceof Error ? err.message : 'Failed to send invoice';
+                  toast.error(errorMsg);
+                } finally {
+                  setSendingInvoice(false);
+                }
+              }}
+              disabled={sendingInvoice}
+            >
+              {sendingInvoice ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  {t('common.sending') || 'Sending...'}
+                </span>
+              ) : (
+                t('crm.invoice.resend') || 'Resend'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
     </>
   );

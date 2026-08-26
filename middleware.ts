@@ -26,6 +26,12 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const host = request.headers.get('host') || ''
 
+  // EXPLICIT BYPASS: Never process onboarding-chat through middleware
+  if (pathname === '/onboarding-chat' || pathname.startsWith('/onboarding-chat/')) {
+    console.log('🚀 [MIDDLEWARE] BYPASSING all checks for /onboarding-chat')
+    return NextResponse.next()
+  }
+
   // === SUBDOMAIN ROUTING FOR PUBLIC WEBSITES ===
   // Check if this is a subdomain request (e.g., mybusiness.agentpilot.io)
   const isLocalhost = host.includes('localhost') || host.includes('127.0.0.1')
@@ -58,11 +64,15 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/oauth') ||
     pathname.startsWith('/static') ||
     pathname.startsWith('/site') || // Public website routes
+    pathname.startsWith('/c/') || // Public conversion pages (standalone booking, contact, payment)
+    pathname.startsWith('/go/') || // Smart link redirects
+    pathname.startsWith('/book/') || // Public booking management pages (reschedule, cancel, intake)
+    pathname.startsWith('/invoice/') || // Public invoice pages
     pathname.match(/\.(ico|png|jpg|jpeg|svg|gif|woff|woff2|ttf|eot|html)$/) ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
     pathname.startsWith('/auth') ||
-    pathname.startsWith('/onboarding') || // Both /onboarding and /onboarding-v2
+    pathname.startsWith('/onboarding') || // Both /onboarding, /onboarding-v2, and /onboarding-chat
     pathname.startsWith('/about') ||
     pathname.startsWith('/features') ||
     pathname.startsWith('/pricing') ||
@@ -191,8 +201,8 @@ export async function middleware(request: NextRequest) {
     const uiVersion = data?.value as 'v1' | 'v2'
 
     // If V2 is enabled and not already on V2 route, redirect
-    // EXCEPT for onboarding routes and business-os routes - they should stay as-is
-    if (uiVersion === 'v2' && !pathname.startsWith('/v2') && !pathname.startsWith('/onboarding') && !pathname.startsWith('/business-os')) {
+    // EXCEPT for onboarding routes, business-os routes, and public invoice pages - they should stay as-is
+    if (uiVersion === 'v2' && !pathname.startsWith('/v2') && !pathname.startsWith('/onboarding') && !pathname.startsWith('/business-os') && !pathname.startsWith('/invoice')) {
       const url = request.nextUrl.clone()
       url.pathname = `/v2${pathname}`
       return NextResponse.redirect(url)

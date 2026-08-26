@@ -13,16 +13,18 @@ import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { emailSendRepository } from '@/lib/repositories/EmailAutomationRepository';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateICSContent } from '@/lib/email/templates/booking-confirmation';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
 import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-receipt';
+import { generateRefundConfirmationEmail } from '@/lib/email/templates/refund-confirmation';
 import { generateWelcomeEmail, generateReturningContactEmail } from '@/lib/email/templates/welcome-email';
 import { generateIntakeRequestEmail } from '@/lib/email/templates/intake-request';
 import type { BrandingData } from '@/lib/email/templates/base-template';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
 import { supabaseServer } from '@/lib/supabaseServer';
-import jwt from 'jsonwebtoken';
+import * as jwt from 'jsonwebtoken';
 
 const logger = createLogger({ service: 'BookingEmailService' });
 
@@ -112,6 +114,27 @@ async function getUserLocale(userId: string): Promise<Locale> {
 }
 
 /**
+ * Fetch business profile language
+ * Used for client-facing emails (booking confirmations, intake requests, etc.)
+ */
+async function getBusinessLocale(userId: string): Promise<Locale> {
+  try {
+    const profileResult = await businessProfileRepository.findByUserId(userId);
+    const language = profileResult.data?.language;
+
+    if (language && isValidLocale(language)) {
+      logger.debug({ userId, locale: language }, 'Using business profile language');
+      return language as Locale;
+    }
+    logger.debug({ userId, language }, 'Invalid or missing business language, using default');
+    return defaultLocale;
+  } catch (err) {
+    logger.warn({ userId, err }, 'Error fetching business locale');
+    return defaultLocale;
+  }
+}
+
+/**
  * Log a sent email to the email_sends table for tracking
  * Non-blocking - catches and logs any errors
  */
@@ -172,7 +195,7 @@ export class BookingEmailService {
   static async sendBookingConfirmation(
     bookingId: string,
     userId: string,
-    options?: { skipInvoice?: boolean }
+    options?: { skipInvoice?: boolean; invoiceId?: string; stripeHostedInvoiceUrl?: string }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendBookingConfirmation' });
 
@@ -187,6 +210,12 @@ export class BookingEmailService {
         return { sent: false, error: 'Booking not found' };
       }
       const booking = bookingResult.data;
+
+      // Validate client email exists
+      if (!booking.client_email) {
+        requestLogger.error({ bookingId, contactId: booking.contact_id }, 'Booking contact has no email address');
+        return { sent: false, error: 'Client email is missing' };
+      }
 
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -204,6 +233,37 @@ export class BookingEmailService {
       const token = generateBookingToken(bookingId, booking.client_email);
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
+
+      // Generate payment URL if invoice exists and payment is pending
+      let paymentUrl: string | undefined;
+
+      // Normalize payment_status - treat null/undefined as 'pending' for new bookings
+      const effectivePaymentStatus = booking.payment_status || 'pending';
+      const isPending = effectivePaymentStatus === 'pending';
+      const hasPrice = service.price && service.price > 0;
+      const hasInvoice = !!options?.invoiceId;
+
+      requestLogger.info({
+        invoiceId: options?.invoiceId,
+        rawPaymentStatus: booking.payment_status,
+        effectivePaymentStatus,
+        isPending,
+        servicePrice: service.price,
+        hasPrice,
+        hasInvoice,
+        stripeHostedUrl: options?.stripeHostedInvoiceUrl
+      }, 'Checking payment URL conditions');
+
+      if (hasInvoice && isPending && hasPrice) {
+        // Prefer Stripe hosted invoice URL if available (allows direct payment)
+        // Otherwise fall back to local invoice page
+        paymentUrl = options?.stripeHostedInvoiceUrl || `${APP_URL}/invoice/${options?.invoiceId}`;
+        requestLogger.info({ paymentUrl }, 'Payment URL generated for email');
+      } else {
+        requestLogger.info({
+          reason: !hasInvoice ? 'no invoice' : !isPending ? 'not pending' : !hasPrice ? 'no price' : 'unknown'
+        }, 'Payment URL NOT generated');
+      }
 
       // Parse booking datetime
       const startTime = new Date(booking.start_time);
@@ -225,6 +285,7 @@ export class BookingEmailService {
         price: service.price || undefined,
         currency: service.currency,
         paymentStatus: booking.payment_status as 'pending' | 'paid' | 'refunded' | undefined,
+        paymentUrl,
         rescheduleUrl,
         cancelUrl,
         bookingId,
@@ -232,22 +293,21 @@ export class BookingEmailService {
         locale
       };
 
+      // Log email data for debugging payment link issues
+      const hasPendingPayment = booking.payment_status === 'pending' && service.price && service.price > 0;
+      requestLogger.info({
+        paymentUrl,
+        paymentStatus: booking.payment_status,
+        servicePrice: service.price,
+        hasPendingPayment,
+        willShowPaymentButton: hasPendingPayment && !!paymentUrl
+      }, 'Email data for booking confirmation');
+
       // Generate email content
       const { subject, html, icsContent } = generateBookingConfirmationEmail(emailData);
 
-      // Generate ICS file for attachment
-      const icsData = generateICSContent({
-        uid: bookingId,
-        summary: `${service.service_name} with ${branding.businessName}`,
-        description: `Your appointment for ${service.service_name}`,
-        location: undefined,
-        startTime,
-        endTime,
-        organizerName: branding.businessName,
-        organizerEmail: profileResult.data?.contact_email || 'noreply@example.com',
-        attendeeName: clientName,
-        attendeeEmail: booking.client_email
-      });
+      // Note: ICS data is included inline in the email HTML via generateBookingConfirmationEmail
+      // TODO: Attach ICS file to email for better calendar integration
 
       // Send email
       const result = await sendEmail({
@@ -272,6 +332,20 @@ export class BookingEmailService {
         bodyHtml: html,
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+
+      // Log CRM activity for booking confirmation (non-blocking, HIPAA compliance)
+      if (result.sent && booking.contact_id) {
+        crmActivityRepository.create({
+          user_id: userId,
+          contact_id: booking.contact_id,
+          activity_type: 'booking_confirmation_sent',
+          title: `Booking Confirmation Sent: ${service.service_name}`,
+          description: `Confirmation email sent for booking on ${startTime.toLocaleDateString()}`,
+          auto_logged: true,
+          source_capability: 'scheduling',
+          source_entity_id: bookingId
+        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
+      }
 
       // Send invoice email if service has a price and not skipped
       if (!options?.skipInvoice && service.price && service.price > 0 && booking.payment_status === 'pending') {
@@ -394,6 +468,20 @@ export class BookingEmailService {
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
+      // Log CRM activity for invoice sent (non-blocking, HIPAA compliance)
+      if (result.sent && booking.contact_id) {
+        crmActivityRepository.create({
+          user_id: userId,
+          contact_id: booking.contact_id,
+          activity_type: 'invoice_sent',
+          title: `Invoice Sent: ${invoiceNumber}`,
+          description: `Invoice for ${service.service_name} - ${service.currency} ${service.price}`,
+          auto_logged: true,
+          source_capability: 'payments',
+          source_entity_id: bookingId
+        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
+      }
+
       return { sent: result.sent, error: result.error };
     } catch (error) {
       requestLogger.error({ err: error }, 'Error sending invoice email');
@@ -496,6 +584,20 @@ export class BookingEmailService {
         bodyHtml: html,
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+
+      // Log CRM activity for payment received (non-blocking, HIPAA compliance)
+      if (result.sent && contactId) {
+        crmActivityRepository.create({
+          user_id: userId,
+          contact_id: contactId,
+          activity_type: 'payment_received',
+          title: `Payment Received: ${paymentData.currency} ${paymentData.amount}`,
+          description: serviceName ? `Payment for ${serviceName}` : `Receipt: ${receiptNumber}`,
+          auto_logged: true,
+          source_capability: 'payments',
+          source_entity_id: paymentData.bookingId || undefined
+        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
+      }
 
       return { sent: result.sent, error: result.error };
     } catch (error) {
@@ -880,8 +982,8 @@ export class BookingEmailService {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendIntakeFormRequest' });
 
     try {
-      // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      // Fetch business profile language (client-facing emails use business language)
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -972,9 +1074,126 @@ export class BookingEmailService {
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
+      // Log CRM activity for intake form request (non-blocking, HIPAA compliance)
+      if (result.sent && booking.contact_id) {
+        crmActivityRepository.create({
+          user_id: userId,
+          contact_id: booking.contact_id,
+          activity_type: 'intake_form_sent',
+          title: `Intake Form Sent: ${service.service_name}`,
+          description: `Intake form request sent for booking on ${startTime.toLocaleDateString()}`,
+          auto_logged: true,
+          source_capability: 'scheduling',
+          source_entity_id: bookingId
+        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
+      }
+
       return { sent: result.sent, error: result.error };
     } catch (error) {
       requestLogger.error({ err: error }, 'Error sending intake form request');
+      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Send refund confirmation email
+   * Called from: /api/scheduling/bookings/[id]/refund
+   */
+  static async sendRefundConfirmation(
+    bookingId: string,
+    userId: string,
+    refundData: {
+      refundAmount: number;
+      originalAmount: number;
+      currency: string;
+      refundType: 'full' | 'partial';
+      reason?: string;
+      isManualRefund?: boolean;
+    }
+  ): Promise<EmailResult> {
+    const requestLogger = logger.child({ bookingId, userId, action: 'sendRefundConfirmation' });
+
+    try {
+      // Fetch user's preferred language from profile
+      const locale = await getUserLocale(userId);
+
+      // Fetch booking
+      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
+      if (bookingResult.error || !bookingResult.data) {
+        requestLogger.error({ err: bookingResult.error }, 'Booking not found');
+        return { sent: false, error: 'Booking not found' };
+      }
+      const booking = bookingResult.data;
+
+      // Fetch service
+      const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
+      const service = serviceResult.data;
+
+      // Fetch business profile for branding
+      const profileResult = await businessProfileRepository.findByUserId(userId);
+      const branding = buildBrandingData(profileResult.data || {}, locale);
+
+      // Get booking URL from website subdomain
+      let bookAgainUrl: string | undefined;
+      const { data: websitePage } = await supabaseServer
+        .from('website_pages')
+        .select('subdomain')
+        .eq('user_id', userId)
+        .eq('status', 'published')
+        .single();
+
+      if (websitePage?.subdomain) {
+        bookAgainUrl = `${APP_URL}/site/${websitePage.subdomain}/book`;
+      } else if (profileResult.data?.website_url) {
+        bookAgainUrl = profileResult.data.website_url;
+      }
+
+      // Build client name
+      const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
+
+      // Generate email
+      const { subject, html } = generateRefundConfirmationEmail({
+        clientName,
+        refundAmount: refundData.refundAmount,
+        originalAmount: refundData.originalAmount,
+        currency: refundData.currency,
+        refundType: refundData.refundType,
+        refundDate: new Date(),
+        serviceName: service?.service_name,
+        reason: refundData.reason,
+        isManualRefund: refundData.isManualRefund,
+        bookAgainUrl,
+        branding,
+        locale
+      });
+
+      // Send email
+      const result = await sendEmail({
+        to: [booking.client_email],
+        subject,
+        html,
+        ownerUserId: userId
+      });
+
+      if (result.sent) {
+        requestLogger.info({ provider: result.provider, refundAmount: refundData.refundAmount }, 'Refund confirmation email sent');
+      } else {
+        requestLogger.warn({ error: result.error }, 'Failed to send refund confirmation email');
+      }
+
+      // Log email to email_sends table (non-blocking)
+      logEmailSend({
+        userId,
+        contactId: booking.contact_id,
+        toEmail: booking.client_email,
+        subject,
+        bodyHtml: html,
+        result
+      }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+
+      return { sent: result.sent, error: result.error };
+    } catch (error) {
+      requestLogger.error({ err: error }, 'Error sending refund confirmation email');
       return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }

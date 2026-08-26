@@ -53,24 +53,30 @@ export default function LandingPreviewPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
 
-  // Detect browser language for loading/error states
-  // Initialize synchronously to avoid flash of English during loading
-  const [browserLocale, setBrowserLocale] = useState<Locale>(() => {
+  // Get language from URL parameter (passed by parent component) or fall back to browser language
+  // This ensures the loading state uses the platform language, not browser language
+  const [uiLocale, setUiLocale] = useState<Locale>(() => {
     if (typeof window !== 'undefined') {
+      // First check URL parameter (platform language passed by parent)
+      const urlParams = new URLSearchParams(window.location.search);
+      const langParam = urlParams.get('lang');
+      if (langParam && isValidLocale(langParam)) {
+        return langParam;
+      }
+      // Fall back to browser language
       const browserLang = navigator.language?.split('-')[0] || defaultLocale;
       return isValidLocale(browserLang) ? browserLang : defaultLocale;
     }
     return defaultLocale;
   });
 
-  // Update browser locale after hydration if needed
+  // Update locale after hydration if URL param changes
   useEffect(() => {
-    const browserLang = navigator.language?.split('-')[0] || defaultLocale;
-    const detectedLocale = isValidLocale(browserLang) ? browserLang : defaultLocale;
-    if (detectedLocale !== browserLocale) {
-      setBrowserLocale(detectedLocale);
+    const langParam = searchParams.get('lang');
+    if (langParam && isValidLocale(langParam) && langParam !== uiLocale) {
+      setUiLocale(langParam);
     }
-  }, [browserLocale]);
+  }, [searchParams, uiLocale]);
 
   useEffect(() => {
     loadPreviewData();
@@ -127,9 +133,9 @@ export default function LandingPreviewPage() {
     }
   };
 
-  // Use browser locale for loading/error states
-  const loadingLabels = LABELS[browserLocale as keyof typeof LABELS] || LABELS.en;
-  const loadingIsRTL = getDirection(browserLocale) === 'rtl';
+  // Use UI locale (from URL param or browser) for loading/error states
+  const loadingLabels = LABELS[uiLocale as keyof typeof LABELS] || LABELS.en;
+  const loadingIsRTL = getDirection(uiLocale) === 'rtl';
 
   if (loading) {
     return (

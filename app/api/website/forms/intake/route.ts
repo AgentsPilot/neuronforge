@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
+import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'WebsiteIntakeFormAPI' });
 
@@ -98,6 +99,13 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
+    // Extract attribution data from request (UTM params, referrer, etc.)
+    const attribution = buildAttributionFromRequest(request, {
+      captureChannel: 'form',
+      pageUrl: data.page_url,
+      generateSessionId: true
+    });
+
     // Look up the website owner by subdomain
     const { data: websitePage, error: pageError } = await supabaseServer
       .from('website_pages')
@@ -114,6 +122,36 @@ export async function POST(request: NextRequest) {
     }
 
     const ownerId = websitePage.user_id;
+
+    // Get user's pipeline stages to find appropriate stage for intake completion
+    // Intake forms indicate engagement - look for 'qualified', 'intake', or a mid-pipeline stage
+    const { data: pipelineStages } = await supabaseServer
+      .from('crm_pipeline_stages')
+      .select('stage_key, position')
+      .eq('user_id', ownerId)
+      .order('position', { ascending: true });
+
+    // Find the best stage for intake completion
+    // Priority: 'intake' > 'qualified' > 'discovery' > second stage (position 1) > first stage
+    let intakeStage = 'qualified'; // fallback
+    if (pipelineStages && pipelineStages.length > 0) {
+      const stageKeys = pipelineStages.map(s => s.stage_key);
+      if (stageKeys.includes('intake')) {
+        intakeStage = 'intake';
+      } else if (stageKeys.includes('qualified')) {
+        intakeStage = 'qualified';
+      } else if (stageKeys.includes('discovery')) {
+        intakeStage = 'discovery';
+      } else if (pipelineStages.length > 1) {
+        // Use the second stage (after initial lead stage)
+        intakeStage = pipelineStages[1].stage_key;
+      } else {
+        // Only one stage, use it
+        intakeStage = pipelineStages[0].stage_key;
+      }
+    }
+
+    requestLogger.debug({ intakeStage, pipelineStages }, 'Determined intake completion stage');
 
     // Extract template-specific fields
     const { subdomain, template, booking_id, name, email, phone, date_of_birth, emergency_contact, page_url, ...templateFields } = data;
@@ -150,7 +188,7 @@ export async function POST(request: NextRequest) {
         .update({
           phone: phone || existingContact.custom_fields?.phone,
           custom_fields: updatedCustomFields,
-          status: 'qualified', // Upgrade status when intake is submitted
+          stage: intakeStage, // Upgrade to appropriate pipeline stage when intake is submitted
           updated_at: new Date().toISOString()
         })
         .eq('id', existingContact.id);
@@ -163,16 +201,23 @@ export async function POST(request: NextRequest) {
       contactId = existingContact.id;
       requestLogger.info({ contactId }, 'Contact updated with intake data');
     } else {
-      // Create new contact with intake data
+      // Parse name into first_name and last_name
+      const nameParts = name.trim().split(/\s+/);
+      const firstName = nameParts[0] || name;
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
+
+      // Create new contact with intake data and attribution
       const { data: newContact, error: createError } = await supabaseServer
         .from('crm_contacts')
         .insert({
           user_id: ownerId,
-          name,
+          first_name: firstName,
+          last_name: lastName,
           email,
           phone: phone || null,
           source: 'website_intake',
-          status: 'qualified',
+          stage: intakeStage, // Use appropriate pipeline stage for intake completion
+          source_metadata: attribution as unknown as Record<string, unknown>,  // Store full attribution data
           custom_fields: {
             intake_data: intakeData,
             intake_submitted_at: new Date().toISOString(),
@@ -216,16 +261,12 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: ownerId,
         contact_id: contactId,
-        type: 'note',
+        activity_type: 'note',
         title: `Intake Form Completed (${template})`,
         description: `Client completed the ${template} intake form.`,
-        metadata: {
-          source: 'website_intake',
-          template,
-          subdomain,
-          booking_id,
-          intake_summary: templateFields
-        }
+        activity_date: new Date().toISOString(),
+        auto_logged: true,
+        source_capability: 'website'
       });
 
     if (activityError) {

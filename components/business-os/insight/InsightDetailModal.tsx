@@ -335,8 +335,7 @@ export function InsightDetailModal({
               <button
                 onClick={() => handleAction('run')}
                 disabled={loading || actionLoading !== null}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #22C58B 0%, #1BA97A 100%)' }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white bg-[var(--v2-success)] transition-all hover:opacity-90 disabled:opacity-50"
               >
                 {actionLoading === 'run' ? (
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

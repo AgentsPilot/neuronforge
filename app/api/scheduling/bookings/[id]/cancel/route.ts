@@ -8,6 +8,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
@@ -61,30 +62,39 @@ export async function POST(
       );
     }
 
-    // 4. Audit log (non-blocking)
+    // 4. Get contact name for audit log
+    let contactName = 'Client';
+    if (result.data.contact_id) {
+      const contactResult = await crmContactRepository.findById(result.data.contact_id, user.id);
+      if (contactResult.data) {
+        contactName = `${contactResult.data.first_name || ''} ${contactResult.data.last_name || ''}`.trim() || 'Client';
+      }
+    }
+
+    // 5. Audit log (non-blocking)
     auditTrail
       .log({
         action: 'SCHEDULING_BOOKING_CANCELLED',
         userId: user.id,
         entityType: 'scheduling_booking',
         entityId: bookingId,
-        resourceName: `Booking for ${result.data.client_first_name} ${result.data.client_last_name || ''}`.trim(),
+        resourceName: `Booking for ${contactName}`,
         metadata: { reason: validated.reason },
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
 
-    // 5. Delete calendar event if booking had one (non-blocking)
+    // 7. Delete calendar event if booking had one (non-blocking)
     if (result.data.external_calendar_event_id) {
       CalendarSyncService.deleteCalendarEvent(result.data, user.id)
         .catch(err => requestLogger.warn({ err, bookingId }, 'Calendar event delete failed'));
     }
 
-    // 6. Send cancellation email (non-blocking)
+    // 8. Send cancellation email (non-blocking)
     BookingEmailService.sendCancellationEmail(bookingId, user.id, validated.reason)
       .catch(err => requestLogger.warn({ err, bookingId }, 'Cancellation email failed'));
 
-    // 7. Return success
+    // 9. Return success
     requestLogger.info({ bookingId, userId: user.id }, 'Booking cancelled successfully');
     return NextResponse.json({
       success: true,

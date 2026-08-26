@@ -29,6 +29,34 @@ export interface ProcessStep {
   number?: number;
 }
 
+/**
+ * Invoice address structure
+ */
+export interface InvoiceAddress {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
+}
+
+/**
+ * Invoice settings for business profile
+ */
+export interface InvoiceSettings {
+  invoice_company_name: string | null;
+  invoice_address: InvoiceAddress;
+  invoice_tax_id: string | null;
+  invoice_bank_name: string | null;
+  invoice_bank_account: string | null;
+  invoice_bank_routing: string | null;
+  invoice_payment_instructions: string | null;
+  invoice_footer_text: string | null;
+  invoice_number_prefix: string;
+  invoice_logo_url: string | null;
+}
+
 export class BusinessProfileRepository {
   private supabase = supabaseServer;
 
@@ -411,6 +439,377 @@ export class BusinessProfileRepository {
       return { data: numberedSteps, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to update process steps');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  // ==================== INVOICE SETTINGS METHODS ====================
+
+  /**
+   * Get invoice settings for a user
+   */
+  async getInvoiceSettings(userId: string): Promise<BusinessProfileRepositoryResult<InvoiceSettings>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select(`
+          invoice_company_name,
+          invoice_address,
+          invoice_tax_id,
+          invoice_bank_name,
+          invoice_bank_account,
+          invoice_bank_routing,
+          invoice_payment_instructions,
+          invoice_footer_text,
+          invoice_number_prefix,
+          invoice_logo_url
+        `)
+        .eq('user_id', userId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No profile found - return defaults
+          return {
+            data: {
+              invoice_company_name: null,
+              invoice_address: {},
+              invoice_tax_id: null,
+              invoice_bank_name: null,
+              invoice_bank_account: null,
+              invoice_bank_routing: null,
+              invoice_payment_instructions: null,
+              invoice_footer_text: null,
+              invoice_number_prefix: 'INV',
+              invoice_logo_url: null
+            },
+            error: null
+          };
+        }
+        throw error;
+      }
+
+      const settings: InvoiceSettings = {
+        invoice_company_name: data.invoice_company_name,
+        invoice_address: (data.invoice_address as InvoiceAddress) || {},
+        invoice_tax_id: data.invoice_tax_id,
+        invoice_bank_name: data.invoice_bank_name,
+        invoice_bank_account: data.invoice_bank_account,
+        invoice_bank_routing: data.invoice_bank_routing,
+        invoice_payment_instructions: data.invoice_payment_instructions,
+        invoice_footer_text: data.invoice_footer_text,
+        invoice_number_prefix: data.invoice_number_prefix || 'INV',
+        invoice_logo_url: data.invoice_logo_url
+      };
+
+      logger.debug({ userId }, 'Retrieved invoice settings');
+      return { data: settings, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to get invoice settings');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Update invoice settings for a user
+   */
+  async updateInvoiceSettings(
+    userId: string,
+    settings: Partial<InvoiceSettings>
+  ): Promise<BusinessProfileRepositoryResult<InvoiceSettings>> {
+    try {
+      logger.info({ userId, fieldsUpdated: Object.keys(settings) }, 'Updating invoice settings');
+
+      // Prepare update object
+      const updateData: Record<string, unknown> = {
+        updated_at: new Date().toISOString()
+      };
+
+      // Map settings to database columns
+      if (settings.invoice_company_name !== undefined) {
+        updateData.invoice_company_name = settings.invoice_company_name;
+      }
+      if (settings.invoice_address !== undefined) {
+        updateData.invoice_address = settings.invoice_address;
+      }
+      if (settings.invoice_tax_id !== undefined) {
+        updateData.invoice_tax_id = settings.invoice_tax_id;
+      }
+      if (settings.invoice_bank_name !== undefined) {
+        updateData.invoice_bank_name = settings.invoice_bank_name;
+      }
+      if (settings.invoice_bank_account !== undefined) {
+        updateData.invoice_bank_account = settings.invoice_bank_account;
+      }
+      if (settings.invoice_bank_routing !== undefined) {
+        updateData.invoice_bank_routing = settings.invoice_bank_routing;
+      }
+      if (settings.invoice_payment_instructions !== undefined) {
+        updateData.invoice_payment_instructions = settings.invoice_payment_instructions;
+      }
+      if (settings.invoice_footer_text !== undefined) {
+        updateData.invoice_footer_text = settings.invoice_footer_text;
+      }
+      if (settings.invoice_number_prefix !== undefined) {
+        updateData.invoice_number_prefix = settings.invoice_number_prefix;
+      }
+      if (settings.invoice_logo_url !== undefined) {
+        updateData.invoice_logo_url = settings.invoice_logo_url;
+      }
+
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update(updateData)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      // Fetch updated settings
+      const result = await this.getInvoiceSettings(userId);
+
+      logger.info({ userId }, 'Invoice settings updated');
+      return result;
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update invoice settings');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Get invoice settings with business profile info for invoice generation
+   * Includes vertical for template selection
+   */
+  async getInvoiceSettingsWithProfile(userId: string): Promise<BusinessProfileRepositoryResult<
+    InvoiceSettings & {
+      vertical: string | null;
+      company_name: string | null;
+      language: string | null;
+    }
+  >> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select(`
+          vertical,
+          company_name,
+          language,
+          invoice_company_name,
+          invoice_address,
+          invoice_tax_id,
+          invoice_bank_name,
+          invoice_bank_account,
+          invoice_bank_routing,
+          invoice_payment_instructions,
+          invoice_footer_text,
+          invoice_number_prefix,
+          invoice_logo_url
+        `)
+        .eq('user_id', userId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return { data: null, error: new Error('Business profile not found') };
+        }
+        throw error;
+      }
+
+      const result = {
+        vertical: data.vertical,
+        company_name: data.company_name,
+        language: data.language,
+        invoice_company_name: data.invoice_company_name,
+        invoice_address: (data.invoice_address as InvoiceAddress) || {},
+        invoice_tax_id: data.invoice_tax_id,
+        invoice_bank_name: data.invoice_bank_name,
+        invoice_bank_account: data.invoice_bank_account,
+        invoice_bank_routing: data.invoice_bank_routing,
+        invoice_payment_instructions: data.invoice_payment_instructions,
+        invoice_footer_text: data.invoice_footer_text,
+        invoice_number_prefix: data.invoice_number_prefix || 'INV',
+        invoice_logo_url: data.invoice_logo_url
+      };
+
+      logger.debug({ userId, vertical: result.vertical }, 'Retrieved invoice settings with profile');
+      return { data: result, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to get invoice settings with profile');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  // ==================== USER CODE METHODS (for Conversion Layer) ====================
+
+  /**
+   * Get user's conversion code (user_code) for public pages
+   * If not set, generates one automatically
+   */
+  async getUserCode(userId: string): Promise<BusinessProfileRepositoryResult<string>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('user_code')
+        .eq('user_id', userId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No profile found
+          return { data: null, error: new Error('Business profile not found') };
+        }
+        throw error;
+      }
+
+      // If user_code exists, return it
+      if (data.user_code) {
+        return { data: data.user_code, error: null };
+      }
+
+      // Generate new user_code if not set
+      const newCode = await this.generateAndSetUserCode(userId);
+      return newCode;
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to get user code');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Generate and set a new user_code for a user
+   * Used when user doesn't have one yet
+   */
+  private async generateAndSetUserCode(userId: string): Promise<BusinessProfileRepositoryResult<string>> {
+    try {
+      const newCode = this.generateUserCode(6);
+
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .update({ user_code: newCode })
+        .eq('user_id', userId)
+        .select('user_code')
+        .single();
+
+      if (error) {
+        // If duplicate code, try again with longer code
+        if (error.code === '23505') {
+          const longerCode = this.generateUserCode(8);
+          const retryResult = await this.supabase
+            .from('business_profiles')
+            .update({ user_code: longerCode })
+            .eq('user_id', userId)
+            .select('user_code')
+            .single();
+
+          if (retryResult.error) throw retryResult.error;
+          return { data: retryResult.data.user_code, error: null };
+        }
+        throw error;
+      }
+
+      logger.info({ userId, userCode: data.user_code }, 'Generated user code');
+      return { data: data.user_code, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to generate user code');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Generate a random alphanumeric code
+   */
+  private generateUserCode(length: number): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  /**
+   * Find business profile by user_code (for public conversion pages)
+   * This is used by public endpoints that need to load user's branding/services
+   */
+  async findByUserCode(userCode: string): Promise<BusinessProfileRepositoryResult<BusinessProfile>> {
+    try {
+      logger.debug({ userCode }, 'Finding business profile by user code');
+
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('*')
+        .eq('user_code', userCode)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          logger.debug({ userCode }, 'No business profile found for user code');
+          return { data: null, error: null };
+        }
+        throw error;
+      }
+
+      logger.debug({ userCode, userId: data.user_id }, 'Business profile found by user code');
+      return { data, error: null };
+    } catch (error) {
+      logger.error({ err: error, userCode }, 'Failed to find business profile by user code');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Get conversion page config for a user (branding, services, journey)
+   * Used by public conversion pages to render user's branded pages
+   */
+  async getConversionConfig(userCode: string): Promise<BusinessProfileRepositoryResult<{
+    userId: string;
+    userCode: string;
+    companyName: string | null;
+    logoUrl: string | null;
+    vertical: string | null;
+    language: string | null;
+    currency: string | null;
+    primaryColor: string | null;
+    customerJourney: string[] | null;
+  }>> {
+    try {
+      // Note: Only selecting columns that exist in the schema
+      // currency, primary_color, customer_journey are not in the DB yet - using defaults
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select(`
+          user_id,
+          user_code,
+          company_name,
+          invoice_logo_url,
+          vertical,
+          language
+        `)
+        .eq('user_code', userCode)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return { data: null, error: new Error('Invalid user code') };
+        }
+        throw error;
+      }
+
+      const config = {
+        userId: data.user_id,
+        userCode: data.user_code,
+        companyName: data.company_name,
+        logoUrl: data.invoice_logo_url,
+        vertical: data.vertical,
+        language: data.language,
+        currency: null, // Not in DB yet - API will default to 'USD'
+        primaryColor: null, // Not in DB yet - API will default to '#4F6EF7'
+        customerJourney: null // Not in DB yet - API will default to standard journey
+      };
+
+      logger.debug({ userCode, companyName: config.companyName }, 'Retrieved conversion config');
+      return { data: config, error: null };
+    } catch (error) {
+      logger.error({ err: error, userCode }, 'Failed to get conversion config');
       return { data: null, error: error as Error };
     }
   }

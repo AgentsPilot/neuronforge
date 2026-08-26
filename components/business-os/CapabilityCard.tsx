@@ -77,6 +77,9 @@ interface ReportsStats {
   weeklyBars: number[]; // 6 values for bar chart
   changePercent: number;
   previousWeek: number;
+  // Unpaid invoices (pending/sent/overdue), any age. Not part of weeklyRevenue —
+  // that stays money actually collected, so the trend keeps comparing like with like.
+  outstanding: number;
 }
 
 interface ConfigStats {
@@ -85,7 +88,7 @@ interface ConfigStats {
   hoursSet: boolean;
   openDaysCount: number;
   paymentsConnected: boolean;
-  paymentsProvider: string;
+  paymentsProvider: string | null;
   automationsCount: number;
   calendarSynced: boolean;
   calendarProvider: 'google_calendar' | 'outlook' | null;
@@ -168,8 +171,16 @@ function MiniPipeline({ pipeline }: { pipeline: PipelineStage[] }) {
 }
 
 // Mini Bar Chart - matches mockup: 6 bars, 38px height, gap 5px, rounded top corners
+// Color indicates trend: green if this week >= last week (bars 4-6 vs bars 1-3), red if down
 function MiniBarChart({ bars }: { bars: number[] }) {
   const max = Math.max(...bars, 1);
+  // Calculate if trend is up or down by comparing last 3 bars (this week) vs first 3 (last week)
+  const lastWeekSum = bars.slice(0, 3).reduce((a, b) => a + b, 0);
+  const thisWeekSum = bars.slice(3, 6).reduce((a, b) => a + b, 0);
+  const isUp = thisWeekSum >= lastWeekSum;
+  const accentColor = isUp ? '#22C58B' : '#EF4444'; // green or red
+  const bgColor = isUp ? 'rgba(34, 197, 139, 0.25)' : 'rgba(239, 68, 68, 0.25)';
+
   return (
     <div className="flex items-end" style={{ height: '38px', gap: '5px' }}>
       {bars.map((value, index) => (
@@ -178,7 +189,7 @@ function MiniBarChart({ bars }: { bars: number[] }) {
           className="flex-1"
           style={{
             height: `${Math.max((value / max) * 100, 15)}%`,
-            background: index === bars.length - 1 ? '#22C58B' : 'rgba(34, 197, 139, 0.25)',
+            background: index === bars.length - 1 ? accentColor : bgColor,
             borderRadius: '3px 3px 0 0'
           }}
         />
@@ -259,7 +270,7 @@ function ArrowIcon() {
 }
 
 export function CapabilityCard({ type, stats, onClick }: CapabilityCardProps) {
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, formatCurrency } = useLanguage();
   const config = CARD_CONFIG[type];
   const Icon = config.Icon;
 
@@ -422,7 +433,7 @@ export function CapabilityCard({ type, stats, onClick }: CapabilityCardProps) {
                   color: 'var(--v2-text-primary)'
                 }}
               >
-                ${(stats as ReportsStats).weeklyRevenue.toLocaleString()}
+                {formatCurrency((stats as ReportsStats).weeklyRevenue, { showFree: false })}
               </b>
               <span style={{ fontSize: '12.5px', color: 'var(--v2-text-muted)' }}>
                 {t('cap.reports.booked_this_week') || 'booked this week'}
@@ -430,12 +441,22 @@ export function CapabilityCard({ type, stats, onClick }: CapabilityCardProps) {
             </div>
             <MiniBarChart bars={(stats as ReportsStats).weeklyBars} />
             <div style={{ fontSize: '12.5px', color: 'var(--v2-text-muted)', lineHeight: 1.45 }}>
-              {t('cap.reports.up_from') || 'Up from'}{' '}
+              {(stats as ReportsStats).weeklyRevenue >= (stats as ReportsStats).previousWeek
+                ? (t('cap.reports.up_from') || 'Up from')
+                : (t('cap.reports.down_from') || 'Down from')}{' '}
               <b style={{ color: 'var(--v2-text-primary)', fontWeight: 600 }}>
-                ${(stats as ReportsStats).previousWeek.toLocaleString()}
+                {formatCurrency((stats as ReportsStats).previousWeek, { showFree: false })}
               </b>{' '}
               {t('cap.reports.last_week') || 'last week'}
             </div>
+            {(stats as ReportsStats).outstanding > 0 && (
+              <div style={{ fontSize: '12.5px', color: 'var(--v2-text-muted)', lineHeight: 1.45 }}>
+                <b style={{ color: 'var(--v2-text-primary)', fontWeight: 600 }}>
+                  {formatCurrency((stats as ReportsStats).outstanding, { showFree: false })}
+                </b>{' '}
+                {t('cap.reports.outstanding') || 'outstanding'}
+              </div>
+            )}
           </>
         )}
 

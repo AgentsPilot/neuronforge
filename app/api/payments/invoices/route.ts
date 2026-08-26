@@ -16,8 +16,10 @@ const LineItemSchema = z.object({
 });
 
 const CreateInvoiceSchema = z.object({
-  contact_id: z.string().uuid().optional(),
+  contact_id: z.string().uuid().optional().nullable(),
   invoice_number: z.string().optional(), // Will auto-generate if not provided
+  client_name: z.string().min(1, 'Client name is required'),
+  client_email: z.string().email('Valid email is required'),
   amount: z.number().positive(),
   currency: z.string().default('USD'),
   status: z.enum(['draft', 'sent', 'paid', 'overdue', 'cancelled']).default('draft'),
@@ -26,9 +28,11 @@ const CreateInvoiceSchema = z.object({
   payment_terms: z.string().default('Due upon receipt'),
   notes: z.string().optional(),
   internal_notes: z.string().optional(),
+  use_stripe: z.boolean().optional().default(false),
 });
 
 // GET /api/payments/invoices - List invoices
+// Query param: include_stats=true to include stats by status
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
@@ -47,25 +51,57 @@ export async function GET(request: NextRequest) {
     const contact_id = searchParams.get('contact_id') || undefined;
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
+    const includeStats = searchParams.get('include_stats') === 'true';
 
-    requestLogger.info({ userId: user.id, status, contact_id }, 'Listing payment invoices');
+    requestLogger.info({ userId: user.id, status, contact_id, includeStats }, 'Listing payment invoices');
 
-    const { data, error } = await paymentInvoiceRepository.list(user.id, {
-      status,
-      contactId: contact_id,
-      limit,
-      offset
-    });
+    // Fetch invoices, count, and optionally stats in parallel
+    const promises: Promise<any>[] = [
+      paymentInvoiceRepository.list(user.id, {
+        status,
+        contactId: contact_id,
+        limit,
+        offset
+      }),
+      paymentInvoiceRepository.count(user.id, {
+        status,
+        contactId: contact_id
+      })
+    ];
 
-    if (error) {
-      requestLogger.error({ err: error }, 'Failed to list invoices');
+    if (includeStats) {
+      promises.push(paymentInvoiceRepository.getStatsByStatus(user.id));
+    }
+
+    const results = await Promise.all(promises);
+    const listResult = results[0];
+    const countResult = results[1];
+    const statsResult = includeStats ? results[2] : null;
+
+    if (listResult.error) {
+      requestLogger.error({ err: listResult.error }, 'Failed to list invoices');
       return NextResponse.json(
         { success: false, error: 'Failed to retrieve invoices' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ success: true, data });
+    const response: {
+      success: boolean;
+      data: any;
+      total: number;
+      stats?: any;
+    } = {
+      success: true,
+      data: listResult.data,
+      total: countResult.data || 0
+    };
+
+    if (includeStats && statsResult?.data) {
+      response.stats = statsResult.data;
+    }
+
+    return NextResponse.json(response);
 
   } catch (error) {
     requestLogger.error({ err: error }, 'Request failed');
@@ -100,12 +136,36 @@ export async function POST(request: NextRequest) {
       invoice_number = nextNumber || 'INV-00001';
     }
 
-    requestLogger.info({ userId: user.id, invoiceNumber: invoice_number }, 'Creating payment invoice');
+    requestLogger.info({
+      userId: user.id,
+      invoiceNumber: invoice_number,
+      clientName: validated.client_name,
+      clientEmail: validated.client_email,
+      amount: validated.amount
+    }, 'Creating payment invoice');
 
     const { data, error } = await paymentInvoiceRepository.create({
       user_id: user.id,
-      ...validated,
-      invoice_number
+      invoice_number,
+      contact_id: validated.contact_id || null,
+      client_name: validated.client_name,
+      client_email: validated.client_email,
+      amount: validated.amount,
+      currency: validated.currency,
+      status: validated.status,
+      line_items: validated.line_items,
+      due_date: validated.due_date || null,
+      payment_terms: validated.payment_terms,
+      notes: validated.notes || null,
+      internal_notes: validated.internal_notes || null,
+      // Initialize other fields
+      sent_at: null,
+      paid_at: null,
+      stripe_invoice_id: null,
+      stripe_hosted_invoice_url: null,
+      stripe_invoice_pdf: null,
+      client_address: null,
+      booking_id: null,
     });
 
     if (error) {

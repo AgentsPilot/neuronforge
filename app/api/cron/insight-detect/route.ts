@@ -4,8 +4,9 @@
  * This endpoint is called by Vercel Cron to run all detectors and generate insights.
  * It runs every 15 minutes to:
  * 1. Run all detectors for active users
- * 2. Prioritize detection results
- * 3. Store insights for surfacing
+ * 2. Run correlation engine to connect related signals
+ * 3. Prioritize and store insights
+ * 4. Generate business health summary with LLM narrative
  *
  * Vercel Cron config: see vercel.json for schedule configuration
  *
@@ -18,8 +19,55 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { DetectorEngine } from '@/lib/business-os/insight/detectors';
 import { InsightPrioritizer } from '@/lib/business-os/insight/prioritizer';
 import { InsightRepository } from '@/lib/business-os/insight/repository';
+import { getCorrelationEngine } from '@/lib/business-os/insight/correlation';
 
 const logger = createLogger({ module: 'InsightDetectCron' });
+
+// Language to currency mapping
+const LANGUAGE_CURRENCY_MAP: Record<string, string> = {
+  en: 'USD',
+  es: 'EUR',
+  he: 'ILS',
+};
+
+// Helper to get user's language and currency preference
+async function getUserLocale(userId: string): Promise<{ language: 'en' | 'es' | 'he'; currency: 'USD' | 'EUR' | 'ILS' }> {
+  try {
+    // Try user_preferences first
+    const { data: prefs } = await supabaseServer
+      .from('user_preferences')
+      .select('preferred_language')
+      .eq('user_id', userId)
+      .single();
+
+    if (prefs?.preferred_language) {
+      const lang = prefs.preferred_language as 'en' | 'es' | 'he';
+      return {
+        language: lang,
+        currency: (LANGUAGE_CURRENCY_MAP[lang] || 'USD') as 'USD' | 'EUR' | 'ILS',
+      };
+    }
+
+    // Fallback to business_profiles
+    const { data: profile } = await supabaseServer
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', userId)
+      .single();
+
+    if (profile?.language) {
+      const lang = profile.language as 'en' | 'es' | 'he';
+      return {
+        language: lang,
+        currency: (LANGUAGE_CURRENCY_MAP[lang] || 'USD') as 'USD' | 'EUR' | 'ILS',
+      };
+    }
+  } catch {
+    // Ignore errors, return default
+  }
+
+  return { language: 'en', currency: 'USD' };
+}
 
 // Verify cron secret to ensure only Vercel can call this
 function verifyCronSecret(request: NextRequest): boolean {
@@ -45,6 +93,9 @@ interface DetectionStats {
   detectorsRun: number;
   detectionsFound: number;
   insightsCreated: number;
+  correlatedInsightsCreated: number;
+  healthSummariesCreated: number;
+  patternsMatched: number;
   errors: number;
 }
 
@@ -72,6 +123,9 @@ export async function GET(request: NextRequest) {
       detectorsRun: 0,
       detectionsFound: 0,
       insightsCreated: 0,
+      correlatedInsightsCreated: 0,
+      healthSummariesCreated: 0,
+      patternsMatched: 0,
       errors: 0,
     };
 
@@ -79,6 +133,7 @@ export async function GET(request: NextRequest) {
     const detectorEngine = new DetectorEngine(supabaseServer);
     const prioritizer = new InsightPrioritizer(supabaseServer);
     const repository = new InsightRepository(supabaseServer);
+    const correlationEngine = getCorrelationEngine();
 
     // Get all active users from multiple business tables
     // We check: payment_invoices, scheduling_bookings, crm_contacts
@@ -123,6 +178,9 @@ export async function GET(request: NextRequest) {
     // Process each user
     for (const userId of userIds) {
       try {
+        // Get user's locale preferences for localized content
+        const userLocale = await getUserLocale(userId);
+
         // Run all detectors
         const detections = await detectorEngine.runForUser(userId);
         stats.detectorsRun += detectorEngine.getDetectors().length;
@@ -130,14 +188,60 @@ export async function GET(request: NextRequest) {
         if (detections.length > 0) {
           stats.detectionsFound += detections.length;
 
-          // Prioritize detections
-          const prioritized = await prioritizer.getTopInsights(userId, detections, 5);
+          // Set locale for this user before correlating
+          correlationEngine.setLocale(userLocale);
 
-          // Store as insights
+          // Run correlation engine to find connected patterns
+          const correlationSummary = correlationEngine.correlate(detections);
+          stats.patternsMatched += correlationSummary.patternsMatched;
+
+          // Map to track detector -> insight ID for linking
+          const detectorToInsightId = new Map<string, string>();
+
+          // Prioritize ALL detections (both correlated and standalone)
+          const prioritized = await prioritizer.getTopInsights(userId, detections, 10);
+
+          // Store individual insights first
           const result = await repository.createBatch(userId, prioritized, runId);
 
           if (result.data) {
             stats.insightsCreated += result.data.length;
+
+            // Build detector -> insight ID mapping
+            for (const insight of result.data) {
+              detectorToInsightId.set(insight.detector_id, insight.id);
+            }
+          }
+
+          // If we have correlated insights, save them with health summary
+          if (correlationSummary.correlatedInsights.length > 0) {
+            const correlationResult = await repository.saveCorrelationResults(
+              userId,
+              correlationSummary,
+              detectorToInsightId,
+              runId
+            );
+
+            if (correlationResult.data) {
+              stats.correlatedInsightsCreated += correlationResult.data.correlatedInsights.length;
+              if (correlationResult.data.healthSummary) {
+                stats.healthSummariesCreated++;
+              }
+            }
+          } else {
+            // No correlations but we might still want a health summary
+            const { data: allInsights } = await repository.findActive(userId, 50);
+            if (allInsights && allInsights.length > 0) {
+              const healthResult = await repository.createOrUpdateHealthSummary(
+                userId,
+                correlationSummary,
+                allInsights,
+                runId
+              );
+              if (healthResult.data) {
+                stats.healthSummariesCreated++;
+              }
+            }
           }
         }
 

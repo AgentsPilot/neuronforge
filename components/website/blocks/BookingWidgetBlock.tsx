@@ -29,7 +29,9 @@ const LABELS = {
     noServices: 'No services available',
     viewSchedule: 'View Schedule',
     minutes: 'min',
-    hours: 'hr'
+    hours: 'hr',
+    availabilityNotConfigured: 'Booking is coming soon',
+    availabilityNotConfiguredSubtitle: 'Our scheduling system is being set up. Please check back soon or contact us directly.'
   },
   es: {
     title: 'Reservar una Cita',
@@ -42,7 +44,9 @@ const LABELS = {
     noServices: 'No hay servicios disponibles',
     viewSchedule: 'Ver Calendario',
     minutes: 'min',
-    hours: 'hr'
+    hours: 'hr',
+    availabilityNotConfigured: 'Reservas próximamente',
+    availabilityNotConfiguredSubtitle: 'Nuestro sistema de programación está siendo configurado. Por favor vuelve pronto o contáctanos directamente.'
   },
   he: {
     title: 'קביעת תור',
@@ -55,7 +59,9 @@ const LABELS = {
     noServices: 'אין שירותים זמינים',
     viewSchedule: 'צפה בלוח זמנים',
     minutes: 'דק׳',
-    hours: 'שע׳'
+    hours: 'שע׳',
+    availabilityNotConfigured: 'הזמנות בקרוב',
+    availabilityNotConfiguredSubtitle: 'מערכת התזמון שלנו נמצאת בהקמה. אנא בדקו שוב בקרוב או צרו איתנו קשר ישירות.'
   }
 };
 
@@ -66,7 +72,7 @@ interface ServiceOption {
   price?: string;
 }
 
-export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, className }: BlockRendererProps) {
+export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, className, subdomain, clientFlow }: BlockRendererProps) {
   const {
     title,
     subtitle,
@@ -85,7 +91,8 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [availableSlots, setAvailableSlots] = useState<string[]>([]);
   const [selectedTime, setSelectedTime] = useState<string>('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [availabilityConfigured, setAvailabilityConfigured] = useState<boolean | null>(null);
 
   // Generate next 7 days
   const nextDays = Array.from({ length: 7 }, (_, i) => {
@@ -94,30 +101,76 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
     return date;
   });
 
-  // Mock available time slots (in real implementation, fetch from API)
-  const mockTimeSlots = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00'];
-
+  // Fetch availability data from API
   useEffect(() => {
-    // In real implementation, fetch services from API
-    if (services.length > 0) {
-      setServiceOptions(services.map((s, i) => ({
-        id: `service-${i}`,
-        name: s,
-        duration: 60
-      })));
+    if (!subdomain) {
+      setLoading(false);
+      return;
     }
-  }, [services]);
 
-  useEffect(() => {
-    if (selectedDate) {
-      setLoading(true);
-      // Simulate API call
-      setTimeout(() => {
-        setAvailableSlots(mockTimeSlots);
+    const fetchAvailability = async () => {
+      try {
+        const response = await fetch(`/api/website/booking/availability?subdomain=${subdomain}`);
+        const data = await response.json();
+
+        if (data.success) {
+          setAvailabilityConfigured(data.availabilityConfigured);
+
+          if (data.services && data.services.length > 0) {
+            setServiceOptions(data.services.map((s: { id: string; name: string; duration_minutes: number; price?: number; currency?: string }) => ({
+              id: s.id,
+              name: s.name,
+              duration: s.duration_minutes,
+              price: s.price ? `${s.currency || 'USD'} ${s.price}` : undefined
+            })));
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch availability:', error);
+        setAvailabilityConfigured(false);
+      } finally {
         setLoading(false);
-      }, 500);
+      }
+    };
+
+    fetchAvailability();
+  }, [subdomain]);
+
+  // Fetch slots when service and date are selected
+  useEffect(() => {
+    if (!selectedDate || !selectedService || !subdomain || !availabilityConfigured) {
+      return;
     }
-  }, [selectedDate]);
+
+    const fetchSlots = async () => {
+      setLoading(true);
+      try {
+        const dateStr = selectedDate.toISOString().split('T')[0];
+        const response = await fetch(
+          `/api/website/booking/availability?subdomain=${subdomain}&service_id=${selectedService}&date=${dateStr}`
+        );
+        const data = await response.json();
+
+        if (data.success && data.slots) {
+          // Extract just the time from the ISO date strings
+          const times = data.slots.map((slot: { start: string }) => {
+            const date = new Date(slot.start);
+            return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', hour12: false });
+          });
+          setAvailableSlots(times);
+        } else {
+          setAvailableSlots([]);
+        }
+      } catch (error) {
+        console.error('Failed to fetch slots:', error);
+        setAvailableSlots([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSlots();
+  }, [selectedDate, selectedService, subdomain, availabilityConfigured, locale]);
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString(locale, {
@@ -128,8 +181,21 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
   };
 
   const handleBook = () => {
-    // In real implementation, redirect to booking page or open modal
-    window.location.href = `/book?service=${selectedService}&date=${selectedDate?.toISOString()}&time=${selectedTime}`;
+    // Build booking URL with service and flow parameters
+    const params = new URLSearchParams();
+    if (selectedService) params.set('service', selectedService);
+    if (selectedDate) params.set('date', selectedDate.toISOString());
+    if (selectedTime) params.set('time', selectedTime);
+
+    // Pass client flow if configured (excluding confirmation)
+    if (clientFlow && clientFlow.length > 0) {
+      const flowSteps = clientFlow.filter(s => s !== 'confirmation');
+      if (flowSteps.length > 0) {
+        params.set('flow', flowSteps.join(','));
+      }
+    }
+
+    window.location.href = `/book?${params.toString()}`;
   };
 
   // Button-only mode
@@ -155,6 +221,64 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
             {text || labels.book}
             <ArrowRight className="w-5 h-5" />
           </motion.a>
+        </div>
+      </section>
+    );
+  }
+
+  // Show loading state
+  if (loading && availabilityConfigured === null) {
+    return (
+      <section
+        dir={isRTL ? 'rtl' : 'ltr'}
+        id="booking"
+        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+      >
+        <div className="max-w-4xl mx-auto px-4 sm:px-6">
+          <div className="text-center">
+            <Loader2 className="w-8 h-8 animate-spin mx-auto text-gray-400" />
+            <p className="mt-4 text-gray-500">{labels.loading}</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // Show message when availability is not configured
+  if (availabilityConfigured === false) {
+    return (
+      <section
+        dir={isRTL ? 'rtl' : 'ltr'}
+        id="booking"
+        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+      >
+        <div className="max-w-4xl mx-auto px-4 sm:px-6">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg p-8 sm:p-12 text-center"
+            style={{ borderRadius: theme?.borderRadius || '1rem' }}
+          >
+            <div
+              className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"
+              style={{ backgroundColor: `${primaryColor}15` }}
+            >
+              <Clock className="w-8 h-8" style={{ color: primaryColor }} />
+            </div>
+            <h3
+              className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-4"
+              style={{ fontFamily: 'var(--website-font-heading)' }}
+            >
+              {labels.availabilityNotConfigured}
+            </h3>
+            <p
+              className="text-gray-600 dark:text-gray-300 max-w-md mx-auto"
+              style={{ fontFamily: 'var(--website-font-body)' }}
+            >
+              {labels.availabilityNotConfiguredSubtitle}
+            </p>
+          </motion.div>
         </div>
       </section>
     );

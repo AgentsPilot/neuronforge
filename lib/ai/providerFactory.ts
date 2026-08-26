@@ -229,3 +229,61 @@ export class ProviderFactory {
     };
   }
 }
+
+/**
+ * Provider wrapper with simplified complete() method
+ * Used by services for easy LLM chat completions
+ */
+export interface SimpleProvider {
+  complete(params: {
+    model: string;
+    messages: Array<{ role: string; content: string }>;
+    response_format?: { type: string };
+    temperature?: number;
+  }): Promise<{ content: string }>;
+  getProvider(name: ProviderName): BaseAIProvider;
+}
+
+/**
+ * Get a wrapper around the provider factory with a simplified complete() method
+ */
+export function getProviderFactory(): SimpleProvider {
+  return {
+    getProvider(name: ProviderName): BaseAIProvider {
+      return ProviderFactory.getProvider(name);
+    },
+    async complete(params: {
+      model: string;
+      messages: Array<{ role: string; content: string }>;
+      response_format?: { type: string };
+      temperature?: number;
+    }): Promise<{ content: string }> {
+      const provider = ProviderFactory.getProvider('openai') as any;
+
+      // Build chat completion params
+      const chatParams: any = {
+        model: params.model,
+        messages: params.messages,
+      };
+
+      if (params.response_format) {
+        chatParams.response_format = params.response_format;
+      }
+
+      if (params.temperature !== undefined) {
+        chatParams.temperature = params.temperature;
+      }
+
+      // Call chatCompletion with a minimal context (no tracking for simple calls)
+      const result = await provider.chatCompletion(chatParams, {
+        userId: 'system',
+        feature: 'onboarding',
+        component: 'simple-complete'
+      });
+
+      // Extract content from OpenAI response format
+      const content = result.choices?.[0]?.message?.content || '';
+      return { content };
+    }
+  };
+}

@@ -38,19 +38,25 @@ const FILTER_CATEGORIES = [
   { value: 'call', labelKey: 'crm.activity.filter.calls', icon: Phone, types: ['call'] },
   { value: 'email', labelKey: 'crm.activity.filter.emails', icon: Mail, types: ['email', 'email_sent'] },
   { value: 'meeting', labelKey: 'crm.activity.filter.meetings', icon: Users, types: ['meeting'] },
-  { value: 'booking', labelKey: 'crm.activity.filter.bookings', icon: Calendar, types: ['booking', 'booking_created', 'booking_completed', 'booking_cancelled', 'booking_confirmed'] },
-  { value: 'payment', labelKey: 'crm.activity.filter.payments', icon: CreditCard, types: ['payment', 'payment_received', 'payment_failed'] },
-  { value: 'task', labelKey: 'crm.activity.filter.tasks', icon: FileText, types: ['task', 'task_created', 'task_completed'] }
+  { value: 'booking', labelKey: 'crm.activity.filter.bookings', icon: Calendar, types: ['booking', 'booking_created', 'booking_completed', 'booking_cancelled', 'booking_confirmed', 'booking_confirmation_sent'] },
+  { value: 'payment', labelKey: 'crm.activity.filter.payments', icon: CreditCard, types: ['payment', 'payment_received', 'payment_failed', 'invoice_sent'] },
+  { value: 'task', labelKey: 'crm.activity.filter.tasks', icon: FileText, types: ['task', 'task_created', 'task_completed'] },
+  { value: 'forms', labelKey: 'crm.activity.filter.forms', icon: FileText, types: ['intake_form_sent', 'intake_form_completed'] }
 ];
 
 const ACTIVITY_ICONS: Record<string, typeof Activity> = {
   note: MessageSquare,
   call: Phone,
   email: Mail,
+  email_sent: Mail,
   meeting: Users,
   booking_created: Calendar,
   booking_completed: Calendar,
   booking_cancelled: Calendar,
+  booking_confirmation_sent: Mail,
+  intake_form_sent: FileText,
+  intake_form_completed: FileText,
+  invoice_sent: CreditCard,
   payment_received: CreditCard,
   payment_failed: CreditCard,
   document_uploaded: FileText,
@@ -63,10 +69,15 @@ const ACTIVITY_COLORS: Record<string, { bg: string; border: string; text: string
   note: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-500' },
   call: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
   email: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-500' },
+  email_sent: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-500' },
   meeting: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
   booking_created: { bg: 'bg-teal-500/10', border: 'border-teal-500/30', text: 'text-teal-500' },
   booking_completed: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
   booking_cancelled: { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-500' },
+  booking_confirmation_sent: { bg: 'bg-teal-500/10', border: 'border-teal-500/30', text: 'text-teal-500' },
+  intake_form_sent: { bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', text: 'text-indigo-500' },
+  intake_form_completed: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
+  invoice_sent: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
   payment_received: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
   payment_failed: { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-500' },
   document_uploaded: { bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', text: 'text-indigo-500' },
@@ -142,6 +153,9 @@ export function ActivitySection({
   const SYSTEM_ACTIVITY_TYPES = [
     'booking', 'payment', 'email', 'task',
     'booking_created', 'booking_completed', 'booking_cancelled', 'booking_confirmed',
+    'booking_confirmation_sent',
+    'intake_form_sent', 'intake_form_completed',
+    'invoice_sent',
     'payment_received', 'payment_failed',
     'document_uploaded',
     'contact_created', 'contact_updated',
@@ -372,8 +386,8 @@ export function ActivitySection({
     // Pattern: "Booking: SERVICE_NAME"
     const bookingMatch = title.match(/^Booking: (.+)$/);
     if (bookingMatch) {
-      const bookingTranslated = t('crm.activity.type.booking');
-      if (bookingTranslated !== 'crm.activity.type.booking') {
+      const bookingTranslated = t('crm.activity.title.booking');
+      if (bookingTranslated !== 'crm.activity.title.booking') {
         return `${bookingTranslated}: ${bookingMatch[1]}`;
       }
     }
@@ -381,8 +395,8 @@ export function ActivitySection({
     // Pattern: "Booking Confirmed: SERVICE_NAME"
     const bookingConfirmedMatch = title.match(/^Booking Confirmed: (.+)$/);
     if (bookingConfirmedMatch) {
-      const bookingConfirmedTranslated = t('crm.activity.type.booking_confirmed');
-      if (bookingConfirmedTranslated !== 'crm.activity.type.booking_confirmed') {
+      const bookingConfirmedTranslated = t('crm.activity.title.booking_confirmed');
+      if (bookingConfirmedTranslated !== 'crm.activity.title.booking_confirmed') {
         return `${bookingConfirmedTranslated}: ${bookingConfirmedMatch[1]}`;
       }
     }
@@ -390,8 +404,8 @@ export function ActivitySection({
     // Pattern: "Payment Received: $AMOUNT"
     const paymentMatch = title.match(/^Payment Received: \$(.+)$/);
     if (paymentMatch) {
-      const paymentTranslated = t('crm.activity.type.payment_received');
-      if (paymentTranslated !== 'crm.activity.type.payment_received') {
+      const paymentTranslated = t('crm.activity.title.payment_received');
+      if (paymentTranslated !== 'crm.activity.title.payment_received') {
         return `${paymentTranslated}: $${paymentMatch[1]}`;
       }
     }
@@ -399,8 +413,8 @@ export function ActivitySection({
     // Pattern: "Email Sent: SUBJECT"
     const emailMatch = title.match(/^Email Sent: (.+)$/);
     if (emailMatch) {
-      const emailTranslated = t('crm.activity.type.email_sent');
-      if (emailTranslated !== 'crm.activity.type.email_sent') {
+      const emailTranslated = t('crm.activity.title.email_sent');
+      if (emailTranslated !== 'crm.activity.title.email_sent') {
         return `${emailTranslated}: ${emailMatch[1]}`;
       }
     }

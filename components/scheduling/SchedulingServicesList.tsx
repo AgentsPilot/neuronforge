@@ -1077,8 +1077,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           background-color: rgba(20, 184, 166, 0.08) !important;
         }
       `}</style>
-      {/* Services Table */}
-      {services.length > 0 && (
+      {/* Services Table - also show when adding new row to display the inline form */}
+      {(services.length > 0 || isAddingNewRow) && (
         <div
           className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden"
           style={{ borderRadius: 'var(--v2-radius-card)' }}

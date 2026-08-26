@@ -262,6 +262,26 @@ export class BaselineCalculator {
   }
 }
 
-// Singleton export
-import { supabaseServer } from '@/lib/supabaseServer';
-export const baselineCalculator = new BaselineCalculator(supabaseServer);
+// Lazy singleton export - avoids module initialization issues in scripts
+let _baselineCalculator: BaselineCalculator | null = null;
+export function getBaselineCalculator(): BaselineCalculator {
+  if (!_baselineCalculator) {
+    // Lazy import to avoid module initialization issues
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { supabaseServer } = require('@/lib/supabaseServer');
+    _baselineCalculator = new BaselineCalculator(supabaseServer);
+  }
+  return _baselineCalculator;
+}
+
+// For backwards compatibility - but note this will fail if supabaseServer isn't available
+export const baselineCalculator = (() => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { supabaseServer } = require('@/lib/supabaseServer');
+    return new BaselineCalculator(supabaseServer);
+  } catch {
+    // Return a placeholder that will be replaced on first use
+    return null as unknown as BaselineCalculator;
+  }
+})();

@@ -38,6 +38,7 @@ import { GalleryBlock } from './GalleryBlock';
 import { NewsletterBlock } from './NewsletterBlock';
 import { LogoCloudBlock } from './LogoCloudBlock';
 import { VideoBlock } from './VideoBlock';
+import { FooterBlock } from './FooterBlock';
 import { ProcessFlowSection } from './ProcessFlowSection';
 import { BookingModal } from './BookingModal';
 
@@ -63,7 +64,8 @@ export {
   GalleryBlock,
   NewsletterBlock,
   LogoCloudBlock,
-  VideoBlock
+  VideoBlock,
+  FooterBlock
 };
 
 // Export types
@@ -106,7 +108,8 @@ const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<{
   gallery: GalleryBlock,
   newsletter: NewsletterBlock,
   logo_cloud: LogoCloudBlock,
-  video: VideoBlock
+  video: VideoBlock,
+  footer: FooterBlock
 };
 
 // Block display names (for UI)
@@ -131,7 +134,8 @@ export const BLOCK_DISPLAY_NAMES: Record<BlockType, { en: string; es: string; he
   gallery: { en: 'Gallery', es: 'Galería', he: 'גלריה' },
   newsletter: { en: 'Newsletter', es: 'Boletín', he: 'ניוזלטר' },
   logo_cloud: { en: 'Logo Cloud', es: 'Logos', he: 'לוגואים' },
-  video: { en: 'Video', es: 'Video', he: 'וידאו' }
+  video: { en: 'Video', es: 'Video', he: 'וידאו' },
+  footer: { en: 'Footer', es: 'Pie de Página', he: 'כותרת תחתונה' }
 };
 
 // Block icons (for UI)
@@ -156,7 +160,8 @@ export const BLOCK_ICONS: Record<BlockType, string> = {
   gallery: '🖼️',
   newsletter: '📰',
   logo_cloud: '🏢',
-  video: '🎬'
+  video: '🎬',
+  footer: '📍'
 };
 
 /**
@@ -342,7 +347,8 @@ export function WebsiteBlocks({
       features: 'features',
       gallery: 'gallery',
       cta: 'cta',
-      stats: 'stats'
+      stats: 'stats',
+      footer: 'footer'
     };
     return anchorMap[blockType] || blockType.replace('_', '-');
   };

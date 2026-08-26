@@ -68,6 +68,10 @@ export const COMMON_GUARDRAILS: Record<string, Guardrail> = {
     type: 'rate_limit',
     config: { entity: 'contact', max: 1, period_hours: 48 },
   },
+  max_1_per_contact_per_7d: {
+    type: 'rate_limit',
+    config: { entity: 'contact', max: 1, period_days: 7 },
+  },
 };
 
 // ===========================

@@ -1,0 +1,2164 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Business Insights Dashboard - WOW Mockup</title>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0D0F14;
+      --bg-secondary: #13161D;
+      --bg-card: #1A1D26;
+      --bg-elevated: #22262F;
+      --border: rgba(255,255,255,0.08);
+      --border-hover: rgba(255,255,255,0.15);
+      --text-primary: #F8FAFC;
+      --text-secondary: rgba(248,250,252,0.72);
+      --text-muted: rgba(248,250,252,0.45);
+      --accent-orange: #F97316;
+      --accent-green: #22C55E;
+      --accent-red: #EF4444;
+      --accent-blue: #3B82F6;
+      --accent-purple: #8B5CF6;
+      --accent-amber: #F59E0B;
+      --accent-cyan: #06B6D4;
+      --accent-pink: #EC4899;
+      --glow-orange: rgba(249,115,22,0.35);
+      --glow-green: rgba(34,197,94,0.35);
+      --glow-red: rgba(239,68,68,0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Heebo', system-ui, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 32px;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* Header with Greeting */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 32px;
+    }
+
+    .greeting {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .avatar {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent-orange) 0%, var(--accent-pink) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 20px;
+      box-shadow: 0 8px 32px var(--glow-orange);
+    }
+
+    .greeting-text h1 {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 4px;
+    }
+
+    .greeting-text p {
+      color: var(--text-secondary);
+      font-size: 15px;
+    }
+
+    .date-badge {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 20px;
+      text-align: left;
+    }
+
+    .date-badge .day {
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 2px;
+    }
+
+    .date-badge .date {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* ========================================
+       AI Summary Hero Section
+       ======================================== */
+    .ai-summary-hero {
+      background: linear-gradient(135deg, var(--bg-card) 0%, rgba(26,29,38,0.95) 100%);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      padding: 32px 36px;
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+      animation: fadeInUp 0.6s ease-out;
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .ai-summary-hero::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 100%;
+      height: 100%;
+      background:
+        radial-gradient(ellipse at top right, rgba(139,92,246,0.12), transparent 50%),
+        radial-gradient(ellipse at bottom left, rgba(59,130,246,0.08), transparent 50%);
+      pointer-events: none;
+    }
+
+    .ai-summary-hero::after {
+      content: '';
+      position: absolute;
+      top: -2px;
+      right: -2px;
+      left: -2px;
+      height: 4px;
+      background: linear-gradient(90deg, var(--accent-purple), var(--accent-blue), var(--accent-cyan));
+      border-radius: 28px 28px 0 0;
+    }
+
+    .ai-summary-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .ai-avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-blue) 50%, var(--accent-cyan) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 32px rgba(139,92,246,0.3);
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .ai-avatar::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, var(--accent-purple), var(--accent-blue), var(--accent-cyan));
+      z-index: -1;
+      opacity: 0.5;
+      filter: blur(8px);
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.5; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(1.05); }
+    }
+
+    .ai-avatar svg {
+      width: 28px;
+      height: 28px;
+      color: white;
+    }
+
+    .ai-summary-label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .ai-summary-label .title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .ai-badge {
+      background: linear-gradient(135deg, rgba(139,92,246,0.2), rgba(59,130,246,0.2));
+      border: 1px solid rgba(139,92,246,0.3);
+      color: var(--accent-purple);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .ai-summary-label .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .ai-summary-content {
+      position: relative;
+      z-index: 1;
+      font-size: 17px;
+      line-height: 1.85;
+      color: var(--text-secondary);
+      padding-right: 66px;
+    }
+
+    .ai-summary-content p {
+      margin-bottom: 0;
+    }
+
+    .ai-summary-content strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .ai-summary-content .highlight-critical {
+      color: var(--accent-red);
+      font-weight: 600;
+    }
+
+    .ai-summary-content .highlight-positive {
+      color: var(--accent-green);
+      font-weight: 600;
+    }
+
+    .ai-summary-content .highlight-warning {
+      color: var(--accent-amber);
+      font-weight: 600;
+    }
+
+    .ai-summary-content .highlight-amount {
+      color: var(--accent-orange);
+      font-weight: 700;
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+    }
+
+    .ai-summary-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      position: relative;
+      z-index: 1;
+    }
+
+    .ai-stat {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 18px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      transition: all 0.2s;
+    }
+
+    .ai-stat:hover {
+      border-color: var(--border-hover);
+      transform: translateY(-2px);
+    }
+
+    .ai-stat-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .ai-stat-icon.critical {
+      background: rgba(239,68,68,0.15);
+    }
+
+    .ai-stat-icon.warning {
+      background: rgba(245,158,11,0.15);
+    }
+
+    .ai-stat-icon.info {
+      background: rgba(59,130,246,0.15);
+    }
+
+    .ai-stat-icon.category {
+      background: rgba(139,92,246,0.15);
+    }
+
+    .ai-stat-icon.risk {
+      background: rgba(249,115,22,0.15);
+    }
+
+    .ai-stat-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .ai-stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+    }
+
+    .ai-stat-value.critical { color: var(--accent-red); }
+    .ai-stat-value.warning { color: var(--accent-amber); }
+    .ai-stat-value.info { color: var(--accent-blue); }
+    .ai-stat-value.category { color: var(--accent-purple); }
+    .ai-stat-value.risk { color: var(--accent-orange); }
+
+    .ai-stat-label {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Main Grid Layout */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 24px;
+    }
+
+    /* Left Sidebar */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Health Score Ring Card */
+    .health-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .health-card::before {
+      content: '';
+      position: absolute;
+      top: -60%;
+      left: -30%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at 30% 30%, rgba(34,197,94,0.08), transparent 50%);
+      pointer-events: none;
+    }
+
+    .health-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .health-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .health-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: rgba(34,197,94,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .health-title span {
+      font-weight: 600;
+      font-size: 16px;
+    }
+
+    .health-trend {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-green);
+      background: rgba(34,197,94,0.12);
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    /* Score Ring */
+    .score-ring-container {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 24px;
+      position: relative;
+    }
+
+    .score-ring {
+      position: relative;
+      width: 160px;
+      height: 160px;
+    }
+
+    .score-ring svg {
+      transform: rotate(-90deg);
+      width: 160px;
+      height: 160px;
+    }
+
+    .score-ring circle {
+      fill: none;
+      stroke-width: 12;
+    }
+
+    .score-ring .bg {
+      stroke: var(--bg-elevated);
+    }
+
+    .score-ring .progress {
+      stroke: url(#scoreGradient);
+      stroke-linecap: round;
+      stroke-dasharray: 408;
+      stroke-dashoffset: 82; /* 100 - 80 = 20% empty, 408 * 0.2 = 81.6 */
+      transition: stroke-dashoffset 1s ease-out;
+    }
+
+    .score-value {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+
+    .score-number {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 48px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #22C55E, #10B981);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      line-height: 1;
+    }
+
+    .score-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* Category Scores Grid */
+    .category-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .category-item {
+      background: var(--bg-elevated);
+      border-radius: 12px;
+      padding: 12px 8px;
+      text-align: center;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .category-item:hover {
+      background: rgba(255,255,255,0.08);
+      transform: translateY(-2px);
+    }
+
+    .category-item .icon {
+      width: 28px;
+      height: 28px;
+      margin: 0 auto 6px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .category-item .score {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .category-item .name {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* Quick Actions Card */
+    .actions-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 20px;
+    }
+
+    .actions-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .actions-header h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .action-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 16px;
+      background: var(--bg-elevated);
+      border-radius: 14px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .action-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .action-item:hover {
+      border-color: var(--border-hover);
+      transform: translateX(-4px);
+    }
+
+    .action-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .action-content {
+      flex: 1;
+    }
+
+    .action-title {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 2px;
+    }
+
+    .action-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .action-arrow {
+      color: var(--text-muted);
+      font-size: 18px;
+      transition: transform 0.2s ease;
+    }
+
+    .action-item:hover .action-arrow {
+      transform: translateX(-4px);
+    }
+
+    /* Right Content Area */
+    .content-area {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Critical Alert Card */
+    .critical-alert {
+      background: linear-gradient(135deg, rgba(239,68,68,0.12) 0%, var(--bg-card) 60%);
+      border: 2px solid rgba(239,68,68,0.3);
+      border-radius: 24px;
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .critical-alert::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent-red), var(--accent-orange));
+    }
+
+    .critical-alert::after {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -20%;
+      width: 400px;
+      height: 400px;
+      background: radial-gradient(circle, var(--glow-red), transparent 60%);
+      pointer-events: none;
+      opacity: 0.5;
+    }
+
+    .alert-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .alert-badge {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .alert-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: rgba(239,68,68,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      box-shadow: 0 8px 24px var(--glow-red);
+    }
+
+    .alert-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .alert-type {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .severity-badge {
+      background: rgba(239,68,68,0.2);
+      color: var(--accent-red);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .pattern-name {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .close-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--bg-elevated);
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      transition: all 0.2s;
+    }
+
+    .close-btn:hover {
+      background: var(--bg-card);
+      color: var(--text-primary);
+    }
+
+    .alert-story {
+      font-size: 20px;
+      font-weight: 500;
+      line-height: 1.5;
+      margin-bottom: 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .alert-story strong {
+      color: var(--accent-red);
+    }
+
+    /* Contributing Signals */
+    .signals-container {
+      position: relative;
+      z-index: 1;
+    }
+
+    .signals-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      margin-bottom: 16px;
+      padding: 8px 0;
+    }
+
+    .signals-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .signal-card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      position: relative;
+    }
+
+    .signal-severity {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .signal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      padding-right: 16px;
+    }
+
+    .signal-detector {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .signal-badge {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .signal-summary {
+      font-size: 14px;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+
+    .signal-impact {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .signal-impact strong {
+      color: var(--accent-orange);
+    }
+
+    /* Impact Banner */
+    .impact-banner {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: rgba(239,68,68,0.1);
+      border-radius: 14px;
+      padding: 16px 20px;
+      margin-top: 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .impact-icon {
+      font-size: 24px;
+    }
+
+    .impact-text {
+      flex: 1;
+    }
+
+    .impact-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 2px;
+    }
+
+    .impact-value {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent-red);
+    }
+
+    /* Action Buttons */
+    .alert-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .btn-primary {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 16px 28px;
+      background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
+      border: none;
+      border-radius: 14px;
+      color: white;
+      font-family: 'Heebo', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: 0 12px 32px var(--glow-orange);
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 40px var(--glow-orange);
+    }
+
+    .btn-secondary {
+      padding: 16px 24px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--text-primary);
+      font-family: 'Heebo', sans-serif;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--border-hover);
+      background: rgba(255,255,255,0.05);
+    }
+
+    /* Individual Insights Stack */
+    .insights-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .insight-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .insight-card:hover {
+      border-color: var(--border-hover);
+      transform: translateX(-4px);
+    }
+
+    .insight-card::before {
+      content: '';
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      border-radius: 0 20px 20px 0;
+    }
+
+    .insight-card.cash-flow::before {
+      background: var(--accent-amber);
+    }
+
+    .insight-card.conversion::before {
+      background: var(--accent-purple);
+    }
+
+    .insight-card.retention::before {
+      background: var(--accent-cyan);
+    }
+
+    .insight-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .insight-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .insight-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    .insight-info h4 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .insight-category {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+
+    .insight-body {
+      margin-bottom: 16px;
+    }
+
+    .insight-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .insight-chips {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--bg-elevated);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .chip .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .insight-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .impact-mini {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .impact-mini strong {
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 600;
+    }
+
+    .btn-action {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 18px;
+      background: linear-gradient(135deg, var(--accent-orange) 0%, #EA580C 100%);
+      border: none;
+      border-radius: 10px;
+      color: white;
+      font-family: 'Heebo', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-action:hover {
+      transform: translateY(-1px);
+    }
+
+    /* Bottom Stats Row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+    }
+
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .stat-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    .stat-content h4 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .stat-content p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Animations */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .pulse {
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .animate-in {
+      animation: slideIn 0.5s ease-out forwards;
+    }
+
+    /* Live indicator */
+    .live-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent-green);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent-green);
+      border-radius: 50%;
+      position: relative;
+    }
+
+    .live-dot::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      background: var(--accent-green);
+      border-radius: 50%;
+      opacity: 0.3;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    /* ========================================
+       Bottom Grid: Operational + Advisor Cards
+       ======================================== */
+
+    .bottom-grid {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 20px;
+    }
+
+    /* Operational Status Card */
+    .operational-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 20px;
+    }
+
+    .op-header {
+      margin-bottom: 16px;
+    }
+
+    .op-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .op-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .op-title h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .op-progress-text {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .op-progress-bar {
+      height: 6px;
+      background: var(--bg-elevated);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .op-progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #F59E0B, #F97316);
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+
+    .op-setup-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .setup-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--bg-elevated);
+      border: 1px solid transparent;
+      border-radius: 10px;
+      font-family: 'Heebo', sans-serif;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .setup-pill:hover {
+      border-color: var(--border-hover);
+      transform: translateX(-2px);
+    }
+
+    .op-metrics {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: var(--bg-elevated);
+      border-radius: 14px;
+    }
+
+    .op-metric {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .metric-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .metric-data {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .metric-value {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 16px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .metric-label {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .metric-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border);
+    }
+
+    /* Insight Advisor Card */
+    .advisor-card {
+      background: var(--bg-card);
+      border-radius: 20px;
+      overflow: hidden;
+      position: relative;
+      border-right: 4px solid var(--accent-amber);
+    }
+
+    .advisor-card::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -20%;
+      width: 300px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(245,166,35,0.1), transparent 60%);
+      pointer-events: none;
+    }
+
+    .advisor-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px 8px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .advisor-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .advisor-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: rgba(249,115,22,0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .advisor-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    .category-tag {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+
+    .category-tag.cash-flow {
+      background: rgba(245,166,35,0.15);
+      color: var(--accent-amber);
+    }
+
+    .advisor-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-arrow {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: var(--bg-elevated);
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+
+    .nav-arrow:hover {
+      border-color: var(--border-hover);
+      color: var(--text-primary);
+    }
+
+    .nav-dots {
+      display: flex;
+      gap: 6px;
+      margin: 0 4px;
+    }
+
+    .nav-dots .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--bg-elevated);
+      transition: all 0.2s;
+    }
+
+    .nav-dots .dot.active {
+      width: 14px;
+      border-radius: 4px;
+      background: var(--accent-amber);
+    }
+
+    .close-btn-small {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      margin-right: 4px;
+    }
+
+    .close-btn-small:hover {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+    }
+
+    .advisor-content {
+      display: flex;
+      gap: 24px;
+      padding: 12px 20px 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .advisor-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .advisor-title {
+      font-family: 'Heebo', sans-serif;
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      line-height: 1.3;
+    }
+
+    .advisor-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+
+    .advisor-desc strong {
+      color: var(--accent-amber);
+    }
+
+    .advisor-chips {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .evidence-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .chip-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .ba-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      background: rgba(245,166,35,0.1);
+      border: none;
+      border-radius: 10px;
+      font-family: 'Heebo', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-amber);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .ba-toggle:hover {
+      background: rgba(245,166,35,0.18);
+    }
+
+    .advisor-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 180px;
+      flex-shrink: 0;
+    }
+
+    .btn-primary-advisor {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 14px 20px;
+      background: linear-gradient(135deg, #FFB454 0%, #F97316 55%, #EA580C 100%);
+      border: none;
+      border-radius: 12px;
+      font-family: 'Heebo', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 10px 24px rgba(249,115,22,0.4);
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary-advisor:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 28px rgba(249,115,22,0.5);
+    }
+
+    .btn-secondary-advisor {
+      padding: 12px 20px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-family: 'Heebo', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-secondary-advisor:hover {
+      border-color: var(--border-hover);
+      background: rgba(255,255,255,0.05);
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+
+      .bottom-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .sidebar {
+        grid-template-columns: 1fr;
+      }
+
+      .signals-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .advisor-content {
+        flex-direction: column;
+      }
+
+      .advisor-actions {
+        width: 100%;
+        flex-direction: row;
+      }
+
+      .advisor-actions button {
+        flex: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <div class="greeting">
+        <div class="avatar">ד</div>
+        <div class="greeting-text">
+          <h1>בוקר טוב, דני</h1>
+          <p>זיהינו כמה דברים שדורשים את תשומת לבך</p>
+        </div>
+      </div>
+      <div class="date-badge">
+        <div class="day">יום שלישי</div>
+        <div class="date">5 באוגוסט 2026</div>
+      </div>
+    </header>
+
+    <!-- AI Summary Hero Section -->
+    <section class="ai-summary-hero">
+      <div class="ai-summary-header">
+        <div class="ai-avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+          </svg>
+        </div>
+        <div class="ai-summary-label">
+          <div class="title">
+            סיכום AI
+            <span class="ai-badge">בזמן אמת</span>
+          </div>
+          <div class="subtitle">ניתוח מצב העסק שלך</div>
+        </div>
+      </div>
+
+      <div class="ai-summary-content">
+        <p>
+          <strong>זה הזמן לפעול!</strong> יש לך מספר <span class="highlight-critical">בעיות קריטיות</span> שדורשות תשומת לב מיידית, במיוחד בתחום ההכנסות.
+          יש לך סכום משמעותי של <span class="highlight-amount">₪14,951</span> בסיכון, עם הכנסות שעומדות להיפגע.
+          מצד שני, יש לך גם תחומים כמו <span class="highlight-positive">רכישת לקוחות</span> ו<span class="highlight-positive">שימור לקוחות</span> שמראים ביצועים טובים, אז זה לא הכל רע.
+          חשוב לנצל את החוזקות שלך כדי להילחם באתגרים הללו. נראה שהמצב לא משתפר, ואנחנו צריכים לפעול במהירות כדי לשפר את הציון הכללי שלך.
+          יש לך <span class="highlight-warning">12 בעיות</span>, מתוכן <span class="highlight-critical">6 קריטיות</span>, והתחום הכי חלש הוא <span class="highlight-critical">זרימת המזומנים</span>, שבו אתה לא מקבל ציון בכלל.
+          זה יכול להיות קריטי להמשך הפעילות שלך, אז בוא נתחיל לעבוד על זה יחד.
+        </p>
+      </div>
+
+      <!-- Quick Stats from AI Analysis -->
+      <div class="ai-summary-stats">
+        <div class="ai-stat">
+          <div class="ai-stat-icon critical">⚠️</div>
+          <div class="ai-stat-content">
+            <div class="ai-stat-value critical">6</div>
+            <div class="ai-stat-label">בעיות קריטיות</div>
+          </div>
+        </div>
+        <div class="ai-stat">
+          <div class="ai-stat-icon warning">📊</div>
+          <div class="ai-stat-content">
+            <div class="ai-stat-value warning">12</div>
+            <div class="ai-stat-label">סה״כ בעיות</div>
+          </div>
+        </div>
+        <div class="ai-stat">
+          <div class="ai-stat-icon risk">💰</div>
+          <div class="ai-stat-content">
+            <div class="ai-stat-value risk">₪14,951</div>
+            <div class="ai-stat-label">בסיכון</div>
+          </div>
+        </div>
+        <div class="ai-stat">
+          <div class="ai-stat-icon category">📉</div>
+          <div class="ai-stat-content">
+            <div class="ai-stat-value category">תזרים</div>
+            <div class="ai-stat-label">תחום חלש</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="main-grid">
+      <!-- Left Sidebar -->
+      <aside class="sidebar">
+        <!-- Health Score Card -->
+        <div class="health-card animate-in">
+          <div class="health-header">
+            <div class="health-title">
+              <div class="health-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2.5">
+                  <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+                </svg>
+              </div>
+              <span>בריאות העסק</span>
+            </div>
+            <div class="health-trend">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="m18 15-6-6-6 6"/>
+              </svg>
+              +5 נק׳
+            </div>
+          </div>
+
+          <!-- Score Ring -->
+          <div class="score-ring-container">
+            <div class="score-ring">
+              <svg viewBox="0 0 160 160">
+                <defs>
+                  <linearGradient id="scoreGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#22C55E"/>
+                    <stop offset="50%" stop-color="#10B981"/>
+                    <stop offset="100%" stop-color="#059669"/>
+                  </linearGradient>
+                </defs>
+                <circle class="bg" cx="80" cy="80" r="65"/>
+                <circle class="progress" cx="80" cy="80" r="65"/>
+              </svg>
+              <div class="score-value">
+                <div class="score-number">80</div>
+                <div class="score-label">מצוין</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Category Grid -->
+          <div class="category-grid">
+            <div class="category-item">
+              <div class="icon" style="background: rgba(249,115,22,0.15);">🎯</div>
+              <div class="score" style="color: #F59E0B;">72</div>
+              <div class="name">גיוס</div>
+            </div>
+            <div class="category-item">
+              <div class="icon" style="background: rgba(139,92,246,0.15);">🔄</div>
+              <div class="score" style="color: #22C55E;">85</div>
+              <div class="name">המרה</div>
+            </div>
+            <div class="category-item">
+              <div class="icon" style="background: rgba(59,130,246,0.15);">💼</div>
+              <div class="score" style="color: #22C55E;">88</div>
+              <div class="name">מכירות</div>
+            </div>
+            <div class="category-item">
+              <div class="icon" style="background: rgba(239,68,68,0.15);">💰</div>
+              <div class="score" style="color: #EF4444;">65</div>
+              <div class="name">תזרים</div>
+            </div>
+            <div class="category-item">
+              <div class="icon" style="background: rgba(6,182,212,0.15);">👥</div>
+              <div class="score" style="color: #F59E0B;">75</div>
+              <div class="name">שימור</div>
+            </div>
+            <div class="category-item">
+              <div class="icon" style="background: rgba(34,197,94,0.15);">⚙️</div>
+              <div class="score" style="color: #22C55E;">82</div>
+              <div class="name">תפעול</div>
+            </div>
+            <div class="category-item">
+              <div class="icon" style="background: rgba(236,72,153,0.15);">🏷️</div>
+              <div class="score" style="color: #22C55E;">90</div>
+              <div class="name">תמחור</div>
+            </div>
+            <div class="category-item">
+              <div class="icon" style="background: rgba(99,102,241,0.15);">🌐</div>
+              <div class="score" style="color: #F59E0B;">70</div>
+              <div class="name">אתר</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="actions-card animate-in" style="animation-delay: 0.1s;">
+          <div class="actions-header">
+            <h3>פעולות מהירות</h3>
+            <div class="live-indicator">
+              <span class="live-dot"></span>
+              חי
+            </div>
+          </div>
+
+          <div class="action-item">
+            <div class="action-icon" style="background: rgba(59,130,246,0.15);">📅</div>
+            <div class="action-content">
+              <div class="action-title">פגישות היום</div>
+              <div class="action-desc">3 פגישות מתוכננות</div>
+            </div>
+            <span class="action-arrow">←</span>
+          </div>
+
+          <div class="action-item">
+            <div class="action-icon" style="background: rgba(34,197,94,0.15);">👥</div>
+            <div class="action-content">
+              <div class="action-title">לקוחות פעילים</div>
+              <div class="action-desc">127 לקוחות</div>
+            </div>
+            <span class="action-arrow">←</span>
+          </div>
+
+          <div class="action-item">
+            <div class="action-icon" style="background: rgba(245,158,11,0.15);">💳</div>
+            <div class="action-content">
+              <div class="action-title">תשלומים ממתינים</div>
+              <div class="action-desc">₪4,250</div>
+            </div>
+            <span class="action-arrow">←</span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="content-area">
+        <!-- Critical Correlated Alert -->
+        <div class="critical-alert animate-in" style="animation-delay: 0.15s;">
+          <div class="alert-header">
+            <div class="alert-badge">
+              <div class="alert-icon">💰</div>
+              <div class="alert-meta">
+                <div class="alert-type">
+                  <span class="severity-badge">קריטי</span>
+                  <span class="pattern-name">הכנסות בסיכון</span>
+                </div>
+              </div>
+            </div>
+            <button class="close-btn">✕</button>
+          </div>
+
+          <div class="alert-story">
+            ההכנסות שלך בסיכון ממספר כיוונים: <strong>₪8,500 בחשבוניות באיחור</strong>,
+            3 תשלומים שנכשלו (₪1,200), ו-5 ביטולים השבוע.
+            סה״כ חשיפה: <strong>₪10,850</strong>.
+          </div>
+
+          <!-- Contributing Signals -->
+          <div class="signals-container">
+            <div class="signals-toggle">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m6 9 6 6 6-6"/>
+              </svg>
+              מה הוביל לזה (3 סימנים)
+            </div>
+
+            <div class="signals-grid">
+              <div class="signal-card">
+                <div class="signal-severity" style="background: #EF4444;"></div>
+                <div class="signal-header">
+                  <span class="signal-detector">חשבוניות באיחור</span>
+                  <span class="signal-badge" style="background: rgba(239,68,68,0.2); color: #EF4444;">קריטי</span>
+                </div>
+                <div class="signal-summary">5 חשבוניות באיחור של יותר מ-30 יום</div>
+                <div class="signal-impact"><strong>₪8,500</strong> בסיכון</div>
+              </div>
+
+              <div class="signal-card">
+                <div class="signal-severity" style="background: #F59E0B;"></div>
+                <div class="signal-header">
+                  <span class="signal-detector">תשלומים נכשלים</span>
+                  <span class="signal-badge" style="background: rgba(245,158,11,0.2); color: #F59E0B;">גבוה</span>
+                </div>
+                <div class="signal-summary">3 תשלומים נכשלו בשבוע האחרון</div>
+                <div class="signal-impact"><strong>₪1,200</strong> בסיכון</div>
+              </div>
+
+              <div class="signal-card">
+                <div class="signal-severity" style="background: #F59E0B;"></div>
+                <div class="signal-header">
+                  <span class="signal-detector">ביטולים</span>
+                  <span class="signal-badge" style="background: rgba(245,158,11,0.2); color: #F59E0B;">גבוה</span>
+                </div>
+                <div class="signal-summary">עלייה של 60% בביטולים השבוע</div>
+                <div class="signal-impact"><strong>₪1,150</strong> בסיכון</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Impact Banner -->
+          <div class="impact-banner">
+            <span class="impact-icon">⚠️</span>
+            <div class="impact-text">
+              <div class="impact-label">סה״כ חשיפה</div>
+              <div class="impact-value">₪10,850</div>
+            </div>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="alert-actions">
+            <button class="btn-primary">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3v12M3 12h18M8 8l4-4 4 4"/>
+              </svg>
+              טפל בזה בשבילי
+            </button>
+            <button class="btn-secondary">לא עכשיו</button>
+          </div>
+        </div>
+
+        <!-- Individual Insight Cards -->
+        <div class="insights-stack">
+          <!-- Cash Flow Insight -->
+          <div class="insight-card cash-flow animate-in" style="animation-delay: 0.2s;">
+            <div class="insight-header">
+              <div class="insight-meta">
+                <div class="insight-icon" style="background: rgba(245,166,35,0.15);">💳</div>
+                <div class="insight-info">
+                  <h4>כרטיסי אשראי שפג תוקפם</h4>
+                  <span class="insight-category" style="background: rgba(245,166,35,0.15); color: #F5A623;">
+                    <span>💰</span> תזרים מזומנים
+                  </span>
+                </div>
+              </div>
+              <button class="close-btn" style="width: 32px; height: 32px;">✕</button>
+            </div>
+            <div class="insight-body">
+              <p class="insight-desc">
+                ל-4 לקוחות עם תשלומים קבועים יש כרטיסי אשראי שיפוג תוקפם ב-30 הימים הקרובים.
+                עדכון יזום ימנע כשלונות בגבייה.
+              </p>
+              <div class="insight-chips">
+                <span class="chip">
+                  <span class="dot" style="background: #F5A623;"></span>
+                  4 לקוחות
+                </span>
+                <span class="chip">
+                  <span class="dot" style="background: #F5A623;"></span>
+                  ₪2,400 / חודש
+                </span>
+              </div>
+            </div>
+            <div class="insight-footer">
+              <div class="impact-mini">
+                <span>💡</span>
+                <span>הכנסה חוזרת בסיכון: <strong style="color: #F5A623;">₪2,400</strong></span>
+              </div>
+              <button class="btn-action">
+                שלח תזכורת
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Conversion Insight -->
+          <div class="insight-card conversion animate-in" style="animation-delay: 0.25s;">
+            <div class="insight-header">
+              <div class="insight-meta">
+                <div class="insight-icon" style="background: rgba(139,92,246,0.15);">🔥</div>
+                <div class="insight-info">
+                  <h4>לידים קרים</h4>
+                  <span class="insight-category" style="background: rgba(139,92,246,0.15); color: #8B5CF6;">
+                    <span>🔄</span> המרה
+                  </span>
+                </div>
+              </div>
+              <button class="close-btn" style="width: 32px; height: 32px;">✕</button>
+            </div>
+            <div class="insight-body">
+              <p class="insight-desc">
+                7 לידים לא קיבלו מענה במשך 10 ימים או יותר. הם מתקררים ועלולים לאבד עניין.
+                פעולה מיידית יכולה להציל את ההזדמנויות האלה.
+              </p>
+              <div class="insight-chips">
+                <span class="chip">
+                  <span class="dot" style="background: #8B5CF6;"></span>
+                  7 לידים
+                </span>
+                <span class="chip">
+                  <span class="dot" style="background: #8B5CF6;"></span>
+                  10+ ימים ללא קשר
+                </span>
+              </div>
+            </div>
+            <div class="insight-footer">
+              <div class="impact-mini">
+                <span>💡</span>
+                <span>הזדמנות משוערת: <strong style="color: #8B5CF6;">₪3,150</strong></span>
+              </div>
+              <button class="btn-action">
+                שלח מעקב
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom 2-Column Layout: Operational Status + Insight Advisor -->
+        <div class="bottom-grid animate-in" style="animation-delay: 0.3s;">
+
+          <!-- Operational Status Card (Left - narrow) -->
+          <div class="operational-card">
+            <div class="op-header">
+              <div class="op-title">
+                <div class="op-icon" style="background: rgba(249,115,22,0.12);">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                  </svg>
+                </div>
+                <div>
+                  <h3>הגדרה מהירה</h3>
+                  <span class="op-progress-text">3/5 הושלמו</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="op-progress-bar">
+              <div class="op-progress-fill" style="width: 60%;"></div>
+            </div>
+
+            <!-- Setup Items -->
+            <div class="op-setup-items">
+              <button class="setup-pill">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+                <span>שירותים</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m9 18 6-6-6-6"/>
+                </svg>
+              </button>
+              <button class="setup-pill">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" stroke-width="2">
+                  <rect width="20" height="14" x="2" y="5" rx="2"/>
+                  <line x1="2" x2="22" y1="10" y2="10"/>
+                </svg>
+                <span>תשלומים</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="m9 18 6-6-6-6"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- Metrics Row -->
+            <div class="op-metrics">
+              <div class="op-metric">
+                <div class="metric-icon" style="background: rgba(59,130,246,0.12);">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2">
+                    <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/>
+                    <line x1="16" x2="16" y1="2" y2="6"/>
+                    <line x1="8" x2="8" y1="2" y2="6"/>
+                    <line x1="3" x2="21" y1="10" y2="10"/>
+                  </svg>
+                </div>
+                <div class="metric-data">
+                  <span class="metric-value">3</span>
+                  <span class="metric-label">היום</span>
+                </div>
+              </div>
+
+              <div class="metric-divider"></div>
+
+              <div class="op-metric">
+                <div class="metric-icon" style="background: rgba(34,197,94,0.12);">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22C55E" stroke-width="2">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                  </svg>
+                </div>
+                <div class="metric-data">
+                  <span class="metric-value">127</span>
+                  <span class="metric-label">לקוחות</span>
+                </div>
+              </div>
+
+              <div class="metric-divider"></div>
+
+              <div class="op-metric">
+                <div class="metric-icon" style="background: rgba(245,158,11,0.12);">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2">
+                    <rect width="20" height="14" x="2" y="5" rx="2"/>
+                    <line x1="2" x2="22" y1="10" y2="10"/>
+                  </svg>
+                </div>
+                <div class="metric-data">
+                  <span class="metric-value">₪4,250</span>
+                  <span class="metric-label">ממתין</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Insight Advisor Card (Right - wider) -->
+          <div class="advisor-card">
+            <!-- Header with navigation -->
+            <div class="advisor-header">
+              <div class="advisor-badge">
+                <div class="advisor-icon">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2">
+                    <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+                  </svg>
+                </div>
+                <span class="advisor-label">היועץ שלך שם לב</span>
+                <span class="category-tag cash-flow">תזרים מזומנים</span>
+              </div>
+
+              <div class="advisor-nav">
+                <button class="nav-arrow">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="m15 18-6-6 6-6"/>
+                  </svg>
+                </button>
+                <div class="nav-dots">
+                  <span class="dot active"></span>
+                  <span class="dot"></span>
+                  <span class="dot"></span>
+                </div>
+                <button class="nav-arrow">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="m9 18 6-6-6-6"/>
+                  </svg>
+                </button>
+                <button class="close-btn-small">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6 6 18M6 6l12 12"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Content -->
+            <div class="advisor-content">
+              <div class="advisor-body">
+                <h3 class="advisor-title">5 חשבוניות באיחור של יותר מ-30 יום</h3>
+                <p class="advisor-desc">
+                  יש לך <strong>₪8,500</strong> בחשבוניות פתוחות שלא שולמו.
+                  אם לא תרדוף אחריהן, הסיכוי לגבות אותן יורד משמעותית.
+                </p>
+
+                <!-- Evidence Chips -->
+                <div class="advisor-chips">
+                  <span class="evidence-chip">
+                    <span class="chip-dot" style="background: #F5A623;"></span>
+                    5 חשבוניות
+                  </span>
+                  <span class="evidence-chip">
+                    <span class="chip-dot" style="background: #F5A623;"></span>
+                    ₪8,500 סה״כ
+                  </span>
+                </div>
+
+                <!-- Before/After Toggle -->
+                <button class="ba-toggle">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="m6 9 6 6 6-6"/>
+                  </svg>
+                  ראה מה קורה אם כן לעומת לא
+                </button>
+              </div>
+
+              <!-- Action Column -->
+              <div class="advisor-actions">
+                <button class="btn-primary-advisor">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                  </svg>
+                  רדוף אחריהם בשבילי
+                </button>
+                <button class="btn-secondary-advisor">
+                  לא עכשיו ▾
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

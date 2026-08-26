@@ -70,9 +70,15 @@ export async function GET(request: NextRequest) {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
+    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
     const { data: todaysBookings } = await supabaseServer
       .from('scheduling_bookings')
-      .select('id, client_first_name, start_time, status')
+      .select(`
+        id,
+        start_time,
+        status,
+        contact:crm_contacts(first_name)
+      `)
       .eq('user_id', user.id)
       .gte('start_time', today.toISOString())
       .lt('start_time', tomorrow.toISOString())
@@ -130,6 +136,9 @@ export async function GET(request: NextRequest) {
     const upcomingCount = todaysBookings?.length || 0;
     if (upcomingCount > 0) {
       const nextBooking = todaysBookings![0];
+      // Get contact name from JOIN
+      const contact = Array.isArray(nextBooking.contact) ? nextBooking.contact[0] : nextBooking.contact;
+      const clientName = contact?.first_name || 'Client';
       const time = new Date(nextBooking.start_time).toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
@@ -140,7 +149,7 @@ export async function GET(request: NextRequest) {
         titleKey: upcomingCount === 1
           ? 'myday.beat.session_at'
           : 'myday.beat.session_at_more',
-        titleParams: { name: nextBooking.client_first_name, time, count: upcomingCount - 1 },
+        titleParams: { name: clientName, time, count: upcomingCount - 1 },
         subtitleKey: upcomingCount > 1 ? 'myday.beat.sessions_today_plural' : 'myday.beat.sessions_today',
         subtitleParams: { count: upcomingCount }
       });

@@ -153,7 +153,7 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
       label: 'Billing',
       onClick: () => {
         setIsOpen(false)
-        router.push(isBusinessOS ? '/business-os/payments?tab=settings' : '/v2/billing')
+        router.push(isBusinessOS ? '/business-os/settings' : '/v2/billing')
       }
     },
     {

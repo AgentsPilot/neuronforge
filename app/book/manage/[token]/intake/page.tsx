@@ -49,7 +49,72 @@ interface BusinessData {
   name: string;
   logoUrl: string | null;
   primaryColor: string;
+  language: string;
 }
+
+// Translations for the intake form page
+const translations: Record<string, Record<string, string>> = {
+  en: {
+    loadingError: 'Unable to Load Form',
+    backToBooking: 'Back to booking',
+    backToBookingDetails: 'Back to booking details',
+    formAlreadyCompleted: 'Form Already Completed',
+    formAlreadyCompletedDesc: "You've already submitted your intake form for this appointment. We look forward to seeing you!",
+    noIntakeRequired: 'No Intake Form Required',
+    noIntakeRequiredDesc: "There's no intake form configured for this appointment. You're all set!",
+    thankYou: 'Thank You!',
+    thankYouDesc: 'Your intake form has been submitted successfully. We look forward to your appointment!',
+    yourAppointment: 'Your appointment',
+    viewBookingDetails: 'View Booking Details',
+    completeIntakeForm: 'Complete Your Intake Form',
+    helpUsPrepare: 'Help us prepare for your appointment',
+    required: 'Required',
+    select: 'Select...',
+    submitting: 'Submitting...',
+    submitForm: 'Submit Form',
+    questionsContact: 'Questions? Contact {name} directly.'
+  },
+  es: {
+    loadingError: 'No se puede cargar el formulario',
+    backToBooking: 'Volver a la reserva',
+    backToBookingDetails: 'Volver a los detalles de la reserva',
+    formAlreadyCompleted: 'Formulario ya completado',
+    formAlreadyCompletedDesc: 'Ya has enviado tu formulario de admisión para esta cita. ¡Te esperamos!',
+    noIntakeRequired: 'No se requiere formulario de admisión',
+    noIntakeRequiredDesc: 'No hay formulario de admisión configurado para esta cita. ¡Estás listo!',
+    thankYou: '¡Gracias!',
+    thankYouDesc: 'Tu formulario de admisión ha sido enviado con éxito. ¡Te esperamos en tu cita!',
+    yourAppointment: 'Tu cita',
+    viewBookingDetails: 'Ver detalles de la reserva',
+    completeIntakeForm: 'Completa tu formulario de admisión',
+    helpUsPrepare: 'Ayúdanos a prepararnos para tu cita',
+    required: 'Obligatorio',
+    select: 'Seleccionar...',
+    submitting: 'Enviando...',
+    submitForm: 'Enviar formulario',
+    questionsContact: '¿Preguntas? Contacta a {name} directamente.'
+  },
+  he: {
+    loadingError: 'לא ניתן לטעון את הטופס',
+    backToBooking: 'חזרה להזמנה',
+    backToBookingDetails: 'חזרה לפרטי ההזמנה',
+    formAlreadyCompleted: 'הטופס כבר מולא',
+    formAlreadyCompletedDesc: 'כבר שלחת את טופס הקליטה לפגישה זו. מחכים לראותך!',
+    noIntakeRequired: 'לא נדרש טופס קליטה',
+    noIntakeRequiredDesc: 'לא הוגדר טופס קליטה לפגישה זו. הכל מוכן!',
+    thankYou: 'תודה רבה!',
+    thankYouDesc: 'טופס הקליטה נשלח בהצלחה. מחכים לך בפגישה!',
+    yourAppointment: 'הפגישה שלך',
+    viewBookingDetails: 'צפייה בפרטי ההזמנה',
+    completeIntakeForm: 'מלא/י את טופס הקליטה',
+    helpUsPrepare: 'עזור/י לנו להתכונן לפגישה שלך',
+    required: 'שדה חובה',
+    select: 'בחר/י...',
+    submitting: 'שולח...',
+    submitForm: 'שליחת הטופס',
+    questionsContact: 'שאלות? צור/י קשר עם {name} ישירות.'
+  }
+};
 
 export default function IntakeFormPage() {
   const params = useParams();
@@ -70,8 +135,20 @@ export default function IntakeFormPage() {
   const [alreadyCompleted, setAlreadyCompleted] = useState(false);
   const [hasNoIntake, setHasNoIntake] = useState(false);
 
-  // Detect locale from browser
-  const locale = 'en'; // Could be enhanced to detect from navigator.language
+  // Get locale from business settings or fallback to browser
+  const locale = business?.language || 'en';
+  const isRTL = locale === 'he';
+
+  // Get translated text
+  const t = (key: string, params?: Record<string, string>): string => {
+    let text = translations[locale]?.[key] || translations.en[key] || key;
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        text = text.replace(`{${k}}`, v);
+      });
+    }
+    return text;
+  };
 
   useEffect(() => {
     async function fetchIntakeForm() {
@@ -80,6 +157,11 @@ export default function IntakeFormPage() {
         const data = await response.json();
 
         if (data.success) {
+          // Always set business data for locale/branding (now returned in all responses)
+          if (data.business) {
+            setBusiness(data.business);
+          }
+
           if (data.alreadyCompleted) {
             setAlreadyCompleted(true);
             setBooking(data.booking);
@@ -89,7 +171,6 @@ export default function IntakeFormPage() {
           } else {
             setTemplate(data.template);
             setBooking(data.booking);
-            setBusiness(data.business);
           }
         } else {
           setError(data.error || 'Failed to load intake form');
@@ -150,7 +231,7 @@ export default function IntakeFormPage() {
     const errors: Record<string, string> = {};
     template.fields.forEach(field => {
       if (field.required && !responses[field.key]) {
-        errors[field.key] = 'Required';
+        errors[field.key] = t('required');
       }
     });
 
@@ -187,10 +268,18 @@ export default function IntakeFormPage() {
     }
   };
 
+  const getLocaleCode = () => {
+    switch (locale) {
+      case 'he': return 'he-IL';
+      case 'es': return 'es-ES';
+      default: return 'en-US';
+    }
+  };
+
   const formatDate = (dateStr: string, timezone: string) => {
     try {
       const date = new Date(dateStr);
-      return date.toLocaleDateString('en-US', {
+      return date.toLocaleDateString(getLocaleCode(), {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
@@ -205,10 +294,10 @@ export default function IntakeFormPage() {
   const formatTime = (dateStr: string, timezone: string) => {
     try {
       const date = new Date(dateStr);
-      return date.toLocaleTimeString('en-US', {
+      return date.toLocaleTimeString(getLocaleCode(), {
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
+        hour12: locale !== 'he', // Hebrew uses 24-hour format
         timeZone: timezone
       });
     } catch {
@@ -216,6 +305,7 @@ export default function IntakeFormPage() {
     }
   };
 
+  // Show loading spinner only while API call is in progress
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -226,18 +316,18 @@ export default function IntakeFormPage() {
 
   if (error && !template) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <X className="w-8 h-8 text-red-600" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Unable to Load Form</h1>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">{t('loadingError')}</h1>
           <p className="text-gray-600 mb-6">{error}</p>
           <button
             onClick={() => router.push(`/book/manage/${token}`)}
             className="text-sm text-gray-500 hover:text-gray-700"
           >
-            ← Back to booking
+            {isRTL ? '→' : '←'} {t('backToBooking')}
           </button>
         </div>
       </div>
@@ -246,20 +336,20 @@ export default function IntakeFormPage() {
 
   if (alreadyCompleted) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <CheckCircle className="w-8 h-8 text-green-600" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Form Already Completed</h1>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">{t('formAlreadyCompleted')}</h1>
           <p className="text-gray-600 mb-6">
-            You've already submitted your intake form for this appointment. We look forward to seeing you!
+            {t('formAlreadyCompletedDesc')}
           </p>
           <button
             onClick={() => router.push(`/book/manage/${token}`)}
             className="text-sm text-gray-500 hover:text-gray-700"
           >
-            ← Back to booking details
+            {isRTL ? '→' : '←'} {t('backToBookingDetails')}
           </button>
         </div>
       </div>
@@ -268,20 +358,20 @@ export default function IntakeFormPage() {
 
   if (hasNoIntake) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <ClipboardList className="w-8 h-8 text-blue-600" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">No Intake Form Required</h1>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">{t('noIntakeRequired')}</h1>
           <p className="text-gray-600 mb-6">
-            There's no intake form configured for this appointment. You're all set!
+            {t('noIntakeRequiredDesc')}
           </p>
           <button
             onClick={() => router.push(`/book/manage/${token}`)}
             className="text-sm text-gray-500 hover:text-gray-700"
           >
-            ← Back to booking details
+            {isRTL ? '→' : '←'} {t('backToBookingDetails')}
           </button>
         </div>
       </div>
@@ -290,21 +380,21 @@ export default function IntakeFormPage() {
 
   if (submitted) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <CheckCircle className="w-8 h-8 text-green-600" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Thank You!</h1>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">{t('thankYou')}</h1>
           <p className="text-gray-600 mb-6">
-            Your intake form has been submitted successfully. We look forward to your appointment!
+            {t('thankYouDesc')}
           </p>
           {booking && (
-            <div className="bg-gray-50 rounded-xl p-4 mb-6 text-left">
-              <p className="text-sm text-gray-500 mb-2">Your appointment</p>
+            <div className={`bg-gray-50 rounded-xl p-4 mb-6 ${isRTL ? 'text-right' : 'text-left'}`}>
+              <p className="text-sm text-gray-500 mb-2">{t('yourAppointment')}</p>
               <p className="font-medium text-gray-900">{booking.service.service_name}</p>
               <p className="text-sm text-gray-600 mt-1">
-                {formatDate(booking.startTime, booking.timezone)} at {formatTime(booking.startTime, booking.timezone)}
+                {formatDate(booking.startTime, booking.timezone)} • {formatTime(booking.startTime, booking.timezone)}
               </p>
             </div>
           )}
@@ -313,7 +403,7 @@ export default function IntakeFormPage() {
             className="px-6 py-2 rounded-xl font-medium text-white transition-all"
             style={{ backgroundColor: business?.primaryColor || '#4F46E5' }}
           >
-            View Booking Details
+            {t('viewBookingDetails')}
           </button>
         </div>
       </div>
@@ -328,15 +418,15 @@ export default function IntakeFormPage() {
   const businessName = business?.name || 'Business';
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
+    <div className="min-h-screen bg-gray-50 py-8 px-4" dir={isRTL ? 'rtl' : 'ltr'}>
       <div className="max-w-lg mx-auto">
         {/* Back Button */}
         <button
           onClick={() => router.push(`/book/manage/${token}`)}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition-colors"
+          className={`flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition-colors ${isRTL ? 'flex-row-reverse' : ''}`}
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back to booking
+          {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
+          {t('backToBooking')}
         </button>
 
         {/* Header */}
@@ -354,8 +444,8 @@ export default function IntakeFormPage() {
           >
             <ClipboardList className="w-8 h-8" style={{ color: primaryColor }} />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Complete Your Intake Form</h1>
-          <p className="text-gray-600 mt-1">Help us prepare for your appointment</p>
+          <h1 className="text-2xl font-bold text-gray-900">{t('completeIntakeForm')}</h1>
+          <p className="text-gray-600 mt-1">{t('helpUsPrepare')}</p>
         </div>
 
         {/* Appointment Summary */}
@@ -437,7 +527,7 @@ export default function IntakeFormPage() {
                     onChange={(e) => handleChange(field.key, e.target.value)}
                     className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors"
                   >
-                    <option value="">Select...</option>
+                    <option value="">{t('select')}</option>
                     {field.options.map((option) => (
                       <option key={option.value} value={option.value}>
                         {getOptionLabel(option)}
@@ -502,18 +592,18 @@ export default function IntakeFormPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 text-white font-medium rounded-xl transition-all hover:opacity-90 disabled:opacity-50"
+              className={`w-full flex items-center justify-center gap-2 px-4 py-3 text-white font-medium rounded-xl transition-all hover:opacity-90 disabled:opacity-50 ${isRTL ? 'flex-row-reverse' : ''}`}
               style={{ backgroundColor: primaryColor }}
             >
               {submitting ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  Submitting...
+                  {t('submitting')}
                 </>
               ) : (
                 <>
-                  Submit Form
-                  <ArrowRight className="w-5 h-5" />
+                  {t('submitForm')}
+                  {isRTL ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
                 </>
               )}
             </button>
@@ -522,7 +612,7 @@ export default function IntakeFormPage() {
 
         {/* Footer */}
         <p className="text-center text-gray-500 text-sm mt-6">
-          Questions? Contact {businessName} directly.
+          {t('questionsContact', { name: businessName })}
         </p>
       </div>
     </div>

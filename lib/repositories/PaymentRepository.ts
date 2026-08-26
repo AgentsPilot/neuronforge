@@ -29,6 +29,29 @@ export interface PaymentTransaction {
   refund_reason: string | null;
   processor_refund_id: string | null;
   processor_type: string | null;
+  // Service information (enriched from metadata)
+  service_id?: string;
+  service_name?: string;
+  // Payment plan installment information (enriched from payment_plan_installments)
+  installment_number?: number;
+  installment_total?: number;
+  payment_plan_name?: string;
+}
+
+export interface InvoiceLineItem {
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+}
+
+export interface InvoiceAddress {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  postal_code?: string;
+  country?: string;
 }
 
 export interface PaymentInvoice {
@@ -39,12 +62,7 @@ export interface PaymentInvoice {
   amount: number;
   currency: string;
   status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
-  line_items: Array<{
-    description: string;
-    quantity: number;
-    unit_price: number;
-    total: number;
-  }>;
+  line_items: InvoiceLineItem[];
   due_date: string | null;
   payment_terms: string;
   notes: string | null;
@@ -53,7 +71,7 @@ export interface PaymentInvoice {
   paid_at: string | null;
   created_at: string;
   updated_at: string;
-  // New payment fields (processor agnostic)
+  // Payment fields (processor agnostic)
   payment_method: string | null;
   payment_received_at: string | null;
   payment_notes: string | null;
@@ -66,6 +84,16 @@ export interface PaymentInvoice {
   retry_count: number;
   last_retry_at: string | null;
   next_retry_at: string | null;
+  // Stripe Invoice fields
+  stripe_invoice_id: string | null;
+  stripe_hosted_invoice_url: string | null;
+  stripe_invoice_pdf: string | null;
+  // Client details
+  client_name: string | null;
+  client_email: string | null;
+  client_address: InvoiceAddress | null;
+  // Booking link
+  booking_id: string | null;
 }
 
 export interface StripeConnectAccount {
@@ -73,6 +101,7 @@ export interface StripeConnectAccount {
   user_id: string;
   stripe_account_id: string;
   stripe_account_type: string;
+  stripe_email: string | null; // Email used for the Stripe Express account
   charges_enabled: boolean;
   payouts_enabled: boolean;
   details_submitted: boolean;
@@ -134,14 +163,20 @@ export class PaymentTransactionRepository {
       contactId?: string;
       limit?: number;
       offset?: number;
+      includeContact?: boolean;
     } = {}
   ): Promise<PaymentRepositoryResult<PaymentTransaction[]>> {
     try {
-      const { status, contactId, limit = 50, offset = 0 } = options;
+      const { status, contactId, limit = 50, offset = 0, includeContact = false } = options;
+
+      // Use join to get contact info if requested
+      const selectClause = includeContact
+        ? '*, contact:crm_contacts(id, first_name, last_name, email)'
+        : '*';
 
       let query = this.supabase
         .from('payment_transactions')
-        .select('*')
+        .select(selectClause)
         .eq('user_id', userId);
 
       if (status) query = query.eq('status', status);
@@ -154,9 +189,81 @@ export class PaymentTransactionRepository {
       const { data, error } = await query;
       if (error) throw error;
 
-      return { data: data || [], error: null };
+      // Enrich with service information and payment plan installment data
+      const enrichedData = await Promise.all((data || []).map(async (transaction: any) => {
+        let enriched = { ...transaction };
+
+        // Add service information from proper service_id column (not metadata)
+        // service_id column was added in migration 20260809
+        const serviceId = transaction.service_id || transaction.metadata?.service_id; // Fallback to metadata for old records
+        if (serviceId) {
+          const { data: serviceData } = await this.supabase
+            .from('scheduling_services')
+            .select('id, service_name')
+            .eq('id', serviceId)
+            .eq('user_id', userId)
+            .single();
+
+          if (serviceData) {
+            enriched = {
+              ...enriched,
+              service_id: serviceData.id,
+              service_name: serviceData.service_name
+            };
+          }
+        }
+
+        // Add payment plan installment information if this transaction is linked to an installment
+        const { data: installmentData } = await this.supabase
+          .from('payment_plan_installments')
+          .select('installment_number, payment_plan_id, payment_plans(name, installment_count)')
+          .eq('transaction_id', transaction.id)
+          .eq('user_id', userId)
+          .single();
+
+        if (installmentData) {
+          enriched = {
+            ...enriched,
+            installment_number: installmentData.installment_number,
+            installment_total: (installmentData as any).payment_plans?.installment_count,
+            payment_plan_name: (installmentData as any).payment_plans?.name
+          };
+        }
+
+        return enriched;
+      }));
+
+      return { data: enrichedData as unknown as PaymentTransaction[], error: null };
     } catch (error) {
       logger.error({ err: error }, 'Failed to list payment transactions');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  async count(
+    userId: string,
+    options: {
+      status?: string;
+      contactId?: string;
+    } = {}
+  ): Promise<PaymentRepositoryResult<number>> {
+    try {
+      const { status, contactId } = options;
+
+      let query = this.supabase
+        .from('payment_transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+
+      if (status) query = query.eq('status', status);
+      if (contactId) query = query.eq('contact_id', contactId);
+
+      const { count, error } = await query;
+      if (error) throw error;
+
+      return { data: count || 0, error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to count payment transactions');
       return { data: null, error: error as Error };
     }
   }
@@ -202,6 +309,65 @@ export class PaymentTransactionRepository {
       return { data: total, error: null };
     } catch (error) {
       logger.error({ err: error }, 'Failed to get total revenue');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Get transaction stats grouped by status
+   */
+  async getStatsByStatus(userId: string): Promise<PaymentRepositoryResult<{
+    succeeded: { count: number; total: number };
+    pending: { count: number; total: number };
+    failed: { count: number; total: number };
+    refunded: { count: number; total: number };
+    all: { count: number; total: number };
+  }>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_transactions')
+        .select('status, amount, refund_status, refunded_amount')
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      const stats = {
+        succeeded: { count: 0, total: 0 },
+        pending: { count: 0, total: 0 },
+        failed: { count: 0, total: 0 },
+        refunded: { count: 0, total: 0 },
+        all: { count: 0, total: 0 }
+      };
+
+      for (const t of data || []) {
+        const amount = Number(t.amount) || 0;
+        stats.all.count++;
+        stats.all.total += amount;
+
+        // Handle refunded transactions
+        if (t.status === 'refunded' || t.refund_status === 'full') {
+          stats.refunded.count++;
+          stats.refunded.total += Number(t.refunded_amount) || amount;
+        } else if (t.refund_status === 'partial') {
+          // Partial refund: count in succeeded but track refund amount separately
+          stats.succeeded.count++;
+          stats.succeeded.total += amount - (Number(t.refunded_amount) || 0);
+          stats.refunded.total += Number(t.refunded_amount) || 0;
+        } else if (t.status === 'succeeded') {
+          stats.succeeded.count++;
+          stats.succeeded.total += amount;
+        } else if (t.status === 'pending') {
+          stats.pending.count++;
+          stats.pending.total += amount;
+        } else if (t.status === 'failed') {
+          stats.failed.count++;
+          stats.failed.total += amount;
+        }
+      }
+
+      return { data: stats, error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to get transaction stats by status');
       return { data: null, error: error as Error };
     }
   }
@@ -466,6 +632,34 @@ export class PaymentInvoiceRepository {
     }
   }
 
+  async count(
+    userId: string,
+    options: {
+      status?: string;
+      contactId?: string;
+    } = {}
+  ): Promise<PaymentRepositoryResult<number>> {
+    try {
+      const { status, contactId } = options;
+
+      let query = this.supabase
+        .from('payment_invoices')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId);
+
+      if (status) query = query.eq('status', status);
+      if (contactId) query = query.eq('contact_id', contactId);
+
+      const { count, error } = await query;
+      if (error) throw error;
+
+      return { data: count || 0, error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to count payment invoices');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async update(
     id: string,
     userId: string,
@@ -720,11 +914,184 @@ export class PaymentInvoiceRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * Get invoice stats grouped by status
+   */
+  async getStatsByStatus(userId: string): Promise<PaymentRepositoryResult<{
+    draft: { count: number; total: number };
+    sent: { count: number; total: number };
+    paid: { count: number; total: number };
+    overdue: { count: number; total: number };
+    cancelled: { count: number; total: number };
+    all: { count: number; total: number };
+  }>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .select('status, amount')
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      const stats = {
+        draft: { count: 0, total: 0 },
+        sent: { count: 0, total: 0 },
+        paid: { count: 0, total: 0 },
+        overdue: { count: 0, total: 0 },
+        cancelled: { count: 0, total: 0 },
+        all: { count: 0, total: 0 }
+      };
+
+      for (const inv of data || []) {
+        const amount = Number(inv.amount) || 0;
+        stats.all.count++;
+        stats.all.total += amount;
+
+        const status = inv.status as keyof typeof stats;
+        if (stats[status]) {
+          stats[status].count++;
+          stats[status].total += amount;
+        }
+      }
+
+      return { data: stats, error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to get invoice stats by status');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Find invoice by Stripe invoice ID (for webhook handling)
+   */
+  async findByStripeInvoiceId(stripeInvoiceId: string): Promise<PaymentRepositoryResult<PaymentInvoice>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .select('*')
+        .eq('stripe_invoice_id', stripeInvoiceId)
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (error) {
+      logger.error({ err: error, stripeInvoiceId }, 'Failed to find invoice by Stripe ID');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Update Stripe invoice fields after invoice is finalized/sent
+   */
+  async updateStripeFields(
+    invoiceId: string,
+    userId: string,
+    stripeFields: {
+      stripe_invoice_id?: string;
+      stripe_hosted_invoice_url?: string;
+      stripe_invoice_pdf?: string;
+      status?: PaymentInvoice['status'];
+      sent_at?: string;
+    }
+  ): Promise<PaymentRepositoryResult<PaymentInvoice>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .update({
+          ...stripeFields,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', invoiceId)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      logger.info({ invoiceId, stripeFields: Object.keys(stripeFields) }, 'Updated Stripe invoice fields');
+      return { data, error: null };
+    } catch (error) {
+      logger.error({ err: error, invoiceId }, 'Failed to update Stripe invoice fields');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Get next invoice number with custom prefix
+   */
+  async getNextInvoiceNumberWithPrefix(userId: string, prefix: string = 'INV'): Promise<PaymentRepositoryResult<string>> {
+    try {
+      // Get all invoices with this prefix to find the highest number
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .select('invoice_number')
+        .eq('user_id', userId)
+        .ilike('invoice_number', `${prefix}-%`)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (error) throw error;
+
+      let maxNumber = 0;
+      if (data && data.length > 0) {
+        for (const invoice of data) {
+          const match = invoice.invoice_number.match(new RegExp(`^${prefix}-(\\d+)$`, 'i'));
+          if (match) {
+            const num = parseInt(match[1], 10);
+            if (num > maxNumber) maxNumber = num;
+          }
+        }
+      }
+
+      return { data: `${prefix}-${String(maxNumber + 1).padStart(5, '0')}`, error: null };
+    } catch (error) {
+      logger.error({ err: error, prefix }, 'Failed to get next invoice number with prefix');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Create invoice with client details and optional Stripe fields
+   */
+  async createWithDetails(
+    invoice: Omit<PaymentInvoice, 'id' | 'created_at' | 'updated_at'> & {
+      client_name?: string;
+      client_email?: string;
+      client_address?: InvoiceAddress;
+      stripe_invoice_id?: string;
+    }
+  ): Promise<PaymentRepositoryResult<PaymentInvoice>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .insert({
+          ...invoice,
+          client_address: invoice.client_address || {}
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      logger.info({
+        invoiceId: data.id,
+        hasStripeId: !!invoice.stripe_invoice_id,
+        clientEmail: invoice.client_email
+      }, 'Payment invoice created with details');
+      return { data, error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to create payment invoice with details');
+      return { data: null, error: error as Error };
+    }
+  }
 }
 
 // Stripe Connect Repository
 export class StripeConnectRepository {
-  private supabase = supabaseServer;
+  private supabase;
+
+  constructor(supabaseClient = supabaseServer) {
+    this.supabase = supabaseClient;
+  }
 
   async create(account: Omit<StripeConnectAccount, 'id' | 'created_at' | 'updated_at'>): Promise<PaymentRepositoryResult<StripeConnectAccount>> {
     try {
@@ -749,9 +1116,10 @@ export class StripeConnectRepository {
         .from('stripe_connect_accounts')
         .select('*')
         .eq('user_id', userId)
-        .single();
+        .maybeSingle(); // Use maybeSingle instead of single to avoid error on no rows
 
       if (error) throw error;
+      // data will be null if no row found, which is valid (not an error)
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to find Stripe Connect account');
@@ -776,6 +1144,26 @@ export class StripeConnectRepository {
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to update Stripe Connect account');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  async delete(
+    id: string,
+    userId: string
+  ): Promise<PaymentRepositoryResult<void>> {
+    try {
+      const { error } = await this.supabase
+        .from('stripe_connect_accounts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      logger.info({ id, userId }, 'Stripe Connect account deleted');
+      return { data: null, error: null };
+    } catch (error) {
+      logger.error({ err: error, id, userId }, 'Failed to delete Stripe Connect account');
       return { data: null, error: error as Error };
     }
   }

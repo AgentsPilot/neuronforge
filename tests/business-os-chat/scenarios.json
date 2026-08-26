@@ -1,0 +1,263 @@
+{
+  "$comment": [
+    "Golden set for the Business OS chat (BizQL).",
+    "",
+    "Assertions are SEMANTIC, not exact JSON equality. A plan that adds a sensible",
+    "limit, ordering or extra select fields is still correct, so each scenario",
+    "states only what MUST be true. Exact-match assertions would fail on harmless",
+    "variation and train everyone to ignore the suite.",
+    "",
+    "Every utterance here is phrased differently from anything in the prompt, the",
+    "catalog or the code. That is the point: if these pass, the system generalises",
+    "from the catalog rather than from memorised phrasings. Adding a scenario is",
+    "how you respond to a new user request — NOT adding an example to a prompt."
+  ],
+  "scenarios": [
+    {
+      "name": "unpaid-invoice-over-threshold",
+      "utterance": "which clients have an unpaid invoice over $100?",
+      "language": "en",
+      "why": "Needs a numeric comparison, which no previous version could express. Either framing is valid: invoices-with-contact, or contacts-with-invoices.",
+      "expect": {
+        "op": "find",
+        "anyEntity": [
+          "invoices",
+          "contacts"
+        ]
+      }
+    },
+    {
+      "name": "unpaid-invoice-over-threshold-he",
+      "utterance": "אילו לקוחות יש להם חשבונית לא משולמת מעל 100 שקל?",
+      "language": "he",
+      "why": "Needs a numeric comparison, which no previous version could express. Either framing is valid: invoices-with-contact, or contacts-with-invoices.",
+      "expect": {
+        "op": "find",
+        "anyEntity": [
+          "invoices",
+          "contacts"
+        ]
+      }
+    },
+    {
+      "name": "who-owes-me-money-he",
+      "utterance": "מי חייב לי כסף?",
+      "language": "he",
+      "why": "Idiomatic Hebrew that maps to a business rule rather than a literal status.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "unpaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unpaid-invoices-es",
+      "utterance": "¿qué facturas están sin pagar?",
+      "language": "es",
+      "why": "Spanish, again with no phrasing examples anywhere.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "unpaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-without-intake",
+      "utterance": "show me contacts who never filled in an intake form",
+      "language": "en",
+      "why": "Relation-absence predicate via a derived field. Previously inexpressible.",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "field": "has_completed_intake",
+            "op": "eq",
+            "value": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-with-intake",
+      "utterance": "which contacts have already completed their intake?",
+      "language": "en",
+      "why": "The inverse, to prove the quantifier flips rather than being two hardcoded cases.",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "field": "has_completed_intake",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "total-owed",
+      "utterance": "how much money am I owed in total?",
+      "language": "en",
+      "why": "A quantity question must aggregate, not return a list of rows.",
+      "expect": {
+        "op": "compute",
+        "entity": "invoices",
+        "agg": "sum",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "unpaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "total-owed-es",
+      "utterance": "¿cuánto me deben en total?",
+      "language": "es",
+      "why": "Same aggregate intent in Spanish. Regressed once by answering with a list.",
+      "expect": {
+        "op": "compute",
+        "entity": "invoices",
+        "agg": "sum"
+      }
+    },
+    {
+      "name": "count-contacts",
+      "utterance": "how many people are in my contact list?",
+      "language": "en",
+      "expect": {
+        "op": "compute",
+        "entity": "contacts",
+        "agg": "count"
+      }
+    },
+    {
+      "name": "bookings-this-week",
+      "utterance": "anything on the calendar for the rest of this week?",
+      "language": "en",
+      "why": "Relative dates. chat-v3 needed three separate English-only regexes for this.",
+      "expect": {
+        "op": "find",
+        "entity": "bookings",
+        "mustFilter": [
+          {
+            "field": "start_time",
+            "dateAnchor": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "bookings-today",
+      "utterance": "what do I have on today?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "bookings",
+        "mustFilter": [
+          {
+            "field": "start_time",
+            "dateAnchor": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "invoices-by-currency",
+      "utterance": "which invoices are more than 500 shekels?",
+      "language": "en",
+      "why": "The model must map 'shekels' to ILS itself. No currency synonyms are declared.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices",
+        "mustFilter": [
+          {
+            "field": "amount",
+            "op": "gt",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "name": "overdue-invoices",
+      "utterance": "any invoices past their due date?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "invoices"
+      }
+    },
+    {
+      "name": "cancelled-bookings",
+      "utterance": "show me sessions that got cancelled",
+      "language": "en",
+      "why": "'cancelled' is a published enum value, so no semantic term should be needed.",
+      "expect": {
+        "op": "find",
+        "entity": "bookings",
+        "mustFilter": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-missing-email",
+      "utterance": "do I have any contacts without an email address?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "field": "email",
+            "op": "is_null"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ambiguous-update",
+      "utterance": "update it",
+      "language": "en",
+      "why": "Must ask rather than guess. Guessing a target is how data gets damaged.",
+      "expect": {
+        "clarification": true
+      }
+    },
+    {
+      "name": "ambiguous-pronoun",
+      "utterance": "send it to them",
+      "language": "en",
+      "why": "No referent in context — must not invent one.",
+      "expect": {
+        "clarification": true
+      }
+    },
+    {
+      "name": "out-of-scope",
+      "utterance": "what is the weather tomorrow?",
+      "language": "en",
+      "why": "Nothing in the catalog answers this; it must not fabricate an entity.",
+      "expect": {
+        "clarificationOrFailure": true
+      }
+    }
+  ]
+}

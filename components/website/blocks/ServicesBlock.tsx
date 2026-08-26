@@ -108,37 +108,18 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   // Use translated default if no title provided
   const displayTitle = title || t('ourServices');
 
-  // CTA labels based on flow - includes new 'scheduling' and 'client_info' steps
-  const ctaLabels: Record<string, Record<FlowStep, string>> = {
-    en: {
-      scheduling: 'Book Now',
-      client_info: 'Get Started',
-      booking: 'Book Now',  // legacy
-      payment: 'Buy Now',
-      intake: 'Get Started',
-      confirmation: 'Learn More'
-    },
-    es: {
-      scheduling: 'Reservar',
-      client_info: 'Comenzar',
-      booking: 'Reservar',  // legacy
-      payment: 'Comprar',
-      intake: 'Empezar',
-      confirmation: 'Más Info'
-    },
-    he: {
-      scheduling: 'הזמן עכשיו',
-      client_info: 'התחל',
-      booking: 'הזמן עכשיו',  // legacy
-      payment: 'קנה עכשיו',
-      intake: 'התחל',
-      confirmation: 'מידע נוסף'
-    }
-  };
-
-  // Determine CTA based on first step in flow
+  // Determine CTA based on first step in flow - use translation helper
   const firstStep = clientFlow?.[0] || 'scheduling';
-  const ctaText = ctaLabels[locale || 'en']?.[firstStep] || ctaLabels.en[firstStep];
+  // Map flow step to translation key
+  const flowStepToTranslationKey: Record<FlowStep, string> = {
+    scheduling: 'bookNow',
+    client_info: 'getStarted',
+    booking: 'bookNow',  // legacy
+    payment: 'buyNow',
+    intake: 'getStarted',
+    confirmation: 'learnMore'
+  };
+  const ctaText = t(flowStepToTranslationKey[firstStep], 'common');
   const hasBookingFlow = clientFlow && clientFlow.length > 0;
 
   // Services come pre-filtered (active only) from the blocks-with-content API

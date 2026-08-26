@@ -34,6 +34,7 @@ import {
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import AvatarUpload from '@/components/ui/AvatarUpload';
+import { InvoiceSettingsSection } from '@/components/business-os/settings/InvoiceSettingsSection';
 import {
   Dialog,
   DialogContent,
@@ -967,6 +968,13 @@ export default function BusinessOSSettingsPage() {
             </div>
           )}
         </div>
+
+        {/* Invoice Settings */}
+        <InvoiceSettingsSection
+          userId={user?.id || ''}
+          expanded={expandedSection === 'invoice'}
+          onToggle={() => setExpandedSection(expandedSection === 'invoice' ? null : 'invoice')}
+        />
 
         {/* Account Actions */}
         <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] divide-y divide-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>

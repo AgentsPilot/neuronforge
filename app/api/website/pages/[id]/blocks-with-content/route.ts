@@ -303,15 +303,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return block;
     });
 
+    // Normalize blocks to ensure `enabled` is always a proper boolean (defaults to true if null/undefined)
+    const normalizedBlocks = blocksWithContent.map(block => ({
+      ...block,
+      enabled: block.enabled !== false // Treat null/undefined as true
+    }));
+
     requestLogger.info(
-      { pageId, userId: user.id, blockCount: blocksWithContent.length, isLandingPage },
+      { pageId, userId: user.id, blockCount: normalizedBlocks.length, isLandingPage },
       isLandingPage ? 'Fetched blocks for landing page (no central content merge)' : 'Fetched blocks with central content'
     );
 
     return NextResponse.json({
       success: true,
       page: pageResult.data,
-      blocks: blocksWithContent,
+      blocks: normalizedBlocks,
       centralContentId: centralContent?.id || null
     });
   } catch (error) {

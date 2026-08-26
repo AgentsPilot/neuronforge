@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { ArrowRight, Calendar } from 'lucide-react';
 import type { BlockRendererProps, SelectedServiceData } from './types';
+import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
 interface CTAContent {
   title: string;
@@ -23,11 +24,12 @@ interface CTAContent {
 }
 
 export function CTABlock({ content, styles, theme, isRTL, className, locale = 'en', bookingUrl, isPreview, onOpenBooking }: BlockRendererProps) {
+  const t = (key: string) => getBlockTranslation('common', key, locale);
   const rawContent = content as CTAContent;
 
   // Support both button_text and cta_text field names
-  const buttonText = rawContent.button_text || rawContent.cta_text ||
-    (locale === 'he' ? 'התחל עכשיו' : locale === 'es' ? 'Comenzar' : 'Get Started');
+  // Use AI-generated content first, translation as fallback only
+  const buttonText = rawContent.button_text || rawContent.cta_text || t('getStarted');
   const buttonLink = rawContent.button_link || rawContent.cta_link || '#contact';
 
   const {
@@ -39,10 +41,17 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
   } = rawContent;
 
   const primaryColor = theme?.colors.primary || '#4F6EF7';
+  const secondaryColor = theme?.colors.secondary || '#E8DDD4';
+
+  // Dynamic gradient style using theme colors
+  const dynamicGradientStyle = {
+    background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
+  };
 
   const styleVariants = {
     primary: {
-      bg: styles?.background || `bg-gradient-to-r from-blue-600 to-purple-600`,
+      bg: '', // Will use dynamicGradientStyle
+      useDynamicBg: true,
       text: 'text-white',
       buttonBg: 'bg-white hover:bg-gray-100',
       buttonText: primaryColor,
@@ -50,20 +59,23 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
     },
     subtle: {
       bg: styles?.background || 'bg-gray-100 dark:bg-slate-800',
+      useDynamicBg: false,
       text: 'text-gray-900 dark:text-white',
       buttonBg: '',
       buttonText: 'white',
       secondaryBorder: 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700'
     },
     gradient: {
-      bg: 'bg-gradient-to-r from-purple-600 via-pink-500 to-orange-500',
+      bg: '', // Will use dynamicGradientStyle
+      useDynamicBg: true,
       text: 'text-white',
       buttonBg: 'bg-white hover:bg-gray-100',
-      buttonText: '#9333ea',
+      buttonText: primaryColor,
       secondaryBorder: 'border-white/30 text-white hover:bg-white/10'
     },
     dark: {
       bg: 'bg-gray-900 dark:bg-black',
+      useDynamicBg: false,
       text: 'text-white',
       buttonBg: '',
       buttonText: 'white',
@@ -111,6 +123,7 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
       className={`${styles?.padding || 'py-12 sm:py-16'} ${variant.bg} ${className || ''}`}
+      style={variant.useDynamicBg ? dynamicGradientStyle : undefined}
     >
       <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center">
         <motion.h2

@@ -17,12 +17,14 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
   const t = (key: string, section: 'testimonials' | 'common' = 'testimonials') =>
     getBlockTranslation(section, key, locale);
 
+  const rawContent = content as TestimonialsContent;
   const {
-    title = t('whatClientsSay'),
     subtitle,
     testimonials = [],
     layout = 'carousel'
-  } = content as TestimonialsContent;
+  } = rawContent;
+  // Always use translated title for section headers
+  const title = t('whatClientsSay');
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isAutoPlaying, setIsAutoPlaying] = useState(true);

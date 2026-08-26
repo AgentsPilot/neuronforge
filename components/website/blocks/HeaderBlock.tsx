@@ -21,7 +21,32 @@ interface HeaderContent {
   layout?: 'standard' | 'minimal' | 'centered';
 }
 
-export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockRendererProps) {
+// Localized labels for header elements
+const LABELS = {
+  en: {
+    bookNow: 'Book Now',
+    about: 'About',
+    services: 'Services',
+    process: 'How It Works',
+    contact: 'Contact',
+  },
+  es: {
+    bookNow: 'Reservar',
+    about: 'Nosotros',
+    services: 'Servicios',
+    process: 'Cómo Funciona',
+    contact: 'Contacto',
+  },
+  he: {
+    bookNow: 'הזמן עכשיו',
+    about: 'אודות',
+    services: 'שירותים',
+    process: 'איך זה עובד',
+    contact: 'צור קשר',
+  },
+};
+
+export function HeaderBlock({ content, styles, theme, isRTL, className, locale = 'en' }: BlockRendererProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
 
@@ -35,8 +60,8 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
     layout = 'standard'
   } = content as HeaderContent;
 
+  const labels = LABELS[locale as keyof typeof LABELS] || LABELS.en;
   const primaryColor = theme?.colors?.primary || '#4F46E5';
-  const textColor = theme?.colors?.text || '#1a1a1a';
   const bgColor = theme?.colors?.background || '#ffffff';
 
   // Handle scroll for sticky header styling
@@ -188,7 +213,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                     fontFamily: 'var(--website-font-body)'
                   }}
                 >
-                  {cta_button.text}
+                  {cta_button.text || labels.bookNow}
                 </a>
               )}
             </div>
@@ -304,7 +329,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className }: BlockR
                         fontFamily: 'var(--website-font-body)'
                       }}
                     >
-                      {cta_button.text}
+                      {cta_button.text || labels.bookNow}
                     </a>
                   </motion.div>
                 )}

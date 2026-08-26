@@ -102,10 +102,16 @@ export interface SessionPayment {
   id?: string;
   amount: number;
   currency: string;
-  status: 'paid' | 'pending' | 'failed' | 'free';
+  status: 'paid' | 'pending' | 'failed' | 'free' | 'refunded';
   paidAt?: string;
+  refundedAt?: string;  // When the refund was processed
   paymentMethod?: string;  // 'card', 'cash', 'bank_transfer', etc.
   last4?: string;  // Last 4 digits of card
+  // Invoice data for resend functionality and due date display
+  invoiceId?: string;
+  invoiceStatus?: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
+  invoiceDueDate?: string;
+  invoiceSentAt?: string;
 }
 
 // Email confirmation sent to client

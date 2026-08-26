@@ -8,6 +8,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 
 const logger = createLogger({ module: 'SchedulingBookingNoShowAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -50,19 +51,28 @@ export async function POST(
       );
     }
 
-    // 3. Audit log (non-blocking)
+    // 3. Get contact name for audit log
+    let contactName = 'Client';
+    if (result.data.contact_id) {
+      const contactResult = await crmContactRepository.findById(result.data.contact_id, user.id);
+      if (contactResult.data) {
+        contactName = `${contactResult.data.first_name || ''} ${contactResult.data.last_name || ''}`.trim() || 'Client';
+      }
+    }
+
+    // 4. Audit log (non-blocking)
     auditTrail
       .log({
         action: 'SCHEDULING_BOOKING_NO_SHOW',
         userId: user.id,
         entityType: 'scheduling_booking',
         entityId: bookingId,
-        resourceName: `Booking for ${result.data.client_first_name} ${result.data.client_last_name || ''}`.trim(),
+        resourceName: `Booking for ${contactName}`,
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
 
-    // 4. Return success
+    // 5. Return success
     requestLogger.info({ bookingId, userId: user.id }, 'Booking marked as no-show');
     return NextResponse.json({
       success: true,

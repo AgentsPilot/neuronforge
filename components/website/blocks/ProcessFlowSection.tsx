@@ -805,9 +805,19 @@ if (typeof window !== 'undefined' && !(window as unknown as Record<string, unkno
   (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache = {};
 }
 
+// Track in-flight payment intent requests to prevent duplicate API calls
+if (typeof window !== 'undefined' && !(window as unknown as Record<string, unknown>).__paymentIntentRequests) {
+  (window as unknown as Record<string, Set<string>>).__paymentIntentRequests = new Set();
+}
+
 function getPaymentIntentCache(): Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }> {
   if (typeof window === 'undefined') return {};
   return (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache || {};
+}
+
+function getInFlightRequests(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  return (window as unknown as Record<string, Set<string>>).__paymentIntentRequests || new Set();
 }
 
 function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, submitting: parentSubmitting, error: parentError, isRTL, labels, theme, locale = 'en', subdomain, customerName, customerEmail, isPreview }: PaymentStepProps) {
@@ -860,6 +870,13 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
       return;
     }
 
+    // Check if a request is already in-flight for this booking
+    const inFlightRequests = getInFlightRequests();
+    if (inFlightRequests.has(bookingId)) {
+      // Request already in progress, skip duplicate
+      return;
+    }
+
     let cancelled = false;
 
     const initializePayment = async () => {
@@ -870,6 +887,14 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         setPaymentReady(true);
         return;
       }
+
+      // Double-check in-flight requests
+      if (inFlightRequests.has(bookingId)) {
+        return;
+      }
+
+      // Mark request as in-flight
+      inFlightRequests.add(bookingId);
 
       try {
         setProcessing(true);
@@ -918,6 +943,8 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
           setLocalError('Failed to initialize payment. Please try again.');
         }
       } finally {
+        // Remove from in-flight tracking
+        inFlightRequests.delete(bookingId);
         if (!cancelled) {
           setProcessing(false);
         }

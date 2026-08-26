@@ -86,7 +86,7 @@ export function AutomationDialog({
   onDelete,
   loading = false,
 }: AutomationDialogProps) {
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, formatCurrency } = useLanguage();
 
   // Form state
   const [processParameters, setProcessParameters] = useState<Record<string, unknown>>(
@@ -273,7 +273,7 @@ export function AutomationDialog({
                 >
                   <p className="text-xs text-[#22C58B] mb-1">Total Value Impact</p>
                   <p className="text-lg font-semibold text-[#22C58B]">
-                    ${automation.total_value_impact.toLocaleString()}
+                    {formatCurrency(automation.total_value_impact, { showFree: false })}
                   </p>
                 </div>
               )}
@@ -421,8 +421,7 @@ export function AutomationDialog({
               <button
                 onClick={handleCreate}
                 disabled={loading || actionLoading !== null}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50"
-                style={{ background: 'linear-gradient(135deg, #22C58B 0%, #1BA97A 100%)' }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white bg-[var(--v2-success)] transition-all hover:opacity-90 disabled:opacity-50"
               >
                 {actionLoading === 'create' ? (
                   <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -441,8 +440,7 @@ export function AutomationDialog({
                 <button
                   onClick={handleUpdate}
                   disabled={loading || actionLoading !== null}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white transition-all hover:opacity-90 disabled:opacity-50"
-                  style={{ background: 'linear-gradient(135deg, #22C58B 0%, #1BA97A 100%)' }}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-semibold text-white bg-[var(--v2-success)] transition-all hover:opacity-90 disabled:opacity-50"
                 >
                   {actionLoading === 'update' ? (
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

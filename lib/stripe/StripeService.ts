@@ -426,9 +426,28 @@ export class StripeService {
     businessProfile?: {
       name?: string;
       url?: string;
+      mcc?: string; // Merchant Category Code (industry)
+      product_description?: string;
     };
+    individual?: {
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+      phone?: string;
+      dob?: { day: number; month: number; year: number };
+      address?: {
+        line1?: string;
+        line2?: string;
+        city?: string;
+        state?: string;
+        postal_code?: string;
+        country?: string;
+      };
+      ssn_last_4?: string;
+    };
+    // Note: tosAcceptance is NOT supported for Express accounts - Stripe handles TOS during hosted onboarding
   }): Promise<{ accountId: string }> {
-    const account = await this.stripe.accounts.create({
+    const accountParams: Stripe.AccountCreateParams = {
       type: 'express',
       email: params.email,
       country: params.country || 'US',
@@ -437,11 +456,74 @@ export class StripeService {
         card_payments: { requested: true },
         transfers: { requested: true },
       },
-      business_profile: params.businessProfile ? {
+    };
+
+    // Add business profile if provided
+    if (params.businessProfile) {
+      accountParams.business_profile = {
         name: params.businessProfile.name,
         url: params.businessProfile.url,
-      } : undefined,
-    });
+        mcc: params.businessProfile.mcc,
+        product_description: params.businessProfile.product_description,
+      };
+    }
+
+    // Add individual details if provided (for individual business type)
+    if (params.individual && params.businessType === 'individual') {
+      accountParams.individual = {};
+
+      if (params.individual.first_name) accountParams.individual.first_name = params.individual.first_name;
+      if (params.individual.last_name) accountParams.individual.last_name = params.individual.last_name;
+      if (params.individual.email) accountParams.individual.email = params.individual.email;
+      if (params.individual.phone) accountParams.individual.phone = params.individual.phone;
+      if (params.individual.dob) accountParams.individual.dob = params.individual.dob;
+      if (params.individual.ssn_last_4) accountParams.individual.ssn_last_4 = params.individual.ssn_last_4;
+
+      if (params.individual.address) {
+        accountParams.individual.address = {
+          line1: params.individual.address.line1,
+          line2: params.individual.address.line2,
+          city: params.individual.address.city,
+          state: params.individual.address.state,
+          postal_code: params.individual.address.postal_code,
+          country: params.individual.address.country || params.country || 'US',
+        };
+      }
+    }
+
+    // Note: TOS acceptance is NOT allowed for Express accounts
+    // Express accounts handle TOS acceptance during Stripe's hosted onboarding flow
+    // Only Custom accounts with controller.requirement_collection = 'application' can accept TOS via API
+
+    const account = await this.stripe.accounts.create(accountParams);
+
+    return { accountId: account.id };
+  }
+
+  /**
+   * Create Express account with minimal information
+   * Stripe's embedded onboarding will collect everything else
+   * This provides the simplest onboarding experience
+   */
+  async createExpressAccountMinimal(params: {
+    email?: string;
+    country?: string;
+  }): Promise<{ accountId: string }> {
+    const accountParams: Stripe.AccountCreateParams = {
+      type: 'express',
+      country: params.country || 'US',
+      capabilities: {
+        card_payments: { requested: true },
+        transfers: { requested: true },
+      },
+    };
+
+    // Only add email if provided
+    if (params.email) {
+      accountParams.email = params.email;
+    }
+
+    const account = await this.stripe.accounts.create(accountParams);
 
     return { accountId: account.id };
   }
@@ -536,6 +618,161 @@ export class StripeService {
   async createExpressDashboardLink(accountId: string): Promise<string> {
     const loginLink = await this.stripe.accounts.createLoginLink(accountId);
     return loginLink.url;
+  }
+
+  /**
+   * Delete a connected account from Stripe
+   * Stripe recommends platform-initiated deletion via API
+   */
+  async deleteConnectedAccount(accountId: string): Promise<void> {
+    await this.stripe.accounts.del(accountId);
+  }
+
+  /**
+   * Get full account details from Stripe for pre-filling forms
+   * Used when continuing onboarding to show what's already been provided
+   */
+  async getConnectAccountDetails(accountId: string): Promise<{
+    email: string | null;
+    country: string | null;
+    businessType: string | null;
+    businessProfile: {
+      name: string | null;
+      url: string | null;
+      mcc: string | null;
+    };
+    individual: {
+      firstName: string | null;
+      lastName: string | null;
+      email: string | null;
+      phone: string | null;
+      dob: { day: number; month: number; year: number } | null;
+      address: {
+        line1: string | null;
+        line2: string | null;
+        city: string | null;
+        state: string | null;
+        postalCode: string | null;
+        country: string | null;
+      } | null;
+      ssnLast4Provided: boolean;
+    } | null;
+    requirements: {
+      currentlyDue: string[];
+      eventuallyDue: string[];
+      pastDue: string[];
+    };
+  }> {
+    const account = await this.stripe.accounts.retrieve(accountId);
+
+    const individual = account.individual;
+    const businessProfile = account.business_profile;
+
+    return {
+      email: account.email || null,
+      country: account.country || null,
+      businessType: account.business_type || null,
+      businessProfile: {
+        name: businessProfile?.name || null,
+        url: businessProfile?.url || null,
+        mcc: businessProfile?.mcc || null,
+      },
+      individual: individual ? {
+        firstName: individual.first_name || null,
+        lastName: individual.last_name || null,
+        email: individual.email || null,
+        phone: individual.phone || null,
+        dob: individual.dob ? {
+          day: individual.dob.day!,
+          month: individual.dob.month!,
+          year: individual.dob.year!,
+        } : null,
+        address: individual.address ? {
+          line1: individual.address.line1 || null,
+          line2: individual.address.line2 || null,
+          city: individual.address.city || null,
+          state: individual.address.state || null,
+          postalCode: individual.address.postal_code || null,
+          country: individual.address.country || null,
+        } : null,
+        ssnLast4Provided: individual.ssn_last_4_provided || false,
+      } : null,
+      requirements: {
+        currentlyDue: account.requirements?.currently_due || [],
+        eventuallyDue: account.requirements?.eventually_due || [],
+        pastDue: account.requirements?.past_due || [],
+      },
+    };
+  }
+
+  /**
+   * Update a connected account with additional information
+   * Used to complete onboarding for Express accounts
+   */
+  async updateConnectedAccount(
+    accountId: string,
+    data: {
+      businessProfile?: {
+        name?: string;
+        url?: string;
+        mcc?: string;
+      };
+      individual?: {
+        first_name?: string;
+        last_name?: string;
+        email?: string;
+        phone?: string;
+        dob?: {
+          day: number;
+          month: number;
+          year: number;
+        };
+        address?: {
+          line1?: string;
+          line2?: string;
+          city?: string;
+          state?: string;
+          postal_code?: string;
+          country?: string;
+        };
+        ssn_last_4?: string;
+      };
+      tosAcceptance?: {
+        date: number;
+        ip: string;
+      };
+    }
+  ): Promise<void> {
+    const updateParams: Stripe.AccountUpdateParams = {};
+
+    if (data.businessProfile) {
+      updateParams.business_profile = {
+        name: data.businessProfile.name,
+        url: data.businessProfile.url,
+        mcc: data.businessProfile.mcc,
+      };
+    }
+
+    if (data.individual) {
+      updateParams.individual = {
+        first_name: data.individual.first_name,
+        last_name: data.individual.last_name,
+        email: data.individual.email,
+        phone: data.individual.phone,
+        dob: data.individual.dob,
+        address: data.individual.address,
+        ssn_last_4: data.individual.ssn_last_4,
+      };
+    }
+
+    if (data.tosAcceptance) {
+      updateParams.tos_acceptance = {
+        date: data.tosAcceptance.date,
+        ip: data.tosAcceptance.ip,
+      };
+    }
+
+    await this.stripe.accounts.update(accountId, updateParams);
   }
 }
 

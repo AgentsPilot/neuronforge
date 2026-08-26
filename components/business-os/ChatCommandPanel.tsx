@@ -2,9 +2,32 @@
 
 import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power, Calendar, Clock, AlertCircle, X, RefreshCw, DollarSign, FileText } from 'lucide-react';
+import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power, Calendar, Clock, AlertCircle, X, RefreshCw, DollarSign, FileText, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { DialogAction, PendingContext } from '@/lib/business-os/DraftManagerTypes';
+
+/**
+ * The v4 answer shape, mirroring RenderedAnswer from
+ * lib/business-os/bizql/render/AnswerRenderer.
+ *
+ * Values arrive already formatted for the user's language, currency and
+ * timezone, so this component only lays them out.
+ */
+interface V4Row {
+  id: string;
+  label: string;
+  fields: Array<{ key: string; label: string; value: string }>;
+}
+
+interface V4Answer {
+  text: string;
+  rows: V4Row[];
+  entity?: string;
+  truncated: boolean;
+  approximate: boolean;
+}
+
+const isHebrewText = (value: string) => /[\u0590-\u05FF]/.test(value);
 
 interface EntityCardAction {
   type: 'navigate' | 'edit' | 'call' | 'email' | 'deactivate' | 'delete' | 'complete' | 'reschedule' | 'cancel' | 'send_invoice' | 'mark_paid';
@@ -30,10 +53,14 @@ interface BookingListItem {
 }
 
 interface ChatMessage {
-  type: 'ai' | 'user' | 'success' | 'entity_card' | 'booking_list';
+  type: 'ai' | 'user' | 'success' | 'entity_card' | 'booking_list' | 'choices' | 'confirmation' | 'result_list';
   content: string;
+  resultRows?: V4Row[];
   entityCard?: EntityCard;
   bookingList?: BookingListItem[];
+  // V3 additions
+  choices?: Array<{ id: string; label: string; detail?: string }>;
+  confirmation?: { confirmationId: string; message: string; actionType: string };
 }
 
 interface ChatCommandPanelProps {
@@ -90,6 +117,7 @@ function EntityCardMessage({
   onSendInvoice?: (invoiceId: string) => void;
   onMarkInvoicePaid?: (invoiceId: string) => void;
 }) {
+  const { currency: userCurrency } = useLanguage();
   const entityName = getEntityDisplayName(entityCard.entity, entityCard.entityType);
 
   return (
@@ -246,7 +274,7 @@ function EntityCardMessage({
               {/* Amount */}
               {(entityCard.entity.amount !== undefined || entityCard.entity.total_amount !== undefined) && (
                 <div className="flex items-center gap-2 text-sm">
-                  <span className="text-[var(--v2-text-muted)]">{entityCard.entity.currency || '₪'}</span>
+                  <span className="text-[var(--v2-text-muted)]">{entityCard.entity.currency || userCurrency.symbol}</span>
                   <span className="text-[var(--v2-text-secondary)] font-medium">
                     {(entityCard.entity.amount ?? entityCard.entity.total_amount) as number}
                   </span>
@@ -494,7 +522,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
   const { t } = useLanguage();
   const router = useRouter();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -515,11 +543,14 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     id: string;
     data: Record<string, unknown>;
   } | null>(null);
+  // V3 session state
+  // Which engine answers. v4 = BizQL (catalog-driven); v2 = legacy AI Data Layer.
+  const [useV4API, setUseV4API] = useState(true);
 
   // Default examples
   const defaultExamples = [
     t('chat.example.slot') || 'Add Saturday morning hours',
-    t('chat.example.service') || 'Add a 90 min session for $150',
+    t('chat.example.service') || 'Add a new service',
     t('chat.example.money') || 'Who owes me money?',
     t('chat.example.booking') || 'Book a client for tomorrow at 2pm'
   ];
@@ -644,7 +675,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         router.push(`/business-os`);
         break;
       case 'invoices':
-        router.push(`/business-os/payments?invoice=${entityId}`);
+        router.push(`/business-os/reports?tab=invoices&invoice=${entityId}`);
         break;
       default:
         // Fallback - prompt user to describe the edit
@@ -716,6 +747,59 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     }
   }, [messages]);
 
+  // ===========================================================================
+  // V4 handler — BizQL
+  //
+  // The v4 response shape is deliberately tiny: a sentence and a list of rows.
+  // All formatting (currency, dates, field labels, language) already happened
+  // server-side in the AnswerRenderer, driven by the Business Catalog, so there
+  // is nothing to translate or special-case per entity here.
+  // ===========================================================================
+  const handleV4Send = useCallback(async (command: string) => {
+    const response = await fetch('/api/business-os/chat-v4', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: command }),
+    });
+
+    const result = await response.json();
+
+    // A question the planner could not answer is a conversational outcome, not
+    // an exception — show it as a reply rather than a red error.
+    if (!result.success) {
+      setMessages(prev => [...prev, { type: 'ai', content: result.error || 'Something went wrong.' }]);
+      return;
+    }
+
+    // The planner declined to guess and asked something back.
+    if (result.clarification) {
+      setMessages(prev => [...prev, { type: 'ai', content: result.clarification }]);
+      return;
+    }
+
+    const answer = result.answer as V4Answer | undefined;
+    if (!answer) return;
+
+    if (answer.text) {
+      setMessages(prev => [...prev, { type: 'ai', content: answer.text }]);
+    }
+
+    if (answer.rows?.length) {
+      setMessages(prev => [...prev, { type: 'result_list', content: '', resultRows: answer.rows }]);
+    }
+
+    // Never let a capped result read as a complete one.
+    if (answer.truncated) {
+      setMessages(prev => [...prev, {
+        type: 'ai',
+        content: isHebrewText(command) ? 'מוצגות רק התוצאות הראשונות.' : 'Showing the first results only.',
+      }]);
+    }
+
+    setPendingContext(null);
+    setSuggestions([]);
+  }, []);
+
   const handleSend = useCallback(async () => {
     const command = input.trim();
     if (!command || loading) return;
@@ -764,141 +848,12 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     setLoading(true);
 
     try {
-      // Build message history for conversation context (last 6 messages = 3 exchanges)
-      // Format: V2 API expects { role: 'user' | 'assistant', content: string }
-      const conversationHistory = messages.slice(-6).map(m => ({
-        role: m.type === 'user' ? 'user' as const : 'assistant' as const,
-        content: m.content,
-      }));
-
-      // Check if user selected from candidates - if so, include the entity ID
-      // This ensures the LLM uses the correct ID instead of trying to match by name
-      let messageToSend = command;
-      if (pendingContext?.candidates && pendingContext.candidates.length > 0) {
-        // Try to find matching candidate by label (with or without detail)
-        const matchedCandidate = pendingContext.candidates.find(c => {
-          const labelWithDetail = c.detail ? `${c.name} (${c.detail})` : c.name;
-          return command === c.name || command === labelWithDetail || command.startsWith(c.name);
-        });
-
-        if (matchedCandidate) {
-          // Include the ID in the message so LLM can use it directly
-          messageToSend = `${command} [ID: ${matchedCandidate.id}]`;
-        }
-      }
-
-      // Call AI Data Layer V2 endpoint - autonomous LLM with capability-aware tools
-      const response = await fetch('/api/business-os/chat-v2', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: messageToSend,
-          conversationHistory,
-          pendingConfirmationId: pendingContext?.confirmationId || undefined,
-          // Pass active entity context for follow-up commands
-          activeEntity: activeEntity || undefined,
-        }),
-      });
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to process message');
-      }
-
-      const { data } = result;
-
-      // Handle pending confirmation - render UI based on actionType
-      if (data.pendingConfirmation) {
-        const { id, actionType, entity, preview } = data.pendingConfirmation;
-
-        // Generate localized confirmation message based on actionType (using translation keys)
-        const confirmationMessage = generateConfirmationMessage(actionType, entity);
-        setMessages(prev => [...prev, { type: 'ai', content: confirmationMessage }]);
-
-        // Store confirmation context for next message
-        setPendingContext({
-          confirmationId: id,
-          actionType,
-          entity,
-          preview,
-          awaitingConfirmation: true
-        });
-
-        // Set confirmation suggestion chips
-        setSuggestions(getConfirmationSuggestions());
+      // v4 is the BizQL path; v2 remains reachable for side-by-side comparison
+      // while the new stack is being evaluated.
+      if (useV4API) {
+        await handleV4Send(command);
       } else {
-        // Add AI response (only if there's a message)
-        if (data.message) {
-          setMessages(prev => [...prev, { type: 'ai', content: data.message }]);
-        }
-
-        // Clear pending context
-        setPendingContext(null);
-        setPendingAvailabilityDays(null);
-
-        // Handle actions
-        if (data.actions?.length > 0) {
-          for (const action of data.actions) {
-            if (action.type === 'present_choices') {
-              // Present choices as suggestion chips
-              const choiceLabels = action.choices.map((c: { label: string; detail?: string }) =>
-                c.detail ? `${c.label} (${c.detail})` : c.label
-              );
-              setSuggestions(choiceLabels);
-              // Store pending action context so we know what to do with selection
-              // Map label -> name for PendingContext.candidates compatibility
-              const candidates = action.choices.map((c: { id: string; label: string; detail?: string }) => ({
-                id: c.id,
-                name: c.label,
-                detail: c.detail
-              }));
-              setPendingContext({
-                entityType: action.entityType,
-                candidates,
-                // Store the pending action (e.g., 'deactivate') for when user selects
-                actionType: action.pendingAction as PendingContext['actionType']
-              });
-              break;
-            } else if (action.type === 'navigate') {
-              setTimeout(() => {
-                router.push(action.destination);
-              }, 1500);
-              break;
-            } else if (action.type === 'open_modal') {
-              setTimeout(() => {
-                onAction?.(action);
-              }, 300);
-              break;
-            } else if (action.type === 'present_entity_card') {
-              // Display entity card in chat
-              setMessages(prev => [...prev, {
-                type: 'entity_card',
-                content: '',
-                entityCard: {
-                  entityType: action.entityType,
-                  entity: action.entity,
-                  actions: action.actions
-                }
-              }]);
-              // Track this entity for context-aware follow-ups
-              setActiveEntity({
-                type: action.entityType as 'tasks' | 'contacts' | 'services' | 'bookings' | 'invoices',
-                id: action.entity.id as string,
-                data: action.entity
-              });
-              break;
-            } else if (action.type === 'present_booking_list') {
-              // Display booking list as styled cards
-              setMessages(prev => [...prev, {
-                type: 'booking_list',
-                content: '',
-                bookingList: action.bookings
-              }]);
-              break;
-            }
-          }
-        }
+        await handleV2Send(command);
       }
 
       onCommand?.(command, null);
@@ -918,7 +873,187 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     } finally {
       setLoading(false);
     }
-  }, [input, loading, router, onCommand, onAction, pendingContext, pendingAvailabilityDays, messages]);
+  }, [input, loading, router, onCommand, onAction, pendingContext, pendingAvailabilityDays, messages, useV4API, handleV4Send]);
+
+
+
+
+  // Get default actions for entity type
+  const getDefaultActionsForEntity = (entityType: string): EntityCardAction[] => {
+    switch (entityType) {
+      case 'contact':
+        return [
+          { type: 'navigate', label: 'View', labelHe: 'צפה', destination: '/business-os/crm' },
+          { type: 'email', label: 'Email', labelHe: 'אימייל' },
+          { type: 'call', label: 'Call', labelHe: 'התקשר' },
+        ];
+      case 'task':
+        return [
+          { type: 'complete', label: 'Complete', labelHe: 'סיים' },
+          { type: 'edit', label: 'Edit', labelHe: 'ערוך' },
+          { type: 'delete', label: 'Delete', labelHe: 'מחק' },
+        ];
+      case 'booking':
+        return [
+          { type: 'reschedule', label: 'Reschedule', labelHe: 'שנה מועד' },
+          { type: 'cancel', label: 'Cancel', labelHe: 'בטל' },
+        ];
+      case 'invoice':
+        return [
+          { type: 'send_invoice', label: 'Send', labelHe: 'שלח' },
+          { type: 'mark_paid', label: 'Mark Paid', labelHe: 'סמן כשולם' },
+        ];
+      case 'service':
+        return [
+          { type: 'edit', label: 'Edit', labelHe: 'ערוך' },
+          { type: 'deactivate', label: 'Deactivate', labelHe: 'השבת' },
+        ];
+      default:
+        return [
+          { type: 'navigate', label: 'View', labelHe: 'צפה' },
+        ];
+    }
+  };
+
+  // V2 API handler (legacy)
+  const handleV2Send = useCallback(async (command: string) => {
+    // Build message history for conversation context (last 6 messages = 3 exchanges)
+    // Format: V2 API expects { role: 'user' | 'assistant', content: string }
+    const conversationHistory = messages.slice(-6).map(m => ({
+      role: m.type === 'user' ? 'user' as const : 'assistant' as const,
+      content: m.content,
+    }));
+
+    // Check if user selected from candidates - if so, include the entity ID
+    // This ensures the LLM uses the correct ID instead of trying to match by name
+    let messageToSend = command;
+    if (pendingContext?.candidates && pendingContext.candidates.length > 0) {
+      // Try to find matching candidate by label (with or without detail)
+      const matchedCandidate = pendingContext.candidates.find(c => {
+        const labelWithDetail = c.detail ? `${c.name} (${c.detail})` : c.name;
+        return command === c.name || command === labelWithDetail || command.startsWith(c.name);
+      });
+
+      if (matchedCandidate) {
+        // Include the ID in the message so LLM can use it directly
+        messageToSend = `${command} [ID: ${matchedCandidate.id}]`;
+      }
+    }
+
+    // Call AI Data Layer V2 endpoint - autonomous LLM with capability-aware tools
+    const response = await fetch('/api/business-os/chat-v2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: messageToSend,
+        conversationHistory,
+        pendingConfirmationId: pendingContext?.confirmationId || undefined,
+        // Pass active entity context for follow-up commands
+        activeEntity: activeEntity || undefined,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to process message');
+    }
+
+    const { data } = result;
+
+    // Handle pending confirmation - render UI based on actionType
+    if (data.pendingConfirmation) {
+      const { id, actionType, entity, preview } = data.pendingConfirmation;
+
+      // Generate localized confirmation message based on actionType (using translation keys)
+      const confirmationMessage = generateConfirmationMessage(actionType, entity);
+      setMessages(prev => [...prev, { type: 'ai', content: confirmationMessage }]);
+
+      // Store confirmation context for next message
+      setPendingContext({
+        confirmationId: id,
+        actionType,
+        entity,
+        preview,
+        awaitingConfirmation: true
+      });
+
+      // Set confirmation suggestion chips
+      setSuggestions(getConfirmationSuggestions());
+    } else {
+      // Add AI response (only if there's a message)
+      if (data.message) {
+        setMessages(prev => [...prev, { type: 'ai', content: data.message }]);
+      }
+
+      // Clear pending context
+      setPendingContext(null);
+      setPendingAvailabilityDays(null);
+
+      // Handle actions
+      if (data.actions?.length > 0) {
+        for (const action of data.actions) {
+          if (action.type === 'present_choices') {
+            // Present choices as suggestion chips
+            const choiceLabels = action.choices.map((c: { label: string; detail?: string }) =>
+              c.detail ? `${c.label} (${c.detail})` : c.label
+            );
+            setSuggestions(choiceLabels);
+            // Store pending action context so we know what to do with selection
+            // Map label -> name for PendingContext.candidates compatibility
+            const candidates = action.choices.map((c: { id: string; label: string; detail?: string }) => ({
+              id: c.id,
+              name: c.label,
+              detail: c.detail
+            }));
+            setPendingContext({
+              entityType: action.entityType,
+              candidates,
+              // Store the pending action (e.g., 'deactivate') for when user selects
+              actionType: action.pendingAction as PendingContext['actionType']
+            });
+            break;
+          } else if (action.type === 'navigate') {
+            setTimeout(() => {
+              router.push(action.destination);
+            }, 1500);
+            break;
+          } else if (action.type === 'open_modal') {
+            setTimeout(() => {
+              onAction?.(action);
+            }, 300);
+            break;
+          } else if (action.type === 'present_entity_card') {
+            // Display entity card in chat
+            setMessages(prev => [...prev, {
+              type: 'entity_card',
+              content: '',
+              entityCard: {
+                entityType: action.entityType,
+                entity: action.entity,
+                actions: action.actions
+              }
+            }]);
+            // Track this entity for context-aware follow-ups
+            setActiveEntity({
+              type: action.entityType as 'tasks' | 'contacts' | 'services' | 'bookings' | 'invoices',
+              id: action.entity.id as string,
+              data: action.entity
+            });
+            break;
+          } else if (action.type === 'present_booking_list') {
+            // Display booking list as styled cards
+            setMessages(prev => [...prev, {
+              type: 'booking_list',
+              content: '',
+              bookingList: action.bookings
+            }]);
+            break;
+          }
+        }
+      }
+    }
+  }, [messages, pendingContext, activeEntity, router, onAction, generateConfirmationMessage, getConfirmationSuggestions]);
 
   const handleExampleClick = (example: string) => {
     setInput(example);
@@ -953,7 +1088,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
           >
             <Bot className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: '#F97316' }} strokeWidth={2} />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <b
               className="block truncate"
               style={{
@@ -970,6 +1105,29 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
               {t('chat.subtitle') || "Change anything, anywhere — I'll handle it"}
             </small>
           </div>
+          {/* V2/V3 Toggle - for comparison testing */}
+          <button
+            onClick={() => {
+              setUseV4API(!useV4API);
+              setMessages(prev => [...prev, {
+                type: 'ai',
+                content: useV4API ? '🔄 Switched to V2 (legacy)' : '🔄 Switched to V4 (BizQL)',
+              }]);
+            }}
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors hover:bg-[var(--v2-bg)]"
+            style={{
+              color: useV4API ? '#F97316' : 'var(--v2-text-muted)',
+              border: '1px solid var(--v2-border)',
+            }}
+            title={useV4API ? 'Using V4 (BizQL) — click to compare with V2' : 'Using V2 (legacy) — click to switch back to V4'}
+          >
+            {useV4API ? (
+              <ToggleRight className="w-4 h-4" />
+            ) : (
+              <ToggleLeft className="w-4 h-4" />
+            )}
+            <span className="hidden sm:inline">{useV4API ? 'V4' : 'V2'}</span>
+          </button>
         </div>
       </div>
 
@@ -1048,6 +1206,9 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
                 onMarkInvoicePaid={msg.entityCard.entityType === 'invoices' ? handleMarkInvoicePaid : undefined}
               />
             )}
+            {msg.type === 'result_list' && msg.resultRows && (
+              <ResultListMessage rows={msg.resultRows} />
+            )}
             {msg.type === 'booking_list' && msg.bookingList && (
               <BookingListMessage
                 bookings={msg.bookingList}
@@ -1099,23 +1260,40 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
 
         {/* Input bar */}
         <div
-          className="flex gap-1.5 sm:gap-2 items-center bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all focus-within:border-[#F97316] focus-within:shadow-[0_0_0_3px_rgba(249,115,22,0.08)]"
+          className="flex gap-1.5 sm:gap-2 items-end bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all focus-within:border-[#F97316] focus-within:shadow-[0_0_0_3px_rgba(249,115,22,0.08)]"
           style={{ borderRadius: '12px', padding: '4px 4px 4px 10px', borderWidth: '1.5px' }}
         >
-          <input
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder={t('chat.placeholder') || 'e.g. add a 90 min session for $150…'}
-            className="flex-1 border-0 bg-transparent text-xs sm:text-sm focus:outline-none text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)]"
+            onKeyDown={(e) => {
+              // Enter without shift sends the message
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+              // Shift+Enter adds a new line (default textarea behavior)
+            }}
+            placeholder={t('chat.placeholder') || 'e.g. who got a refund today?'}
+            className="flex-1 border-0 bg-transparent text-xs sm:text-sm focus:outline-none text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] resize-none min-h-[36px] max-h-[120px] py-2"
             disabled={loading}
+            rows={1}
+            style={{
+              lineHeight: '1.4',
+              overflow: input.includes('\n') ? 'auto' : 'hidden',
+            }}
+            onInput={(e) => {
+              // Auto-resize textarea based on content
+              const target = e.target as HTMLTextAreaElement;
+              target.style.height = 'auto';
+              target.style.height = `${Math.min(target.scrollHeight, 120)}px`;
+            }}
           />
           <button
             onClick={handleSend}
             disabled={loading || !input.trim()}
-            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center flex-none transition-transform active:scale-95 disabled:opacity-50"
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center flex-none transition-transform active:scale-95 disabled:opacity-50 mb-0.5"
             style={{
               borderRadius: '8px',
               background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)'
@@ -1129,3 +1307,55 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     </section>
   );
 });
+
+/**
+ * Renders BizQL result rows.
+ *
+ * Entity-agnostic on purpose. Every value arrives pre-formatted by the server's
+ * AnswerRenderer using catalog metadata — currency symbols, dates in the user's
+ * timezone, field labels in their language — so this has no per-entity branches
+ * and no translation logic. Adding an entity to the catalog makes it renderable
+ * here with no change to this file.
+ */
+function ResultListMessage({ rows }: { rows: V4Row[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const VISIBLE = 5;
+
+  const shown = expanded ? rows : rows.slice(0, VISIBLE);
+  const hidden = rows.length - shown.length;
+
+  return (
+    <div className="flex flex-col gap-1.5 w-full max-w-full">
+      {shown.map((row) => (
+        <div
+          key={row.id}
+          className="bg-[var(--v2-bg)] border border-[var(--v2-border)] w-full"
+          style={{ borderRadius: '10px', padding: '10px 12px' }}
+        >
+          <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text)] mb-1 break-words">
+            {row.label}
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+            {row.fields.map((field) => (
+              <span key={field.key} className="text-[11px] text-[var(--v2-text-muted)]">
+                {field.label}:{' '}
+                <span className="text-[var(--v2-text)]">{field.value}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="self-start text-[11px] font-medium hover:underline"
+          style={{ color: '#F97316' }}
+        >
+          + {hidden} more
+        </button>
+      )}
+    </div>
+  );
+}

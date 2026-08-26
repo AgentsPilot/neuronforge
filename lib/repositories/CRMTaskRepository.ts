@@ -136,7 +136,7 @@ export class CRMTaskRepository {
     try {
       const { data, error } = await this.supabase
         .from('crm_tasks')
-        .select('*, contact:crm_contacts(first_name, last_name, email)')
+        .select('*, contact:crm_contacts(id, first_name, last_name, email)')
         .eq('id', id)
         .eq('user_id', userId)
         .single();
@@ -174,7 +174,7 @@ export class CRMTaskRepository {
 
       let query = this.supabase
         .from('crm_tasks')
-        .select('*, contact:crm_contacts(first_name, last_name, email)')
+        .select('*, contact:crm_contacts(id, first_name, last_name, email)')
         .eq('user_id', userId);
 
       // Filter by contact

@@ -14,12 +14,15 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'WebsiteContactFormAPI' });
 
 // Form submission schema
+// Supports both subdomain (website) and userCode (standalone conversion pages)
 const ContactFormSchema = z.object({
-  subdomain: z.string().min(1, 'Subdomain is required'),
+  subdomain: z.string().optional(),
+  userCode: z.string().optional(),
   name: z.string().min(1, 'Name is required').max(200),
   email: z.string().email('Invalid email address'),
   phone: z.string().optional(),
@@ -28,6 +31,8 @@ const ContactFormSchema = z.object({
   referral_source: z.string().optional(),
   consent_marketing: z.boolean().optional().default(false),
   page_url: z.string().optional()
+}).refine(data => data.subdomain || data.userCode, {
+  message: 'Either subdomain or userCode is required'
 });
 
 export async function POST(request: NextRequest) {
@@ -49,22 +54,63 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
-    // Look up the website owner by subdomain
-    const { data: websitePage, error: pageError } = await supabaseServer
-      .from('website_pages')
-      .select('user_id')
-      .eq('subdomain', data.subdomain)
-      .single();
+    // Extract attribution data from request (UTM params, referrer, etc.)
+    const attribution = buildAttributionFromRequest(request, {
+      captureChannel: 'form',
+      pageUrl: data.page_url,
+      generateSessionId: true
+    });
 
-    if (pageError || !websitePage) {
-      requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');
+    let ownerId: string;
+
+    // Look up owner by subdomain (website) or userCode (standalone conversion page)
+    if (data.subdomain) {
+      const { data: websitePage, error: pageError } = await supabaseServer
+        .from('website_pages')
+        .select('user_id')
+        .eq('subdomain', data.subdomain)
+        .single();
+
+      if (pageError || !websitePage) {
+        requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');
+        return NextResponse.json(
+          { success: false, error: 'Website not found' },
+          { status: 404 }
+        );
+      }
+      ownerId = websitePage.user_id;
+    } else if (data.userCode) {
+      const { data: businessProfile, error: profileError } = await supabaseServer
+        .from('business_profiles')
+        .select('user_id')
+        .eq('user_code', data.userCode.toLowerCase())
+        .single();
+
+      if (profileError || !businessProfile) {
+        requestLogger.warn({ userCode: data.userCode }, 'User code not found');
+        return NextResponse.json(
+          { success: false, error: 'User not found' },
+          { status: 404 }
+        );
+      }
+      ownerId = businessProfile.user_id;
+    } else {
       return NextResponse.json(
-        { success: false, error: 'Website not found' },
-        { status: 404 }
+        { success: false, error: 'Either subdomain or userCode is required' },
+        { status: 400 }
       );
     }
 
-    const ownerId = websitePage.user_id;
+    // Get user's first pipeline stage (or fallback to 'lead')
+    const { data: pipelineStages } = await supabaseServer
+      .from('crm_pipeline_stages')
+      .select('stage_key')
+      .eq('user_id', ownerId)
+      .order('position', { ascending: true })
+      .limit(1);
+
+    const initialStage = pipelineStages?.[0]?.stage_key || 'lead';
+    requestLogger.debug({ initialStage, ownerId }, 'Using pipeline stage for new contact');
 
     // Check if contact already exists
     const { data: existingContact } = await supabaseServer
@@ -109,7 +155,7 @@ export async function POST(request: NextRequest) {
       const firstName = nameParts[0] || data.name;
       const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
 
-      // Create new contact
+      // Create new contact with attribution
       const { data: newContact, error: createError } = await supabaseServer
         .from('crm_contacts')
         .insert({
@@ -119,7 +165,8 @@ export async function POST(request: NextRequest) {
           email: data.email,
           phone: data.phone || null,
           source: 'website_form',
-          stage: 'lead',
+          stage: initialStage,  // Use user's first pipeline stage
+          source_metadata: attribution as unknown as Record<string, unknown>,  // Store full attribution data
           custom_fields: {
             first_website_message: data.message,
             service_interest: data.service_interest,

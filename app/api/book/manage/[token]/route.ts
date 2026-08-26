@@ -33,14 +33,13 @@ export async function GET(
     const { bookingId, email } = decoded;
     requestLogger.info({ bookingId }, 'Fetching booking for self-service');
 
-    // Fetch booking with service details
+    // Fetch booking with service and contact details
+    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')
       .select(`
         id,
-        client_first_name,
-        client_last_name,
-        client_email,
+        contact_id,
         start_time,
         end_time,
         timezone,
@@ -48,6 +47,12 @@ export async function GET(
         payment_status,
         notes,
         user_id,
+        contact:crm_contacts(
+          first_name,
+          last_name,
+          email,
+          phone
+        ),
         service:scheduling_services(
           id,
           service_name,
@@ -58,7 +63,6 @@ export async function GET(
         )
       `)
       .eq('id', bookingId)
-      .eq('client_email', email)
       .single();
 
     if (error || !booking) {
@@ -69,10 +73,24 @@ export async function GET(
       );
     }
 
+    // Get contact data from the JOIN
+    const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
+    const contactEmail = contact?.email || '';
+
+    // Verify the email matches the token's email (security check)
+    if (contactEmail.toLowerCase() !== email.toLowerCase()) {
+      requestLogger.warn({ bookingId, tokenEmail: email, contactEmail }, 'Email mismatch');
+      return NextResponse.json(
+        { success: false, error: 'Booking not found' },
+        { status: 404 }
+      );
+    }
+
     // Fetch business profile for display
+    // Note: logo_url and primary_color columns don't exist in business_profiles table
     const { data: profile } = await supabaseServer
       .from('business_profiles')
-      .select('company_name, logo_url, primary_color, website_url')
+      .select('company_name, invoice_logo_url, website_url, language')
       .eq('user_id', booking.user_id)
       .single();
 
@@ -86,8 +104,8 @@ export async function GET(
       success: true,
       booking: {
         id: booking.id,
-        clientName: [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' '),
-        clientEmail: booking.client_email,
+        clientName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),
+        clientEmail: contactEmail,
         startTime: booking.start_time,
         endTime: booking.end_time,
         timezone: booking.timezone,
@@ -101,9 +119,10 @@ export async function GET(
       },
       business: profile ? {
         name: profile.company_name,
-        logoUrl: profile.logo_url,
-        primaryColor: profile.primary_color,
-        websiteUrl: profile.website_url
+        logoUrl: profile.invoice_logo_url,
+        primaryColor: '#4F46E5', // Default color since primary_color column doesn't exist
+        websiteUrl: profile.website_url,
+        language: profile.language || 'en'
       } : null
     });
 

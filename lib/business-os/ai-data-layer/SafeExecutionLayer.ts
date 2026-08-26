@@ -18,6 +18,7 @@ import {
 } from '@/lib/repositories/SchedulingRepository';
 import { paymentInvoiceRepository, paymentTransactionRepository } from '@/lib/repositories/PaymentRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { CRMPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import type {
   EntityType,
   ToolResult,
@@ -32,13 +33,14 @@ import { getAction, type ActionType } from './capabilities-schema';
 import { resolveAllSemanticFilters } from './semantic-schema';
 
 const logger = createLogger({ service: 'SafeExecutionLayer' });
+const pipelineStagesRepo = new CRMPipelineStagesRepository();
 
 // In-memory store for pending mutations (in production, use Redis or database)
 const pendingMutations = new Map<string, PendingMutation>();
 
 // Validation schemas for tool parameters
 const dataQuerySchema = z.object({
-  entity: z.enum(['contacts', 'services', 'bookings', 'tasks', 'invoices', 'availability']),
+  entity: z.enum(['contacts', 'services', 'bookings', 'tasks', 'invoices', 'availability', 'transactions']),
   filters: z.record(z.unknown()).optional(),
   fields: z.array(z.string()).optional(),
   orderBy: z.object({
@@ -49,7 +51,7 @@ const dataQuerySchema = z.object({
 });
 
 const dataAggregateSchema = z.object({
-  entity: z.enum(['contacts', 'services', 'bookings', 'tasks', 'invoices']),
+  entity: z.enum(['contacts', 'services', 'bookings', 'tasks', 'invoices', 'transactions']),
   operation: z.enum(['count', 'sum', 'avg', 'min', 'max']),
   field: z.string().optional(),
   filters: z.record(z.unknown()).optional(),
@@ -57,7 +59,7 @@ const dataAggregateSchema = z.object({
 });
 
 const dataMutateSchema = z.object({
-  entity: z.enum(['contacts', 'services', 'bookings', 'tasks', 'invoices']),
+  entity: z.enum(['contacts', 'services', 'bookings', 'tasks', 'invoices', 'transactions']),
   operation: z.enum(['create', 'update', 'delete']),
   id: z.string().optional(),
   payload: z.record(z.unknown()).optional()
@@ -81,7 +83,8 @@ const SENSITIVE_FIELDS_MAP: Record<EntityType, string[]> = {
   bookings: ['payment_token', 'card_last4', 'stripe_payment_intent_id'],
   tasks: [],
   invoices: ['stripe_invoice_id', 'processor_payment_id'],
-  availability: []
+  availability: [],
+  transactions: ['stripe_payment_intent_id', 'stripe_charge_id', 'stripe_customer_id', 'processor_refund_id']
 };
 
 export class SafeExecutionLayer {
@@ -246,6 +249,9 @@ export class SafeExecutionLayer {
       case 'invoices':
         result = await paymentInvoiceRepository.findById(id, this.userId);
         break;
+      case 'transactions':
+        result = await paymentTransactionRepository.findById(id, this.userId);
+        break;
       default:
         return { success: false, error: `Cannot get entity: ${entity}` };
     }
@@ -292,7 +298,8 @@ export class SafeExecutionLayer {
       services: ['service_name', 'description', 'duration_minutes', 'price'],
       bookings: ['notes', 'status'],
       invoices: ['notes', 'due_date'],
-      availability: []
+      availability: [],
+      transactions: [] // Transactions are read-only
     };
 
     const entitySafeFields = safeFields[entityType] || [];
@@ -1079,6 +1086,9 @@ export class SafeExecutionLayer {
       case 'availability':
         result = await this.queryAvailability();
         break;
+      case 'transactions':
+        result = await this.queryTransactions(resolvedFilters, maxLimit);
+        break;
       default:
         return { success: false, error: `Unknown entity: ${entity}` };
     }
@@ -1383,6 +1393,60 @@ export class SafeExecutionLayer {
     return { data: availability, error: null };
   }
 
+  private async queryTransactions(
+    filters: Record<string, unknown> | undefined,
+    limit: number
+  ) {
+    // Handle array status (from semantic resolution) by fetching multiple statuses
+    if (filters?.status && Array.isArray(filters.status)) {
+      const statuses = filters.status as string[];
+      const contactId = filters.contact_id ? String(filters.contact_id) : undefined;
+
+      // Fetch all statuses in parallel
+      const results = await Promise.all(
+        statuses.map(status =>
+          paymentTransactionRepository.list(this.userId, {
+            status,
+            contactId,
+            limit,
+            includeContact: true
+          })
+        )
+      );
+
+      // Combine results and remove duplicates by ID
+      const allTransactions = results.flatMap(r => r.data || []);
+      const uniqueTransactions = Array.from(
+        new Map(allTransactions.map(tx => [tx.id, tx])).values()
+      );
+
+      // Sort by created_at descending and apply limit
+      uniqueTransactions.sort((a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      return {
+        data: uniqueTransactions.slice(0, limit),
+        error: null
+      };
+    }
+
+    // Single status or no status filter
+    const options: {
+      status?: string;
+      contactId?: string;
+      limit: number;
+      includeContact: boolean;
+    } = { limit, includeContact: true };
+
+    if (filters) {
+      if (filters.status) options.status = String(filters.status);
+      if (filters.contact_id) options.contactId = String(filters.contact_id);
+    }
+
+    return paymentTransactionRepository.list(this.userId, options);
+  }
+
   // ==========================================================================
   // Aggregate Execution
   // ==========================================================================
@@ -1503,6 +1567,27 @@ export class SafeExecutionLayer {
             status: resolvedFilters?.status as string
           });
           count = result.data?.length || 0;
+        }
+        break;
+      }
+      case 'transactions': {
+        // Handle array status (from semantic resolution)
+        if (resolvedFilters?.status && Array.isArray(resolvedFilters.status)) {
+          const statuses = resolvedFilters.status as string[];
+          const results = await Promise.all(
+            statuses.map(status =>
+              paymentTransactionRepository.list(this.userId, { status })
+            )
+          );
+          // Combine and deduplicate by ID
+          const allTransactions = results.flatMap(r => r.data || []);
+          const uniqueIds = new Set(allTransactions.map(tx => tx.id));
+          count = uniqueIds.size;
+        } else {
+          const result = await paymentTransactionRepository.count(this.userId, {
+            status: resolvedFilters?.status as string
+          });
+          count = result.data || 0;
         }
         break;
       }
@@ -1636,7 +1721,8 @@ export class SafeExecutionLayer {
       bookings: 'booking',
       tasks: 'task',
       invoices: 'invoice',
-      availability: 'availability'
+      availability: 'availability',
+      transactions: 'transaction'
     };
 
     const label = entityLabels[entity] || entity;
@@ -1731,13 +1817,20 @@ export class SafeExecutionLayer {
   ): Promise<ToolResult> {
     switch (operation) {
       case 'create': {
+        // Get user's first pipeline stage if no stage provided
+        let stage = payload?.stage as string;
+        if (!stage) {
+          const stagesResult = await pipelineStagesRepo.findByUser(this.userId);
+          stage = stagesResult.data?.[0]?.stage_key || 'lead';
+        }
+
         const result = await crmContactRepository.create({
           user_id: this.userId,
           first_name: payload?.first_name as string,
           last_name: payload?.last_name as string,
           email: payload?.email as string,
           phone: payload?.phone as string,
-          stage: (payload?.stage as string) || 'lead',
+          stage,
           tags: (payload?.tags as string[]) || [],
           source: 'chat'
         });

@@ -66,6 +66,20 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...data.branding, locale };
 
+  // Get translations for the current locale
+  const greeting = t.greeting[locale](data.branding.businessName);
+  const intro = t.intro[locale](data.clientName);
+  const invoiceNumberLabel = t.invoiceNumber[locale];
+  const amountDueLabel = t.amountDue[locale];
+  const dueDateLabel = t.dueDate[locale];
+  const forAppointmentLabel = t.forAppointment[locale];
+  const invoiceDetailsLabel = t.invoiceDetails[locale];
+  const totalLabel = t.total[locale];
+  const payNowLabel = t.payNow[locale];
+  const securePaymentLabel = t.securePayment[locale];
+  const questionsText = t.questions[locale](data.branding.businessName);
+  const serviceLabel = t.service[locale];
+
   // Build line items HTML
   const lineItemsHtml = data.lineItems.map(item => `
     <tr>
@@ -88,10 +102,10 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   const content = `
     <!-- Greeting -->
     <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
-      Invoice from ${data.branding.businessName}
+      ${greeting}
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
-      Hi ${data.clientName}, here's your invoice for upcoming services.
+      ${intro}
     </p>
 
     <!-- Invoice Header -->
@@ -102,7 +116,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
             <tr>
               <td>
                 <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #666666; text-transform: uppercase;">
-                  Invoice Number
+                  ${invoiceNumberLabel}
                 </p>
                 <p style="margin: 0; font-size: 18px; font-weight: 600; color: ${data.branding.primaryColor};">
                   ${data.invoiceNumber}
@@ -110,7 +124,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
               </td>
               <td style="text-align: right;">
                 <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #666666; text-transform: uppercase;">
-                  Amount Due
+                  ${amountDueLabel}
                 </p>
                 <p style="margin: 0; font-size: 24px; font-weight: 700; color: #1a1a1a;">
                   ${formatCurrency(data.amount, data.currency)}
@@ -130,7 +144,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
             <tr>
               <td>
                 <p style="margin: 0; font-size: 14px; color: #92400e;">
-                  <strong>📅 Due Date:</strong> ${formattedDueDate}
+                  <strong>📅 ${dueDateLabel}:</strong> ${formattedDueDate}
                 </p>
               </td>
             </tr>
@@ -145,7 +159,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
       <tr>
         <td style="padding: 16px; background-color: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
           <p style="margin: 0; font-size: 14px; color: #0369a1;">
-            <strong>📆 For appointment:</strong> ${data.serviceName || 'Service'} on ${formattedAppointmentDate}
+            <strong>📆 ${forAppointmentLabel}:</strong> ${data.serviceName || serviceLabel} on ${formattedAppointmentDate}
           </p>
         </td>
       </tr>
@@ -157,14 +171,14 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
       <tr>
         <td>
           <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
-            Invoice Details
+            ${invoiceDetailsLabel}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #fafafa; border-radius: 8px; padding: 8px 16px;">
             ${lineItemsHtml}
             <!-- Total Row -->
             <tr>
               <td style="padding: 16px 0 8px; font-size: 16px; font-weight: 600; color: #1a1a1a;">
-                Total
+                ${totalLabel}
               </td>
               <td style="padding: 16px 0 8px; text-align: right; font-size: 18px; font-weight: 700; color: ${data.branding.primaryColor};">
                 ${formatCurrency(data.amount, data.currency)}
@@ -179,12 +193,12 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
         <td style="text-align: center;">
-          ${emailButton('Pay Now', data.paymentUrl, {
+          ${emailButton(payNowLabel, data.paymentUrl, {
             backgroundColor: data.branding.primaryColor,
             fullWidth: true
           })}
           <p style="margin: 12px 0 0; font-size: 12px; color: #888888;">
-            Secure payment powered by Stripe
+            ${securePaymentLabel}
           </p>
         </td>
       </tr>
@@ -192,7 +206,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
 
     <!-- Final Note -->
     <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
-      If you have any questions about this invoice, please reply to this email or contact ${data.branding.businessName} directly.
+      ${questionsText}
     </p>
   `;
 

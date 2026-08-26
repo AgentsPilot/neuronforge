@@ -484,6 +484,103 @@ export const emailTranslations = {
   },
 
   // ==========================================
+  // REFUND CONFIRMATION EMAIL
+  // ==========================================
+  refundConfirmation: {
+    subject: {
+      en: (businessName: string) => `Refund processed - ${businessName}`,
+      es: (businessName: string) => `Reembolso procesado - ${businessName}`,
+      he: (businessName: string) => `ההחזר בוצע - ${businessName}`
+    },
+    greeting: {
+      en: 'Refund Processed',
+      es: 'Reembolso Procesado',
+      he: 'ההחזר בוצע'
+    },
+    intro: {
+      en: (clientName: string, businessName: string) =>
+        `Hi ${clientName}, your refund from ${businessName} has been processed successfully.`,
+      es: (clientName: string, businessName: string) =>
+        `Hola ${clientName}, tu reembolso de ${businessName} ha sido procesado exitosamente.`,
+      he: (clientName: string, businessName: string) =>
+        `שלום ${clientName}, ההחזר שלך מ-${businessName} בוצע בהצלחה.`
+    },
+    refundDetails: {
+      en: 'Refund Details',
+      es: 'Detalles del Reembolso',
+      he: 'פרטי ההחזר'
+    },
+    amountRefunded: {
+      en: 'Amount Refunded',
+      es: 'Monto Reembolsado',
+      he: 'סכום ההחזר'
+    },
+    originalPayment: {
+      en: 'Original Payment',
+      es: 'Pago Original',
+      he: 'תשלום מקורי'
+    },
+    refundDate: {
+      en: 'Refund Date',
+      es: 'Fecha del Reembolso',
+      he: 'תאריך ההחזר'
+    },
+    refundType: {
+      en: 'Refund Type',
+      es: 'Tipo de Reembolso',
+      he: 'סוג ההחזר'
+    },
+    fullRefund: {
+      en: 'Full Refund',
+      es: 'Reembolso Completo',
+      he: 'החזר מלא'
+    },
+    partialRefund: {
+      en: 'Partial Refund',
+      es: 'Reembolso Parcial',
+      he: 'החזר חלקי'
+    },
+    serviceLabel: {
+      en: 'Service',
+      es: 'Servicio',
+      he: 'שירות'
+    },
+    reasonLabel: {
+      en: 'Reason',
+      es: 'Motivo',
+      he: 'סיבה'
+    },
+    processingNote: {
+      en: 'The refund will be credited to your original payment method within 5-10 business days, depending on your bank.',
+      es: 'El reembolso se acreditará a tu método de pago original dentro de 5-10 días hábiles, dependiendo de tu banco.',
+      he: 'ההחזר יזוכה לאמצעי התשלום המקורי שלך תוך 5-10 ימי עסקים, בהתאם לבנק שלך.'
+    },
+    manualRefundNote: {
+      en: 'This refund was processed manually. Please contact us if you have any questions about receiving your refund.',
+      es: 'Este reembolso fue procesado manualmente. Por favor contáctanos si tienes alguna pregunta sobre recibir tu reembolso.',
+      he: 'החזר זה בוצע באופן ידני. אנא צור קשר אם יש לך שאלות לגבי קבלת ההחזר.'
+    },
+    bookAgainPrompt: {
+      en: 'We hope to see you again soon!',
+      es: '¡Esperamos verte de nuevo pronto!',
+      he: 'מקווים לראות אותך שוב בקרוב!'
+    },
+    bookAgain: {
+      en: 'Book Again',
+      es: 'Reservar de Nuevo',
+      he: 'הזמן שוב'
+    },
+    questions: {
+      en: (businessName: string) =>
+        `If you have any questions about this refund, please contact ${businessName} directly.`,
+      es: (businessName: string) =>
+        `Si tienes alguna pregunta sobre este reembolso, por favor contacta a ${businessName} directamente.`,
+      he: (businessName: string) =>
+        `אם יש לך שאלות לגבי החזר זה, אנא צור קשר עם ${businessName} ישירות.`
+    }
+  },
+
+  // ==========================================
   // INVOICE EMAIL
   // ==========================================
   invoice: {
@@ -496,37 +593,70 @@ export const emailTranslations = {
         `חשבונית #${invoiceNumber} מ-${businessName}`
     },
     greeting: {
-      en: 'Invoice',
-      es: 'Factura',
-      he: 'חשבונית'
+      en: (businessName: string) => `Invoice from ${businessName}`,
+      es: (businessName: string) => `Factura de ${businessName}`,
+      he: (businessName: string) => `חשבונית מ-${businessName}`
     },
     intro: {
-      en: (clientName: string, businessName: string) =>
-        `Hi ${clientName}, please find your invoice from ${businessName} below.`,
-      es: (clientName: string, businessName: string) =>
-        `Hola ${clientName}, a continuación encontrarás tu factura de ${businessName}.`,
-      he: (clientName: string, businessName: string) =>
-        `שלום ${clientName}, מצורפת החשבונית שלך מ-${businessName}.`
+      en: (clientName: string) =>
+        `Hi ${clientName}, here's your invoice for upcoming services.`,
+      es: (clientName: string) =>
+        `Hola ${clientName}, aquí está tu factura por los servicios.`,
+      he: (clientName: string) =>
+        `שלום ${clientName}, מצורפת החשבונית שלך עבור השירותים.`
     },
     invoiceNumber: {
       en: 'Invoice Number',
       es: 'Número de Factura',
       he: 'מספר חשבונית'
     },
+    amountDue: {
+      en: 'Amount Due',
+      es: 'Monto a Pagar',
+      he: 'סכום לתשלום'
+    },
     dueDate: {
       en: 'Due Date',
       es: 'Fecha de Vencimiento',
       he: 'תאריך לתשלום'
     },
-    totalDue: {
-      en: 'Total Due',
-      es: 'Total a Pagar',
-      he: 'סה"כ לתשלום'
+    forAppointment: {
+      en: 'For appointment',
+      es: 'Para la cita',
+      he: 'עבור הפגישה'
     },
-    payInvoice: {
-      en: 'Pay Invoice',
-      es: 'Pagar Factura',
-      he: 'שלם חשבונית'
+    invoiceDetails: {
+      en: 'Invoice Details',
+      es: 'Detalles de la Factura',
+      he: 'פרטי החשבונית'
+    },
+    total: {
+      en: 'Total',
+      es: 'Total',
+      he: 'סה"כ'
+    },
+    payNow: {
+      en: 'Pay Now',
+      es: 'Pagar Ahora',
+      he: 'שלם עכשיו'
+    },
+    securePayment: {
+      en: 'Secure payment powered by Stripe',
+      es: 'Pago seguro procesado por Stripe',
+      he: 'תשלום מאובטח באמצעות Stripe'
+    },
+    questions: {
+      en: (businessName: string) =>
+        `If you have any questions about this invoice, please reply to this email or contact ${businessName} directly.`,
+      es: (businessName: string) =>
+        `Si tienes alguna pregunta sobre esta factura, por favor responde a este correo o contacta a ${businessName} directamente.`,
+      he: (businessName: string) =>
+        `אם יש לך שאלות לגבי חשבונית זו, אנא השב למייל זה או צור קשר עם ${businessName} ישירות.`
+    },
+    service: {
+      en: 'Service',
+      es: 'Servicio',
+      he: 'שירות'
     }
   }
 } as const;

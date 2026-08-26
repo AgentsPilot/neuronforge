@@ -18,15 +18,18 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
+import { buildAttributionFromRequest, type LeadSourceMetadata } from '@/lib/utils/attribution';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteBookingCreateAPI' });
 
-// Subdomain is optional - if not provided, authenticated user is used (preview mode)
+// Subdomain or userCode is optional - if not provided, authenticated user is used (preview mode)
 // start_time is optional - if not provided, booking is created without scheduling (for courses, products, etc.)
 const BookingSchema = z.object({
   // Transform empty strings to undefined so they're treated as "not provided"
   subdomain: z.string().optional().transform(val => val && val.trim() ? val : undefined),
+  // userCode is an alternative to subdomain for standalone booking pages (/c/[userCode]/book)
+  userCode: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   service_id: z.string().uuid('Invalid service ID'),
   // Optional - when not provided or empty, creates non-scheduled booking (courses, products)
   // Transform empty strings to undefined so they're treated as "not provided"
@@ -35,9 +38,8 @@ const BookingSchema = z.object({
   email: z.string().email('Invalid email address'),
   phone: z.string().optional().transform(val => val && val.trim() ? val : undefined),
   notes: z.string().max(2000).optional().transform(val => val && val.trim() ? val : undefined),
-  timezone: z.string().optional().default('UTC'),
-  // Skip contact creation for paid services - contact will be created after payment
-  skip_contact: z.boolean().optional().default(false)
+  timezone: z.string().optional().default('UTC')
+  // Removed skip_contact - we now always create contact first, using stage to differentiate lead vs active_client
 });
 
 export async function POST(request: NextRequest) {
@@ -59,12 +61,19 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
+    // Extract attribution data from request (UTM params, referrer, etc.)
+    const attribution = buildAttributionFromRequest(request, {
+      captureChannel: 'booking',
+      generateSessionId: true
+    });
+
     let ownerId: string;
 
     // Track hidden service names for validation (only used for public access)
     let hiddenServiceNames: Set<string> = new Set();
 
     // If subdomain is provided, look up website owner (public access)
+    // If userCode is provided, look up business profile owner (standalone booking page)
     // Otherwise, use authenticated user (preview mode)
     if (data.subdomain && data.subdomain.trim()) {
       const { data: websitePage, error: pageError } = await supabaseServer
@@ -102,6 +111,24 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         requestLogger.warn({ err }, 'Failed to fetch hidden service flags');
       }
+    } else if (data.userCode && data.userCode.trim()) {
+      // Standalone booking page - look up business profile by userCode
+      const { data: businessProfile, error: profileError } = await supabaseServer
+        .from('business_profiles')
+        .select('user_id')
+        .eq('user_code', data.userCode.toLowerCase())
+        .single();
+
+      if (profileError || !businessProfile) {
+        requestLogger.warn({ userCode: data.userCode }, 'Business not found');
+        return NextResponse.json(
+          { success: false, error: 'Business not found' },
+          { status: 404 }
+        );
+      }
+      ownerId = businessProfile.user_id;
+      // Note: For standalone booking pages, we don't check hidden services
+      // (the services are already filtered in the availability API)
     } else {
       // Authenticated access - use current user (preview mode)
       const user = await getUser();
@@ -179,71 +206,115 @@ export async function POST(request: NextRequest) {
     // Determine if payment is required
     const requiresPayment = service.price !== null && service.price > 0;
 
-    requestLogger.info(
-      { skip_contact: data.skip_contact, price: service.price, requiresPayment },
-      'Contact creation decision'
-    );
+    // Get user's pipeline stages to determine appropriate stages
+    const { data: pipelineStages } = await supabaseServer
+      .from('crm_pipeline_stages')
+      .select('stage_key, position')
+      .eq('user_id', ownerId)
+      .order('position', { ascending: true });
 
-    // Create contact only if not skipped (for paid services, contact is created after payment)
-    let contactId: string | null = null;
+    // First stage for leads (paid services that need payment first)
+    const firstStage = pipelineStages?.[0]?.stage_key || 'lead';
 
-    if (!data.skip_contact) {
-      // Check if contact already exists by email
-      const { data: existingContact } = await supabaseServer
-        .from('crm_contacts')
-        .select('id, first_name, last_name, phone')
-        .eq('user_id', ownerId)
-        .eq('email', data.email)
-        .single();
-
-      if (existingContact) {
-        contactId = existingContact.id;
-        // Update contact if we have new/better data
-        const updates: Record<string, string | null> = {};
-        if (!existingContact.first_name && clientFirstName) {
-          updates.first_name = clientFirstName;
-        }
-        if (!existingContact.last_name && clientLastName) {
-          updates.last_name = clientLastName;
-        }
-        if (!existingContact.phone && data.phone) {
-          updates.phone = data.phone;
-        }
-        if (Object.keys(updates).length > 0) {
-          await supabaseServer
-            .from('crm_contacts')
-            .update(updates)
-            .eq('id', contactId);
-          requestLogger.debug({ contactId, updates }, 'Updated existing contact with new data');
-        }
+    // Find best "active client" stage for free services (they're immediately clients)
+    // Priority: 'active_client' > 'active' > 'client' > highest non-terminal stage > first stage
+    let activeClientStage = firstStage;
+    if (pipelineStages && pipelineStages.length > 0) {
+      const stageKeys = pipelineStages.map(s => s.stage_key);
+      if (stageKeys.includes('active_client')) {
+        activeClientStage = 'active_client';
+      } else if (stageKeys.includes('active')) {
+        activeClientStage = 'active';
+      } else if (stageKeys.includes('client')) {
+        activeClientStage = 'client';
       } else {
-        // Create new contact
-        const { data: newContact, error: contactError } = await supabaseServer
-          .from('crm_contacts')
-          .insert({
-            user_id: ownerId,
-            first_name: clientFirstName,
-            last_name: clientLastName,
-            email: data.email,
-            phone: data.phone || null,
-            source: 'website_booking',
-            stage: 'lead'
-          })
-          .select('id')
-          .single();
-
-        if (contactError) {
-          requestLogger.warn({ err: contactError }, 'Failed to create contact (proceeding without)');
-        } else if (newContact) {
-          contactId = newContact.id;
+        // Use the stage with highest position but not terminal stages
+        const validStages = pipelineStages.filter(
+          s => !['completed', 'inactive', 'past_client'].includes(s.stage_key)
+        );
+        if (validStages.length > 0) {
+          activeClientStage = validStages[validStages.length - 1].stage_key;
         }
       }
+    }
+
+    // Determine contact stage based on payment requirement
+    // For paid services: start at first pipeline stage (will be upgraded after payment)
+    // For free services: directly set as active client (no payment barrier)
+    const contactStage = requiresPayment ? firstStage : activeClientStage;
+
+    requestLogger.info(
+      { price: service.price, requiresPayment, contactStage, firstStage, activeClientStage },
+      'Contact creation decision - always creating contact first'
+    );
+
+    // ALWAYS create or find contact (for both free and paid services)
+    // This ensures contact exists before booking, enabling better tracking and email capabilities
+    let contactId: string | null = null;
+
+    // Check if contact already exists by email (use limit 1 to handle potential duplicates)
+    const { data: existingContacts } = await supabaseServer
+      .from('crm_contacts')
+      .select('id, first_name, last_name, phone, stage')
+      .eq('user_id', ownerId)
+      .eq('email', data.email)
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    const existingContact = existingContacts?.[0] || null;
+
+    if (existingContact) {
+      contactId = existingContact.id;
+      // Update contact if we have new/better data
+      const updates: Record<string, string | null> = {};
+      if (!existingContact.first_name && clientFirstName) {
+        updates.first_name = clientFirstName;
+      }
+      if (!existingContact.last_name && clientLastName) {
+        updates.last_name = clientLastName;
+      }
+      if (!existingContact.phone && data.phone) {
+        updates.phone = data.phone;
+      }
+      // Don't downgrade stage - if they were already active_client, keep them there
+      // Only upgrade lead to active_client for free services
+      if (existingContact.stage === 'lead' && contactStage === 'active_client') {
+        updates.stage = 'active_client';
+      }
+      if (Object.keys(updates).length > 0) {
+        await supabaseServer
+          .from('crm_contacts')
+          .update(updates)
+          .eq('id', contactId);
+        requestLogger.debug({ contactId, updates }, 'Updated existing contact with new data');
+      }
     } else {
-      requestLogger.debug({ email: data.email }, 'Skipping contact creation (paid service - will create after payment)');
+      // Create new contact with appropriate stage and attribution
+      const { data: newContact, error: contactError } = await supabaseServer
+        .from('crm_contacts')
+        .insert({
+          user_id: ownerId,
+          first_name: clientFirstName,
+          last_name: clientLastName,
+          email: data.email,
+          phone: data.phone || null,
+          source: 'website_booking',
+          stage: contactStage,  // 'lead' for paid services, 'active_client' for free
+          source_metadata: attribution as unknown as Record<string, unknown>  // Store full attribution data
+        })
+        .select('id')
+        .single();
+
+      if (contactError) {
+        requestLogger.warn({ err: contactError }, 'Failed to create contact (proceeding without)');
+      } else if (newContact) {
+        contactId = newContact.id;
+        requestLogger.info({ contactId, stage: contactStage }, 'Created new contact for booking');
+      }
     }
 
     // Create the booking
-    // Note: scheduling_bookings uses client_first_name/client_last_name (not client_name), booking_source (not source)
+    // Note: client data is now stored only in crm_contacts (via contact_id)
     // For paid services: status is 'pending' until payment is confirmed
     // For non-scheduled bookings (courses, products): start_time and end_time are null
     const { data: booking, error: bookingError } = await supabaseServer
@@ -251,11 +322,7 @@ export async function POST(request: NextRequest) {
       .insert({
         user_id: ownerId,
         service_id: data.service_id,
-        contact_id: contactId,
-        client_first_name: clientFirstName,
-        client_last_name: clientLastName,
-        client_email: data.email,
-        client_phone: data.phone || null,
+        contact_id: contactId,  // Required - client data is in crm_contacts
         start_time: startTime?.toISOString() || null,
         end_time: endTime?.toISOString() || null,
         status: requiresPayment ? 'pending' : 'confirmed',
@@ -272,32 +339,7 @@ export async function POST(request: NextRequest) {
       throw bookingError || new Error('Failed to create booking');
     }
 
-    // Create activity (non-blocking) for all bookings with a contact
-    if (contactId) {
-      const activityDescription = startTime
-        ? `Booked via website for ${startTime.toLocaleString()}`
-        : `Purchased via website`;
-      const activityDate = startTime?.toISOString() || new Date().toISOString();
-
-      supabaseServer
-        .from('crm_activities')
-        .insert({
-          user_id: ownerId,
-          contact_id: contactId,
-          activity_type: 'booking',
-          title: `Booking: ${service.service_name}`,
-          description: activityDescription,
-          activity_date: activityDate,
-          auto_logged: true,
-          source_capability: 'scheduling',
-          source_entity_id: booking.id
-        })
-        .then(({ error }) => {
-          if (error) {
-            requestLogger.warn({ err: error }, 'Failed to create activity (non-blocking)');
-          }
-        });
-    }
+    // Note: Activity is auto-created by log_booking_activity_trigger (scheduling_bookings table trigger)
 
     // Send booking confirmation email (non-blocking)
     // Only for FREE bookings - paid bookings get confirmation after payment in Stripe webhook

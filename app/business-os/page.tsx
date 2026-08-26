@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { StoryBeat, SummaryData } from '@/components/business-os/MyDaySection';
-import { MyDayInsightSection } from '@/components/business-os/insight';
+import { LiveDashboard, SetupItem, FunnelStats, MilestoneData } from '@/components/business-os/insight';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
 import { CapabilityCard, WebsiteStats, PeopleStats, ReportsStats, ConfigStats } from '@/components/business-os/CapabilityCard';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
@@ -25,6 +25,14 @@ interface MyDayData {
   storyBeats: StoryBeat[];
 }
 
+// Calculate greeting based on current time
+function getGreetingFromTime(): 'morning' | 'afternoon' | 'evening' {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'morning';
+  if (hour < 17) return 'afternoon';
+  return 'evening';
+}
+
 interface DashboardStats {
   website: WebsiteStats;
   people: PeopleStats;
@@ -39,8 +47,8 @@ function BusinessOSContent() {
   const chatPanelRef = useRef<ChatCommandPanelRef>(null);
   const [loading, setLoading] = useState(true);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [configInitialTab, setConfigInitialTab] = useState<'services' | 'availability' | 'payments'>('services');
-  const [configVisibleTabs, setConfigVisibleTabs] = useState<('services' | 'availability' | 'payments')[] | undefined>(undefined);
+  const [configInitialTab, setConfigInitialTab] = useState<'services' | 'availability' | 'intake' | 'payments'>('services');
+  const [configVisibleTabs, setConfigVisibleTabs] = useState<('services' | 'availability' | 'intake' | 'payments')[] | undefined>(undefined);
   const [configServiceToEdit, setConfigServiceToEdit] = useState<string | undefined>(undefined);
   const [configServicePrefill, setConfigServicePrefill] = useState<Record<string, any> | undefined>(undefined);
   const [configAvailabilityDays, setConfigAvailabilityDays] = useState<string[] | undefined>(undefined); // Days to pre-select in availability editor
@@ -69,13 +77,24 @@ function BusinessOSContent() {
   // My Day section collapsed state - controls expanded height for chat and cards
   const [isMyDayCollapsed, setIsMyDayCollapsed] = useState(false);
 
-  // My Day data
-  const [myDay, setMyDay] = useState<MyDayData>({
-    userName: 'there',
-    greeting: 'morning',
+  // Insight card collapsed state
+  const [isInsightCollapsed, setIsInsightCollapsed] = useState(false);
+
+  // Capability cards visibility (hidden by default)
+  const [showCapabilityCards, setShowCapabilityCards] = useState(false);
+
+  // Active capabilities - determines which cards to show
+  const [activeCapabilities, setActiveCapabilities] = useState<Set<string>>(new Set());
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(true);
+
+
+  // My Day data - use time-based greeting as initial state
+  const [myDay, setMyDay] = useState<MyDayData>(() => ({
+    userName: '', // Empty until loaded from API
+    greeting: getGreetingFromTime(),
     summaryData: { key: 'myday.summary.default' },
     storyBeats: []
-  });
+  }));
 
   // Capability stats
   const [stats, setStats] = useState<DashboardStats>({
@@ -96,7 +115,8 @@ function BusinessOSContent() {
       weeklyRevenue: 0,
       weeklyBars: [0, 0, 0, 0, 0, 0],
       changePercent: 0,
-      previousWeek: 0
+      previousWeek: 0,
+      outstanding: 0
     },
     config: {
       servicesCount: 0,
@@ -104,18 +124,43 @@ function BusinessOSContent() {
       hoursSet: false,
       openDaysCount: 0,
       paymentsConnected: false,
-      paymentsProvider: 'Stripe',
+      paymentsProvider: null, // Will be set from API if connected
       automationsCount: 0,
       calendarSynced: false,
       calendarProvider: null
     }
   });
 
+  // LiveDashboard data state
+  const [setupItems, setSetupItems] = useState<SetupItem[]>([]);
+  const [funnelStats, setFunnelStats] = useState<FunnelStats | undefined>(undefined);
+  const [milestoneData, setMilestoneData] = useState<MilestoneData | undefined>(undefined);
+  const [draftPageId, setDraftPageId] = useState<string | undefined>(undefined);
+  const [publishingWebsite, setPublishingWebsite] = useState(false);
+
   useEffect(() => {
     if (user) {
+      fetchCapabilities();
       fetchDashboardData();
     }
   }, [user]);
+
+  const fetchCapabilities = async () => {
+    try {
+      const response = await fetch('/api/capabilities', { cache: 'no-store' });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.enabledKeys) {
+          setActiveCapabilities(new Set(data.enabledKeys));
+        }
+      }
+    } catch (error) {
+      // Error handled silently - default to no capabilities
+      console.error('Failed to load capabilities:', error);
+    } finally {
+      setCapabilitiesLoading(false);
+    }
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -164,23 +209,186 @@ function BusinessOSContent() {
               wentQuiet: s.crm?.went_quiet || 0,
               pipeline: s.crm?.pipeline_stages || []
             },
-            reports: {
-              weeklyRevenue: s.payments?.revenue_30d || 0,
-              weeklyBars: generateWeeklyBars(s.payments?.revenue_30d || 0),
-              changePercent: 18, // Placeholder
-              previousWeek: Math.floor((s.payments?.revenue_30d || 0) * 0.85)
-            },
+            reports: (() => {
+              // The card is labelled "booked this week", so it shows what clients
+              // ordered — priced from the service, whether or not payment cleared.
+              // Money actually collected lives on the reports page instead.
+              const bookedThisWeek = s.scheduling?.booked_value_this_week || 0;
+              const bookedLastWeek = s.scheduling?.booked_value_last_week || 0;
+              return {
+                weeklyRevenue: bookedThisWeek,
+                weeklyBars: generateWeeklyBars(bookedThisWeek, bookedLastWeek),
+                changePercent: calculateChangePercent(bookedThisWeek, bookedLastWeek),
+                previousWeek: bookedLastWeek,
+                // Unpaid invoices of any age — same figure the reports page shows as "Owed".
+                outstanding: s.payments?.pending_invoices_amount || 0
+              };
+            })(),
             config: {
               servicesCount: s.scheduling?.active_services_count || 0,
               servicesActive: (s.scheduling?.active_services_count || 0) > 0,
               hoursSet: (s.scheduling?.open_days_count || 0) > 0,
               openDaysCount: s.scheduling?.open_days_count || 0,
               paymentsConnected: s.scheduling?.stripe_connected || false,
-              paymentsProvider: 'Stripe',
+              paymentsProvider: s.scheduling?.stripe_connected ? 'Stripe' : null, // Only show provider if connected
               automationsCount: s.automation_engine?.workflows_count || 0,
               calendarSynced: s.scheduling?.calendar_synced || false,
               calendarProvider: s.scheduling?.calendar_provider || null
             }
+          });
+
+          // Compute setup items for LiveDashboard from stats
+          const computedSetupItems: SetupItem[] = [];
+
+          // Website setup
+          if (s.website?.wants_website && !s.website?.has_live_pages) {
+            computedSetupItems.push({
+              id: 'website',
+              title: language === 'he' ? 'פרסם אתר' : 'Publish website',
+              description: language === 'he' ? 'לקוחות לא יכולים למצוא אותך או להזמין' : 'Clients cannot find you or book',
+              completed: false,
+              action: 'publish_website'
+            });
+            // Store draft page ID for quick publish
+            if (s.website?.draft_page_id) {
+              setDraftPageId(s.website.draft_page_id);
+            }
+          } else if (s.website?.has_live_pages) {
+            computedSetupItems.push({
+              id: 'website',
+              title: language === 'he' ? 'אתר פורסם' : 'Website published',
+              description: s.website?.url || '',
+              completed: true
+            });
+          }
+
+          // Services setup
+          if ((s.scheduling?.active_services_count || 0) === 0) {
+            computedSetupItems.push({
+              id: 'services',
+              title: language === 'he' ? 'הוסף שירותים' : 'Add services',
+              description: language === 'he' ? 'אין מה להזמין — דף ההזמנות ריק' : 'There is nothing to book — the booking page is empty',
+              completed: false,
+              action: 'add_services'
+            });
+          } else {
+            computedSetupItems.push({
+              id: 'services',
+              title: language === 'he' ? `${s.scheduling.active_services_count} שירותים פעילים` : `${s.scheduling.active_services_count} active services`,
+              description: '',
+              completed: true
+            });
+          }
+
+          // Availability setup
+          if ((s.scheduling?.open_days_count || 0) === 0) {
+            computedSetupItems.push({
+              id: 'availability',
+              title: language === 'he' ? 'הגדר שעות פעילות' : 'Set availability',
+              description: language === 'he' ? 'אין זמנים פנויים להצגה ללקוח' : 'No available times to show a client',
+              completed: false,
+              action: 'set_hours'
+            });
+          } else {
+            computedSetupItems.push({
+              id: 'availability',
+              title: language === 'he' ? `${s.scheduling.open_days_count} ימים פתוחים` : `${s.scheduling.open_days_count} days open`,
+              description: '',
+              completed: true
+            });
+          }
+
+          // Payments setup
+          if (!s.scheduling?.stripe_connected) {
+            computedSetupItems.push({
+              id: 'payments',
+              title: language === 'he' ? 'חבר תשלומים' : 'Connect payments',
+              description: language === 'he' ? 'לא ניתן לגבות תשלום בזמן ההזמנה' : 'You cannot take payment at booking',
+              completed: false,
+              action: 'connect_payments'
+            });
+          } else {
+            computedSetupItems.push({
+              id: 'payments',
+              title: language === 'he' ? 'תשלומים מחוברים' : 'Payments connected',
+              description: 'Stripe',
+              completed: true
+            });
+          }
+
+          // Calendar sync — recommended, not required. Bookings work without it,
+          // but nothing stops a client booking over something already in your diary.
+          if (!s.scheduling?.calendar_synced) {
+            computedSetupItems.push({
+              id: 'calendar',
+              title: language === 'he' ? 'סנכרן יומן' : 'Sync calendar',
+              description: language === 'he' ? 'מנע הזמנות כפולות מול היומן שלך' : 'Stop clients booking over what you already have',
+              completed: false,
+              action: 'sync_calendar',
+              required: false
+            });
+          } else {
+            computedSetupItems.push({
+              id: 'calendar',
+              title: language === 'he' ? 'היומן מסונכרן' : 'Calendar synced',
+              description: s.scheduling?.calendar_provider === 'outlook' ? 'Outlook' : 'Google Calendar',
+              completed: true,
+              required: false
+            });
+          }
+
+          // Intake form — recommended. Opt-in feature, so an absent settings row
+          // is a legitimate choice rather than an unfinished step.
+          if (!s.scheduling?.intake_enabled) {
+            computedSetupItems.push({
+              id: 'intake',
+              title: language === 'he' ? 'הגדר טופס קליטה' : 'Set up intake form',
+              description: language === 'he' ? 'אסוף פרטים מהלקוח לפני הפגישה' : 'Collect client details before the session',
+              completed: false,
+              action: 'setup_intake',
+              required: false
+            });
+          } else {
+            computedSetupItems.push({
+              id: 'intake',
+              title: language === 'he' ? 'טופס קליטה פעיל' : 'Intake form active',
+              description: '',
+              completed: true,
+              required: false
+            });
+          }
+
+          setSetupItems(computedSetupItems);
+
+          // Compute funnel stats for LiveDashboard (legacy fallback)
+          setFunnelStats({
+            found: s.website?.visitors_30d || 0,
+            touch: s.crm?.total_contacts || 0,
+            booked: s.scheduling?.bookings_count || 0,
+            paid: s.payments?.paid_count || 0,
+            paidAmount: s.payments?.revenue_this_week || 0
+          });
+
+          // Set real CRM pipeline stages (preferred over funnelStats)
+          if (s.crm?.pipeline_stages && Array.isArray(s.crm.pipeline_stages)) {
+            setPipelineStages(s.crm.pipeline_stages);
+          }
+
+          // Compute milestone data
+          setMilestoneData({
+            firstVisitor: s.website?.first_visitor_date ? {
+              date: s.website.first_visitor_date,
+              source: s.website.first_visitor_source || 'direct'
+            } : undefined,
+            firstEnquiry: s.crm?.first_contact_date ? {
+              date: s.crm.first_contact_date,
+              responseTime: s.crm.first_response_time || '—'
+            } : undefined,
+            // Note: first_booking_amount removed - total_amount no longer on scheduling_bookings
+            firstBooking: s.scheduling?.first_booking_date ? {
+              date: s.scheduling.first_booking_date,
+              amount: 0  // Amount no longer available from booking table
+            } : undefined
           });
         }
       }
@@ -192,18 +400,26 @@ function BusinessOSContent() {
     }
   };
 
-  // Generate mock weekly bars for chart
-  function generateWeeklyBars(total: number): number[] {
-    if (total === 0) return [0, 0, 0, 0, 0, 0];
-    const avg = total / 6;
+  // Generate weekly bars for chart based on this week and last week revenue
+  function generateWeeklyBars(thisWeek: number, lastWeek: number): number[] {
+    if (thisWeek === 0 && lastWeek === 0) return [0, 0, 0, 0, 0, 0];
+    // Show a simple progression: last week average in first 3 bars, this week average in last 3 bars
+    const lastWeekAvg = lastWeek / 3;
+    const thisWeekAvg = thisWeek / 3;
     return [
-      Math.floor(avg * 0.6),
-      Math.floor(avg * 0.8),
-      Math.floor(avg * 0.7),
-      Math.floor(avg * 1.1),
-      Math.floor(avg * 0.9),
-      Math.floor(avg * 1.5)
+      Math.floor(lastWeekAvg * 0.8),
+      Math.floor(lastWeekAvg),
+      Math.floor(lastWeekAvg * 1.1),
+      Math.floor(thisWeekAvg * 0.9),
+      Math.floor(thisWeekAvg),
+      Math.floor(thisWeekAvg * 1.1)
     ];
+  }
+
+  // Calculate percentage change between this week and last week
+  function calculateChangePercent(thisWeek: number, lastWeek: number): number {
+    if (lastWeek === 0) return thisWeek > 0 ? 100 : 0;
+    return Math.round(((thisWeek - lastWeek) / lastWeek) * 100);
   }
 
   // Handle chat actions (open dialogs, etc.)
@@ -312,7 +528,7 @@ function BusinessOSContent() {
         break;
 
       case 'open_invoice_dialog':
-        router.push('/business-os/payments?action=create');
+        router.push('/business-os/reports?tab=invoices&action=create');
         break;
 
       case 'show_service_list':
@@ -408,6 +624,38 @@ function BusinessOSContent() {
     setConfigServicePrefill(undefined);
     setIsConfigOpen(true);
   }, []);
+
+  // Handle quick setup clicks from OperationalStatusCard (services, availability, payments, etc.)
+  const handleQuickSetupClick = useCallback((stepId: string) => {
+    // Map step IDs to config tabs
+    const tabMapping: Record<string, 'services' | 'availability' | 'intake' | 'payments'> = {
+      services: 'services',
+      availability: 'availability',
+      payments: 'payments',
+      intake: 'intake',
+    };
+
+    const tab = tabMapping[stepId];
+    if (tab) {
+      setConfigInitialTab(tab);
+      setConfigVisibleTabs([tab]); // Only show the relevant tab
+      setConfigServiceToEdit(undefined);
+      setConfigServicePrefill(undefined);
+      setConfigAvailabilityDays(undefined);
+      setIsConfigOpen(true);
+    } else if (stepId === 'calendar') {
+      // CalendarSyncSettings is rendered at the top of the availability tab.
+      setConfigInitialTab('availability');
+      setConfigVisibleTabs(['availability']);
+      setConfigServiceToEdit(undefined);
+      setConfigServicePrefill(undefined);
+      setConfigAvailabilityDays(undefined);
+      setIsConfigOpen(true);
+    } else if (stepId === 'website') {
+      // Navigate to website builder
+      router.push('/business-os/website');
+    }
+  }, [router]);
 
   // Handle confirming a direct service update
   const confirmServiceUpdate = useCallback(async () => {
@@ -629,6 +877,49 @@ function BusinessOSContent() {
     fetchDashboardData();
   }, []);
 
+  // Handle website publish from dashboard
+  const handlePublishWebsite = useCallback(async () => {
+    if (!draftPageId || publishingWebsite) return;
+
+    try {
+      setPublishingWebsite(true);
+      const response = await fetch(`/api/website/pages/${draftPageId}/publish`, {
+        method: 'POST'
+      });
+      const data = await response.json();
+
+      if (data.success) {
+        // Refresh dashboard to update setup items
+        fetchDashboardData();
+        // Show success message in chat if available
+        if (chatPanelRef.current) {
+          const message = language === 'he'
+            ? 'האתר שלך פורסם בהצלחה! 🎉'
+            : 'Your website is now live! 🎉';
+          chatPanelRef.current.addMessage('success', message);
+        }
+      } else {
+        // Show error in chat
+        if (chatPanelRef.current) {
+          const message = language === 'he'
+            ? 'שגיאה בפרסום האתר. נסה שוב.'
+            : 'Failed to publish website. Please try again.';
+          chatPanelRef.current.addMessage('ai', message);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to publish website:', error);
+      if (chatPanelRef.current) {
+        const message = language === 'he'
+          ? 'שגיאה בפרסום האתר. נסה שוב.'
+          : 'Failed to publish website. Please try again.';
+        chatPanelRef.current.addMessage('ai', message);
+      }
+    } finally {
+      setPublishingWebsite(false);
+    }
+  }, [draftPageId, publishingWebsite, language]);
+
   const handleCapabilityClick = (type: 'website' | 'people' | 'reports' | 'config') => {
     switch (type) {
       case 'website':
@@ -656,12 +947,7 @@ function BusinessOSContent() {
       <div className="flex items-center justify-center min-h-screen bg-[var(--v2-bg)]">
         <div className="text-center space-y-4">
           <div
-            className="w-16 h-16 rounded-full animate-spin mx-auto"
-            style={{
-              border: '4px solid transparent',
-              borderTopColor: '#F97316',
-              background: 'linear-gradient(var(--v2-bg), var(--v2-bg)) padding-box, linear-gradient(120deg, #FFB454, #F97316, #EA580C) border-box'
-            }}
+            className="w-16 h-16 rounded-full animate-spin mx-auto border-4 border-[var(--v2-border)] border-t-orange-500"
           />
           <p className="text-[var(--v2-text-secondary)] font-medium">
             {t('loading.dashboard') || 'Loading your dashboard...'}
@@ -673,10 +959,7 @@ function BusinessOSContent() {
 
   return (
     <div
-      className="min-h-screen"
-      style={{
-        background: 'radial-gradient(70% 45% at 12% -5%, #FFE9D6 0%, transparent 50%), radial-gradient(60% 40% at 100% 0%, #FFF0E0 0%, transparent 45%), var(--v2-bg)'
-      }}
+      className="min-h-screen bg-[var(--v2-bg)]"
     >
       {/* Header */}
       <BusinessOSHeader />
@@ -684,20 +967,51 @@ function BusinessOSContent() {
       {/* Main Content */}
       <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-5 lg:py-6 max-w-7xl">
 
-        {/* My Day Section with Insight Integration */}
-        <MyDayInsightSection
-          userName={myDay.userName}
-          greeting={myDay.greeting}
-          loading={loading}
-          isFullyCollapsed={isMyDayCollapsed}
-          onFullyCollapsedChange={setIsMyDayCollapsed}
-        />
+        {/* Live Dashboard - Mockup-based Insight Section */}
+        <div className="relative">
+          <LiveDashboard
+            userName={myDay.userName}
+            greeting={myDay.greeting}
+            setupItems={setupItems}
+            funnelStats={funnelStats}
+            pipelineStages={pipelineStages}
+            milestoneData={milestoneData}
+            onConfigureClick={handleQuickSetupClick}
+            collapsed={isInsightCollapsed}
+            onToggleCollapse={() => setIsInsightCollapsed(!isInsightCollapsed)}
+            onAction={(action) => {
+              // Handle actions from LiveDashboard
+              if (action === 'publish_website') {
+                // Publish website directly if we have a draft page ID
+                if (draftPageId) {
+                  handlePublishWebsite();
+                } else {
+                  // Fallback to website page if no draft page ID
+                  router.push('/business-os/website');
+                }
+              } else if (action === 'add_services') {
+                handleQuickSetupClick('services');
+              } else if (action === 'set_hours') {
+                handleQuickSetupClick('availability');
+              } else if (action === 'connect_payments') {
+                handleQuickSetupClick('payments');
+              } else if (action === 'sync_calendar') {
+                handleQuickSetupClick('calendar');
+              } else if (action === 'setup_intake') {
+                handleQuickSetupClick('intake');
+              } else if (action === 'view_funnel') {
+                // Navigate to CRM page to view the funnel/pipeline
+                router.push('/business-os/crm');
+              }
+            }}
+          />
+        </div>
 
-        {/* Row 3: Chat Panel + Capability Cards - matches mockup exactly */}
+        {/* Row 3: Chat Panel + Capability Cards (hidden by default) */}
         <div
           className="mt-5 grid dashboard-main-grid"
           style={{
-            gridTemplateColumns: '390px 1fr',
+            gridTemplateColumns: showCapabilityCards ? '390px 1fr' : '1fr',
             gap: '20px',
             alignItems: 'start'
           }}
@@ -712,38 +1026,78 @@ function BusinessOSContent() {
             expanded={isMyDayCollapsed}
           />
 
-          {/* Right: 4 Capability Cards (2x2 grid) - matches mockup: equal height cards */}
-          <div
-            className="grid transition-all duration-300 capability-cards-grid"
-            style={{
-              gridTemplateColumns: '1fr 1fr',
-              gridTemplateRows: '1fr 1fr',
-              gap: '20px',
-              height: isMyDayCollapsed ? '640px' : '460px'
-            }}
-          >
-            <CapabilityCard
-              type="website"
-              stats={stats.website}
-              onClick={() => handleCapabilityClick('website')}
-            />
-            <CapabilityCard
-              type="people"
-              stats={stats.people}
-              onClick={() => handleCapabilityClick('people')}
-            />
-            <CapabilityCard
-              type="reports"
-              stats={stats.reports}
-              onClick={() => handleCapabilityClick('reports')}
-            />
-            <CapabilityCard
-              type="config"
-              stats={stats.config}
-              onClick={() => handleCapabilityClick('config')}
-            />
-          </div>
+          {/* Right: 4 Capability Cards (2x2 grid) - hidden by default */}
+          {showCapabilityCards && (
+            <div
+              className="grid transition-all duration-300 capability-cards-grid"
+              style={{
+                gridTemplateColumns: '1fr 1fr',
+                gridTemplateRows: '1fr 1fr',
+                gap: '20px',
+                height: isMyDayCollapsed ? '640px' : '460px'
+              }}
+            >
+              {/* Website Card - only show if capability active */}
+              {activeCapabilities.has('website') && (
+                <CapabilityCard
+                  type="website"
+                  stats={stats.website}
+                  onClick={() => handleCapabilityClick('website')}
+                />
+              )}
+
+              {/* CRM Card - only show if capability active */}
+              {activeCapabilities.has('crm') && (
+                <CapabilityCard
+                  type="people"
+                  stats={stats.people}
+                  onClick={() => handleCapabilityClick('people')}
+                />
+              )}
+
+              {/* Reports Card - only show if capability active */}
+              {activeCapabilities.has('reports') && (
+                <CapabilityCard
+                  type="reports"
+                  stats={stats.reports}
+                  onClick={() => handleCapabilityClick('reports')}
+                />
+              )}
+
+              {/* Config Card - always show (manages capabilities) */}
+              <CapabilityCard
+                type="config"
+                stats={stats.config}
+                onClick={() => handleCapabilityClick('config')}
+              />
+            </div>
+          )}
         </div>
+
+        {/* Show/Hide Capability Cards Button */}
+        <div className="flex justify-center mt-4">
+          <button
+            onClick={() => setShowCapabilityCards(!showCapabilityCards)}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-full transition-all hover:border-orange-300"
+          >
+            {showCapabilityCards ? (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="18 15 12 9 6 15"></polyline>
+                </svg>
+                {t('dashboard.hideCards') || 'Hide cards'}
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+                {t('dashboard.showCards') || 'Show quick access cards'}
+              </>
+            )}
+          </button>
+        </div>
+
       </div>
 
       {/* Configuration Dialog (for services, availability, payments) */}

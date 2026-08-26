@@ -17,14 +17,42 @@ const createAccountCustomSchema = z.object({
   email: z.string().email(),
   business_profile: z.object({
     name: z.string().optional(),
-    url: z.string().url().optional(),
+    url: z.preprocess(
+      (val) => {
+        if (val === '' || val === null || val === undefined) return undefined;
+        // Auto-add https:// if no protocol specified
+        const urlStr = String(val);
+        if (urlStr && !urlStr.match(/^https?:\/\//i)) {
+          return `https://${urlStr}`;
+        }
+        return urlStr;
+      },
+      z.string().url().optional()
+    ),
+    mcc: z.string().optional(), // Merchant Category Code (industry)
+    product_description: z.string().optional(),
   }).optional(),
   individual: z.object({
-    first_name: z.string(),
-    last_name: z.string(),
-    email: z.string().email(),
+    first_name: z.string().optional(),
+    last_name: z.string().optional(),
+    email: z.string().email().optional(),
     phone: z.string().optional(),
+    dob: z.object({
+      day: z.number().min(1).max(31),
+      month: z.number().min(1).max(12),
+      year: z.number().min(1900).max(2010),
+    }).optional(),
+    address: z.object({
+      line1: z.string().optional(),
+      line2: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      postal_code: z.string().optional(),
+      country: z.string().length(2).optional(),
+    }).optional(),
+    ssn_last_4: z.string().length(4).optional(),
   }).optional(),
+  // Note: tos_accepted is NOT used for Express accounts - Stripe handles TOS during their hosted onboarding
 });
 
 /**
@@ -59,6 +87,7 @@ export async function POST(request: NextRequest) {
     const existingAccount = await stripeConnectRepo.findByUserId(user.id);
 
     if (existingAccount.data) {
+      requestLogger.warn({ existingAccountId: existingAccount.data.stripe_account_id }, 'User already has a Stripe Connect account');
       return NextResponse.json(
         { success: false, error: 'You already have a payment account connected' },
         { status: 400 }
@@ -71,6 +100,8 @@ export async function POST(request: NextRequest) {
       country: validated.country,
       businessType: validated.business_type,
       businessProfile: validated.business_profile,
+      individual: validated.individual,
+      // Note: TOS acceptance is handled by Stripe during their hosted onboarding for Express accounts
     });
 
     requestLogger.info({ accountId }, 'Stripe Express account created');
@@ -80,6 +111,7 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       stripe_account_id: accountId,
       stripe_account_type: 'express',
+      stripe_email: validated.email, // Store the Stripe account email
       charges_enabled: false,
       payouts_enabled: false,
       details_submitted: false,
@@ -131,6 +163,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     if (error instanceof z.ZodError) {
+      requestLogger.warn({ zodErrors: error.errors }, 'Validation failed for create account request');
       return NextResponse.json(
         { success: false, error: 'Invalid request data', details: error.errors },
         { status: 400 }

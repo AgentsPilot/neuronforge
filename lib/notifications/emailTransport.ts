@@ -3,8 +3,9 @@
 //
 // Sends via whatever is configured, in priority order, with automatic fallback:
 //   1. Resend            (if RESEND_API_KEY looks valid — starts with "re_")
-//   2. Gmail OAuth2      (if GMAIL_USER + GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN)
-//   3. console preview   (dev) — returns { sent: false }
+//   2. SMTP              (if SMTP_HOST + SMTP_PORT + SMTP_USER + SMTP_PASS)
+//   3. Gmail OAuth2      (if GMAIL_USER + GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN)
+//   4. console preview   (dev) — returns { sent: false }
 //
 // Best-effort: never throws. Returns a structured result so callers can log
 // honestly. Used by NotificationService (calibration result + human-approval
@@ -22,6 +23,15 @@ const logger = createLogger({ module: 'EmailTransport', service: 'notifications'
 
 const RESEND_DEFAULT_FROM = 'NeuronForge <notifications@neuronforge.app>';
 
+export interface EmailAttachment {
+  /** Filename to display in the email */
+  filename: string;
+  /** File content as Buffer or base64 string */
+  content: Buffer | string;
+  /** MIME type (e.g., 'application/pdf') */
+  contentType: string;
+}
+
 export interface SendEmailParams {
   to: string[];
   subject: string;
@@ -33,19 +43,15 @@ export interface SendEmailParams {
    * Callers do NOT need to supply this; the transport degrades gracefully.
    */
   text?: string;
-  /** Resend honors this (verified domain required); Gmail always sends from GMAIL_USER. */
+  /** Resend honors this (verified domain required); SMTP/Gmail use configured sender. */
   from?: string;
-  /**
-   * Last-resort fallback: if Resend + env Gmail both fail and this owner has a
-   * google-mail plugin connection, send via that connection (its token is valid
-   * and auto-refreshing). The email is sent FROM the owner's own Gmail.
-   */
-  ownerUserId?: string;
+  /** Optional file attachments */
+  attachments?: EmailAttachment[];
 }
 
 export interface SendEmailResult {
   sent: boolean;
-  provider: 'resend' | 'gmail' | 'gmail-plugin' | 'none';
+  provider: 'resend' | 'smtp' | 'gmail' | 'none';
   error?: string;
 }
 
@@ -63,6 +69,15 @@ function resendConfigured(): boolean {
   return !!key && key.startsWith('re_');
 }
 
+function smtpConfigured(): boolean {
+  return !!(
+    process.env.SMTP_HOST &&
+    process.env.SMTP_PORT &&
+    process.env.SMTP_USER &&
+    process.env.SMTP_PASS
+  );
+}
+
 function gmailConfigured(): boolean {
   return !!(
     process.env.GMAIL_USER &&
@@ -73,41 +88,97 @@ function gmailConfigured(): boolean {
 }
 
 async function sendViaResend(p: SendEmailParams): Promise<void> {
+  // Build request body
+  const body: Record<string, unknown> = {
+    from: p.from || process.env.RESEND_FROM_EMAIL || RESEND_DEFAULT_FROM,
+    to: p.to,
+    subject: p.subject,
+    html: p.html,
+    text: resolveText(p), // D9: multipart/alternative — plaintext part alongside HTML
+  };
+
+  // Add attachments if present (Resend format)
+  // Resend expects: { filename, content (base64 string), type (optional mime type) }
+  if (p.attachments && p.attachments.length > 0) {
+    body.attachments = p.attachments.map(att => {
+      const content = Buffer.isBuffer(att.content) ? att.content.toString('base64') : att.content;
+      logger.info({
+        filename: att.filename,
+        contentType: att.contentType,
+        contentLength: content.length,
+        isBase64: typeof content === 'string' && content.length > 0
+      }, 'Preparing attachment for Resend');
+      return {
+        filename: att.filename,
+        content,
+        type: att.contentType, // Add MIME type for proper handling
+      };
+    });
+  }
+
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      from: p.from || process.env.RESEND_FROM_EMAIL || RESEND_DEFAULT_FROM,
-      to: p.to,
-      subject: p.subject,
-      html: p.html,
-      text: resolveText(p), // D9: multipart/alternative — plaintext part alongside HTML
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`Resend API error (${res.status}): ${await res.text()}`);
+    const errorText = await res.text();
+    logger.error({ status: res.status, error: errorText }, 'Resend API error');
+    throw new Error(`Resend API error (${res.status}): ${errorText}`);
   }
 }
 
 /**
- * Last-resort: send via the owner's google-mail PLUGIN connection (the same path
- * the agent's own emails use — valid, auto-refreshing token). Sends from the
- * owner's Gmail. Lazy-imports the plugin executor so the plugin system is only
- * loaded when this fallback actually fires.
+ * Send via SMTP using nodemailer.
+ * Supports any SMTP server (Gmail, Outlook, SendGrid, custom, etc.)
  */
-async function sendViaOwnerPlugin(p: SendEmailParams): Promise<void> {
-  const { PluginExecuterV2 } = await import('@/lib/server/plugin-executer-v2');
-  const executer = await PluginExecuterV2.getInstance();
-  const result = await executer.execute(p.ownerUserId as string, 'google-mail', 'send_email', {
-    recipients: { to: p.to },
-    content: { subject: p.subject, html_body: p.html },
+async function sendViaSMTP(p: SendEmailParams): Promise<void> {
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure, // true for 465, false for other ports (STARTTLS)
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
   });
-  if (!result.success) {
-    throw new Error(result.message || result.error || 'google-mail plugin send failed');
+
+  // Build mail options
+  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
+  const fromName = process.env.SMTP_FROM_NAME || 'NeuronForge';
+
+  const mailOptions: nodemailer.SendMailOptions = {
+    from: p.from || `"${fromName}" <${fromEmail}>`,
+    to: p.to.join(', '),
+    subject: p.subject,
+    html: p.html,
+    text: resolveText(p),
+  };
+
+  // Add attachments if present (nodemailer format)
+  if (p.attachments && p.attachments.length > 0) {
+    logger.info({
+      attachmentCount: p.attachments.length,
+      attachments: p.attachments.map(a => ({
+        filename: a.filename,
+        contentType: a.contentType,
+        size: Buffer.isBuffer(a.content) ? a.content.length : (typeof a.content === 'string' ? a.content.length : 0)
+      }))
+    }, 'Preparing attachments for SMTP');
+    mailOptions.attachments = p.attachments.map(att => ({
+      filename: att.filename,
+      content: att.content,
+      contentType: att.contentType,
+    }));
   }
+
+  await transporter.sendMail(mailOptions);
 }
 
 async function sendViaGmail(p: SendEmailParams): Promise<void> {
@@ -123,13 +194,34 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
       refreshToken: process.env.GMAIL_REFRESH_TOKEN,
     },
   });
-  await transporter.sendMail({
+
+  // Build mail options
+  const mailOptions: nodemailer.SendMailOptions = {
     from: `"NeuronForge" <${process.env.GMAIL_USER}>`,
     to: p.to.join(', '),
     subject: p.subject,
     html: p.html,
     text: resolveText(p), // D9: multipart/alternative — nodemailer builds both parts
-  });
+  };
+
+  // Add attachments if present (nodemailer format)
+  if (p.attachments && p.attachments.length > 0) {
+    logger.info({
+      attachmentCount: p.attachments.length,
+      attachments: p.attachments.map(a => ({
+        filename: a.filename,
+        contentType: a.contentType,
+        size: Buffer.isBuffer(a.content) ? a.content.length : (typeof a.content === 'string' ? a.content.length : 0)
+      }))
+    }, 'Preparing attachments for Gmail');
+    mailOptions.attachments = p.attachments.map(att => ({
+      filename: att.filename,
+      content: att.content,
+      contentType: att.contentType,
+    }));
+  }
+
+  await transporter.sendMail(mailOptions);
 }
 
 /**
@@ -138,6 +230,22 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
  */
 export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   const errors: string[] = [];
+
+  // Log email send attempt with attachment info
+  logger.info({
+    to: p.to,
+    subject: p.subject?.substring(0, 50),
+    hasAttachments: !!(p.attachments && p.attachments.length > 0),
+    attachmentCount: p.attachments?.length || 0,
+    attachmentDetails: p.attachments?.map(a => ({
+      filename: a.filename,
+      contentType: a.contentType,
+      size: Buffer.isBuffer(a.content) ? a.content.length : (typeof a.content === 'string' ? a.content.length : 0)
+    })),
+    resendConfigured: resendConfigured(),
+    smtpConfigured: smtpConfigured(),
+    gmailConfigured: gmailConfigured(),
+  }, 'Attempting to send email');
 
   // 1. Resend (preferred for production)
   if (resendConfigured()) {
@@ -153,7 +261,19 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
     logger.warn('RESEND_API_KEY is set but is not a valid Resend key (must start with "re_") — skipping Resend');
   }
 
-  // 2. Gmail OAuth2 (nodemailer) — shared env "system" account
+  // 2. SMTP (universal - works with any email provider)
+  if (smtpConfigured()) {
+    try {
+      await sendViaSMTP(p);
+      logger.info({ to: p.to, provider: 'smtp', host: process.env.SMTP_HOST }, 'Email sent');
+      return { sent: true, provider: 'smtp' };
+    } catch (err: any) {
+      errors.push(`smtp: ${err?.message ?? err}`);
+      logger.warn({ err: err?.message ?? String(err), host: process.env.SMTP_HOST }, 'SMTP send failed — trying next transport');
+    }
+  }
+
+  // 3. Gmail OAuth2 (nodemailer) — shared env "system" account
   if (gmailConfigured()) {
     try {
       await sendViaGmail(p);
@@ -161,19 +281,7 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
       return { sent: true, provider: 'gmail' };
     } catch (err: any) {
       errors.push(`gmail: ${err?.message ?? err}`);
-      logger.warn({ err: err?.message ?? String(err) }, 'Gmail send failed — trying next transport');
-    }
-  }
-
-  // 3. Owner's google-mail plugin connection — last-resort, sends from the owner's Gmail
-  if (p.ownerUserId) {
-    try {
-      await sendViaOwnerPlugin(p);
-      logger.info({ to: p.to, provider: 'gmail-plugin', ownerUserId: p.ownerUserId }, 'Email sent');
-      return { sent: true, provider: 'gmail-plugin' };
-    } catch (err: any) {
-      errors.push(`gmail-plugin: ${err?.message ?? err}`);
-      logger.warn({ err: err?.message ?? String(err), ownerUserId: p.ownerUserId }, 'Owner google-mail plugin send failed');
+      logger.warn({ err: err?.message ?? String(err) }, 'Gmail send failed');
     }
   }
 

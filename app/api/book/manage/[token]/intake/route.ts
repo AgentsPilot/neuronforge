@@ -38,21 +38,25 @@ export async function GET(
 
     const { bookingId, email } = decoded;
 
-    // Fetch booking with service details
+    // Fetch booking with service and contact details
+    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')
       .select(`
         id,
         user_id,
-        client_first_name,
-        client_last_name,
-        client_email,
+        contact_id,
         start_time,
         end_time,
         timezone,
         status,
         intake_responses,
         intake_completed_at,
+        contact:crm_contacts(
+          first_name,
+          last_name,
+          email
+        ),
         service:scheduling_services(
           id,
           service_name,
@@ -60,7 +64,6 @@ export async function GET(
         )
       `)
       .eq('id', bookingId)
-      .eq('client_email', email)
       .single();
 
     if (error || !booking) {
@@ -70,6 +73,50 @@ export async function GET(
       );
     }
 
+    // Get contact data from JOIN and verify email matches the token
+    const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
+    const contactEmail = contact?.email || '';
+    if (contactEmail.toLowerCase() !== email.toLowerCase()) {
+      return NextResponse.json(
+        { success: false, error: 'Booking not found' },
+        { status: 404 }
+      );
+    }
+
+    // Fetch business info for branding early - needed for all responses (language, branding)
+    // Note: logo_url and primary_color columns don't exist in business_profiles table
+    // Use invoice_logo_url as fallback for logo, and hardcode default primary color
+    const { data: profile, error: profileError } = await supabaseServer
+      .from('business_profiles')
+      .select('company_name, invoice_logo_url, language')
+      .eq('user_id', booking.user_id)
+      .single();
+
+    if (profileError && profileError.code !== 'PGRST116') {
+      // Only log if it's not a "no rows found" error
+      requestLogger.warn({
+        err: profileError,
+        errorCode: profileError.code,
+        errorMessage: profileError.message,
+        userId: booking.user_id,
+        bookingId: booking.id
+      }, 'Failed to fetch business profile for intake form');
+    }
+
+    const businessData = profile ? {
+      name: profile.company_name,
+      logoUrl: profile.invoice_logo_url,
+      primaryColor: '#4F46E5', // Default color since primary_color column doesn't exist
+      language: profile.language || 'en'
+    } : null;
+
+    requestLogger.info({
+      businessData,
+      profileLanguage: profile?.language,
+      rawProfile: profile ? { company_name: profile.company_name, language: profile.language } : null,
+      userId: booking.user_id
+    }, 'Business data for intake form');
+
     // Check if intake already completed
     if (booking.intake_completed_at) {
       return NextResponse.json({
@@ -78,12 +125,13 @@ export async function GET(
         completedAt: booking.intake_completed_at,
         booking: {
           id: booking.id,
-          clientName: [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' '),
+          clientName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),
           startTime: booking.start_time,
           endTime: booking.end_time,
           timezone: booking.timezone,
           service: booking.service
-        }
+        },
+        business: businessData
       });
     }
 
@@ -111,21 +159,15 @@ export async function GET(
         template: null,
         booking: {
           id: booking.id,
-          clientName: [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' '),
+          clientName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),
           startTime: booking.start_time,
           endTime: booking.end_time,
           timezone: booking.timezone,
           service: booking.service
-        }
+        },
+        business: businessData
       });
     }
-
-    // Fetch business info for branding
-    const { data: profile } = await supabaseServer
-      .from('business_profiles')
-      .select('company_name, logo_url, primary_color')
-      .eq('user_id', booking.user_id)
-      .single();
 
     requestLogger.info({ bookingId, templateKey: template.template_key }, 'Intake template fetched');
 
@@ -142,17 +184,13 @@ export async function GET(
       },
       booking: {
         id: booking.id,
-        clientName: [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' '),
+        clientName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),
         startTime: booking.start_time,
         endTime: booking.end_time,
         timezone: booking.timezone,
         service: booking.service
       },
-      business: profile ? {
-        name: profile.company_name,
-        logoUrl: profile.logo_url,
-        primaryColor: profile.primary_color
-      } : null
+      business: businessData
     });
 
   } catch (error) {
@@ -190,20 +228,40 @@ export async function POST(
     const body = await request.json();
     const validated = submitIntakeSchema.parse(body);
 
-    // Fetch booking
-    const { data: booking, error } = await supabaseServer
+    // Fetch booking with contact email via JOIN
+    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
+    const { data: postBooking, error } = await supabaseServer
       .from('scheduling_bookings')
-      .select('id, user_id, client_email, status, intake_completed_at')
+      .select(`
+        id,
+        user_id,
+        contact_id,
+        status,
+        intake_completed_at,
+        contact:crm_contacts(email)
+      `)
       .eq('id', bookingId)
-      .eq('client_email', email)
       .single();
 
-    if (error || !booking) {
+    if (error || !postBooking) {
       return NextResponse.json(
         { success: false, error: 'Booking not found' },
         { status: 404 }
       );
     }
+
+    // Get contact email from JOIN and verify it matches the token
+    const postContact = Array.isArray(postBooking.contact) ? postBooking.contact[0] : postBooking.contact;
+    const postContactEmail = postContact?.email || '';
+    if (postContactEmail.toLowerCase() !== email.toLowerCase()) {
+      return NextResponse.json(
+        { success: false, error: 'Booking not found' },
+        { status: 404 }
+      );
+    }
+
+    // Use alias to avoid variable shadowing
+    const booking = postBooking;
 
     // Check if already completed
     if (booking.intake_completed_at) {

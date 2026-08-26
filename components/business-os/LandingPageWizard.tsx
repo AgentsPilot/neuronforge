@@ -2,8 +2,16 @@
 
 /**
  * LandingPageWizard
- * 3-step wizard for creating standalone landing pages
- * Steps: 1) Select/Create Service 2) Choose Style (skip if website exists) 3) Preview & Publish
+ * Unified wizard for creating both Smart Links and Landing Pages
+ *
+ * Smart Links:
+ *   - Contact Form Only → /go/[code] → /c/[userCode]/contact
+ *   - Full Journey → /go/[code] → /c/[userCode]/book?flow=...
+ *
+ * Landing Pages:
+ *   - Full marketing page with journey steps
+ *
+ * Steps vary by creation type - see getStepsForCreationType()
  */
 
 import { useState, useEffect } from 'react';
@@ -12,13 +20,15 @@ import {
   Globe, ChevronRight, ChevronLeft, Check, X,
   Plus, Loader2, Eye, Sparkles, Rocket, ExternalLink,
   Monitor, Tablet, Smartphone, Maximize2, Calendar, DollarSign,
-  Target, Users, FileText, CreditCard, ClipboardList, GripVertical, User
+  Target, Users, FileText, CreditCard, ClipboardList, GripVertical, User,
+  Link, MessageSquare, Copy, QrCode, Layers, Mail, Share2
 } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { QRCodeSVG } from 'qrcode.react';
 
 // Types
 interface SchedulingService {
@@ -52,24 +62,57 @@ interface BusinessInfo {
 // Legacy 'booking' = scheduling + client_info combined
 type ClientFlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
 
+// Creation types for unified wizard
+type CreationType = 'landing-page' | 'smart-link';
+type JourneyType = 'contact-only' | 'full-journey';
+
+// Smart link data from API
+interface SmartLink {
+  id: string;
+  code: string;
+  destination_url: string;
+  name: string;
+}
+
+interface EditingSmartLink {
+  id: string;
+  name: string | null;
+  metadata?: {
+    journeyType?: 'contact-only' | 'full';
+    serviceIds?: string[];
+    flow?: string[];
+    destinationType?: 'form' | 'booking';
+  } | null;
+}
+
 interface LandingPageWizardProps {
   existingTheme?: ExistingTheme | null;
   subdomain?: string;
   businessInfo?: BusinessInfo | null;
   clientFlow?: ClientFlowStep[];
+  userCode?: string; // User code for smart link destinations
   onComplete: (data: LandingPageWizardResult) => void;
   onCancel: () => void;
+  editingSmartLink?: EditingSmartLink | null; // When editing an existing smart link
 }
 
 export interface LandingPageWizardResult {
-  serviceId: string;
-  serviceName: string;
-  stylePreset: string;
-  theme: ExistingTheme;
-  slug: string;
-  shouldPublish: boolean;
+  // Common fields
+  creationType: CreationType;
   clientFlow: ClientFlowStep[];
-  generatedContent: Record<string, unknown>;
+
+  // Landing page specific
+  serviceId?: string;
+  serviceName?: string;
+  stylePreset?: string;
+  theme?: ExistingTheme;
+  slug?: string;
+  shouldPublish?: boolean;
+  generatedContent?: Record<string, unknown>;
+
+  // Smart link specific
+  smartLink?: SmartLink;
+  journeyType?: JourneyType;
 }
 
 // Style presets for users without existing website
@@ -255,7 +298,42 @@ const LABELS = {
     continue: 'Continue',
     publish: 'Publish',
     save_draft: 'Save as Draft',
-    // Step 1
+    // Step 0 - Creation Type Selection
+    step0_title: 'What do you want to create?',
+    step0_subtitle: 'Choose the type of customer acquisition tool',
+    creation_smart_link: 'Smart Link',
+    creation_smart_link_desc: 'A direct link to share on social media, WhatsApp, or your existing website',
+    creation_landing_page: 'Landing Page',
+    creation_landing_page_desc: 'A full marketing page with your branding, content, and booking',
+    // Step 1 (Smart Link) - Journey Type Selection
+    journey_type_title: 'What should visitors do?',
+    journey_type_subtitle: 'Choose the action for your smart link',
+    journey_contact_only: 'Contact Form Only',
+    journey_contact_only_desc: 'Capture name, email, phone, and message',
+    journey_contact_only_best_for: 'Best for: general inquiries, "get in touch"',
+    journey_full: 'Full User Journey',
+    journey_full_desc: 'Configure booking, payment, intake steps',
+    journey_full_best_for: 'Best for: appointments, consultations, services',
+    // Smart Link Complete
+    smart_link_ready_title: 'Your Smart Link is Ready!',
+    smart_link_copy: 'Copy Link',
+    smart_link_show_qr: 'Show QR',
+    smart_link_preview: 'Preview',
+    smart_link_share_tips: 'Where to share:',
+    smart_link_tip_instagram: 'Instagram or TikTok bio link',
+    smart_link_tip_whatsapp: 'WhatsApp status or groups',
+    smart_link_tip_email: 'Email signature',
+    smart_link_tip_website: 'Your existing website',
+    smart_link_done: 'Done',
+    smart_link_create_another: 'Create Another',
+    smart_link_copied: 'Link copied!',
+    smart_link_contact_form_name: 'Contact Form',
+    smart_link_services_link: '{count} Services Link',
+    smart_link_all_services: 'All Services Link',
+    smart_link_booking_link: 'Booking Link',
+    smart_link_service_link_suffix: 'Link',
+    minutes_abbr: 'min',
+    // Step 1 (Landing Page)
     step1_title: 'Select a Service',
     step1_subtitle: 'Choose which service this landing page promotes',
     loading_services: 'Loading services...',
@@ -269,6 +347,9 @@ const LABELS = {
     service_price: 'Price',
     create_service: 'Create Service',
     creating: 'Creating...',
+    all_services: 'All Services',
+    all_services_desc: 'Let visitors choose from all your available services',
+    multi_select_hint: 'Select services to include (or skip to show all)',
     // Step 2 - Journey
     step_journey_title: 'Build Client Journey',
     step_journey_subtitle: 'Drag to reorder or add/remove steps',
@@ -298,6 +379,11 @@ const LABELS = {
     preview: 'Preview',
     edit: 'Edit',
     open_preview: 'Open Full Preview',
+    // Edit mode
+    edit_smart_link_title: 'Edit Smart Link',
+    edit_smart_link_subtitle: 'Update services and client journey',
+    smart_link_updated_title: 'Smart Link Updated!',
+    update_link: 'Update Link',
   },
   es: {
     step: 'Paso',
@@ -307,6 +393,42 @@ const LABELS = {
     continue: 'Continuar',
     publish: 'Publicar',
     save_draft: 'Guardar borrador',
+    // Step 0 - Creation Type Selection
+    step0_title: '¿Qué quieres crear?',
+    step0_subtitle: 'Elige el tipo de herramienta de captación',
+    creation_smart_link: 'Smart Link',
+    creation_smart_link_desc: 'Un enlace directo para compartir en redes sociales, WhatsApp o tu sitio web',
+    creation_landing_page: 'Landing Page',
+    creation_landing_page_desc: 'Una página de marketing completa con tu marca, contenido y reservas',
+    // Step 1 (Smart Link) - Journey Type Selection
+    journey_type_title: '¿Qué deben hacer los visitantes?',
+    journey_type_subtitle: 'Elige la acción para tu smart link',
+    journey_contact_only: 'Solo Formulario de Contacto',
+    journey_contact_only_desc: 'Captura nombre, email, teléfono y mensaje',
+    journey_contact_only_best_for: 'Ideal para: consultas generales, "contáctenos"',
+    journey_full: 'Recorrido Completo',
+    journey_full_desc: 'Configura pasos de reserva, pago e intake',
+    journey_full_best_for: 'Ideal para: citas, consultas, servicios',
+    // Smart Link Complete
+    smart_link_ready_title: '¡Tu Smart Link está listo!',
+    smart_link_copy: 'Copiar Enlace',
+    smart_link_show_qr: 'Mostrar QR',
+    smart_link_preview: 'Vista Previa',
+    smart_link_share_tips: 'Dónde compartir:',
+    smart_link_tip_instagram: 'Bio de Instagram o TikTok',
+    smart_link_tip_whatsapp: 'Estado o grupos de WhatsApp',
+    smart_link_tip_email: 'Firma de email',
+    smart_link_tip_website: 'Tu sitio web existente',
+    smart_link_done: 'Listo',
+    smart_link_create_another: 'Crear Otro',
+    smart_link_copied: '¡Enlace copiado!',
+    smart_link_contact_form_name: 'Formulario de Contacto',
+    smart_link_services_link: '{count} Servicios',
+    smart_link_all_services: 'Todos los Servicios',
+    smart_link_booking_link: 'Enlace de Reserva',
+    smart_link_service_link_suffix: '',
+    minutes_abbr: 'min',
+    // Step 1 (Landing Page)
     step1_title: 'Selecciona un Servicio',
     step1_subtitle: 'Elige qué servicio promueve esta landing page',
     loading_services: 'Cargando servicios...',
@@ -320,6 +442,9 @@ const LABELS = {
     service_price: 'Precio',
     create_service: 'Crear Servicio',
     creating: 'Creando...',
+    all_services: 'Todos los Servicios',
+    all_services_desc: 'Dejar que los visitantes elijan de todos tus servicios disponibles',
+    multi_select_hint: 'Selecciona servicios a incluir (o salta para mostrar todos)',
     step_journey_title: 'Construir Recorrido del Cliente',
     step_journey_subtitle: 'Arrastra para reordenar o añade/elimina pasos',
     journey_add_step: 'Añadir paso',
@@ -346,6 +471,11 @@ const LABELS = {
     preview: 'Vista Previa',
     edit: 'Editar',
     open_preview: 'Abrir Vista Completa',
+    // Edit mode
+    edit_smart_link_title: 'Editar Smart Link',
+    edit_smart_link_subtitle: 'Actualiza servicios y recorrido del cliente',
+    smart_link_updated_title: '¡Smart Link Actualizado!',
+    update_link: 'Actualizar Enlace',
   },
   he: {
     step: 'שלב',
@@ -355,6 +485,42 @@ const LABELS = {
     continue: 'המשך',
     publish: 'פרסם',
     save_draft: 'שמור כטיוטה',
+    // Step 0 - Creation Type Selection
+    step0_title: 'מה ברצונך ליצור?',
+    step0_subtitle: 'בחר את סוג הכלי לגיוס לקוחות',
+    creation_smart_link: 'קישור חכם',
+    creation_smart_link_desc: 'קישור ישיר לשיתוף ברשתות חברתיות, וואטסאפ או האתר שלך',
+    creation_landing_page: 'דף נחיתה',
+    creation_landing_page_desc: 'דף שיווקי מלא עם המיתוג שלך, תוכן והזמנות',
+    // Step 1 (Smart Link) - Journey Type Selection
+    journey_type_title: 'מה המבקרים יעשו?',
+    journey_type_subtitle: 'בחר את הפעולה לקישור החכם',
+    journey_contact_only: 'טופס יצירת קשר בלבד',
+    journey_contact_only_desc: 'איסוף שם, אימייל, טלפון והודעה',
+    journey_contact_only_best_for: 'מתאים ל: פניות כלליות, "צור קשר"',
+    journey_full: 'מסע לקוח מלא',
+    journey_full_desc: 'הגדר שלבי הזמנה, תשלום ושאלון',
+    journey_full_best_for: 'מתאים ל: פגישות, ייעוץ, שירותים',
+    // Smart Link Complete
+    smart_link_ready_title: 'הקישור החכם שלך מוכן!',
+    smart_link_copy: 'העתק קישור',
+    smart_link_show_qr: 'הצג QR',
+    smart_link_preview: 'תצוגה מקדימה',
+    smart_link_share_tips: 'איפה לשתף:',
+    smart_link_tip_instagram: 'ביו באינסטגרם או טיקטוק',
+    smart_link_tip_whatsapp: 'סטטוס או קבוצות וואטסאפ',
+    smart_link_tip_email: 'חתימת אימייל',
+    smart_link_tip_website: 'האתר הקיים שלך',
+    smart_link_done: 'סיום',
+    smart_link_create_another: 'צור עוד',
+    smart_link_copied: 'הקישור הועתק!',
+    smart_link_contact_form_name: 'טופס יצירת קשר',
+    smart_link_services_link: '{count} שירותים',
+    smart_link_all_services: 'כל השירותים',
+    smart_link_booking_link: 'קישור להזמנה',
+    smart_link_service_link_suffix: '',
+    minutes_abbr: 'דק׳',
+    // Step 1 (Landing Page)
     step1_title: 'בחר שירות',
     step1_subtitle: 'בחר איזה שירות דף הנחיתה מקדם',
     loading_services: 'טוען שירותים...',
@@ -368,6 +534,9 @@ const LABELS = {
     service_price: 'מחיר',
     create_service: 'צור שירות',
     creating: 'יוצר...',
+    all_services: 'כל השירותים',
+    all_services_desc: 'אפשר למבקרים לבחור מכל השירותים הזמינים שלך',
+    multi_select_hint: 'בחר שירותים לכלול (או דלג להצגת הכל)',
     step_journey_title: 'בנה מסע לקוח',
     step_journey_subtitle: 'גרור לשינוי סדר או הוסף/הסר שלבים',
     journey_add_step: 'הוסף שלב',
@@ -394,6 +563,11 @@ const LABELS = {
     preview: 'תצוגה מקדימה',
     edit: 'עריכה',
     open_preview: 'פתח תצוגה מלאה',
+    // Edit mode
+    edit_smart_link_title: 'עריכת קישור חכם',
+    edit_smart_link_subtitle: 'עדכון שירותים ומסע הלקוח',
+    smart_link_updated_title: 'הקישור החכם עודכן!',
+    update_link: 'עדכן קישור',
   }
 };
 
@@ -402,25 +576,65 @@ export function LandingPageWizard({
   subdomain = '',
   businessInfo,
   clientFlow,
+  userCode = '',
   onComplete,
-  onCancel
+  onCancel,
+  editingSmartLink
 }: LandingPageWizardProps) {
-  const { language } = useLanguage();
+  const { language, formatCurrency, availableCurrencies } = useLanguage();
   const labels = LABELS[language] || LABELS.en;
   const isRTL = language === 'he';
 
-  // Determine total steps: Service → Journey → Style (skip if theme exists) → Preview
-  const hasExistingTheme = !!existingTheme;
-  const totalSteps = hasExistingTheme ? 3 : 4;
+  // Edit mode detection
+  const isEditMode = !!editingSmartLink;
 
-  // Wizard state
-  const [currentStep, setCurrentStep] = useState(1);
+  // Step 0: Creation Type Selection state
+  // If editing, pre-populate from metadata
+  const [creationType, setCreationType] = useState<CreationType | null>(
+    isEditMode ? 'smart-link' : null
+  );
+  const [journeyType, setJourneyType] = useState<JourneyType | null>(
+    isEditMode && editingSmartLink?.metadata?.journeyType === 'full' ? 'full-journey' : null
+  );
+  const [createdSmartLink, setCreatedSmartLink] = useState<SmartLink | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [creatingSmartLink, setCreatingSmartLink] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+
+  // Determine total steps based on creation type
+  // Smart Link (contact): Step 0 → Step 1 → Done
+  // Smart Link (journey): Step 0 → Step 1 → Service → Journey → Done
+  // Landing Page: Step 0 → Service → Journey → Style (skip if theme) → Preview
+  const hasExistingTheme = !!existingTheme;
+
+  const getTotalSteps = (): number => {
+    if (!creationType) return 1; // Just step 0
+    if (creationType === 'smart-link') {
+      if (!journeyType) return 2; // Step 0 + Step 1 (journey type)
+      if (journeyType === 'contact-only') return 2; // Done after selecting contact-only
+      // Full journey: Step 0 + Journey Type + Service + Journey Builder + Done = 5
+      return 5;
+    }
+    // Landing page: Step 0 + Service + Journey + Style (optional) + Preview
+    return hasExistingTheme ? 4 : 5;
+  };
+
+  const totalSteps = getTotalSteps();
+
+  // Wizard state - step 0 is creation type selection
+  // If editing, start at step 2 (service selection for full journey)
+  const [currentStep, setCurrentStep] = useState(isEditMode ? 2 : 0);
   const [loading, setLoading] = useState(false);
 
   // Step 1: Service selection
   const [services, setServices] = useState<SchedulingService[]>([]);
   const [loadingServices, setLoadingServices] = useState(true);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+  // Multi-select for smart links - allows selecting multiple services
+  // If editing, pre-populate from metadata
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
+    isEditMode && editingSmartLink?.metadata?.serviceIds ? editingSmartLink.metadata.serviceIds : []
+  );
   const [showCreateService, setShowCreateService] = useState(false);
   const [newServiceName, setNewServiceName] = useState('');
   const [newServiceDescription, setNewServiceDescription] = useState('');
@@ -431,9 +645,16 @@ export function LandingPageWizard({
 
   // Step 2: Journey selection - custom flow builder
   // Use passed clientFlow if editing, otherwise default to scheduling + client_info + confirmation
-  const [selectedFlow, setSelectedFlow] = useState<ClientFlowStep[]>(
-    clientFlow && clientFlow.length > 0 ? clientFlow : ['scheduling', 'client_info', 'confirmation']
-  );
+  // If editing, pre-populate from metadata (flow array)
+  const [selectedFlow, setSelectedFlow] = useState<ClientFlowStep[]>(() => {
+    if (isEditMode && editingSmartLink?.metadata?.flow && editingSmartLink.metadata.flow.length > 0) {
+      // Add confirmation back if not present
+      const flow = editingSmartLink.metadata.flow as ClientFlowStep[];
+      return flow.includes('confirmation') ? flow : [...flow, 'confirmation'];
+    }
+    if (clientFlow && clientFlow.length > 0) return clientFlow;
+    return ['scheduling', 'client_info', 'confirmation'];
+  });
 
   // Step 3: Style selection (only if no existing theme)
   const [selectedPresetId, setSelectedPresetId] = useState<string>('professional');
@@ -449,6 +670,44 @@ export function LandingPageWizard({
 
   // Get selected service
   const selectedService = services.find(s => s.id === selectedServiceId);
+
+  // Reset state when editingSmartLink changes (for edit mode)
+  useEffect(() => {
+    if (editingSmartLink) {
+      // Entering edit mode - set up the state from metadata
+      setCreationType('smart-link');
+      setJourneyType(editingSmartLink.metadata?.journeyType === 'full' ? 'full-journey' : 'full-journey');
+      setCurrentStep(2); // Start at service selection
+
+      // Pre-populate selected services
+      if (editingSmartLink.metadata?.serviceIds) {
+        setSelectedServiceIds(editingSmartLink.metadata.serviceIds);
+      } else {
+        setSelectedServiceIds([]);
+      }
+
+      // Pre-populate flow
+      if (editingSmartLink.metadata?.flow && editingSmartLink.metadata.flow.length > 0) {
+        const flow = editingSmartLink.metadata.flow as ClientFlowStep[];
+        setSelectedFlow(flow.includes('confirmation') ? flow : [...flow, 'confirmation']);
+      } else {
+        setSelectedFlow(['scheduling', 'client_info', 'confirmation']);
+      }
+
+      // Clear any previous completion state
+      setCreatedSmartLink(null);
+      setLinkCopied(false);
+    } else {
+      // Not editing - reset to initial state
+      setCreationType(null);
+      setJourneyType(null);
+      setCurrentStep(0);
+      setSelectedServiceIds([]);
+      setSelectedFlow(clientFlow && clientFlow.length > 0 ? clientFlow : ['scheduling', 'client_info', 'confirmation']);
+      setCreatedSmartLink(null);
+      setLinkCopied(false);
+    }
+  }, [editingSmartLink, clientFlow]);
 
   // Fetch services and user profile on mount
   useEffect(() => {
@@ -551,11 +810,10 @@ export function LandingPageWizard({
   };
 
   // Helper to format price with correct currency symbol
-  const formatPrice = (price: number | null | undefined, currency: string) => {
+  const formatPrice = (price: number | null | undefined, currencyCode: string) => {
     if (price == null) return language === 'he' ? 'צרו קשר' : language === 'es' ? 'Contáctenos' : 'Contact us';
-    const symbols: Record<string, string> = { USD: '$', EUR: '€', ILS: '₪', GBP: '£' };
-    const symbol = symbols[currency] || currency + ' ';
-    return `${symbol}${price}`;
+    // Use the global formatCurrency from LanguageContext for locale-aware formatting
+    return formatCurrency(price, { showFree: false, currencyOverride: currencyCode as 'USD' | 'EUR' | 'GBP' | 'ILS' | 'CAD' | 'AUD' });
   };
 
   // Store preview data in sessionStorage and return a key
@@ -684,45 +942,283 @@ export function LandingPageWizard({
     }
   };
 
-  // Navigation: Step 1 (Service) → Step 2 (Journey) → Step 3 (Style, skip if theme) → Step 4/3 (Preview)
+  // Create smart link via API
+  const createSmartLink = async (
+    destinationType: 'form' | 'booking',
+    destinationPath: string,
+    name: string,
+    metadata?: {
+      journeyType?: 'contact-only' | 'full';
+      serviceIds?: string[];
+      flow?: string[];
+    }
+  ) => {
+    setCreatingSmartLink(true);
+    try {
+      // Build full URL from path (API requires full URL)
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const fullDestinationUrl = destinationPath.startsWith('http') ? destinationPath : `${baseUrl}${destinationPath}`;
+
+      const response = await fetch('/api/smart-links', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination_url: fullDestinationUrl,
+          destination_type: destinationType,
+          name,
+          metadata: metadata ? {
+            ...metadata,
+            destinationType
+          } : { destinationType }
+        })
+      });
+
+      const data = await response.json();
+      if (data.success && data.link) {
+        setCreatedSmartLink(data.link);
+        return data.link;
+      }
+      return null;
+    } catch (error) {
+      console.error('[LandingPageWizard] Error creating smart link:', error);
+      return null;
+    } finally {
+      setCreatingSmartLink(false);
+    }
+  };
+
+  // Update existing smart link via API (for edit mode)
+  const updateSmartLink = async (
+    destinationType: 'form' | 'booking',
+    destinationPath: string,
+    name: string,
+    metadata?: {
+      journeyType?: 'contact-only' | 'full';
+      serviceIds?: string[];
+      flow?: string[];
+    }
+  ) => {
+    if (!editingSmartLink) return null;
+
+    setCreatingSmartLink(true);
+    try {
+      // Build full URL from path (API requires full URL)
+      const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+      const fullDestinationUrl = destinationPath.startsWith('http') ? destinationPath : `${baseUrl}${destinationPath}`;
+
+      const response = await fetch(`/api/smart-links/${editingSmartLink.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination_url: fullDestinationUrl,
+          destination_type: destinationType,
+          name,
+          metadata: metadata ? {
+            ...metadata,
+            destinationType
+          } : { destinationType }
+        })
+      });
+
+      const data = await response.json();
+      if (data.success && data.link) {
+        setCreatedSmartLink(data.link);
+        return data.link;
+      }
+      return null;
+    } catch (error) {
+      console.error('[LandingPageWizard] Error updating smart link:', error);
+      return null;
+    } finally {
+      setCreatingSmartLink(false);
+    }
+  };
+
+  // Copy smart link to clipboard
+  const copySmartLink = () => {
+    if (!createdSmartLink) return;
+    const url = `${window.location.origin}/go/${createdSmartLink.code}`;
+    navigator.clipboard.writeText(url);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
+  // Build destination URL for smart link with flow params
+  // Uses {userCode} placeholder that the API will replace with the actual userCode
+  const buildSmartLinkDestination = (): string => {
+    // Use placeholder - the API will replace this with the actual userCode from the database
+    const userCodePlaceholder = '{userCode}';
+
+    if (journeyType === 'contact-only') {
+      return `/c/${userCodePlaceholder}/contact`;
+    }
+
+    // Full journey - include service and flow params
+    // Don't filter out confirmation - include all flow steps the user selected
+    const flowSteps = selectedFlow.filter(s => s !== 'confirmation');
+    const flowParam = flowSteps.join(','); // Don't encode - URL API will handle it
+
+    // For smart links: pass selected service IDs (multiple allowed)
+    // If only one service selected, pass as single service param for direct selection
+    // If multiple or none, pass as services param to filter the list
+    let serviceParam = '';
+    if (selectedServiceIds.length === 1) {
+      // Single service - pre-select it
+      serviceParam = `&service=${selectedServiceIds[0]}`;
+    } else if (selectedServiceIds.length > 1) {
+      // Multiple services - filter to show only these
+      serviceParam = `&services=${selectedServiceIds.join(',')}`;
+    }
+    // If no services selected, show all services (no param needed)
+
+    const url = `/c/${userCodePlaceholder}/book?flow=${flowParam}${serviceParam}`;
+
+    console.log('[SmartLink] Building destination URL:', {
+      selectedFlow,
+      flowSteps,
+      flowParam,
+      selectedServiceIds,
+      url
+    });
+
+    return url;
+  };
+
+  // Navigation logic - varies by creation type
   const goNext = async () => {
-    if (currentStep === 1 && selectedServiceId) {
-      // Service → Journey
-      setCurrentStep(2);
-    } else if (currentStep === 2) {
-      // Journey → Style or Preview
-      if (hasExistingTheme) {
-        // Skip style, go to preview (step 3 in 3-step flow)
-        setCurrentStep(3);
-        await generateContent();
+    // Step 0: Creation type selected
+    if (currentStep === 0 && creationType) {
+      setCurrentStep(1);
+      return;
+    }
+
+    // Step 1 varies by creation type
+    if (currentStep === 1) {
+      if (creationType === 'smart-link') {
+        // Journey type selection for smart link
+        if (journeyType === 'contact-only') {
+          // Create contact form smart link immediately (API will replace {userCode} placeholder)
+          const link = await createSmartLink('form', `/c/{userCode}/contact`, labels.smart_link_contact_form_name, {
+            journeyType: 'contact-only'
+          });
+          if (link) {
+            setCurrentStep(2); // Go to completion screen
+          }
+        } else if (journeyType === 'full-journey') {
+          // Go to service selection
+          setCurrentStep(2);
+        }
       } else {
-        // Go to style selection
+        // Landing page: Step 1 is service selection, auto-advance on select
+        // This is handled by handleServiceSelect
+      }
+      return;
+    }
+
+    // Smart Link flow: Step 2 is service selection, Step 3 is journey builder
+    if (creationType === 'smart-link' && journeyType === 'full-journey') {
+      if (currentStep === 2) {
+        // Service selection → Journey builder
+        // Can proceed with 0, 1, or multiple services selected
+        // 0 services = show all services to visitor
+        // 1+ services = filter to selected services
         setCurrentStep(3);
+      } else if (currentStep === 3) {
+        // Journey → Create or update smart link and show completion
+        const destination = buildSmartLinkDestination();
+        // Generate name based on number of services selected
+        let linkName = labels.smart_link_booking_link;
+        if (selectedServiceIds.length === 1) {
+          const service = services.find(s => s.id === selectedServiceIds[0]);
+          const suffix = labels.smart_link_service_link_suffix ? ` ${labels.smart_link_service_link_suffix}` : '';
+          linkName = `${service?.name || labels.smart_link_booking_link}${suffix}`;
+        } else if (selectedServiceIds.length > 1) {
+          linkName = labels.smart_link_services_link.replace('{count}', String(selectedServiceIds.length));
+        } else {
+          linkName = labels.smart_link_all_services;
+        }
+        const metadata = {
+          journeyType: 'full' as const,
+          serviceIds: selectedServiceIds,
+          flow: selectedFlow.filter(s => s !== 'confirmation')
+        };
+        // Use update if in edit mode, otherwise create
+        const link = isEditMode
+          ? await updateSmartLink('booking', destination, linkName, metadata)
+          : await createSmartLink('booking', destination, linkName, metadata);
+        if (link) {
+          setCurrentStep(4);
+        }
       }
-    } else if (currentStep === 3) {
-      if (hasExistingTheme) {
-        // Already at preview
-        return;
+      return;
+    }
+
+    // Landing Page flow
+    if (creationType === 'landing-page') {
+      if (currentStep === 1 && selectedServiceId) {
+        // Service → Journey
+        setCurrentStep(2);
+      } else if (currentStep === 2) {
+        // Journey → Style or Preview
+        if (hasExistingTheme) {
+          setCurrentStep(3);
+          await generateContent();
+        } else {
+          setCurrentStep(3);
+        }
+      } else if (currentStep === 3) {
+        if (hasExistingTheme) {
+          // Already at preview
+          return;
+        }
+        // Style → Preview
+        setCurrentStep(4);
+        await generateContent();
       }
-      // Style → Preview (step 4 in 4-step flow)
-      setCurrentStep(4);
-      await generateContent();
     }
   };
 
   const goBack = () => {
-    if (currentStep === 1) return;
+    if (currentStep === 0) return;
 
-    if (hasExistingTheme) {
-      // In 3-step flow: Preview (3) → Journey (2) → Service (1)
-      setCurrentStep(currentStep - 1);
-    } else {
-      // In 4-step flow: Preview (4) → Style (3) → Journey (2) → Service (1)
-      setCurrentStep(currentStep - 1);
+    // Smart link completion screen - go back to journey type selection
+    if (creationType === 'smart-link' && createdSmartLink) {
+      setCreatedSmartLink(null);
+      if (journeyType === 'contact-only') {
+        setCurrentStep(1);
+      } else {
+        setCurrentStep(3); // Journey builder
+      }
+      return;
     }
+
+    // General back navigation
+    if (currentStep === 1) {
+      // Go back to step 0, reset creation type
+      setCreationType(null);
+      setJourneyType(null);
+      setCurrentStep(0);
+      return;
+    }
+
+    setCurrentStep(currentStep - 1);
   };
 
   const handleServiceSelect = async (serviceId: string) => {
+    // For smart links: toggle multi-select (don't auto-advance)
+    if (creationType === 'smart-link') {
+      setSelectedServiceIds(prev => {
+        const newIds = prev.includes(serviceId)
+          ? prev.filter(id => id !== serviceId)
+          : [...prev, serviceId];
+        // Also update selectedServiceId for backward compatibility (use first selected)
+        setSelectedServiceId(newIds.length > 0 ? newIds[0] : null);
+        return newIds;
+      });
+      return; // Don't auto-advance for smart links
+    }
+
+    // For landing pages: single select with auto-advance
     setSelectedServiceId(serviceId);
     // Find the selected service for slug generation
     const service = services.find(s => s.id === serviceId);
@@ -731,8 +1227,26 @@ export function LandingPageWizard({
     // Set slug from service name
     setSlug(generateSlug(service.name));
 
-    // Auto-advance to Journey step (step 2)
+    // Landing page: Step 1 (service) → Step 2 (journey)
     setCurrentStep(2);
+  };
+
+  // Handle smart link completion (user clicks "Done")
+  const handleSmartLinkComplete = () => {
+    if (!createdSmartLink) return;
+
+    const clientFlowSteps: ClientFlowStep[] = journeyType === 'contact-only'
+      ? ['client_info', 'confirmation']
+      : selectedFlow;
+
+    onComplete({
+      creationType: 'smart-link',
+      smartLink: createdSmartLink,
+      journeyType: journeyType || 'contact-only',
+      clientFlow: clientFlowSteps,
+      serviceId: selectedServiceId || undefined,
+      serviceName: selectedService?.name
+    });
   };
 
   const handleComplete = async (shouldPublish: boolean) => {
@@ -751,7 +1265,8 @@ export function LandingPageWizard({
       ? selectedFlow
       : [...selectedFlow.filter((s): s is ClientFlowStep => s !== 'confirmation'), 'confirmation'];
 
-    const result = {
+    const result: LandingPageWizardResult = {
+      creationType: 'landing-page',
       serviceId: selectedService.id,
       serviceName: selectedService.name,
       stylePreset: hasExistingTheme && useExistingTheme ? 'existing' : selectedPresetId,
@@ -778,6 +1293,287 @@ export function LandingPageWizard({
     desktop: '100%',
     tablet: '768px',
     mobile: '375px'
+  };
+
+  // Render Step 0: Creation Type Selection
+  const renderStep0 = () => (
+    <div className="space-y-4">
+      {/* Smart Link Option */}
+      <button
+        onClick={() => {
+          setCreationType('smart-link');
+          setCurrentStep(1);
+        }}
+        className="w-full p-5 rounded-xl border-2 border-[var(--v2-border)] hover:border-[#4F6EF7] hover:bg-[#4F6EF7]/5 transition-all text-start group"
+      >
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#4F6EF720' }}>
+            <Link className="w-6 h-6" style={{ color: '#4F6EF7' }} />
+          </div>
+          <div className="flex-1">
+            <h4 className="text-base font-semibold text-[var(--v2-text-primary)] group-hover:text-[#4F6EF7] transition-colors">
+              {labels.creation_smart_link}
+            </h4>
+            <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
+              {labels.creation_smart_link_desc}
+            </p>
+          </div>
+          <ChevronRight className="w-5 h-5 text-[var(--v2-text-muted)] group-hover:text-[#4F6EF7] transition-colors flex-shrink-0 mt-1" />
+        </div>
+      </button>
+
+      {/* Landing Page Option */}
+      <button
+        onClick={() => {
+          setCreationType('landing-page');
+          setCurrentStep(1);
+        }}
+        className="w-full p-5 rounded-xl border-2 border-[var(--v2-border)] hover:border-[#4F6EF7] hover:bg-[#4F6EF7]/5 transition-all text-start group"
+      >
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#22C58B20' }}>
+            <FileText className="w-6 h-6" style={{ color: '#22C58B' }} />
+          </div>
+          <div className="flex-1">
+            <h4 className="text-base font-semibold text-[var(--v2-text-primary)] group-hover:text-[#4F6EF7] transition-colors">
+              {labels.creation_landing_page}
+            </h4>
+            <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
+              {labels.creation_landing_page_desc}
+            </p>
+          </div>
+          <ChevronRight className="w-5 h-5 text-[var(--v2-text-muted)] group-hover:text-[#4F6EF7] transition-colors flex-shrink-0 mt-1" />
+        </div>
+      </button>
+    </div>
+  );
+
+  // Render Smart Link Journey Type Selection (Step 1 for smart links)
+  const renderJourneyTypeSelection = () => (
+    <div className="space-y-4">
+      {/* Contact Form Only */}
+      <button
+        onClick={async () => {
+          setJourneyType('contact-only');
+          // Create contact form smart link immediately (API will replace {userCode} placeholder)
+          const link = await createSmartLink('form', `/c/{userCode}/contact`, labels.smart_link_contact_form_name, {
+            journeyType: 'contact-only'
+          });
+          if (link) {
+            setCurrentStep(2); // Go to completion screen
+          }
+        }}
+        disabled={creatingSmartLink}
+        className="w-full p-5 rounded-xl border-2 border-[var(--v2-border)] hover:border-[#4F6EF7] hover:bg-[#4F6EF7]/5 transition-all text-start group disabled:opacity-50"
+      >
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#8B5CF620' }}>
+            <MessageSquare className="w-6 h-6" style={{ color: '#8B5CF6' }} />
+          </div>
+          <div className="flex-1">
+            <h4 className="text-base font-semibold text-[var(--v2-text-primary)] group-hover:text-[#4F6EF7] transition-colors">
+              {labels.journey_contact_only}
+            </h4>
+            <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
+              {labels.journey_contact_only_desc}
+            </p>
+            <p className="text-xs text-[var(--v2-text-muted)] mt-2">
+              {labels.journey_contact_only_best_for}
+            </p>
+          </div>
+          {creatingSmartLink && journeyType === 'contact-only' ? (
+            <Loader2 className="w-5 h-5 text-[#4F6EF7] animate-spin flex-shrink-0 mt-1" />
+          ) : (
+            <ChevronRight className="w-5 h-5 text-[var(--v2-text-muted)] group-hover:text-[#4F6EF7] transition-colors flex-shrink-0 mt-1" />
+          )}
+        </div>
+      </button>
+
+      {/* Full User Journey */}
+      <button
+        onClick={() => {
+          setJourneyType('full-journey');
+          setCurrentStep(2); // Go to service selection
+        }}
+        disabled={creatingSmartLink}
+        className="w-full p-5 rounded-xl border-2 border-[var(--v2-border)] hover:border-[#4F6EF7] hover:bg-[#4F6EF7]/5 transition-all text-start group disabled:opacity-50"
+      >
+        <div className="flex items-start gap-4">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: '#F59E0B20' }}>
+            <Calendar className="w-6 h-6" style={{ color: '#F59E0B' }} />
+          </div>
+          <div className="flex-1">
+            <h4 className="text-base font-semibold text-[var(--v2-text-primary)] group-hover:text-[#4F6EF7] transition-colors">
+              {labels.journey_full}
+            </h4>
+            <p className="text-sm text-[var(--v2-text-secondary)] mt-1">
+              {labels.journey_full_desc}
+            </p>
+            <p className="text-xs text-[var(--v2-text-muted)] mt-2">
+              {labels.journey_full_best_for}
+            </p>
+          </div>
+          <ChevronRight className="w-5 h-5 text-[var(--v2-text-muted)] group-hover:text-[#4F6EF7] transition-colors flex-shrink-0 mt-1" />
+        </div>
+      </button>
+    </div>
+  );
+
+  // Render Smart Link Completion Screen (Compact)
+  const renderSmartLinkComplete = () => {
+    if (!createdSmartLink) return null;
+
+    const fullUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/go/${createdSmartLink.code}`;
+    const shortCode = createdSmartLink.code;
+
+    return (
+      <div className="space-y-4">
+        {/* Compact Success Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3"
+        >
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+            className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: '#22C58B' }}
+          >
+            <Check className="w-6 h-6 text-white" strokeWidth={3} />
+          </motion.div>
+          <div>
+            <h2 className="text-lg font-bold text-[var(--v2-text-primary)]">
+              {isEditMode ? labels.smart_link_updated_title : labels.smart_link_ready_title}
+            </h2>
+            <p className="text-sm text-[var(--v2-text-muted)]">{createdSmartLink.name}</p>
+          </div>
+        </motion.div>
+
+        {/* Link Card - Compact */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-gradient-to-br from-[#4F6EF7]/5 to-[#4F6EF7]/10 border border-[#4F6EF7]/20 p-4 rounded-xl"
+        >
+          {/* URL Display - Single line */}
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center bg-[#4F6EF7]">
+              <Link className="w-4 h-4 text-white" />
+            </div>
+            <code className="text-sm font-semibold text-[var(--v2-text-primary)] truncate flex-1" dir="ltr">
+              /go/{shortCode}
+            </code>
+          </div>
+
+          {/* Action Buttons Row */}
+          <div className="flex gap-2">
+            <button
+              onClick={copySmartLink}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 text-sm font-semibold rounded-lg transition-all"
+              style={{
+                backgroundColor: linkCopied ? '#22C58B' : '#4F6EF7',
+                color: 'white'
+              }}
+            >
+              {linkCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              {linkCopied ? labels.smart_link_copied : labels.smart_link_copy}
+            </button>
+            <button
+              onClick={() => window.open(fullUrl, '_blank')}
+              className="p-2 text-[var(--v2-text-secondary)] bg-white/80 dark:bg-white/10 border border-[var(--v2-border)] rounded-lg hover:bg-white dark:hover:bg-white/20 transition-all"
+              title={labels.smart_link_preview}
+            >
+              <ExternalLink className="w-4 h-4" />
+            </button>
+            <button
+              className="p-2 text-[var(--v2-text-secondary)] bg-white/80 dark:bg-white/10 border border-[var(--v2-border)] rounded-lg hover:bg-white dark:hover:bg-white/20 transition-all"
+              title={labels.smart_link_show_qr}
+              onClick={() => setShowQRModal(true)}
+            >
+              <QrCode className="w-4 h-4" />
+            </button>
+          </div>
+        </motion.div>
+
+        {/* Action Buttons */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="flex gap-2"
+        >
+          <button
+            onClick={handleSmartLinkComplete}
+            className="flex-1 px-4 py-2.5 bg-[#4F6EF7] text-white font-semibold rounded-xl hover:bg-[#3B5AE5] transition-all shadow-sm"
+          >
+            {labels.smart_link_done}
+          </button>
+          <button
+            onClick={() => {
+              // Reset and start over
+              setCreatedSmartLink(null);
+              setCreationType(null);
+              setJourneyType(null);
+              setSelectedServiceId(null);
+              setSelectedServiceIds([]);
+              setCurrentStep(0);
+            }}
+            className="flex-1 px-4 py-2.5 border border-[var(--v2-border)] text-[var(--v2-text-primary)] font-medium rounded-xl hover:bg-[var(--v2-surface-hover)] transition-all"
+          >
+            {labels.smart_link_create_another}
+          </button>
+        </motion.div>
+
+        {/* QR Code Modal */}
+        <AnimatePresence>
+          {showQRModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+              onClick={() => setShowQRModal(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white dark:bg-[var(--v2-surface)] rounded-2xl p-6 shadow-xl max-w-sm w-full mx-4"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                    {labels.smart_link_show_qr}
+                  </h3>
+                  <button
+                    onClick={() => setShowQRModal(false)}
+                    className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-surface-hover)] rounded-lg transition-all"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <QRCodeSVG
+                      value={fullUrl}
+                      size={200}
+                      level="H"
+                      includeMargin={false}
+                    />
+                  </div>
+                  <p className="mt-4 text-sm text-[var(--v2-text-secondary)] text-center break-all max-w-[250px]">
+                    {fullUrl}
+                  </p>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
   };
 
   // Render Step 1: Service Selection
@@ -891,9 +1687,22 @@ export function LandingPageWizard({
       ) : (
         <>
           <div className="grid grid-cols-1 gap-2">
+            {/* Multi-select hint for smart links */}
+            {creationType === 'smart-link' && services.length > 1 && (
+              <div className="text-sm text-[var(--v2-text-muted)] mb-2 flex items-center gap-2">
+                <Layers className="w-4 h-4" />
+                {labels.multi_select_hint}
+              </div>
+            )}
+
             {services.map((service) => {
-              const isSelected = selectedServiceId === service.id;
-              const currencySymbol = service.currency === 'ILS' ? '₪' : service.currency === 'EUR' ? '€' : '$';
+              // For smart links, use multi-select; for landing pages, use single select
+              const isSelected = creationType === 'smart-link'
+                ? selectedServiceIds.includes(service.id)
+                : selectedServiceId === service.id;
+              // Get currency symbol from centralized currency configs
+              const serviceCurrency = (service.currency || 'USD') as 'USD' | 'EUR' | 'ILS' | 'GBP';
+              const currencySymbol = availableCurrencies[serviceCurrency]?.symbol || '$';
 
               return (
                 <button
@@ -914,7 +1723,7 @@ export function LandingPageWizard({
                     <div className="flex-1 min-w-0">
                       <h4 className="font-medium text-[var(--v2-text-primary)] truncate">{service.name}</h4>
                       <div className="flex items-center gap-3 text-xs text-[var(--v2-text-muted)]">
-                        <span>{service.duration_minutes} min</span>
+                        <span>{service.duration_minutes} {labels.minutes_abbr}</span>
                         {service.price != null && (
                           <span className="text-green-600 font-medium">{currencySymbol}{service.price}</span>
                         )}
@@ -1248,7 +2057,7 @@ export function LandingPageWizard({
                 {previewDataKey ? (
                   <iframe
                     key={previewDataKey}
-                    src={`/business-os/website/landing-preview?dataKey=${previewDataKey}`}
+                    src={`/business-os/website/landing-preview?dataKey=${previewDataKey}&lang=${language}`}
                     className="w-full h-full border-0"
                     title="Landing Page Preview"
                     style={{ minHeight: '400px' }}
@@ -1308,44 +2117,163 @@ export function LandingPageWizard({
     </div>
   );
 
-  // Determine which step content to render
-  // Flow: Step 1 (Service) → Step 2 (Journey) → Step 3 (Style, skip if theme) → Step 4/3 (Preview)
+  // Determine which step content to render based on creation type
   const renderCurrentStep = () => {
-    if (currentStep === 1) {
-      return renderStep1();
+    // Step 0: Creation Type Selection (always first)
+    if (currentStep === 0) {
+      return renderStep0();
     }
-    if (currentStep === 2) {
-      return renderJourneyStep();
+
+    // Smart Link flow
+    if (creationType === 'smart-link') {
+      // Step 1: Journey Type Selection
+      if (currentStep === 1) {
+        return renderJourneyTypeSelection();
+      }
+      // Contact-only: Step 2 is completion screen
+      if (journeyType === 'contact-only' && currentStep === 2) {
+        return renderSmartLinkComplete();
+      }
+      // Full journey: Step 2 is service selection
+      if (journeyType === 'full-journey') {
+        if (currentStep === 2) return renderStep1(); // Service selection
+        if (currentStep === 3) return renderJourneyStep(); // Journey builder
+        if (currentStep === 4) return renderSmartLinkComplete(); // Completion
+      }
     }
-    if (hasExistingTheme) {
-      // 3-step flow: step 3 is preview
-      return renderStepPreview();
+
+    // Landing Page flow
+    if (creationType === 'landing-page') {
+      if (currentStep === 1) return renderStep1(); // Service selection
+      if (currentStep === 2) return renderJourneyStep(); // Journey builder
+      if (hasExistingTheme) {
+        // 4-step flow: Step 3 is preview
+        if (currentStep === 3) return renderStepPreview();
+      } else {
+        // 5-step flow: Step 3 is style, Step 4 is preview
+        if (currentStep === 3) return renderStep2Style();
+        if (currentStep === 4) return renderStepPreview();
+      }
     }
-    // 4-step flow
-    if (currentStep === 3) {
-      return renderStep2Style();
-    }
-    return renderStepPreview();
+
+    return null;
   };
 
-  // Get current step title/subtitle
+  // Get current step title/subtitle based on creation type and current step
   const getStepTitle = () => {
-    if (currentStep === 1) return labels.step1_title;
-    if (currentStep === 2) return labels.step_journey_title;
-    if (hasExistingTheme) return labels.step3_title; // Preview
-    if (currentStep === 3) return labels.step2_title; // Style
-    return labels.step3_title; // Preview
+    if (currentStep === 0) return labels.step0_title;
+
+    if (creationType === 'smart-link') {
+      if (currentStep === 1) return labels.journey_type_title;
+      if (journeyType === 'contact-only' && currentStep === 2) return labels.smart_link_ready_title;
+      if (journeyType === 'full-journey') {
+        if (currentStep === 2) return isEditMode ? labels.edit_smart_link_title : labels.step1_title; // Service
+        if (currentStep === 3) return labels.step_journey_title; // Journey
+        if (currentStep === 4) return isEditMode ? labels.smart_link_updated_title : labels.smart_link_ready_title; // Complete
+      }
+    }
+
+    if (creationType === 'landing-page') {
+      if (currentStep === 1) return labels.step1_title;
+      if (currentStep === 2) return labels.step_journey_title;
+      if (hasExistingTheme) {
+        return labels.step3_title; // Preview
+      } else {
+        if (currentStep === 3) return labels.step2_title; // Style
+        return labels.step3_title; // Preview
+      }
+    }
+
+    return '';
   };
 
   const getStepSubtitle = () => {
-    if (currentStep === 1) return labels.step1_subtitle;
-    if (currentStep === 2) return labels.step_journey_subtitle;
-    if (hasExistingTheme) return labels.step3_subtitle;
-    if (currentStep === 3) return labels.step2_subtitle;
-    return labels.step3_subtitle;
+    if (currentStep === 0) return labels.step0_subtitle;
+
+    if (creationType === 'smart-link') {
+      if (currentStep === 1) return labels.journey_type_subtitle;
+      if (journeyType === 'contact-only' && currentStep === 2) return ''; // No subtitle for completion
+      if (journeyType === 'full-journey') {
+        if (currentStep === 2) return isEditMode ? labels.edit_smart_link_subtitle : labels.step1_subtitle;
+        if (currentStep === 3) return labels.step_journey_subtitle;
+        if (currentStep === 4) return '';
+      }
+    }
+
+    if (creationType === 'landing-page') {
+      if (currentStep === 1) return labels.step1_subtitle;
+      if (currentStep === 2) return labels.step_journey_subtitle;
+      if (hasExistingTheme) {
+        return labels.step3_subtitle;
+      } else {
+        if (currentStep === 3) return labels.step2_subtitle;
+        return labels.step3_subtitle;
+      }
+    }
+
+    return '';
   };
 
-  const isPreviewStep = hasExistingTheme ? currentStep === 3 : currentStep === 4;
+  // Determine if we're on a step that has its own action buttons (completion screen or preview)
+  const isStepWithOwnButtons = (): boolean => {
+    // Smart link completion screens have their own buttons
+    if (creationType === 'smart-link') {
+      if (journeyType === 'contact-only' && currentStep === 2) return true;
+      if (journeyType === 'full-journey' && currentStep === 4) return true;
+    }
+    // Landing page preview has its own buttons
+    if (creationType === 'landing-page') {
+      if (hasExistingTheme && currentStep === 3) return true;
+      if (!hasExistingTheme && currentStep === 4) return true;
+    }
+    return false;
+  };
+
+  // Determine if we should show the continue button in footer
+  const shouldShowContinueButton = (): boolean => {
+    // Step 0: no continue button (selection auto-advances)
+    if (currentStep === 0) return false;
+
+    // Smart link journey type selection: no continue (selection auto-advances)
+    if (creationType === 'smart-link' && currentStep === 1) return false;
+
+    // Service selection for smart links: always show continue (0 services = all services)
+    if (creationType === 'smart-link' && journeyType === 'full-journey' && currentStep === 2) {
+      return true; // Can proceed with any selection (including none = all services)
+    }
+    // Service selection for landing pages: require selection
+    if (creationType === 'landing-page' && currentStep === 1) {
+      return !!selectedServiceId;
+    }
+
+    // Journey builder: always show continue
+    if (creationType === 'smart-link' && journeyType === 'full-journey' && currentStep === 3) {
+      return true;
+    }
+    if (creationType === 'landing-page' && currentStep === 2) {
+      return true;
+    }
+
+    // Style selection: show continue
+    if (creationType === 'landing-page' && !hasExistingTheme && currentStep === 3) {
+      return true;
+    }
+
+    return false;
+  };
+
+  // Get header icon based on creation type
+  const getHeaderIcon = () => {
+    if (creationType === 'smart-link') {
+      return <Link className="w-4 h-4" style={{ color: '#4F6EF7' }} />;
+    }
+    return <Globe className="w-4 h-4" style={{ color: '#4F6EF7' }} />;
+  };
+
+  // Calculate display step number (1-indexed for user display)
+  const getDisplayStep = (): number => {
+    return currentStep + 1; // Convert 0-indexed to 1-indexed
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" dir={isRTL ? 'rtl' : 'ltr'}>
@@ -1358,12 +2286,12 @@ export function LandingPageWizard({
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--v2-border)] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[#4F6EF7] flex items-center justify-center">
-              <Globe className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#4F6EF720' }}>
+              {getHeaderIcon()}
             </div>
             <div>
               <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                {labels.step} {currentStep} {labels.of} {totalSteps}
+                {labels.step} {getDisplayStep()} {labels.of} {totalSteps}
               </span>
             </div>
           </div>
@@ -1380,23 +2308,27 @@ export function LandingPageWizard({
           <motion.div
             className="h-full bg-[#4F6EF7]"
             initial={{ width: '0%' }}
-            animate={{ width: `${(currentStep / totalSteps) * 100}%` }}
+            animate={{ width: `${((currentStep + 1) / totalSteps) * 100}%` }}
             transition={{ duration: 0.3 }}
           />
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-auto p-6">
-          {/* Step header */}
-          <div className="mb-4">
-            <h2 className="text-lg font-bold text-[var(--v2-text-primary)]">{getStepTitle()}</h2>
-            <p className="text-sm text-[var(--v2-text-secondary)]">{getStepSubtitle()}</p>
-          </div>
+          {/* Step header - hide on completion screens */}
+          {!isStepWithOwnButtons() && (
+            <div className="mb-4">
+              <h2 className="text-lg font-bold text-[var(--v2-text-primary)]">{getStepTitle()}</h2>
+              {getStepSubtitle() && (
+                <p className="text-sm text-[var(--v2-text-secondary)]">{getStepSubtitle()}</p>
+              )}
+            </div>
+          )}
 
           {/* Step content */}
           <AnimatePresence mode="wait">
             <motion.div
-              key={currentStep}
+              key={`${creationType}-${journeyType}-${currentStep}`}
               initial={{ opacity: 0, x: isRTL ? -20 : 20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: isRTL ? 20 : -20 }}
@@ -1407,44 +2339,32 @@ export function LandingPageWizard({
           </AnimatePresence>
         </div>
 
-        {/* Footer navigation (not shown on preview step which has its own buttons) */}
-        {!isPreviewStep && (
+        {/* Footer navigation (not shown on steps with their own buttons) */}
+        {!isStepWithOwnButtons() && (
           <div className="px-6 py-4 border-t border-[var(--v2-border)] flex items-center justify-between">
             <button
-              onClick={currentStep === 1 ? onCancel : goBack}
+              onClick={currentStep === 0 ? onCancel : goBack}
               className="flex items-center gap-1 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
             >
               <ChevronLeft className="w-4 h-4" />
-              {currentStep === 1 ? labels.cancel : labels.back}
+              {currentStep === 0 ? labels.cancel : labels.back}
             </button>
-            {/* Show Continue button on step 1 only if service is selected */}
-            {currentStep === 1 && selectedServiceId && (
+
+            {/* Continue button - shown based on shouldShowContinueButton logic */}
+            {shouldShowContinueButton() && (
               <button
                 onClick={goNext}
-                className="px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] transition-all flex items-center gap-1 rounded-lg"
+                disabled={creatingSmartLink}
+                className="px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] transition-all flex items-center gap-1 rounded-lg disabled:opacity-50"
               >
-                {labels.continue}
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
-            {/* Show Continue button on journey step (step 2) */}
-            {currentStep === 2 && (
-              <button
-                onClick={goNext}
-                className="px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] transition-all flex items-center gap-1 rounded-lg"
-              >
-                {labels.continue}
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            )}
-            {/* Show Continue button on style step (step 3 without existing theme) */}
-            {currentStep === 3 && !hasExistingTheme && (
-              <button
-                onClick={goNext}
-                className="px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] transition-all flex items-center gap-1 rounded-lg"
-              >
-                {labels.continue}
-                <ChevronRight className="w-4 h-4" />
+                {creatingSmartLink ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    {isEditMode && currentStep === 3 ? labels.update_link : labels.continue}
+                    <ChevronRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
             )}
           </div>

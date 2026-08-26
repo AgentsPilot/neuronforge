@@ -14,16 +14,8 @@ import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'WebsiteBookingAvailabilityAPI' });
 
-// Default business hours if not configured
-const DEFAULT_HOURS = {
-  monday: { start: '09:00', end: '17:00', enabled: true },
-  tuesday: { start: '09:00', end: '17:00', enabled: true },
-  wednesday: { start: '09:00', end: '17:00', enabled: true },
-  thursday: { start: '09:00', end: '17:00', enabled: true },
-  friday: { start: '09:00', end: '17:00', enabled: true },
-  saturday: { start: '09:00', end: '13:00', enabled: false },
-  sunday: { start: '09:00', end: '13:00', enabled: false }
-};
+// Note: No default hours - availability must be explicitly configured
+// This prevents showing booking slots before the business owner sets up their schedule
 
 interface TimeSlot {
   start: string; // ISO datetime
@@ -82,7 +74,17 @@ export async function GET(request: NextRequest) {
       .eq('user_id', ownerId)
       .single();
 
-    const availabilitySettings = businessProfile?.scheduling_availability || DEFAULT_HOURS;
+    // Check if availability has been explicitly configured
+    const hasAvailabilityConfigured = !!(
+      businessProfile?.scheduling_availability &&
+      typeof businessProfile.scheduling_availability === 'object' &&
+      Object.keys(businessProfile.scheduling_availability).length > 0
+    );
+
+    // If not configured, don't show any slots - require explicit configuration
+    const availabilitySettings = hasAvailabilityConfigured
+      ? businessProfile.scheduling_availability
+      : null;
     const timezone = businessProfile?.timezone || 'UTC';
 
     // Fetch active services
@@ -113,36 +115,38 @@ export async function GET(request: NextRequest) {
       currency: s.currency || 'USD'
     }));
 
-    // Calculate available slots
+    // Calculate available slots (only if availability is configured)
     let slots: TimeSlot[] = [];
 
-    if (date && serviceId) {
-      // Fetch specific date slots
-      const selectedService = formattedServices.find(s => s.id === serviceId);
-      if (selectedService) {
-        slots = await calculateDaySlots(
-          ownerId,
-          date,
-          selectedService.duration_minutes,
-          availabilitySettings
-        );
-      }
-    } else if (serviceId) {
-      // Fetch slots for next N days
-      const selectedService = formattedServices.find(s => s.id === serviceId);
-      if (selectedService) {
-        const today = new Date();
-        for (let i = 0; i < daysAhead; i++) {
-          const dayDate = new Date(today);
-          dayDate.setDate(today.getDate() + i);
-          const dateStr = dayDate.toISOString().split('T')[0];
-          const daySlots = await calculateDaySlots(
+    if (hasAvailabilityConfigured && availabilitySettings) {
+      if (date && serviceId) {
+        // Fetch specific date slots
+        const selectedService = formattedServices.find(s => s.id === serviceId);
+        if (selectedService) {
+          slots = await calculateDaySlots(
             ownerId,
-            dateStr,
+            date,
             selectedService.duration_minutes,
             availabilitySettings
           );
-          slots.push(...daySlots);
+        }
+      } else if (serviceId) {
+        // Fetch slots for next N days
+        const selectedService = formattedServices.find(s => s.id === serviceId);
+        if (selectedService) {
+          const today = new Date();
+          for (let i = 0; i < daysAhead; i++) {
+            const dayDate = new Date(today);
+            dayDate.setDate(today.getDate() + i);
+            const dateStr = dayDate.toISOString().split('T')[0];
+            const daySlots = await calculateDaySlots(
+              ownerId,
+              dateStr,
+              selectedService.duration_minutes,
+              availabilitySettings
+            );
+            slots.push(...daySlots);
+          }
         }
       }
     }
@@ -189,6 +193,7 @@ export async function GET(request: NextRequest) {
       success: true,
       businessName: businessProfile?.company_name || subdomain,
       timezone,
+      availabilityConfigured: hasAvailabilityConfigured,
       services: formattedServices,
       slots: slots.filter(s => s.available), // Only return available slots
       totalSlots: slots.length,

@@ -40,28 +40,36 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   if (!userId) {
     const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY!);
 
-    // Try to get subscription from invoice.subscription field
-    if (invoiceSubscription) {
-      console.log('📋 [Webhook] Fetching metadata from invoice.subscription:', invoiceSubscription);
-      const subscription = await stripe.subscriptions.retrieve(invoiceSubscription as string);
-      userId = subscription.metadata?.user_id;
-      pilotCredits = parseInt(subscription.metadata?.credits || '0');
-      console.log('✅ [Webhook] Found metadata in subscription:', { userId, pilotCredits });
-    }
-    // If still no userId, try getting subscription from customer
-    else if (invoice.customer) {
-      console.log('📋 [Webhook] Invoice has no subscription field, looking up by customer:', invoice.customer);
-      const subscriptions = await stripe.subscriptions.list({
-        customer: invoice.customer as string,
-        limit: 1
-      });
-
-      if (subscriptions.data.length > 0) {
-        const subscription = subscriptions.data[0];
+    try {
+      // Try to get subscription from invoice.subscription field
+      if (invoiceSubscription) {
+        console.log('📋 [Webhook] Fetching metadata from invoice.subscription:', invoiceSubscription);
+        const subscription = await stripe.subscriptions.retrieve(invoiceSubscription as string);
         userId = subscription.metadata?.user_id;
-        pilotCredits = parseInt(subscription.metadata?.credits || subscription.metadata?.pilot_credits || '0');
-        console.log('✅ [Webhook] Found metadata from customer subscription:', { userId, pilotCredits });
+        pilotCredits = parseInt(subscription.metadata?.credits || '0');
+        console.log('✅ [Webhook] Found metadata in subscription:', { userId, pilotCredits });
       }
+      // If still no userId, try getting subscription from customer
+      else if (invoice.customer) {
+        console.log('📋 [Webhook] Invoice has no subscription field, looking up by customer:', invoice.customer);
+        const subscriptions = await stripe.subscriptions.list({
+          customer: invoice.customer as string,
+          limit: 1
+        });
+
+        if (subscriptions.data.length > 0) {
+          const subscription = subscriptions.data[0];
+          userId = subscription.metadata?.user_id;
+          pilotCredits = parseInt(subscription.metadata?.credits || subscription.metadata?.pilot_credits || '0');
+          console.log('✅ [Webhook] Found metadata from customer subscription:', { userId, pilotCredits });
+        }
+      }
+    } catch (stripeError: any) {
+      // This can happen if the customer/subscription doesn't exist in our platform's Stripe account
+      // This is likely a Connect event that wasn't properly identified (missing stripe-account header)
+      console.log('⚠️ [Webhook] Failed to lookup subscription/customer - likely a Connect event without stripe-account header:', stripeError.message);
+      console.log('ℹ️  [Webhook] Invoice details:', { invoiceId: invoice.id, customer: invoice.customer, metadata: invoice.metadata });
+      return; // Exit early - let the Connect handler process it if it's re-sent
     }
   }
 
@@ -872,6 +880,455 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
 }
 
 /**
+ * Handle business invoice.paid event (from Connect accounts)
+ * - Update payment_invoices status to 'paid'
+ * - Create payment_transaction record
+ */
+async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string) {
+  console.log('💳 [Webhook] Processing Connect invoice.paid:', invoice.id, 'Account:', connectAccountId);
+  console.log('💳 [Webhook] Invoice metadata:', JSON.stringify(invoice.metadata || {}));
+
+  // Look up the platform invoice by Stripe invoice ID
+  let platformInvoice: {
+    id: string;
+    user_id: string;
+    contact_id: string;
+    invoice_number: string;
+    booking_id?: string | null;
+    amount?: number;
+  } | null = null;
+
+  const { data: invoiceByStripeId, error: lookupError } = await supabaseAdmin
+    .from('payment_invoices')
+    .select('*')
+    .eq('stripe_invoice_id', invoice.id)
+    .single();
+
+  if (invoiceByStripeId) {
+    platformInvoice = invoiceByStripeId;
+    console.log('✅ [Webhook] Found platform invoice by stripe_invoice_id:', platformInvoice.id);
+  } else {
+    console.log('ℹ️  [Webhook] No platform invoice found by stripe_invoice_id, checking metadata...');
+
+    // Fallback: Look up by invoice_id from Checkout Session metadata
+    // When paying via Checkout Session, the invoice.metadata contains invoice_id
+    const metadataInvoiceId = invoice.metadata?.invoice_id;
+
+    if (metadataInvoiceId) {
+      console.log('🔍 [Webhook] Looking up by metadata.invoice_id:', metadataInvoiceId);
+      const { data: invoiceByMetadata, error: metadataLookupError } = await supabaseAdmin
+        .from('payment_invoices')
+        .select('*')
+        .eq('id', metadataInvoiceId)
+        .single();
+
+      if (invoiceByMetadata && !metadataLookupError) {
+        platformInvoice = invoiceByMetadata;
+        console.log('✅ [Webhook] Found platform invoice by metadata.invoice_id:', platformInvoice.id);
+
+        // Update the invoice with stripe_invoice_id for future lookups
+        await supabaseAdmin
+          .from('payment_invoices')
+          .update({
+            stripe_invoice_id: invoice.id,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', platformInvoice.id);
+        console.log('✅ [Webhook] Updated invoice with stripe_invoice_id');
+      }
+    }
+  }
+
+  if (!platformInvoice) {
+    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    // This might be a Stripe invoice created directly in Stripe, not through our platform
+    return;
+  }
+
+  console.log('✅ [Webhook] Found platform invoice:', platformInvoice.id, platformInvoice.invoice_number);
+
+  // Update platform invoice to paid
+  const { error: updateError } = await supabaseAdmin
+    .from('payment_invoices')
+    .update({
+      status: 'paid',
+      paid_at: new Date().toISOString(),
+      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
+      stripe_invoice_pdf: invoice.invoice_pdf,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', platformInvoice.id);
+
+  if (updateError) {
+    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    return;
+  }
+
+  // Create payment_transaction record
+  const { error: txError } = await supabaseAdmin
+    .from('payment_transactions')
+    .insert({
+      user_id: platformInvoice.user_id,
+      contact_id: platformInvoice.contact_id,
+      invoice_id: platformInvoice.id,
+      amount: invoice.amount_paid / 100, // Convert from cents
+      currency: invoice.currency.toUpperCase(),
+      status: 'succeeded',
+      payment_method: 'card',
+      description: `Payment for invoice ${platformInvoice.invoice_number}`,
+      processor_type: 'stripe',
+      stripe_payment_intent_id: typeof invoice.payment_intent === 'string' ? invoice.payment_intent : invoice.payment_intent?.id || null,
+      stripe_customer_id: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id || null,
+      paid_at: new Date().toISOString(),
+      metadata: {
+        stripe_invoice_id: invoice.id,
+        connect_account_id: connectAccountId,
+        invoice_number: platformInvoice.invoice_number
+      },
+      refund_status: 'none',
+      refunded_amount: 0
+    });
+
+  if (txError) {
+    console.error('❌ [Webhook] Failed to create payment transaction:', txError);
+  } else {
+    console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+  }
+
+  // Update linked booking's payment_status if invoice has a booking_id
+  if (platformInvoice.booking_id) {
+    console.log('🔄 [Webhook] Updating booking payment_status:', platformInvoice.booking_id);
+    const { error: bookingUpdateError } = await supabaseAdmin
+      .from('scheduling_bookings')
+      .update({
+        payment_status: 'paid',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', platformInvoice.booking_id);
+
+    if (bookingUpdateError) {
+      console.error('❌ [Webhook] Failed to update booking payment status:', bookingUpdateError);
+    } else {
+      console.log('✅ [Webhook] Booking payment status updated to paid');
+    }
+  } else {
+    // Fallback: Try to find booking by contact_id, user_id, and matching amount
+    console.log('⚠️ [Webhook] Invoice has no booking_id, attempting to find matching booking');
+
+    const { data: matchingBooking, error: matchError } = await supabaseAdmin
+      .from('scheduling_bookings')
+      .select('id, service:scheduling_services(price)')
+      .eq('user_id', platformInvoice.user_id)
+      .eq('contact_id', platformInvoice.contact_id)
+      .in('payment_status', ['pending', null])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (matchingBooking && !matchError) {
+      const servicePrice = (matchingBooking.service as { price?: number } | null)?.price || 0;
+      const invoiceAmount = platformInvoice.amount || invoice.amount_paid / 100;
+
+      if (Math.abs(servicePrice - invoiceAmount) < 0.01) {
+        // Update booking payment status
+        await supabaseAdmin
+          .from('scheduling_bookings')
+          .update({
+            payment_status: 'paid',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', matchingBooking.id);
+
+        // Also update invoice with booking_id for future reference
+        await supabaseAdmin
+          .from('payment_invoices')
+          .update({
+            booking_id: matchingBooking.id,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', platformInvoice.id);
+
+        console.log('✅ [Webhook] Found and updated matching booking:', matchingBooking.id);
+      } else {
+        console.log('ℹ️  [Webhook] Found booking but amount mismatch:', { servicePrice, invoiceAmount });
+      }
+    } else {
+      console.log('ℹ️  [Webhook] No matching pending booking found for invoice');
+    }
+  }
+
+  // Log audit event
+  try {
+    const { auditLog } = await import('@/lib/services/AuditTrailService');
+    await auditLog({
+      action: 'INVOICE_PAID',
+      entityType: 'payment_invoice',
+      entityId: platformInvoice.id,
+      userId: platformInvoice.user_id,
+      resourceName: platformInvoice.invoice_number,
+      details: {
+        amount: invoice.amount_paid / 100,
+        currency: invoice.currency,
+        stripe_invoice_id: invoice.id,
+        connect_account_id: connectAccountId
+      },
+      severity: 'info'
+    });
+  } catch (auditError) {
+    console.warn('⚠️ [Webhook] Audit logging failed:', auditError);
+  }
+
+  console.log('✅ [Webhook] Connect invoice paid processed:', platformInvoice.invoice_number);
+}
+
+/**
+ * Handle Connect checkout.session.completed event
+ * - For invoice payments: Update payment_invoices status to 'paid'
+ * - For booking payments: Update booking payment status
+ */
+async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, connectAccountId: string) {
+  console.log('💳 [Webhook] Processing Connect checkout.session.completed:', session.id, 'Account:', connectAccountId);
+
+  const invoiceId = session.metadata?.invoice_id;
+  const bookingId = session.metadata?.booking_id;
+
+  // Handle invoice payment via Checkout Session
+  if (invoiceId) {
+    console.log('📄 [Webhook] Checkout session for invoice:', invoiceId);
+
+    // Look up the platform invoice
+    const { data: platformInvoice, error: lookupError } = await supabaseAdmin
+      .from('payment_invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .single();
+
+    if (lookupError || !platformInvoice) {
+      console.error('❌ [Webhook] Platform invoice not found:', invoiceId, lookupError);
+      return;
+    }
+
+    if (platformInvoice.status === 'paid') {
+      console.log('ℹ️  [Webhook] Invoice already marked as paid:', invoiceId);
+      return;
+    }
+
+    // Update invoice to paid
+    const { error: updateError } = await supabaseAdmin
+      .from('payment_invoices')
+      .update({
+        status: 'paid',
+        paid_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', invoiceId);
+
+    if (updateError) {
+      console.error('❌ [Webhook] Failed to update invoice status:', updateError);
+      return;
+    }
+
+    console.log('✅ [Webhook] Invoice marked as paid:', platformInvoice.invoice_number);
+
+    // Create payment transaction record
+    const amountPaid = (session.amount_total || 0) / 100;
+    const { error: txError } = await supabaseAdmin
+      .from('payment_transactions')
+      .insert({
+        user_id: platformInvoice.user_id,
+        contact_id: platformInvoice.contact_id,
+        invoice_id: invoiceId,
+        type: 'payment',
+        amount: amountPaid,
+        currency: platformInvoice.currency || 'USD',
+        status: 'completed',
+        payment_method: 'card',
+        stripe_payment_intent_id: session.payment_intent as string,
+        description: `Payment for invoice ${platformInvoice.invoice_number}`,
+        metadata: {
+          checkout_session_id: session.id,
+          connect_account_id: connectAccountId
+        }
+      });
+
+    if (txError) {
+      console.error('❌ [Webhook] Failed to create payment transaction:', txError);
+    } else {
+      console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+    }
+
+    // Update CRM contact stage to 'customer' if applicable
+    if (platformInvoice.contact_id) {
+      const { error: contactError } = await supabaseAdmin
+        .from('crm_contacts')
+        .update({
+          stage: 'customer',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', platformInvoice.contact_id)
+        .neq('stage', 'customer'); // Only update if not already a customer
+
+      if (contactError) {
+        console.warn('⚠️ [Webhook] Failed to update contact stage:', contactError);
+      }
+    }
+
+    // Update linked booking's payment_status if invoice has a booking_id
+    if (platformInvoice.booking_id) {
+      console.log('📅 [Webhook] Updating booking payment status for invoice booking:', platformInvoice.booking_id);
+      const { error: bookingError } = await supabaseAdmin
+        .from('scheduling_bookings')
+        .update({
+          payment_status: 'paid',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', platformInvoice.booking_id);
+
+      if (bookingError) {
+        console.error('❌ [Webhook] Failed to update booking payment status:', bookingError);
+      } else {
+        console.log('✅ [Webhook] Booking payment status updated for invoice:', platformInvoice.booking_id);
+      }
+    }
+
+    return;
+  }
+
+  // Handle booking payment via Checkout Session
+  if (bookingId) {
+    console.log('📅 [Webhook] Checkout session for booking:', bookingId);
+
+    // Update booking payment status
+    const { error: bookingError } = await supabaseAdmin
+      .from('scheduling_bookings')
+      .update({
+        payment_status: 'paid',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', bookingId);
+
+    if (bookingError) {
+      console.error('❌ [Webhook] Failed to update booking payment status:', bookingError);
+    } else {
+      console.log('✅ [Webhook] Booking payment status updated:', bookingId);
+    }
+
+    return;
+  }
+
+  console.log('ℹ️  [Webhook] Connect checkout session with no invoice_id or booking_id - skipping');
+}
+
+/**
+ * Handle business invoice.payment_failed event (from Connect accounts)
+ * - Update payment_invoices status to 'overdue'
+ */
+async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connectAccountId: string) {
+  console.log('⚠️ [Webhook] Processing Connect invoice.payment_failed:', invoice.id, 'Account:', connectAccountId);
+
+  // Look up the platform invoice by Stripe invoice ID
+  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
+    .from('payment_invoices')
+    .select('id, invoice_number, user_id')
+    .eq('stripe_invoice_id', invoice.id)
+    .single();
+
+  if (lookupError || !platformInvoice) {
+    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    return;
+  }
+
+  // Update platform invoice to overdue
+  const { error: updateError } = await supabaseAdmin
+    .from('payment_invoices')
+    .update({
+      status: 'overdue',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', platformInvoice.id);
+
+  if (updateError) {
+    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    return;
+  }
+
+  console.log('✅ [Webhook] Connect invoice payment failed processed:', platformInvoice.invoice_number);
+}
+
+/**
+ * Handle business invoice.finalized event (from Connect accounts)
+ * - Update stripe_hosted_invoice_url and stripe_invoice_pdf
+ */
+async function handleConnectInvoiceFinalized(invoice: Stripe.Invoice, connectAccountId: string) {
+  console.log('📋 [Webhook] Processing Connect invoice.finalized:', invoice.id, 'Account:', connectAccountId);
+
+  // Look up the platform invoice by Stripe invoice ID
+  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
+    .from('payment_invoices')
+    .select('id, invoice_number')
+    .eq('stripe_invoice_id', invoice.id)
+    .single();
+
+  if (lookupError || !platformInvoice) {
+    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    return;
+  }
+
+  // Update with hosted URL and PDF
+  const { error: updateError } = await supabaseAdmin
+    .from('payment_invoices')
+    .update({
+      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
+      stripe_invoice_pdf: invoice.invoice_pdf,
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', platformInvoice.id);
+
+  if (updateError) {
+    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    return;
+  }
+
+  console.log('✅ [Webhook] Connect invoice finalized processed:', platformInvoice.invoice_number);
+}
+
+/**
+ * Handle business invoice.marked_uncollectible event (from Connect accounts)
+ * - Update payment_invoices status to 'cancelled'
+ */
+async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connectAccountId: string) {
+  console.log('❌ [Webhook] Processing Connect invoice.marked_uncollectible:', invoice.id, 'Account:', connectAccountId);
+
+  // Look up the platform invoice by Stripe invoice ID
+  const { data: platformInvoice, error: lookupError } = await supabaseAdmin
+    .from('payment_invoices')
+    .select('id, invoice_number')
+    .eq('stripe_invoice_id', invoice.id)
+    .single();
+
+  if (lookupError || !platformInvoice) {
+    console.log('ℹ️  [Webhook] No platform invoice found for Stripe invoice:', invoice.id);
+    return;
+  }
+
+  // Update platform invoice to cancelled
+  const { error: updateError } = await supabaseAdmin
+    .from('payment_invoices')
+    .update({
+      status: 'cancelled',
+      updated_at: new Date().toISOString()
+    })
+    .eq('id', platformInvoice.id);
+
+  if (updateError) {
+    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    return;
+  }
+
+  console.log('✅ [Webhook] Connect invoice marked uncollectible:', platformInvoice.invoice_number);
+}
+
+/**
  * Handle customer.subscription.deleted event
  * - Mark subscription as canceled
  */
@@ -981,18 +1438,60 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ [Webhook] Event ${event.id} recorded, processing...`);
 
+    // Check if this is a Connect webhook (from a connected account)
+    const connectAccountId = request.headers.get('stripe-account');
+    const isConnectEvent = !!connectAccountId;
+
+    if (isConnectEvent) {
+      console.log(`🔗 [Webhook] Connect event from account: ${connectAccountId}`);
+    }
+
     // Process event based on type
     switch (event.type) {
       case 'invoice.paid':
-        await handleInvoicePaid(event.data.object as Stripe.Invoice);
+        if (isConnectEvent) {
+          // Business user's client paid an invoice
+          await handleConnectInvoicePaid(event.data.object as Stripe.Invoice, connectAccountId!);
+        } else {
+          // Platform subscription invoice paid
+          await handleInvoicePaid(event.data.object as Stripe.Invoice);
+        }
         break;
 
       case 'invoice.payment_failed':
-        await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+        if (isConnectEvent) {
+          // Business user's client failed to pay
+          await handleConnectInvoicePaymentFailed(event.data.object as Stripe.Invoice, connectAccountId!);
+        } else {
+          // Platform subscription payment failed
+          await handleInvoicePaymentFailed(event.data.object as Stripe.Invoice);
+        }
+        break;
+
+      case 'invoice.finalized':
+        if (isConnectEvent) {
+          // Business user's invoice was finalized (ready for payment)
+          await handleConnectInvoiceFinalized(event.data.object as Stripe.Invoice, connectAccountId!);
+        }
+        // No platform handler for finalized - platform uses Stripe's automatic invoicing
+        break;
+
+      case 'invoice.marked_uncollectible':
+        if (isConnectEvent) {
+          // Business user's invoice marked as uncollectible
+          await handleConnectInvoiceUncollectible(event.data.object as Stripe.Invoice, connectAccountId!);
+        }
+        // No platform handler - not applicable to subscription invoices
         break;
 
       case 'checkout.session.completed':
-        await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
+        if (isConnectEvent) {
+          // Business user's client completed a checkout (invoice payment, booking payment, etc.)
+          await handleConnectCheckoutCompleted(event.data.object as Stripe.Checkout.Session, connectAccountId!);
+        } else {
+          // Platform checkout (boost packs, subscriptions)
+          await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
+        }
         break;
 
       case 'customer.subscription.updated':

@@ -152,6 +152,7 @@ interface BusinessProfile {
   company_name: string | null;
   vertical: string;
   sub_vertical: string | null;
+  user_code?: string;
 }
 
 // Localized strings
@@ -287,9 +288,9 @@ const LABELS = {
     main_website_desc: 'Your full business website',
     design_colors: 'Design & Colors',
     run_wizard: 'Run Setup Wizard',
-    create_landing_page: 'Create Landing Page',
-    landing_pages: 'Landing Pages',
-    landing_pages_desc: 'Standalone pages to promote specific services or products',
+    create_landing_page: 'Create New',
+    landing_pages: 'Customer Acquisition',
+    landing_pages_desc: 'Smart links and landing pages for lead capture',
     no_landing_pages: 'No landing pages yet',
     no_landing_pages_desc: 'Create landing pages to promote specific services',
     journey_booking: 'Booking',
@@ -428,9 +429,9 @@ const LABELS = {
     main_website_desc: 'Tu sitio web completo de negocios',
     design_colors: 'Diseño y Colores',
     run_wizard: 'Ejecutar Asistente',
-    create_landing_page: 'Crear Página de Destino',
-    landing_pages: 'Páginas de Destino',
-    landing_pages_desc: 'Páginas independientes para promover servicios o productos específicos',
+    create_landing_page: 'Crear Nuevo',
+    landing_pages: 'Adquisición de Clientes',
+    landing_pages_desc: 'Smart links y páginas de aterrizaje para captura de leads',
     no_landing_pages: 'Aún no hay páginas de destino',
     no_landing_pages_desc: 'Crea páginas de destino para promover servicios específicos',
     journey_booking: 'Reserva',
@@ -569,9 +570,9 @@ const LABELS = {
     main_website_desc: 'האתר העסקי המלא שלך',
     design_colors: 'עיצוב וצבעים',
     run_wizard: 'הפעל אשף',
-    create_landing_page: 'צור דף נחיתה',
-    landing_pages: 'דפי נחיתה',
-    landing_pages_desc: 'דפים עצמאיים לקידום שירותים או מוצרים ספציפיים',
+    create_landing_page: 'צור חדש',
+    landing_pages: 'גיוס לקוחות',
+    landing_pages_desc: 'קישורים חכמים ודפי נחיתה לגיוס לידים',
     no_landing_pages: 'עדיין אין דפי נחיתה',
     no_landing_pages_desc: 'צור דפי נחיתה לקידום שירותים ספציפיים',
     journey_booking: 'הזמנה',
@@ -673,6 +674,7 @@ export default function WebsiteManagementPage() {
   const [blocks, setBlocks] = useState<WebsiteBlock[]>([]);
   const [templates, setTemplates] = useState<WebsiteTemplate[]>([]);
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
+  const [hasPaidServices, setHasPaidServices] = useState(false);
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -681,6 +683,36 @@ export default function WebsiteManagementPage() {
   const [showCreatePageModal, setShowCreatePageModal] = useState(false);
   const [showLandingPageWizard, setShowLandingPageWizard] = useState(false);
   const [creatingPage, setCreatingPage] = useState(false);
+  const [smartLinksRefreshTrigger, setSmartLinksRefreshTrigger] = useState(0);
+  const [smartLinks, setSmartLinks] = useState<Array<{
+    id: string;
+    code: string;
+    name: string | null;
+    destination_url: string;
+    destination_type: string | null;
+    click_count: number;
+    conversion_count: number;
+    is_active: boolean;
+    created_at: string;
+    metadata?: {
+      journeyType?: 'contact-only' | 'full';
+      serviceIds?: string[];
+      flow?: string[];
+      destinationType?: 'form' | 'booking';
+    } | null;
+  }>>([]);
+  const [showInactiveSmartLinks, setShowInactiveSmartLinks] = useState(false);
+  const [editingSmartLink, setEditingSmartLink] = useState<{
+    id: string;
+    name: string | null;
+    metadata?: {
+      journeyType?: 'contact-only' | 'full';
+      serviceIds?: string[];
+      flow?: string[];
+      destinationType?: 'form' | 'booking';
+    } | null;
+  } | null>(null);
+  const [togglingSmartLinkStatus, setTogglingSmartLinkStatus] = useState<string | null>(null);
   const [newPageTitle, setNewPageTitle] = useState('');
   const [newPageSlug, setNewPageSlug] = useState('');
   const [selectedTemplateForNewPage, setSelectedTemplateForNewPage] = useState<string | null>(null);
@@ -811,9 +843,32 @@ export default function WebsiteManagementPage() {
   const [deletingPage, setDeletingPage] = useState<{ id: string; title: string; hasActivity: boolean; viewCount: number } | null>(null);
   const [checkingActivity, setCheckingActivity] = useState(false);
 
+  // Smart link delete dialog state
+  const [deleteSmartLinkDialogOpen, setDeleteSmartLinkDialogOpen] = useState(false);
+  const [deletingSmartLink, setDeletingSmartLink] = useState<{ id: string; name: string } | null>(null);
+  const [deletingSmartLinkLoading, setDeletingSmartLinkLoading] = useState(false);
+
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Refetch smart links when trigger changes
+  useEffect(() => {
+    if (smartLinksRefreshTrigger > 0) {
+      const refetchSmartLinks = async () => {
+        try {
+          const response = await fetch('/api/smart-links?active=false');
+          const data = await response.json();
+          if (data.success && data.links) {
+            setSmartLinks(data.links);
+          }
+        } catch (err) {
+          logger.warn({ err }, 'Failed to refetch smart links');
+        }
+      };
+      refetchSmartLinks();
+    }
+  }, [smartLinksRefreshTrigger]);
 
   const fetchData = async () => {
     try {
@@ -837,20 +892,28 @@ export default function WebsiteManagementPage() {
         }
       }
 
-      // Fetch pages and templates (filtered by vertical if profile exists)
+      // Fetch pages, templates, and scheduling services (filtered by vertical if profile exists)
       const templatesUrl = profile?.vertical
         ? `/api/website/templates?vertical=${encodeURIComponent(profile.vertical)}`
         : '/api/website/templates';
 
-      const [pagesResponse, templatesResponse] = await Promise.all([
+      const [pagesResponse, templatesResponse, servicesResponse] = await Promise.all([
         fetch('/api/website/pages'),
-        fetch(templatesUrl)
+        fetch(templatesUrl),
+        fetch('/api/scheduling/services')
       ]);
 
-      const [pagesData, templatesData] = await Promise.all([
+      const [pagesData, templatesData, servicesData] = await Promise.all([
         pagesResponse.json(),
-        templatesResponse.json()
+        templatesResponse.json(),
+        servicesResponse.json()
       ]);
+
+      // Check for paid services
+      if (servicesData.success && servicesData.services) {
+        const paidServices = servicesData.services.filter((s: { price?: number }) => s.price && s.price > 0);
+        setHasPaidServices(paidServices.length > 0);
+      }
 
       if (pagesData.success && pagesData.pages?.length > 0) {
         // Store all pages
@@ -940,6 +1003,18 @@ export default function WebsiteManagementPage() {
           });
           setLandingPagesAnalytics(analyticsMap);
         }
+
+      }
+
+      // Fetch smart links (always, regardless of pages) - include inactive for filtering
+      try {
+        const smartLinksResponse = await fetch('/api/smart-links?active=false');
+        const smartLinksData = await smartLinksResponse.json();
+        if (smartLinksData.success && smartLinksData.links) {
+          setSmartLinks(smartLinksData.links);
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Failed to fetch smart links');
       }
 
       if (templatesData.success) {
@@ -970,14 +1045,12 @@ export default function WebsiteManagementPage() {
           // Clean up the URL
           router.replace('/business-os/website', { scroll: false });
         } else {
-          // Auto-show wizard for first-time users
+          // Auto-show wizard ONLY for first-time users with no generated content
           const hasNoPage = !pagesData.pages || pagesData.pages.length === 0;
-          const homepage = pagesData.pages?.find((p: WebsitePage) => p.page_type === 'homepage');
-          const isDraft = homepage?.status === 'draft';
-          const hasNoUserEdits = !homepage?.updated_at || homepage.created_at === homepage.updated_at;
 
-          // Show wizard if no page exists OR if page is draft with no user edits
-          if (hasNoPage || (isDraft && hasNoUserEdits)) {
+          // Only show wizard if there's truly no website at all
+          // Websites generated through onboarding already have content - don't show wizard for them
+          if (hasNoPage) {
             setViewMode('wizard');
           }
         }
@@ -1619,18 +1692,75 @@ export default function WebsiteManagementPage() {
   };
 
   const handleToggleBlock = async (blockId: string, enabled: boolean) => {
+    if (!page?.id) {
+      logger.error({ blockId }, 'Cannot toggle block: page ID is missing');
+      return;
+    }
+
+    // Optimistic update
+    const previousBlocks = blocks;
+    setBlocks(blocks.map(b => b.id === blockId ? { ...b, enabled } : b));
+
     try {
-      const response = await fetch(`/api/website/pages/${page?.id}/blocks/${blockId}`, {
+      const response = await fetch(`/api/website/pages/${page.id}/blocks/${blockId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled })
       });
 
-      if (response.ok) {
-        setBlocks(blocks.map(b => b.id === blockId ? { ...b, enabled } : b));
+      if (!response.ok) {
+        // Revert on failure
+        setBlocks(previousBlocks);
+        logger.error({ blockId, status: response.status }, 'Failed to toggle block: API error');
       }
     } catch (error) {
+      // Revert on error
+      setBlocks(previousBlocks);
       logger.error({ err: error }, 'Failed to toggle block');
+    }
+  };
+
+  // Required blocks that cannot be deleted
+  const REQUIRED_BLOCKS: BlockType[] = ['header'];
+
+  // Delete block modal state
+  const [deleteBlockModal, setDeleteBlockModal] = useState<{ isOpen: boolean; blockId: string | null; blockType: string | null }>({
+    isOpen: false,
+    blockId: null,
+    blockType: null
+  });
+  const [deletingBlock, setDeletingBlock] = useState(false);
+
+  const handleDeleteBlockClick = (blockId: string, blockType: BlockType) => {
+    // Check if this is a required block
+    if (REQUIRED_BLOCKS.includes(blockType)) {
+      return; // Don't show delete option for required blocks
+    }
+
+    setDeleteBlockModal({ isOpen: true, blockId, blockType });
+  };
+
+  const handleDeleteBlock = async () => {
+    if (!deleteBlockModal.blockId) return;
+
+    setDeletingBlock(true);
+    try {
+      const response = await fetch(`/api/website/pages/${page?.id}/blocks/${deleteBlockModal.blockId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        setBlocks(blocks.filter(b => b.id !== deleteBlockModal.blockId));
+        if (expandedBlockId === deleteBlockModal.blockId) {
+          setExpandedBlockId(null);
+          setEditingBlockContent(null);
+        }
+        setDeleteBlockModal({ isOpen: false, blockId: null, blockType: null });
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to delete block');
+    } finally {
+      setDeletingBlock(false);
     }
   };
 
@@ -2340,7 +2470,9 @@ export default function WebsiteManagementPage() {
       gallery: { en: 'Gallery', es: 'Galería', he: 'גלריה' },
       newsletter: { en: 'Newsletter', es: 'Boletín', he: 'ניוזלטר' },
       video: { en: 'Video', es: 'Video', he: 'וידאו' },
-      stats: { en: 'Statistics', es: 'Estadísticas', he: 'סטטיסטיקות' }
+      stats: { en: 'Statistics', es: 'Estadísticas', he: 'סטטיסטיקות' },
+      footer: { en: 'Footer', es: 'Pie de página', he: 'כותרת תחתונה' },
+      intake_form: { en: 'Intake Form', es: 'Formulario de Admisión', he: 'טופס קליטה' }
     };
     return names[blockType]?.[language] || names[blockType]?.en || blockType;
   };
@@ -2425,53 +2557,39 @@ export default function WebsiteManagementPage() {
               <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
             </button>
 
+            {/* Back to Main Website - only when editing a landing page */}
+            {page && page.page_type === 'landing' && viewMode !== 'wizard' && (
+              <button
+                onClick={() => {
+                  const homepage = allPages.find(p => p.page_type === 'homepage');
+                  if (homepage) {
+                    handleSelectPage(homepage);
+                  } else {
+                    setPage(null);
+                    setBlocks([]);
+                  }
+                  setViewMode('overview');
+                }}
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Globe className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">{language === 'he' ? 'לאתר הראשי' : language === 'es' ? 'Sitio Principal' : 'Main Website'}</span>
+              </button>
+            )}
+
             {page && viewMode !== 'wizard' && (
               <>
-                {/* View Site Button - only when live */}
-                {page.status === 'live' && page.subdomain && (
-                  <a
-                    href={getWebsiteUrl() || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all whitespace-nowrap"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    <span className="hidden sm:inline">{labels.view_site}</span>
-                  </a>
-                )}
-
-                {/* Copy Link Button */}
-                {page.subdomain && (
-                  <button
-                    onClick={copyLink}
-                    className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all flex-shrink-0"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    title={labels.copy_link}
-                  >
-                    {linkCopied ? (
-                      <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-green-500" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    )}
-                  </button>
-                )}
-
-                {/* View Mode Tabs - matching CRM pattern - Scrollable on mobile */}
+                {/* Global Tabs - Design, Settings only (applies to all page types) */}
                 <div
-                  className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-0.5 sm:p-1 inline-flex gap-0.5 sm:gap-1 overflow-x-auto"
+                  className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-0.5 sm:p-1 inline-flex gap-0.5 sm:gap-1"
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
                   {[
                     { id: 'overview', icon: Eye, title: labels.tab_overview },
-                    { id: 'journey', icon: Target, title: labels.tab_journey, hideForLanding: true },
-                    { id: 'sections', icon: Layout, title: labels.tab_sections },
                     { id: 'design', icon: Palette, title: labels.tab_design },
-                    { id: 'settings', icon: Settings, title: labels.tab_settings },
-                    { id: 'templates', icon: LayoutTemplate, title: labels.tab_templates, hideForLanding: true }
-                  ]
-                    .filter(tab => !(tab.hideForLanding && page?.page_type === 'landing'))
-                    .map((tab) => (
+                    { id: 'settings', icon: Settings, title: labels.tab_settings }
+                  ].map((tab) => (
                     <button
                       key={tab.id}
                       className={`p-1.5 sm:p-2 transition-all border ${
@@ -2487,37 +2605,6 @@ export default function WebsiteManagementPage() {
                     </button>
                   ))}
                 </div>
-
-                {/* Publish/Unpublish Button - matching CRM's Add Contact pattern */}
-                {page.status === 'live' ? (
-                  <button
-                    onClick={handleUnpublish}
-                    disabled={publishing}
-                    className="flex items-center gap-2 px-4 py-2 text-amber-600 text-sm font-medium border border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:border-amber-700 dark:hover:bg-amber-900/30 transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : labels.unpublish}
-                  </button>
-                ) : (
-                  <button
-                    onClick={handlePublish}
-                    disabled={publishing || !page.subdomain}
-                    className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {publishing ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        {labels.publishing}
-                      </>
-                    ) : (
-                      <>
-                        <Rocket className="h-4 w-4" />
-                        {labels.publish}
-                      </>
-                    )}
-                  </button>
-                )}
               </>
             )}
 
@@ -2708,36 +2795,78 @@ export default function WebsiteManagementPage() {
                       </div>
                     </div>
 
-                    {/* Quick Actions for Landing Page - Simplified (main actions in upper toolbar) */}
-                    <div className="flex flex-wrap gap-3">
+                    {/* Landing Page Actions */}
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* Edit Sections */}
+                      <button
+                        onClick={() => setViewMode('sections')}
+                        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-all ${
+                          viewMode === 'sections'
+                            ? 'text-purple-700 bg-purple-100 dark:bg-purple-800/50 border-purple-400'
+                            : 'text-purple-600 bg-white/50 dark:bg-slate-800/50 border-purple-200/50 dark:border-purple-700/50 hover:bg-purple-100 dark:hover:bg-purple-800/30'
+                        } border`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Layout className="h-4 w-4" />
+                        {labels.tab_sections}
+                      </button>
+
+                      {/* Preview */}
                       <a
                         href={`/business-os/website/preview/${page.id}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                        className="flex items-center gap-2 px-3 py-2 text-purple-600 text-sm font-medium bg-white/50 dark:bg-slate-800/50 border border-purple-200/50 dark:border-purple-700/50 hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-all"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Eye className="h-4 w-4" />
                         {labels.preview}
                       </a>
-                      <button
-                        onClick={() => {
-                          // Find and load homepage so user can edit main website
-                          const homepage = allPages.find(p => p.page_type === 'homepage');
-                          if (homepage) {
-                            handleSelectPage(homepage);
-                          } else {
-                            setPage(null);
-                            setBlocks([]);
-                          }
-                          setViewMode('overview');
-                        }}
-                        className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <ArrowLeft className="h-4 w-4" />
-                        {language === 'he' ? 'חזרה לאתר הראשי' : language === 'es' ? 'Volver al Sitio Principal' : 'Back to Main Website'}
-                      </button>
+
+                      {/* View Site Button - only when live */}
+                      {page.status === 'live' && page.subdomain && page.slug && (
+                        <a
+                          href={`https://${page.subdomain}.agentpilot.io/${page.slug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-3 py-2 text-purple-600 text-sm font-medium bg-white/50 dark:bg-slate-800/50 border border-purple-200/50 dark:border-purple-700/50 hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-all"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          {labels.view_site}
+                        </a>
+                      )}
+
+                      {/* Publish/Unpublish Button */}
+                      {page.status === 'live' ? (
+                        <button
+                          onClick={handleUnpublish}
+                          disabled={publishing}
+                          className="flex items-center gap-2 px-4 py-2 text-amber-600 text-sm font-medium border border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:border-amber-700 dark:hover:bg-amber-900/30 transition-all disabled:opacity-50"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : labels.unpublish}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handlePublish}
+                          disabled={publishing || !page.subdomain}
+                          className="flex items-center gap-2 px-4 py-2 text-purple-600 text-sm font-medium border border-purple-400 bg-purple-100 hover:bg-purple-200 dark:bg-purple-800/30 dark:border-purple-600 dark:hover:bg-purple-800/50 transition-all disabled:opacity-50"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          {publishing ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              {labels.publishing}
+                            </>
+                          ) : (
+                            <>
+                              <Rocket className="h-4 w-4" />
+                              {labels.publish}
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2837,31 +2966,97 @@ export default function WebsiteManagementPage() {
                       </div>
                     )}
 
-                    {/* Quick Actions - Simplified (main actions in upper toolbar) */}
-                    <div className="flex flex-wrap gap-3">
-                      <a
-                        href={getPreviewUrl() || '#'}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    {/* Website Actions */}
+                    <div className="flex flex-wrap items-center gap-3">
+                      {/* Website-specific tabs - content editing for this specific page */}
+                      <div
+                        className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-0.5 inline-flex gap-0.5"
+                        style={{ borderRadius: 'var(--v2-radius-card)' }}
                       >
-                        <Eye className="h-4 w-4" />
-                        {labels.preview}
-                      </a>
-                      <button
-                        onClick={() => setViewMode('wizard')}
-                        className="flex items-center gap-2 px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <Wand2 className="h-4 w-4" />
-                        {labels.run_wizard}
-                      </button>
+                        {[
+                          { id: 'sections', icon: Layout, title: labels.tab_sections },
+                          { id: 'journey', icon: Target, title: labels.tab_journey },
+                          { id: 'templates', icon: LayoutTemplate, title: labels.tab_templates }
+                        ].map((tab) => (
+                          <button
+                            key={tab.id}
+                            className={`p-1.5 transition-all border ${
+                              viewMode === tab.id
+                                ? 'text-[#4F6EF7] border-[#4F6EF7] bg-[#4F6EF7]/10'
+                                : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                            }`}
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            onClick={() => setViewMode(tab.id as ViewMode)}
+                            title={tab.title}
+                          >
+                            <tab.icon className="h-4 w-4" />
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* View Site Button - only when live */}
+                      {page.status === 'live' && page.subdomain && (
+                        <a
+                          href={getWebsiteUrl() || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-3 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          {labels.view_site}
+                        </a>
+                      )}
+
+                      {/* Preview Button - only when NOT live (draft) */}
+                      {page.status !== 'live' && (
+                        <a
+                          href={`/business-os/website/preview/${page.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 px-3 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          <Eye className="h-4 w-4" />
+                          {labels.preview}
+                        </a>
+                      )}
+
+                      {/* Publish/Unpublish Button */}
+                      {page.status === 'live' ? (
+                        <button
+                          onClick={handleUnpublish}
+                          disabled={publishing}
+                          className="flex items-center gap-2 px-4 py-2 text-amber-600 text-sm font-medium border border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:border-amber-700 dark:hover:bg-amber-900/30 transition-all disabled:opacity-50"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : labels.unpublish}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handlePublish}
+                          disabled={publishing || !page.subdomain}
+                          className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all disabled:opacity-50"
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          {publishing ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              {labels.publishing}
+                            </>
+                          ) : (
+                            <>
+                              <Rocket className="h-4 w-4" />
+                              {labels.publish}
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {/* Row 2: Landing Pages Section */}
+                {/* Row 2: Lead Generation Section (Landing Pages + Lead Capture) */}
                 <div
                   className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
@@ -2880,18 +3075,203 @@ export default function WebsiteManagementPage() {
                         </p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => setShowLandingPageWizard(true)}
-                      className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <Plus className="h-4 w-4" />
-                      {labels.create_landing_page}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {/* Filter toggle for inactive smart links */}
+                      {smartLinks.some(l => !l.is_active) && (
+                        <button
+                          onClick={() => setShowInactiveSmartLinks(!showInactiveSmartLinks)}
+                          className={`flex items-center gap-2 px-3 py-2 text-sm border transition-all ${
+                            showInactiveSmartLinks
+                              ? 'bg-[#4F6EF7]/10 border-[#4F6EF7]/30 text-[#4F6EF7]'
+                              : 'bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-text-muted)]'
+                          }`}
+                          style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        >
+                          {showInactiveSmartLinks ? (
+                            <EyeOff className="w-4 h-4" />
+                          ) : (
+                            <Eye className="w-4 h-4" />
+                          )}
+                          <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                            showInactiveSmartLinks
+                              ? 'bg-[#4F6EF7]/20 text-[#4F6EF7]'
+                              : 'bg-[var(--v2-surface-hover)] text-[var(--v2-text-muted)]'
+                          }`}>
+                            {smartLinks.filter(l => !l.is_active).length}
+                          </span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setShowLandingPageWizard(true)}
+                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Plus className="h-4 w-4" />
+                        {labels.create_landing_page}
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Landing Pages List */}
+                  {/* Combined Landing Pages & Smart Links List */}
                   <div className="space-y-3">
+                    {/* Smart Links */}
+                    {smartLinks.filter(link => link.is_active || showInactiveSmartLinks).map((link) => (
+                      <div
+                        key={`smart-${link.id}`}
+                        className={`p-4 bg-[var(--v2-bg)] rounded-lg border ${!link.is_active ? 'border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-900/10' : 'border-[var(--v2-border)]'}`}
+                      >
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-4">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
+                              <Link2 className="w-5 h-5" style={{ color: '#4F6EF7' }} />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className={`font-medium ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
+                                  {link.name === 'Contact Form'
+                                    ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
+                                    : (link.name || (language === 'he' ? 'קישור חכם' : 'Smart Link'))}
+                                </p>
+                                {link.is_active ? (
+                                  <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#4F6EF720', color: '#4F6EF7' }}>
+                                    {language === 'he' ? 'קישור חכם' : language === 'es' ? 'Smart Link' : 'Smart Link'}
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                                    {language === 'he' ? 'לא פעיל' : language === 'es' ? 'Inactivo' : 'Inactive'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-3 mt-1" dir="ltr">
+                                <span className={`text-xs font-mono ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-muted)]'}`}>
+                                  /go/{link.code}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {/* Activate/Deactivate toggle */}
+                            {!link.is_active ? (
+                              <button
+                                onClick={async () => {
+                                  setTogglingSmartLinkStatus(link.id);
+                                  try {
+                                    const response = await fetch(`/api/smart-links/${link.id}`, {
+                                      method: 'PUT',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ is_active: true })
+                                    });
+                                    if (response.ok) {
+                                      setSmartLinks(prev => prev.map(l =>
+                                        l.id === link.id ? { ...l, is_active: true } : l
+                                      ));
+                                    }
+                                  } catch (err) {
+                                    logger.error({ err }, 'Failed to activate smart link');
+                                  } finally {
+                                    setTogglingSmartLinkStatus(null);
+                                  }
+                                }}
+                                disabled={togglingSmartLinkStatus === link.id}
+                                className="px-2 py-1 text-xs font-medium text-green-600 bg-green-100 hover:bg-green-200 dark:bg-green-900/30 dark:hover:bg-green-900/50 rounded transition-colors disabled:opacity-50"
+                                title={language === 'he' ? 'הפעל' : language === 'es' ? 'Activar' : 'Activate'}
+                              >
+                                {togglingSmartLinkStatus === link.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  language === 'he' ? 'הפעל' : language === 'es' ? 'Activar' : 'Activate'
+                                )}
+                              </button>
+                            ) : (
+                              <>
+                                {/* Edit button - for booking links (full journey) or booking destination type */}
+                                {(link.metadata?.journeyType === 'full' || link.destination_type === 'booking') && (
+                                  <button
+                                    onClick={() => {
+                                      setEditingSmartLink({
+                                        id: link.id,
+                                        name: link.name,
+                                        metadata: link.metadata || { journeyType: 'full' }
+                                      });
+                                      setShowLandingPageWizard(true);
+                                    }}
+                                    className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
+                                    title={language === 'he' ? 'עריכה' : language === 'es' ? 'Editar' : 'Edit'}
+                                  >
+                                    <PenLine className="h-4 w-4" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    const url = `${window.location.origin}/go/${link.code}`;
+                                    navigator.clipboard.writeText(url);
+                                  }}
+                                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
+                                  title={language === 'he' ? 'העתק' : language === 'es' ? 'Copiar' : 'Copy'}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </button>
+                                <a
+                                  href={`/go/${link.code}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                                  title={labels.preview}
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </a>
+                                <button
+                                  onClick={() => {
+                                    const displayName = link.name === 'Contact Form'
+                                      ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
+                                      : (link.name || 'Smart Link');
+                                    setDeletingSmartLink({ id: link.id, name: displayName });
+                                    setDeleteSmartLinkDialogOpen(true);
+                                  }}
+                                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
+                                  title={language === 'he' ? 'השבת' : language === 'es' ? 'Desactivar' : 'Deactivate'}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Smart Link Analytics - Compact row */}
+                        <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">
+                              {language === 'he' ? 'קליקים:' : language === 'es' ? 'Clics:' : 'Clicks:'}
+                            </span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.click_count}</span>
+                          </div>
+                          <div className="w-px h-4 bg-[var(--v2-border)]" />
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--v2-text-muted)]">
+                              {language === 'he' ? 'המרות:' : language === 'es' ? 'Conversiones:' : 'Conversions:'}
+                            </span>
+                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.conversion_count}</span>
+                          </div>
+                          {link.click_count > 0 && (
+                            <>
+                              <div className="w-px h-4 bg-[var(--v2-border)]" />
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-[var(--v2-text-muted)]">
+                                  {language === 'he' ? 'אחוז המרה:' : language === 'es' ? 'Tasa:' : 'Rate:'}
+                                </span>
+                                <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                                  {((link.conversion_count / link.click_count) * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Landing Pages */}
                     {allPages.filter(p => p.page_type === 'landing').map((p) => (
                       <div
                         key={p.id}
@@ -2899,14 +3279,19 @@ export default function WebsiteManagementPage() {
                       >
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-[var(--v2-surface)]">
-                              <FileText className="w-5 h-5 text-[var(--v2-text-secondary)]" />
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#22C58B20' }}>
+                              <FileText className="w-5 h-5" style={{ color: '#22C58B' }} />
                             </div>
                             <div>
-                              <p className="font-medium text-[var(--v2-text-primary)]">
-                                {p.title}
-                              </p>
-                              <div className="flex items-center gap-2" dir="ltr">
+                              <div className="flex items-center gap-2">
+                                <p className="font-medium text-[var(--v2-text-primary)]">
+                                  {p.title}
+                                </p>
+                                <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#22C58B20', color: '#22C58B' }}>
+                                  {language === 'he' ? 'דף נחיתה' : language === 'es' ? 'Landing Page' : 'Landing Page'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1" dir="ltr">
                                 {p.slug && (
                                   <span className="text-xs text-[var(--v2-text-muted)] font-mono">
                                     /{p.slug}
@@ -2977,7 +3362,8 @@ export default function WebsiteManagementPage() {
                       </div>
                     ))}
 
-                    {allPages.filter(p => p.page_type === 'landing').length === 0 && (
+                    {/* Empty state */}
+                    {allPages.filter(p => p.page_type === 'landing').length === 0 && smartLinks.length === 0 && (
                       <div className="text-center py-8 bg-[var(--v2-surface)] rounded-lg">
                         <Megaphone className="w-10 h-10 mx-auto text-[var(--v2-text-muted)] mb-3 opacity-50" />
                         <p className="text-sm text-[var(--v2-text-secondary)] font-medium">
@@ -2989,6 +3375,7 @@ export default function WebsiteManagementPage() {
                       </div>
                     )}
                   </div>
+
                 </div>
                   </>
                 )}
@@ -3532,12 +3919,23 @@ export default function WebsiteManagementPage() {
                               <label className="relative inline-flex items-center cursor-pointer">
                                 <input
                                   type="checkbox"
-                                  checked={block.enabled}
+                                  checked={block.enabled !== false}
                                   onChange={(e) => handleToggleBlock(block.id, e.target.checked)}
                                   className="sr-only peer"
                                 />
                                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600" />
                               </label>
+
+                              {/* Delete Button - Only show for non-required blocks */}
+                              {!REQUIRED_BLOCKS.includes(block.block_type) && (
+                                <button
+                                  onClick={() => handleDeleteBlockClick(block.id, block.block_type)}
+                                  className="p-2 rounded-lg text-[var(--v2-text-muted)] hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                                  title={language === 'he' ? 'מחק מקטע' : language === 'es' ? 'Eliminar sección' : 'Delete section'}
+                                >
+                                  <Trash2 className="w-5 h-5" />
+                                </button>
+                              )}
                             </div>
                           </div>
 
@@ -5571,6 +5969,149 @@ export default function WebsiteManagementPage() {
                                   </>
                                 )}
 
+                                {/* Footer Block */}
+                                {block.block_type === 'footer' && (
+                                  <>
+                                    <div>
+                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                        {language === 'he' ? 'שם העסק' : language === 'es' ? 'Nombre del Negocio' : 'Company Name'}
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={(editingBlockContent.company_name as string) || ''}
+                                        onChange={(e) => updateBlockField('company_name', e.target.value)}
+                                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                        {language === 'he' ? 'תיאור קצר' : language === 'es' ? 'Descripción Breve' : 'Tagline'}
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={(editingBlockContent.tagline as string) || ''}
+                                        onChange={(e) => updateBlockField('tagline', e.target.value)}
+                                        placeholder={language === 'he' ? 'משפט תיאור קצר...' : language === 'es' ? 'Frase descriptiva...' : 'Short description...'}
+                                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                      />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div>
+                                        <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                          {language === 'he' ? 'אימייל' : language === 'es' ? 'Email' : 'Email'}
+                                        </label>
+                                        <input
+                                          type="email"
+                                          value={(editingBlockContent.email as string) || ''}
+                                          onChange={(e) => updateBlockField('email', e.target.value)}
+                                          placeholder="contact@example.com"
+                                          className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                        />
+                                      </div>
+                                      <div>
+                                        <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                          {language === 'he' ? 'טלפון' : language === 'es' ? 'Teléfono' : 'Phone'}
+                                        </label>
+                                        <input
+                                          type="tel"
+                                          value={(editingBlockContent.phone as string) || ''}
+                                          onChange={(e) => updateBlockField('phone', e.target.value)}
+                                          placeholder="+1 (555) 123-4567"
+                                          dir="ltr"
+                                          className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                                        {language === 'he' ? 'כתובת' : language === 'es' ? 'Dirección' : 'Address'}
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={(editingBlockContent.address as string) || ''}
+                                        onChange={(e) => updateBlockField('address', e.target.value)}
+                                        placeholder={language === 'he' ? 'כתובת העסק...' : language === 'es' ? 'Dirección del negocio...' : 'Business address...'}
+                                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                        {language === 'he' ? 'רשתות חברתיות' : language === 'es' ? 'Redes Sociales' : 'Social Links'}
+                                      </label>
+                                      <div className="space-y-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-20 text-xs text-[var(--v2-text-muted)]">Facebook</span>
+                                          <input
+                                            type="url"
+                                            value={((editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string })?.facebook as string) || ''}
+                                            onChange={(e) => updateBlockField('social_links', {
+                                              ...(editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string } || {}),
+                                              facebook: e.target.value
+                                            })}
+                                            placeholder="https://facebook.com/..."
+                                            dir="ltr"
+                                            className="flex-1 px-2 py-1.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#4F6EF7] text-sm"
+                                          />
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-20 text-xs text-[var(--v2-text-muted)]">Instagram</span>
+                                          <input
+                                            type="url"
+                                            value={((editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string })?.instagram as string) || ''}
+                                            onChange={(e) => updateBlockField('social_links', {
+                                              ...(editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string } || {}),
+                                              instagram: e.target.value
+                                            })}
+                                            placeholder="https://instagram.com/..."
+                                            dir="ltr"
+                                            className="flex-1 px-2 py-1.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#4F6EF7] text-sm"
+                                          />
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-20 text-xs text-[var(--v2-text-muted)]">LinkedIn</span>
+                                          <input
+                                            type="url"
+                                            value={((editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string })?.linkedin as string) || ''}
+                                            onChange={(e) => updateBlockField('social_links', {
+                                              ...(editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string } || {}),
+                                              linkedin: e.target.value
+                                            })}
+                                            placeholder="https://linkedin.com/..."
+                                            dir="ltr"
+                                            className="flex-1 px-2 py-1.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#4F6EF7] text-sm"
+                                          />
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="w-20 text-xs text-[var(--v2-text-muted)]">Twitter/X</span>
+                                          <input
+                                            type="url"
+                                            value={((editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string })?.twitter as string) || ''}
+                                            onChange={(e) => updateBlockField('social_links', {
+                                              ...(editingBlockContent.social_links as { facebook?: string; instagram?: string; linkedin?: string; twitter?: string } || {}),
+                                              twitter: e.target.value
+                                            })}
+                                            placeholder="https://twitter.com/..."
+                                            dir="ltr"
+                                            className="flex-1 px-2 py-1.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#4F6EF7] text-sm"
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      <input
+                                        type="checkbox"
+                                        id="show_powered_by"
+                                        checked={(editingBlockContent.show_powered_by as boolean) ?? false}
+                                        onChange={(e) => updateBlockField('show_powered_by', e.target.checked)}
+                                        className="w-4 h-4 rounded border-[var(--v2-border)] text-[#4F6EF7] focus:ring-[#4F6EF7]"
+                                      />
+                                      <label htmlFor="show_powered_by" className="text-sm text-[var(--v2-text-secondary)]">
+                                        {language === 'he' ? 'הצג "מופעל על ידי AgentsPilot"' : language === 'es' ? 'Mostrar "Desarrollado por AgentsPilot"' : 'Show "Powered by AgentsPilot"'}
+                                      </label>
+                                    </div>
+                                  </>
+                                )}
+
                                 {/* Save Button */}
                                 <div className="flex justify-end pt-2">
                                   <button
@@ -6214,7 +6755,7 @@ export default function WebsiteManagementPage() {
         </div>
       )}
 
-      {/* Landing Page Wizard */}
+      {/* Customer Acquisition Wizard (Smart Links + Landing Pages) */}
       {showLandingPageWizard && (
         <LandingPageWizard
           existingTheme={page?.theme ? {
@@ -6233,8 +6774,24 @@ export default function WebsiteManagementPage() {
             logoUrl: blocks.find(b => b.block_type === 'header')?.content?.logo_url as string | undefined
           }}
           clientFlow={clientFlow}
+          userCode={businessProfile?.user_code || ''}
           onComplete={async (result: LandingPageWizardResult) => {
             setShowLandingPageWizard(false);
+            setEditingSmartLink(null);
+
+            // Handle Smart Link completion - no additional API call needed
+            // (the smart link was already created in the wizard)
+            if (result.creationType === 'smart-link') {
+              logger.info({
+                smartLinkCode: result.smartLink?.code,
+                journeyType: result.journeyType
+              }, 'Smart link created successfully');
+              // Trigger refresh of smart links list
+              setSmartLinksRefreshTrigger(prev => prev + 1);
+              return;
+            }
+
+            // Handle Landing Page creation
             setCreatingPage(true);
             try {
               logger.info({
@@ -6288,7 +6845,11 @@ export default function WebsiteManagementPage() {
               setCreatingPage(false);
             }
           }}
-          onCancel={() => setShowLandingPageWizard(false)}
+          onCancel={() => {
+            setShowLandingPageWizard(false);
+            setEditingSmartLink(null);
+          }}
+          editingSmartLink={editingSmartLink}
         />
       )}
 
@@ -6320,6 +6881,100 @@ export default function WebsiteManagementPage() {
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               {deletingPage?.hasActivity ? labels.delete_deactivate : labels.delete_confirm}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Block Confirmation Dialog */}
+      <Dialog open={deleteBlockModal.isOpen} onOpenChange={(open) => !deletingBlock && setDeleteBlockModal({ isOpen: open, blockId: null, blockType: null })}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-red-500" />
+              {language === 'he' ? 'מחיקת מקטע' : language === 'es' ? 'Eliminar Sección' : 'Delete Section'}
+            </DialogTitle>
+            <DialogDescription className="text-[var(--v2-text-secondary)]">
+              {language === 'he'
+                ? `האם אתה בטוח שברצונך למחוק את מקטע "${getBlockName(deleteBlockModal.blockType || '')}"? פעולה זו לא ניתנת לביטול.`
+                : language === 'es'
+                ? `¿Estás seguro de que quieres eliminar la sección "${getBlockName(deleteBlockModal.blockType || '')}"? Esta acción no se puede deshacer.`
+                : `Are you sure you want to delete the "${getBlockName(deleteBlockModal.blockType || '')}" section? This action cannot be undone.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              onClick={() => setDeleteBlockModal({ isOpen: false, blockId: null, blockType: null })}
+              disabled={deletingBlock}
+              className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors disabled:opacity-50"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {language === 'he' ? 'ביטול' : language === 'es' ? 'Cancelar' : 'Cancel'}
+            </button>
+            <button
+              onClick={handleDeleteBlock}
+              disabled={deletingBlock}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-2"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {deletingBlock && <Loader2 className="w-4 h-4 animate-spin" />}
+              {language === 'he' ? 'מחק' : language === 'es' ? 'Eliminar' : 'Delete'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Smart Link Confirmation Dialog */}
+      <Dialog open={deleteSmartLinkDialogOpen} onOpenChange={setDeleteSmartLinkDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-red-500" />
+              {language === 'he' ? 'מחיקת קישור חכם' : language === 'es' ? 'Eliminar Smart Link' : 'Delete Smart Link'}
+            </DialogTitle>
+            <DialogDescription className="text-[var(--v2-text-secondary)]">
+              {language === 'he'
+                ? `האם אתה בטוח שברצונך למחוק את "${deletingSmartLink?.name}"? פעולה זו לא ניתנת לביטול.`
+                : language === 'es'
+                ? `¿Estás seguro de que quieres eliminar "${deletingSmartLink?.name}"? Esta acción no se puede deshacer.`
+                : `Are you sure you want to delete "${deletingSmartLink?.name}"? This action cannot be undone.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              onClick={() => setDeleteSmartLinkDialogOpen(false)}
+              disabled={deletingSmartLinkLoading}
+              className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors disabled:opacity-50"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {language === 'he' ? 'ביטול' : language === 'es' ? 'Cancelar' : 'Cancel'}
+            </button>
+            <button
+              onClick={async () => {
+                if (!deletingSmartLink) return;
+                setDeletingSmartLinkLoading(true);
+                try {
+                  const response = await fetch(`/api/smart-links/${deletingSmartLink.id}`, { method: 'DELETE' });
+                  if (response.ok) {
+                    // Mark as inactive instead of removing (soft delete)
+                    setSmartLinks(prev => prev.map(l =>
+                      l.id === deletingSmartLink.id ? { ...l, is_active: false } : l
+                    ));
+                    setDeleteSmartLinkDialogOpen(false);
+                    setDeletingSmartLink(null);
+                  }
+                } catch (err) {
+                  logger.error({ err }, 'Failed to delete smart link');
+                } finally {
+                  setDeletingSmartLinkLoading(false);
+                }
+              }}
+              disabled={deletingSmartLinkLoading}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors disabled:opacity-50 flex items-center gap-2"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {deletingSmartLinkLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {language === 'he' ? 'מחק' : language === 'es' ? 'Eliminar' : 'Delete'}
             </button>
           </DialogFooter>
         </DialogContent>

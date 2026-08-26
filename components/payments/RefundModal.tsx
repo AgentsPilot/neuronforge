@@ -3,13 +3,15 @@
 /**
  * RefundModal
  *
- * Modal for processing full or partial refunds
+ * Modal for processing full or partial refunds.
+ * Optionally supports deleting the associated booking after refund (for CRM drawer).
  */
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { X, Loader2, AlertTriangle, RotateCcw } from 'lucide-react';
+import { X, Loader2, AlertTriangle, RotateCcw, Trash2 } from 'lucide-react';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 interface RefundModalProps {
   isOpen: boolean;
@@ -19,8 +21,12 @@ interface RefundModalProps {
   currency: string;
   alreadyRefunded?: number;
   contactName?: string;
-  onSuccess?: () => void;
+  onSuccess?: (deleteBooking?: boolean) => void;
   onError?: (error: string) => void;
+  // Optional: for CRM drawer integration - show delete booking toggle
+  bookingId?: string;
+  showDeleteBookingOption?: boolean;
+  isRTL?: boolean;
 }
 
 export function RefundModal({
@@ -32,13 +38,18 @@ export function RefundModal({
   alreadyRefunded = 0,
   contactName,
   onSuccess,
-  onError
+  onError,
+  bookingId,
+  showDeleteBookingOption = false,
+  isRTL = false
 }: RefundModalProps) {
+  const { t, language } = useLanguage();
   const [loading, setLoading] = useState(false);
   const [refundType, setRefundType] = useState<'full' | 'partial'>('full');
   const [partialAmount, setPartialAmount] = useState('');
   const [reason, setReason] = useState('');
   const [notifyContact, setNotifyContact] = useState(true);
+  const [deleteBooking, setDeleteBooking] = useState(false);
 
   if (!isOpen) return null;
 
@@ -46,7 +57,8 @@ export function RefundModal({
   const refundAmount = refundType === 'full' ? maxRefundable : parseFloat(partialAmount) || 0;
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
+    const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
+    return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency
     }).format(amount);
@@ -56,7 +68,7 @@ export function RefundModal({
     e.preventDefault();
 
     if (refundType === 'partial' && (refundAmount <= 0 || refundAmount > maxRefundable)) {
-      onError?.(`Please enter a valid amount between 0 and ${formatCurrency(maxRefundable)}`);
+      onError?.(t('payments.refund.invalid_amount').replace('{amount}', formatCurrency(maxRefundable)));
       return;
     }
 
@@ -91,7 +103,7 @@ export function RefundModal({
         throw new Error(data.error || 'Failed to process refund');
       }
 
-      onSuccess?.();
+      onSuccess?.(deleteBooking);
       onClose();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to process refund';
@@ -102,7 +114,7 @@ export function RefundModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/50"
@@ -110,12 +122,15 @@ export function RefundModal({
       />
 
       {/* Modal */}
-      <div className="relative z-10 w-full sm:max-w-md h-full sm:h-auto rounded-none sm:rounded-lg bg-white px-4 sm:px-6 py-4 sm:py-6 shadow-xl dark:bg-gray-900 overflow-y-auto">
+      <div
+        className="relative z-10 w-full sm:max-w-md h-full sm:h-auto max-h-full rounded-none sm:rounded-lg bg-[var(--v2-bg,#fff)] dark:bg-[var(--v2-bg,#1a1a1a)] px-4 sm:px-6 py-4 sm:py-6 shadow-xl overflow-y-auto"
+        dir={isRTL ? 'rtl' : 'ltr'}
+      >
         {/* Header */}
         <div className="mb-4 sm:mb-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <RotateCcw className="h-4 w-4 sm:h-5 sm:w-5 text-orange-500" />
-            <h2 className="text-base sm:text-lg font-semibold">Process Refund</h2>
+            <h2 className="text-base sm:text-lg font-semibold">{t('payments.refund.title')}</h2>
           </div>
           <button
             onClick={onClose}
@@ -129,22 +144,22 @@ export function RefundModal({
         <div className="mb-4 sm:mb-6 rounded-lg bg-gray-50 p-3 sm:p-4 dark:bg-gray-800">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs sm:text-sm">
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Original Amount</span>
+              <span className="text-gray-500 dark:text-gray-400">{t('payments.refund.original_amount')}</span>
               <p className="font-semibold">{formatCurrency(originalAmount)}</p>
             </div>
             {alreadyRefunded > 0 && (
               <div>
-                <span className="text-gray-500 dark:text-gray-400">Already Refunded</span>
+                <span className="text-gray-500 dark:text-gray-400">{t('payments.refund.already_refunded')}</span>
                 <p className="font-semibold text-orange-600">{formatCurrency(alreadyRefunded)}</p>
               </div>
             )}
             <div>
-              <span className="text-gray-500 dark:text-gray-400">Refundable</span>
+              <span className="text-gray-500 dark:text-gray-400">{t('payments.refund.refundable')}</span>
               <p className="font-semibold text-green-600">{formatCurrency(maxRefundable)}</p>
             </div>
             {contactName && (
               <div>
-                <span className="text-gray-500 dark:text-gray-400">Contact</span>
+                <span className="text-gray-500 dark:text-gray-400">{t('payments.refund.contact')}</span>
                 <p className="font-semibold">{contactName}</p>
               </div>
             )}
@@ -155,7 +170,7 @@ export function RefundModal({
         <form onSubmit={handleSubmit} className="space-y-3 sm:space-y-4">
           {/* Refund Type */}
           <div>
-            <label className="mb-1.5 sm:mb-2 block text-xs sm:text-sm font-medium">Refund Type</label>
+            <label className="mb-1.5 sm:mb-2 block text-xs sm:text-sm font-medium">{t('payments.refund.type_label')}</label>
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
               <label className="flex cursor-pointer items-center gap-2">
                 <input
@@ -166,7 +181,7 @@ export function RefundModal({
                   onChange={() => setRefundType('full')}
                   className="h-4 w-4 text-blue-600"
                 />
-                <span>Full Refund ({formatCurrency(maxRefundable)})</span>
+                <span>{t('payments.refund.full_with_amount').replace('{amount}', formatCurrency(maxRefundable))}</span>
               </label>
               <label className="flex cursor-pointer items-center gap-2">
                 <input
@@ -177,7 +192,7 @@ export function RefundModal({
                   onChange={() => setRefundType('partial')}
                   className="h-4 w-4 text-blue-600"
                 />
-                <span>Partial Refund</span>
+                <span>{t('payments.refund.partial')}</span>
               </label>
             </div>
           </div>
@@ -185,7 +200,7 @@ export function RefundModal({
           {/* Partial Amount */}
           {refundType === 'partial' && (
             <div>
-              <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Refund Amount</label>
+              <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">{t('payments.refund.amount_label')}</label>
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">{currency}</span>
                 <Input
@@ -195,23 +210,23 @@ export function RefundModal({
                   max={maxRefundable}
                   value={partialAmount}
                   onChange={(e) => setPartialAmount(e.target.value)}
-                  placeholder="0.00"
+                  placeholder={t('payments.refund.amount_placeholder')}
                   required
                 />
               </div>
               <p className="mt-1 text-xs text-gray-500">
-                Maximum: {formatCurrency(maxRefundable)}
+                {t('payments.refund.max_info').replace('{amount}', formatCurrency(maxRefundable))}
               </p>
             </div>
           )}
 
           {/* Reason */}
           <div>
-            <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">Reason (optional)</label>
+            <label className="mb-1 sm:mb-1.5 block text-xs sm:text-sm font-medium">{t('payments.refund.reason_label')}</label>
             <textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Reason for refund..."
+              placeholder={t('payments.refund.reason_placeholder')}
               className="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800"
               rows={2}
             />
@@ -226,15 +241,49 @@ export function RefundModal({
                 onChange={(e) => setNotifyContact(e.target.checked)}
                 className="h-4 w-4 rounded text-blue-600"
               />
-              <span className="text-sm">Send notification to contact</span>
+              <span className="text-sm">{t('payments.refund.notify_contact')}</span>
             </label>
           </div>
+
+          {/* Delete Booking Toggle - only shown when called from CRM drawer */}
+          {showDeleteBookingOption && refundType === 'full' && (
+            <div className="flex items-center justify-between p-3 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <Trash2 className="h-4 w-4 text-orange-500 flex-shrink-0" />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {t('payments.refund.delete_booking_label')}
+                  </span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {t('payments.refund.delete_booking_desc')}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={deleteBooking}
+                onClick={() => setDeleteBooking(!deleteBooking)}
+                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 ms-3 ${
+                  deleteBooking ? 'bg-orange-500' : 'bg-gray-200 dark:bg-gray-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    deleteBooking
+                      ? (isRTL ? '-translate-x-5' : 'translate-x-5')
+                      : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          )}
 
           {/* Warning */}
           <div className="flex items-start gap-2 rounded-lg bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
             <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
             <p>
-              Refunds cannot be undone. The {formatCurrency(refundAmount)} will be returned to the original payment method.
+              {t('payments.refund.warning_full').replace('{amount}', formatCurrency(refundAmount))}
             </p>
           </div>
 
@@ -246,7 +295,7 @@ export function RefundModal({
               onClick={onClose}
               disabled={loading}
             >
-              Cancel
+              {t('payments.refund.cancel')}
             </Button>
             <Button
               type="submit"
@@ -256,12 +305,12 @@ export function RefundModal({
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Processing...
+                  {t('payments.refund.processing')}
                 </>
               ) : (
                 <>
                   <RotateCcw className="mr-2 h-4 w-4" />
-                  Refund {formatCurrency(refundAmount)}
+                  {t('payments.refund.submit_button').replace('{amount}', formatCurrency(refundAmount))}
                 </>
               )}
             </Button>

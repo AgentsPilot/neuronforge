@@ -26,7 +26,8 @@ export type BlockType =
   | 'gallery'
   | 'newsletter'
   | 'logo_cloud'
-  | 'video';
+  | 'video'
+  | 'footer';
 
 // Header menu item interface
 export interface HeaderMenuItem {
@@ -129,6 +130,8 @@ export interface BlockRendererProps {
   bookingUrl?: string;
   /** Website subdomain - used for public API calls */
   subdomain?: string;
+  /** User code - used for standalone conversion pages (alternative to subdomain) */
+  userCode?: string;
   /** Preview mode - enables in-page booking modal instead of navigation */
   isPreview?: boolean;
   /** Callback when booking modal should open (preview mode) - receives selected service */

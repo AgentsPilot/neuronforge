@@ -60,16 +60,14 @@ const SEVERITY_COLORS = {
 // ===========================
 
 export function InsightBeatCard({ insight, onClick }: InsightBeatCardProps) {
-  const { isRTL } = useLanguage();
+  const { isRTL, formatCurrency } = useLanguage();
   const style = BEAT_STYLES[insight.type];
   const Icon = style.Icon;
   const isOffer = insight.type === 'insight_offer';
 
-  const formatCurrency = (value: number) => {
-    if (value >= 1000) {
-      return `$${(value / 1000).toFixed(1)}k`;
-    }
-    return `$${value}`;
+  const formatCurrencyValue = (value: number) => {
+    // Use the global formatCurrency for locale-aware formatting
+    return formatCurrency(value, { showFree: false });
   };
 
   return (
@@ -146,7 +144,7 @@ export function InsightBeatCard({ insight, onClick }: InsightBeatCardProps) {
                 : '#22C58B',
             }}
           >
-            {formatCurrency(insight.estimatedImpactUsd)}
+            {formatCurrencyValue(insight.estimatedImpactUsd)}
             {insight.impactDirection === 'loss' ? ' at risk' : ' opportunity'}
           </span>
         </div>

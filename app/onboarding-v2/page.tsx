@@ -39,7 +39,7 @@ interface BusinessProfile {
 
 const translations = {
   en: {
-    welcome: "Welcome!",
+    welcome: "Welcome to AgentsPilot!",
     welcomeMsg: "I'm here to help you run your business. Tell me about what you do, and I'll set everything up for you.",
     headerTitle: "Let's Get You Started",
     headerSubtitle: "I'll help you set up everything you need",

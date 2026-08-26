@@ -10,6 +10,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
@@ -18,16 +19,14 @@ const logger = createLogger({ module: 'SchedulingBookingAPI' });
 const auditTrail = AuditTrailService.getInstance();
 
 // Validation schema for updates
+// Note: client_* fields removed - client data is now only in crm_contacts (via contact_id)
 const updateBookingSchema = z.object({
   // Booking time updates
   start_time: z.string().optional(),
   end_time: z.string().optional(),
   timezone: z.string().optional(),
-  // Client info updates
-  client_first_name: z.string().min(1).optional(),
-  client_last_name: z.string().optional(),
-  client_email: z.string().email().optional(),
-  client_phone: z.string().optional(),
+  // Contact update (to link to different contact)
+  contact_id: z.string().uuid().optional(),
   // Status updates
   status: z.enum(['confirmed', 'cancelled', 'completed', 'no_show']).optional(),
   cancellation_reason: z.string().optional(),
@@ -39,7 +38,9 @@ const updateBookingSchema = z.object({
   internal_notes: z.string().optional(),
   // Reminder tracking
   reminder_24hr_sent: z.boolean().optional(),
-  reminder_2hr_sent: z.boolean().optional()
+  reminder_2hr_sent: z.boolean().optional(),
+  // Intake form - allow sending intake form after initial booking
+  send_intake_form: z.boolean().optional()
 });
 
 export async function GET(
@@ -120,8 +121,11 @@ export async function PUT(
     const body = await request.json();
     const validated = updateBookingSchema.parse(body);
 
+    // Extract send_intake_form flag (not a DB column, just a trigger to send email)
+    const { send_intake_form, ...bookingUpdateData } = validated;
+
     const bookingId = params.id;
-    requestLogger.info({ userId: user.id, bookingId, updates: Object.keys(validated) }, 'Updating booking');
+    requestLogger.info({ userId: user.id, bookingId, updates: Object.keys(bookingUpdateData), sendIntakeForm: send_intake_form }, 'Updating booking');
 
     // 3. Fetch old booking first (for time change comparison)
     const oldBookingResult = await schedulingBookingRepository.findById(bookingId, user.id);
@@ -133,8 +137,8 @@ export async function PUT(
     }
     const oldBooking = oldBookingResult.data;
 
-    // 4. Update booking
-    const result = await schedulingBookingRepository.update(bookingId, user.id, validated);
+    // 4. Update booking (only pass actual DB columns, not send_intake_form flag)
+    const result = await schedulingBookingRepository.update(bookingId, user.id, bookingUpdateData);
 
     if (result.error) {
       requestLogger.error({ err: result.error, userId: user.id, bookingId }, 'Failed to update booking');
@@ -151,20 +155,29 @@ export async function PUT(
       );
     }
 
-    // 5. Audit log (non-blocking)
+    // 5. Get contact name for audit log
+    let contactName = 'Client';
+    if (result.data.contact_id) {
+      const contactResult = await crmContactRepository.findById(result.data.contact_id, user.id);
+      if (contactResult.data) {
+        contactName = `${contactResult.data.first_name || ''} ${contactResult.data.last_name || ''}`.trim() || 'Client';
+      }
+    }
+
+    // 6. Audit log (non-blocking)
     auditTrail
       .log({
         action: 'SCHEDULING_BOOKING_UPDATED',
         userId: user.id,
         entityType: 'scheduling_booking',
         entityId: bookingId,
-        resourceName: `Booking for ${result.data.client_first_name} ${result.data.client_last_name || ''}`.trim(),
+        resourceName: `Booking for ${contactName}`,
         changes: validated,
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
 
-    // 6. Sync calendar event if booking has one (non-blocking)
+    // 7. Sync calendar event if booking has one (non-blocking)
     if (result.data.external_calendar_event_id) {
       schedulingServiceRepository.findById(result.data.service_id, user.id)
         .then(serviceResult => {
@@ -183,9 +196,15 @@ export async function PUT(
         .catch(err => requestLogger.warn({ err }, 'Failed to get service for calendar sync'));
     }
 
-    // 7. Send update email if time changed and booking is confirmed (non-blocking)
-    const timeChanged = validated.start_time || validated.end_time;
-    if (timeChanged && result.data.status === 'confirmed' && result.data.client_email) {
+    // 8. Send update email if time ACTUALLY changed and booking is confirmed (non-blocking)
+    // Compare old vs new times to avoid sending email when only other fields changed (like intake toggle)
+    const oldStartTime = new Date(oldBooking.start_time).getTime();
+    const oldEndTime = new Date(oldBooking.end_time).getTime();
+    const newStartTime = validated.start_time ? new Date(validated.start_time).getTime() : oldStartTime;
+    const newEndTime = validated.end_time ? new Date(validated.end_time).getTime() : oldEndTime;
+    const timeActuallyChanged = oldStartTime !== newStartTime || oldEndTime !== newEndTime;
+
+    if (timeActuallyChanged && result.data.status === 'confirmed' && result.data.contact_id) {
       BookingEmailService.sendRescheduledEmail(
         bookingId,
         user.id,
@@ -193,7 +212,26 @@ export async function PUT(
       ).catch(err => requestLogger.warn({ err, bookingId }, 'Reschedule email failed'));
     }
 
-    // 8. Return success
+    // 9. Send intake form if requested (non-blocking)
+    // Only send if booking doesn't already have intake data
+    if (send_intake_form && !oldBooking.intake_responses && !oldBooking.intake_completed_at) {
+      requestLogger.info({ bookingId, userId: user.id }, 'Sending intake form request for existing booking');
+
+      // Mark the booking as having intake requested by setting empty intake_responses
+      // This allows the journey timeline to show "intake pending" status
+      await schedulingBookingRepository.update(bookingId, user.id, {
+        intake_responses: {
+          template_id: '',
+          template_key: 'pending',
+          responses: {}
+        }
+      });
+
+      BookingEmailService.sendIntakeFormRequest(bookingId, user.id)
+        .catch(err => requestLogger.warn({ err, bookingId }, 'Intake form request email failed'));
+    }
+
+    // 10. Return success
     requestLogger.info({ bookingId, userId: user.id }, 'Booking updated successfully');
     return NextResponse.json({
       success: true,
@@ -265,14 +303,23 @@ export async function DELETE(
       );
     }
 
-    // 4. Audit log (non-blocking)
+    // 4. Get contact name for audit log
+    let deleteContactName = 'Client';
+    if (getResult.data.contact_id) {
+      const deleteContactResult = await crmContactRepository.findById(getResult.data.contact_id, user.id);
+      if (deleteContactResult.data) {
+        deleteContactName = `${deleteContactResult.data.first_name || ''} ${deleteContactResult.data.last_name || ''}`.trim() || 'Client';
+      }
+    }
+
+    // 5. Audit log (non-blocking)
     auditTrail
       .log({
         action: 'SCHEDULING_BOOKING_DELETED',
         userId: user.id,
         entityType: 'scheduling_booking',
         entityId: bookingId,
-        resourceName: `Booking for ${getResult.data.client_first_name} ${getResult.data.client_last_name || ''}`.trim(),
+        resourceName: `Booking for ${deleteContactName}`,
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));

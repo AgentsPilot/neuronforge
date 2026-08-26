@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>AgentsPilot — Live dashboard, day one</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#1B130D; --canvas:#F6F7FB; --card:#FFFFFF;
+  --text:#131A2B; --muted:#697187; --line:#E7E9F1;
+  --violet:#F97316; --amber:#FFB24D; --green:#22C58B; --danger:#F26B6B;
+  --blue:#4F6EF7;
+  --shadow:0 18px 50px -20px rgba(16,22,42,.28);
+  --shadow-sm:0 6px 20px -10px rgba(16,22,42,.25);
+  --aurora:linear-gradient(120deg,#FFB454 0%,#F97316 55%,#EA580C 100%);
+  --r:18px;
+  --display:"Space Grotesk",system-ui,sans-serif;
+  --body:"Inter",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--body);color:var(--text);background:var(--canvas);-webkit-font-smoothing:antialiased;line-height:1.5}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+:focus-visible{outline:2.5px solid var(--violet);outline-offset:2px;border-radius:6px}
+
+/* ============ shell ============ */
+.wrap{max-width:1020px;margin:0 auto;padding:26px 20px 90px}
+.hd{display:flex;align-items:center;gap:11px;margin-bottom:6px}
+.mark{width:26px;height:26px;border-radius:9px;background:var(--aurora);flex:none}
+.hd b{font-family:var(--display);font-size:17px;letter-spacing:-.01em}
+.hd b span{font-weight:500}
+.hd-note{font-size:12.5px;color:var(--muted);margin-left:auto}
+.pgh{font-family:var(--display);font-size:clamp(23px,3.6vw,31px);font-weight:600;letter-spacing:-.025em;margin:14px 0 5px}
+.pgs{color:var(--muted);font-size:15px;max-width:52rem}
+
+/* ============ timeline scrubber ============ */
+.tl{margin:26px 0 24px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:18px 16px 14px;box-shadow:var(--shadow-sm)}
+.tl-h{font-size:11.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:14px;padding-left:2px}
+.tl-row{display:flex;position:relative}
+.tl-row::before{content:"";position:absolute;left:11%;right:11%;top:11px;height:2px;background:var(--line)}
+.tl-n{flex:1;position:relative;text-align:center;padding-top:0;display:flex;flex-direction:column;align-items:center;gap:9px}
+.tl-dot{width:22px;height:22px;border-radius:50%;background:var(--card);border:2px solid var(--line);position:relative;z-index:1;transition:.25s;display:grid;place-items:center}
+.tl-dot i{width:8px;height:8px;border-radius:50%;background:var(--line);transition:.25s}
+.tl-n.done .tl-dot{border-color:#F9C79A}
+.tl-n.done .tl-dot i{background:#F9C79A}
+.tl-n.on .tl-dot{border-color:transparent;background:var(--aurora);box-shadow:0 0 0 4px rgba(249,115,22,.16)}
+.tl-n.on .tl-dot i{background:#fff}
+.tl-tx b{display:block;font-family:var(--display);font-size:13.5px;font-weight:600;letter-spacing:-.01em}
+.tl-tx small{display:block;font-size:11.5px;color:var(--muted);margin-top:1px;line-height:1.35}
+.tl-n.on .tl-tx b{color:#C2410C}
+
+/* ============ verdict ============ */
+.lv-verdict{display:flex;gap:13px;align-items:flex-start;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:17px 18px;box-shadow:var(--shadow-sm);margin-bottom:14px}
+.lv-live{width:9px;height:9px;border-radius:50%;background:var(--green);flex:none;margin-top:7px;position:relative}
+.lv-live::after{content:"";position:absolute;inset:-5px;border-radius:50%;background:rgba(34,197,139,.28);animation:lvPulse 2.2s ease-out infinite}
+.lv-verdict.warn .lv-live{background:var(--amber)}
+.lv-verdict.warn .lv-live::after{background:rgba(255,178,77,.3)}
+@keyframes lvPulse{0%{transform:scale(.6);opacity:.9}100%{transform:scale(1.5);opacity:0}}
+.lv-v-t{font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-.02em;margin-bottom:4px}
+.lv-v-p{font-size:14.5px;color:var(--muted)}
+.lv-v-when{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);background:#F1F3F8;padding:3px 9px;border-radius:20px;margin-bottom:7px}
+
+/* ============ pilot stepper ============ */
+.lv-tips{display:flex;align-items:center;gap:12px;background:linear-gradient(180deg,#FFF8F2,#FFFDFB);border:1px solid #FBDCC0;border-radius:var(--r);padding:14px 16px;margin-bottom:16px}
+.lv-orb{width:26px;height:26px;border-radius:50%;background:var(--aurora);flex:none;box-shadow:0 0 0 4px rgba(249,115,22,.13);animation:lvBob 3.4s ease-in-out infinite}
+@keyframes lvBob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.lv-tips-t{font-size:14.5px;font-weight:600;flex:1;min-width:0}
+.lv-tips-t small{display:block;font-weight:400;color:var(--muted);font-size:13px;margin-top:1px}
+.lv-tips-c{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.lv-next{border:1.5px solid #F3D2B4;background:#fff;border-radius:11px;padding:8px 13px;font-size:13px;font-weight:600;color:#C2410C;white-space:nowrap;transition:.15s}
+.lv-next:hover{background:#FFF3E8}
+
+/* ============ the map ============ */
+.lv-map{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:26px 20px 20px;box-shadow:var(--shadow-sm)}
+.lv-flow{display:flex;align-items:stretch}
+.lv-st{flex:0 0 auto;width:118px;text-align:center;position:relative;padding:14px 6px 12px;border-radius:15px;border:1.5px solid var(--line);background:#fff;transition:.3s;cursor:pointer}
+.lv-st:hover{border-color:#D7DBE7}
+.lv-st.on{border-color:var(--violet);box-shadow:0 0 0 3px rgba(249,115,22,.11)}
+/* blueprint state — the station exists on the plan but isn't built */
+.lv-st.off{border-style:dashed;border-color:#D8DCE8;background:repeating-linear-gradient(135deg,#FBFCFE 0 7px,#F5F6FA 7px 8px)}
+.lv-st.off .lv-ic{background:#EDEFF5;color:#A8AEBF;box-shadow:none}
+.lv-st.off .lv-n{color:#B4BAC8}
+.lv-ic{width:34px;height:34px;border-radius:11px;background:var(--aurora);display:grid;place-items:center;margin:0 auto 9px;box-shadow:0 5px 14px -6px rgba(249,115,22,.7)}
+.lv-ic svg{width:17px;height:17px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.lv-st.off .lv-ic svg{stroke:#A8AEBF}
+.lv-n{font-family:var(--display);font-size:23px;font-weight:600;letter-spacing:-.03em;font-variant-numeric:tabular-nums;line-height:1.1}
+.lv-lb{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.3}
+.lv-mk{position:absolute;top:-9px;right:-9px;width:23px;height:23px;border-radius:50%;background:var(--amber);color:#5A3A05;font-size:12px;font-weight:700;display:grid;place-items:center;box-shadow:0 3px 9px -2px rgba(255,178,77,.9);animation:mkPop .4s ease-out}
+@keyframes mkPop{from{transform:scale(.4);opacity:0}}
+
+.lv-gap{flex:1;min-width:34px;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:7px;padding:0 4px;cursor:pointer;position:relative}
+.lv-track{width:100%;height:3px;border-radius:3px;background:#EAF7F1;position:relative;overflow:hidden}
+.lv-track i{position:absolute;top:-2.5px;width:8px;height:8px;border-radius:50%;background:var(--green);animation:lvFlow 2.8s linear infinite}
+@keyframes lvFlow{from{left:-8px}to{left:100%}}
+.lv-gap.leak .lv-track{background:#FBE5E5}
+.lv-gap.leak .lv-track i{background:var(--danger)}
+.lv-gap.watch .lv-track{background:transparent;border-top:2.5px dotted #C9CEDC;height:0}
+.lv-gap.off .lv-track{background:transparent;border-top:2.5px dotted #E0E3EC;height:0}
+.lv-gap-lb{font-size:11px;font-weight:600;text-align:center;line-height:1.25;color:var(--muted)}
+.lv-gap.leak .lv-gap-lb{color:#C0392B}
+.lv-gap.on .lv-gap-lb{text-decoration:underline;text-underline-offset:3px}
+.lv-gap .lv-mk{top:-2px;right:auto;left:50%;transform:translateX(-50%)}
+
+.lv-ghost{margin-top:18px;border:1.5px dashed #E3D6C6;background:#FEFAF5;border-radius:13px;padding:12px 14px;display:flex;gap:11px;align-items:flex-start}
+.lv-ghost svg{width:16px;height:16px;stroke:#C09456;fill:none;stroke-width:2;flex:none;margin-top:2px}
+.lv-ghost b{font-size:13.5px;font-weight:600;display:block;line-height:1.4}
+.lv-gh-tag{font-size:12px;color:#A18B6B;margin-top:3px;display:block;line-height:1.4}
+
+.lv-legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:20px;padding-top:15px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+.lg-k{display:flex;align-items:center;gap:7px}
+.lg-s{width:15px;height:3px;border-radius:3px;background:var(--green)}
+.lg-s.leak{background:var(--danger)}
+.lg-s.watch{background:none;border-top:2.5px dotted #C9CEDC}
+.lg-s.mk{width:15px;height:15px;border-radius:50%;background:var(--amber)}
+
+/* ============ drawer ============ */
+.lv-dr{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;box-shadow:var(--shadow-sm)}
+.lv-dr.hero{border-color:#F6C6C6;background:linear-gradient(180deg,#FFF9F9,#fff)}
+.lv-dr-ey{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--violet);margin-bottom:5px}
+.lv-dr-t{font-family:var(--display);font-size:18px;font-weight:600;letter-spacing:-.02em;margin-bottom:5px}
+.lv-dr-p{font-size:14px;color:var(--muted);margin-bottom:16px;max-width:48rem}
+.lv-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+.lv-stat{background:#F8F9FC;border:1px solid var(--line);border-radius:13px;padding:12px 13px}
+.lvs-v{font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.lvs-lb{font-size:12px;color:var(--muted);margin-top:1px}
+.lvs-sub{font-size:11.5px;color:var(--muted);margin-top:5px}
+.lvs-sub.good{color:#1B9A6C}
+.lvs-sub.bad{color:#C0392B}
+
+/* confidence bar — the "too early to tell" device */
+.lv-conf{border:1px solid #DDE2EE;background:#F7F9FD;border-radius:13px;padding:13px 14px;margin-bottom:16px}
+.lv-conf-t{font-size:13.5px;font-weight:600;margin-bottom:3px;display:flex;align-items:center;gap:7px}
+.lv-conf-t svg{width:15px;height:15px;stroke:#7C86A0;fill:none;stroke-width:2}
+.lv-conf-p{font-size:12.5px;color:var(--muted);margin-bottom:10px}
+.lv-conf-bar{height:6px;border-radius:6px;background:#E4E8F2;overflow:hidden}
+.lv-conf-bar i{display:block;height:100%;border-radius:6px;background:#9AA5BE;transition:width .5s}
+.lv-conf-sc{display:flex;justify-content:space-between;font-size:11px;color:#8A93A8;margin-top:6px;font-variant-numeric:tabular-nums}
+
+/* setup rows — day one drawer */
+.lv-todo{display:flex;gap:12px;align-items:center;padding:13px 0;border-bottom:1px solid var(--line)}
+.lv-todo:last-of-type{border-bottom:none}
+.lv-td-ic{width:30px;height:30px;border-radius:10px;flex:none;display:grid;place-items:center;background:#FFF1E4}
+.lv-td-ic svg{width:15px;height:15px;stroke:var(--violet);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.lv-td-ic.done{background:#E6F8F0}
+.lv-td-ic.done svg{stroke:#1B9A6C}
+.lv-td-m{flex:1;min-width:0}
+.lv-td-m b{font-size:14px;font-weight:600;display:block}
+.lv-td-m small{font-size:12.5px;color:var(--muted)}
+.lv-td-btn{border:none;background:var(--aurora);color:#fff;border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap;box-shadow:0 5px 14px -7px rgba(249,115,22,.9)}
+.lv-td-btn.lite{background:#fff;color:#C2410C;border:1.5px solid #F3D2B4;box-shadow:none}
+.lv-td-tag{font-size:12px;color:#1B9A6C;font-weight:600;white-space:nowrap}
+
+/* people rows */
+.lv-p{display:flex;gap:11px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.lv-p:last-of-type{border-bottom:none}
+.lv-av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:12px;font-weight:700;flex:none}
+.lv-p-m{flex:1;min-width:0}
+.lv-p-m b{font-size:14px;display:block;font-weight:600}
+.lv-p-m small{font-size:12.5px;color:var(--muted)}
+.lv-p-tag{font-size:11.5px;font-weight:600;color:#C2410C;background:#FFF1E4;padding:4px 9px;border-radius:20px;white-space:nowrap}
+
+.lv-pl{display:flex;gap:11px;align-items:flex-start;background:#FFF8F2;border:1px solid #FBDCC0;border-radius:13px;padding:13px 14px;margin-top:16px}
+.lv-pl .lv-orb{width:20px;height:20px;box-shadow:0 0 0 3px rgba(249,115,22,.13);animation:none;margin-top:1px}
+.lv-pl-tx{flex:1;font-size:13.5px;min-width:0}
+.lv-pl-btn{border:none;background:var(--aurora);color:#fff;border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;white-space:nowrap;box-shadow:0 5px 14px -7px rgba(249,115,22,.9)}
+
+/* ============ first light ============ */
+.fl{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;box-shadow:var(--shadow-sm)}
+.fl-h{font-family:var(--display);font-size:16.5px;font-weight:600;letter-spacing:-.02em}
+.fl-s{font-size:13px;color:var(--muted);margin:3px 0 16px}
+.fl-row{display:flex;gap:13px;align-items:flex-start;padding:13px 0;border-bottom:1px solid var(--line)}
+.fl-row:last-child{border-bottom:none;padding-bottom:0}
+.fl-tick{width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;border:2px dashed #D5D9E4;background:#fff}
+.fl-tick svg{width:13px;height:13px;stroke:#fff;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;opacity:0}
+.fl-row.lit .fl-tick{border:none;background:var(--green);box-shadow:0 0 0 4px rgba(34,197,139,.16)}
+.fl-row.lit .fl-tick svg{opacity:1}
+.fl-m{flex:1;min-width:0}
+.fl-m b{font-size:14.5px;font-weight:600;display:block}
+.fl-m small{font-size:13px;color:var(--muted);display:block;margin-top:1px}
+.fl-row.lit .fl-m small{color:#1B9A6C}
+.fl-when{font-size:11.5px;color:#8A93A8;white-space:nowrap;padding-top:2px}
+
+/* ============ footer action ============ */
+.lv-foot{margin-top:16px;text-align:center}
+.lv-replay{border:1.5px solid var(--line);background:var(--card);border-radius:13px;padding:12px 20px;font-size:14px;font-weight:600;display:inline-flex;align-items:center;gap:9px;box-shadow:var(--shadow-sm);transition:.15s}
+.lv-replay:hover{border-color:#D7DBE7}
+.lv-replay svg{width:16px;height:16px;stroke:var(--violet);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ============ modal ============ */
+.scrim{position:fixed;inset:0;background:rgba(19,26,43,.5);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
+.scrim.open{display:flex}
+.mbox{background:var(--card);border-radius:20px;width:100%;max-width:460px;max-height:86vh;overflow:auto;box-shadow:var(--shadow);padding:24px}
+.mb-h{font-family:var(--display);font-size:19px;font-weight:600;letter-spacing:-.02em}
+.mb-s{font-size:13.5px;color:var(--muted);margin:4px 0 18px}
+.mb-row{display:flex;gap:11px;align-items:flex-start;padding:11px 0;border-bottom:1px solid var(--line)}
+.mb-row:last-of-type{border-bottom:none}
+.mb-ic{width:24px;height:24px;border-radius:8px;background:#E6F8F0;flex:none;display:grid;place-items:center}
+.mb-ic svg{width:12px;height:12px;stroke:#1B9A6C;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.mb-row b{font-size:13.5px;font-weight:600;display:block}
+.mb-row small{font-size:12.5px;color:var(--muted)}
+.mb-close{width:100%;margin-top:18px;border:1.5px solid var(--line);background:#fff;border-radius:12px;padding:12px;font-size:14px;font-weight:600}
+
+/* ============ note ============ */
+.note{margin-top:30px;border-left:3px solid var(--violet);background:#fff;border-radius:0 14px 14px 0;padding:16px 18px;box-shadow:var(--shadow-sm)}
+.note b{font-family:var(--display);font-size:14.5px;display:block;margin-bottom:5px}
+.note p{font-size:13.5px;color:var(--muted)}
+.note p + p{margin-top:8px}
+
+/* ============ advisor card (the Insight top slot) ============ */
+.adv{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:0 26px 60px -32px rgba(20,26,44,.3);overflow:hidden;margin-bottom:16px}
+.adv-in{padding:20px 22px}
+.adv-top{display:flex;align-items:center;gap:11px;margin-bottom:12px}
+.adv-orb{width:30px;height:30px;border-radius:50%;background:var(--aurora);flex:none;box-shadow:0 0 0 5px rgba(249,115,22,.12)}
+.adv-ey{font-size:12.5px;font-weight:600;color:var(--violet)}
+.adv-ey small{display:block;font-weight:400;color:var(--muted);font-size:11.5px}
+.adv-vt{margin-left:auto;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;background:#F1F3F8;color:var(--muted);padding:5px 11px;border-radius:20px;white-space:nowrap}
+.adv-h{font-family:var(--display);font-size:clamp(19px,2.6vw,23px);font-weight:600;letter-spacing:-.025em;margin-bottom:7px;line-height:1.25}
+.adv-p{font-size:14.5px;color:var(--muted);max-width:46rem}
+
+/* before → after */
+.adv-proj{display:flex;align-items:stretch;gap:0;margin-top:16px;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.pj{flex:1;padding:13px 15px;min-width:0}
+.pj + .pj{border-left:1px solid var(--line);background:#F6FBF8}
+.pj-lb{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.pj-v{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:-.02em}
+.pj + .pj .pj-v{color:#1B9A6C}
+.pj-s{font-size:12.5px;color:var(--muted);margin-top:3px}
+
+.adv-acts{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
+.adv-btn{background:var(--aurora);color:#fff;border-radius:12px;padding:11px 18px;font-size:14px;font-weight:600;box-shadow:0 8px 20px -9px rgba(249,115,22,.9)}
+.adv-lite{border:1.5px solid var(--line);background:#fff;border-radius:12px;padding:11px 18px;font-size:14px;font-weight:600;color:var(--muted)}
+.adv-seen{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:7px;margin-left:auto}
+.adv-seen svg{width:14px;height:14px;stroke:var(--muted);fill:none;stroke-width:2}
+
+/* the automate offer */
+.auto-offer{margin-top:18px;border:1.5px solid #FBDCC0;background:linear-gradient(180deg,#FFF8F2,#FFFDFB);border-radius:16px;padding:17px 18px}
+.auto-ey{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--violet);margin-bottom:6px}
+.auto-h{font-family:var(--display);font-size:17px;font-weight:600;letter-spacing:-.02em;margin-bottom:6px}
+.auto-p{font-size:13.5px;color:var(--muted);margin-bottom:14px}
+.auto-thr{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #F3D2B4;border-radius:12px;padding:11px 14px;flex-wrap:wrap}
+.thr-lb{font-size:13.5px;font-weight:500;flex:1;min-width:150px}
+.thr-ctl{display:flex;align-items:center;gap:2px;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
+.thr-b{width:34px;height:34px;font-size:17px;font-weight:600;color:var(--violet);background:#FFF6EE}
+.thr-b:hover{background:#FFEBD9}
+.thr-v{min-width:62px;text-align:center;font-family:var(--display);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.auto-acts{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.auto-done{margin-top:18px;border:1.5px solid #B8E9D3;background:#F3FBF7;border-radius:16px;padding:17px 18px;display:flex;gap:12px;align-items:flex-start}
+.auto-done-ic{width:28px;height:28px;border-radius:50%;background:var(--green);flex:none;display:grid;place-items:center;box-shadow:0 0 0 4px rgba(34,197,139,.17)}
+.auto-done-ic svg{width:14px;height:14px;stroke:#fff;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.auto-done b{font-family:var(--display);font-size:15.5px;font-weight:600;display:block;margin-bottom:3px}
+.auto-done p{font-size:13.5px;color:var(--muted)}
+
+/* ============ vector strip — the advisor's seven dials ============ */
+.vecs-wrap{border-top:1px solid var(--line);background:#FBFCFE;padding:15px 22px 17px}
+.vecs-h{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:11px}
+.vecs{display:flex;flex-wrap:wrap;gap:8px}
+.vec{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;border-radius:20px;padding:6px 12px 6px 10px;font-size:12.5px;color:#9AA1B2}
+.vec-dot{width:8px;height:8px;border-radius:50%;background:#DDE1EA;flex:none}
+.vec.lit{color:var(--text);font-weight:600;border-color:#CFEDDF;background:#F5FCF9}
+.vec.lit .vec-dot{background:var(--green);box-shadow:0 0 0 3px rgba(34,197,139,.16)}
+.vec.learn{color:#8A7A5E;border-color:#F0E2CC;background:#FFFCF7}
+.vec.learn .vec-dot{background:#fff;border:2px dotted var(--amber);width:10px;height:10px}
+.vec-note{font-size:12.5px;color:var(--muted);margin-top:11px;line-height:1.45}
+
+/* what I've handled */
+.hdl{border-top:1px solid var(--line);padding:15px 22px 18px}
+.hdl-h{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.hdl-row{display:flex;gap:10px;align-items:flex-start;padding:7px 0}
+.hdl-tick{width:18px;height:18px;border-radius:50%;background:#E6F8F0;flex:none;display:grid;place-items:center;margin-top:1px}
+.hdl-tick svg{width:10px;height:10px;stroke:#1B9A6C;fill:none;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round}
+.hdl-row b{font-size:13.5px;font-weight:600;display:block}
+.hdl-row small{font-size:12.5px;color:var(--muted)}
+
+/* ============ mobile: the map goes vertical ============ */
+@media (max-width:719px){
+  .wrap{padding:20px 14px 70px}
+  .tl-row{flex-wrap:wrap;gap:10px}
+  .tl-row::before{display:none}
+  .tl-n{flex:1 1 44%;flex-direction:row;text-align:left;gap:10px;align-items:center;border:1.5px solid var(--line);border-radius:13px;padding:10px 11px}
+  .tl-n.on{border-color:var(--violet);background:#FFF8F2}
+  .lv-flow{flex-direction:column;align-items:stretch}
+  .lv-st{width:100%;display:flex;align-items:center;gap:13px;text-align:left;padding:13px 14px}
+  .lv-ic{margin:0}
+  .lv-st .lv-tx{flex:1;min-width:0}
+  .lv-n{font-size:21px}
+  .lv-mk{top:50%;right:12px;transform:translateY(-50%)}
+  .lv-gap{flex-direction:row;min-height:44px;gap:11px;padding:5px 0 5px 30px}
+  .lv-track{width:3px;height:34px;flex:none}
+  .lv-track i{top:auto;left:-2.5px;animation:lvFlowV 2.8s linear infinite}
+  @keyframes lvFlowV{from{top:-8px}to{top:100%}}
+  .lv-gap.watch .lv-track,.lv-gap.off .lv-track{border-top:none;border-left:2.5px dotted #C9CEDC;height:34px;width:0}
+  .lv-gap.off .lv-track{border-left-color:#E0E3EC}
+  .lv-gap-lb{text-align:left}
+  .lv-gap .lv-mk{position:static;transform:none;margin-left:auto}
+  .lv-stats{grid-template-columns:1fr}
+  .adv-in{padding:17px 16px}
+  .vecs-wrap,.hdl{padding-left:16px;padding-right:16px}
+  .adv-proj{flex-direction:column}
+  .pj + .pj{border-left:none;border-top:1px solid var(--line)}
+  .adv-seen{margin-left:0;width:100%}
+  .adv-btn,.adv-lite{flex:1;text-align:center}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd">
+    <span class="mark"></span>
+    <b><span>Agents</span>Pilot</b>
+    <span class="hd-note">Live dashboard · cold start</span>
+  </div>
+  <h1 class="pgh">The first ninety days</h1>
+  <p class="pgs">The same Live dashboard and Insight advisor at five moments. The map doesn't wait for data to exist — it shows what's built, what's flowing, and what the Pilot honestly can't tell yet.</p>
+
+  <div class="tl">
+    <div class="tl-h">Tap through the first three months</div>
+    <div class="tl-row" id="tlRow"></div>
+  </div>
+
+  <div id="stage"></div>
+
+  <div class="note">
+    <b>When the advisor switches on</b>
+    <p>Not all at once. The Insight card appears on <b>day one</b> — but at day one it has only one thing to say, and it's about setup. Each of the seven vectors lights independently as its own evidence arrives: wins need no history at all, conversion needs ~25 visitors, cash flow needs a first late invoice, retention needs clients old enough to lapse, pricing needs six weeks of calendar. The strip under the card shows which are reading and says plainly why the others aren't.</p>
+    <p>The moment that matters commercially is <b>Day 90</b>, not Day 1: the third recurrence is when the advisor stops asking and offers to take the job. Recommend-and-run works on a single instance; a standing rule needs a repeat, or the threshold is guessed from one data point.</p>
+    <b style="margin-top:14px">Why the map isn't just "0 everywhere"</b>
+    <p>Three devices do the work. <b>Blueprint stations</b> — an unbuilt station is drawn as a dashed plan, not a zero, so an empty map reads as "not switched on yet" instead of "nothing is happening." <b>The confidence bar</b> — the Pilot refuses to call a leak until it has the numbers to call one, and says so out loud with a threshold. <b>First light</b> — three milestones the user waits for, so week one has something to anticipate instead of something to stare at.</p>
+    <p>Same data shapes as the real Live page (stations, gaps, markers, drawer), so this ports into <code>LV_STATIONS</code> / <code>LV_GAPS</code> / <code>LV_TIPS</code> as a state parameter rather than a second page.</p>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" onclick="if(event.target===this)closeModal()">
+  <div class="mbox" role="dialog" aria-modal="true">
+    <div class="mb-h" id="mbH"></div>
+    <div class="mb-s" id="mbS"></div>
+    <div id="mbBody"></div>
+    <button class="mb-close" onclick="closeModal()">Close</button>
+  </div>
+</div>
+
+<script>
+/* ---------- icons ---------- */
+var IC = {
+  found:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>',
+  touch:'<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+  booked:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/></svg>',
+  paid:'<svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>',
+  globe:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>',
+  clock:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  send:'<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  tick:'<svg viewBox="0 0 24 24"><path d="M4 12l6 6L20 5"/></svg>',
+  eye:'<svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+  play:'<svg viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></svg>',
+  spark:'<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>'
+};
+function av(t,c){return '<span class="lv-av" style="background:'+c+'">'+t+'</span>';}
+
+/* ---------- the four states ---------- */
+var STATES = [
+{
+  key:'d1', node:'Day 1', nodeSub:'Nothing live',
+  when:'Tuesday · nothing published',
+  status:'warn',
+  verdict:'Nothing can reach you yet.',
+  vsub:'Your website is built, your posts are written, your automations are armed. None of it is switched on — so this map stays empty. Publishing takes about two minutes.',
+  stations:[
+    {k:'found', n:'—', lb:'Found you', off:true},
+    {k:'touch', n:'—', lb:'Got in touch', off:true},
+    {k:'booked',n:'—', lb:'Booked', off:true},
+    {k:'paid',  n:'—', lb:'Paid you', off:true}
+  ],
+  gaps:[{k:'g1',state:'off'},{k:'g2',state:'off'},{k:'g3',state:'off'}],
+  ghost:{t:'About 40 people a week search for a therapist near you.',
+         s:'That\u2019s the pool this map will fill from once you\u2019re live.',
+         tag:'My estimate from your area and category \u2014 not your numbers.'},
+  tips:[{at:'found', n:1, t:'One thing to do', s:'Publish your website. Everything else on this page waits on it.'}],
+  sel:'found',
+  drawers:{
+    found:{ey:'The only station that matters today',t:'Nobody can find you yet',
+      p:'Three switches stand between an empty map and your first enquiry. I\u2019ve done the work behind each one — you just say go.',
+      todos:[
+        {ic:'globe',t:'Publish your website',s:'8 pages, English and Hebrew, your 3 services priced. Ready since 11:04am.',btn:'Publish it'},
+        {ic:'found',t:'Claim your Google listing',s:'The one people actually search. I\u2019ve written the whole listing — Google posts a code to verify you.',btn:'Start it',lite:true},
+        {ic:'clock',t:'Set your hours',s:'Without these your booking page can\u2019t take a time.',btn:'Set them',lite:true}
+      ]},
+    touch:{ey:'Not open yet',t:'This is where enquiries will land',
+      p:'Every form, call button and Google message arrives here, and gets an answer from me in about two minutes — day or night. It switches on the moment you publish.'},
+    booked:{ey:'Not open yet',t:'This is where bookings will land',
+      p:'Once your hours are set, people pick a time themselves and pay for it. Nothing here needs you.'},
+    paid:{ey:'Not open yet',t:'This is where the money will land',
+      p:'Connect Stripe and paid sessions settle straight to your bank, in your name. I chase what\u2019s late.'}
+  },
+  milestones:[
+    {t:'First visitor',s:'Usually within a few hours of publishing.',w:'waiting'},
+    {t:'First enquiry',s:'Most therapists see one in the first week or two.',w:'waiting'},
+    {t:'First booking',s:'I\u2019ll tell you the moment it happens.',w:'waiting'}
+  ],
+  foot:{lb:'See everything I built', modal:{
+    h:'What I built while we talked',
+    s:'None of it is live yet. All of it is finished.',
+    rows:[
+      {b:'A website, 8 pages',s:'English and Hebrew, your photo, your 3 services with prices'},
+      {b:'A booking page',s:'Waiting on your hours and Stripe'},
+      {b:'4 posts, written',s:'First one queued for the Tuesday after you publish'},
+      {b:'6 automations, armed',s:'Instant replies, reminders, invoice chasing, review requests'},
+      {b:'Your Google listing, drafted',s:'Name, category, description, hours \u2014 needs you to claim it'}
+    ]}}
+},
+
+{
+  key:'d4', node:'Day 4', nodeSub:'First visitors',
+  when:'Since you published, Tuesday',
+  status:'ok',
+  verdict:'You\u2019re live. 11 people have found you.',
+  vsub:'None have got in touch yet. At 11 visitors that tells me nothing \u2014 I\u2019d expect the first enquiry somewhere around 25.',
+  stations:[
+    {k:'found', n:'11', lb:'Found you'},
+    {k:'touch', n:'0', lb:'Got in touch', off:true},
+    {k:'booked',n:'—', lb:'Booked', off:true},
+    {k:'paid',  n:'—', lb:'Paid you', off:true}
+  ],
+  gaps:[{k:'g1',state:'watch',lb:'too early to tell'},{k:'g2',state:'off'},{k:'g3',state:'off'}],
+  ghost:{t:'About 40 a week search for a therapist near you. You\u2019re reaching roughly a fifth of them.',
+         s:'Your Google listing goes live when the postcard arrives \u2014 that\u2019s the number that moves.',
+         tag:'My estimate from your area and category.'},
+  tips:[{at:'found', n:1, t:'One thing I\u2019d do', s:'Everyone who found you came from one place. That\u2019s one point of failure.'}],
+  sel:'g1',
+  drawers:{
+    g1:{ey:'Between found you and got in touch',t:'I can\u2019t call this yet',
+      p:'Eleven people looked and nobody wrote. That could mean your page isn\u2019t landing \u2014 or it could mean eleven is a small number. It\u2019s a small number.',
+      conf:{t:'Not enough to judge',p:'I need about 25 visitors before I\u2019d trust what this gap is telling me. Until then I won\u2019t invent a problem for you to fix.',now:11,need:25},
+      pl:{tx:'What I\u2019d watch instead: 4 of the 11 opened your booking page and stopped. If that holds at 25, it\u2019s the price they\u2019re stopping at, and I\u2019ll say so.',act:''}},
+    found:{ey:'Where they came from',t:'11 people, all from one place',
+      p:'Every visitor so far came from your Google listing. It\u2019s working \u2014 but if Google shifts, you go quiet overnight.',
+      stats:[{v:'11',l:'Found you',s:'since Tuesday'},{v:'11',l:'From Google',s:'100% \u2014 one channel',bad:true},{v:'0',l:'From anywhere else',s:'no page, no referrals'}],
+      pl:{tx:'A Facebook page takes me about ten minutes and gives you a second way in. I\u2019ve already written the bio and picked the photo.',act:'Set it up'}},
+    touch:{ey:'Open, and empty',t:'Nobody has written yet',
+      p:'The form works \u2014 I tested it twice. When someone does write, they get an answer in about two minutes and land in your people list. You\u2019ll get a notification, not a task.'},
+    booked:{ey:'Not open yet',t:'Booking is waiting on Stripe',
+      p:'Your hours are set. Connect Stripe and people can pick a time and pay for it in the same minute.'},
+    paid:{ey:'Not open yet',t:'Nothing to collect yet',
+      p:'The moment a paid session is booked, this station starts working \u2014 including chasing anything that goes late.'}
+  },
+  milestones:[
+    {t:'First visitor',s:'Tuesday 4:12pm \u00b7 from Google \u00b7 read your About page for 40 seconds.',w:'Tue',lit:true},
+    {t:'First enquiry',s:'Not yet. Typically around 25 visitors \u2014 you\u2019re at 11.',w:'waiting'},
+    {t:'First booking',s:'I\u2019ll tell you the moment it happens.',w:'waiting'}
+  ],
+  foot:{lb:'Watch the last four days', modal:{
+    h:'Your first four days',
+    s:'Six things happened. None of them needed you.',
+    rows:[
+      {b:'Tue 11:06am \u2014 your site went live',s:'Google found it 38 minutes later'},
+      {b:'Tue 4:12pm \u2014 first visitor',s:'Searched \u201ctherapist near me\u201d'},
+      {b:'Wed 9:00am \u2014 first post went out',s:'On your page. 61 people saw it.'},
+      {b:'Wed \u2014 4 visitors opened your booking page',s:'None finished. Watching this.'},
+      {b:'Thu \u2014 Google asked to verify you',s:'Postcard on its way, 5\u201314 days'},
+      {b:'Fri 9:00am \u2014 second post went out',s:'Written Tuesday, posted itself'}
+    ]}}
+},
+
+{
+  key:'d18', node:'Day 18', nodeSub:'First booking',
+  when:'This week',
+  status:'ok',
+  verdict:'46 found you. 3 wrote. 1 booked \u2014 that\u2019s $180.',
+  vsub:'Three enquiries from 46 visitors is a good rate \u2014 better than most therapist sites I see. Your website isn\u2019t the problem. Getting people to it is.',
+  stations:[
+    {k:'found', n:'46', lb:'Found you'},
+    {k:'touch', n:'3', lb:'Got in touch'},
+    {k:'booked',n:'1', lb:'Booked'},
+    {k:'paid',  n:'$180', lb:'Paid you'}
+  ],
+  gaps:[{k:'g1',state:'ok',lb:'1 in 15'},{k:'g2',state:'leak',lb:'2 went quiet'},{k:'g3',state:'ok'}],
+  tips:[
+    {at:'g2', n:1, t:'First thing I\u2019d do', s:'Two people asked and never picked a time. I\u2019ve written to both.'},
+    {at:'found', n:2, t:'Second thing', s:'Your rate is fine. Your reach isn\u2019t \u2014 46 a week is the ceiling.'}
+  ],
+  sel:'g2',
+  drawers:{
+    g2:{hero:true,ey:'Between got in touch and booked',t:'Two people asked, then went quiet',
+      p:'Both got an answer inside two minutes. Both opened the booking page. Neither picked a time. Two isn\u2019t a pattern yet \u2014 but two is two real people, and a short note costs nothing.',
+      people:[
+        {i:'DK',c:'#FB923C',n:'David Kim',m:'Wrote Monday \u00b7 opened your booking page twice',tag:'note written'},
+        {i:'NH',c:'#D14E97',n:'Nadia Haddad',m:'Wrote Thursday \u00b7 asked about evenings, you have none',tag:'note written'}
+      ],
+      pl:{tx:'Nadia asked for an evening and your last slot is 5pm. If you opened one Tuesday evening I\u2019d offer it to her first.',act:'Send both'}},
+    found:{ey:'Where they came from',t:'46 this week, and that\u2019s the ceiling',
+      p:'Your Google listing is verified and doing the work. Your page adds a little. At 46 a week, three enquiries is about right \u2014 so the number to move is 46, not 3.',
+      stats:[{v:'46',l:'Found you',s:'+12 on last week',good:true},{v:'31',l:'From Google',s:'your listing, verified'},{v:'15',l:'From your page',s:'2 posts, 1 shared'}],
+      conf:{t:'Now I can tell you something',p:'46 visitors is enough to trust the rate. 1 enquiry per 15 is above what I usually see for a therapist site \u2014 which is why I\u2019m pointing at traffic, not at your words.',now:46,need:25},
+      pl:{tx:'Your first review request goes out to your booked client after the session. Reviews are the single biggest thing that moves a Google listing.',act:'See how'}},
+    touch:{ey:'Working',t:'3 people wrote, all answered in about 2 minutes',
+      p:'Two at night, one on Saturday. You wrote none of the replies.',
+      stats:[{v:'3',l:'Enquiries',s:'this week'},{v:'2 min',l:'Average reply',s:'day or night',good:true},{v:'1',l:'Booked',s:'from the 3'}]},
+    booked:{ey:'Your first',t:'Maria Reyes, Thursday 2pm',
+      p:'Booked herself at 11:40pm on Tuesday, paid at the same time. You found out in the morning.',
+      stats:[{v:'1',l:'Booked',s:'first one'},{v:'$180',l:'Paid up front',s:'settled Wednesday',good:true},{v:'0',l:'Back and forth',s:'no messages needed'}]},
+    paid:{ey:'Money',t:'$180 in, nothing outstanding',
+      p:'Paid at the moment of booking, which is the whole point of taking payment on the page.',
+      stats:[{v:'$180',l:'Collected',s:'this week'},{v:'$0',l:'Owed you',s:'nothing late',good:true},{v:'1',l:'Paying client',s:'first of many'}]}
+  },
+  milestones:[
+    {t:'First visitor',s:'Day 1 \u00b7 4:12pm \u00b7 from Google.',w:'Day 1',lit:true},
+    {t:'First enquiry',s:'Day 9 \u00b7 David Kim \u00b7 answered in 1 min 40s, while you slept.',w:'Day 9',lit:true},
+    {t:'First booking',s:'Day 16 \u00b7 Maria Reyes \u00b7 Thursday 2pm \u00b7 $180 paid up front.',w:'Day 16',lit:true}
+  ],
+  foot:{lb:'Watch last night', modal:{
+    h:'Last night',
+    s:'Three things happened between 9pm and 7am.',
+    rows:[
+      {b:'11:40pm \u2014 Maria booked and paid',s:'Thursday 2pm \u00b7 $180 \u00b7 confirmation sent'},
+      {b:'11:41pm \u2014 Thursday 2pm closed on your calendar',s:'And your buffer either side'},
+      {b:'6:30am \u2014 Nadia\u2019s note written',s:'Waiting on your OK. It offers her the evening she asked about.'}
+    ]}}
+},
+
+{
+  key:'d60', node:'Day 60', nodeSub:'Running',
+  when:'This week',
+  status:'ok',
+  verdict:'1,284 people found you. 9 wrote. 3 booked \u2014 that\u2019s $2,400 of work.',
+  vsub:'Everything\u2019s running. One thing needs you, and it\u2019s the same thing it was last week.',
+  stations:[
+    {k:'found', n:'1,284', lb:'Found you'},
+    {k:'touch', n:'9', lb:'Got in touch'},
+    {k:'booked',n:'3', lb:'Booked'},
+    {k:'paid',  n:'$420', lb:'Paid you'}
+  ],
+  gaps:[{k:'g1',state:'ok'},{k:'g2',state:'leak',lb:'6 stop here'},{k:'g3',state:'ok'}],
+  tips:[
+    {at:'g2', n:1, t:'First thing I\u2019d do', s:'Three of the six are one message away. The notes are written.'},
+    {at:'found', n:2, t:'Second thing', s:'Your quiet weeks are the weeks you didn\u2019t post.'},
+    {at:'paid', n:3, t:'Third thing', s:'$680 is owed across two invoices.'}
+  ],
+  sel:'g2',
+  drawers:{
+    g2:{hero:true,ey:'Between got in touch and booked',t:'Six people asked, then went quiet',
+      p:'Not your fault \u2014 every one of them got an answer in about two minutes. Three are one message away from booking. Three I\u2019d leave alone.',
+      people:[
+        {i:'JC',c:'#F97316',n:'James Cole',m:'Replied, never picked a time',tag:'note written'},
+        {i:'NH',c:'#D14E97',n:'Nadia Haddad',m:'Opened your booking page twice',tag:'note written'},
+        {i:'TF',c:'#FB923C',n:'Tom Fletcher',m:'Opened your booking page, didn\u2019t finish',tag:'note written'}
+      ],
+      pl:{tx:'Each note is personal and offers your two open slots. Nothing goes out until you say so.',act:'Send all three'}},
+    found:{ey:'Where they came from',t:'1,284 this week, 88 from Google',
+      p:'The weeks you post are the weeks this number climbs. The quiet weeks aren\u2019t random.',
+      stats:[{v:'1,284',l:'Found you',s:'+18% on last week',good:true},{v:'88',l:'From Google',s:'your listing'},{v:'1,240',l:'Post reach',s:'Tuesday\u2019s post'}],
+      pl:{tx:'One post every Tuesday, written by me, and you never think about it again.',act:'Turn it on'}},
+    touch:{ey:'Working well',t:'9 people wrote, every one answered',
+      p:'About two minutes each, day or night. You wrote none of them.',
+      stats:[{v:'9',l:'Enquiries',s:'this week'},{v:'2 min',l:'Average reply',s:'down from about 4 hours',good:true},{v:'3',l:'Booked',s:'$2,400 of work'}]},
+    booked:{ey:'Your calendar',t:'3 booked, $2,400 of work',
+      p:'All confirmed overnight. Tuesday 2\u20134pm never goes empty \u2014 it\u2019s the slot people pick first.',
+      stats:[{v:'3',l:'Booked',s:'this week'},{v:'$2,400',l:'Of work',s:'$600 above your usual',good:true},{v:'0',l:'Missed',s:'all 3 confirmed'}]},
+    paid:{ey:'Money',t:'$420 in, $680 still owed',
+      p:'The Cohens paid $240 this morning after a third reminder. David and Aisha haven\u2019t.',
+      stats:[{v:'$420',l:'Collected',s:'this week'},{v:'$680',l:'Owed you',s:'across 2 invoices',bad:true},{v:'3',l:'Reminders sent',s:'you sent none'}],
+      pl:{tx:'Review requests go out after every session now. People who leave one rebook about twice as often.',act:'See impact'}}
+  },
+  milestones:[
+    {t:'First visitor',s:'Day 1 \u00b7 from Google.',w:'Day 1',lit:true},
+    {t:'First enquiry',s:'Day 9 \u00b7 answered in 1 min 40s.',w:'Day 9',lit:true},
+    {t:'First booking',s:'Day 16 \u00b7 Maria Reyes \u00b7 $180.',w:'Day 16',lit:true}
+  ],
+  foot:{lb:'Watch last night', modal:{
+    h:'Last night',
+    s:'Five things happened. None of them woke you up.',
+    rows:[
+      {b:'9:12pm \u2014 Maria found you on Google',s:'Booked Thursday 2pm \u00b7 $180 \u00b7 paid online'},
+      {b:'11:04pm \u2014 an enquiry answered in 2 minutes',s:'Your words, my typing'},
+      {b:'6:20am \u2014 the Cohens paid $240',s:'Third reminder. You sent none of them.'},
+      {b:'7:00am \u2014 3 sessions confirmed for today',s:'And the reminders went out'},
+      {b:'7:02am \u2014 tomorrow\u2019s post written',s:'Goes out Tuesday 9am unless you stop it'}
+    ]}}
+}
+];
+
+/* ---------- day 90: the advisor takes something over ---------- */
+STATES.push({
+  key:'d90', node:'Day 90', nodeSub:'Takes over',
+  when:'This week',
+  status:'ok',
+  verdict:'1,690 found you. 14 wrote. 6 booked \u2014 and the gap I kept nagging you about is closed.',
+  vsub:'You stopped being the one who chases people. I do it now, and it works about as often as you did.',
+  stations:[
+    {k:'found', n:'1,690', lb:'Found you'},
+    {k:'touch', n:'14', lb:'Got in touch'},
+    {k:'booked',n:'6', lb:'Booked'},
+    {k:'paid',  n:'$1,140', lb:'Paid you'}
+  ],
+  gaps:[{k:'g1',state:'ok'},{k:'g2',state:'ok',lb:'I handle these now'},{k:'g3',state:'ok'}],
+  tips:[{at:'booked', n:1, t:'One thing I\u2019d do', s:'You\u2019ve been full six weeks running. That\u2019s a pricing conversation.'}],
+  sel:'g2',
+  drawers:{
+    g2:{ey:'Between got in touch and booked',t:'This used to be your worst leak',
+      p:'Eight of the fourteen didn\u2019t book straight away. I wrote to all eight without asking. Three came back \u2014 roughly what you managed by hand, except you didn\u2019t do it.',
+      stats:[{v:'8',l:'Went quiet',s:'all written to'},{v:'3',l:'Came back',s:'38% \u2014 in line with your own rate',good:true},{v:'0',l:'You wrote',s:'none of them'}],
+      pl:{tx:'The five who didn\u2019t reply have been left alone. I don\u2019t chase people twice.',act:''}},
+    found:{ey:'Where they came from',t:'1,690 this week, no longer one channel',
+      p:'Google is still the biggest, but your page and your reviews are doing real work now.',
+      stats:[{v:'1,690',l:'Found you',s:'+32% on last month',good:true},{v:'11',l:'Reviews',s:'4.9 average'},{v:'3',l:'Channels',s:'no single point of failure',good:true}]},
+    touch:{ey:'Working well',t:'14 wrote, every one answered',
+      p:'Still about two minutes. Still none of them by you.',
+      stats:[{v:'14',l:'Enquiries',s:'this week'},{v:'2 min',l:'Average reply',s:'day or night',good:true},{v:'6',l:'Booked',s:'43%'}]},
+    booked:{ey:'Your calendar',t:'Full six weeks running',
+      p:'92% of your available slots, every week this month. You are not short of demand \u2014 which is the only honest reason to talk about price.',
+      stats:[{v:'6',l:'Booked',s:'this week'},{v:'92%',l:'Of your slots',s:'6 weeks running',good:true},{v:'0',l:'Open evenings',s:'the thing people ask for',bad:true}]},
+    paid:{ey:'Money',t:'$1,140 in, nothing outstanding',
+      p:'Two invoices went late this month. Both were chased, both were paid, and you found out afterwards.',
+      stats:[{v:'$1,140',l:'Collected',s:'this week'},{v:'$0',l:'Owed you',s:'first time',good:true},{v:'9 days',l:'Average to pay',s:'was 23',good:true}]}
+  },
+  milestones:[
+    {t:'First visitor',s:'Day 1 \u00b7 from Google.',w:'Day 1',lit:true},
+    {t:'First enquiry',s:'Day 9 \u00b7 answered in 1 min 40s.',w:'Day 9',lit:true},
+    {t:'First booking',s:'Day 16 \u00b7 Maria Reyes \u00b7 $180.',w:'Day 16',lit:true}
+  ],
+  foot:{lb:'Watch last night', modal:{
+    h:'Last night',
+    s:'Six things happened. You approved none of them, because you already had.',
+    rows:[
+      {b:'8:40pm \u2014 two new enquiries answered',s:'Both offered your open Thursday slots'},
+      {b:'11:15pm \u2014 one booked and paid',s:'$180 \u00b7 confirmation sent'},
+      {b:'6:00am \u2014 an invoice hit 14 days',s:'Chased automatically. Standing rule since Day 90.'},
+      {b:'6:02am \u2014 two follow-ups written and sent',s:'People who opened the booking page and stopped'},
+      {b:'7:00am \u2014 today\u2019s 4 sessions confirmed',s:'And the reminders went out'},
+      {b:'7:01am \u2014 a review request went out',s:'To yesterday\u2019s client'}
+    ]}}
+});
+
+/* ---------- the advisor's seven dials ---------- */
+var VEC=[{k:'wins',n:'Wins'},{k:'conv',n:'Conversion'},{k:'ops',n:'Booking'},{k:'cash',n:'Cash flow'},
+         {k:'leads',n:'Leads'},{k:'ret',n:'Retention'},{k:'price',n:'Pricing'}];
+
+var VECS={
+ d1:{v:{wins:'dark',conv:'dark',ops:'dark',cash:'dark',leads:'dark',ret:'dark',price:'dark'},
+     note:'Reading 0 of 7. I start watching the moment you publish \u2014 there is genuinely nothing to read until someone visits.'},
+ d4:{v:{wins:'lit',conv:'learn',ops:'dark',cash:'dark',leads:'learn',ret:'dark',price:'dark'},
+     note:'Reading 1 of 7. Wins need no history \u2014 they\u2019re things that happened. Conversion needs about 25 visitors before it means anything; you\u2019re at 11.'},
+ d18:{v:{wins:'lit',conv:'lit',ops:'lit',cash:'learn',leads:'learn',ret:'dark',price:'dark'},
+     note:'Reading 3 of 7. Cash flow switches on with your first late invoice. Retention needs clients who\u2019ve been with you long enough to lapse \u2014 that\u2019s two months away.'},
+ d60:{v:{wins:'lit',conv:'lit',ops:'lit',cash:'lit',leads:'lit',ret:'learn',price:'learn'},
+     note:'Reading 5 of 7. Pricing needs six weeks of your calendar before I\u2019d say anything about what you charge. Two weeks to go.'},
+ d90:{v:{wins:'lit',conv:'lit',ops:'lit',cash:'lit',leads:'lit',ret:'lit',price:'lit'},
+     note:'Reading 7 of 7. This is the whole business now \u2014 what brings people in, what stops them, what you\u2019re owed, who comes back, and what you charge for it.'}
+};
+
+/* ---------- the advisor card, at five maturities ---------- */
+var ADV={
+ d1:{vt:'Getting you switched on', stage:'setup',
+   ey:'Your advisor', eys:'Nothing to advise on yet \u2014 so here\u2019s the only thing that matters',
+   h:'Everything is built. None of it is on.',
+   p:'I can\u2019t tell you anything about your business until your business is reachable. One button changes that, and I\u2019ve done the rest.',
+   proj:{a:{lb:'Right now',v:'0 ways in',s:'nobody can find you'},b:{lb:'Two minutes from now',v:'Live',s:'Google usually indexes within the hour'}},
+   act:'Publish it', lite:'Show me what you built'},
+
+ d4:{vt:'Wins', stage:'win',
+   ey:'Your advisor noticed', eys:'A good thing, which is still worth telling you',
+   h:'Someone found you 38 minutes after you published.',
+   p:'Tuesday 4:12pm. She searched for a therapist near you, landed on your site, and read your About page for forty seconds. That\u2019s the first proof this works.',
+   act:'See where she came from', lite:'Nothing to do here',
+   seen:'Wins are the only thing I can honestly report this early \u2014 they\u2019re facts, not judgements.'},
+
+ d18:{vt:'Conversion', stage:'run',
+   ey:'Your advisor noticed', eys:'First real recommendation',
+   h:'Two people asked, then went quiet.',
+   p:'Both got an answer in under two minutes. Both opened your booking page. Neither picked a time. Two isn\u2019t a pattern \u2014 but it\u2019s two real people, and a note costs nothing.',
+   proj:{a:{lb:'If you do nothing',v:'1 booked of 3',s:'$180 this month'},b:{lb:'If both reply',v:'3 booked of 3',s:'+$360, and Nadia gets her evening'}},
+   act:'Write to both', lite:'Not now',
+   seen:'First time I\u2019ve seen this. I\u2019ll offer to handle it standing once it has happened a few times.'},
+
+ d60:{vt:'Cash flow', stage:'run',
+   ey:'Your advisor noticed', eys:'Second time this has come up',
+   h:'$680 has been sitting unpaid for over three weeks.',
+   p:'David Kim at $500, thirty-four days. Aisha Patel at $180, twenty-one. The Cohens owed the same last month and paid on the third reminder \u2014 which I sent, and you never saw.',
+   proj:{a:{lb:'If you do nothing',v:'$680 outstanding',s:'both drifting past a month'},b:{lb:'If I chase both',v:'~$680 in 3\u20139 days',s:'that\u2019s how long it took last time'}},
+   act:'Chase both', lite:'Leave it',
+   seen:'Twice now. One more and I\u2019ll ask to take it off you for good.',
+   handled:[
+     {b:'Answered 9 enquiries',s:'about two minutes each, day and night'},
+     {b:'Confirmed today\u2019s 3 sessions',s:'and sent the reminders'},
+     {b:'Wrote and posted twice',s:'Tuesday\u2019s reached 1,240 people'}
+   ]},
+
+ d90:{vt:'Cash flow', stage:'automate',
+   ey:'Your advisor', eys:'Third time \u2014 so I\u2019d like to stop asking',
+   h:'That\u2019s three months running I\u2019ve chased a late invoice for you.',
+   p:'Every time the same shape: it passes two weeks, I write, they pay within about a week. You\u2019ve approved it three times and changed nothing about it three times.',
+   auto:{h:'Want me to just handle this from now on?',
+         p:'I\u2019ll watch every invoice and chase the ones that pass your limit. Up to three reminders, a week apart, in your voice. I stop the moment they pay, and I tell you when it works.',
+         lb:'Chase anything unpaid after', val:14, unit:'days',
+         yes:'Yes, handle it', no:'Keep asking me'},
+   done:{h:'Done \u2014 I\u2019ll chase them from now on',
+         p:'Anything unpaid past 14 days, up to three reminders. It shows up in what I\u2019ve handled, not in your inbox. Turn it off in Operation whenever you like.'},
+   handled:[
+     {b:'Chased 2 late invoices',s:'both paid \u2014 average 9 days, was 23'},
+     {b:'Followed up 8 people who went quiet',s:'3 came back and booked'},
+     {b:'Answered 14 enquiries',s:'you wrote none of them'},
+     {b:'Asked 4 clients for a review',s:'2 left one \u2014 you\u2019re at 4.9 from 11'}
+   ]}
+};
+var autoAccepted=false, autoThr=14;
+var si = 0, sel = null, tipIdx = 0;
+
+function S(){ return STATES[si]; }
+
+function setDay(i){
+  si = i; sel = S().sel; tipIdx = 0; render();
+}
+function selNode(k){ sel = k; var t = S().tips; for(var j=0;j<t.length;j++){ if(t[j].at===k) tipIdx=j; } render(); }
+function nextTip(){ var t=S().tips; if(!t.length) return; tipIdx=(tipIdx+1)%t.length; sel=t[tipIdx].at; render(); }
+
+/* ---------- render ---------- */
+function renderTimeline(){
+  var h='';
+  for(var i=0;i<STATES.length;i++){
+    var s=STATES[i];
+    var cls = i===si ? 'on' : (i<si ? 'done' : '');
+    h += '<button class="tl-n '+cls+'" onclick="setDay('+i+')" aria-pressed="'+(i===si)+'">'
+       + '<span class="tl-dot"><i></i></span>'
+       + '<span class="tl-tx"><b>'+s.node+'</b><small>'+s.nodeSub+'</small></span></button>';
+  }
+  document.getElementById('tlRow').innerHTML = h;
+}
+
+function mkFor(k){
+  var t = S().tips;
+  for(var i=0;i<t.length;i++){ if(t[i].at===k) return '<span class="lv-mk">'+t[i].n+'</span>'; }
+  return '';
+}
+
+function mapHTML(){
+  var s=S(), h='<div class="lv-flow">';
+  for(var i=0;i<s.stations.length;i++){
+    var st=s.stations[i];
+    h += '<button class="lv-st'+(st.off?' off':'')+(sel===st.k?' on':'')+'" onclick="selNode(\''+st.k+'\')">'
+       + '<span class="lv-ic">'+IC[st.k]+'</span>'
+       + '<span class="lv-tx"><span class="lv-n">'+st.n+'</span><span class="lv-lb">'+st.lb+'</span></span>'
+       + mkFor(st.k)+'</button>';
+    if(i<s.gaps.length){
+      var g=s.gaps[i];
+      var dots = g.state==='ok' ? '<i></i><i style="animation-delay:.9s"></i><i style="animation-delay:1.8s"></i>'
+               : g.state==='leak' ? '<i></i>' : '';
+      h += '<button class="lv-gap '+g.state+(sel===g.k?' on':'')+'" onclick="selNode(\''+g.k+'\')">'
+         + '<span class="lv-track">'+dots+'</span>'
+         + (g.lb?'<span class="lv-gap-lb">'+g.lb+'</span>':'')
+         + mkFor(g.k)+'</button>';
+    }
+  }
+  h += '</div>';
+
+  if(s.ghost){
+    h += '<div class="lv-ghost">'+IC.spark+'<div><b>'+s.ghost.t+'</b>'
+       + '<span class="lv-gh-tag">'+s.ghost.s+'</span>'
+       + '<span class="lv-gh-tag">'+s.ghost.tag+'</span></div></div>';
+  }
+
+  h += '<div class="lv-legend">'
+     + '<span class="lg-k"><i class="lg-s"></i>flowing</span>'
+     + '<span class="lg-k"><i class="lg-s leak"></i>leaking</span>'
+     + '<span class="lg-k"><i class="lg-s watch"></i>not enough to judge</span>'
+     + '<span class="lg-k"><i class="lg-s mk"></i>something I\u2019d do</span></div>';
+  return '<div class="lv-map">'+h+'</div>';
+}
+
+function drawerHTML(){
+  var s=S(), d=s.drawers[sel];
+  if(!d) d={ey:'Not open yet',t:'Nothing here yet',p:'This part of the map switches on when there\u2019s something real to show.'};
+  var h='<div class="lv-dr'+(d.hero?' hero':'')+'">';
+  h += '<div class="lv-dr-ey">'+d.ey+'</div><div class="lv-dr-t">'+d.t+'</div><div class="lv-dr-p">'+d.p+'</div>';
+
+  if(d.stats){
+    h+='<div class="lv-stats">';
+    for(var i=0;i<d.stats.length;i++){ var x=d.stats[i];
+      h+='<div class="lv-stat"><div class="lvs-v">'+x.v+'</div><div class="lvs-lb">'+x.l+'</div>'
+        +'<div class="lvs-sub'+(x.good?' good':'')+(x.bad?' bad':'')+'">'+x.s+'</div></div>';
+    }
+    h+='</div>';
+  }
+
+  if(d.conf){
+    var pct = Math.min(100, Math.round(d.conf.now/d.conf.need*100));
+    h+='<div class="lv-conf"><div class="lv-conf-t">'+IC.eye+d.conf.t+'</div>'
+      +'<div class="lv-conf-p">'+d.conf.p+'</div>'
+      +'<div class="lv-conf-bar"><i style="width:'+pct+'%"></i></div>'
+      +'<div class="lv-conf-sc"><span>'+d.conf.now+' visitors</span><span>'+d.conf.need+' before I\u2019d call it</span></div></div>';
+  }
+
+  if(d.todos){
+    for(var j=0;j<d.todos.length;j++){ var t=d.todos[j];
+      h+='<div class="lv-todo"><span class="lv-td-ic">'+IC[t.ic]+'</span>'
+        +'<span class="lv-td-m"><b>'+t.t+'</b><small>'+t.s+'</small></span>'
+        +'<button class="lv-td-btn'+(t.lite?' lite':'')+'">'+t.btn+'</button></div>';
+    }
+  }
+
+  if(d.people){
+    for(var p=0;p<d.people.length;p++){ var q=d.people[p];
+      h+='<div class="lv-p">'+av(q.i,q.c)+'<span class="lv-p-m"><b>'+q.n+'</b><small>'+q.m+'</small></span>'
+        +'<span class="lv-p-tag">'+q.tag+'</span></div>';
+    }
+  }
+
+  if(d.pl){
+    h+='<div class="lv-pl"><span class="lv-orb"></span><span class="lv-pl-tx">'+d.pl.tx+'</span>'
+      +(d.pl.act?'<button class="lv-pl-btn">'+d.pl.act+'</button>':'')+'</div>';
+  }
+  return h+'</div>';
+}
+
+function firstLightHTML(){
+  var s=S(), h='<div class="fl"><div class="fl-h">First light</div>'
+    +'<div class="fl-s">The three moments I\u2019ll interrupt you for. Everything else I handle.</div>';
+  for(var i=0;i<s.milestones.length;i++){ var m=s.milestones[i];
+    h+='<div class="fl-row'+(m.lit?' lit':'')+'"><span class="fl-tick">'+IC.tick+'</span>'
+      +'<span class="fl-m"><b>'+m.t+'</b><small>'+m.s+'</small></span>'
+      +'<span class="fl-when">'+m.w+'</span></div>';
+  }
+  return h+'</div>';
+}
+
+function vecsHTML(){
+  var vs=VECS[S().key], h='<div class="vecs-wrap"><div class="vecs-h">What I\u2019m watching</div><div class="vecs">';
+  for(var i=0;i<VEC.length;i++){
+    var st=vs.v[VEC[i].k];
+    h+='<span class="vec '+st+'"><i class="vec-dot"></i>'+VEC[i].n+'</span>';
+  }
+  return h+'</div><div class="vec-note">'+vs.note+'</div></div>';
+}
+
+function handledHTML(a){
+  if(!a.handled) return '';
+  var h='<div class="hdl"><div class="hdl-h">What I\u2019ve handled for you today</div>';
+  for(var i=0;i<a.handled.length;i++){
+    h+='<div class="hdl-row"><span class="hdl-tick">'+IC.tick+'</span><span><b>'+a.handled[i].b+'</b><small>'+a.handled[i].s+'</small></span></div>';
+  }
+  return h+'</div>';
+}
+
+function advisorHTML(){
+  var a=ADV[S().key];
+  if(!a) return '';
+  var h='<div class="adv"><div class="adv-in">';
+  h+='<div class="adv-top"><span class="adv-orb"></span>'
+    +'<span class="adv-ey">'+a.ey+'<small>'+a.eys+'</small></span>'
+    +'<span class="adv-vt">'+a.vt+'</span></div>';
+  h+='<div class="adv-h">'+a.h+'</div><div class="adv-p">'+a.p+'</div>';
+
+  if(a.proj){
+    h+='<div class="adv-proj">'
+      +'<div class="pj"><div class="pj-lb">'+a.proj.a.lb+'</div><div class="pj-v">'+a.proj.a.v+'</div><div class="pj-s">'+a.proj.a.s+'</div></div>'
+      +'<div class="pj"><div class="pj-lb">'+a.proj.b.lb+'</div><div class="pj-v">'+a.proj.b.v+'</div><div class="pj-s">'+a.proj.b.s+'</div></div></div>';
+  }
+
+  if(a.act){
+    h+='<div class="adv-acts"><button class="adv-btn">'+a.act+'</button>'
+      +(a.lite?'<button class="adv-lite">'+a.lite+'</button>':'')
+      +(a.seen?'<span class="adv-seen">'+IC.clock+a.seen+'</span>':'')+'</div>';
+  }
+
+  if(a.auto){
+    if(autoAccepted){
+      h+='<div class="auto-done"><span class="auto-done-ic">'+IC.tick+'</span>'
+        +'<div><b>'+a.done.h+'</b><p>'+a.done.p.replace('14 days',autoThr+' days')+'</p></div></div>';
+    } else {
+      h+='<div class="auto-offer"><div class="auto-ey">Standing automation</div>'
+        +'<div class="auto-h">'+a.auto.h+'</div><div class="auto-p">'+a.auto.p+'</div>'
+        +'<div class="auto-thr"><span class="thr-lb">'+a.auto.lb+'</span>'
+        +'<span class="thr-ctl"><button class="thr-b" onclick="thr(-1)" aria-label="Fewer days">\u2212</button>'
+        +'<span class="thr-v">'+autoThr+' '+a.auto.unit+'</span>'
+        +'<button class="thr-b" onclick="thr(1)" aria-label="More days">+</button></span></div>'
+        +'<div class="auto-acts"><button class="adv-btn" onclick="acceptAuto()">'+a.auto.yes+'</button>'
+        +'<button class="adv-lite">'+a.auto.no+'</button></div></div>';
+    }
+  }
+
+  h+='</div>'+vecsHTML()+handledHTML(a)+'</div>';
+  return h;
+}
+function thr(d){ autoThr=Math.max(7,Math.min(45,autoThr+d*7)); render(); }
+function acceptAuto(){ autoAccepted=true; render(); }
+
+function render(){
+  renderTimeline();
+  var s=S();
+  var tip = s.tips[tipIdx];
+  var h=advisorHTML();
+  h += '<div class="lv-verdict'+(s.status==='warn'?' warn':'')+'"><span class="lv-live"></span><div>'
+     + '<span class="lv-v-when">'+s.when+'</span>'
+     + '<div class="lv-v-t">'+s.verdict+'</div><div class="lv-v-p">'+s.vsub+'</div></div></div>';
+
+  if(tip){
+    h += '<div class="lv-tips"><span class="lv-orb"></span>'
+       + '<span class="lv-tips-t">'+tip.t+'<small>'+tip.s+'</small></span>'
+       + '<span class="lv-tips-c">'+(tipIdx+1)+' of '+s.tips.length+'</span>'
+       + (s.tips.length>1?'<button class="lv-next" onclick="nextTip()">Next</button>':'')
+       + '</div>';
+  }
+
+  h += mapHTML() + drawerHTML() + firstLightHTML();
+  h += '<div class="lv-foot"><button class="lv-replay" onclick="openModal()">'+IC.play+s.foot.lb+'</button></div>';
+  document.getElementById('stage').innerHTML = h;
+}
+
+/* ---------- modal ---------- */
+function openModal(){
+  var m=S().foot.modal;
+  document.getElementById('mbH').textContent=m.h;
+  document.getElementById('mbS').textContent=m.s;
+  var h='';
+  for(var i=0;i<m.rows.length;i++){
+    h+='<div class="mb-row"><span class="mb-ic">'+IC.tick+'</span><span><b>'+m.rows[i].b+'</b><small>'+m.rows[i].s+'</small></span></div>';
+  }
+  document.getElementById('mbBody').innerHTML=h;
+  document.getElementById('scrim').classList.add('open');
+}
+function closeModal(){ document.getElementById('scrim').classList.remove('open'); }
+document.addEventListener('keydown',function(e){
+  if(e.key==='Escape') closeModal();
+  if(e.key==='ArrowRight' && si<STATES.length-1) setDay(si+1);
+  if(e.key==='ArrowLeft' && si>0) setDay(si-1);
+});
+
+setDay(0);
+</script>
+</body>
+</html>

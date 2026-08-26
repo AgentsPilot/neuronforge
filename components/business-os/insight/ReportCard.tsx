@@ -23,7 +23,7 @@ export function ReportCard({
   totalTimeSaved,
   onSeeAll,
 }: ReportCardProps) {
-  const { t, isRTL, language } = useLanguage();
+  const { t, isRTL, language, formatCurrency } = useLanguage();
 
   // Get today's date formatted
   const today = new Date();
@@ -79,7 +79,7 @@ export function ReportCard({
     if (processId === 'chase_overdue_invoices' && valueImpact && valueImpact > 0) {
       return t('insight.report.invoices_paid')
         .replace('{count}', String(itemsSucceeded))
-        .replace('{amount}', `$${valueImpact.toLocaleString()}`);
+        .replace('{amount}', formatCurrency(valueImpact, { showFree: false }));
     }
     if (processId === 'send_followup_nudge' && itemsSucceeded > 0) {
       return t('insight.report.rebooked').replace('{count}', String(itemsSucceeded));
@@ -95,7 +95,7 @@ export function ReportCard({
     if (valueImpact && valueImpact > 0) {
       return t('myday.report.value_outcome')
         .replace('{succeeded}', String(itemsSucceeded))
-        .replace('{value}', `$${valueImpact.toLocaleString()}`);
+        .replace('{value}', formatCurrency(valueImpact, { showFree: false }));
     }
     return t('myday.report.partial_outcome')
       .replace('{succeeded}', String(itemsSucceeded))
@@ -104,11 +104,10 @@ export function ReportCard({
 
   return (
     <div
-      className="overflow-hidden"
+      className="overflow-hidden bg-[var(--v2-surface)] border border-[var(--v2-border)]"
       style={{
         borderRadius: '16px',
-        borderLeft: '4px solid #22C58B',
-        background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(255,255,255,0.5) 100%)',
+        borderLeft: '4px solid var(--v2-success)',
         direction: isRTL ? 'rtl' : 'ltr',
       }}
     >
@@ -116,11 +115,7 @@ export function ReportCard({
       <div className="flex items-center gap-3 px-[22px] pt-[18px] pb-[6px]">
         {/* Orb */}
         <div
-          className="w-[30px] h-[30px] rounded-[9px] flex items-center justify-center flex-none"
-          style={{
-            background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-            boxShadow: '0 6px 14px -5px rgba(249,115,22,.6)',
-          }}
+          className="w-[30px] h-[30px] rounded-[9px] flex items-center justify-center flex-none bg-[var(--v2-accent)]"
         >
           <Sparkles className="w-4 h-4 text-white" strokeWidth={2.2} />
         </div>

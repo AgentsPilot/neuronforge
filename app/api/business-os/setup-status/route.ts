@@ -40,11 +40,12 @@ export async function GET(request: NextRequest) {
 
     requestLogger.info({ userId: user.id }, 'Fetching setup status');
 
-    // 2. Fetch all setup-related data in parallel (optimized - 4 queries instead of 6)
+    // 2. Fetch all setup-related data in parallel (optimized - 5 queries)
     const [
       { data: businessProfile },
       { count: servicesCount },
       { data: pluginConnections },
+      { data: stripeConnectAccount },
       { data: websitePage },
     ] = await Promise.all([
       // Business profile - includes availability and dismissed steps
@@ -60,13 +61,19 @@ export async function GET(request: NextRequest) {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .eq('status', 'active'),
-      // All relevant plugin connections in one query
+      // Calendar plugin connections
       supabaseServer
         .from('plugin_connections')
         .select('plugin_key')
         .eq('user_id', user.id)
-        .in('plugin_key', ['stripe', 'google_calendar', 'outlook_calendar'])
+        .in('plugin_key', ['google_calendar', 'outlook_calendar'])
         .eq('status', 'active'),
+      // Stripe Connect account - stored in separate table
+      supabaseServer
+        .from('stripe_connect_accounts')
+        .select('id, charges_enabled, onboarding_completed')
+        .eq('user_id', user.id)
+        .maybeSingle(),
       // Website page - check if user has a published homepage
       supabaseServer
         .from('website_pages')
@@ -76,8 +83,8 @@ export async function GET(request: NextRequest) {
         .maybeSingle(),
     ]);
 
-    // Debug: Log the full businessProfile to see all fields
-    requestLogger.info({ businessProfile }, 'Full business profile from DB');
+    // Debug: Log the full businessProfile and stripe account to see all fields
+    requestLogger.info({ businessProfile, stripeConnectAccount }, 'Full business profile and stripe account from DB');
 
     // 3. Determine completion status for each step
     const connectedPlugins = new Set(pluginConnections?.map(p => p.plugin_key) || []);
@@ -88,7 +95,8 @@ export async function GET(request: NextRequest) {
     const hasAvailability = !!(availability &&
       Object.values(availability).some(slots => Array.isArray(slots) && slots.length > 0));
 
-    const hasStripe = connectedPlugins.has('stripe');
+    // Stripe is connected if the user has a stripe_connect_account with charges enabled or onboarding completed
+    const hasStripe = !!(stripeConnectAccount && (stripeConnectAccount.charges_enabled || stripeConnectAccount.onboarding_completed));
     const hasCalendar = connectedPlugins.has('google_calendar') || connectedPlugins.has('outlook_calendar');
     const hasWebsite = !!(websitePage?.published && websitePage?.subdomain);
 

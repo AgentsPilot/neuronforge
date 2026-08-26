@@ -2269,6 +2269,217 @@ export const TutorTemplates: WebsiteTemplate[] = [
 ];
 
 // =============================================
+// BEAUTY & WELLNESS TEMPLATES (3)
+// Glamorous, portfolio-focused, service-based
+// =============================================
+
+export const BeautyTemplates: WebsiteTemplate[] = [
+  {
+    id: 'beauty_glamour_studio',
+    name: 'Glamour Studio',
+    description: 'Elegant, luxurious design with rose gold and black',
+    vertical: 'beauty',
+    template_type: 'homepage',
+    keywords: ['makeup', 'beauty', 'glamour', 'bridal', 'cosmetics', 'salon', 'styling'],
+    theme: {
+      primary_color: '#B8860B',
+      secondary_color: '#1A1A1A',
+      accent_color: '#FFF8F0',
+      font_heading: 'Playfair Display',
+      font_body: 'Lato',
+      font_family: 'Playfair Display, serif',
+      brand_voice: 'luxurious'
+    },
+    blocks: [
+      HeaderBlock.standard({
+        logo_text: 'Glamour Studio',
+        menu_items: [
+          { label: 'Services', anchor: '#services' },
+          { label: 'Portfolio', anchor: '#gallery' },
+          { label: 'About', anchor: '#about' },
+          { label: 'Book Now', anchor: '#booking' }
+        ],
+        cta_button: { text: 'Book Now', link: '#booking' },
+        style: 'blur'
+      }),
+      HeroBlock.warm({
+        name: 'Glamour Studio',
+        tagline: 'Luxury Beauty Services for Your Special Moments',
+        cta: 'Book Your Appointment'
+      }),
+      GalleryBlock.masonry({
+        title: 'My Work',
+        images: []
+      }),
+      ServicesBlock.grid([
+        { name: 'Bridal Makeup', description: 'Look stunning on your special day', icon: 'Heart' },
+        { name: 'Special Event', description: 'Red carpet ready looks', icon: 'Sparkles' },
+        { name: 'Photoshoot Ready', description: 'Camera-perfect makeup for shoots', icon: 'Camera' },
+        { name: 'Makeup Lesson', description: 'Learn professional techniques', icon: 'BookOpen' }
+      ]),
+      ProcessBlock.numbered([
+        { title: 'Book', description: 'Choose your service and preferred time' },
+        { title: 'Consult', description: 'Quick chat about your desired look' },
+        { title: 'Transform', description: 'Relax while I create your look' },
+        { title: 'Shine', description: 'Leave feeling confident and beautiful' }
+      ]),
+      TestimonialsBlock.carousel([
+        { quote: 'Made me feel like a princess on my wedding day. Flawless makeup that lasted all night!', author: 'Sarah M.', role: 'Bride' },
+        { quote: 'Amazing artist! She knew exactly what would work for my skin tone.', author: 'Jennifer L.', role: 'Event Client' }
+      ]),
+      AboutBlock.withImage({
+        title: 'About Me',
+        content: 'With over 10 years of experience in professional makeup artistry, I specialize in creating looks that enhance your natural beauty. From bridal to editorial, every face is a canvas for perfection.'
+      }),
+      BookingWidgetBlock.embedded({
+        title: 'Book Your Session',
+        services: ['Bridal Makeup', 'Special Event', 'Photoshoot Ready']
+      }),
+      ContactFormBlock.standard({
+        title: 'Get in Touch',
+        email: 'hello@glamourstudio.com'
+      })
+    ]
+  },
+
+  {
+    id: 'beauty_modern_salon',
+    name: 'Modern Salon',
+    description: 'Clean, contemporary design with pink and white',
+    vertical: 'beauty',
+    template_type: 'homepage',
+    keywords: ['salon', 'hair', 'nails', 'spa', 'beauty', 'hairdresser', 'stylist'],
+    theme: {
+      primary_color: '#EC4899',
+      secondary_color: '#FFFFFF',
+      accent_color: '#FCE7F3',
+      font_heading: 'Montserrat',
+      font_body: 'Open Sans',
+      font_family: 'Montserrat, sans-serif',
+      brand_voice: 'modern'
+    },
+    blocks: [
+      HeaderBlock.standard({
+        logo_text: 'Beauty Bar',
+        menu_items: [
+          { label: 'Services', anchor: '#services' },
+          { label: 'Prices', anchor: '#pricing' },
+          { label: 'About', anchor: '#about' },
+          { label: 'Book', anchor: '#booking' }
+        ],
+        cta_button: { text: 'Book Appointment', link: '#booking' },
+        style: 'blur'
+      }),
+      HeroBlock.warm({
+        name: 'Beauty Bar',
+        tagline: 'Your Destination for Self-Care & Style',
+        cta: 'Book Your Visit'
+      }),
+      ServicesBlock.grid([
+        { name: 'Hair Styling', description: 'Cuts, color, and styling', icon: 'Scissors' },
+        { name: 'Manicure & Pedicure', description: 'Classic to gel treatments', icon: 'Hand' },
+        { name: 'Facials', description: 'Refresh and rejuvenate your skin', icon: 'Sparkles' },
+        { name: 'Waxing', description: 'Full body waxing services', icon: 'Flower2' }
+      ]),
+      PricingBlock.simple([
+        { name: 'Express Services', price: 'From $25', features: ['Blowout', 'Express facial', 'Basic manicure'] },
+        { name: 'Signature Services', price: 'From $65', features: ['Cut & style', 'Gel manicure', 'Full facial'], popular: true },
+        { name: 'Luxe Packages', price: 'From $150', features: ['Full glam package', 'Spa day', 'Bridal prep'] }
+      ]),
+      TestimonialsBlock.carousel([
+        { quote: 'Best salon experience ever! The staff is so friendly and skilled.', author: 'Maria G.', role: 'Regular Client' },
+        { quote: 'Finally found my go-to place for nails. Love the attention to detail!', author: 'Ashley T.', role: 'Loyal Customer' }
+      ]),
+      AboutBlock.withImage({
+        title: 'Welcome to Beauty Bar',
+        content: 'A modern beauty destination where self-care meets style. Our talented team creates a relaxing atmosphere while delivering top-notch services. Walk out feeling refreshed and beautiful.'
+      }),
+      ProcessBlock.numbered([
+        { title: 'Choose Service', description: 'Browse our menu and pick what you need' },
+        { title: 'Book Online', description: 'Select your stylist and time slot' },
+        { title: 'Relax & Enjoy', description: 'Sit back and let us pamper you' }
+      ]),
+      BookingWidgetBlock.embedded({
+        title: 'Book Your Appointment',
+        services: ['Hair Styling', 'Manicure', 'Facial']
+      }),
+      ContactFormBlock.standard({
+        title: 'Questions? Contact Us',
+        email: 'hello@beautybar.com'
+      })
+    ]
+  },
+
+  {
+    id: 'beauty_natural_aesthetics',
+    name: 'Natural Aesthetics',
+    description: 'Organic, earthy design with sage and cream',
+    vertical: 'beauty',
+    template_type: 'homepage',
+    keywords: ['natural', 'organic', 'skincare', 'esthetician', 'facial', 'holistic', 'spa'],
+    theme: {
+      primary_color: '#6B8E6B',
+      secondary_color: '#F5F5DC',
+      accent_color: '#F0FFF0',
+      font_heading: 'Cormorant Garamond',
+      font_body: 'Nunito Sans',
+      font_family: 'Cormorant Garamond, serif',
+      brand_voice: 'warm'
+    },
+    blocks: [
+      HeaderBlock.standard({
+        logo_text: 'Natural Glow',
+        menu_items: [
+          { label: 'Treatments', anchor: '#services' },
+          { label: 'Philosophy', anchor: '#about' },
+          { label: 'Reviews', anchor: '#testimonials' },
+          { label: 'Book Now', anchor: '#booking' }
+        ],
+        cta_button: { text: 'Book Treatment', link: '#booking' },
+        style: 'blur'
+      }),
+      HeroBlock.warm({
+        name: 'Natural Glow',
+        tagline: 'Holistic Skincare for Radiant, Healthy Skin',
+        cta: 'Book Your Consultation'
+      }),
+      AboutBlock.withImage({
+        title: 'Clean Beauty, Real Results',
+        content: 'I believe in the power of nature to heal and transform skin. As a licensed esthetician specializing in organic and clean beauty, I create personalized treatments using only the finest natural ingredients.'
+      }),
+      ServicesBlock.grid([
+        { name: 'Organic Facial', description: 'Customized to your skin type', icon: 'Leaf' },
+        { name: 'LED Light Therapy', description: 'Rejuvenate at the cellular level', icon: 'Sun' },
+        { name: 'Chemical Peel', description: 'Reveal fresh, glowing skin', icon: 'Sparkles' },
+        { name: 'Microneedling', description: 'Stimulate natural collagen', icon: 'Flower2' }
+      ]),
+      ProcessBlock.numbered([
+        { title: 'Consultation', description: 'Free skin analysis and goal setting' },
+        { title: 'Custom Plan', description: 'Personalized treatment recommendations' },
+        { title: 'Treatment', description: 'Relaxing, results-driven session' },
+        { title: 'Aftercare', description: 'Home care guidance for lasting results' }
+      ]),
+      TestimonialsBlock.carousel([
+        { quote: 'My skin has never looked better! Love the natural approach and products.', author: 'Emily R.', role: 'Skincare Client' },
+        { quote: 'Finally found someone who understands sensitive skin. Amazing results!', author: 'Lisa K.', role: 'Monthly Member' }
+      ]),
+      PricingBlock.simple([
+        { name: 'Single Treatment', price: 'From $85', features: ['Customized facial', 'Product recommendations', 'Relaxing experience'] },
+        { name: 'Treatment Package', price: '4 for $300', features: ['Save $40', 'Consistent results', 'Priority booking'], popular: true }
+      ]),
+      BookingWidgetBlock.embedded({
+        title: 'Book Your Treatment',
+        services: ['Consultation', 'Organic Facial', 'LED Therapy']
+      }),
+      ContactFormBlock.standard({
+        title: 'Questions About Your Skin?',
+        email: 'hello@naturalglow.com'
+      })
+    ]
+  }
+];
+
+// =============================================
 // EXPORT ALL TEMPLATES
 // =============================================
 
@@ -2280,7 +2491,8 @@ export const WEBSITE_TEMPLATES: WebsiteTemplate[] = [
   ...PhotographerTemplates,
   ...RealEstateTemplates,
   ...PersonalTrainerTemplates,
-  ...TutorTemplates
+  ...TutorTemplates,
+  ...BeautyTemplates
 ];
 
 // Alias for backwards compatibility

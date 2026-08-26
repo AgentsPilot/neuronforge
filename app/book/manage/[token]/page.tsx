@@ -34,7 +34,57 @@ interface BusinessData {
   logoUrl: string | null;
   primaryColor: string;
   websiteUrl: string | null;
+  language: string;
 }
+
+// Translations for the booking manage page
+const translations: Record<string, Record<string, string>> = {
+  en: {
+    manageBooking: 'Manage Your Booking',
+    cancelled: 'Cancelled',
+    confirmed: 'Confirmed',
+    pending: 'Pending',
+    yourDetails: 'Your Details',
+    notes: 'Notes',
+    reschedule: 'Reschedule Appointment',
+    cancel: 'Cancel Appointment',
+    cannotModify: 'Changes can only be made more than 24 hours before your appointment.',
+    questionsContact: 'Questions? Contact {name} directly.',
+    bookingNotFound: 'Booking Not Found',
+    bookingNotFoundDesc: 'This booking link may have expired or the booking no longer exists.',
+    min: 'min'
+  },
+  es: {
+    manageBooking: 'Gestiona tu reserva',
+    cancelled: 'Cancelada',
+    confirmed: 'Confirmada',
+    pending: 'Pendiente',
+    yourDetails: 'Tus datos',
+    notes: 'Notas',
+    reschedule: 'Reprogramar cita',
+    cancel: 'Cancelar cita',
+    cannotModify: 'Los cambios solo se pueden realizar con más de 24 horas de anticipación.',
+    questionsContact: '¿Preguntas? Contacta a {name} directamente.',
+    bookingNotFound: 'Reserva no encontrada',
+    bookingNotFoundDesc: 'Este enlace puede haber expirado o la reserva ya no existe.',
+    min: 'min'
+  },
+  he: {
+    manageBooking: 'ניהול ההזמנה שלך',
+    cancelled: 'בוטלה',
+    confirmed: 'מאושרת',
+    pending: 'ממתינה',
+    yourDetails: 'הפרטים שלך',
+    notes: 'הערות',
+    reschedule: 'שינוי מועד',
+    cancel: 'ביטול הפגישה',
+    cannotModify: 'ניתן לבצע שינויים רק יותר מ-24 שעות לפני הפגישה.',
+    questionsContact: 'שאלות? צור/י קשר עם {name} ישירות.',
+    bookingNotFound: 'ההזמנה לא נמצאה',
+    bookingNotFoundDesc: 'ייתכן שהקישור פג תוקף או שההזמנה כבר לא קיימת.',
+    min: 'דק\''
+  }
+};
 
 export default function BookingManagePage() {
   const params = useParams();
@@ -45,6 +95,29 @@ export default function BookingManagePage() {
   const [business, setBusiness] = useState<BusinessData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Get locale from business settings
+  const locale = business?.language || 'en';
+  const isRTL = locale === 'he';
+
+  // Get translated text
+  const t = (key: string, params?: Record<string, string>): string => {
+    let text = translations[locale]?.[key] || translations.en[key] || key;
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        text = text.replace(`{${k}}`, v);
+      });
+    }
+    return text;
+  };
+
+  const getLocaleCode = () => {
+    switch (locale) {
+      case 'he': return 'he-IL';
+      case 'es': return 'es-ES';
+      default: return 'en-US';
+    }
+  };
 
   useEffect(() => {
     async function fetchBooking() {
@@ -73,7 +146,7 @@ export default function BookingManagePage() {
   const formatDate = (dateStr: string, timezone: string) => {
     try {
       const date = new Date(dateStr);
-      return date.toLocaleDateString('en-US', {
+      return date.toLocaleDateString(getLocaleCode(), {
         weekday: 'long',
         year: 'numeric',
         month: 'long',
@@ -88,10 +161,10 @@ export default function BookingManagePage() {
   const formatTime = (dateStr: string, timezone: string) => {
     try {
       const date = new Date(dateStr);
-      return date.toLocaleTimeString('en-US', {
+      return date.toLocaleTimeString(getLocaleCode(), {
         hour: 'numeric',
         minute: '2-digit',
-        hour12: true,
+        hour12: locale !== 'he', // Hebrew uses 24-hour format
         timeZone: timezone
       });
     } catch {
@@ -109,14 +182,18 @@ export default function BookingManagePage() {
 
   if (error || !booking) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div
+        className="min-h-screen bg-gray-50 flex items-center justify-center p-4"
+        dir={isRTL ? 'rtl' : 'ltr'}
+        lang={locale}
+      >
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <X className="w-8 h-8 text-red-600" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Booking Not Found</h1>
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">{t('bookingNotFound')}</h1>
           <p className="text-gray-600 mb-6">
-            {error || 'This booking link may have expired or the booking no longer exists.'}
+            {error || t('bookingNotFoundDesc')}
           </p>
         </div>
       </div>
@@ -127,8 +204,14 @@ export default function BookingManagePage() {
   const businessName = business?.name || 'Business';
   const isCancelled = booking.status === 'cancelled';
 
+  const getStatusText = () => {
+    if (isCancelled) return t('cancelled');
+    if (booking.status === 'confirmed') return t('confirmed');
+    return t('pending');
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
+    <div className="min-h-screen bg-gray-50 py-8 px-4" dir={isRTL ? 'rtl' : 'ltr'} lang={locale}>
       <div className="max-w-lg mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
@@ -139,8 +222,8 @@ export default function BookingManagePage() {
               className="h-12 mx-auto mb-3"
             />
           )}
-          <h1 className="text-2xl font-bold text-gray-900">{businessName}</h1>
-          <p className="text-gray-600 mt-1">Manage Your Booking</p>
+          <h1 className="text-2xl font-bold text-gray-900"><bdi>{businessName}</bdi></h1>
+          <p className="text-gray-600 mt-1">{t('manageBooking')}</p>
         </div>
 
         {/* Booking Card */}
@@ -150,24 +233,27 @@ export default function BookingManagePage() {
             className="px-6 py-3 text-white text-center font-medium"
             style={{ backgroundColor: isCancelled ? '#DC2626' : primaryColor }}
           >
-            {isCancelled ? 'Cancelled' : booking.status === 'confirmed' ? 'Confirmed' : 'Pending'}
+            {getStatusText()}
           </div>
 
           {/* Service Info */}
           <div className="p-6 border-b">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">{booking.service.service_name}</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4"><bdi>{booking.service.service_name}</bdi></h2>
 
             <div className="space-y-3">
               <div className="flex items-center text-gray-600">
-                <Calendar className="w-5 h-5 mr-3" style={{ color: primaryColor }} />
+                <Calendar className="w-5 h-5 me-3 shrink-0" style={{ color: primaryColor }} />
                 <span>{formatDate(booking.startTime, booking.timezone)}</span>
               </div>
 
               <div className="flex items-center text-gray-600">
-                <Clock className="w-5 h-5 mr-3" style={{ color: primaryColor }} />
+                <Clock className="w-5 h-5 me-3 shrink-0" style={{ color: primaryColor }} />
                 <span>
-                  {formatTime(booking.startTime, booking.timezone)} - {formatTime(booking.endTime, booking.timezone)}
-                  <span className="text-gray-400 ml-2">({booking.service.duration_minutes} min)</span>
+                  {/* dir="ltr" keeps the time range from being reordered as "10:00 - 9:00" under RTL bidi */}
+                  <span dir="ltr" className="inline-block">
+                    {formatTime(booking.startTime, booking.timezone)} - {formatTime(booking.endTime, booking.timezone)}
+                  </span>
+                  <span className="text-gray-400 ms-2">({booking.service.duration_minutes} {t('min')})</span>
                 </span>
               </div>
             </div>
@@ -175,15 +261,15 @@ export default function BookingManagePage() {
 
           {/* Client Info */}
           <div className="p-6 bg-gray-50 border-b">
-            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">Your Details</h3>
+            <h3 className={`text-sm font-medium text-gray-500 mb-3 ${isRTL ? '' : 'uppercase tracking-wide'}`}>{t('yourDetails')}</h3>
             <div className="space-y-2">
               <div className="flex items-center text-gray-700">
-                <User className="w-4 h-4 mr-3 text-gray-400" />
-                <span>{booking.clientName}</span>
+                <User className="w-4 h-4 text-gray-400 me-3 shrink-0" />
+                <bdi>{booking.clientName}</bdi>
               </div>
               <div className="flex items-center text-gray-700">
-                <Mail className="w-4 h-4 mr-3 text-gray-400" />
-                <span>{booking.clientEmail}</span>
+                <Mail className="w-4 h-4 text-gray-400 me-3 shrink-0" />
+                <bdi dir="ltr">{booking.clientEmail}</bdi>
               </div>
             </div>
           </div>
@@ -191,7 +277,7 @@ export default function BookingManagePage() {
           {/* Notes */}
           {booking.notes && (
             <div className="p-6 border-b">
-              <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Notes</h3>
+              <h3 className={`text-sm font-medium text-gray-500 mb-2 ${isRTL ? '' : 'uppercase tracking-wide'}`}>{t('notes')}</h3>
               <p className="text-gray-700">{booking.notes}</p>
             </div>
           )}
@@ -209,7 +295,7 @@ export default function BookingManagePage() {
                   }}
                 >
                   <RefreshCw className="w-5 h-5" />
-                  Reschedule Appointment
+                  {t('reschedule')}
                 </button>
               )}
 
@@ -219,13 +305,13 @@ export default function BookingManagePage() {
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-all"
                 >
                   <X className="w-5 h-5" />
-                  Cancel Appointment
+                  {t('cancel')}
                 </button>
               )}
 
               {!booking.canReschedule && !booking.canCancel && (
                 <p className="text-center text-gray-500 text-sm py-2">
-                  Changes can only be made more than 24 hours before your appointment.
+                  {t('cannotModify')}
                 </p>
               )}
             </div>
@@ -234,7 +320,7 @@ export default function BookingManagePage() {
 
         {/* Footer */}
         <p className="text-center text-gray-500 text-sm mt-6">
-          Questions? Contact {businessName} directly.
+          <bdi>{t('questionsContact', { name: businessName })}</bdi>
         </p>
       </div>
     </div>

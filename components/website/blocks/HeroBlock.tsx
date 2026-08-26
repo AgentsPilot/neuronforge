@@ -52,7 +52,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
   const {
     headline,
     subheadline,
-    cta_text,
+    cta_text: rawCtaText,
     cta_link = '#contact',
     secondary_cta_text,
     secondary_cta_link,
@@ -64,6 +64,11 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
     gradient_text = false,
     video_url
   } = content as HeroContent;
+
+  // Use AI-generated CTA text from content, only fall back to translation if missing
+  const cta_text = rawCtaText || (cta_link.includes('booking') || cta_link.includes('schedule')
+    ? t('bookNow', 'common')
+    : t('getStarted', 'common'));
 
   const alignment = styles?.alignment || 'center';
   const alignmentClasses = {

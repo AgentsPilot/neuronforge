@@ -23,6 +23,7 @@ const CreateTransactionSchema = z.object({
 });
 
 // GET /api/payments/transactions - List transactions
+// Query param: include_stats=true to include stats by status
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
@@ -41,25 +42,58 @@ export async function GET(request: NextRequest) {
     const contact_id = searchParams.get('contact_id') || undefined;
     const limit = parseInt(searchParams.get('limit') || '50');
     const offset = parseInt(searchParams.get('offset') || '0');
+    const includeStats = searchParams.get('include_stats') === 'true';
 
-    requestLogger.info({ userId: user.id, status, contact_id }, 'Listing payment transactions');
+    requestLogger.info({ userId: user.id, status, contact_id, includeStats }, 'Listing payment transactions');
 
-    const { data, error } = await paymentTransactionRepository.list(user.id, {
-      status,
-      contactId: contact_id,
-      limit,
-      offset
-    });
+    // Fetch transactions, count, and optionally stats in parallel
+    const promises: Promise<any>[] = [
+      paymentTransactionRepository.list(user.id, {
+        status,
+        contactId: contact_id,
+        limit,
+        offset,
+        includeContact: true
+      }),
+      paymentTransactionRepository.count(user.id, {
+        status,
+        contactId: contact_id
+      })
+    ];
 
-    if (error) {
-      requestLogger.error({ err: error }, 'Failed to list transactions');
+    if (includeStats) {
+      promises.push(paymentTransactionRepository.getStatsByStatus(user.id));
+    }
+
+    const results = await Promise.all(promises);
+    const listResult = results[0];
+    const countResult = results[1];
+    const statsResult = includeStats ? results[2] : null;
+
+    if (listResult.error) {
+      requestLogger.error({ err: listResult.error }, 'Failed to list transactions');
       return NextResponse.json(
         { success: false, error: 'Failed to retrieve transactions' },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ success: true, data });
+    const response: {
+      success: boolean;
+      data: any;
+      total: number;
+      stats?: any;
+    } = {
+      success: true,
+      data: listResult.data,
+      total: countResult.data || 0
+    };
+
+    if (includeStats && statsResult?.data) {
+      response.stats = statsResult.data;
+    }
+
+    return NextResponse.json(response);
 
   } catch (error) {
     requestLogger.error({ err: error }, 'Request failed');

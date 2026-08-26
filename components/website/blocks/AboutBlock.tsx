@@ -7,7 +7,9 @@ import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
 interface AboutContent {
   title?: string;
-  content: string;
+  content?: string;
+  // Legacy format: paragraphs array (for backwards compatibility)
+  paragraphs?: string[];
   image?: string;
   layout?: 'side-by-side' | 'text-only' | 'image-above' | 'full-width' | 'overlap';
   credentials?: string[];
@@ -23,7 +25,8 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
 
   const {
     title,
-    content: aboutContent = '',
+    content: aboutContentString,
+    paragraphs,
     image,
     layout = 'side-by-side',
     credentials = [],
@@ -32,8 +35,11 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
     highlight_text
   } = content as AboutContent;
 
-  // Use translated default if no title provided
-  const displayTitle = title || t('title');
+  // Support both new format (content string) and legacy format (paragraphs array)
+  const aboutContent = aboutContentString || (paragraphs ? paragraphs.join('\n\n') : '');
+
+  // Always use translated title for section headers (ensures consistent localization)
+  const displayTitle = t('title');
 
   const primaryColor = theme?.colors.primary || '#4F6EF7';
   const secondaryColor = theme?.colors.secondary || '#E8DDD4';

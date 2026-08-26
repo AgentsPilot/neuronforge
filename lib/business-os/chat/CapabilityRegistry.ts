@@ -17,6 +17,10 @@ export interface CapabilityParam {
   description: string;
   description_he?: string;
 
+  // Display label for the parameter (used in confirmations/prompts)
+  label?: string;
+  label_he?: string;
+
   // For entity_ref type - which entity table to reference
   entityType?: 'contacts' | 'tasks' | 'services' | 'bookings' | 'invoices';
 
@@ -38,7 +42,7 @@ export interface Capability {
   id: string;  // e.g., "task.create", "invoice.send"
 
   // Categorization
-  domain: 'crm' | 'scheduling' | 'payments' | 'communication' | 'settings';
+  domain: 'crm' | 'scheduling' | 'payments' | 'communication' | 'settings' | 'reports' | 'navigation';
   entity: string;  // e.g., "task", "contact", "invoice"
   action: string;  // e.g., "create", "update", "send"
 
@@ -113,14 +117,18 @@ export const CAPABILITY_REGISTRY: Capability[] = [
         type: 'email',
         required: false,
         description: 'Email address',
-        description_he: 'כתובת אימייל'
+        description_he: 'כתובת אימייל',
+        prompt: 'Email address? (or skip)',
+        prompt_he: 'כתובת אימייל? (או דלג)'
       },
       {
         name: 'phone',
         type: 'phone',
         required: false,
         description: 'Phone number',
-        description_he: 'מספר טלפון'
+        description_he: 'מספר טלפון',
+        prompt: 'Phone number? (or skip)',
+        prompt_he: 'מספר טלפון? (או דלג)'
       }
     ],
     confirmationRequired: false,
@@ -160,25 +168,33 @@ export const CAPABILITY_REGISTRY: Capability[] = [
         name: 'first_name',
         type: 'string',
         required: false,
-        description: 'New first name'
+        description: 'New first name',
+        prompt: 'New first name? (or skip)',
+        prompt_he: 'שם פרטי חדש? (או דלג)'
       },
       {
         name: 'last_name',
         type: 'string',
         required: false,
-        description: 'New last name'
+        description: 'New last name',
+        prompt: 'New last name? (or skip)',
+        prompt_he: 'שם משפחה חדש? (או דלג)'
       },
       {
         name: 'email',
         type: 'email',
         required: false,
-        description: 'New email'
+        description: 'New email',
+        prompt: 'New email address? (or skip)',
+        prompt_he: 'אימייל חדש? (או דלג)'
       },
       {
         name: 'phone',
         type: 'phone',
         required: false,
-        description: 'New phone'
+        description: 'New phone',
+        prompt: 'New phone number? (or skip)',
+        prompt_he: 'טלפון חדש? (או דלג)'
       }
     ],
     confirmationRequired: true,
@@ -196,6 +212,16 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'delete',
     description: 'Permanently delete a contact',
     description_he: 'מחיקת איש קשר לצמיתות',
+    examples: [
+      'delete contact',
+      'remove client',
+      'delete customer'
+    ],
+    examples_he: [
+      'מחק איש קשר',
+      'מחק לקוח',
+      'הסר לקוח'
+    ],
     params: [
       {
         name: 'contact_id',
@@ -225,12 +251,19 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     description_he: 'יצירת משימה או תזכורת',
     examples: [
       'create a task',
+      'create task',
+      'add task',
+      'new task',
+      'open task',
       'add todo: call John tomorrow',
       'remind me to send invoice',
       'add task for next week'
     ],
     examples_he: [
       'צור משימה',
+      'פתח משימה',
+      'הוסף משימה',
+      'משימה חדשה',
       'הוסף משימה: להתקשר לדוד',
       'תזכיר לי לשלוח חשבונית',
       'הוסף משימה לשבוע הבא'
@@ -258,14 +291,18 @@ export const CAPABILITY_REGISTRY: Capability[] = [
         required: false,
         description: 'Task priority',
         default: 'medium',
-        enumValues: ['low', 'medium', 'high']
+        enumValues: ['low', 'medium', 'high'],
+        prompt: 'What priority? (low/medium/high, or skip)',
+        prompt_he: 'מה העדיפות? (נמוכה/בינונית/גבוהה, או דלג)'
       },
       {
         name: 'contact_id',
         type: 'entity_ref',
         entityType: 'contacts',
         required: false,
-        description: 'Related contact'
+        description: 'Contact name when mentioned (e.g., "for Moshe" / "לדוד" / "למשה")',
+        prompt: 'Related to a contact? If yes, who?',
+        prompt_he: 'האם קשור לאיש קשר? אם כן, למי?'
       }
     ],
     confirmationRequired: false,
@@ -317,6 +354,17 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'update',
     description: 'Update task details',
     description_he: 'עדכון פרטי משימה',
+    examples: [
+      'update task',
+      'change task',
+      'edit task',
+      'modify task'
+    ],
+    examples_he: [
+      'עדכן משימה',
+      'שנה משימה',
+      'ערוך משימה'
+    ],
     params: [
       {
         name: 'task_id',
@@ -356,6 +404,15 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'delete',
     description: 'Delete a task',
     description_he: 'מחיקת משימה',
+    examples: [
+      'delete task',
+      'remove task',
+      'remove todo'
+    ],
+    examples_he: [
+      'מחק משימה',
+      'הסר משימה'
+    ],
     params: [
       {
         name: 'task_id',
@@ -379,6 +436,17 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'create',
     description: 'Create a new service offering',
     description_he: 'יצירת שירות חדש',
+    examples: [
+      'create service',
+      'add service',
+      'new service',
+      'add offering'
+    ],
+    examples_he: [
+      'צור שירות',
+      'הוסף שירות',
+      'שירות חדש'
+    ],
     params: [
       {
         name: 'service_name',
@@ -424,6 +492,18 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'update',
     description: 'Update a service',
     description_he: 'עדכון שירות',
+    examples: [
+      'update service',
+      'change service',
+      'edit service',
+      'modify service price'
+    ],
+    examples_he: [
+      'עדכן שירות',
+      'שנה שירות',
+      'ערוך שירות',
+      'שנה מחיר שירות'
+    ],
     params: [
       {
         name: 'service_id',
@@ -498,6 +578,17 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'activate',
     description: 'Reactivate a deactivated service',
     description_he: 'הפעלת שירות מחדש',
+    examples: [
+      'activate service',
+      'enable service',
+      'reactivate service',
+      'turn on service'
+    ],
+    examples_he: [
+      'הפעל שירות',
+      'הפעל מחדש שירות',
+      'אפשר שירות'
+    ],
     params: [
       {
         name: 'service_id',
@@ -612,6 +703,18 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'cancel',
     description: 'Cancel an appointment',
     description_he: 'ביטול פגישה',
+    examples: [
+      'cancel booking',
+      'cancel appointment',
+      'cancel meeting',
+      'cancel session'
+    ],
+    examples_he: [
+      'בטל פגישה',
+      'בטל תור',
+      'ביטול פגישה',
+      'ביטול תור'
+    ],
     params: [
       {
         name: 'booking_id',
@@ -639,6 +742,19 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     action: 'create',
     description: 'Create a new invoice',
     description_he: 'יצירת חשבונית חדשה',
+    examples: [
+      'create invoice',
+      'new invoice',
+      'make invoice',
+      'bill client',
+      'create bill'
+    ],
+    examples_he: [
+      'צור חשבונית',
+      'חשבונית חדשה',
+      'הפק חשבונית',
+      'יצירת חשבונית'
+    ],
     params: [
       {
         name: 'contact_id',
@@ -669,7 +785,9 @@ export const CAPABILITY_REGISTRY: Capability[] = [
         name: 'due_date',
         type: 'date',
         required: false,
-        description: 'Payment due date'
+        description: 'Payment due date',
+        prompt: 'When is the payment due? (or skip)',
+        prompt_he: 'מתי התשלום? (או דלג)'
       }
     ],
     confirmationRequired: true,
@@ -725,7 +843,10 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     ],
     examples_he: [
       'שלח מייל',
+      'שלח אימייל',
       'שלח אימייל לדוד',
+      'שליחת אימייל',
+      'שליחת מייל',
       'כתוב מייל ללקוח'
     ],
     params: [
@@ -759,6 +880,618 @@ export const CAPABILITY_REGISTRY: Capability[] = [
     destructive: false,
     confirmationTemplate: 'Send email to {contact_id_entity.email}?\n\nSubject: {subject}\n\n{body}',
     confirmationTemplate_he: 'לשלוח אימייל ל-{contact_id_entity.email}?\n\nנושא: {subject}\n\n{body}'
+  },
+
+  // =====================================
+  // SEARCH/QUERY OPERATIONS
+  // =====================================
+  {
+    id: 'contact.search',
+    domain: 'crm',
+    entity: 'contact',
+    action: 'search',
+    description: 'Search or list contacts/clients/leads',
+    description_he: 'חיפוש או הצגת אנשי קשר/לקוחות/לידים',
+    examples: [
+      'find contact',
+      'search for John',
+      'show all clients',
+      'who are my leads',
+      'list contacts'
+    ],
+    examples_he: [
+      'מצא איש קשר',
+      'חפש לקוח',
+      'הראה לידים',
+      'כמה לידים יש לי',
+      'הראה את כל הלקוחות'
+    ],
+    params: [
+      {
+        name: 'query',
+        type: 'string',
+        required: false,
+        description: 'Name or email to search for',
+        prompt: 'Search for a specific name or email? (or skip to show all)',
+        prompt_he: 'לחפש שם או אימייל ספציפי? (או דלג להראות הכל)'
+      },
+      {
+        name: 'status',
+        type: 'string',
+        required: false,
+        description: 'Filter by status: lead, client, prospect',
+        enumValues: ['lead', 'client', 'prospect', 'qualified'],
+        prompt: 'Filter by status? (lead/client/prospect, or skip)',
+        prompt_he: 'לסנן לפי סטטוס? (ליד/לקוח/פוטנציאלי, או דלג)'
+      },
+      {
+        name: 'limit',
+        type: 'number',
+        required: false,
+        description: 'Maximum number of results',
+        prompt: 'How many results? (or skip for default)',
+        prompt_he: 'כמה תוצאות להציג? (או דלג לברירת מחדל)'
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  {
+    id: 'task.search',
+    domain: 'crm',
+    entity: 'task',
+    action: 'search',
+    description: 'Search or list tasks/todos',
+    description_he: 'חיפוש או הצגת משימות',
+    examples: [
+      'show my tasks',
+      'what tasks are due today',
+      'list overdue tasks',
+      'show all todos'
+    ],
+    examples_he: [
+      'הראה משימות',
+      'מה המשימות להיום',
+      'משימות באיחור',
+      'כל המשימות'
+    ],
+    params: [
+      {
+        name: 'status',
+        type: 'string',
+        required: false,
+        description: 'Filter: pending, completed, overdue',
+        enumValues: ['pending', 'completed', 'overdue'],
+        prompt: 'Filter by status? (pending/completed/overdue, or skip)',
+        prompt_he: 'לסנן לפי סטטוס? (ממתין/הושלם/באיחור, או דלג)'
+      },
+      {
+        name: 'due_period',
+        type: 'string',
+        required: false,
+        description: 'Time period: today, this_week, this_month',
+        enumValues: ['today', 'tomorrow', 'this_week', 'this_month'],
+        prompt: 'Filter by time period? (today/tomorrow/this_week/this_month, or skip)',
+        prompt_he: 'לסנן לפי תקופה? (היום/מחר/השבוע/החודש, או דלג)'
+      },
+      {
+        name: 'contact_id',
+        type: 'entity_ref',
+        entityType: 'contacts',
+        required: false,
+        description: 'Filter by related contact',
+        prompt: 'Filter by contact? (enter name, or skip)',
+        prompt_he: 'לסנן לפי איש קשר? (הזן שם, או דלג)'
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  {
+    id: 'booking.search',
+    domain: 'scheduling',
+    entity: 'booking',
+    action: 'search',
+    description: 'Search or list bookings/appointments',
+    description_he: 'חיפוש או הצגת פגישות/תורים',
+    examples: [
+      'show my bookings',
+      'what meetings do I have today',
+      'show appointments this week',
+      'list all bookings'
+    ],
+    examples_he: [
+      'הראה פגישות',
+      'מה יש לי היום',
+      'פגישות השבוע',
+      'כל התורים'
+    ],
+    params: [
+      {
+        name: 'period',
+        type: 'string',
+        required: false,
+        description: 'Time period: today, tomorrow, this_week, next_week',
+        enumValues: ['today', 'tomorrow', 'this_week', 'next_week', 'this_month'],
+        prompt: 'Which time period? (today/tomorrow/this_week/next_week, or skip)',
+        prompt_he: 'איזו תקופה? (היום/מחר/השבוע/שבוע הבא, או דלג)'
+      },
+      {
+        name: 'status',
+        type: 'string',
+        required: false,
+        description: 'Filter: confirmed, cancelled, completed',
+        enumValues: ['confirmed', 'cancelled', 'completed', 'no_show'],
+        prompt: 'Filter by status? (confirmed/cancelled/completed, or skip)',
+        prompt_he: 'לסנן לפי סטטוס? (מאושר/מבוטל/הושלם, או דלג)'
+      },
+      {
+        name: 'contact_id',
+        type: 'entity_ref',
+        entityType: 'contacts',
+        required: false,
+        description: 'Filter by client',
+        prompt: 'Filter by client? (enter name, or skip)',
+        prompt_he: 'לסנן לפי לקוח? (הזן שם, או דלג)'
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  {
+    id: 'service.search',
+    domain: 'scheduling',
+    entity: 'service',
+    action: 'search',
+    description: 'Search or list services',
+    description_he: 'חיפוש או הצגת שירותים',
+    examples: [
+      'show my services',
+      'list all services',
+      'what services do I offer'
+    ],
+    examples_he: [
+      'הראה שירותים',
+      'כל השירותים',
+      'אילו שירותים אני מציע'
+    ],
+    params: [
+      {
+        name: 'active_only',
+        type: 'boolean',
+        required: false,
+        description: 'Show only active services',
+        default: true,
+        prompt: 'Show only active services? (yes/no, or skip)',
+        prompt_he: 'להציג רק שירותים פעילים? (כן/לא, או דלג)'
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  {
+    id: 'invoice.search',
+    domain: 'payments',
+    entity: 'invoice',
+    action: 'search',
+    description: 'Search or list invoices',
+    description_he: 'חיפוש או הצגת חשבוניות',
+    examples: [
+      'show invoices',
+      'who owes me money',
+      'unpaid invoices',
+      'show overdue invoices',
+      'open invoices'
+    ],
+    examples_he: [
+      'הראה חשבוניות',
+      'מי חייב לי כסף',
+      'חשבוניות שלא שולמו',
+      'חשבוניות באיחור',
+      'חשבוניות פתוחות',
+      'האם יש לי חשבוניות פתוחות'
+    ],
+    params: [
+      {
+        name: 'status',
+        type: 'string',
+        required: false,
+        description: 'Filter: draft, sent, paid, overdue, open. Use "open" or "unpaid" for outstanding invoices.',
+        enumValues: ['draft', 'sent', 'paid', 'overdue', 'cancelled', 'open', 'unpaid'],
+        prompt: 'Filter by status? (draft/sent/paid/overdue, or skip)',
+        prompt_he: 'לסנן לפי סטטוס? (טיוטה/נשלחה/שולם/באיחור, או דלג)'
+      },
+      {
+        name: 'contact_id',
+        type: 'entity_ref',
+        entityType: 'contacts',
+        required: false,
+        description: 'Filter by client',
+        prompt: 'Filter by client? (enter name, or skip)',
+        prompt_he: 'לסנן לפי לקוח? (הזן שם, או דלג)'
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  {
+    id: 'transaction.search',
+    domain: 'payments',
+    entity: 'transaction',
+    action: 'search',
+    description: 'Search or list payment transactions (refunds, payments received)',
+    description_he: 'חיפוש עסקאות תשלום (החזרים, תשלומים שהתקבלו)',
+    examples: [
+      'show transactions',
+      'who got a refund',
+      'list refunds',
+      'show payment history'
+    ],
+    examples_he: [
+      'הראה עסקאות',
+      'מי קיבל החזר',
+      'הראה החזרים',
+      'היסטוריית תשלומים'
+    ],
+    params: [
+      {
+        name: 'status',
+        type: 'string',
+        required: false,
+        description: 'Filter: succeeded, refunded, pending, failed',
+        enumValues: ['succeeded', 'refunded', 'pending', 'failed']
+      },
+      {
+        name: 'contact_id',
+        type: 'entity_ref',
+        entityType: 'contacts',
+        required: false,
+        description: 'Filter by client'
+      },
+      {
+        name: 'limit',
+        type: 'number',
+        required: false,
+        description: 'Max results'
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  // =====================================
+  // AVAILABILITY & CALENDAR
+  // =====================================
+  {
+    id: 'availability.update',
+    domain: 'settings',
+    entity: 'availability',
+    action: 'update',
+    description: 'Update working hours/availability schedule',
+    description_he: 'עדכון שעות עבודה/זמינות',
+    examples: [
+      'add Saturday hours',
+      'change my availability',
+      'set working hours',
+      'update schedule'
+    ],
+    examples_he: [
+      'הוסף שעות בשבת',
+      'שנה זמינות',
+      'עדכן שעות עבודה',
+      'שנה לוח זמנים'
+    ],
+    params: [
+      {
+        name: 'days',
+        type: 'string',
+        required: false,
+        description: 'Days to update (comma-separated): sunday, monday, tuesday, wednesday, thursday, friday, saturday'
+      },
+      {
+        name: 'start_time',
+        type: 'time',
+        required: false,
+        description: 'Start time (24h format)',
+        prompt: 'What time do you start?',
+        prompt_he: 'באיזו שעה מתחילים?'
+      },
+      {
+        name: 'end_time',
+        type: 'time',
+        required: false,
+        description: 'End time (24h format)',
+        prompt: 'What time do you finish?',
+        prompt_he: 'באיזו שעה מסיימים?'
+      }
+    ],
+    confirmationRequired: true,
+    destructive: false
+  },
+
+  {
+    id: 'availability.query',
+    domain: 'settings',
+    entity: 'availability',
+    action: 'query',
+    description: 'Check current availability/working hours',
+    description_he: 'בדיקת זמינות/שעות עבודה נוכחיות',
+    examples: [
+      'what are my hours',
+      'show availability',
+      'when am I available'
+    ],
+    examples_he: [
+      'מה השעות שלי',
+      'הראה זמינות',
+      'מתי אני פנוי'
+    ],
+    params: [],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  {
+    id: 'calendar.open',
+    domain: 'scheduling',
+    entity: 'calendar',
+    action: 'open',
+    description: 'Open/show the calendar view',
+    description_he: 'פתיחת תצוגת היומן',
+    examples: [
+      'open calendar',
+      'show my calendar',
+      'open schedule'
+    ],
+    examples_he: [
+      'פתח יומן',
+      'הראה יומן',
+      'טען יומן'
+    ],
+    params: [],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  // =====================================
+  // REPORTS & ANALYTICS
+  // =====================================
+  {
+    id: 'report.query',
+    domain: 'reports',
+    entity: 'report',
+    action: 'query',
+    description: 'Get business metrics (revenue, bookings, clients)',
+    description_he: 'קבלת מדדים עסקיים (הכנסות, פגישות, לקוחות)',
+    examples: [
+      'how much did I earn',
+      'show revenue',
+      'how many bookings this week',
+      'show monthly report'
+    ],
+    examples_he: [
+      'כמה הרווחתי',
+      'הראה הכנסות',
+      'כמה פגישות השבוע',
+      'הראה דוח חודשי'
+    ],
+    params: [
+      {
+        name: 'metric',
+        type: 'string',
+        required: false,
+        description: 'Metric to show: revenue, bookings, clients, payments',
+        enumValues: ['revenue', 'bookings', 'clients', 'payments']
+      },
+      {
+        name: 'period',
+        type: 'string',
+        required: false,
+        description: 'Time period: today, this_week, this_month, last_month',
+        enumValues: ['today', 'this_week', 'this_month', 'last_month', 'this_year']
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  // =====================================
+  // NAVIGATION
+  // =====================================
+  {
+    id: 'navigate',
+    domain: 'settings',
+    entity: 'navigation',
+    action: 'go',
+    description: 'Navigate to a specific page or section',
+    description_he: 'מעבר לדף או חלק ספציפי',
+    examples: [
+      'go to contacts',
+      'open settings',
+      'show reports page'
+    ],
+    examples_he: [
+      'עבור לאנשי קשר',
+      'פתח הגדרות',
+      'הראה דוחות'
+    ],
+    params: [
+      {
+        name: 'destination',
+        type: 'string',
+        required: true,
+        description: 'Where to navigate: contacts, calendar, services, payments, reports, settings',
+        enumValues: ['contacts', 'calendar', 'services', 'payments', 'reports', 'settings']
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  // =====================================
+  // BOOKING STATUS UPDATE
+  // =====================================
+  {
+    id: 'booking.update_status',
+    domain: 'scheduling',
+    entity: 'booking',
+    action: 'update_status',
+    description: 'Mark booking as completed, no-show, or other status',
+    description_he: 'סימון פגישה כהושלמה, לא הגיע, או סטטוס אחר',
+    examples: [
+      'mark as completed',
+      'client showed up',
+      'no show',
+      'mark as no-show'
+    ],
+    examples_he: [
+      'סמן כהושלם',
+      'הלקוח הגיע',
+      'לא הגיע',
+      'סמן כלא הגיע'
+    ],
+    params: [
+      {
+        name: 'booking_id',
+        type: 'entity_ref',
+        entityType: 'bookings',
+        required: true,
+        description: 'Booking to update',
+        prompt: 'Which booking?',
+        prompt_he: 'איזו פגישה?'
+      },
+      {
+        name: 'new_status',
+        type: 'string',
+        required: true,
+        description: 'New status: completed, no_show, cancelled',
+        enumValues: ['completed', 'no_show', 'cancelled', 'confirmed']
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
+  },
+
+  // =====================================
+  // PAYMENT RECORDING
+  // =====================================
+  {
+    id: 'payment.record',
+    domain: 'payments',
+    entity: 'payment',
+    action: 'record',
+    description: 'Record a payment received (cash, bank transfer, etc.)',
+    description_he: 'רישום תשלום שהתקבל (מזומן, העברה בנקאית, וכו\')',
+    examples: [
+      'record payment',
+      'John paid cash',
+      'mark invoice as paid',
+      'received payment'
+    ],
+    examples_he: [
+      'רשום תשלום',
+      'דוד שילם במזומן',
+      'סמן חשבונית כשולמה',
+      'התקבל תשלום'
+    ],
+    params: [
+      {
+        name: 'contact_id',
+        type: 'entity_ref',
+        entityType: 'contacts',
+        required: true,
+        description: 'Client who paid',
+        prompt: 'Who paid?',
+        prompt_he: 'מי שילם?'
+      },
+      {
+        name: 'amount',
+        type: 'money',
+        required: true,
+        description: 'Payment amount',
+        prompt: 'How much?',
+        prompt_he: 'כמה?'
+      },
+      {
+        name: 'method',
+        type: 'string',
+        required: false,
+        description: 'Payment method: cash, bank_transfer, card, other',
+        enumValues: ['cash', 'bank_transfer', 'card', 'other'],
+        default: 'cash'
+      },
+      {
+        name: 'invoice_id',
+        type: 'entity_ref',
+        entityType: 'invoices',
+        required: false,
+        description: 'Invoice this payment is for'
+      }
+    ],
+    confirmationRequired: true,
+    destructive: false
+  },
+
+  // =====================================
+  // CRM - ACTIVITIES
+  // =====================================
+  {
+    id: 'activity.create',
+    domain: 'crm',
+    entity: 'activity',
+    action: 'create',
+    description: 'Add an activity to a contact (note, call, meeting, email)',
+    description_he: 'הוספת פעילות לאיש קשר (הערה, שיחה, פגישה, אימייל)',
+    examples: [
+      'add note for John',
+      'log call with client',
+      'record meeting notes'
+    ],
+    examples_he: [
+      'הוסף הערה לדוד',
+      'רשום שיחה עם לקוח',
+      'רשום סיכום פגישה'
+    ],
+    params: [
+      {
+        name: 'contact_id',
+        type: 'entity_ref',
+        entityType: 'contacts',
+        required: true,
+        description: 'Contact to add activity for',
+        prompt: 'For which contact?',
+        prompt_he: 'לאיזה איש קשר?'
+      },
+      {
+        name: 'activity_type',
+        type: 'string',
+        required: true,
+        description: 'Type: note, call, meeting, email',
+        enumValues: ['note', 'call', 'meeting', 'email'],
+        default: 'note'
+      },
+      {
+        name: 'title',
+        type: 'string',
+        required: false,
+        description: 'Activity title/summary'
+      },
+      {
+        name: 'description',
+        type: 'string',
+        required: true,
+        description: 'Activity details',
+        prompt: 'What are the details?',
+        prompt_he: 'מה הפרטים?'
+      }
+    ],
+    confirmationRequired: false,
+    destructive: false
   }
 ];
 
@@ -836,7 +1569,11 @@ export function generateLLMToolSchema(): object[] {
             }
           ])
         ),
-        required: cap.params.filter(p => p.required).map(p => p.name)
+        // NOTE: We intentionally don't mark params as required here.
+        // If we do, the LLM will fabricate values for required params even when
+        // the user didn't provide them. Instead, we handle requirements at runtime
+        // via the slot-filling service, which asks the user for missing params.
+        required: []
       }
     }
   }));

@@ -47,9 +47,19 @@ export async function GET(request: NextRequest) {
     requestLogger.info({ userId: user.id }, 'Fetching Stripe Connect account');
 
     const { data, error } = await stripeConnectRepository.findByUserId(user.id);
+    requestLogger.debug({ hasData: !!data, error }, 'Stripe Connect query result');
 
     if (error) {
-      // Account not found is not an error - user hasn't connected Stripe yet
+      // Actual database error
+      requestLogger.error({ err: error, userId: user.id }, 'Database error fetching Stripe Connect account');
+      return NextResponse.json(
+        { success: false, error: 'Failed to fetch Stripe account' },
+        { status: 500 }
+      );
+    }
+
+    if (!data) {
+      // No account found - user hasn't connected Stripe yet
       requestLogger.info({ userId: user.id }, 'No Stripe Connect account found');
       return NextResponse.json({
         success: true,
@@ -58,6 +68,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    requestLogger.info({ userId: user.id, stripeAccountId: data.stripe_account_id }, 'Stripe Connect account found');
     return NextResponse.json({ success: true, data });
 
   } catch (error) {

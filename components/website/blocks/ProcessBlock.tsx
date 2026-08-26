@@ -8,15 +8,54 @@ import {
 import type { BlockRendererProps, ProcessStep } from './types';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
+// Client flow step types
+type ClientFlowStepKey = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+
 interface ProcessContent {
   title?: string;
   subtitle?: string;
   steps: ProcessStep[];
+  client_flow?: ClientFlowStepKey[];
   layout?: 'numbered' | 'timeline' | 'horizontal' | 'cards' | 'zigzag';
 }
 
-// Map icon names to Lucide components
+// Mapping from client_flow keys to display steps (localized)
+const CLIENT_FLOW_STEPS: Record<ClientFlowStepKey, Record<string, { title: string; description: string; icon: string }>> = {
+  scheduling: {
+    en: { title: 'Book Your Session', description: 'Choose a date and time that works for you', icon: 'calendar' },
+    es: { title: 'Reserva Tu Sesión', description: 'Elige una fecha y hora que te convenga', icon: 'calendar' },
+    he: { title: 'קבע את הפגישה', description: 'בחר תאריך ושעה שמתאימים לך', icon: 'calendar' },
+  },
+  client_info: {
+    en: { title: 'Your Details', description: 'Fill in your contact information', icon: 'user' },
+    es: { title: 'Tus Datos', description: 'Completa tu información de contacto', icon: 'user' },
+    he: { title: 'הפרטים שלך', description: 'מלא את פרטי הקשר שלך', icon: 'user' },
+  },
+  booking: {
+    en: { title: 'Book Your Session', description: 'Select a time and provide your details', icon: 'calendar' },
+    es: { title: 'Reserva Tu Sesión', description: 'Selecciona un horario y proporciona tus datos', icon: 'calendar' },
+    he: { title: 'קבע את הפגישה', description: 'בחר זמן ומלא את הפרטים שלך', icon: 'calendar' },
+  },
+  payment: {
+    en: { title: 'Secure Payment', description: 'Complete your payment safely online', icon: 'creditcard' },
+    es: { title: 'Pago Seguro', description: 'Completa tu pago de forma segura en línea', icon: 'creditcard' },
+    he: { title: 'תשלום מאובטח', description: 'השלם את התשלום באופן מאובטח באינטרנט', icon: 'creditcard' },
+  },
+  intake: {
+    en: { title: 'Intake Form', description: 'Help us prepare by answering a few questions', icon: 'clipboard' },
+    es: { title: 'Formulario de Ingreso', description: 'Ayúdanos a prepararnos respondiendo algunas preguntas', icon: 'clipboard' },
+    he: { title: 'טופס קליטה', description: 'עזור לנו להתכונן על ידי מענה על מספר שאלות', icon: 'clipboard' },
+  },
+  confirmation: {
+    en: { title: 'All Set!', description: 'You\'ll receive a confirmation email with all the details', icon: 'check' },
+    es: { title: '¡Todo Listo!', description: 'Recibirás un correo de confirmación con todos los detalles', icon: 'check' },
+    he: { title: 'הכל מוכן!', description: 'תקבל מייל אישור עם כל הפרטים', icon: 'check' },
+  },
+};
+
+// Map icon names to Lucide components (both PascalCase and lowercase keys)
 const ICON_REGISTRY: Record<string, LucideIcon> = {
+  // PascalCase keys
   Users,
   Calendar,
   CreditCard,
@@ -25,23 +64,38 @@ const ICON_REGISTRY: Record<string, LucideIcon> = {
   ClipboardCheck,
   Send,
   CheckCircle,
-  ArrowRight
+  ArrowRight,
+  // Lowercase keys (from AI generation)
+  users: Users,
+  calendar: Calendar,
+  creditcard: CreditCard,
+  mail: Mail,
+  filetext: FileText,
+  clipboardcheck: ClipboardCheck,
+  clipboard: ClipboardCheck,
+  send: Send,
+  checkcircle: CheckCircle,
+  check: CheckCircle,
+  arrowright: ArrowRight,
+  user: Users,
+  phone: Mail, // Fallback to Mail icon for phone
+  heart: Sparkles, // Fallback to Sparkles for heart
+  star: Sparkles, // Fallback to Sparkles for star
 };
 
 // Helper to check if string is a Lucide icon name
 const isLucideIconName = (icon: string): boolean => {
-  return icon in ICON_REGISTRY;
+  return icon.toLowerCase() in ICON_REGISTRY || icon in ICON_REGISTRY;
 };
 
 // Process step icon component
 interface StepIconProps {
   icon?: string;
   fallback: number;
-  primaryColor: string;
   size?: 'sm' | 'md' | 'lg';
 }
 
-function StepIcon({ icon, fallback, primaryColor, size = 'md' }: StepIconProps) {
+function StepIcon({ icon, fallback, size = 'md' }: StepIconProps) {
   const sizeClasses = {
     sm: 'w-5 h-5',
     md: 'w-6 h-6',
@@ -49,8 +103,11 @@ function StepIcon({ icon, fallback, primaryColor, size = 'md' }: StepIconProps) 
   };
 
   if (icon && isLucideIconName(icon)) {
-    const IconComponent = ICON_REGISTRY[icon];
-    return <IconComponent className={sizeClasses[size]} />;
+    // Try exact match first, then lowercase
+    const IconComponent = ICON_REGISTRY[icon] || ICON_REGISTRY[icon.toLowerCase()];
+    if (IconComponent) {
+      return <IconComponent className={sizeClasses[size]} />;
+    }
   }
 
   // If icon is an emoji, render it
@@ -70,9 +127,27 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
   const {
     title,
     subtitle,
-    steps = [],
+    steps: contentSteps = [],
+    client_flow,
     layout = 'numbered'
   } = content as ProcessContent;
+
+  // Generate steps from client_flow if available, otherwise use AI-generated steps
+  const steps: ProcessStep[] = client_flow && client_flow.length > 0
+    ? client_flow.map((flowKey, index) => {
+        const flowStep = CLIENT_FLOW_STEPS[flowKey]?.[locale] || CLIENT_FLOW_STEPS[flowKey]?.en;
+        if (!flowStep) {
+          // Fallback for unknown flow keys
+          return { title: flowKey, description: '', icon: 'check', number: index + 1 };
+        }
+        return {
+          title: flowStep.title,
+          description: flowStep.description,
+          icon: flowStep.icon,
+          number: index + 1,
+        };
+      })
+    : contentSteps;
 
   // Use translated default if no title provided
   const displayTitle = title || t('howItWorks');
@@ -204,7 +279,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     boxShadow: `0 10px 25px -5px ${primaryColor}40`
                   }}
                 >
-                  <StepIcon icon={step.icon} fallback={step.number || index + 1} primaryColor={primaryColor} size="md" />
+                  <StepIcon icon={step.icon} fallback={step.number || index + 1} size="md" />
 
                   {/* Pulse effect */}
                   <motion.div
@@ -297,7 +372,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                       boxShadow: `0 10px 30px -5px ${primaryColor}50`
                     }}
                   >
-                    <StepIcon icon={step.icon} fallback={step.number || index + 1} primaryColor={primaryColor} size="md" />
+                    <StepIcon icon={step.icon} fallback={step.number || index + 1} size="md" />
 
                     {/* Animated ring */}
                     <motion.div
@@ -406,7 +481,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                         boxShadow: `0 15px 35px -10px ${primaryColor}50`
                       }}
                     >
-                      <StepIcon icon={step.icon} fallback={step.number || index + 1} primaryColor={primaryColor} size="lg" />
+                      <StepIcon icon={step.icon} fallback={step.number || index + 1} size="lg" />
                     </div>
 
                     {/* Decorative ring */}
@@ -535,7 +610,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                       boxShadow: `0 8px 20px -5px ${primaryColor}40`
                     }}
                   >
-                    <StepIcon icon={step.icon} fallback={step.number || index + 1} primaryColor={primaryColor} size="md" />
+                    <StepIcon icon={step.icon} fallback={step.number || index + 1} size="md" />
                   </motion.div>
 
                   <h3
@@ -615,7 +690,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                         boxShadow: `0 20px 40px -10px ${primaryColor}50`
                       }}
                     >
-                      <StepIcon icon={step.icon} fallback={step.number || index + 1} primaryColor={primaryColor} size="lg" />
+                      <StepIcon icon={step.icon} fallback={step.number || index + 1} size="lg" />
                     </div>
 
                     {/* Decorative elements */}

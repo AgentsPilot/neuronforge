@@ -5,7 +5,7 @@ import {
   Calendar, Clock, CreditCard, ClipboardList, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, Plus, Edit2,
   Loader2, ShoppingBag, Package, Truck, Gift, User, MapPin,
-  Phone, AtSign, Eye, ExternalLink, Save, X,
+  Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw,
   type LucideIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -18,10 +18,12 @@ interface BookingsTabProps {
   t: (key: string) => string;
   isRTL: boolean;
   language: string;
-  onNewSession?: () => void;
+  onNewSession?: () => void | Promise<void>;
   onEditSession?: (bookingId: string) => void;
   onManagePayment?: (session: SessionCardData) => void;
   onIntakeSaved?: (bookingId: string) => void;
+  onSendIntake?: (bookingId: string) => Promise<void>;
+  onSendInvoice?: (invoiceId: string, bookingId: string) => Promise<void>;
   isLoading?: boolean;
   intakeTemplates?: Record<string, IntakeTemplate>;
   isOpen?: boolean;
@@ -112,6 +114,8 @@ export function BookingsTab({
   onEditSession,
   onManagePayment,
   onIntakeSaved,
+  onSendIntake,
+  onSendInvoice,
   isLoading = false,
   intakeTemplates = {},
   isOpen,
@@ -125,6 +129,10 @@ export function BookingsTab({
   const [intakeSaving, setIntakeSaving] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [intakeSuccess, setIntakeSuccess] = useState(false);
+  // Intake email sending state
+  const [sendingIntakeBookingId, setSendingIntakeBookingId] = useState<string | null>(null);
+  // Invoice email sending state
+  const [sendingInvoiceBookingId, setSendingInvoiceBookingId] = useState<string | null>(null);
 
   const toggleBooking = (id: string) => {
     setExpandedBookings(prev => {
@@ -277,6 +285,30 @@ export function BookingsTab({
 
   const handleIntakeFieldChange = (key: string, value: unknown) => {
     setEditingIntakeResponses(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Handle sending/resending intake form email
+  const handleSendIntake = async (bookingId: string) => {
+    if (!onSendIntake || sendingIntakeBookingId) return;
+
+    setSendingIntakeBookingId(bookingId);
+    try {
+      await onSendIntake(bookingId);
+    } finally {
+      setSendingIntakeBookingId(null);
+    }
+  };
+
+  // Handle sending/resending invoice
+  const handleSendInvoice = async (invoiceId: string, bookingId: string) => {
+    if (!onSendInvoice || sendingInvoiceBookingId) return;
+
+    setSendingInvoiceBookingId(bookingId);
+    try {
+      await onSendInvoice(invoiceId, bookingId);
+    } finally {
+      setSendingInvoiceBookingId(null);
+    }
   };
 
   // Build intake content for expanded view (supports view and edit modes)
@@ -631,21 +663,47 @@ export function BookingsTab({
     content: React.ReactNode,
     sectionKey: string,
     expandable: boolean = false,
-    expandedContent?: React.ReactNode
+    expandedContent?: React.ReactNode,
+    onIconClick?: () => void,
+    isIconLoading?: boolean,
+    iconClickTooltip?: string
   ) => {
     const Icon = icon;
     const colors = STATUS_COLORS[status];
     const isExpanded = expandedSections.has(sectionKey);
+    const isClickable = !!onIconClick && !isIconLoading;
+
+    // Default tooltip based on status
+    const defaultTooltip = status === 'pending' || status === 'active'
+      ? (t('common.send') || 'Send')
+      : (t('common.resend') || 'Resend');
 
     return (
-      <div className="relative flex gap-3">
+      <div key={sectionKey} className="relative flex gap-3">
         {/* Vertical line connector */}
         <div className="absolute top-6 bottom-0 w-0.5 bg-[var(--v2-border)]" style={{ [isRTL ? 'right' : 'left']: '11px' }} />
 
-        {/* Status dot */}
-        <div className={`relative z-10 flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${colors.bg} border-2 ${colors.border}`}>
-          <Icon className={`h-3 w-3 ${colors.icon}`} />
-        </div>
+        {/* Status dot - clickable if onIconClick provided */}
+        <button
+          type="button"
+          onClick={(e) => {
+            if (onIconClick) {
+              e.stopPropagation();
+              onIconClick();
+            }
+          }}
+          disabled={!isClickable}
+          className={`relative z-10 flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${colors.bg} border-2 ${colors.border} ${
+            isClickable ? 'cursor-pointer hover:scale-110 hover:shadow-md transition-all' : ''
+          } ${!onIconClick ? 'cursor-default' : ''}`}
+          title={onIconClick ? (iconClickTooltip || defaultTooltip) : undefined}
+        >
+          {isIconLoading ? (
+            <Loader2 className={`h-3 w-3 ${colors.icon} animate-spin`} />
+          ) : (
+            <Icon className={`h-3 w-3 ${colors.icon}`} />
+          )}
+        </button>
 
         {/* Content */}
         <div className="flex-1 pb-4">
@@ -888,8 +946,15 @@ export function BookingsTab({
                                     {isConfirmationStep ? formatDateTime(step.timestamp) : formatShortDate(step.timestamp)}
                                   </p>
                                 )}
-                                {/* Payment step - show Manage button */}
-                                {paymentManageable && onManagePayment && (
+                                {/* Payment step - show refunded badge if refunded */}
+                                {isPaymentStep && session.payment?.status === 'refunded' && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                                    <RotateCcw className="h-3 w-3" />
+                                    {t('crm.payment.status.refunded') || 'Refunded'}
+                                  </span>
+                                )}
+                                {/* Payment step - show Manage button (only if paid, not refunded) */}
+                                {paymentManageable && session.payment?.status === 'paid' && onManagePayment && (
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -918,7 +983,21 @@ export function BookingsTab({
                               </div>,
                               `${booking.id}-${step.key}-${index}`,
                               intakeExpandable,
-                              intakeExpandable ? buildIntakeContent(booking, template) : undefined
+                              intakeExpandable ? buildIntakeContent(booking, template) : undefined,
+                              // Make intake icon clickable when not completed, or payment icon when invoice can be resent
+                              isIntakeStep && !hasIntake && onSendIntake && booking.status !== 'cancelled'
+                                ? () => handleSendIntake(booking.id)
+                                : isPaymentStep && step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled'
+                                  ? () => handleSendInvoice(step.metadata?.invoiceId as string, booking.id)
+                                  : undefined,
+                              (isIntakeStep && sendingIntakeBookingId === booking.id) ||
+                              (isPaymentStep && sendingInvoiceBookingId === booking.id),
+                              // Tooltip for clickable icons
+                              isIntakeStep
+                                ? (hasIntake ? undefined : t('crm.intake.send_form') || 'Send intake form')
+                                : isPaymentStep && step.metadata?.canResend
+                                  ? t('crm.invoice.resend') || 'Resend invoice'
+                                  : undefined
                             );
                           })
                         ) : (

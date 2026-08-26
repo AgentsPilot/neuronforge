@@ -14,8 +14,11 @@ import {
   schedulingBookingRepository
 } from '@/lib/repositories/SchedulingRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { CRMPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { createLogger } from '@/lib/logger';
+
+const pipelineStagesRepo = new CRMPipelineStagesRepository();
 
 const logger = createLogger({ service: 'CapabilityEngine' });
 const auditTrail = AuditTrailService.getInstance();
@@ -169,13 +172,17 @@ export class CapabilityEngine {
   // ============== CONTACT EXECUTORS ==============
 
   private async createContact(params: Record<string, unknown>): Promise<ExecutionResult> {
+    // Get user's first pipeline stage instead of hardcoding 'lead'
+    const stagesResult = await pipelineStagesRepo.findByUser(this.userId);
+    const firstStage = stagesResult.data?.[0]?.stage_key || 'lead';
+
     const result = await crmContactRepository.create({
       user_id: this.userId,
       first_name: params.first_name as string,
       last_name: (params.last_name as string) || null,
       email: (params.email as string) || null,
       phone: (params.phone as string) || null,
-      stage: 'lead',
+      stage: firstStage,
       tags: [],
       source: 'chat'
     });

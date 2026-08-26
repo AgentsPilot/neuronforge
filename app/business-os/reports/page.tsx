@@ -1,526 +1,259 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
-import { StoryCard } from '@/components/business-os/reports/StoryCard';
+import { MetricCard } from '@/components/business-os/reports/MetricCard';
+import { RevenueSourcesSection } from '@/components/business-os/reports/RevenueSourcesSection';
+import { FinancialHealthGrid } from '@/components/business-os/reports/FinancialHealthGrid';
+import { RevenueByServicesSection } from '@/components/business-os/reports/RevenueByServicesSection';
 import {
   ArrowLeft,
   BarChart3,
-  Users,
-  Calendar,
-  CreditCard,
   LayoutDashboard,
   List,
   FileText,
+  Search,
+  Download,
+  Plus,
   Banknote,
-  Globe
+  TrendingUp,
+  Clock,
+  Receipt
 } from 'lucide-react';
-import { assessAllCards } from '@/lib/business-os/insights/StaticHealthRules';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PaymentTransactionList } from '@/components/payments/PaymentTransactionList';
 import { PaymentInvoiceList } from '@/components/payments/PaymentInvoiceList';
-import type { StoryResponse, FocusItem } from '@/app/api/business-os/story/route';
-import type { BusinessStats, HealthStatus } from '@/lib/business-os/insights/StaticHealthRules';
-
-// Reports theme color: Green (#22C58B)
-const REPORTS_COLOR = '#22C58B';
+import { InvoiceModal } from '@/components/payments/InvoiceModal';
+import {
+  PERFORMANCE_THRESHOLDS,
+  REPORTS_COLORS
+} from '@/lib/business-os/reports/constants';
 
 type ViewMode = 'overview' | 'transactions' | 'invoices';
+
+/** Reporting window, passed straight through to /api/business-os/stats. */
+type ReportPeriod = 'week' | 'month' | 'year' | 'all';
+
+const REPORT_PERIODS: { value: ReportPeriod; key: string; fallback: string }[] = [
+  { value: 'week', key: 'reports.period_week', fallback: 'Week' },
+  { value: 'month', key: 'reports.period_month', fallback: 'Month' },
+  { value: 'year', key: 'reports.period_year', fallback: 'Year' },
+  { value: 'all', key: 'reports.period_all', fallback: 'All time' }
+];
 
 export default function ReportsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { t, language, formatCurrency } = useLanguage();
 
-  // Check URL params for initial view mode and invoice filter
+  // Check URL params for initial view mode and invoice/transaction filter
   const tabParam = searchParams.get('tab');
   const invoiceIdParam = searchParams.get('invoice');
+  const transactionIdParam = searchParams.get('transaction');
   const initialViewMode = tabParam === 'invoices' || tabParam === 'transactions' ? tabParam : 'overview';
 
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(invoiceIdParam);
+  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(transactionIdParam);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState<BusinessStats | null>(null);
-  const [story, setStory] = useState<StoryResponse | null>(null);
-  const [websiteAnalytics, setWebsiteAnalytics] = useState<{
-    total_views: number;
-    unique_visitors: number;
-    visitors_today: number;
-    visitors_7d: number;
-    visitors_30d: number;
-  } | null>(null);
-  // Detailed stats from the API for expandable cards
-  const [detailedStats, setDetailedStats] = useState<{
-    scheduling: {
-      confirmed_30d: number;
-      completed_30d: number;
-      cancelled_30d: number;
-      no_show_30d: number;
-      total_revenue_30d: number;
-    };
+  // Reporting window. 'month' matches what this page showed before the filter existed.
+  const [period, setPeriod] = useState<ReportPeriod>('month');
+  // Switching period refetches in the background: the numbers on screen stay put
+  // and fade slightly instead of the page collapsing into the full-page spinner.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const hasLoadedOnceRef = useRef(false);
+
+  // Stats from the API
+  const [stats, setStats] = useState<{
     payments: {
+      revenue_30d: number;
+      revenue_paid_30d: number;
+      revenue_owed_30d: number;
+      pending_invoices: number;
+      pending_invoices_amount: number;
+      revenue_this_week: number;
+      revenue_last_week: number;
       successful_transactions_30d: number;
       failed_transactions_30d: number;
       refunded_30d: number;
       invoices_sent_30d: number;
       invoices_paid_30d: number;
       invoices_overdue: number;
+      invoices_overdue_amount: number;
       average_invoice_amount: number;
+      transactions_revenue_30d: number;
+      invoices_paid_amount_30d: number;
     };
-    crm: {
-      active_leads: number;
-      active_clients: number;
-      contacts_by_source: { source: string; count: number }[];
-    };
-    website: {
-      form_submissions_30d: number;
+    scheduling: {
+      total_revenue_30d: number;
+      completed_30d: number;
+      service_revenue: Array<{
+        service_id: string;
+        service_name: string;
+        revenue: number;
+        count: number;
+      }>;
     };
   } | null>(null);
 
-  // Fetch stats on mount (no LLM call - just static data)
+  // Invoice modal state
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceListKey, setInvoiceListKey] = useState(0);
+
+  // Fetch stats on mount and whenever the reporting window changes.
+  // Only the very first load blocks the page; period changes refresh silently.
   useEffect(() => {
-    fetchStats();
-    fetchWebsiteAnalytics();
-  }, []);
+    fetchStats({ silent: hasLoadedOnceRef.current });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period]);
 
   // Update view mode when URL params change
   useEffect(() => {
     const tab = searchParams.get('tab');
     const invoice = searchParams.get('invoice');
+    const transaction = searchParams.get('transaction');
     if (tab === 'invoices' || tab === 'transactions') {
       setViewMode(tab);
     }
     if (invoice) {
       setSelectedInvoiceId(invoice);
     }
+    if (transaction) {
+      setSelectedTransactionId(transaction);
+    }
   }, [searchParams]);
 
-  const fetchStats = async () => {
+  const fetchStats = async ({ silent = false }: { silent?: boolean } = {}) => {
     try {
-      setLoading(true);
-      const response = await fetch('/api/business-os/stats', { cache: 'no-store' });
+      if (silent) {
+        setIsRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const response = await fetch(`/api/business-os/stats?period=${period}`, { cache: 'no-store' });
       const data = await response.json();
 
       if (data.success && data.stats) {
-        const newStats: BusinessStats = {
+        setStats({
           payments: {
             revenue_30d: data.stats.payments?.revenue_30d || 0,
-            pending_invoices: data.stats.payments?.pending_invoices || 0
-          },
-          crm: {
-            total_contacts: data.stats.crm?.total_contacts || 0,
-            new_this_week: data.stats.crm?.new_this_week || 0,
-            became_clients_this_week: data.stats.crm?.became_clients_this_week || 0,
-            went_quiet: data.stats.crm?.went_quiet || 0
-          },
-          scheduling: {
-            bookings_30d: data.stats.scheduling?.bookings_30d || 0,
-            upcoming_count: data.stats.scheduling?.upcoming_count || 0
-          }
-        };
-        setStats(newStats);
-
-        // Extract detailed stats for expandable cards
-        setDetailedStats({
-          scheduling: {
-            confirmed_30d: data.stats.scheduling?.confirmed_30d || 0,
-            completed_30d: data.stats.scheduling?.completed_30d || 0,
-            cancelled_30d: data.stats.scheduling?.cancelled_30d || 0,
-            no_show_30d: data.stats.scheduling?.no_show_30d || 0,
-            total_revenue_30d: data.stats.scheduling?.total_revenue_30d || 0,
-          },
-          payments: {
+            revenue_paid_30d: data.stats.payments?.revenue_paid_30d || 0,
+            revenue_owed_30d: data.stats.payments?.revenue_owed_30d || 0,
+            pending_invoices: data.stats.payments?.pending_invoices || 0,
+            pending_invoices_amount: data.stats.payments?.pending_invoices_amount || 0,
+            revenue_this_week: data.stats.payments?.revenue_this_week || 0,
+            revenue_last_week: data.stats.payments?.revenue_last_week || 0,
             successful_transactions_30d: data.stats.payments?.successful_transactions_30d || 0,
             failed_transactions_30d: data.stats.payments?.failed_transactions_30d || 0,
             refunded_30d: data.stats.payments?.refunded_30d || 0,
             invoices_sent_30d: data.stats.payments?.invoices_sent_30d || 0,
             invoices_paid_30d: data.stats.payments?.invoices_paid_30d || 0,
             invoices_overdue: data.stats.payments?.invoices_overdue || 0,
+            invoices_overdue_amount: data.stats.payments?.invoices_overdue_amount || 0,
             average_invoice_amount: data.stats.payments?.average_invoice_amount || 0,
+            transactions_revenue_30d: data.stats.payments?.transactions_revenue_30d || 0,
+            invoices_paid_amount_30d: data.stats.payments?.invoices_paid_amount_30d || 0
           },
-          crm: {
-            active_leads: data.stats.crm?.active_leads || 0,
-            active_clients: data.stats.crm?.active_clients || 0,
-            contacts_by_source: data.stats.crm?.contacts_by_source || [],
-          },
-          website: {
-            form_submissions_30d: data.stats.website?.form_submissions_30d || 0,
-          },
-        });
-
-        // Set static health assessments (no LLM)
-        const cardHealth = assessAllCards(newStats);
-        setStory({
-          bigPicture: '', // Empty until user clicks Generate Insights
-          focusItems: [],
-          healthStatus: cardHealth.overall,
-          cardHealth
+          scheduling: {
+            total_revenue_30d: data.stats.scheduling?.total_revenue_30d || 0,
+            completed_30d: data.stats.scheduling?.completed_30d || 0,
+            service_revenue: data.stats.scheduling?.service_revenue || []
+          }
         });
       }
     } catch (error) {
       console.error('Failed to fetch stats:', error);
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
-  const fetchWebsiteAnalytics = async () => {
+  // Export all transactions to CSV
+  const handleExportAllTransactions = async () => {
     try {
-      const response = await fetch('/api/website/analytics', { cache: 'no-store' });
-      const data = await response.json();
-      if (data.success && data.analytics) {
-        setWebsiteAnalytics(data.analytics);
+      // Fetch all transactions (no pagination limit)
+      const response = await fetch('/api/payments/transactions?limit=10000&offset=0');
+      const result = await response.json();
+
+      if (!result.success || !result.data || result.data.length === 0) {
+        return;
       }
+
+      const transactions = result.data;
+
+      // Define CSV headers
+      const headers = [
+        t('payments.export.date') || 'Date',
+        t('payments.export.client') || 'Client',
+        t('payments.export.email') || 'Email',
+        t('payments.export.amount') || 'Amount',
+        t('payments.export.currency') || 'Currency',
+        t('payments.export.status') || 'Status',
+        t('payments.export.payment_method') || 'Payment Method',
+        t('payments.export.description') || 'Description',
+        t('payments.export.refund_status') || 'Refund Status',
+        t('payments.export.refunded_amount') || 'Refunded Amount',
+        t('payments.export.transaction_id') || 'Transaction ID'
+      ];
+
+      // Map transactions to CSV rows
+      const rows = transactions.map((tx: {
+        paid_at?: string | null;
+        created_at: string;
+        contact?: { first_name?: string | null; last_name?: string | null; email?: string | null } | null;
+        amount: number;
+        currency: string;
+        status: string;
+        payment_method?: string | null;
+        description?: string | null;
+        refund_status?: string | null;
+        refunded_amount?: number | null;
+        stripe_payment_intent_id?: string | null;
+        stripe_charge_id?: string | null;
+        id: string;
+      }) => {
+        const contactName = tx.contact
+          ? `${tx.contact.first_name || ''} ${tx.contact.last_name || ''}`.trim()
+          : '-';
+        const hasRefund = tx.refund_status === 'partial' || tx.refund_status === 'full';
+        return [
+          tx.paid_at || tx.created_at ? new Date(tx.paid_at || tx.created_at).toLocaleDateString() : '',
+          contactName,
+          tx.contact?.email || '-',
+          tx.amount.toFixed(2),
+          tx.currency,
+          t(`payments.status.${tx.status}`) || tx.status,
+          tx.payment_method ? (t(`payments.payment_method.${tx.payment_method}`) || tx.payment_method) : '-',
+          tx.description || '-',
+          hasRefund ? (t(`payments.refund_status.${tx.refund_status}`) || tx.refund_status) : '-',
+          tx.refunded_amount ? tx.refunded_amount.toFixed(2) : '-',
+          tx.stripe_payment_intent_id || tx.stripe_charge_id || tx.id
+        ];
+      });
+
+      // Create CSV content
+      const csvContent = [
+        headers.join(','),
+        ...rows.map((row: string[]) => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      ].join('\n');
+
+      // Create and trigger download
+      const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `all_payments_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
     } catch (error) {
-      console.error('Failed to fetch website analytics:', error);
+      console.error('Failed to export transactions:', error);
     }
   };
-
-  // Translations for card content
-  const cardTranslations: Record<string, Record<string, string>> = {
-    money: {
-      en: 'Money Momentum',
-      es: 'Impulso del Dinero',
-      he: 'תנועת הכסף'
-    },
-    people: {
-      en: 'Your People',
-      es: 'Tu Gente',
-      he: 'האנשים שלך'
-    },
-    calendar: {
-      en: 'Your Calendar',
-      es: 'Tu Calendario',
-      he: 'היומן שלך'
-    },
-    collection: {
-      en: 'Collecting Payment',
-      es: 'Cobrando Pagos',
-      he: 'גביית תשלומים'
-    },
-    website: {
-      en: 'Website Traffic',
-      es: 'Tráfico del Sitio',
-      he: 'תנועה באתר'
-    },
-    visitors: {
-      en: 'visitors',
-      es: 'visitantes',
-      he: 'מבקרים'
-    },
-    views: {
-      en: 'page views',
-      es: 'vistas',
-      he: 'צפיות'
-    },
-    today: {
-      en: 'today',
-      es: 'hoy',
-      he: 'היום'
-    },
-    last_7_days: {
-      en: 'last 7 days',
-      es: 'últimos 7 días',
-      he: '7 ימים אחרונים'
-    },
-    last_30_days: {
-      en: 'last 30 days',
-      es: 'últimos 30 días',
-      he: '30 ימים אחרונים'
-    },
-    this_month: {
-      en: 'this month',
-      es: 'este mes',
-      he: 'החודש'
-    },
-    new_faces: {
-      en: 'new faces this week',
-      es: 'caras nuevas esta semana',
-      he: 'פנים חדשות השבוע'
-    },
-    became_clients: {
-      en: 'became clients',
-      es: 'se volvieron clientes',
-      he: 'הפכו ללקוחות'
-    },
-    went_quiet: {
-      en: 'went quiet',
-      es: 'se callaron',
-      he: 'השתתקו'
-    },
-    sessions: {
-      en: 'sessions',
-      es: 'sesiones',
-      he: 'פגישות'
-    },
-    upcoming: {
-      en: 'upcoming this week',
-      es: 'próximas esta semana',
-      he: 'קרובות השבוע'
-    },
-    waiting: {
-      en: 'waiting',
-      es: 'esperando',
-      he: 'ממתין'
-    },
-    invoices: {
-      en: 'invoices',
-      es: 'facturas',
-      he: 'חשבוניות'
-    },
-    people_in_network: {
-      en: 'people in your network',
-      es: 'personas en tu red',
-      he: 'אנשים ברשת שלך'
-    },
-    send_reminder: {
-      en: 'Send Reminder',
-      es: 'Enviar Recordatorio',
-      he: 'שלח תזכורת'
-    },
-    // Detailed stats translations
-    confirmed: {
-      en: 'Confirmed',
-      es: 'Confirmadas',
-      he: 'מאושר'
-    },
-    completed: {
-      en: 'Completed',
-      es: 'Completadas',
-      he: 'הושלם'
-    },
-    cancelled: {
-      en: 'Cancelled',
-      es: 'Canceladas',
-      he: 'בוטל'
-    },
-    no_show: {
-      en: 'No-Show',
-      es: 'No asistió',
-      he: 'לא הגיע'
-    },
-    booking_revenue: {
-      en: 'Revenue',
-      es: 'Ingresos',
-      he: 'הכנסות'
-    },
-    successful: {
-      en: 'Successful',
-      es: 'Exitosas',
-      he: 'הצליחו'
-    },
-    failed: {
-      en: 'Failed',
-      es: 'Fallidas',
-      he: 'נכשלו'
-    },
-    refunded: {
-      en: 'Refunded',
-      es: 'Reembolsadas',
-      he: 'הוחזרו'
-    },
-    invoices_sent: {
-      en: 'Sent',
-      es: 'Enviadas',
-      he: 'נשלחו'
-    },
-    invoices_paid: {
-      en: 'Paid',
-      es: 'Pagadas',
-      he: 'שולמו'
-    },
-    overdue: {
-      en: 'Overdue',
-      es: 'Vencidas',
-      he: 'באיחור'
-    },
-    average_amount: {
-      en: 'Avg. Amount',
-      es: 'Monto Prom.',
-      he: 'סכום ממוצע'
-    },
-    active_leads: {
-      en: 'Active Leads',
-      es: 'Leads Activos',
-      he: 'לידים פעילים'
-    },
-    active_clients: {
-      en: 'Active Clients',
-      es: 'Clientes Activos',
-      he: 'לקוחות פעילים'
-    },
-    form_submissions: {
-      en: 'Form Submissions',
-      es: 'Envíos de Formulario',
-      he: 'הגשות טפסים'
-    },
-    breakdown_30d: {
-      en: '30-day breakdown',
-      es: 'Desglose de 30 días',
-      he: 'פירוט 30 יום'
-    }
-  };
-
-  // Status label translations
-  const statusLabels: Record<string, Record<string, string>> = {
-    growing: { en: 'Growing', es: 'Creciendo', he: 'צומח' },
-    collect_pending: { en: 'Collect pending', es: 'Cobrar pendientes', he: 'לגבות ממתינים' },
-    needs_attention: { en: 'Needs attention', es: 'Necesita atención', he: 'דורש תשומת לב' },
-    just_starting: { en: 'Just starting', es: 'Recién empezando', he: 'רק מתחילים' },
-    reach_out: { en: 'Reach out', es: 'Contactar', he: 'ליצור קשר' },
-    many_quiet: { en: 'Many quiet', es: 'Muchos callados', he: 'רבים שותקים' },
-    stable: { en: 'Stable', es: 'Estable', he: 'יציב' },
-    busy: { en: 'Busy', es: 'Ocupado', he: 'עמוס' },
-    active: { en: 'Active', es: 'Activo', he: 'פעיל' },
-    quiet: { en: 'Quiet', es: 'Tranquilo', he: 'שקט' },
-    all_collected: { en: 'All collected', es: 'Todo cobrado', he: 'הכל נגבה' },
-    some_pending: { en: 'Some pending', es: 'Algunos pendientes', he: 'כמה ממתינים' },
-    many_pending: { en: 'Many pending', es: 'Muchos pendientes', he: 'רבים ממתינים' },
-    getting_traffic: { en: 'Getting traffic', es: 'Recibiendo tráfico', he: 'מקבל תנועה' },
-    no_traffic: { en: 'No traffic yet', es: 'Sin tráfico aún', he: 'אין תנועה עדיין' }
-  };
-
-  // Card explanations based on health status
-  const getMoneyExplanation = () => {
-    if (!stats) return '';
-    const key = story?.cardHealth?.money?.statusLabel || 'just_starting';
-    const explanations: Record<string, Record<string, string>> = {
-      growing: {
-        en: 'Your pricing is working. People want what you offer.',
-        es: 'Tu precio funciona. La gente quiere lo que ofreces.',
-        he: 'התמחור שלך עובד. אנשים רוצים את מה שיש לך להציע.'
-      },
-      collect_pending: {
-        en: 'Revenue is coming in. Some invoices need a gentle nudge.',
-        es: 'Los ingresos llegan. Algunas facturas necesitan un empujoncito.',
-        he: 'הכנסות נכנסות. כמה חשבוניות צריכות דחיפה קלה.'
-      },
-      needs_attention: {
-        en: 'Time to follow up on those pending payments.',
-        es: 'Es hora de dar seguimiento a esos pagos pendientes.',
-        he: 'הגיע הזמן לעקוב אחרי התשלומים הממתינים.'
-      },
-      just_starting: {
-        en: 'Your business is just getting started. Good things take time.',
-        es: 'Tu negocio recién comienza. Las cosas buenas toman tiempo.',
-        he: 'העסק שלך רק מתחיל. דברים טובים לוקחים זמן.'
-      }
-    };
-    return explanations[key]?.[language] || explanations.just_starting.en;
-  };
-
-  const getPeopleExplanation = () => {
-    if (!stats) return '';
-    const key = story?.cardHealth?.people?.statusLabel || 'stable';
-    const explanations: Record<string, Record<string, string>> = {
-      growing: {
-        en: 'Your network is growing nicely. Keep building those relationships.',
-        es: 'Tu red crece bien. Sigue construyendo esas relaciones.',
-        he: 'הרשת שלך צומחת יפה. המשך לבנות את הקשרים האלה.'
-      },
-      reach_out: {
-        en: 'New faces are coming in. Reach out to the quiet ones too.',
-        es: 'Caras nuevas llegan. Contacta también a los callados.',
-        he: 'פנים חדשות מגיעות. פנה גם לשקטים.'
-      },
-      many_quiet: {
-        en: 'Several contacts went quiet. A friendly check-in might help.',
-        es: 'Varios contactos se callaron. Un saludo amigable podría ayudar.',
-        he: 'כמה אנשי קשר השתתקו. בדיקה ידידותית עשויה לעזור.'
-      },
-      stable: {
-        en: 'Your network is stable. Keep nurturing those connections.',
-        es: 'Tu red es estable. Sigue nutriendo esas conexiones.',
-        he: 'הרשת שלך יציבה. המשך לטפח את הקשרים האלה.'
-      },
-      just_starting: {
-        en: 'Building your network takes time. Every contact counts.',
-        es: 'Construir tu red toma tiempo. Cada contacto cuenta.',
-        he: 'בניית הרשת שלך לוקחת זמן. כל איש קשר חשוב.'
-      }
-    };
-    return explanations[key]?.[language] || explanations.stable.en;
-  };
-
-  const getCalendarExplanation = () => {
-    if (!stats) return '';
-    const key = story?.cardHealth?.calendar?.statusLabel || 'active';
-    const explanations: Record<string, Record<string, string>> = {
-      busy: {
-        en: 'Your calendar is filling up. Clients are booking you consistently.',
-        es: 'Tu calendario se llena. Los clientes te reservan constantemente.',
-        he: 'היומן שלך מתמלא. לקוחות מזמינים אותך באופן קבוע.'
-      },
-      active: {
-        en: 'Bookings are coming in. Your availability is working.',
-        es: 'Las reservas llegan. Tu disponibilidad funciona.',
-        he: 'הזמנות נכנסות. הזמינות שלך עובדת.'
-      },
-      quiet: {
-        en: 'Your calendar is quiet. Maybe share your booking link.',
-        es: 'Tu calendario está tranquilo. Quizás comparte tu enlace de reservas.',
-        he: 'היומן שלך שקט. אולי שתף את קישור ההזמנות שלך.'
-      }
-    };
-    return explanations[key]?.[language] || explanations.active.en;
-  };
-
-  const getCollectionExplanation = () => {
-    if (!stats) return '';
-    const key = story?.cardHealth?.collection?.statusLabel || 'all_collected';
-    const explanations: Record<string, Record<string, string>> = {
-      all_collected: {
-        en: 'All payments are in. Great job staying on top of things.',
-        es: 'Todos los pagos están al día. Buen trabajo manteniéndote al día.',
-        he: 'כל התשלומים נגבו. עבודה מצוינת להישאר מעודכן.'
-      },
-      some_pending: {
-        en: 'A gentle reminder might help them remember.',
-        es: 'Un recordatorio amable podría ayudarles a recordar.',
-        he: 'תזכורת עדינה עשויה לעזור להם לזכור.'
-      },
-      many_pending: {
-        en: 'Time to follow up on those invoices.',
-        es: 'Es hora de dar seguimiento a esas facturas.',
-        he: 'הגיע הזמן לעקוב אחרי החשבוניות האלה.'
-      }
-    };
-    return explanations[key]?.[language] || explanations.all_collected.en;
-  };
-
-  const getWebsiteExplanation = () => {
-    if (!websiteAnalytics) return '';
-    const hasTraffic = websiteAnalytics.visitors_30d > 0;
-    const explanations: Record<string, Record<string, string>> = {
-      getting_traffic: {
-        en: 'People are finding your website. Keep sharing your link.',
-        es: 'La gente está encontrando tu sitio. Sigue compartiendo tu enlace.',
-        he: 'אנשים מוצאים את האתר שלך. המשך לשתף את הקישור.'
-      },
-      no_traffic: {
-        en: 'Your website is ready. Share your link to get visitors.',
-        es: 'Tu sitio está listo. Comparte tu enlace para conseguir visitantes.',
-        he: 'האתר שלך מוכן. שתף את הקישור שלך כדי לקבל מבקרים.'
-      }
-    };
-    const key = hasTraffic ? 'getting_traffic' : 'no_traffic';
-    return explanations[key]?.[language] || explanations.no_traffic.en;
-  };
-
-  const getWebsiteHealth = (): HealthStatus => {
-    if (!websiteAnalytics) return 'healthy';
-    if (websiteAnalytics.visitors_30d > 0) return 'healthy';
-    return 'watch';
-  };
-
-  const getWebsiteStatusLabel = (): string => {
-    if (!websiteAnalytics) return 'no_traffic';
-    return websiteAnalytics.visitors_30d > 0 ? 'getting_traffic' : 'no_traffic';
-  };
-
-  const tr = (key: string) => cardTranslations[key]?.[language] || cardTranslations[key]?.en || key;
-  const getStatusLabel = (key: string) => statusLabels[key]?.[language] || statusLabels[key]?.en || key;
 
   const isRTL = language === 'he';
 
@@ -538,14 +271,14 @@ export default function ReportsPage() {
               className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center flex-shrink-0"
               style={{ backgroundColor: 'rgba(34, 197, 139, 0.2)' }}
             >
-              <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: REPORTS_COLOR }} />
+              <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" style={{ color: REPORTS_COLORS.PRIMARY }} />
             </div>
             <div className="min-w-0">
               <h1 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] truncate">
-                {t('reports.title') || 'Your Business Story'}
+                {t('reports.title') || 'Cash Flow & Financials'}
               </h1>
               <p className="text-xs text-[var(--v2-text-secondary)] hidden sm:block">
-                {t('reports.subtitle') || 'How your business is doing'}
+                {t('reports.subtitle') || 'Your business financial overview'}
               </p>
             </div>
           </div>
@@ -560,6 +293,49 @@ export default function ReportsPage() {
             >
               <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
             </button>
+
+            {/* Search Input - Only visible when in transactions/invoices view */}
+            {(viewMode === 'transactions' || viewMode === 'invoices') && (
+              <div className="relative hidden md:block">
+                <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
+                <input
+                  type="text"
+                  placeholder={viewMode === 'invoices'
+                    ? (t('payments.search_invoices_placeholder') || 'Search invoices...')
+                    : (t('payments.search_placeholder') || 'Search transactions...')}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-10 pe-4 py-2 w-48 lg:w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#22C58B] transition-all"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                />
+              </div>
+            )}
+
+            {/* Export All Button - Only visible when in transactions view */}
+            {viewMode === 'transactions' && (
+              <button
+                onClick={handleExportAllTransactions}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                title={t('payments.export.all_tooltip') || 'Export all transactions'}
+              >
+                <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">{t('payments.bulk.export') || 'Export'}</span>
+              </button>
+            )}
+
+            {/* Create Invoice Button - Only visible when in invoices view */}
+            {viewMode === 'invoices' && (
+              <button
+                onClick={() => setShowInvoiceModal(true)}
+                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[#22C58B] text-xs sm:text-sm font-medium border border-[#22C58B] bg-[#22C58B]/10 hover:bg-[#22C58B]/20 transition-all whitespace-nowrap"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">{t('payments.create_invoice')}</span>
+                <span className="sm:hidden">{t('payments.create_invoice')}</span>
+              </button>
+            )}
 
             {/* View Mode Tabs */}
             <div
@@ -606,150 +382,171 @@ export default function ReportsPage() {
           </div>
         </div>
 
+        {/* Mobile Search Bar - Only visible on mobile when in transactions/invoices view */}
+        {(viewMode === 'transactions' || viewMode === 'invoices') && (
+          <div className="md:hidden relative">
+            <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
+            <input
+              type="text"
+              placeholder={viewMode === 'invoices'
+                ? (t('payments.search_invoices_placeholder') || 'Search invoices...')
+                : (t('payments.search_placeholder') || 'Search transactions...')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="ps-10 pe-4 py-2 w-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#22C58B] transition-all"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            />
+          </div>
+        )}
+
         {/* Loading state */}
         {loading ? (
           <div className="flex items-center justify-center min-h-[300px]">
             <div className="text-center space-y-3">
               <div
                 className="w-12 h-12 border-3 border-t-transparent rounded-full animate-spin mx-auto"
-                style={{ borderColor: REPORTS_COLOR, borderTopColor: 'transparent' }}
+                style={{ borderColor: REPORTS_COLORS.PRIMARY, borderTopColor: 'transparent' }}
               />
               <p className="text-sm text-[var(--v2-text-secondary)]">{t('reports.loading') || 'Loading...'}</p>
             </div>
           </div>
         ) : viewMode === 'overview' ? (
-          /* Story-driven Overview - Compact layout */
-          <div className="space-y-3">
-            {/* Story Cards Grid - 3 cards per row, equal heights */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" style={{ gridAutoRows: 'minmax(280px, auto)' }}>
-              {/* Money Card */}
-              <StoryCard
+          /* Financial Dashboard */
+          <div className="space-y-4 max-w-7xl mx-auto">
+            {/* Reporting window */}
+            <div
+              className="inline-flex items-center gap-1 p-1 border border-[var(--v2-border)] bg-[var(--v2-surface)]"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              role="group"
+              aria-label={t('reports.period_label') || 'Reporting period'}
+            >
+              {REPORT_PERIODS.map(({ value, key, fallback }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setPeriod(value)}
+                  disabled={isRefreshing && period !== value}
+                  aria-pressed={period === value}
+                  className={`px-3 py-1.5 text-sm font-medium transition-all border disabled:cursor-default ${
+                    period === value
+                      ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
+                      : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                  }`}
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {t(key) || fallback}
+                </button>
+              ))}
+            </div>
+
+            {/* Numbers stay on screen while the new window loads, dimmed so it's
+                clear they're the previous period's figures. */}
+            <div
+              className="space-y-4 transition-opacity duration-200"
+              style={{ opacity: isRefreshing ? 0.45 : 1 }}
+              aria-busy={isRefreshing}
+            >
+
+            {/* Key Financial Metrics - 4 Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Total Revenue (30d) */}
+              <MetricCard
                 icon={Banknote}
-                iconColor={REPORTS_COLOR}
-                iconBgColor="rgba(34, 197, 139, 0.15)"
-                title={tr('money')}
-                mainValue={formatCurrency(stats?.payments.revenue_30d || 0)}
-                health={story?.cardHealth?.money?.status || 'healthy'}
-                statusLabel={getStatusLabel(story?.cardHealth?.money?.statusLabel || 'growing')}
-                explanation={getMoneyExplanation()}
-                trendType="revenue"
-                currentValue={stats?.payments.revenue_30d || 0}
-                previousValue={(stats?.payments.revenue_30d || 0) * 0.85}
-                expandedTitle={tr('breakdown_30d')}
-                expandedDetails={[
-                  { label: tr('successful'), value: detailedStats?.payments.successful_transactions_30d || 0, color: 'green' },
-                  { label: tr('failed'), value: detailedStats?.payments.failed_transactions_30d || 0, color: detailedStats?.payments.failed_transactions_30d ? 'red' : 'default' },
-                  { label: tr('refunded'), value: detailedStats?.payments.refunded_30d || 0 },
-                  { label: tr('average_amount'), value: formatCurrency(detailedStats?.payments.average_invoice_amount || 0) },
-                ]}
+                iconColor={REPORTS_COLORS.PRIMARY}
+                label={t('reports.total_revenue') || 'Total Revenue'}
+                value={formatCurrency(stats?.payments.revenue_30d || 0, { showFree: false })}
+                subtitle={(() => {
+                  const paid = stats?.payments.revenue_paid_30d || 0;
+                  const owed = stats?.payments.revenue_owed_30d || 0;
+
+                  return `${t('reports.paid') || 'Paid'}: ${formatCurrency(paid, { showFree: false })} • ${t('reports.owed') || 'Owed'}: ${formatCurrency(owed, { showFree: false })}`;
+                })()}
+                onAction={() => setViewMode('transactions')}
+                actionLabel={t('reports.view_transactions') || 'View transactions'}
               />
 
-              {/* People Card */}
-              <StoryCard
-                icon={Users}
-                iconColor="#8B5CF6"
-                iconBgColor="rgba(139, 92, 246, 0.15)"
-                title={tr('people')}
-                mainValue={`${stats?.crm.total_contacts || 0} ${tr('people_in_network')}`}
-                details={[
-                  { label: tr('new_faces'), value: stats?.crm.new_this_week || 0 },
-                  { label: tr('became_clients'), value: stats?.crm.became_clients_this_week || 0 },
-                  { label: tr('went_quiet'), value: stats?.crm.went_quiet || 0, highlight: (stats?.crm.went_quiet || 0) > 0 }
-                ]}
-                health={story?.cardHealth?.people?.status || 'healthy'}
-                statusLabel={getStatusLabel(story?.cardHealth?.people?.statusLabel || 'stable')}
-                explanation={getPeopleExplanation()}
-                action={stats?.crm.went_quiet && stats.crm.went_quiet > 0 ? {
-                  label: tr('send_reminder'),
-                  onClick: () => router.push('/business-os/crm?filter=quiet')
-                } : undefined}
-                trendType="people"
-                currentValue={stats?.crm.total_contacts || 0}
-                previousValue={(stats?.crm.total_contacts || 0) - (stats?.crm.new_this_week || 0)}
-                expandedTitle={tr('breakdown_30d')}
-                expandedDetails={[
-                  { label: tr('active_leads'), value: detailedStats?.crm.active_leads || 0 },
-                  { label: tr('active_clients'), value: detailedStats?.crm.active_clients || 0, color: 'green' },
-                  { label: tr('went_quiet'), value: stats?.crm.went_quiet || 0, color: stats?.crm.went_quiet ? 'amber' : 'default' },
-                  { label: tr('became_clients'), value: stats?.crm.became_clients_this_week || 0 },
-                ]}
-              />
-
-              {/* Calendar Card */}
-              <StoryCard
-                icon={Calendar}
-                iconColor="#14B8A6"
-                iconBgColor="rgba(20, 184, 166, 0.15)"
-                title={tr('calendar')}
-                mainValue={`${stats?.scheduling.bookings_30d || 0} ${tr('sessions')} ${tr('this_month')}`}
-                details={[
-                  { label: tr('upcoming'), value: stats?.scheduling.upcoming_count || 0 }
-                ]}
-                health={story?.cardHealth?.calendar?.status || 'healthy'}
-                statusLabel={getStatusLabel(story?.cardHealth?.calendar?.statusLabel || 'active')}
-                explanation={getCalendarExplanation()}
-                trendType="calendar"
-                currentValue={stats?.scheduling.bookings_30d || 0}
-                previousValue={(stats?.scheduling.bookings_30d || 0) * 0.8}
-                expandedTitle={tr('breakdown_30d')}
-                expandedDetails={[
-                  { label: tr('confirmed'), value: detailedStats?.scheduling.confirmed_30d || 0 },
-                  { label: tr('completed'), value: detailedStats?.scheduling.completed_30d || 0, color: 'green' },
-                  { label: tr('cancelled'), value: detailedStats?.scheduling.cancelled_30d || 0, color: detailedStats?.scheduling.cancelled_30d ? 'red' : 'default' },
-                  { label: tr('no_show'), value: detailedStats?.scheduling.no_show_30d || 0, color: detailedStats?.scheduling.no_show_30d ? 'amber' : 'default' },
-                ]}
-              />
-
-              {/* Collection Card */}
-              <StoryCard
-                icon={CreditCard}
-                iconColor="#F59E0B"
-                iconBgColor="rgba(245, 158, 11, 0.15)"
-                title={tr('collection')}
-                mainValue={`${stats?.payments.pending_invoices || 0} ${tr('invoices')} ${tr('waiting')}`}
-                health={story?.cardHealth?.collection?.status || 'healthy'}
-                statusLabel={getStatusLabel(story?.cardHealth?.collection?.statusLabel || 'all_collected')}
-                explanation={getCollectionExplanation()}
-                action={stats?.payments.pending_invoices && stats.payments.pending_invoices > 0 ? {
-                  label: tr('send_reminder'),
-                  onClick: () => router.push('/business-os/payments?filter=pending')
-                } : undefined}
-                trendType="collection"
-                currentValue={stats?.payments.pending_invoices || 0}
-                previousValue={(stats?.payments.pending_invoices || 0) * 1.2}
-                expandedTitle={tr('breakdown_30d')}
-                expandedDetails={[
-                  { label: tr('invoices_sent'), value: detailedStats?.payments.invoices_sent_30d || 0 },
-                  { label: tr('invoices_paid'), value: detailedStats?.payments.invoices_paid_30d || 0, color: 'green' },
-                  { label: tr('overdue'), value: detailedStats?.payments.invoices_overdue || 0, color: detailedStats?.payments.invoices_overdue ? 'red' : 'default' },
-                  { label: tr('waiting'), value: stats?.payments.pending_invoices || 0, color: stats?.payments.pending_invoices ? 'amber' : 'default' },
-                ]}
-              />
-
-              {/* Website Card */}
-              <StoryCard
-                icon={Globe}
-                iconColor="#3B82F6"
-                iconBgColor="rgba(59, 130, 246, 0.15)"
-                title={tr('website')}
-                mainValue={`${websiteAnalytics?.visitors_30d || 0} ${tr('visitors')} ${tr('last_30_days')}`}
-                health={getWebsiteHealth()}
-                statusLabel={getStatusLabel(getWebsiteStatusLabel())}
-                explanation={getWebsiteExplanation()}
-                action={{
-                  label: language === 'he' ? 'צפה באתר' : language === 'es' ? 'Ver sitio' : 'View site',
-                  onClick: () => router.push('/business-os/website')
+              {/* Revenue This Week */}
+              <MetricCard
+                icon={TrendingUp}
+                iconColor={REPORTS_COLORS.PRIMARY}
+                label={t('reports.this_week') || 'This Week'}
+                value={formatCurrency(stats?.payments.revenue_this_week || 0, { showFree: false })}
+                subtitle={t('reports.last_7_days') || 'Last 7 days'}
+                trend={{
+                  value: formatCurrency(Math.abs((stats?.payments.revenue_this_week || 0) - (stats?.payments.revenue_last_week || 0)), { showFree: false }),
+                  isPositive: (stats?.payments.revenue_this_week || 0) >= (stats?.payments.revenue_last_week || 0),
+                  text: t('reports.from_last_week') || 'from last week'
                 }}
-                trendType="people"
-                currentValue={websiteAnalytics?.visitors_30d || 0}
-                previousValue={(websiteAnalytics?.visitors_30d || 0) * 0.8}
-                expandedTitle={tr('breakdown_30d')}
-                expandedDetails={[
-                  { label: tr('today'), value: websiteAnalytics?.visitors_today || 0 },
-                  { label: tr('last_7_days'), value: websiteAnalytics?.visitors_7d || 0 },
-                  { label: tr('form_submissions'), value: detailedStats?.website.form_submissions_30d || 0, color: detailedStats?.website.form_submissions_30d ? 'green' : 'default' },
-                  { label: tr('views'), value: websiteAnalytics?.total_views || 0 },
-                ]}
+              />
+
+              {/* Pending Invoices */}
+              <MetricCard
+                icon={Clock}
+                iconColor={REPORTS_COLORS.WARNING}
+                label={t('reports.pending_invoices') || 'Pending Invoices'}
+                value={formatCurrency(stats?.payments.pending_invoices_amount || 0, { showFree: false })}
+                subtitle={`${stats?.payments.pending_invoices || 0} ${t('reports.invoices') || 'invoices'} • ${stats?.payments.invoices_overdue || 0} ${t('reports.overdue') || 'overdue'}`}
+                onAction={() => setViewMode('invoices')}
+                actionLabel={t('reports.view_invoices') || 'View invoices'}
+              />
+
+              {/* Average Invoice */}
+              <MetricCard
+                icon={Receipt}
+                iconColor={REPORTS_COLORS.ACCENT}
+                label={t('reports.average_invoice') || 'Average Invoice'}
+                value={formatCurrency(stats?.payments.average_invoice_amount || 0, { showFree: false })}
+                subtitle={t('reports.per_paid_invoice') || 'Per paid invoice'}
+              />
+            </div>
+
+            {/* Revenue Sources */}
+            <RevenueSourcesSection
+              payments={{
+                type: 'payments',
+                amount: stats?.payments.transactions_revenue_30d || 0,
+                count: stats?.payments.successful_transactions_30d || 0
+              }}
+              invoices={{
+                type: 'invoices',
+                amount: (stats?.payments.invoices_paid_amount_30d || 0) + (stats?.payments.pending_invoices_amount || 0),
+                count: (stats?.payments.invoices_paid_30d || 0) + (stats?.payments.pending_invoices || 0),
+                paid: stats?.payments.invoices_paid_amount_30d || 0,
+                outstanding: stats?.payments.pending_invoices_amount || 0
+              }}
+            />
+
+            {/* Financial Health */}
+            <FinancialHealthGrid
+              successRate={{
+                value: `${Math.round(((stats?.payments.successful_transactions_30d || 0) / Math.max((stats?.payments.successful_transactions_30d || 0) + (stats?.payments.failed_transactions_30d || 0), 1)) * 100)}%`,
+                subtitle: language === 'he'
+                  ? `${t('reports.transactions')} ${stats?.payments.successful_transactions_30d || 0} ${t('reports.of')} ${(stats?.payments.successful_transactions_30d || 0) + (stats?.payments.failed_transactions_30d || 0)}`
+                  : `${stats?.payments.successful_transactions_30d || 0} ${t('reports.of')} ${(stats?.payments.successful_transactions_30d || 0) + (stats?.payments.failed_transactions_30d || 0)} ${t('reports.transactions')}`,
+                status: ((stats?.payments.successful_transactions_30d || 0) / Math.max((stats?.payments.successful_transactions_30d || 0) + (stats?.payments.failed_transactions_30d || 0), 1)) >= PERFORMANCE_THRESHOLDS.SUCCESS_RATE_GOOD ? 'success' : 'warning'
+              }}
+              collectionRate={{
+                value: `${Math.min(100, Math.round(((stats?.payments.invoices_paid_30d || 0) / Math.max(stats?.payments.invoices_sent_30d || 0, 1)) * 100))}%`,
+                subtitle: language === 'he'
+                  ? `${t('reports.invoices_paid')} ${stats?.payments.invoices_paid_30d || 0} ${t('reports.of')} ${stats?.payments.invoices_sent_30d || 0}`
+                  : `${stats?.payments.invoices_paid_30d || 0} ${t('reports.of')} ${stats?.payments.invoices_sent_30d || 0} ${t('reports.invoices_paid')}`,
+                status: ((stats?.payments.invoices_paid_30d || 0) / Math.max(stats?.payments.invoices_sent_30d || 0, 1)) >= PERFORMANCE_THRESHOLDS.COLLECTION_RATE_GOOD ? 'success' : 'warning'
+              }}
+              outstanding={{
+                value: formatCurrency(stats?.payments.invoices_overdue_amount || 0, { showFree: false }),
+                subtitle: `${stats?.payments.invoices_overdue || 0} ${t('reports.overdue_invoices')}`,
+                status: (stats?.payments.invoices_overdue || 0) === PERFORMANCE_THRESHOLDS.OUTSTANDING_GOOD ? 'success' : (stats?.payments.invoices_overdue || 0) <= PERFORMANCE_THRESHOLDS.OUTSTANDING_WARNING ? 'warning' : 'danger'
+              }}
+              refundRate={{
+                value: `${Math.round(((stats?.payments.refunded_30d || 0) / Math.max(stats?.payments.successful_transactions_30d || 0, 1)) * 100)}%`,
+                subtitle: `${stats?.payments.refunded_30d || 0} ${t('reports.refunded')}`,
+                status: ((stats?.payments.refunded_30d || 0) / Math.max(stats?.payments.successful_transactions_30d || 0, 1)) <= PERFORMANCE_THRESHOLDS.REFUND_RATE_GOOD ? 'success' : 'warning'
+              }}
+            />
+
+              {/* Revenue by Services */}
+              <RevenueByServicesSection
+                services={stats?.scheduling.service_revenue || []}
               />
             </div>
           </div>
@@ -759,17 +556,35 @@ export default function ReportsPage() {
             className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
-            {viewMode === 'transactions' && <PaymentTransactionList searchQuery="" />}
+            {viewMode === 'transactions' && (
+              <PaymentTransactionList
+                searchQuery={searchQuery}
+                hideInternalSearch
+                highlightId={selectedTransactionId}
+              />
+            )}
             {viewMode === 'invoices' && (
               <PaymentInvoiceList
-                searchQuery=""
-                onCreateInvoice={() => {}}
+                key={invoiceListKey}
+                searchQuery={searchQuery}
+                onCreateInvoice={() => setShowInvoiceModal(true)}
                 highlightId={selectedInvoiceId}
               />
             )}
           </div>
         )}
       </div>
+
+      {/* Invoice Modal */}
+      <InvoiceModal
+        isOpen={showInvoiceModal}
+        onClose={() => setShowInvoiceModal(false)}
+        onSave={() => {
+          setShowInvoiceModal(false);
+          // Refresh the invoice list
+          setInvoiceListKey(prev => prev + 1);
+        }}
+      />
     </div>
   );
 }

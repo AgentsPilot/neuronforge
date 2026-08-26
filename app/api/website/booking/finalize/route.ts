@@ -45,10 +45,26 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
-    // Look up the booking
+    // Look up the booking with contact data via JOIN
+    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
     const { data: booking, error: bookingError } = await supabaseServer
       .from('scheduling_bookings')
-      .select('id, user_id, service_id, client_first_name, client_last_name, client_email, client_phone, start_time, contact_id, status, payment_status')
+      .select(`
+        id,
+        user_id,
+        service_id,
+        start_time,
+        contact_id,
+        status,
+        payment_status,
+        contact:crm_contacts(
+          id,
+          first_name,
+          last_name,
+          email,
+          phone
+        )
+      `)
       .eq('id', data.booking_id)
       .single();
 
@@ -112,62 +128,28 @@ export async function POST(request: NextRequest) {
 
     requestLogger.debug({ activeClientStage, pipelineStages }, 'Determined active client stage for paid booking');
 
-    // Create/update CRM contact if not already linked
-    let contactId = booking.contact_id;
+    // Get contact data from the JOIN
+    const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
+
+    // Contact should already exist from /create endpoint (contact_id is NOT NULL)
+    // Just upgrade the stage to 'active_client' since payment succeeded
+    const contactId = booking.contact_id;
 
     if (!contactId) {
-      // Check if contact already exists by email
-      const { data: existingContact } = await supabaseServer
-        .from('crm_contacts')
-        .select('id, first_name, last_name, phone')
-        .eq('user_id', ownerId)
-        .eq('email', booking.client_email)
-        .single();
-
-      if (existingContact) {
-        contactId = existingContact.id;
-        // Update contact with new data and upgrade to active client stage (they paid)
-        const updates: Record<string, string | null> = {
-          stage: activeClientStage // Upgrade to active client since they completed payment
-        };
-        if (!existingContact.first_name && booking.client_first_name) {
-          updates.first_name = booking.client_first_name;
-        }
-        if (!existingContact.last_name && booking.client_last_name) {
-          updates.last_name = booking.client_last_name;
-        }
-        if (!existingContact.phone && booking.client_phone) {
-          updates.phone = booking.client_phone;
-        }
-        await supabaseServer
-          .from('crm_contacts')
-          .update(updates)
-          .eq('id', contactId);
-        requestLogger.debug({ contactId, stage: activeClientStage }, 'Updated existing contact - upgraded to active client');
-      } else {
-        // Create new contact as active client (they paid)
-        const { data: newContact, error: contactError } = await supabaseServer
-          .from('crm_contacts')
-          .insert({
-            user_id: ownerId,
-            first_name: booking.client_first_name,
-            last_name: booking.client_last_name,
-            email: booking.client_email,
-            phone: booking.client_phone || null,
-            source: 'website_booking',
-            stage: activeClientStage // Direct to active client since they completed payment
-          })
-          .select('id')
-          .single();
-
-        if (contactError) {
-          requestLogger.warn({ err: contactError }, 'Failed to create contact');
-        } else if (newContact) {
-          contactId = newContact.id;
-          requestLogger.info({ contactId, stage: activeClientStage }, 'Created new active client contact from paid booking');
-        }
-      }
+      // This should not happen since contact_id is now NOT NULL in the database
+      requestLogger.error({ bookingId: booking.id }, 'Contact missing - contact_id is required');
+      return NextResponse.json(
+        { success: false, error: 'Booking is missing contact information' },
+        { status: 500 }
+      );
     }
+
+    // Upgrade contact stage from 'lead' to 'active_client' since payment succeeded
+    await supabaseServer
+      .from('crm_contacts')
+      .update({ stage: activeClientStage })
+      .eq('id', contactId);
+    requestLogger.info({ contactId, stage: activeClientStage }, 'Upgraded contact to active client after payment');
 
     // Get service name for activity logging
     const { data: service } = await supabaseServer
@@ -191,15 +173,19 @@ export async function POST(request: NextRequest) {
         .insert({
           user_id: ownerId,
           contact_id: contactId,
+          service_id: booking.service_id, // Proper column for revenue tracking (added in migration 20260809)
+          // Note: booking_id will be added as proper column in future migration
+          // For now, keep in metadata for backward compatibility
           stripe_payment_intent_id: data.payment_intent_id,
-          amount: serviceDetails.price,
+          amount: serviceDetails.price,  // SINGLE source of truth for payment amount
           currency: serviceDetails.currency || 'USD',
           status: data.payment_status === 'paid' ? 'succeeded' : 'pending',
           payment_method: 'card',
+          processor_type: 'stripe', // Required for refunds to work correctly
           description: `Booking: ${service?.service_name || 'Service'}`,
           metadata: {
-            booking_id: booking.id,
-            service_id: booking.service_id,
+            booking_id: booking.id,  // Will be moved to proper column in future migration
+            // Removed service_id from metadata - it's now in proper column above
             source: 'website_booking'
           },
           paid_at: data.payment_status === 'paid' ? new Date().toISOString() : null
@@ -215,11 +201,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update booking with contact_id, confirmed status, and payment transaction reference
-    const updateData: Record<string, string | null> = {
+    // Update booking with confirmed status and payment transaction reference
+    // Note: contact_id should already be set from /create, but update it to be safe
+    const updateData: Record<string, string | number | null> = {
       contact_id: contactId,
       status: 'confirmed',
       payment_status: data.payment_status || 'paid'
+      // Removed total_amount - payment amount should only exist in payment_transactions
+      // This prevents double-counting in revenue calculations
     };
 
     // Store payment transaction ID reference (UUID) instead of Stripe intent ID
@@ -240,34 +229,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create CRM activity (non-blocking)
-    // Handle both scheduled bookings (with start_time) and non-scheduled (courses, products)
-    if (contactId) {
-      const startTime = booking.start_time ? new Date(booking.start_time) : null;
-      const activityDescription = startTime
-        ? `Booked via website for ${startTime.toLocaleString()} (paid)`
-        : `Purchased via website (paid)`;
-      const activityDate = startTime?.toISOString() || new Date().toISOString();
-
-      supabaseServer
-        .from('crm_activities')
-        .insert({
-          user_id: ownerId,
-          contact_id: contactId,
-          activity_type: 'booking',
-          title: `Booking: ${service?.service_name || 'Service'}`,
-          description: activityDescription,
-          activity_date: activityDate,
-          auto_logged: true,
-          source_capability: 'scheduling',
-          source_entity_id: booking.id
-        })
-        .then(({ error }) => {
-          if (error) {
-            requestLogger.warn({ err: error }, 'Failed to create activity (non-blocking)');
-          }
-        });
-    }
+    // Note: Activity is auto-created by log_booking_activity_trigger (scheduling_bookings table trigger)
 
     // Send booking confirmation email (non-blocking)
     // skipInvoice=true since payment is already completed
@@ -280,10 +242,10 @@ export async function POST(request: NextRequest) {
       .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
 
     // Send payment receipt (non-blocking) - reuse serviceDetails from earlier
-    if (serviceDetails?.price && serviceDetails.price > 0) {
-      const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
+    if (serviceDetails?.price && serviceDetails.price > 0 && contact?.email) {
+      const clientName = [contact.first_name, contact.last_name].filter(Boolean).join(' ');
       BookingEmailService.sendPaymentReceipt(ownerId, {
-        customerEmail: booking.client_email,
+        customerEmail: contact.email,
         customerName: clientName,
         amount: serviceDetails.price,
         currency: serviceDetails.currency,

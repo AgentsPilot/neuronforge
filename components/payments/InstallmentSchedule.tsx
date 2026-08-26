@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ManualPaymentModal } from './ManualPaymentModal';
 import { PaymentCheckoutButton } from './PaymentCheckoutButton';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 interface Installment {
   id: string;
@@ -67,6 +68,7 @@ export function InstallmentSchedule({
   onPaymentSuccess,
   readOnly = false
 }: InstallmentScheduleProps) {
+  const { currencyCode } = useLanguage();
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [showManualPayment, setShowManualPayment] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +134,7 @@ export function InstallmentSchedule({
     .reduce((sum, i) => sum + i.amount, 0);
   const pendingCount = installments.filter(i => i.status === 'pending').length;
   const overdueCount = installments.filter(i => i.status === 'overdue' || isOverdue(i.due_date, i.status)).length;
-  const currency = installments[0]?.currency || 'USD';
+  const currency = installments[0]?.currency || currencyCode;
 
   return (
     <div className="space-y-4">

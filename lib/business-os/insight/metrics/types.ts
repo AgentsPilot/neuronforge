@@ -19,13 +19,22 @@ export type AcquisitionMetricKey =
   | 'acquisition.page_views'
   | 'acquisition.unique_visitors'
   | 'acquisition.form_submissions'
-  | 'acquisition.form_conversion_rate';
+  | 'acquisition.form_conversion_rate'
+  | 'acquisition.traffic_change'
+  | 'acquisition.page_conversion'
+  | 'acquisition.mobile_conversion'
+  | 'acquisition.missing_ctas'
+  | 'acquisition.incomplete_content';
 
 // Conversion metrics
 export type ConversionMetricKey =
   | 'conversion.new_contacts'
   | 'conversion.lead_to_client_rate'
-  | 'conversion.stage_progression_rate';
+  | 'conversion.stage_progression_rate'
+  | 'conversion.cold_leads_count'
+  | 'conversion.pipeline_velocity'
+  | 'conversion.overdue_tasks'
+  | 'conversion.source_performance';
 
 // Sales metrics
 export type SalesMetricKey =
@@ -42,7 +51,14 @@ export type CashFlowMetricKey =
   | 'cashflow.ar_total'
   | 'cashflow.ar_overdue_usd'
   | 'cashflow.avg_days_to_pay'
-  | 'cashflow.payment_success_rate';
+  | 'cashflow.payment_success_rate'
+  | 'cashflow.failed_payments'
+  | 'cashflow.pending_payments'
+  | 'cashflow.refunded_payments'
+  | 'cashflow.ar_aging'
+  | 'cashflow.expiring_cards'
+  | 'cashflow.refund_rate'
+  | 'cashflow.payout_status';
 
 // Retention metrics
 export type RetentionMetricKey =
@@ -50,7 +66,9 @@ export type RetentionMetricKey =
   | 'retention.no_show_count'
   | 'retention.no_show_rate'
   | 'retention.cancellation_rate'
+  | 'retention.cancellation_spike'
   | 'retention.rebooking_rate'
+  | 'retention.repeat_booking_rate'
   | 'retention.clients_at_risk';
 
 // Operations metrics
@@ -58,13 +76,18 @@ export type OperationsMetricKey =
   | 'operations.calendar_utilization'
   | 'operations.available_hours'
   | 'operations.booked_hours'
-  | 'operations.active_services';
+  | 'operations.active_services'
+  | 'operations.last_minute_cancels'
+  | 'operations.service_performance'
+  | 'operations.peak_utilization';
 
 // Pricing metrics
 export type PricingMetricKey =
   | 'pricing.avg_service_price'
   | 'pricing.avg_discount_percent'
-  | 'pricing.intro_offer_conversion_rate';
+  | 'pricing.intro_offer_conversion_rate'
+  | 'pricing.discount_rate'
+  | 'pricing.intro_conversion';
 
 // Union of all metric keys
 export type MetricKey =

@@ -12,7 +12,7 @@ interface SessionsSectionProps {
   t: (key: string) => string;
   isRTL: boolean;
   language: string;
-  onNewSession?: () => void;
+  onNewSession?: () => void | Promise<void>;
   onEditSession?: (bookingId: string) => void;
   onViewIntake?: (bookingId: string) => void;
   isLoading?: boolean;
