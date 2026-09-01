@@ -6,6 +6,8 @@ import { Moon, Sun, Globe, Check, Settings, Calendar } from 'lucide-react';
 import { V2Logo } from '@/components/v2/V2Header';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+
 import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
 
 export function BusinessOSHeader() {
@@ -50,7 +52,7 @@ export function BusinessOSHeader() {
 
   return (
     <div className="sticky top-0 z-50 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4 flex items-center justify-between">
+      <div className={`${PAGE_CONTAINER} py-3 sm:py-4 flex items-center justify-between`}>
         <V2Logo />
 
         {/* Calendar + Dark Mode Toggle + Language Selector + Settings */}

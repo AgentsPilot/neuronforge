@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
@@ -147,8 +148,27 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // The editor previews what visitors will see, so the header's logo is
+    // injected from the business profile here exactly as the public route does.
+    // The block itself only stores `show_logo`.
+    const headerShowsLogo = blocks.some(
+      b => b.block_type === 'header' && (b.content as Record<string, unknown>)?.show_logo === true
+    );
+    const businessLogoUrl = headerShowsLogo ? await resolveBusinessLogo(user.id) : null;
+
     // Merge central content into blocks (only for homepage/main website, not landing pages)
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {
+      if (block.block_type === 'header') {
+        const headerContent = block.content as Record<string, unknown>;
+        return {
+          ...block,
+          content: {
+            ...headerContent,
+            logo_url: headerContent?.show_logo === true && businessLogoUrl ? businessLogoUrl : undefined,
+          },
+        };
+      }
+
       // For landing pages, use block content directly (AI-generated content stored in blocks)
       // BUT inject live service data for pricing blocks so prices stay current
       if (isLandingPage) {
@@ -221,8 +241,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // SERVICES: Always use live services from Scheduling capability
       // Merge with saved hidden flags from block content
       // PROCESS: Use block content directly (page-specific flow/steps)
-      // HEADER: Use block content directly (page-specific menu/logo)
-      if (block.block_type === 'process' || block.block_type === 'header') {
+      // (HEADER is handled above, where the business logo is injected.)
+      if (block.block_type === 'process') {
         // These blocks store page-specific content that should not be merged with central content
         return block;
       }

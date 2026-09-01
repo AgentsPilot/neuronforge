@@ -24,6 +24,10 @@
 
 import { createLogger } from '@/lib/logger';
 import { sendEmail } from '@/lib/notifications/emailTransport';
+import {
+  wrapInBrandedTemplate,
+  type BrandingData,
+} from '@/lib/email/templates/base-template';
 import { CATALOG, type ResolvedEntity } from '@/lib/business-os/catalog';
 import {
   BizQLValidationError,
@@ -34,6 +38,7 @@ import {
   type QueryRow,
 } from '../types';
 import { getActionLog } from './ActionLog';
+import { performEmail } from './emailSend';
 import { executeMutate } from './MutateExecutor';
 
 const logger = createLogger({ module: 'BizQLForEach' });
@@ -46,6 +51,15 @@ export interface ForEachOptions {
   language?: string;
   /** Identifies this execution for idempotency. Must be stable across a retry. */
   planId: string;
+  /**
+   * Branding for the outgoing email, resolved by the caller.
+   *
+   * Passed in rather than looked up here on purpose: this module is covered by
+   * tests that guarantee no network and no database, and a lookup inside would
+   * break that. Omitted, the body is sent exactly as it was before — so a caller
+   * that has not been updated degrades to the previous behaviour, not to an error.
+   */
+  branding?: BrandingData;
 }
 
 /**
@@ -79,35 +93,6 @@ function resolveParams(
   }
 
   return resolved;
-}
-
-/** Send one email. Returns an outcome rather than throwing: partial failure is normal. */
-async function performEmail(
-  params: Record<string, unknown>
-): Promise<{ ok: boolean; provider?: string; error?: string }> {
-  const to = params.to;
-
-  if (typeof to !== 'string' || !to.includes('@')) {
-    // A row with no usable address is skipped honestly rather than counted as
-    // sent. Silently "succeeding" here is how a report claims 47 sends when
-    // only 40 had an address.
-    return { ok: false, error: 'no email address' };
-  }
-
-  const subject = String(params.subject ?? '').trim();
-  const body = String(params.body ?? params.html ?? '').trim();
-
-  if (!subject || !body) {
-    return { ok: false, error: 'missing subject or body' };
-  }
-
-  const result = await sendEmail({
-    to: [to],
-    subject,
-    html: body.startsWith('<') ? body : `<p>${body.replace(/\n/g, '<br>')}</p>`,
-  });
-
-  return { ok: result.sent, provider: result.provider, error: result.error };
 }
 
 /** Run tasks with bounded concurrency, preserving order. */
@@ -173,7 +158,50 @@ export async function executeForEach(
   }
 
   const requested = Math.min(query.max ?? rows.length, rows.length);
-  const targets = rows.slice(0, requested);
+  const requestedRows = rows.slice(0, requested);
+
+  // De-duplicate by RECIPIENT, not by row id.
+  //
+  // "email everyone who owes me money" legitimately finds 13 unpaid invoices —
+  // 12 of which belong to the same person. Acting per row would send them 12
+  // identical emails. The per-item idempotency key cannot catch this: those are
+  // 13 genuinely distinct rows.
+  //
+  // Reaching the same address twice from one instruction is never the intent, so
+  // the first occurrence wins and the rest are reported as deduplicated. It also
+  // makes the confirmation honest — "2 recipients", not "13".
+  const seen = new Set<string>();
+  const deduplicated: QueryRow[] = [];
+  let duplicates = 0;
+
+  for (const row of requestedRows) {
+    let key: string;
+    try {
+      const params = resolveParams(query.params, row, entity);
+      key = typeof params.to === 'string' ? params.to.toLowerCase() : String(row.id ?? '');
+    } catch {
+      // Let a bad row through so it fails visibly per-item rather than silently
+      // vanishing from the count here.
+      deduplicated.push(row);
+      continue;
+    }
+
+    if (seen.has(key)) {
+      duplicates++;
+      continue;
+    }
+    seen.add(key);
+    deduplicated.push(row);
+  }
+
+  if (duplicates > 0) {
+    logger.info(
+      { entity: query.entity, action: query.action, duplicates },
+      'Collapsed duplicate recipients before fan-out'
+    );
+  }
+
+  const targets = deduplicated;
 
   const log = getActionLog();
 
@@ -187,7 +215,7 @@ export async function executeForEach(
       attempted: targets.length,
       succeeded: 0,
       failed: 0,
-      skipped: 0,
+      skipped: duplicates,
       items: targets.map((row) => ({
         id: String(row.id ?? ''),
         target: (() => {
@@ -254,7 +282,7 @@ export async function executeForEach(
     try {
       const result =
         query.action === 'send'
-          ? await performEmail(params)
+          ? await performEmail(params, options.branding)
           : await executeMutate(
               {
                 op: 'mutate',
@@ -282,7 +310,10 @@ export async function executeForEach(
   });
 
   const succeeded = outcomes.filter((o) => o.ok && !o.skipped).length;
-  const skipped = outcomes.filter((o) => o.skipped).length;
+  // Both reasons for not acting count as skipped: already-claimed (idempotency)
+  // and collapsed duplicate recipients. Counting only the former would make the
+  // execution total disagree with the preview the user approved.
+  const skipped = outcomes.filter((o) => o.skipped).length + duplicates;
   const failed = outcomes.filter((o) => !o.ok).length;
 
   logger.info(

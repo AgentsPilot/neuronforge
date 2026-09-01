@@ -143,7 +143,9 @@ const CreateLandingPageSchema = z.object({
   // Language for localized content
   language: z.enum(['en', 'es', 'he']).optional().default('en'),
   // Business branding for header
-  logoUrl: z.string().optional(),
+  // Whether this page's header wears the business logo. The image itself is
+  // never passed in or stored here — it comes from the business profile.
+  showLogo: z.boolean().optional(),
   companyName: z.string().optional(),
   // Service details for pricing and booking
   servicePrice: z.number().nullable().optional(),
@@ -261,9 +263,10 @@ export async function POST(request: NextRequest) {
         };
       }
 
-      // For header, set logo and company name
+      // For header, record whether to show the logo and the company name. The
+      // logo URL is injected at read time from the business profile.
       if (block.block_type === 'header') {
-        content.logo_url = validated.logoUrl || null;
+        content.show_logo = validated.showLogo ?? false;
         content.logo_text = validated.companyName || '';
       }
 

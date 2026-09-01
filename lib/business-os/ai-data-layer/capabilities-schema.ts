@@ -533,9 +533,9 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
     icon: 'CreditCard',
     color: '#F59E0B',
     routes: {
-      main: '/business-os/reports?tab=invoices',
-      invoices: '/business-os/reports?tab=invoices',
-      transactions: '/business-os/reports?tab=transactions',
+      main: '/business-os/payments',
+      invoices: '/business-os/payments',
+      transactions: '/business-os/payments',
     },
     entities: {
       invoices: {

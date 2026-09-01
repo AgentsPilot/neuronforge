@@ -18,7 +18,11 @@ const auditTrail = AuditTrailService.getInstance();
 const createServiceSchema = z.object({
   service_name: z.string().min(1),
   description: z.string().optional(),
-  duration_minutes: z.number().min(5).max(10080), // Up to 7 days (10080 minutes) for multi-day courses/retreats
+  duration_minutes: z.number().min(5).max(10080).nullable().optional(), // Null for a product; up to 7 days for multi-day courses
+  // Two facts that decide this service's client journey. A product has no
+  // duration, and a free service is not collected at all — both arrive null.
+  is_scheduled: z.boolean().optional(),
+  collection: z.enum(['online', 'invoice']).nullable().optional(),
   price: z.number().min(0).optional(),
   currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
   buffer_minutes: z.number().min(0).max(120).optional(),
@@ -78,7 +82,7 @@ export async function POST(request: NextRequest) {
         entityType: 'scheduling_service',
         entityId: result.data!.id,
         resourceName: result.data!.service_name,
-        metadata: {
+        details: {
           duration_minutes: result.data!.duration_minutes,
           price: result.data!.price
         },

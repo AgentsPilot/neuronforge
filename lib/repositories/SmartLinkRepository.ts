@@ -6,8 +6,28 @@
 
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { resolveChannel } from '@/lib/business-os/channel-insights/channelFromReferrer';
 
 const logger = createLogger({ service: 'SmartLinkRepository' });
+
+/**
+ * Destinations whose arrivals are already recorded as page views. Counting a
+ * click to one of these as well would count the same person twice.
+ *
+ * Only the public website mounts the page-view tracker, so everything else a
+ * smart link can point at goes uncounted without this.
+ */
+const TRACKED_ELSEWHERE = new Set(['website', 'landing']);
+
+/** Clicks per channel per day, shaped like the page-view equivalent. */
+export interface SmartLinkVisitRow {
+  channel: string;
+  metric_date: string;
+  views: number;
+  visitors: number;
+  /** Distinct visitor hashes, so uniques can be counted across the period. */
+  visitorIds: string[];
+}
 
 export interface SmartLinkMetadata {
   journeyType?: 'contact-only' | 'full';
@@ -511,7 +531,26 @@ export class SmartLinkRepository {
    */
   async getOrCreateDefaultLinks(
     userId: string,
-    userCode: string
+    userCode: string,
+    options?: {
+      /**
+       * The journey the booking link should carry, from how this business
+       * collects — so the link a business is handed on day one runs the flow
+       * it described in onboarding rather than the page's generic default.
+       * Applied only when the link is created; an existing one is left as the
+       * business has since arranged it.
+       */
+      bookingFlow?: string[];
+      /**
+       * What to call the links, in the business's own language.
+       *
+       * The repository has no language of its own — it is called from a route
+       * that does — so the words come in rather than being chosen here. Without
+       * them a Hebrew account got a link named "Booking Link", in a list it
+       * reads right-to-left.
+       */
+      names?: { booking?: string; contact?: string };
+    }
   ): Promise<SmartLinkRepositoryResult<{
     booking: SmartLink | null;
     contact: SmartLink | null;
@@ -544,23 +583,66 @@ export class SmartLinkRepository {
       // Create missing links
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentspilot.com';
 
-      if (!result.booking) {
-        const { data: bookingLink } = await this.create(userId, {
-          name: 'Booking Link',
-          destination_url: `${baseUrl}/c/${userCode}/book`,
-          destination_type: 'booking'
-        });
-        result.booking = bookingLink;
-      }
+      /**
+       * A link still addressed to this account.
+       *
+       * The account's `user_code` is what a public link resolves through, and
+       * it is regenerated whenever the business profile is recreated — running
+       * onboarding again, for instance. The links themselves survive that, so
+       * a link built before the reset keeps pointing at a code the account no
+       * longer answers to: it exists, this function reports it ready, and it
+       * leads nowhere. Existence was never the property worth checking.
+       */
+      const addressesThisAccount = (link: SmartLink | null) =>
+        !!link && link.destination_url.includes(`/c/${userCode}/`);
 
-      if (!result.contact) {
-        const { data: contactLink } = await this.create(userId, {
-          name: 'Contact Form',
-          destination_url: `${baseUrl}/c/${userCode}/contact`,
-          destination_type: 'form'
+      const ensure = async (
+        existingLink: SmartLink | null,
+        name: string,
+        destinationType: 'booking' | 'form',
+        path: string
+      ): Promise<SmartLink | null> => {
+        const destinationUrl = `${baseUrl}/c/${userCode}/${path}`;
+
+        if (addressesThisAccount(existingLink)) return existingLink;
+
+        // Repaired rather than replaced: the code in the URL is stale, but the
+        // link's own short code may already be written down somewhere, and its
+        // click history belongs to this business.
+        if (existingLink) {
+          // Only the account segment is wrong. A booking link can carry a
+          // flow and a set of pre-selected services in its query, and
+          // rebuilding the URL from scratch would throw all of that away to
+          // fix six characters.
+          const repointed = existingLink.destination_url.replace(
+            /\/c\/[^/]+\//,
+            `/c/${userCode}/`
+          );
+          const { data: repaired } = await this.update(existingLink.id, userId, {
+            destination_url: repointed.includes(`/c/${userCode}/`) ? repointed : destinationUrl
+          });
+          logger.info(
+            { userId, linkId: existingLink.id, destinationType },
+            'Repointed a default link at the current user code'
+          );
+          return repaired || existingLink;
+        }
+
+        const flow = destinationType === 'booking' && options?.bookingFlow?.length
+          ? `?flow=${options.bookingFlow.join(',')}`
+          : '';
+
+        const { data: created } = await this.create(userId, {
+          name,
+          destination_url: `${destinationUrl}${flow}`,
+          destination_type: destinationType,
+          ...(flow ? { metadata: { flow: options!.bookingFlow } } : {})
         });
-        result.contact = contactLink;
-      }
+        return created;
+      };
+
+      result.booking = await ensure(result.booking, options?.names?.booking || 'Booking Link', 'booking', 'book');
+      result.contact = await ensure(result.contact, options?.names?.contact || 'Contact Form', 'form', 'contact');
 
       // Payment link is optional - only created when requested
       // because it depends on having paid services
@@ -569,6 +651,84 @@ export class SmartLinkRepository {
       return { data: result, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to get or create default links');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Smart link clicks per channel per day, for the visits picture.
+   *
+   * Excludes destinations that are already counted somewhere else. A click
+   * redirects to one of our own surfaces, so a link pointing at the public
+   * website produces both a click here and a page view in
+   * `website_page_views` — the same person arriving once. Booking, form and
+   * payment destinations carry no page-view tracker, so a click is the only
+   * record that the arrival happened.
+   *
+   * @param since ISO timestamp.
+   */
+  async getClickTotalsByChannelSince(
+    userId: string,
+    since: string
+  ): Promise<SmartLinkRepositoryResult<SmartLinkVisitRow[]>> {
+    try {
+      const { data: links, error: linksError } = await this.supabase
+        .from('smart_links')
+        .select('id, source, medium, destination_type')
+        .eq('user_id', userId);
+
+      if (linksError) throw linksError;
+
+      const counted = new Map<string, { source: string | null }>();
+      for (const link of links || []) {
+        if (TRACKED_ELSEWHERE.has(link.destination_type as string)) continue;
+        counted.set(link.id, { source: link.source });
+      }
+
+      if (counted.size === 0) return { data: [], error: null };
+
+      const { data: clicks, error: clicksError } = await this.supabase
+        .from('smart_link_clicks')
+        .select('smart_link_id, clicked_at, ip_hash')
+        .in('smart_link_id', [...counted.keys()])
+        .gte('clicked_at', since);
+
+      if (clicksError) throw clicksError;
+
+      // channel|date -> clicks, plus the distinct hashes seen for that bucket
+      const buckets = new Map<
+        string,
+        { channel: string; date: string; views: number; visitors: Set<string> }
+      >();
+
+      for (const click of clicks || []) {
+        const date = String(click.clicked_at || '').slice(0, 10);
+        if (!date) continue;
+
+        // A smart link carries its own utm_source, which is what the channel
+        // vocabulary is built on. There is no referrer to fall back to: the
+        // click is recorded at the redirect, before any destination is loaded.
+        const source = counted.get(click.smart_link_id)?.source ?? null;
+        const { channel } = resolveChannel(null, source);
+        const key = `${channel}|${date}`;
+
+        const bucket = buckets.get(key) ?? { channel, date, views: 0, visitors: new Set<string>() };
+        bucket.views += 1;
+        if (click.ip_hash) bucket.visitors.add(click.ip_hash);
+        buckets.set(key, bucket);
+      }
+
+      const rows: SmartLinkVisitRow[] = [...buckets.values()].map(b => ({
+        channel: b.channel,
+        metric_date: b.date,
+        views: b.views,
+        visitors: b.visitors.size,
+        visitorIds: [...b.visitors],
+      }));
+
+      return { data: rows, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to load smart link clicks by channel');
       return { data: null, error: error as Error };
     }
   }

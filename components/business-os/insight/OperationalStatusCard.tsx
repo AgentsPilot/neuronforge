@@ -10,6 +10,7 @@ import {
   Clock,
   Globe,
   Link2,
+  Palette,
   ChevronRight,
   X,
   Activity,
@@ -87,6 +88,16 @@ const STEP_CONFIG: Record<string, {
     label: 'Website',
     color: '#EC4899',
     route: '/business-os/website',
+  },
+  // Colours and fonts, edited in the website builder — the one place they live.
+  // Listed here because they are not only the site's: the invoice PDF and every
+  // transactional email are drawn from the same theme, so a business that never
+  // opens the builder still sends the platform's look to its clients.
+  design: {
+    icon: Palette,
+    label: 'Design',
+    color: '#0EA5E9',
+    route: '/business-os/website?view=design',
   },
 };
 

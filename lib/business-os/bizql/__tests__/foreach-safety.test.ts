@@ -205,6 +205,43 @@ describe('fan-out — execution', () => {
   });
 });
 
+describe('fan-out — duplicate recipients', () => {
+  it('emails one person once, however many rows they own', async () => {
+    // "email everyone who owes me money" finds 13 unpaid invoices, 12 of them
+    // the same client's. Per-item idempotency cannot help — those are 13
+    // genuinely distinct rows — so this has to be collapsed by recipient.
+    const manyInvoicesOnePerson: QueryRow[] = [
+      { id: 'i1', email: 'ofir@example.com' },
+      { id: 'i2', email: 'ofir@example.com' },
+      { id: 'i3', email: 'OFIR@example.com' },
+      { id: 'i4', email: 'yael@example.com' },
+    ];
+
+    const result = await executeForEach(emailStep(), manyInvoicesOnePerson, CTX, OPTIONS);
+
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+    expect(result.succeeded).toBe(2);
+    expect(result.skipped).toBe(2);
+  });
+
+  it('reports the deduplicated count in a preview, so confirmation is honest', async () => {
+    const rowsWithDupes: QueryRow[] = [
+      { id: 'i1', email: 'a@example.com' },
+      { id: 'i2', email: 'a@example.com' },
+      { id: 'i3', email: 'b@example.com' },
+    ];
+
+    const result = await executeForEach(emailStep(), rowsWithDupes, CTX, {
+      ...OPTIONS,
+      dryRun: true,
+    });
+
+    // The user must be asked to approve "2 recipients", not "3".
+    expect(result.attempted).toBe(2);
+    expect(result.items.map((i) => i.target)).toEqual(['a@example.com', 'b@example.com']);
+  });
+});
+
 describe('fan-out — idempotency', () => {
   it('skips an item already claimed, and does not double-send', async () => {
     // Simulates a double-clicked confirmation or a retried invocation: the

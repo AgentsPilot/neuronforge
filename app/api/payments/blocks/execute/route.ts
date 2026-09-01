@@ -31,6 +31,7 @@ import {
   PaymentProcessorType,
   emitPaymentEvent
 } from '@/lib/services/PaymentEventService';
+import { refund } from '@/lib/payments/RefundService';
 import { paymentProcessorService } from '@/lib/services/PaymentProcessorService';
 import {
   paymentTransactionRepository,
@@ -198,15 +199,25 @@ async function executeRecordManualPayment(
 }
 
 /**
- * Execute refund_full block
+ * refund_full and refund_partial.
+ *
+ * Both are adapters now. The refund itself — the account, the idempotency key,
+ * the over-refund guard, the ledger row — lives in RefundService, because those
+ * invariants are all-or-nothing and duplicating them is exactly how this route
+ * and the booking route drifted apart in the first place.
+ *
+ * What this route keeps is its own concern: the payment_events stream the
+ * automation kernel listens to.
+ *
+ * The block ids are unchanged; the kernel addresses them by name.
  */
-async function executeRefundFull(
+async function executeRefundBlock(
   userId: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  isFullRefund: boolean
 ): Promise<{ result: unknown; events: PaymentEventType[] }> {
   const { transaction_id, reason, notify_contact } = params;
 
-  // Get transaction
   const txResult = await paymentTransactionRepository.findById(transaction_id as string, userId);
   if (txResult.error || !txResult.data) {
     throw new Error('Transaction not found');
@@ -215,185 +226,82 @@ async function executeRefundFull(
   const transaction = txResult.data;
   const events: PaymentEventType[] = ['refund.initiated'];
 
-  // Emit initiated event
   await emitPaymentEvent(userId, {
     eventType: 'refund.initiated',
     entityType: 'transaction',
     entityId: transaction_id as string,
     contactId: transaction.contact_id,
     processorType: transaction.processor_type as PaymentProcessorType,
-    metadata: { amount: transaction.amount, reason, isFullRefund: true }
+    metadata: { amount: params.amount ?? transaction.amount, reason, isFullRefund }
   });
 
-  // Process refund based on processor
-  if (transaction.processor_type && transaction.processor_type !== 'manual') {
-    // Use processor to refund
-    const refundResult = await paymentProcessorService.processRefund(
-      userId,
-      {
-        processorTransactionId: transaction.stripe_payment_intent_id || transaction.stripe_charge_id || '',
-        amount: transaction.amount,
-        reason: reason as string
-      },
-      transaction.processor_type as PaymentProcessorType
-    );
-
-    if (refundResult.error) {
-      await emitPaymentEvent(userId, {
-        eventType: 'refund.failed',
-        entityType: 'transaction',
-        entityId: transaction_id as string,
-        metadata: { error: refundResult.error.message }
-      });
-      throw refundResult.error;
-    }
-  }
-
-  // Update transaction with refund info
-  const result = await paymentTransactionRepository.createRefund(transaction_id as string, userId, {
-    amount: transaction.amount,
+  // A full refund passes NO amount: that means "everything still remaining".
+  // This block used to send `transaction.amount`, which after a partial refund
+  // asks for more than is left and then records a full refund regardless.
+  const outcome = await refund({
+    userId,
+    transactionId: transaction_id as string,
+    amount: isFullRefund ? undefined : (params.amount as number),
     reason: reason as string | undefined,
-    isFullRefund: true
+    source: 'app',
+    initiatedBy: userId,
+    // Blocks are addressed by the automation kernel, which may retry. Keying on
+    // the transaction and amount makes a retry a replay rather than a second
+    // refund.
+    clientRequestId: `block:${transaction_id}:${isFullRefund ? 'full' : params.amount}`
   });
 
-  if (result.error) {
+  if (!outcome.ok) {
     await emitPaymentEvent(userId, {
       eventType: 'refund.failed',
       entityType: 'transaction',
       entityId: transaction_id as string,
-      metadata: { error: result.error.message }
+      metadata: { error: outcome.message, code: outcome.code }
     });
-    throw result.error;
+    throw new Error(outcome.message);
   }
 
-  // Emit completed event
   await emitPaymentEvent(userId, {
     eventType: 'refund.completed',
     entityType: 'transaction',
     entityId: transaction_id as string,
     contactId: transaction.contact_id,
     metadata: {
-      amount: transaction.amount,
+      amount: outcome.amount,
       reason,
-      isFullRefund: true,
+      isFullRefund,
       notifyContact: notify_contact
     }
   });
   events.push('refund.completed');
 
+  // refunded_amount is recomputed from the ledger by trigger, so it is read
+  // back rather than assumed.
+  const after = await paymentTransactionRepository.findById(transaction_id as string, userId);
+
   return {
     result: {
       transactionId: transaction_id,
-      refundedAmount: transaction.amount,
-      refundStatus: 'full'
+      refundedAmount: outcome.amount,
+      totalRefunded: after.data?.refunded_amount ?? outcome.amount,
+      refundStatus: after.data?.refund_status ?? (isFullRefund ? 'full' : 'partial')
     },
     events
   };
 }
 
-/**
- * Execute refund_partial block
- */
+async function executeRefundFull(
+  userId: string,
+  params: Record<string, unknown>
+): Promise<{ result: unknown; events: PaymentEventType[] }> {
+  return executeRefundBlock(userId, params, true);
+}
+
 async function executeRefundPartial(
   userId: string,
   params: Record<string, unknown>
 ): Promise<{ result: unknown; events: PaymentEventType[] }> {
-  const { transaction_id, amount, reason, notify_contact } = params;
-
-  // Get transaction
-  const txResult = await paymentTransactionRepository.findById(transaction_id as string, userId);
-  if (txResult.error || !txResult.data) {
-    throw new Error('Transaction not found');
-  }
-
-  const transaction = txResult.data;
-  const refundAmount = amount as number;
-
-  // Validate refund amount
-  const alreadyRefunded = transaction.refunded_amount || 0;
-  const maxRefundable = transaction.amount - alreadyRefunded;
-  if (refundAmount > maxRefundable) {
-    throw new Error(`Cannot refund ${refundAmount}. Maximum refundable: ${maxRefundable}`);
-  }
-
-  const events: PaymentEventType[] = ['refund.initiated'];
-
-  // Emit initiated event
-  await emitPaymentEvent(userId, {
-    eventType: 'refund.initiated',
-    entityType: 'transaction',
-    entityId: transaction_id as string,
-    contactId: transaction.contact_id,
-    metadata: { amount: refundAmount, reason, isFullRefund: false }
-  });
-
-  // Process refund based on processor
-  if (transaction.processor_type && transaction.processor_type !== 'manual') {
-    const refundResult = await paymentProcessorService.processRefund(
-      userId,
-      {
-        processorTransactionId: transaction.stripe_payment_intent_id || transaction.stripe_charge_id || '',
-        amount: refundAmount,
-        reason: reason as string
-      },
-      transaction.processor_type as PaymentProcessorType
-    );
-
-    if (refundResult.error) {
-      await emitPaymentEvent(userId, {
-        eventType: 'refund.failed',
-        entityType: 'transaction',
-        entityId: transaction_id as string,
-        metadata: { error: refundResult.error.message }
-      });
-      throw refundResult.error;
-    }
-  }
-
-  // Update transaction
-  const totalRefunded = alreadyRefunded + refundAmount;
-  const isNowFullyRefunded = totalRefunded >= transaction.amount;
-
-  const result = await paymentTransactionRepository.createRefund(transaction_id as string, userId, {
-    amount: totalRefunded,
-    reason: reason as string | undefined,
-    isFullRefund: isNowFullyRefunded
-  });
-
-  if (result.error) {
-    await emitPaymentEvent(userId, {
-      eventType: 'refund.failed',
-      entityType: 'transaction',
-      entityId: transaction_id as string,
-      metadata: { error: result.error.message }
-    });
-    throw result.error;
-  }
-
-  await emitPaymentEvent(userId, {
-    eventType: 'refund.completed',
-    entityType: 'transaction',
-    entityId: transaction_id as string,
-    contactId: transaction.contact_id,
-    metadata: {
-      amount: refundAmount,
-      totalRefunded,
-      reason,
-      isFullRefund: isNowFullyRefunded,
-      notifyContact: notify_contact
-    }
-  });
-  events.push('refund.completed');
-
-  return {
-    result: {
-      transactionId: transaction_id,
-      refundedAmount: refundAmount,
-      totalRefunded,
-      refundStatus: isNowFullyRefunded ? 'full' : 'partial'
-    },
-    events
-  };
+  return executeRefundBlock(userId, params, false);
 }
 
 /**

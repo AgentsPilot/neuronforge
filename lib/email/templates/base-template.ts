@@ -12,6 +12,48 @@ export interface BrandingData {
   websiteUrl?: string;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
+  /**
+   * Typography from the user's website theme (`website_pages.theme.fonts`).
+   *
+   * Optional on purpose: every caller that predates this renders exactly as it
+   * did before, on the system stack below. When present the name is prepended
+   * to that same stack, so a client without the face still falls back to a
+   * readable default rather than to a serif nobody chose.
+   */
+  headingFont?: string;
+  bodyFont?: string;
+}
+
+/**
+ * The stack every email fell back to before themes were wired in. Kept as the
+ * tail of every font-family so an unavailable web font degrades to the previous
+ * appearance instead of to the client's default.
+ */
+const FALLBACK_FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+
+/** Quote a font name for CSS only when it needs it, then append the fallbacks. */
+function fontStack(name?: string): string {
+  if (!name) return FALLBACK_FONT_STACK;
+  const trimmed = name.trim();
+  if (!trimmed) return FALLBACK_FONT_STACK;
+  const quoted = /^[A-Za-z0-9-]+$/.test(trimmed) ? trimmed : `'${trimmed.replace(/'/g, '')}'`;
+  return `${quoted}, ${FALLBACK_FONT_STACK}`;
+}
+
+/**
+ * Ask the client to load the theme's web fonts.
+ *
+ * Many clients strip this, which is why it is additive only — the fallback
+ * chain above is what guarantees the email stays readable either way.
+ */
+function fontLink(headingFont?: string, bodyFont?: string): string {
+  const families = [...new Set([headingFont, bodyFont].filter(Boolean) as string[])];
+  if (families.length === 0) return '';
+  const query = families
+    .map((f) => `family=${encodeURIComponent(f.trim()).replace(/%20/g, '+')}:wght@400;600;700`)
+    .join('&');
+  return `\n  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?${query}&display=swap">`;
 }
 
 /**
@@ -29,6 +71,9 @@ export function wrapInBrandedTemplate(
   const dir = rtl ? 'rtl' : 'ltr';
   const textAlign = rtl ? 'right' : 'left';
 
+  const bodyStack = fontStack(branding.bodyFont);
+  const headingStack = fontStack(branding.headingFont);
+
   return `<!DOCTYPE html>
 <html lang="${locale}" dir="${dir}">
 <head>
@@ -44,9 +89,9 @@ export function wrapInBrandedTemplate(
       </o:OfficeDocumentSettings>
     </xml>
   </noscript>
-  <![endif]-->
+  <![endif]-->${fontLink(branding.headingFont, branding.bodyFont)}
 </head>
-<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f5f5f5; -webkit-font-smoothing: antialiased;">
+<body style="margin: 0; padding: 0; font-family: ${bodyStack}; background-color: #f5f5f5; -webkit-font-smoothing: antialiased;">
   <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
     <tr>
       <td style="padding: 24px 16px;">
@@ -61,7 +106,7 @@ export function wrapInBrandedTemplate(
                     ${logoUrl ? `
                     <img src="${logoUrl}" alt="${businessName}" style="max-height: 48px; max-width: 200px; display: inline-block;" />
                     ` : `
-                    <h1 style="margin: 0; font-size: 24px; font-weight: 600; color: #ffffff; letter-spacing: -0.5px;">
+                    <h1 style="margin: 0; font-family: ${headingStack}; font-size: 24px; font-weight: 600; color: #ffffff; letter-spacing: -0.5px;">
                       ${businessName}
                     </h1>
                     `}

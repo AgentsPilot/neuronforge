@@ -15,6 +15,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
 import { paymentProcessorService } from '@/lib/services/PaymentProcessorService';
+import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 import {
   paymentInvoiceRepository,
   PaymentInvoice
@@ -356,11 +357,21 @@ export class PaymentRetryService {
         );
 
         if (chargeResult.data && chargeResult.data.status === 'succeeded') {
-          // Mark invoice as paid
-          await paymentInvoiceRepository.markAsPaid(invoiceId, userId, {
+          // Record the PAYMENT, which marks the invoice paid as a consequence.
+          //
+          // This called markAsPaid alone, so a successful retry produced an
+          // invoice reading `paid` with no payment_transactions row: invisible
+          // to revenue, and impossible to refund.
+          await settleInvoicePaid(supabaseServer, {
+            invoiceId,
+            userId,
+            contactId: invoice.contact_id,
+            amount: invoice.amount,
+            currency: invoice.currency,
             paymentMethod: 'card',
-            processorType: invoice.processor_type || undefined,
-            notes: `Paid via automatic retry (attempt ${invoice.retry_count + 1})`
+            processorType: invoice.processor_type || 'stripe',
+            description: `Paid via automatic retry (attempt ${invoice.retry_count + 1})`,
+            metadata: { source: 'payment_retry', retry_attempt: invoice.retry_count + 1 }
           });
 
           // Emit success event

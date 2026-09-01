@@ -31,9 +31,19 @@ import * as path from 'path';
 import { getBizQLPlanner } from '@/lib/business-os/bizql/planner/Planner';
 import { runBusinessQuery } from '@/lib/business-os/bizql';
 import { CATALOG_VERSION } from '@/lib/business-os/catalog';
+import { executeMutate, requiresConfirmation } from '@/lib/business-os/bizql/mutate/MutateExecutor';
+import {
+  hasDescribedReferences,
+  needsTargetResolution,
+  resolveDescribedReferences,
+  resolveMutateTarget,
+  withResolvedTarget,
+} from '@/lib/business-os/bizql/mutate/resolveTarget';
+import { labelForRow } from '@/lib/business-os/bizql/render/AnswerRenderer';
+import { MissingFieldsError } from '@/lib/business-os/bizql/types';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { Plan } from '@/lib/business-os/bizql/planner/Planner';
-import type { ComputeQuery, FindQuery, Query } from '@/lib/business-os/bizql/types';
+import type { ComputeQuery, FindQuery, MutateQuery, Query } from '@/lib/business-os/bizql/types';
 
 // ============================================================================
 // Scenario shape
@@ -47,17 +57,94 @@ interface FilterExpectation {
   semantic?: string;
   /** Require a {$date:"…"} value, without pinning which anchor. */
   dateAnchor?: boolean;
+  /** Match a relation predicate rather than a field one. */
+  relation?: string;
+  quantifier?: 'any' | 'none';
+}
+
+/**
+ * What a WRITE should do — asserted on the execution outcome, not the plan.
+ *
+ * Every bug a human found in this chat lived below the plan: a title the planner
+ * invented, a create that never asked for confirmation, a date written as an
+ * object, an approval card naming a uuid. A correct-looking plan produced every
+ * one of them, so plan-shape assertions could not have caught any of them.
+ *
+ * Nothing here ever writes. Mutations run with dryRun, which is also what the
+ * route does to build its preview — so this exercises the real path.
+ */
+/** One concrete thing that can happen when a write is attempted. */
+type WriteOutcome = 'asks_for' | 'confirms' | 'chooses' | 'refuses';
+
+interface WriteExpectation {
+  /**
+   * asks_for — the write cannot proceed until the user supplies `fields`.
+   * confirms — it is ready, and must be approved before anything happens.
+   * chooses  — a named row matched none or several, so the user must pick.
+   * refuses  — the write is rejected outright (bulk delete, unknown action).
+   */
+  /**
+   * A list when several outcomes are correct. Pinning the worse one makes the
+   * suite punish an improvement: "הוסף שירות חדש" is RIGHT to ask and acceptable
+   * to confirm with the name shown — what is unacceptable is writing silently.
+   */
+  outcome: WriteOutcome | WriteOutcome[];
+  /** asks_for: the catalog field keys the user must still supply. */
+  fields?: string[];
+  entity?: string;
+  action?: string;
+  /** confirms: must this be approved before it happens? */
+  confirmRequired?: boolean;
+  /** confirms: substrings that MUST appear on the approval card. */
+  cardContains?: string[];
+  /** confirms: substrings that must NOT appear (raw uuids, [object Object]). */
+  cardExcludes?: string[];
 }
 
 interface Expectation {
+  write?: WriteExpectation;
   op?: 'find' | 'compute';
   entity?: string;
   /** Any one of these entities is acceptable, when several framings are valid. */
   anyEntity?: string[];
   agg?: string;
+  /**
+   * The field a `compute` must group by.
+   *
+   * Without this a "revenue by service" scenario passes on a plain unsegmented
+   * sum — the eval green, the answer a single number where the user asked for a
+   * breakdown. A relation name ('service') requires grouping by a related
+   * label rather than a raw id; 'sent_at:month' requires a time bucket.
+   *
+   * A list means any of them is correct. "how much did I invoice each month"
+   * is answered equally well from when the invoice was sent or when it was
+   * raised, and a suite that insists on one of two right answers teaches
+   * people to ignore it.
+   */
+  groupBy?: string | string[];
   mustFilter?: FilterExpectation[];
+  /**
+   * Filters that must NOT appear.
+   *
+   * `mustFilter` alone cannot catch a plan that is right about everything it was
+   * asked about and wrong about something extra. "מי חייב לי כסף?" carried the
+   * required unpaid filter — so this suite passed it — and ALSO a bare
+   * {relation:contact, quantifier:none}, which emptied the result. The user saw
+   * "nobody owes you anything" while the eval reported green.
+   */
+  mustNotFilter?: FilterExpectation[];
   clarification?: boolean;
   clarificationOrFailure?: boolean;
+  /**
+   * The plan must RUN and report that a filter named something non-existent.
+   *
+   * Asserted after execution, not at plan time, because the planner has not seen
+   * the data and cannot know that "Gregory Fenwick" is nobody. Demanding a
+   * refusal from it would teach it to refuse real names too. Whether a name
+   * matched is a fact only the database has, so this scenario forces execution
+   * even when the suite is run without --execute.
+   */
+  unmatched?: boolean;
 }
 
 interface Scenario {
@@ -107,6 +194,12 @@ function flattenPredicates(predicates: unknown[]): Record<string, unknown>[] {
 }
 
 function matchesFilter(actual: Record<string, unknown>, expected: FilterExpectation): boolean {
+  if (expected.relation !== undefined) {
+    if (actual.relation !== expected.relation) return false;
+    if (expected.quantifier && actual.quantifier !== expected.quantifier) return false;
+    return true;
+  }
+
   if (actual.field !== expected.field) return false;
   if (expected.op && actual.op !== expected.op) return false;
 
@@ -132,7 +225,8 @@ function matchesFilter(actual: Record<string, unknown>, expected: FilterExpectat
 function assertPlan(plan: Plan, expect: Expectation): string[] {
   const problems: string[] = [];
 
-  if (expect.clarification || expect.clarificationOrFailure) {
+  // An `unmatched` scenario EXPECTS a plan — the check happens after it runs.
+  if ((expect.clarification || expect.clarificationOrFailure) && !expect.unmatched) {
     problems.push('expected a clarifying question, but a plan was produced');
     return problems;
   }
@@ -166,11 +260,34 @@ function assertPlan(plan: Plan, expect: Expectation): string[] {
     }
   }
 
+  if (expect.groupBy) {
+    const accepted = Array.isArray(expect.groupBy) ? expect.groupBy : [expect.groupBy];
+    const actual = (step as ComputeQuery).group_by;
+    if (!actual) {
+      problems.push(
+        `expected group_by ${accepted.map(g => `'${g}'`).join(' or ')}, got none (unsegmented aggregate)`
+      );
+    } else if (!accepted.includes(actual)) {
+      problems.push(
+        `group_by: expected ${accepted.map(g => `'${g}'`).join(' or ')}, got '${actual}'`
+      );
+    }
+  }
+
   for (const expected of expect.mustFilter ?? []) {
     const actuals = flattenPredicates((step as FindQuery).where ?? []);
     if (!actuals.some((a) => matchesFilter(a, expected))) {
       problems.push(
         `missing filter ${JSON.stringify(expected)} — got ${JSON.stringify(actuals)}`
+      );
+    }
+  }
+
+  for (const forbidden of expect.mustNotFilter ?? []) {
+    const actuals = flattenPredicates((step as FindQuery).where ?? []);
+    if (actuals.some((a) => matchesFilter(a, forbidden))) {
+      problems.push(
+        `forbidden filter ${JSON.stringify(forbidden)} present — got ${JSON.stringify(actuals)}`
       );
     }
   }
@@ -203,6 +320,119 @@ async function pickUser(): Promise<string> {
   return ranked[0][0];
 }
 
+/**
+ * Run a write the way the route does — resolve, preview, never apply — and report
+ * what the user would actually experience.
+ *
+ * SAFETY: every mutation runs with dryRun. Nothing is written, and the one path
+ * that touches the database is the read used to resolve a named row.
+ */
+async function runWrite(
+  plan: Plan,
+  scenario: Scenario,
+  userId: string
+): Promise<{ outcome: WriteOutcome; detail: string; card?: string; step?: MutateQuery }> {
+  const ctx = { userId, timezone: 'UTC', consumer: 'test' as const };
+
+  const writes = plan.steps.filter((s): s is MutateQuery => s.op === 'mutate');
+  if (writes.length === 0) {
+    return { outcome: 'refuses', detail: 'plan contained no write step' };
+  }
+
+  for (const step of writes) {
+    let current = step;
+    let referenceNames: Record<string, string> | undefined;
+    let targetName: string | undefined;
+
+    if (hasDescribedReferences(current)) {
+      const refs = await resolveDescribedReferences(current, ctx, scenario.language);
+      if (refs.status !== 'resolved') {
+        return { outcome: 'chooses', detail: `${refs.status} ${refs.entity} for ${refs.field}` };
+      }
+      current = { ...current, data: refs.data as MutateQuery['data'] };
+      referenceNames = refs.labels;
+    }
+
+    if (needsTargetResolution(current)) {
+      const target = await resolveMutateTarget(current, ctx);
+      if (target.status !== 'resolved') {
+        return { outcome: 'chooses', detail: `${target.status} ${current.entity}` };
+      }
+      targetName = labelForRow(current.entity, target.row, { language: scenario.language });
+      current = withResolvedTarget(current, target.id);
+    }
+
+    const result = await executeMutate(current, ctx, {
+      dryRun: true,
+      language: scenario.language,
+      utterance: scenario.utterance,
+      targetName,
+      referenceNames,
+    });
+
+    return {
+      outcome: 'confirms',
+      detail: `${current.entity}.${current.action}`,
+      card: result.preview,
+      step: current,
+    };
+  }
+
+  return { outcome: 'refuses', detail: 'no write reached execution' };
+}
+
+/** Is `outcome` one of the outcomes this scenario accepts? */
+function wantsOutcome(want: WriteExpectation | undefined, outcome: string): boolean {
+  if (!want) return false;
+  return Array.isArray(want.outcome) ? want.outcome.includes(outcome as never) : want.outcome === outcome;
+}
+
+function assertWrite(
+  got: Awaited<ReturnType<typeof runWrite>>,
+  want: WriteExpectation
+): string[] {
+  const problems: string[] = [];
+
+  const acceptable: WriteOutcome[] = Array.isArray(want.outcome)
+    ? want.outcome
+    : [want.outcome];
+
+  if (!acceptable.includes(got.outcome)) {
+    problems.push(
+      `outcome: expected ${acceptable.map((o) => `'${o}'`).join(' or ')}, ` +
+        `got '${got.outcome}' (${got.detail})`
+    );
+    return problems;
+  }
+
+  // Card assertions only mean anything when it actually got as far as a card.
+  if (got.outcome !== 'confirms') return problems;
+
+  if (want.entity && got.step && got.step.entity !== want.entity) {
+    problems.push(`entity: expected '${want.entity}', got '${got.step.entity}'`);
+  }
+  if (want.action && got.step && got.step.action !== want.action) {
+    problems.push(`action: expected '${want.action}', got '${got.step.action}'`);
+  }
+
+  if (want.confirmRequired && got.step && !requiresConfirmation(got.step)) {
+    problems.push(`'${got.step.entity}.${got.step.action}' would apply WITHOUT confirmation`);
+  }
+
+  for (const needle of want.cardContains ?? []) {
+    if (!got.card?.includes(needle)) {
+      problems.push(`approval card is missing '${needle}' — got: ${got.card}`);
+    }
+  }
+  for (const needle of want.cardExcludes ?? []) {
+    if (got.card?.includes(needle)) {
+      problems.push(`approval card contains '${needle}' — got: ${got.card}`);
+    }
+  }
+
+  return problems;
+}
+
 async function runOnce(scenario: Scenario, userId: string, execute: boolean): Promise<Attempt> {
   const started = Date.now();
 
@@ -219,22 +449,102 @@ async function runOnce(scenario: Scenario, userId: string, execute: boolean): Pr
     durationMs: Date.now() - started,
   };
 
-  // A refusal is the correct outcome for an out-of-scope request.
+  const want = scenario.expect.write;
+
+  // A refusal is the correct outcome for an out-of-scope request — and for a
+  // write the plan layer already rejects, such as a bulk delete.
   if (!outcome.ok) {
+    if (wantsOutcome(want, 'refuses')) return { passed: true, problems: [], ...base };
     return scenario.expect.clarificationOrFailure
       ? { passed: true, problems: [], ...base }
       : { passed: false, problems: [`planning failed: ${outcome.error}`], ...base };
   }
 
   if (outcome.clarification) {
+    // The planner asking for the missing detail satisfies `asks_for` just as
+    // well as the executor demanding it. Both reach the user as a question, and
+    // pinning which layer produced it would make the suite brittle for no gain.
+    if (wantsOutcome(want, 'asks_for')) return { passed: true, problems: [], ...base };
+
     const wanted = scenario.expect.clarification || scenario.expect.clarificationOrFailure;
     return wanted
       ? { passed: true, problems: [], ...base }
       : { passed: false, problems: ['asked for clarification instead of planning'], ...base };
   }
 
+  // --- writes: assert what the USER would experience ------------------------
+  if (want) {
+    try {
+      const got = await runWrite(outcome.plan!, scenario, userId);
+      const problems = assertWrite(got, want);
+      return { passed: problems.length === 0, problems, ...base };
+    } catch (err) {
+      const acceptable: WriteOutcome[] = Array.isArray(want.outcome)
+        ? want.outcome
+        : [want.outcome];
+
+      if (err instanceof MissingFieldsError) {
+        if (!acceptable.includes('asks_for')) {
+          return {
+            passed: false,
+            problems: [
+              `outcome: expected ${acceptable.map((o) => `'${o}'`).join(' or ')}, ` +
+                `got 'asks_for' (${err.fields.join(', ')})`,
+            ],
+            ...base,
+          };
+        }
+        const missing = (want.fields ?? []).filter((f) => !err.fields.includes(f));
+        return missing.length === 0
+          ? { passed: true, problems: [], ...base }
+          : {
+              passed: false,
+              problems: [`should have asked for ${missing.join(', ')}; asked for ${err.fields.join(', ')}`],
+              ...base,
+            };
+      }
+
+      if (acceptable.includes('refuses')) return { passed: true, problems: [], ...base };
+
+      return {
+        passed: false,
+        problems: [`write failed: ${(err as Error).message.split('\n').pop()?.trim()}`],
+        ...base,
+      };
+    }
+  }
+
   const problems = assertPlan(outcome.plan!, scenario.expect);
   if (problems.length > 0) return { passed: false, problems, ...base };
+
+  if (scenario.expect.unmatched) {
+    // Run it and require the "no such thing" signal. A number here — even 0 —
+    // is the failure this scenario exists to catch.
+    const seen: string[] = [];
+    for (const step of outcome.plan!.steps) {
+      if (step.op === 'mutate' || step.op === 'for_each') continue;
+      try {
+        const result = await runBusinessQuery(step, { userId, consumer: 'test' });
+        for (const u of (result as { unmatched?: Array<{ value: string }> }).unmatched ?? []) {
+          seen.push(u.value);
+        }
+      } catch {
+        // A step that will not compile is a failure of this scenario, not a
+        // reason to abort the whole suite — which is what an uncaught throw here
+        // did, losing every result after it.
+      }
+    }
+
+    return seen.length > 0
+      ? { passed: true, problems: [], ...base }
+      : {
+          passed: false,
+          problems: [
+            'ran without reporting an unmatched filter — a wrong number would reach the user',
+          ],
+          ...base,
+        };
+  }
 
   if (!execute) return { passed: true, problems: [], ...base };
 
@@ -243,6 +553,9 @@ async function runOnce(scenario: Scenario, userId: string, execute: boolean): Pr
   try {
     let rows = 0;
     for (const step of outcome.plan!.steps) {
+      // Writes have their own executor and their own assertions above. Handing
+      // one to the query compiler throws by design.
+      if (step.op === 'mutate' || step.op === 'for_each') continue;
       const result = await runBusinessQuery(step, { userId, consumer: 'test' });
       if (result.op === 'find') rows += result.rows.length;
     }

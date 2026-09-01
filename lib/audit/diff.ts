@@ -150,6 +150,24 @@ export function summarizeChanges(changes: ChangeSet | null | undefined): string 
   const summaries: string[] = [];
 
   for (const [key, change] of Object.entries(changes)) {
+    if (key === '_created') return 'Created new record';
+    if (key === '_deleted') return 'Deleted record';
+
+    // Callers hand this a raw payload more often than a diff — `{ stage:
+    // 'family_enrolled' }` rather than `{ stage: { from, to } }`. Using `in` on
+    // that string threw, and took the whole audit entry down with it. A value
+    // that isn't a change object is reported as what it is: a field set to
+    // something, with no record of what it was before.
+    if (typeof change !== 'object' || change === null) {
+      summaries.push(`set ${key} to ${formatValue(change)}`);
+      continue;
+    }
+
+    if (Array.isArray(change)) {
+      summaries.push(`set ${key} to ${formatValue(change)}`);
+      continue;
+    }
+
     if ('added' in change && 'removed' in change) {
       // Array change
       const arrayChange = change as ArrayChange;
@@ -165,10 +183,10 @@ export function summarizeChanges(changes: ChangeSet | null | undefined): string 
       const fromStr = formatValue(fieldChange.from);
       const toStr = formatValue(fieldChange.to);
       summaries.push(`changed ${key} from ${fromStr} to ${toStr}`);
-    } else if (key === '_created') {
-      return 'Created new record';
-    } else if (key === '_deleted') {
-      return 'Deleted record';
+    } else {
+      // An object that is neither an array change nor a field change: a nested
+      // diff, or a payload value. Named without pretending to know its shape.
+      summaries.push(`updated ${key}`);
     }
   }
 

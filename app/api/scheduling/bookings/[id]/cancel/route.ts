@@ -6,15 +6,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { AuditTrailService } from '@/lib/services/AuditTrailService';
-import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
-import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
-import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
-import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { cancelBooking } from '@/lib/services/BookingLifecycleService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingBookingCancelAPI' });
-const auditTrail = AuditTrailService.getInstance();
 
 const cancelBookingSchema = z.object({
   reason: z.string().optional()
@@ -42,63 +37,34 @@ export async function POST(
     const validated = cancelBookingSchema.parse(body);
 
     const bookingId = params.id;
-    requestLogger.info({ userId: user.id, bookingId, reason: validated.reason }, 'Cancelling booking');
 
-    // 3. Cancel booking
-    const result = await schedulingBookingRepository.cancel(bookingId, user.id, validated.reason);
+    // 3. Cancel — status, calendar and client notification together.
+    //
+    // The sequence lives in BookingLifecycleService so that the chat cancels a
+    // booking the same way this route does. It used to live here, which meant
+    // cancelling from anywhere else updated a status and stopped there.
+    const result = await cancelBooking({
+      bookingId,
+      userId: user.id,
+      reason: validated.reason,
+      request,
+      logger: requestLogger
+    });
 
     if (result.error) {
       requestLogger.error({ err: result.error, userId: user.id, bookingId }, 'Failed to cancel booking');
+      const notFound = result.error.message === 'Booking not found';
       return NextResponse.json(
-        { success: false, error: 'Failed to cancel booking' },
-        { status: 500 }
+        { success: false, error: notFound ? 'Booking not found' : 'Failed to cancel booking' },
+        { status: notFound ? 404 : 500 }
       );
     }
 
-    if (!result.data) {
-      return NextResponse.json(
-        { success: false, error: 'Booking not found' },
-        { status: 404 }
-      );
-    }
-
-    // 4. Get contact name for audit log
-    let contactName = 'Client';
-    if (result.data.contact_id) {
-      const contactResult = await crmContactRepository.findById(result.data.contact_id, user.id);
-      if (contactResult.data) {
-        contactName = `${contactResult.data.first_name || ''} ${contactResult.data.last_name || ''}`.trim() || 'Client';
-      }
-    }
-
-    // 5. Audit log (non-blocking)
-    auditTrail
-      .log({
-        action: 'SCHEDULING_BOOKING_CANCELLED',
-        userId: user.id,
-        entityType: 'scheduling_booking',
-        entityId: bookingId,
-        resourceName: `Booking for ${contactName}`,
-        metadata: { reason: validated.reason },
-        request
-      })
-      .catch(err => requestLogger.error({ err }, 'Audit failed'));
-
-    // 7. Delete calendar event if booking had one (non-blocking)
-    if (result.data.external_calendar_event_id) {
-      CalendarSyncService.deleteCalendarEvent(result.data, user.id)
-        .catch(err => requestLogger.warn({ err, bookingId }, 'Calendar event delete failed'));
-    }
-
-    // 8. Send cancellation email (non-blocking)
-    BookingEmailService.sendCancellationEmail(bookingId, user.id, validated.reason)
-      .catch(err => requestLogger.warn({ err, bookingId }, 'Cancellation email failed'));
-
-    // 9. Return success
-    requestLogger.info({ bookingId, userId: user.id }, 'Booking cancelled successfully');
+    // 4. Return success
     return NextResponse.json({
       success: true,
-      booking: result.data
+      booking: result.data!.booking,
+      client_notified: result.data!.clientNotified
     });
 
   } catch (error) {

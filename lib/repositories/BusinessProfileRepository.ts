@@ -54,7 +54,6 @@ export interface InvoiceSettings {
   invoice_payment_instructions: string | null;
   invoice_footer_text: string | null;
   invoice_number_prefix: string;
-  invoice_logo_url: string | null;
 }
 
 export class BusinessProfileRepository {
@@ -453,6 +452,7 @@ export class BusinessProfileRepository {
       const { data, error } = await this.supabase
         .from('business_profiles')
         .select(`
+          company_name,
           invoice_company_name,
           invoice_address,
           invoice_tax_id,
@@ -461,8 +461,7 @@ export class BusinessProfileRepository {
           invoice_bank_routing,
           invoice_payment_instructions,
           invoice_footer_text,
-          invoice_number_prefix,
-          invoice_logo_url
+          invoice_number_prefix
         `)
         .eq('user_id', userId)
         .single();
@@ -480,8 +479,7 @@ export class BusinessProfileRepository {
               invoice_bank_routing: null,
               invoice_payment_instructions: null,
               invoice_footer_text: null,
-              invoice_number_prefix: 'INV',
-              invoice_logo_url: null
+              invoice_number_prefix: 'INV'
             },
             error: null
           };
@@ -490,7 +488,15 @@ export class BusinessProfileRepository {
       }
 
       const settings: InvoiceSettings = {
-        invoice_company_name: data.invoice_company_name,
+        // The business already told us its name once. Presenting an empty box
+        // asks for it again and gets a slightly different answer — an account
+        // here ended up invoicing as "בית הספר הבינלאומי חהורות" against a
+        // profile reading "הבית הספר הבינלאומי להורות", and the invoice is the
+        // document a client keeps.
+        //
+        // Only a default: an invoice name that is deliberately different — a
+        // registered legal entity behind a trading name — is stored and wins.
+        invoice_company_name: data.invoice_company_name || data.company_name || null,
         invoice_address: (data.invoice_address as InvoiceAddress) || {},
         invoice_tax_id: data.invoice_tax_id,
         invoice_bank_name: data.invoice_bank_name,
@@ -498,14 +504,87 @@ export class BusinessProfileRepository {
         invoice_bank_routing: data.invoice_bank_routing,
         invoice_payment_instructions: data.invoice_payment_instructions,
         invoice_footer_text: data.invoice_footer_text,
-        invoice_number_prefix: data.invoice_number_prefix || 'INV',
-        invoice_logo_url: data.invoice_logo_url
+        invoice_number_prefix: data.invoice_number_prefix || 'INV'
       };
 
       logger.debug({ userId }, 'Retrieved invoice settings');
       return { data: settings, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to get invoice settings');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Update the business's branding.
+   *
+   * The logo is not an invoice setting, a website setting or a booking-page
+   * setting: it is a property of the business that all of them read. This is
+   * the one path that writes it. Fields left undefined are not touched, so
+   * saving one of them cannot blank the other — which is precisely how the
+   * invoice-settings save used to wipe the logo on every write.
+   */
+  async updateBranding(
+    userId: string,
+    branding: {
+      logo_url?: string | null;
+      show_logo_on_smart_links?: boolean;
+      /** Colours and fonts for every public surface, not just the website. */
+      theme?: Record<string, unknown> | null;
+    }
+  ): Promise<BusinessProfileRepositoryResult<true>> {
+    try {
+      const updateData: Record<string, unknown> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (branding.logo_url !== undefined) updateData.logo_url = branding.logo_url;
+      if (branding.show_logo_on_smart_links !== undefined) {
+        updateData.show_logo_on_smart_links = branding.show_logo_on_smart_links;
+      }
+      if (branding.theme !== undefined) updateData.theme = branding.theme;
+
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update(updateData)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, fields: Object.keys(branding) }, 'Business branding updated');
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update business branding');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Read the business's branding.
+   */
+  async getBranding(
+    userId: string
+  ): Promise<BusinessProfileRepositoryResult<{ logo_url: string | null; show_logo_on_smart_links: boolean }>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('logo_url, show_logo_on_smart_links')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return {
+        data: {
+          logo_url: data?.logo_url ?? null,
+          // A business with no profile row yet is treated as opted in, matching
+          // the column default.
+          show_logo_on_smart_links: data?.show_logo_on_smart_links ?? true,
+        },
+        error: null,
+      };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read business branding');
       return { data: null, error: error as Error };
     }
   }
@@ -553,10 +632,6 @@ export class BusinessProfileRepository {
       if (settings.invoice_number_prefix !== undefined) {
         updateData.invoice_number_prefix = settings.invoice_number_prefix;
       }
-      if (settings.invoice_logo_url !== undefined) {
-        updateData.invoice_logo_url = settings.invoice_logo_url;
-      }
-
       const { error } = await this.supabase
         .from('business_profiles')
         .update(updateData)
@@ -584,6 +659,8 @@ export class BusinessProfileRepository {
       vertical: string | null;
       company_name: string | null;
       language: string | null;
+      /** The business's logo. Not an invoice setting — invoices only render it. */
+      logo_url: string | null;
     }
   >> {
     try {
@@ -602,7 +679,7 @@ export class BusinessProfileRepository {
           invoice_payment_instructions,
           invoice_footer_text,
           invoice_number_prefix,
-          invoice_logo_url
+          logo_url
         `)
         .eq('user_id', userId)
         .single();
@@ -618,7 +695,11 @@ export class BusinessProfileRepository {
         vertical: data.vertical,
         company_name: data.company_name,
         language: data.language,
-        invoice_company_name: data.invoice_company_name,
+        // Same default the settings screen shows, applied here too — this is
+        // the path the PDF and the emailed invoice read, and a business that
+        // never opened the invoice screen was sending documents with no name
+        // on them while its profile had one all along.
+        invoice_company_name: data.invoice_company_name || data.company_name || null,
         invoice_address: (data.invoice_address as InvoiceAddress) || {},
         invoice_tax_id: data.invoice_tax_id,
         invoice_bank_name: data.invoice_bank_name,
@@ -627,7 +708,7 @@ export class BusinessProfileRepository {
         invoice_payment_instructions: data.invoice_payment_instructions,
         invoice_footer_text: data.invoice_footer_text,
         invoice_number_prefix: data.invoice_number_prefix || 'INV',
-        invoice_logo_url: data.invoice_logo_url
+        logo_url: data.logo_url
       };
 
       logger.debug({ userId, vertical: result.vertical }, 'Retrieved invoice settings with profile');
@@ -770,6 +851,10 @@ export class BusinessProfileRepository {
     currency: string | null;
     primaryColor: string | null;
     customerJourney: string[] | null;
+    /** How this business collects — decides whether a client is asked to pay
+     *  at booking, or invoiced afterwards. Null on accounts that predate the
+     *  question. */
+    collectionMethod: string | null;
   }>> {
     try {
       // Note: Only selecting columns that exist in the schema
@@ -780,9 +865,11 @@ export class BusinessProfileRepository {
           user_id,
           user_code,
           company_name,
-          invoice_logo_url,
+          logo_url,
+          show_logo_on_smart_links,
           vertical,
-          language
+          language,
+          collection_method
         `)
         .eq('user_code', userCode)
         .single();
@@ -798,12 +885,14 @@ export class BusinessProfileRepository {
         userId: data.user_id,
         userCode: data.user_code,
         companyName: data.company_name,
-        logoUrl: data.invoice_logo_url,
+        // Public pages honour the business's own choice about being branded.
+        logoUrl: data.show_logo_on_smart_links === false ? null : data.logo_url,
         vertical: data.vertical,
         language: data.language,
         currency: null, // Not in DB yet - API will default to 'USD'
         primaryColor: null, // Not in DB yet - API will default to '#4F6EF7'
-        customerJourney: null // Not in DB yet - API will default to standard journey
+        customerJourney: null, // Not in DB yet - API will default to standard journey
+        collectionMethod: data.collection_method ?? null
       };
 
       logger.debug({ userCode, companyName: config.companyName }, 'Retrieved conversion config');

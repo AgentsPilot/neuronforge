@@ -12,6 +12,7 @@
 import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { StandaloneBookingWidget } from './StandaloneBookingWidget';
+import type { CollectionMethod } from '@/lib/business-os/setup/setupGraph';
 import { isValidLocale, getDirection, type Locale } from '@/lib/i18n/config';
 
 interface PageProps {
@@ -57,6 +58,9 @@ interface BusinessData {
     logoUrl?: string;
     primaryColor?: string;
     language?: string;
+    /** How the business collects, and whether a card can be charged today. */
+    collectionMethod?: CollectionMethod | null;
+    processorReady?: boolean;
   };
 }
 
@@ -110,7 +114,9 @@ async function getBusinessData(userCode: string): Promise<BusinessData | null> {
         config = {
           logoUrl: configData.config?.logoUrl,
           primaryColor: configData.config?.primaryColor,
-          language: configData.config?.language
+          language: configData.config?.language,
+          collectionMethod: configData.config?.collectionMethod ?? null,
+          processorReady: configData.config?.processorReady === true
         };
       }
     }
@@ -120,7 +126,7 @@ async function getBusinessData(userCode: string): Promise<BusinessData | null> {
       businessName: availData.businessName,
       timezone: availData.timezone,
       services: availData.services || [],
-      config
+      config: config ?? undefined
     };
   } catch (error) {
     console.error('Failed to fetch business data:', error);
@@ -240,6 +246,12 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
             locale={language}
             initialServiceId={initialServiceId}
             clientFlow={customFlow}
+            // Two separate reasons a booking may not ask for payment: the
+            // business does not collect that way, or it does and Stripe is not
+            // connected yet. Either one drops the step — a payment screen with
+            // no processor behind it is worse than no payment screen.
+            collectionMethod={businessData.config?.collectionMethod ?? null}
+            processorReady={businessData.config?.processorReady === true}
           />
         </div>
 

@@ -183,7 +183,8 @@ export async function GET(request: NextRequest) {
 
         // Run all detectors
         const detections = await detectorEngine.runForUser(userId);
-        stats.detectorsRun += detectorEngine.getDetectors().length;
+        // Detectors whose vector is dark are skipped, so count what ran.
+        stats.detectorsRun += detectorEngine.getLastEvaluatedCount();
 
         if (detections.length > 0) {
           stats.detectionsFound += detections.length;

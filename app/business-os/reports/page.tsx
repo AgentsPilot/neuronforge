@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { MetricCard } from '@/components/business-os/reports/MetricCard';
 import { RevenueSourcesSection } from '@/components/business-os/reports/RevenueSourcesSection';
 import { FinancialHealthGrid } from '@/components/business-os/reports/FinancialHealthGrid';
@@ -22,15 +21,22 @@ import {
   Receipt
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { PaymentTransactionList } from '@/components/payments/PaymentTransactionList';
-import { PaymentInvoiceList } from '@/components/payments/PaymentInvoiceList';
-import { InvoiceModal } from '@/components/payments/InvoiceModal';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+
 import {
   PERFORMANCE_THRESHOLDS,
   REPORTS_COLORS
 } from '@/lib/business-os/reports/constants';
 
-type ViewMode = 'overview' | 'transactions' | 'invoices';
+/**
+ * Money moved to /business-os/payments and this page is charts again.
+ *
+ * It used to carry both, switched by a `ViewMode`, which meant every toolbar
+ * control was wrapped in `viewMode === 'money' &&` and neither half could be
+ * linked to honestly. The old `?tab=invoices|transactions|money` links still
+ * work — they redirect below — because one of them is built by the Stripe
+ * Connect callback and is where somebody lands returning from onboarding.
+ */
 
 /** Reporting window, passed straight through to /api/business-os/stats. */
 type ReportPeriod = 'week' | 'month' | 'year' | 'all';
@@ -47,16 +53,6 @@ export default function ReportsPage() {
   const searchParams = useSearchParams();
   const { t, language, formatCurrency } = useLanguage();
 
-  // Check URL params for initial view mode and invoice/transaction filter
-  const tabParam = searchParams.get('tab');
-  const invoiceIdParam = searchParams.get('invoice');
-  const transactionIdParam = searchParams.get('transaction');
-  const initialViewMode = tabParam === 'invoices' || tabParam === 'transactions' ? tabParam : 'overview';
-
-  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
-  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(invoiceIdParam);
-  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(transactionIdParam);
-  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   // Reporting window. 'month' matches what this page showed before the filter existed.
   const [period, setPeriod] = useState<ReportPeriod>('month');
@@ -99,8 +95,6 @@ export default function ReportsPage() {
   } | null>(null);
 
   // Invoice modal state
-  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [invoiceListKey, setInvoiceListKey] = useState(0);
 
   // Fetch stats on mount and whenever the reporting window changes.
   // Only the very first load blocks the page; period changes refresh silently.
@@ -109,21 +103,25 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period]);
 
-  // Update view mode when URL params change
+  // Money asked for here now lives at /business-os/payments.
+  //
+  // Forwarded rather than dropped, with the parameters carried across: these
+  // links are in the wild — in the CRM drawer, in chat replies, and in the URL
+  // the Stripe Connect callback sends people back to. `replace` rather than
+  // `push` so the back button does not bounce off this page.
   useEffect(() => {
     const tab = searchParams.get('tab');
-    const invoice = searchParams.get('invoice');
-    const transaction = searchParams.get('transaction');
-    if (tab === 'invoices' || tab === 'transactions') {
-      setViewMode(tab);
+    if (tab !== 'invoices' && tab !== 'transactions' && tab !== 'money') return;
+
+    const forwarded = new URLSearchParams();
+    for (const key of ['invoice', 'transaction', 'filter', 'action']) {
+      const value = searchParams.get(key);
+      if (value) forwarded.set(key, value);
     }
-    if (invoice) {
-      setSelectedInvoiceId(invoice);
-    }
-    if (transaction) {
-      setSelectedTransactionId(transaction);
-    }
-  }, [searchParams]);
+
+    const query = forwarded.toString();
+    router.replace(`/business-os/payments${query ? `?${query}` : ''}`);
+  }, [searchParams, router]);
 
   const fetchStats = async ({ silent = false }: { silent?: boolean } = {}) => {
     try {
@@ -259,10 +257,9 @@ export default function ReportsPage() {
 
   return (
     <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
-      <BusinessOSHeader />
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4">
+      <div className={`${PAGE_CONTAINER} py-4 sm:py-6 space-y-4`}>
 
         {/* Page Header - Compact */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
@@ -294,110 +291,8 @@ export default function ReportsPage() {
               <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
             </button>
 
-            {/* Search Input - Only visible when in transactions/invoices view */}
-            {(viewMode === 'transactions' || viewMode === 'invoices') && (
-              <div className="relative hidden md:block">
-                <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
-                <input
-                  type="text"
-                  placeholder={viewMode === 'invoices'
-                    ? (t('payments.search_invoices_placeholder') || 'Search invoices...')
-                    : (t('payments.search_placeholder') || 'Search transactions...')}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-10 pe-4 py-2 w-48 lg:w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#22C58B] transition-all"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                />
-              </div>
-            )}
-
-            {/* Export All Button - Only visible when in transactions view */}
-            {viewMode === 'transactions' && (
-              <button
-                onClick={handleExportAllTransactions}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                title={t('payments.export.all_tooltip') || 'Export all transactions'}
-              >
-                <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                <span className="hidden sm:inline">{t('payments.bulk.export') || 'Export'}</span>
-              </button>
-            )}
-
-            {/* Create Invoice Button - Only visible when in invoices view */}
-            {viewMode === 'invoices' && (
-              <button
-                onClick={() => setShowInvoiceModal(true)}
-                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[#22C58B] text-xs sm:text-sm font-medium border border-[#22C58B] bg-[#22C58B]/10 hover:bg-[#22C58B]/20 transition-all whitespace-nowrap"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                <span className="hidden sm:inline">{t('payments.create_invoice')}</span>
-                <span className="sm:hidden">{t('payments.create_invoice')}</span>
-              </button>
-            )}
-
-            {/* View Mode Tabs */}
-            <div
-              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-0.5 sm:p-1 inline-flex gap-0.5 sm:gap-1 flex-1 sm:flex-initial justify-stretch sm:justify-start"
-              style={{ borderRadius: 'var(--v2-radius-card)' }}
-            >
-              <button
-                className={`p-1.5 sm:p-2 transition-all border flex-1 sm:flex-initial ${
-                  viewMode === 'overview'
-                    ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
-                    : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
-                }`}
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                onClick={() => setViewMode('overview')}
-                title={t('reports.tab_overview') || 'Overview'}
-              >
-                <LayoutDashboard className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </button>
-              <button
-                className={`p-1.5 sm:p-2 transition-all border flex-1 sm:flex-initial ${
-                  viewMode === 'transactions'
-                    ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
-                    : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
-                }`}
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                onClick={() => setViewMode('transactions')}
-                title={t('reports.tab_transactions') || 'Transactions'}
-              >
-                <List className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </button>
-              <button
-                className={`p-1.5 sm:p-2 transition-all border flex-1 sm:flex-initial ${
-                  viewMode === 'invoices'
-                    ? 'text-[#22C58B] border-[#22C58B] bg-[#22C58B]/10'
-                    : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
-                }`}
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                onClick={() => setViewMode('invoices')}
-                title={t('reports.tab_invoices') || 'Invoices'}
-              >
-                <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              </button>
-            </div>
           </div>
         </div>
-
-        {/* Mobile Search Bar - Only visible on mobile when in transactions/invoices view */}
-        {(viewMode === 'transactions' || viewMode === 'invoices') && (
-          <div className="md:hidden relative">
-            <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
-            <input
-              type="text"
-              placeholder={viewMode === 'invoices'
-                ? (t('payments.search_invoices_placeholder') || 'Search invoices...')
-                : (t('payments.search_placeholder') || 'Search transactions...')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-10 pe-4 py-2 w-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#22C58B] transition-all"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            />
-          </div>
-        )}
 
         {/* Loading state */}
         {loading ? (
@@ -410,7 +305,7 @@ export default function ReportsPage() {
               <p className="text-sm text-[var(--v2-text-secondary)]">{t('reports.loading') || 'Loading...'}</p>
             </div>
           </div>
-        ) : viewMode === 'overview' ? (
+        ) : (
           /* Financial Dashboard */
           <div className="space-y-4 max-w-7xl mx-auto">
             {/* Reporting window */}
@@ -461,8 +356,9 @@ export default function ReportsPage() {
 
                   return `${t('reports.paid') || 'Paid'}: ${formatCurrency(paid, { showFree: false })} • ${t('reports.owed') || 'Owed'}: ${formatCurrency(owed, { showFree: false })}`;
                 })()}
-                onAction={() => setViewMode('transactions')}
-                actionLabel={t('reports.view_transactions') || 'View transactions'}
+                // The money it is summarising now lives on its own page.
+                onAction={() => router.push('/business-os/payments')}
+                actionLabel={t('reports.view_money') || 'View money'}
               />
 
               {/* Revenue This Week */}
@@ -486,8 +382,9 @@ export default function ReportsPage() {
                 label={t('reports.pending_invoices') || 'Pending Invoices'}
                 value={formatCurrency(stats?.payments.pending_invoices_amount || 0, { showFree: false })}
                 subtitle={`${stats?.payments.pending_invoices || 0} ${t('reports.invoices') || 'invoices'} • ${stats?.payments.invoices_overdue || 0} ${t('reports.overdue') || 'overdue'}`}
-                onAction={() => setViewMode('invoices')}
-                actionLabel={t('reports.view_invoices') || 'View invoices'}
+                // The money it is summarising now lives on its own page.
+                onAction={() => router.push('/business-os/payments')}
+                actionLabel={t('reports.view_money') || 'View money'}
               />
 
               {/* Average Invoice */}
@@ -515,6 +412,7 @@ export default function ReportsPage() {
                 outstanding: stats?.payments.pending_invoices_amount || 0
               }}
             />
+
 
             {/* Financial Health */}
             <FinancialHealthGrid
@@ -550,41 +448,8 @@ export default function ReportsPage() {
               />
             </div>
           </div>
-        ) : (
-          /* Transactions / Invoices view */
-          <div
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4"
-            style={{ borderRadius: 'var(--v2-radius-card)' }}
-          >
-            {viewMode === 'transactions' && (
-              <PaymentTransactionList
-                searchQuery={searchQuery}
-                hideInternalSearch
-                highlightId={selectedTransactionId}
-              />
-            )}
-            {viewMode === 'invoices' && (
-              <PaymentInvoiceList
-                key={invoiceListKey}
-                searchQuery={searchQuery}
-                onCreateInvoice={() => setShowInvoiceModal(true)}
-                highlightId={selectedInvoiceId}
-              />
-            )}
-          </div>
         )}
       </div>
-
-      {/* Invoice Modal */}
-      <InvoiceModal
-        isOpen={showInvoiceModal}
-        onClose={() => setShowInvoiceModal(false)}
-        onSave={() => {
-          setShowInvoiceModal(false);
-          // Refresh the invoice list
-          setInvoiceListKey(prev => prev + 1);
-        }}
-      />
     </div>
   );
 }

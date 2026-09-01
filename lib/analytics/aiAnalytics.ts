@@ -280,15 +280,53 @@ export class AIAnalyticsService {
         query = query.lte('created_at', dateRange.end);
       }
       
-      const { data, error } = await query.order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
+      // Paginate. PostgREST caps an unbounded select at 1,000 rows, and this
+      // query had no limit — so any account with more than 1,000 calls in the
+      // window was silently reported on a subset. Measured on a real account:
+      // 2,479 rows truncated to 1,000, understating usage by 52%.
+      //
+      // The truncation was invisible in the worst way: the number looked
+      // plausible and the breakdown summed correctly to it. It also skewed the
+      // breakdown, because the retained rows were the NEWEST — one busy feature
+      // crowded every other feature out of a view whose job is showing which
+      // feature was busy.
+      const data = await this.fetchAllRows(query.order('created_at', { ascending: false }));
+
       return this.processUsageData(data, filters);
     } catch (error) {
       console.error('Error fetching usage analytics:', error);
       return this.getMockUsageReport();
     }
+  }
+
+  /**
+   * Read every row a query matches, a page at a time.
+   *
+   * Capped so a pathological account degrades into an understated number with a
+   * loud log rather than an unbounded fetch that takes the page down — but the
+   * cap is 100x the one that was silently biting.
+   */
+  private async fetchAllRows(query: any, pageSize = 1000, maxRows = 100_000): Promise<any[]> {
+    const rows: any[] = [];
+
+    for (let page = 0; rows.length < maxRows; page++) {
+      const { data, error } = await query.range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) throw error;
+      if (!data?.length) break;
+
+      rows.push(...data);
+      if (data.length < pageSize) break;
+    }
+
+    if (rows.length >= maxRows) {
+      console.warn(
+        `⚠️ AI Analytics: hit the ${maxRows}-row ceiling; this report is understated. ` +
+          'Aggregate in SQL rather than fetching rows.'
+      );
+    }
+
+    return rows;
   }
 
   // Get agent-specific analytics

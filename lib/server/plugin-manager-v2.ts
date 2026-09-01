@@ -26,11 +26,18 @@ const corePluginFiles = [
       'discord-plugin-v2.json',
       'dropbox-plugin-v2.json',
       'meta-ads-plugin-v2.json',
+      'meta-insights-plugin-v2.json',
+      'google-analytics-plugin-v2.json',
+      'google-business-profile-plugin-v2.json',
       'notion-plugin-v2.json',
       'onedrive-plugin-v2.json',
       'outlook-plugin-v2.json',
       'salesforce-plugin-v2.json',
       'stripe-plugin-v2.json',
+      // The user's own business records. Generated from the Business Catalog —
+      // see scripts/generate-business-os-plugin.ts. Regenerate after any catalog
+      // change; the drift test fails if this file falls behind.
+      'business-os-plugin-v2.json',
     ];
 
 // Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)

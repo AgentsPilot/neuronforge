@@ -20,7 +20,11 @@ const auditTrail = AuditTrailService.getInstance();
 const updateServiceSchema = z.object({
   service_name: z.string().min(1).optional(),
   description: z.string().optional(),
-  duration_minutes: z.number().min(5).max(10080).optional(), // Up to 7 days (10080 minutes) for multi-day courses/retreats
+  duration_minutes: z.number().min(5).max(10080).nullable().optional(), // Null for a product
+  // Two facts that decide this service's client journey. A product has no
+  // duration, and a free service is not collected at all — both arrive null.
+  is_scheduled: z.boolean().optional(),
+  collection: z.enum(['online', 'invoice']).nullable().optional(),
   price: z.number().min(0).nullable().optional(),
   currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
   buffer_minutes: z.number().min(0).max(1440).optional(), // Max 24 hours
@@ -118,7 +122,27 @@ export async function PUT(
     requestLogger.info({ userId: user.id, serviceId, updates: Object.keys(validated) }, 'Updating scheduling service');
 
     // 3. Update service
-    const result = await schedulingServiceRepository.update(serviceId, user.id, validated);
+    //
+    // The schema tolerates nulls on the instalment fields because older clients
+    // send them; the columns do not. A null here means "leave it alone", not
+    // "write null", so those keys are dropped rather than forwarded.
+    const NULLABLE_ONLY_IN_TRANSIT = [
+      'installment_count',
+      'installment_frequency',
+      'first_payment_due',
+      'first_payment_days',
+    ] as const;
+
+    const updates: Record<string, unknown> = { ...validated };
+    NULLABLE_ONLY_IN_TRANSIT.forEach(key => {
+      if (updates[key] === null) delete updates[key];
+    });
+
+    const result = await schedulingServiceRepository.update(
+      serviceId,
+      user.id,
+      updates as Parameters<typeof schedulingServiceRepository.update>[2]
+    );
 
     if (result.error) {
       requestLogger.error({ err: result.error, userId: user.id, serviceId }, 'Failed to update service');

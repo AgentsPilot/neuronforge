@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react';
 import { Calendar, Clock, User, Mail, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown } from 'lucide-react';
 import PhoneInput from 'react-phone-number-input';
+import { journeySteps } from '@/lib/business-os/clientJourney';
 import type { CountryCode } from 'libphonenumber-js/core';
 import { isValidPhoneNumber } from 'react-phone-number-input';
 import { WebsiteCountrySelect } from '@/components/website/blocks/WebsiteCountrySelect';
@@ -19,9 +20,13 @@ interface Service {
   id: string;
   name: string;
   description: string | null;
-  duration_minutes: number;
+  duration_minutes: number | null;
   price: number | null;
   currency: string;
+  /** Does a client pick a time for this? False for a product. */
+  is_scheduled?: boolean | null;
+  /** How the money arrives. Null while the service is free. */
+  collection?: 'online' | 'invoice' | null;
 }
 
 interface TimeSlot {
@@ -64,59 +69,28 @@ interface BookingWidgetProps {
   /** Pre-select a service by ID (e.g., from landing page link) */
   initialServiceId?: string;
   /** Custom client journey flow from business configuration */
+  /**
+   * Ignored, and kept only so an existing link carrying `?flow=` still renders.
+   *
+   * A link cannot describe the journey for a business selling a card-paid
+   * session and an invoiced programme — one flow had to stand for both. The
+   * service decides instead.
+   */
   clientFlow?: ClientFlowStep[] | null;
+  /** Whether a card can actually be charged today. */
+  processorReady?: boolean;
 }
 
 type Step = 'service' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
 
 // Map ClientFlowStep to internal Step
-function mapFlowToSteps(clientFlow: ClientFlowStep[] | null | undefined, hasPayment: boolean, hasIntake: boolean): Step[] {
-  // Default flow if none specified
-  if (!clientFlow || clientFlow.length === 0) {
-    const steps: Step[] = ['service', 'datetime', 'details'];
-    if (hasPayment) steps.push('payment');
-    if (hasIntake) steps.push('intake');
-    steps.push('confirmation');
-    return steps;
-  }
-
-  const steps: Step[] = ['service']; // Always start with service selection
-
-  for (const flowStep of clientFlow) {
-    if (flowStep === 'scheduling' || flowStep === 'booking') {
-      if (!steps.includes('datetime')) {
-        steps.push('datetime');
-      }
-    }
-    if (flowStep === 'client_info' || flowStep === 'booking') {
-      if (!steps.includes('details')) {
-        steps.push('details');
-      }
-    }
-    if (flowStep === 'payment' && hasPayment) {
-      if (!steps.includes('payment')) {
-        steps.push('payment');
-      }
-    }
-    if (flowStep === 'intake' && hasIntake) {
-      if (!steps.includes('intake')) {
-        steps.push('intake');
-      }
-    }
-    if (flowStep === 'confirmation') {
-      if (!steps.includes('confirmation')) {
-        steps.push('confirmation');
-      }
-    }
-  }
-
-  // Ensure confirmation is always last
-  if (!steps.includes('confirmation')) {
-    steps.push('confirmation');
-  }
-
-  return steps;
-}
+// The journey comes from `journeySteps` in lib/business-os/clientJourney.
+//
+// This file used to carry its own copy, which is how it drifted: it decided the
+// payment step from `price > 0` and always asked for a date, so an invoiced
+// service showed a card form here and a product asked the client to pick a
+// time — while the smart-link widget, working from the same services, did
+// neither. One resolver, one answer, both surfaces.
 
 // Simple translations for public booking widget
 const translations = {
@@ -155,6 +129,7 @@ const translations = {
     select_option: 'Select...',
     min: 'min',
     free: 'Free',
+    on_request: 'Price on request',
     secure_payment_stripe: 'Secure payment powered by Stripe'
   },
   es: {
@@ -192,6 +167,7 @@ const translations = {
     select_option: 'Seleccionar...',
     min: 'min',
     free: 'Gratis',
+    on_request: 'Precio a convenir',
     secure_payment_stripe: 'Pago seguro con Stripe'
   },
   he: {
@@ -229,11 +205,12 @@ const translations = {
     select_option: 'בחר...',
     min: 'דק\'',
     free: 'חינם',
+    on_request: 'לפי הצעת מחיר',
     secure_payment_stripe: 'תשלום מאובטח באמצעות Stripe'
   }
 };
 
-export function BookingWidget({ subdomain, services, timezone, primaryColor, locale = 'en', initialServiceId, clientFlow }: BookingWidgetProps) {
+export function BookingWidget({ subdomain, services, timezone, primaryColor, locale = 'en', initialServiceId, processorReady = false }: BookingWidgetProps) {
   // Get translations for current locale
   const t = translations[locale] || translations.en;
   const isRTL = locale === 'he';
@@ -285,9 +262,11 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   // Custom select dropdown state
   const [openSelectKey, setOpenSelectKey] = useState<string | null>(null);
 
-  // Determine which steps are active based on clientFlow
-  const hasPayment = selectedService ? (selectedService.price !== null && selectedService.price > 0) : false;
-  const activeSteps = mapFlowToSteps(clientFlow, hasPayment, hasIntake);
+  /** The journey for whichever service the client has picked. */
+  const stepsFor = (service: Service | null) =>
+    journeySteps(service ?? {}, { processorReady, intakeEnabled: hasIntake });
+
+  const activeSteps = stepsFor(selectedService);
 
   // Navigate to next step in the flow (respecting activeSteps)
   const goToNextStep = () => {
@@ -319,14 +298,13 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
       if (service) {
         setSelectedService(service);
         // Determine next step based on clientFlow, not hardcoded to 'datetime'
-        const hasPaymentForService = (service.price || 0) > 0;
-        const steps = mapFlowToSteps(clientFlow, hasPaymentForService, hasIntake);
+        const steps = stepsFor(service);
         // Skip 'service' step and go to the next step in the flow
         const nextStep = steps.length > 1 ? steps[1] : 'confirmation';
         setStep(nextStep);
       }
     }
-  }, [initialServiceId, services, clientFlow, hasIntake]);
+  }, [initialServiceId, services, processorReady, hasIntake]);
 
   // Fetch intake template on mount
   useEffect(() => {
@@ -449,9 +427,8 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
 
   const handleSelectService = (service: Service) => {
     setSelectedService(service);
-    // Use flow-aware navigation instead of hardcoded 'datetime'
-    const hasPaymentForService = (service.price || 0) > 0;
-    const steps = mapFlowToSteps(clientFlow, hasPaymentForService, hasIntake);
+    // The journey follows the service, not the link.
+    const steps = stepsFor(service);
     const nextStep = steps.length > 1 ? steps[1] : 'confirmation';
     setStep(nextStep);
   };
@@ -492,7 +469,11 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
         body: JSON.stringify({
           subdomain,
           service_id: selectedService.id,
-          start_time: selectedSlot.start,
+          // A product has no datetime step, so there is no slot to send. The
+          // create route already reads a missing `start_time` as a booking
+          // that is not against a time — this used to throw here instead,
+          // because every journey was assumed to have picked one.
+          start_time: selectedSlot?.start,
           name,
           email,
           phone: phone || undefined,
@@ -657,7 +638,12 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   };
 
   const formatPrice = (price: number | null, currency: string) => {
-    if (price === null || price === 0) return t.free;
+    // Null and zero are different promises. Zero is free; null is "we agree the
+    // price together", which is how a consultancy or anyone quoting per project
+    // works. Collapsing them printed "Free" on a public page for work that
+    // costs money — and skipped straight past any conversation about it.
+    if (price === null) return t.on_request;
+    if (price === 0) return t.free;
     const symbols: Record<string, string> = { USD: '$', EUR: '€', ILS: '₪', GBP: '£' };
     return `${symbols[currency] || '$'}${price}`;
   };

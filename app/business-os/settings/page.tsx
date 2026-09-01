@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { supabase } from '@/lib/supabaseClient';
 import {
@@ -31,10 +31,13 @@ import {
   ExternalLink,
   Settings,
 } from 'lucide-react';
-import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import AvatarUpload from '@/components/ui/AvatarUpload';
+import { MediaUploader } from '@/components/website/MediaUploader';
 import { InvoiceSettingsSection } from '@/components/business-os/settings/InvoiceSettingsSection';
+import { getVerticalLabel } from '@/lib/business-os/verticalLabels';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+
 import {
   Dialog,
   DialogContent,
@@ -44,8 +47,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 
-export default function BusinessOSSettingsPage() {
+function BusinessOSSettingsContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const { t, isRTL, language, setLanguage, currencyCode, setCurrency, availableCurrencies } = useLanguage();
   const [loading, setLoading] = useState(true);
@@ -61,15 +65,62 @@ export default function BusinessOSSettingsPage() {
     timezone: '',
   });
 
+  /**
+   * Persist branding immediately rather than with the rest of the form.
+   *
+   * Uploading a logo or flipping its visibility is already a deliberate act; if
+   * it waited for a Save the user could reasonably believe it had taken effect
+   * and leave without it. State is rolled back when the write fails, so the UI
+   * never claims a logo the database does not have.
+   */
+  const saveBranding = async (patch: { logo_url?: string | null; show_logo_on_smart_links?: boolean }) => {
+    const previous = branding;
+    setBranding(b => ({
+      logo_url: patch.logo_url !== undefined ? (patch.logo_url || '') : b.logo_url,
+      show_logo_on_smart_links: patch.show_logo_on_smart_links ?? b.show_logo_on_smart_links,
+    }));
+    setSavingBranding(true);
+
+    try {
+      const res = await fetch('/api/business-os/business-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(`Branding save failed: ${res.status}`);
+    } catch {
+      setBranding(previous);
+    } finally {
+      setSavingBranding(false);
+    }
+  };
+
   // Business data (from business_profiles - read only from onboarding)
   const [businessProfile, setBusinessProfile] = useState({
     vertical: '',
     sub_vertical: '',
     company_name: '',
+    /**
+     * What the business said it does, in its own words, during onboarding.
+     *
+     * It was captured and then never shown anywhere it could be read or
+     * corrected — while the website generator writes a whole homepage from it.
+     * Someone whose site says the wrong thing had no way to find out why.
+     */
+    description: '',
     website_url: '',
     clients_per_week: 0,
     revenue_tier: '',
   });
+
+  // The business's logo and where it is allowed to appear. Read from and
+  // written to business_profiles; every surface that shows a logo reads it
+  // from there — see lib/branding/businessLogo.ts.
+  const [branding, setBranding] = useState<{ logo_url: string; show_logo_on_smart_links: boolean }>({
+    logo_url: '',
+    show_logo_on_smart_links: true,
+  });
+  const [savingBranding, setSavingBranding] = useState(false);
 
   // Organization settings (editable)
   const [orgSettings, setOrgSettings] = useState({
@@ -86,6 +137,8 @@ export default function BusinessOSSettingsPage() {
 
   // Edit states
   const [editingProfile, setEditingProfile] = useState(false);
+  /** False until the business profile row has been read — see saveBusiness. */
+  const [businessLoaded, setBusinessLoaded] = useState(false);
 
   // Expandable sections
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -115,17 +168,64 @@ export default function BusinessOSSettingsPage() {
     }
   }, [user?.id]);
 
+  /**
+   * Open a section directly from a link — `?section=business` or
+   * `?section=invoice`, which is how the readiness chips on the dashboard get
+   * here. Landing on settings with everything collapsed leaves the reader to
+   * hunt for the thing they just clicked.
+   *
+   * Waits for `loading` to clear. While it is true this page renders a spinner
+   * instead of the sections, so an earlier version scrolled to an element that
+   * did not exist yet and silently did nothing — which looked fine for the
+   * business section near the top and looked broken for the invoice section
+   * below the fold.
+   *
+   * Only the sections that exist are honoured; anything else is ignored rather
+   * than opening a panel that isn't there.
+   */
+  useEffect(() => {
+    if (loading) return;
+
+    const requested = searchParams.get('section');
+    if (requested !== 'business' && requested !== 'invoice') return;
+
+    setExpandedSection(requested);
+
+    // After paint, so the section has rendered its expanded height and the
+    // scroll lands on the open panel rather than where it used to be.
+    const timer = setTimeout(() => {
+      const target = document.getElementById(`settings-section-${requested}`);
+      if (!target) return;
+
+      // Offset by the sticky header, which would otherwise cover the section
+      // heading the reader was sent here to find.
+      const header = document.querySelector('.sticky');
+      const headerHeight = header ? header.getBoundingClientRect().height : 0;
+      const top = target.getBoundingClientRect().top + window.scrollY - headerHeight - 12;
+
+      window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [searchParams, loading]);
+
   const loadData = async () => {
     if (!user) return;
 
     try {
       setLoading(true);
 
-      const [profileRes, prefsRes, businessRes, orgRes] = await Promise.all([
+      const [profileRes, prefsRes, businessRes, orgRes, brandingRes] = await Promise.all([
         supabase.from('profiles').select('full_name, avatar_url, job_title').eq('id', user.id).single(),
         supabase.from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle(),
-        supabase.from('business_profiles').select('vertical, sub_vertical, company_name, website_url, clients_per_week, revenue_tier').eq('user_id', user.id).maybeSingle(),
+        supabase.from('business_profiles').select('vertical, sub_vertical, company_name, description, website_url, clients_per_week, revenue_tier').eq('user_id', user.id).maybeSingle(),
         supabase.from('organizations').select('id, name, settings').eq('owner_user_id', user.id).maybeSingle(),
+        // Logo columns arrive with the business-logo migration. Asked for
+        // separately because PostgREST rejects an entire select when one named
+        // column is absent — folded into the query above, an un-migrated
+        // database returned nothing and this whole form loaded blank, which is
+        // how saving it could wipe the company name.
+        supabase.from('business_profiles').select('logo_url, show_logo_on_smart_links').eq('user_id', user.id).maybeSingle(),
       ]);
 
       if (profileRes.data) {
@@ -137,14 +237,27 @@ export default function BusinessOSSettingsPage() {
         });
       }
 
+      // Whether the profile row was actually read. saveBusiness upserts
+      // company_name from this state, so saving after a failed load would
+      // overwrite a real name with an empty string.
+      setBusinessLoaded(!businessRes.error);
+
       if (businessRes.data) {
         setBusinessProfile({
           vertical: businessRes.data.vertical || '',
           sub_vertical: businessRes.data.sub_vertical || '',
           company_name: businessRes.data.company_name || '',
+          description: businessRes.data.description || '',
           website_url: businessRes.data.website_url || '',
           clients_per_week: businessRes.data.clients_per_week || 0,
           revenue_tier: businessRes.data.revenue_tier || '',
+        });
+      }
+
+      if (brandingRes.data) {
+        setBranding({
+          logo_url: brandingRes.data.logo_url || '',
+          show_logo_on_smart_links: brandingRes.data.show_logo_on_smart_links ?? true,
         });
       }
 
@@ -187,6 +300,11 @@ export default function BusinessOSSettingsPage() {
         await supabase.from('user_preferences').upsert({
           user_id: user.id,
           timezone: profile.timezone,
+          // Carried even though this save is about the timezone. Without it the
+          // upsert CREATES the row, and `preferred_language` lands on its `en`
+          // default — which server-side features read as a deliberate choice
+          // and used to generate English insights for a Hebrew business.
+          preferred_language: language,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
       }
@@ -378,6 +496,12 @@ export default function BusinessOSSettingsPage() {
   // Save business settings
   const saveBusiness = async () => {
     if (!user) return;
+    // Refuse to write what was never read. Without this, a failed load left the
+    // form blank and the first save replaced the company name with ''.
+    if (!businessLoaded) {
+      setErrorMessage(t('settings.business.error'));
+      return;
+    }
 
     try {
       setSaving(true);
@@ -388,6 +512,7 @@ export default function BusinessOSSettingsPage() {
       await supabase.from('business_profiles').upsert({
         user_id: user.id,
         company_name: businessProfile.company_name,
+        description: businessProfile.description,
         vertical: businessProfile.vertical,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
@@ -433,7 +558,6 @@ export default function BusinessOSSettingsPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
-        <BusinessOSHeader />
         <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-center space-y-4">
             <div className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mx-auto" style={{ borderColor: 'var(--v2-primary)', borderTopColor: 'transparent' }}></div>
@@ -446,10 +570,9 @@ export default function BusinessOSSettingsPage() {
 
   return (
     <div className="min-h-screen bg-[var(--v2-bg)]" dir={isRTL ? 'rtl' : 'ltr'}>
-      <BusinessOSHeader />
 
       {/* Main Content with max-width like CRM page */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+      <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
@@ -679,7 +802,7 @@ export default function BusinessOSSettingsPage() {
           {/* Right Column - Business & Account */}
           <div className="space-y-6">
             {/* Business Info */}
-        <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+        <div id="settings-section-business" className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           <button
             onClick={() => setExpandedSection(expandedSection === 'business' ? null : 'business')}
             className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
@@ -713,6 +836,48 @@ export default function BusinessOSSettingsPage() {
                 </div>
               </div>
 
+              {/* Business Logo — the single source for invoices, emails,
+                  booking pages, smart links and the website. */}
+              <div>
+                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                  {t('settings.business.logo')}
+                </label>
+                <div className="flex items-start gap-3 p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+                  <div className="shrink-0">
+                    <MediaUploader
+                      value={branding.logo_url}
+                      onChange={(url) => saveBranding({ logo_url: url })}
+                      onRemove={() => saveBranding({ logo_url: null })}
+                      folder={`${user?.id || 'shared'}/logos`}
+                      placeholder=""
+                      previewClassName="w-16 h-16 rounded-lg"
+                      showUrlInput={false}
+                      disabled={savingBranding}
+                    />
+                  </div>
+                  {/* min-w-0 lets the hint wrap inside the row instead of forcing
+                      it wider; the checkbox keeps its own line and never splits
+                      from its label. */}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-[var(--v2-text-secondary)] leading-snug">
+                      {t('settings.business.logo_hint')}
+                    </p>
+                    <label className="mt-2 flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={branding.show_logo_on_smart_links}
+                        onChange={(e) => saveBranding({ show_logo_on_smart_links: e.target.checked })}
+                        disabled={savingBranding}
+                        className="w-3.5 h-3.5 mt-0.5 shrink-0 accent-[var(--v2-primary)]"
+                      />
+                      <span className="text-xs text-[var(--v2-text-secondary)] leading-snug">
+                        {t('settings.business.logo_on_smart_links')}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
               {/* Company Name */}
               <div>
                 <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
@@ -732,6 +897,28 @@ export default function BusinessOSSettingsPage() {
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                 </div>
+              </div>
+
+              {/* What the business does, as it described itself.
+                  Shown here because this is the text the website generator
+                  writes a homepage from, and the invoices and emails inherit
+                  its tone — so it has to be readable and correctable
+                  somewhere. */}
+              <div>
+                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                  {t('settings.business.description')}
+                </label>
+                <textarea
+                  value={businessProfile.description}
+                  onChange={(e) => setBusinessProfile(b => ({ ...b, description: e.target.value }))}
+                  rows={4}
+                  placeholder={t('settings.business.description_placeholder')}
+                  className={`w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)] resize-none ${isRTL ? 'text-right' : ''}`}
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                />
+                <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
+                  {t('settings.business.description_hint')}
+                </p>
               </div>
 
               {/* Industry Dropdown */}
@@ -915,8 +1102,10 @@ export default function BusinessOSSettingsPage() {
                     {businessProfile.vertical && (
                       <div className="p-2 bg-[var(--v2-bg)] border border-gray-200 dark:border-gray-700" style={{ borderRadius: 'var(--v2-radius-button)' }}>
                         <p className="text-[10px] text-[var(--v2-text-muted)]">{t('settings.business.vertical')}</p>
-                        <p className="text-xs font-medium text-[var(--v2-text-primary)] capitalize">
-                          {businessProfile.vertical.replace(/_/g, ' ')}
+                        <p className="text-xs font-medium text-[var(--v2-text-primary)]">
+                          {/* Was the raw column value with underscores swapped
+                              for spaces, so a Hebrew account read "tutor". */}
+                          {getVerticalLabel(businessProfile.vertical, language)}
                         </p>
                       </div>
                     )}
@@ -970,11 +1159,13 @@ export default function BusinessOSSettingsPage() {
         </div>
 
         {/* Invoice Settings */}
+        <div id="settings-section-invoice">
         <InvoiceSettingsSection
           userId={user?.id || ''}
           expanded={expandedSection === 'invoice'}
           onToggle={() => setExpandedSection(expandedSection === 'invoice' ? null : 'invoice')}
         />
+        </div>
 
         {/* Account Actions */}
         <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] divide-y divide-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
@@ -1137,5 +1328,13 @@ export default function BusinessOSSettingsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function BusinessOSSettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <BusinessOSSettingsContent />
+    </Suspense>
   );
 }

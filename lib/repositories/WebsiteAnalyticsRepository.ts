@@ -7,6 +7,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { resolveChannel } from '@/lib/business-os/channel-insights/channelFromReferrer';
 import crypto from 'crypto';
 
 const logger = createLogger({ service: 'WebsiteAnalyticsRepository' });
@@ -28,6 +29,40 @@ export interface PageView {
   created_at: string;
 }
 
+/** One channel's visits on one day. */
+export interface ChannelVisitRow {
+  channel: string;
+  metric_date: string;
+  views: number;
+  visitors: number;
+  /**
+   * The distinct visitor hashes in this bucket.
+   *
+   * Carried through so the caller can count unique people over a whole period
+   * rather than adding up daily uniques — someone who visits on Monday and
+   * again on Friday is one visitor, not two. Never leaves the server: the API
+   * returns counts.
+   */
+  visitorIds: string[];
+  /**
+   * Which page the visit landed on. The dashboard breaks visits down by
+   * surface, and a landing page built for one campaign is a different thing
+   * from the main site even though both live in `website_pages`.
+   */
+  surface: 'website' | 'landing';
+}
+
+/** Bare hostname from a referrer URL, or null when there wasn't one. */
+function hostOf(referer: string | null | undefined): string | null {
+  if (!referer) return null;
+  try {
+    return new URL(referer).hostname;
+  } catch {
+    // Already a bare host, or unparseable — resolveChannel normalises either.
+    return referer;
+  }
+}
+
 export interface PageViewInsert {
   page_id: string;
   user_id: string;
@@ -38,6 +73,12 @@ export interface PageViewInsert {
   country_code?: string | null;
   device_type?: string | null;
   session_id?: string | null;
+  /** From the landing URL. The referer cannot carry these — it is the PREVIOUS page. */
+  utm_source?: string | null;
+  utm_medium?: string | null;
+  utm_campaign?: string | null;
+  /** The owner viewing their own page. Excluded from every visitor metric. */
+  is_owner_view?: boolean;
 }
 
 export interface AnalyticsSummary {
@@ -140,10 +181,14 @@ export class WebsiteAnalyticsRepository {
   async getSummary(userId: string, subdomain?: string): Promise<RepositoryResult<AnalyticsSummary>> {
     try {
       // Query raw page_views table and compute stats
+      // The owner previewing their own site is not an audience. Excluding this
+      // is the difference between reporting customers and reporting the owner —
+      // before the flag existed, every stored view was in fact a preview.
       let query = this.supabase
         .from('website_page_views')
         .select('viewed_at, ip_hash')
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .eq('is_owner_view', false);
 
       if (subdomain) {
         query = query.eq('subdomain', subdomain);
@@ -151,14 +196,7 @@ export class WebsiteAnalyticsRepository {
 
       const { data, error } = await query;
 
-      console.log('[Analytics Repo] Query result:', {
-        dataLength: data?.length,
-        error,
-        userId,
-        subdomain,
-        firstRecord: data?.[0],
-        serverTime: new Date().toISOString()
-      });
+      logger.debug({ userId, subdomain, rowCount: data?.length ?? 0 }, 'Loaded page views');
 
       if (error) throw error;
 
@@ -239,7 +277,7 @@ export class WebsiteAnalyticsRepository {
         visitors_7d: sevenDayIpHashes.size
       };
 
-      console.log('[Analytics Repo] Computed stats:', result);
+      logger.debug({ userId, subdomain, result }, 'Computed analytics summary');
 
       return {
         data: result,
@@ -519,6 +557,78 @@ export class WebsiteAnalyticsRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * Visits to this user's hosted pages, grouped by the channel that sent them.
+   *
+   * Uses the shared `resolveChannel` taxonomy rather than raw referrer hostnames,
+   * so these numbers line up with lead attribution and with connector data
+   * instead of forming a third vocabulary.
+   *
+   * Returns per-day rows because visit precedence against GA4 is decided a day
+   * at a time — a window total could not express "GA4 covered Monday but not
+   * Tuesday".
+   */
+  async getVisitTotalsByChannelSince(
+    userId: string,
+    since: string
+  ): Promise<RepositoryResult<ChannelVisitRow[]>> {
+    try {
+      // page_type comes from the joined page: a landing page and the main site
+      // are both rows in website_pages and are told apart only by that column.
+      const { data, error } = await this.supabase
+        .from('website_page_views')
+        .select('viewed_at, referer, utm_source, ip_hash, website_pages(page_type)')
+        .eq('user_id', userId)
+        .eq('is_owner_view', false)
+        .gte('viewed_at', since);
+
+      if (error) throw error;
+
+      // channel|date|surface -> views, plus the distinct hashes for that bucket
+      const buckets = new Map<
+        string,
+        { channel: string; date: string; surface: 'website' | 'landing'; views: number; visitors: Set<string> }
+      >();
+
+      for (const row of (data as any[]) || []) {
+        const date = String(row.viewed_at || '').slice(0, 10);
+        if (!date) continue;
+
+        const host = hostOf(row.referer);
+        const { channel } = resolveChannel(host, row.utm_source);
+        // Anything that isn't explicitly a landing page is the site itself —
+        // including a view whose page row has gone, which is still a real
+        // arrival and must not be dropped.
+        const joined = row.website_pages;
+        const pageType = Array.isArray(joined) ? joined[0]?.page_type : joined?.page_type;
+        const surface: 'website' | 'landing' = pageType === 'landing' ? 'landing' : 'website';
+        const key = `${channel}|${date}|${surface}`;
+
+        const bucket = buckets.get(key) ?? { channel, date, surface, views: 0, visitors: new Set<string>() };
+        bucket.views += 1;
+        // A null hash means the IP was unknown. Counted as a view but not as an
+        // identifiable visitor, rather than collapsing every such view into one.
+        if (row.ip_hash) bucket.visitors.add(row.ip_hash);
+        buckets.set(key, bucket);
+      }
+
+      const rows: ChannelVisitRow[] = [...buckets.values()].map(b => ({
+        channel: b.channel,
+        metric_date: b.date,
+        views: b.views,
+        visitors: b.visitors.size,
+        visitorIds: [...b.visitors],
+        surface: b.surface,
+      }));
+
+      return { data: rows, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to load visits by channel');
+      return { data: null, error: error as Error };
+    }
+  }
+
 }
 
 // Singleton export

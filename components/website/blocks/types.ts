@@ -111,6 +111,17 @@ export function flowHasClientInfo(flow: FlowStep[]): boolean {
   return flow.includes('client_info') || flow.includes('scheduling') || flow.includes('booking');
 }
 
+/** What a public block needs to know to resolve a service's journey. */
+export interface JourneyServiceFacts {
+  name?: string;
+  /** Does booking this involve picking a time? */
+  is_scheduled?: boolean | null;
+  /** How the money arrives, or null where the service is free. */
+  collection?: 'online' | 'invoice' | null;
+  priceRaw?: number | null;
+  hidden?: boolean;
+}
+
 export interface BlockRendererProps {
   content: Record<string, unknown>;
   styles?: BlockStyles;
@@ -126,6 +137,16 @@ export interface BlockRendererProps {
   pageId?: string;
   /** Client flow configuration - steps that happen after clicking a service */
   clientFlow?: FlowStep[];
+  /**
+   * The services the page offers, reduced to the two facts that decide each
+   * one's journey.
+   *
+   * The page used to narrate a single stored `client_flow` — one story for the
+   * whole site — while the booking widget resolved the journey per service. A
+   * business selling an appointment paid by card and an invoiced programme had
+   * a page describing neither.
+   */
+  journeyServices?: JourneyServiceFacts[];
   /** Booking page URL */
   bookingUrl?: string;
   /** Website subdomain - used for public API calls */

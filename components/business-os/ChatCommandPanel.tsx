@@ -4,7 +4,10 @@ import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardR
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power, Calendar, Clock, AlertCircle, X, RefreshCw, DollarSign, FileText, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { createLogger } from '@/lib/logger';
 import type { DialogAction, PendingContext } from '@/lib/business-os/DraftManagerTypes';
+
+const logger = createLogger({ module: 'ChatCommandPanel' });
 
 /**
  * The v4 answer shape, mirroring RenderedAnswer from
@@ -25,6 +28,61 @@ interface V4Answer {
   entity?: string;
   truncated: boolean;
   approximate: boolean;
+  collapsed?: number;
+}
+
+/**
+ * A write parked awaiting an explicit yes.
+ *
+ * `preview` is what the server resolved — "2 recipients — a@x.com, b@y.com" —
+ * and the user must see it before approving. The backend has already frozen
+ * those exact targets, so what is shown here is what will happen.
+ */
+interface V4Confirmation {
+  id: string;
+  message: string;
+  preview: string[];
+}
+
+/**
+ * A write named a row that matched nothing, or matched several.
+ *
+ * The server sends facts, not a sentence — it does not know this component has a
+ * translation dictionary, and duplicating one server-side is what produced ~120
+ * response templates in the previous stack.
+ */
+interface V4Choice {
+  kind: 'none' | 'ambiguous';
+  entity: string;
+  total: number;
+}
+
+/**
+ * A write that cannot run yet because the user has not said enough.
+ *
+ * Labels come from the server already translated, so this component composes one
+ * sentence instead of holding a phrase per field per language.
+ */
+/**
+ * How much of today's allowance is left.
+ *
+ * Counted in questions rather than tokens: cost per question is nearly constant
+ * in this system, and "12 questions left" is something a person can act on in a
+ * way that a token count never is.
+ */
+interface V4Budget {
+  used: number;
+  limit: number;
+  remaining: number;
+  warn: boolean;
+  blocked: boolean;
+  resetsAt: string;
+}
+
+interface V4Needs {
+  entity: string;
+  action: string;
+  fields: Array<{ key: string; label: string }>;
 }
 
 const isHebrewText = (value: string) => /[\u0590-\u05FF]/.test(value);
@@ -53,9 +111,19 @@ interface BookingListItem {
 }
 
 interface ChatMessage {
-  type: 'ai' | 'user' | 'success' | 'entity_card' | 'booking_list' | 'choices' | 'confirmation' | 'result_list';
+  type:
+    | 'ai'
+    | 'user'
+    | 'success'
+    | 'entity_card'
+    | 'booking_list'
+    | 'choices'
+    | 'confirmation'
+    | 'result_list'
+    | 'pending_write';
   content: string;
   resultRows?: V4Row[];
+  pendingWrite?: V4Confirmation;
   entityCard?: EntityCard;
   bookingList?: BookingListItem[];
   // V3 additions
@@ -625,7 +693,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         }]);
       }
     } catch (error) {
-      console.error('Failed to complete task:', error);
+      logger.error({ err: error, taskId }, 'Failed to complete task');
     }
   }, [t]);
 
@@ -675,7 +743,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         router.push(`/business-os`);
         break;
       case 'invoices':
-        router.push(`/business-os/reports?tab=invoices&invoice=${entityId}`);
+        router.push(`/business-os/payments?invoice=${entityId}`);
         break;
       default:
         // Fallback - prompt user to describe the edit
@@ -708,7 +776,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         }]);
       }
     } catch (error) {
-      console.error('Failed to send invoice:', error);
+      logger.error({ err: error, invoiceId }, 'Failed to send invoice');
       setMessages(prev => [...prev, {
         type: 'ai',
         content: isHebrew ? 'שגיאה בשליחת החשבונית.' : 'Error sending invoice.'
@@ -739,7 +807,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         }]);
       }
     } catch (error) {
-      console.error('Failed to mark invoice as paid:', error);
+      logger.error({ err: error, invoiceId }, 'Failed to mark invoice as paid');
       setMessages(prev => [...prev, {
         type: 'ai',
         content: isHebrew ? 'שגיאה בעדכון החשבונית.' : 'Error updating invoice.'
@@ -771,13 +839,76 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       return;
     }
 
+    // Out of allowance. Handled before everything else because no answer was
+    // produced — there is nothing else to render.
+    const budget = result.budget as V4Budget | undefined;
+
+    if (budget?.blocked) {
+      setMessages(prev => [
+        ...prev,
+        { type: 'ai', content: t('chat.budget.spent', { limit: budget.limit }) },
+      ]);
+      setSuggestions([]);
+      return;
+    }
+
     // The planner declined to guess and asked something back.
     if (result.clarification) {
       setMessages(prev => [...prev, { type: 'ai', content: result.clarification }]);
       return;
     }
 
+    // A parked write. This branch was missing, which meant the backend would
+    // park a write, return a confirmation, and the user would see NOTHING —
+    // no prompt, no way to approve, and the action silently never happened.
+    if (result.confirmation) {
+      const pending = result.confirmation as V4Confirmation;
+      setMessages(prev => [
+        ...prev,
+        { type: 'pending_write', content: pending.message, pendingWrite: pending },
+      ]);
+      // Chips give a one-tap answer; typing "yes" works just as well, since the
+      // server decides based on what is parked rather than on this UI state.
+      setSuggestions(isHebrewText(command) ? ['כן', 'לא'] : ['Yes', 'Cancel']);
+      return;
+    }
+
+    // A write is missing values the action requires. Ask for them by name — the
+    // labels arrive already translated, so this composes one sentence rather than
+    // carrying a string per field.
+    const needs = result.needs as V4Needs | undefined;
+    if (needs) {
+      const wanted = needs.fields.map(f => f.label).join(', ');
+      setMessages(prev => [
+        ...prev,
+        { type: 'ai', content: `${t('chat.need_fields')} ${wanted}` },
+      ]);
+      return;
+    }
+
     const answer = result.answer as V4Answer | undefined;
+
+    // A write could not be pinned to one row. Show the candidates and ask —
+    // never pick one, and never apply the change to all of them.
+    const choice = result.choice as V4Choice | undefined;
+    if (choice) {
+      const question =
+        choice.kind === 'none'
+          ? t('chat.no_match')
+          : choice.total > 1
+            ? t('chat.which_one_many')
+            : t('chat.which_one');
+
+      if (answer?.rows?.length) {
+        setMessages(prev => [
+          ...prev,
+          { type: 'result_list', content: '', resultRows: answer.rows },
+        ]);
+      }
+      setMessages(prev => [...prev, { type: 'ai', content: question }]);
+      return;
+    }
+
     if (!answer) return;
 
     if (answer.text) {
@@ -796,9 +927,39 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       }]);
     }
 
+    // Repeated records were collapsed. Say so — the duplicates are themselves a
+    // signal (198 copies of one finding means something upstream is re-recording
+    // it), and a silently shortened list invites "where did the rest go?".
+    if (answer.collapsed) {
+      setMessages(prev => [...prev, {
+        type: 'ai',
+        content: isHebrewText(command)
+          ? `אוחדו ${answer.collapsed} רשומות כפולות.`
+          : `Merged ${answer.collapsed} duplicate records.`,
+      }]);
+    }
+
+    // Warn only once the answer is on screen: the point is to stop a wall
+    // arriving unannounced, not to interrupt the thing they asked for.
+    if (budget?.warn) {
+      setMessages(prev => [
+        ...prev,
+        {
+          type: 'ai',
+          content: t('chat.budget.warn', {
+            remaining: budget.remaining,
+            limit: budget.limit,
+          }),
+        },
+      ]);
+    }
+
     setPendingContext(null);
     setSuggestions([]);
-  }, []);
+    // `t` is a dependency now that this handler phrases the disambiguation
+    // question. With an empty array it would keep the dictionary captured at first
+    // render, and switching language mid-session would answer in the old one.
+  }, [t]);
 
   const handleSend = useCallback(async () => {
     const command = input.trim();
@@ -859,8 +1020,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       onCommand?.(command, null);
 
     } catch (error) {
-      // Log the error for debugging
-      console.error('Chat processing error:', error);
+      logger.error({ err: error, engine: useV4API ? 'v4' : 'v2' }, 'Chat turn failed');
 
       // Show error message
       setMessages(prev => [
@@ -1060,6 +1220,38 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     inputRef.current?.focus();
   };
 
+  /**
+   * Send a message directly, without going through the input box.
+   *
+   * handleSend() reads from `input` state, so a caller cannot hand it a value:
+   * setInput() is asynchronous, and handleSend would still see the previous
+   * value. The Confirm button needs to actually SEND, not just prefill — an
+   * approval button that silently fills a textbox is worse than no button.
+   */
+  const sendDirect = useCallback(
+    async (text: string) => {
+      if (loading) return;
+
+      setMessages(prev => [...prev, { type: 'user', content: text }]);
+      setInput('');
+      setSuggestions([]);
+      setLoading(true);
+
+      try {
+        await handleV4Send(text);
+      } catch (err) {
+        logger.error({ err }, 'Chat send failed');
+        setMessages(prev => [
+          ...prev,
+          { type: 'ai', content: "Sorry, I couldn't process that. Please try again." },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loading, handleV4Send]
+  );
+
   // Calculate height based on expanded state
   const panelHeight = expanded ? '640px' : '460px';
 
@@ -1209,6 +1401,18 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             {msg.type === 'result_list' && msg.resultRows && (
               <ResultListMessage rows={msg.resultRows} />
             )}
+            {msg.type === 'pending_write' && msg.pendingWrite && (
+              <PendingWriteMessage
+                pending={msg.pendingWrite}
+                isHebrew={isHebrewText(messages[0]?.content || '')}
+                onRespond={(reply) => {
+                  // Send the answer as an ordinary message. The server decides
+                  // from what it has parked, so the outcome never depends on
+                  // this component's state being in sync.
+                  void sendDirect(reply);
+                }}
+              />
+            )}
             {msg.type === 'booking_list' && msg.bookingList && (
               <BookingListMessage
                 bookings={msg.bookingList}
@@ -1355,6 +1559,94 @@ function ResultListMessage({ rows }: { rows: V4Row[] }) {
         >
           + {hidden} more
         </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A write awaiting approval.
+ *
+ * The point of this card is that the user approves something CONCRETE. The
+ * server has already resolved and frozen the exact targets, and `preview` is
+ * that resolved set — "2 recipients — moshe@…, yael@…" — not a restatement of
+ * the request. Approving "send it to them" without seeing who "them" is, is how
+ * people end up emailing their whole contact list.
+ */
+function PendingWriteMessage({
+  pending,
+  isHebrew,
+  onRespond,
+}: {
+  pending: V4Confirmation;
+  isHebrew: boolean;
+  onRespond: (reply: string) => void;
+}) {
+  const [answered, setAnswered] = useState<string | null>(null);
+
+  const respond = (reply: string) => {
+    // Guard against a double-tap producing two confirmations. The backend's
+    // idempotency key makes a duplicate harmless, but the UI should not send
+    // one in the first place.
+    if (answered) return;
+    setAnswered(reply);
+    onRespond(reply);
+  };
+
+  return (
+    <div
+      className="w-full max-w-full border"
+      style={{
+        borderRadius: '12px',
+        padding: '12px 14px',
+        borderColor: 'rgba(249, 115, 22, 0.35)',
+        background: 'rgba(249, 115, 22, 0.06)',
+      }}
+    >
+      <div className="flex items-start gap-2 mb-2">
+        <AlertCircle
+          className="w-4 h-4 flex-shrink-0 mt-0.5"
+          style={{ color: '#F97316' }}
+          strokeWidth={2}
+        />
+        <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text)]">
+          {pending.message}
+        </div>
+      </div>
+
+      {pending.preview.length > 0 && (
+        <ul className="mb-3 ml-6 list-disc space-y-0.5">
+          {pending.preview.map((line, i) => (
+            <li key={i} className="text-[11px] sm:text-xs text-[var(--v2-text-muted)] break-words">
+              {line}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {answered ? (
+        <div className="ml-6 text-[11px] text-[var(--v2-text-muted)]">
+          {answered}
+        </div>
+      ) : (
+        <div className="flex gap-2 ml-6">
+          <button
+            type="button"
+            onClick={() => respond(isHebrew ? 'כן' : 'Yes')}
+            className="text-xs font-semibold text-white transition-opacity hover:opacity-90"
+            style={{ background: '#F97316', borderRadius: '10px', padding: '6px 14px' }}
+          >
+            {isHebrew ? 'אשר' : 'Confirm'}
+          </button>
+          <button
+            type="button"
+            onClick={() => respond(isHebrew ? 'לא' : 'Cancel')}
+            className="text-xs font-medium text-[var(--v2-text)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-colors hover:border-[var(--v2-text-muted)]"
+            style={{ borderRadius: '10px', padding: '6px 14px' }}
+          >
+            {isHebrew ? 'ביטול' : 'Cancel'}
+          </button>
+        </div>
       )}
     </div>
   );

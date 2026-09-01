@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
       entityType: 'scheduling_service',
       entityId: createResult.data?.[0]?.id || 'batch',
       resourceName: `${createResult.data?.length || 0} draft services generated`,
-      metadata: {
+      details: {
         vertical: blueprint.vertical,
         services_count: createResult.data?.length || 0,
         tokens_used: generationResult.tokensUsed

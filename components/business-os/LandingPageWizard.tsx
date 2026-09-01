@@ -28,6 +28,7 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { QRCodeSVG } from 'qrcode.react';
 
 // Types
@@ -36,10 +37,14 @@ interface SchedulingService {
   name: string;
   service_name?: string;
   description: string | null;
-  duration_minutes: number;
+  duration_minutes: number | null;
   price: number | null;
   currency: string;
   status: string;
+  is_active?: boolean;
+  /** The two facts this service's client journey is built from. */
+  is_scheduled?: boolean | null;
+  collection?: 'online' | 'invoice' | null;
 }
 
 interface ExistingTheme {
@@ -109,6 +114,8 @@ export interface LandingPageWizardResult {
   slug?: string;
   shouldPublish?: boolean;
   generatedContent?: Record<string, unknown>;
+  /** Whether this page's header wears the business logo. */
+  showLogo?: boolean;
 
   // Smart link specific
   smartLink?: SmartLink;
@@ -333,6 +340,7 @@ const LABELS = {
     smart_link_booking_link: 'Booking Link',
     smart_link_service_link_suffix: 'Link',
     minutes_abbr: 'min',
+    journey_follows_service: 'Each service decides its own journey — a date step only where one is booked, a payment step only where it is paid by card. Change it on the service.',
     // Step 1 (Landing Page)
     step1_title: 'Select a Service',
     step1_subtitle: 'Choose which service this landing page promotes',
@@ -368,6 +376,7 @@ const LABELS = {
     step2_title: 'Choose a Style',
     step2_subtitle: 'Select the visual appearance for your landing page',
     using_website_style: 'Using Your Website Style',
+    show_logo: 'Show my business logo on this page',
     using_website_style_desc: 'Your landing page will match your existing website',
     customize: 'Customize',
     or_choose_preset: 'Or choose a different style:',
@@ -428,6 +437,7 @@ const LABELS = {
     smart_link_booking_link: 'Enlace de Reserva',
     smart_link_service_link_suffix: '',
     minutes_abbr: 'min',
+    journey_follows_service: 'Cada servicio define su propio recorrido — fecha solo si se reserva una, pago solo si se cobra con tarjeta. Se cambia en el servicio.',
     // Step 1 (Landing Page)
     step1_title: 'Selecciona un Servicio',
     step1_subtitle: 'Elige qué servicio promueve esta landing page',
@@ -461,6 +471,7 @@ const LABELS = {
     step2_title: 'Elige un Estilo',
     step2_subtitle: 'Selecciona la apariencia visual de tu landing page',
     using_website_style: 'Usando el Estilo de Tu Sitio',
+    show_logo: 'Mostrar el logo de mi negocio en esta página',
     using_website_style_desc: 'Tu landing page coincidirá con tu sitio web existente',
     customize: 'Personalizar',
     or_choose_preset: 'O elige un estilo diferente:',
@@ -520,6 +531,7 @@ const LABELS = {
     smart_link_booking_link: 'קישור להזמנה',
     smart_link_service_link_suffix: '',
     minutes_abbr: 'דק׳',
+    journey_follows_service: 'כל שירות קובע את המסע שלו — שלב תאריך רק כשקובעים תור, שלב תשלום רק כשגובים בכרטיס. משנים את זה בשירות עצמו.',
     // Step 1 (Landing Page)
     step1_title: 'בחר שירות',
     step1_subtitle: 'בחר איזה שירות דף הנחיתה מקדם',
@@ -553,6 +565,7 @@ const LABELS = {
     step2_title: 'בחר סגנון',
     step2_subtitle: 'בחר את המראה החזותי לדף הנחיתה שלך',
     using_website_style: 'משתמש בסגנון האתר שלך',
+    show_logo: 'הצג את הלוגו של העסק בדף הזה',
     using_website_style_desc: 'דף הנחיתה יתאים לאתר הקיים שלך',
     customize: 'התאמה אישית',
     or_choose_preset: 'או בחר סגנון אחר:',
@@ -593,9 +606,17 @@ export function LandingPageWizard({
   const [creationType, setCreationType] = useState<CreationType | null>(
     isEditMode ? 'smart-link' : null
   );
-  const [journeyType, setJourneyType] = useState<JourneyType | null>(
-    isEditMode && editingSmartLink?.metadata?.journeyType === 'full' ? 'full-journey' : null
-  );
+  const [journeyType, setJourneyType] = useState<JourneyType | null>(() => {
+    if (!isEditMode) return null;
+    // A contact-only link used to come back with nothing selected, because the
+    // check only recognised 'full'. Editing one meant re-answering a question
+    // it had already answered — and starting the wizard at the service step
+    // with no journey type set.
+    const stored = editingSmartLink?.metadata?.journeyType;
+    if (stored === 'full') return 'full-journey';
+    if (stored === 'contact-only') return 'contact-only';
+    return null;
+  });
   const [createdSmartLink, setCreatedSmartLink] = useState<SmartLink | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [creatingSmartLink, setCreatingSmartLink] = useState(false);
@@ -612,8 +633,10 @@ export function LandingPageWizard({
     if (creationType === 'smart-link') {
       if (!journeyType) return 2; // Step 0 + Step 1 (journey type)
       if (journeyType === 'contact-only') return 2; // Done after selecting contact-only
-      // Full journey: Step 0 + Journey Type + Service + Journey Builder + Done = 5
-      return 5;
+      // Full journey: Step 0 + Journey Type + Service + Done = 4. The journey
+      // builder that used to sit between service and done is gone — the
+      // journey is the service's, not the link's.
+      return 4;
     }
     // Landing page: Step 0 + Service + Journey + Style (optional) + Preview
     return hasExistingTheme ? 4 : 5;
@@ -665,6 +688,9 @@ export function LandingPageWizard({
   const [generatedContent, setGeneratedContent] = useState<Record<string, unknown> | null>(null);
   const [generatingContent, setGeneratingContent] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  // The image is the business's, held on the profile; this page only records
+  // whether to display it.
+  const [showLogo, setShowLogo] = useState(!!businessInfo?.logoUrl);
   const [deviceMode, setDeviceMode] = useState<'desktop' | 'tablet' | 'mobile'>('desktop');
   const [previewDataKey, setPreviewDataKey] = useState<string | null>(null);
 
@@ -734,12 +760,23 @@ export function LandingPageWizard({
       const data = await response.json();
       if (data.success && data.services) {
         const mapped = data.services
-          .filter((s: { status: string }) => s.status === 'active')
+          // Both flags, as every public surface now checks: a link must not be
+          // able to offer a service that is switched off or unpublished.
+          .filter((s: { status: string; is_active?: boolean }) => s.status === 'active' && s.is_active !== false)
           .map((s: SchedulingService & { service_name?: string }) => ({
             ...s,
             name: s.service_name || s.name
           }));
         setServices(mapped);
+
+        // A link with no stored services offers all of them — that is what an
+        // absent `services=` parameter means on the public page. Editing one
+        // showed an empty picker, which reads as "nothing selected" rather
+        // than "everything", and saving from there would have narrowed the
+        // link to nothing without the user asking.
+        if (isEditMode && !editingSmartLink?.metadata?.serviceIds?.length) {
+          setSelectedServiceIds(mapped.map((service: SchedulingService) => service.id));
+        }
       }
     } catch {
       // Silently fail
@@ -829,7 +866,7 @@ export function LandingPageWizard({
       generatedContent: generatedContent || {},
       clientFlow: selectedFlow,
       language,
-      logoUrl: businessInfo?.logoUrl,
+      showLogo,
       companyName: businessInfo?.companyName,
       subdomain: subdomain
     };
@@ -1053,11 +1090,13 @@ export function LandingPageWizard({
       return `/c/${userCodePlaceholder}/contact`;
     }
 
-    // Full journey - include service and flow params
-    // Don't filter out confirmation - include all flow steps the user selected
-    const flowSteps = selectedFlow.filter(s => s !== 'confirmation');
-    const flowParam = flowSteps.join(','); // Don't encode - URL API will handle it
-
+    // Full journey — services only, no flow.
+    //
+    // The link used to pin `?flow=`, which could not be right for a business
+    // whose services walk different journeys. The booking page rebuilds its
+    // steps from the service the client picks, so the link says which services
+    // it offers and nothing about how they are booked.
+    //
     // For smart links: pass selected service IDs (multiple allowed)
     // If only one service selected, pass as single service param for direct selection
     // If multiple or none, pass as services param to filter the list
@@ -1071,15 +1110,10 @@ export function LandingPageWizard({
     }
     // If no services selected, show all services (no param needed)
 
-    const url = `/c/${userCodePlaceholder}/book?flow=${flowParam}${serviceParam}`;
-
-    console.log('[SmartLink] Building destination URL:', {
-      selectedFlow,
-      flowSteps,
-      flowParam,
-      selectedServiceIds,
-      url
-    });
+    // `?` then a stripped leading `&`, so the URL is well formed whether or not
+    // any services were chosen.
+    const query = serviceParam.replace(/^&/, '');
+    const url = `/c/${userCodePlaceholder}/book${query ? `?${query}` : ''}`;
 
     return url;
   };
@@ -1115,16 +1149,17 @@ export function LandingPageWizard({
       return;
     }
 
-    // Smart Link flow: Step 2 is service selection, Step 3 is journey builder
+    // Smart Link flow: service selection is the last decision.
+    //
+    // There used to be a journey builder after it, and it could not hold: the
+    // journey belongs to the service — a card-paid session and an invoiced
+    // programme walk different steps — so a flow pinned to the link contradicted
+    // half the catalogue and lost silently at render. The link chooses WHICH
+    // services; each service chooses its own journey, shown beside it while
+    // picking.
     if (creationType === 'smart-link' && journeyType === 'full-journey') {
       if (currentStep === 2) {
-        // Service selection → Journey builder
-        // Can proceed with 0, 1, or multiple services selected
-        // 0 services = show all services to visitor
-        // 1+ services = filter to selected services
-        setCurrentStep(3);
-      } else if (currentStep === 3) {
-        // Journey → Create or update smart link and show completion
+        // Service selection → create or update the link and show completion
         const destination = buildSmartLinkDestination();
         // Generate name based on number of services selected
         let linkName = labels.smart_link_booking_link;
@@ -1140,14 +1175,13 @@ export function LandingPageWizard({
         const metadata = {
           journeyType: 'full' as const,
           serviceIds: selectedServiceIds,
-          flow: selectedFlow.filter(s => s !== 'confirmation')
         };
         // Use update if in edit mode, otherwise create
         const link = isEditMode
           ? await updateSmartLink('booking', destination, linkName, metadata)
           : await createSmartLink('booking', destination, linkName, metadata);
         if (link) {
-          setCurrentStep(4);
+          setCurrentStep(3);
         }
       }
       return;
@@ -1187,7 +1221,7 @@ export function LandingPageWizard({
       if (journeyType === 'contact-only') {
         setCurrentStep(1);
       } else {
-        setCurrentStep(3); // Journey builder
+        setCurrentStep(2); // Back to choosing which services the link offers
       }
       return;
     }
@@ -1274,7 +1308,8 @@ export function LandingPageWizard({
       slug,
       shouldPublish,
       clientFlow: clientFlowSteps,
-      generatedContent: generatedContent || {}
+      generatedContent: generatedContent || {},
+      showLogo
     };
 
     console.log('[LandingPageWizard] Calling onComplete with:', {
@@ -1723,10 +1758,28 @@ export function LandingPageWizard({
                     <div className="flex-1 min-w-0">
                       <h4 className="font-medium text-[var(--v2-text-primary)] truncate">{service.name}</h4>
                       <div className="flex items-center gap-3 text-xs text-[var(--v2-text-muted)]">
-                        <span>{service.duration_minutes} {labels.minutes_abbr}</span>
+                        {service.duration_minutes ? (
+                          <span>{service.duration_minutes} {labels.minutes_abbr}</span>
+                        ) : null}
                         {service.price != null && (
                           <span className="text-green-600 font-medium">{currencySymbol}{service.price}</span>
                         )}
+                      </div>
+                      {/* What a client picking this service actually walks
+                          through. The journey is the service's own, so this is
+                          how the difference between them becomes visible while
+                          choosing which to offer — the link cannot change it,
+                          and pretending otherwise is what the flow builder
+                          used to do. */}
+                      <div className="mt-2">
+                        <ClientJourneyStrip
+                          compact
+                          service={{
+                            scheduled: service.is_scheduled !== false,
+                            collection: service.collection ?? null,
+                            price: service.price,
+                          }}
+                        />
                       </div>
                     </div>
                     {isSelected && (
@@ -1810,87 +1863,55 @@ export function LandingPageWizard({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedService?.id, selectedService?.price]); // Only trigger when service changes
 
+  /**
+   * The journey, shown rather than built.
+   *
+   * This was an editable flow builder — add a payment step, drop the date —
+   * and it could not be honoured. The journey belongs to the service: a
+   * card-paid session and an invoiced programme walk different steps, and the
+   * booking page rebuilds them from whichever service the client picks. A flow
+   * chosen here simply lost at render, silently, which is worse than not
+   * offering the choice.
+   *
+   * So the step now reports what this page's service will actually do.
+   */
   const renderJourneyStep = () => {
-    // Check if service has a price - if so, payment step should be required
-    const serviceHasPrice = selectedService?.price != null && selectedService.price > 0;
+    const shown = creationType === 'landing-page'
+      ? services.filter(s => s.id === selectedServiceId)
+      : services.filter(s => selectedServiceIds.includes(s.id));
 
-    // Available steps to add (excluding confirmation which is always there)
-    const availableToAdd: ClientFlowStep[] = (['scheduling', 'client_info', 'payment', 'intake'] as const)
-      .filter(step => !selectedFlow.includes(step));
+    const list = shown.length > 0 ? shown : services;
 
     return (
-      <div className="space-y-4">
-        {/* Info message if service has price */}
-        {serviceHasPrice && (
-          <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
-            <p className="text-sm text-amber-700 dark:text-amber-300">
-              {labels.journey_payment_required}
-            </p>
-          </div>
-        )}
+      <div className="space-y-3">
+        <p className="text-sm text-[var(--v2-text-muted)]">
+          {labels.journey_follows_service}
+        </p>
 
-        {/* Available steps to add */}
-        {availableToAdd.length > 0 && (
-          <div className="mb-4">
-            <p className="text-xs text-[var(--v2-text-muted)] mb-2">{labels.journey_add_step}:</p>
-            <div className="flex flex-wrap gap-2">
-              {availableToAdd.map(step => {
-                const stepInfo = STEP_INFO[step];
-                const Icon = stepInfo.icon;
-                return (
-                  <button
-                    key={step}
-                    onClick={() => toggleJourneyStep(step)}
-                    className="flex items-center gap-2 px-3 py-1.5 border-2 border-dashed border-[var(--v2-border)] rounded-full text-[var(--v2-text-secondary)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-colors"
-                  >
-                    <Icon className="w-4 h-4" />
-                    {stepInfo.name[language] || stepInfo.name.en}
-                    <Plus className="w-3 h-3" />
-                  </button>
-                );
-              })}
+        {list.map(service => (
+          <div
+            key={service.id}
+            className="p-3 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface)]"
+          >
+            <div className="flex items-baseline gap-2 flex-wrap mb-2">
+              <span className="text-sm font-medium text-[var(--v2-text-primary)]">{service.name}</span>
+              <span className="text-xs text-[var(--v2-text-muted)]">
+                {[
+                  service.duration_minutes ? `${service.duration_minutes} ${labels.minutes_abbr}` : null,
+                  service.price != null ? `${service.price}` : null,
+                ].filter(Boolean).join(' · ')}
+              </span>
             </div>
+            <ClientJourneyStrip
+              compact
+              service={{
+                scheduled: service.is_scheduled !== false,
+                collection: service.collection ?? null,
+                price: service.price,
+              }}
+            />
           </div>
-        )}
-
-        {/* Current flow steps with drag and drop */}
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleJourneyDragEnd}
-          modifiers={[restrictToVerticalAxis]}
-        >
-          <SortableContext items={selectedFlow} strategy={verticalListSortingStrategy}>
-            <div className="space-y-3">
-              {selectedFlow.map((step, index) => (
-                <SortableJourneyStep
-                  key={step}
-                  step={step}
-                  index={index}
-                  language={language}
-                  isConfirmation={step === 'confirmation'}
-                  isPaymentRequired={serviceHasPrice && step === 'payment'}
-                  onRemove={toggleJourneyStep}
-                  alwaysIncludedLabel={labels.journey_always_included}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-
-        {/* Add confirmation if not in list */}
-        {!selectedFlow.includes('confirmation') && selectedFlow.length > 0 && (
-          <div className="flex items-center gap-3 p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-600">
-            <div className="w-10 h-10 rounded-full bg-gray-400 text-white flex items-center justify-center font-bold">
-              {selectedFlow.length + 1}
-            </div>
-            <div className="flex-1">
-              <div className="font-medium text-[var(--v2-text-primary)]">{labels.journey_step_confirmation}</div>
-              <div className="text-sm text-[var(--v2-text-secondary)]">{labels.journey_step_confirmation_desc}</div>
-            </div>
-            <span className="text-xs text-[var(--v2-text-muted)] italic">{labels.journey_always_included}</span>
-          </div>
-        )}
+        ))}
       </div>
     );
   };
@@ -1899,6 +1920,25 @@ export function LandingPageWizard({
   const renderStep2Style = () => (
     <div className="space-y-4">
       {/* If has existing theme, show option to use it */}
+      {/* The business logo, when there is one to show. The image comes from the
+          business profile — this only chooses whether this page wears it. */}
+      {businessInfo?.logoUrl && (
+        <label className="w-full flex items-center gap-3 p-3 rounded-xl border border-[var(--v2-border)] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showLogo}
+            onChange={(e) => setShowLogo(e.target.checked)}
+            className="w-4 h-4 accent-[#4F6EF7]"
+          />
+          <img
+            src={businessInfo.logoUrl}
+            alt=""
+            className="w-8 h-8 object-contain rounded"
+          />
+          <span className="text-sm text-[var(--v2-text-secondary)]">{labels.show_logo}</span>
+        </label>
+      )}
+
       {hasExistingTheme && existingTheme && (
         <button
           onClick={() => {
@@ -2137,8 +2177,9 @@ export function LandingPageWizard({
       // Full journey: Step 2 is service selection
       if (journeyType === 'full-journey') {
         if (currentStep === 2) return renderStep1(); // Service selection
-        if (currentStep === 3) return renderJourneyStep(); // Journey builder
-        if (currentStep === 4) return renderSmartLinkComplete(); // Completion
+        // No journey builder: each service shows its own journey in the list
+        // above, and the link cannot override it.
+        if (currentStep === 3) return renderSmartLinkComplete(); // Completion
       }
     }
 
@@ -2168,8 +2209,7 @@ export function LandingPageWizard({
       if (journeyType === 'contact-only' && currentStep === 2) return labels.smart_link_ready_title;
       if (journeyType === 'full-journey') {
         if (currentStep === 2) return isEditMode ? labels.edit_smart_link_title : labels.step1_title; // Service
-        if (currentStep === 3) return labels.step_journey_title; // Journey
-        if (currentStep === 4) return isEditMode ? labels.smart_link_updated_title : labels.smart_link_ready_title; // Complete
+        if (currentStep === 3) return isEditMode ? labels.smart_link_updated_title : labels.smart_link_ready_title; // Complete
       }
     }
 
@@ -2195,8 +2235,7 @@ export function LandingPageWizard({
       if (journeyType === 'contact-only' && currentStep === 2) return ''; // No subtitle for completion
       if (journeyType === 'full-journey') {
         if (currentStep === 2) return isEditMode ? labels.edit_smart_link_subtitle : labels.step1_subtitle;
-        if (currentStep === 3) return labels.step_journey_subtitle;
-        if (currentStep === 4) return '';
+        if (currentStep === 3) return '';
       }
     }
 

@@ -17,7 +17,10 @@ import {
   CreditCard, Check, RotateCcw, Loader2, AlertTriangle,
   CheckCircle2, Clock, XCircle, DollarSign, User, ArrowLeft, Trash2
 } from 'lucide-react';
+import { createLogger } from '@/lib/logger';
 import type { SessionCardData } from './types';
+
+const logger = createLogger({ module: 'PaymentManagementModal' });
 
 interface PaymentManagementModalProps {
   isOpen: boolean;
@@ -166,7 +169,9 @@ export function PaymentManagementModal({
 
       setSuccess(t('crm.payment.refund_success') || 'Refund processed successfully');
 
-      // If user enabled "delete booking" toggle (full refund only)
+      // If user enabled "delete booking" toggle (full refund only).
+      // The refund itself already succeeded, so a failure here is reported but
+      // does not undo it — the booking simply stays, with its money returned.
       if (deleteBooking && refundType === 'full' && onBookingDeleted) {
         try {
           const deleteResponse = await fetch(`/api/scheduling/bookings/${booking.booking.id}`, {
@@ -175,9 +180,22 @@ export function PaymentManagementModal({
 
           if (deleteResponse.ok) {
             onBookingDeleted(booking.booking.id);
+          } else {
+            const deleteData = await deleteResponse.json().catch(() => null);
+            setError(
+              deleteData?.code === 'BOOKING_HAS_PAID_INVOICE'
+                ? t('scheduling.booking.delete_blocked_paid')
+                  || 'The refund went through, but this booking still has a paid invoice and cannot be deleted.'
+                : t('crm.payment.refund_ok_delete_failed')
+                  || 'The refund went through, but the booking could not be deleted.'
+            );
           }
-        } catch {
-          // Log error but don't block the flow
+        } catch (err) {
+          logger.error({ err, bookingId: booking.booking.id }, 'Failed to delete booking after refund');
+          setError(
+            t('crm.payment.refund_ok_delete_failed')
+              || 'The refund went through, but the booking could not be deleted.'
+          );
         }
       }
 

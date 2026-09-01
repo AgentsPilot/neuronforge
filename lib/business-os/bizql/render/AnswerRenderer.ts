@@ -18,8 +18,14 @@
  * @module lib/business-os/bizql/render
  */
 
-import { CATALOG, type ResolvedEntity } from '@/lib/business-os/catalog';
-import type { ComputeResult, FindResult, QueryResult, QueryRow } from '../types';
+import { CATALOG, type ResolvedEntity, type ResolvedField } from '@/lib/business-os/catalog';
+import type {
+  ComputeResult,
+  FindResult,
+  QueryResult,
+  QueryRow,
+  UnmatchedFilter,
+} from '../types';
 
 export interface RenderContext {
   language?: string;
@@ -40,6 +46,19 @@ export interface RenderedAnswer {
   truncated: boolean;
   /** True when an aggregate ran over a capped scan and may be incomplete. */
   approximate: boolean;
+  /**
+   * How many repeated rows the entity's dedupe key collapsed, across all steps.
+   *
+   * Surfaced rather than swallowed: "you have 2 urgent things" is the useful
+   * answer, but the owner should still be told that 198 duplicate records sit
+   * behind it — that is a symptom worth knowing about, not noise to hide.
+   */
+  collapsed: number;
+  /**
+   * Set when the answer had to say "there is no such thing" instead of a number.
+   * Callers that log or test answers need to tell that apart from a real result.
+   */
+  unmatched?: UnmatchedFilter[];
 }
 
 // =============================================================================
@@ -50,7 +69,9 @@ function formatValue(
   value: unknown,
   format: string | undefined,
   ctx: RenderContext,
-  row?: QueryRow
+  row?: QueryRow,
+  /** Carries enumLabels, so a stored token can be shown as a word. */
+  field?: ResolvedField
 ): string {
   if (value === null || value === undefined || value === '') return '—';
 
@@ -84,6 +105,19 @@ function formatValue(
       } catch {
         return date.toISOString();
       }
+    }
+
+    case 'enum': {
+      // The stored token is not the word to show: a Hebrew answer read
+      // "סטטוס: overdue", the label translated and the value not. Anything
+      // without a label falls back to a readable form of the token rather than
+      // the token itself, so a status added later is never raw or blank.
+      const stored = String(value);
+      const labelled = field?.enumLabels?.[stored];
+      if (labelled) {
+        return labelled[(ctx.language as 'he' | 'es') ?? 'en'] ?? labelled.en;
+      }
+      return stored.replace(/_/g, ' ');
     }
 
     case 'tags':
@@ -169,10 +203,30 @@ function renderRow(entity: ResolvedEntity, row: QueryRow, ctx: RenderContext): R
       return {
         key,
         label: field.labels[(ctx.language as 'en') ?? 'en'] ?? field.labels.en,
-        value: formatValue(row[field.column], field.format, ctx, row),
+        value: formatValue(row[field.column], field.format, ctx, row, field),
       };
     })
     .filter((f): f is RenderedRow['fields'][number] => f !== null);
+
+  // Show embedded relations as fields of their own, so a booking reads
+  // "client: Ofir · service: Consultation" rather than two bare timestamps.
+  for (const relationKey of entity.displayRelations ?? []) {
+    const relation = entity.relations?.[relationKey];
+    const embedded = row[relationKey];
+    if (!relation || !embedded || typeof embedded !== 'object') continue;
+
+    const target = CATALOG.entities[relation.target];
+    if (!target) continue;
+
+    const value = pickLabel(target, embedded as QueryRow, ctx, false);
+    if (!value || value === '—') continue;
+
+    fields.unshift({
+      key: relationKey,
+      label: relation.labels[(ctx.language as 'en') ?? 'en'] ?? relation.labels.en,
+      value,
+    });
+  }
 
   return { id: String(row.id ?? ''), label: pickLabel(entity, row, ctx), fields };
 }
@@ -180,6 +234,21 @@ function renderRow(entity: ResolvedEntity, row: QueryRow, ctx: RenderContext): R
 // =============================================================================
 // PLACEHOLDER SUBSTITUTION
 // =============================================================================
+
+
+/**
+ * The one number a step produced, whichever kind of step it was.
+ *
+ * A rate is routinely a count over a count ("12 of 40 bookings converted") or an
+ * aggregate over an aggregate, and the planner should not have to know which
+ * shape it picked in order to divide them.
+ */
+function numericValue(result: QueryResult | undefined): number | null {
+  if (!result) return null;
+  if (result.op === 'find') return (result as FindResult).rows.length;
+  if (result.op === 'compute') return (result as ComputeResult).value;
+  return null;
+}
 
 /**
  * Resolve one `{sN.something}` placeholder against a step's result.
@@ -198,6 +267,34 @@ function resolvePlaceholder(
   const result = results.get(stepId);
   if (!result) return '';
 
+  // `{s1.percent_of.s2}` — the one piece of arithmetic the language has.
+  //
+  // Multi-step plans could already cite two numbers in one sentence ("12 of
+  // 40"), but nothing divided them, so a conversion rate could not be STATED as
+  // a rate. This is deliberately a named path rather than an expression syntax:
+  // an arithmetic mini-language in a placeholder is a parser, and a parser here
+  // is a source of wrong numbers dressed as a feature.
+  //
+  // Division by zero resolves to empty rather than Infinity or NaN, which sends
+  // the caller to the plain fallback line — no rate is better than "NaN%".
+  const percentMatch = /^percent_of\.(\w+)$/.exec(path);
+  if (percentMatch) {
+    const whole = numericValue(results.get(percentMatch[1]));
+    const part = numericValue(result);
+
+    if (part === null || whole === null || whole === 0) return '';
+
+    const percent = (part / whole) * 100;
+    try {
+      return new Intl.NumberFormat(ctx.language || 'en', {
+        style: 'percent',
+        maximumFractionDigits: percent < 10 ? 1 : 0,
+      }).format(part / whole);
+    } catch {
+      return `${percent.toFixed(1)}%`;
+    }
+  }
+
   if (result.op === 'find') {
     const find = result as FindResult;
     switch (path) {
@@ -206,14 +303,59 @@ function resolvePlaceholder(
       case 'rows': {
         const entity = CATALOG.entities[find.entity];
         if (!entity) return String(find.rows.length);
-        // Keep an inline list short; the full set is rendered as cards.
-        return find.rows
-          .slice(0, 5)
-          .map((row) => pickLabel(entity, row, ctx))
-          .join(', ');
+
+        // DEDUPLICATED, and deliberately.
+        //
+        // Asked "איזה לקוחות חייבים לי כסף", the plan finds unpaid INVOICES and
+        // an invoice's label leads with its client — so one client with two
+        // invoices was listed twice, as though two people owed money. The rows
+        // are correct; naming the same thing twice in a sentence is not.
+        //
+        // Order is preserved rather than sorted: the first mention is where the
+        // reader expects it, and the rows below appear in the same order.
+        const seen = new Set<string>();
+        const labels: string[] = [];
+
+        for (const row of find.rows) {
+          const label = pickLabel(entity, row, ctx);
+          if (seen.has(label)) continue;
+          seen.add(label);
+          labels.push(label);
+          // Keep an inline list short; the full set is rendered as cards.
+          if (labels.length === 5) break;
+        }
+
+        return labels.join(', ');
       }
-      default:
-        return String(find.rows.length);
+      case 'first': {
+        const entity = CATALOG.entities[find.entity];
+        const first = find.rows[0];
+        return entity && first ? pickLabel(entity, first, ctx) : '';
+      }
+      default: {
+        // `first.<field>` — one named field of the first row, formatted the same
+        // way the result cards format it, so a price reads "₪400.00" in the
+        // sentence and beside it rather than as a bare number in one and a
+        // formatted one in the other.
+        const fieldMatch = /^first\.(\w+)$/.exec(path);
+        if (fieldMatch) {
+          const entity = CATALOG.entities[find.entity];
+          const field = entity?.fields[fieldMatch[1]];
+          const first = find.rows[0];
+
+          // No row means no value. Returning empty is what triggers the plain
+          // fallback sentence, which is better than a sentence with a hole.
+          if (!field || field.readable === false || !first) return '';
+
+          return formatValue(first[field.column], field.format, ctx, first, field);
+        }
+      }
+      // falls through
+        // An unrecognised path used to fall through to the row count, so
+        // "{s1.first_name} {s1.last_name}" rendered as "1 1" — confident
+        // nonsense. Returning empty triggers the fallback line instead, which
+        // is plain but true.
+        return '';
     }
   }
 
@@ -225,14 +367,42 @@ function resolvePlaceholder(
 
   if (compute.value === null) return '0';
 
-  // An aggregate over a money field should read as money. The entity's own
-  // format hint decides, so no per-question special-casing is needed.
+  // An aggregate takes its unit from the FIELD it reduced, not from the entity.
+  //
+  // Asking "does this entity have any money field?" produced "You have $4.00
+  // services" and "You have $1,000.00 insights": services have a price and
+  // insights an estimated impact, so counting either rendered as currency. A
+  // count is dimensionless whatever else the entity stores, and a sum is only
+  // money when the summed column is.
   const entity = CATALOG.entities[compute.entity];
-  const isMoney = Object.values(entity?.fields ?? {}).some((f) => f.format === 'money');
+  const aggregatedField = compute.agg?.field
+    ? entity?.fields[compute.agg.field]
+    : undefined;
+  const isMoney = compute.agg?.fn !== 'count' && aggregatedField?.format === 'money';
 
   return isMoney
     ? formatValue(compute.value, 'money', ctx)
     : String(Math.round(compute.value * 100) / 100);
+}
+
+/**
+ * Name a row the way a person would — shared with the write path.
+ *
+ * Exported so a confirmation card can say "mark INV-00002 as paid" rather than
+ * naming a uuid. Reusing this rather than writing a second labelling rule is the
+ * point: two ways to name a row would drift, and the one on the approval card is
+ * the one that matters most.
+ */
+export function labelForRow(
+  entityKey: string,
+  row: QueryRow,
+  ctx: RenderContext
+): string | undefined {
+  const entity = CATALOG.entities[entityKey];
+  if (!entity) return undefined;
+
+  const label = pickLabel(entity, row, ctx);
+  return label && label !== '—' ? label : undefined;
 }
 
 // =============================================================================
@@ -269,15 +439,103 @@ export function renderAnswer(
     return resolved;
   });
 
-  const useFallback = !text.trim() || (emptySubstitution && primary?.rows.length === 0);
+  // Any unresolved placeholder means the sentence has a hole in it — "יש לך
+  // חשבוניות" with a gap where the number should be. That reads as a bug to the
+  // user, so prefer the plain generic line over a broken sentence, whether the
+  // result was empty or not.
+  const useFallback = !text.trim() || emptySubstitution;
+
+  // A filter that named something non-existent OVERRIDES the sentence, even a
+  // perfectly formed one.
+  //
+  // This is the whole point. The planner writes "Gregory Fenwick owes you
+  // {s1.value}" before any data is fetched; the sum comes back 0 because there
+  // is no Gregory Fenwick; and the sentence substitutes cleanly into a confident,
+  // false statement about someone's money. Falling back would not help either —
+  // "invoices: 0" is the same lie in fewer words. The only correct answer is to
+  // say the name matched nothing.
+  const unmatched = results.flatMap(
+    (r) => (r as { unmatched?: UnmatchedFilter[] }).unmatched ?? []
+  );
 
   return {
-    text: useFallback ? fallbackText(primary, entity, ctx) : text.trim(),
+    text: unmatched.length
+      ? unmatchedText(unmatched, ctx)
+      : useFallback
+        ? fallbackText(primary, entity, results, ctx)
+        : text.trim(),
     rows,
     entity: primary?.entity,
     truncated: findResults.some((r) => r.truncated),
     approximate: results.some((r) => r.op === 'compute' && r.approximate),
+    collapsed: results.reduce(
+      (sum, r) =>
+        sum + ((r as { collapsed?: number }).collapsed ?? 0),
+      0
+    ),
+    ...(unmatched.length > 0 ? { unmatched } : {}),
   };
+}
+
+
+/**
+ * "There is no such thing", rather than a number that would be a lie.
+ *
+ * The one piece of hand-written prose in this file, and it earns the exception:
+ * every other message here is a localized noun beside a number, which works
+ * because the number is TRUE. Here the number would be false — a sum over rows
+ * that do not exist renders as a perfectly ordinary 0 — so there is nothing to
+ * put beside the noun except a sentence saying why.
+ *
+ * Both non-English forms are chosen to sidestep grammatical gender, because the
+ * noun is interpolated from the catalog and no phrase here can know its gender:
+ * Hebrew "אין" does not inflect, and Spanish "no se encontró" is impersonal. A
+ * construction needing agreement would be wrong for half the entities.
+ */
+function unmatchedText(all: UnmatchedFilter[], ctx: RenderContext): string {
+  // One sentence per entity, not per filter.
+  //
+  // "how much does Gregory Fenwick owe me" filters first_name AND last_name, and
+  // a two-step plan applies both twice — so the naive rendering said "No contact
+  // found matching Gregory. No contact found matching Fenwick." four times over.
+  // The parts belong to one name the user typed as one name, so they are joined
+  // back into one. Deduplicated first, since the same part arrives from every
+  // step that filtered on it.
+  const byEntity = new Map<string, string[]>();
+  for (const { entity, value } of all) {
+    const values = byEntity.get(entity) ?? [];
+    if (!values.includes(value)) values.push(value);
+    byEntity.set(entity, values);
+  }
+
+  const unmatched = [...byEntity.entries()].map(([entity, values]) => ({
+    entity,
+    value: values.join(' '),
+  }));
+
+  // Widened deliberately: the rest of this file casts to 'en' because it only
+  // ever indexes a label map, where an unknown key falls back. Here the value is
+  // switched on, so narrowing it to 'en' would make the other two branches
+  // unreachable — and the compiler said so.
+  const language = (ctx.language ?? 'en') as 'en' | 'he' | 'es';
+
+  return unmatched
+    .map(({ entity, value }) => {
+      const target = CATALOG.entities[entity];
+      const noun = target
+        ? (target.labels.one[language] ?? target.labels.one.en)
+        : entity;
+
+      switch (language) {
+        case 'he':
+          return `אין ${noun} בשם "${value}".`;
+        case 'es':
+          return `No se encontró ${noun}: "${value}".`;
+        default:
+          return `No ${noun} found matching "${value}".`;
+      }
+    })
+    .join(' ');
 }
 
 /**
@@ -293,13 +551,42 @@ export function renderAnswer(
 function fallbackText(
   primary: FindResult | undefined,
   entity: ResolvedEntity | undefined,
+  results: QueryResult[],
   ctx: RenderContext
 ): string {
-  if (!primary || !entity) return '';
-
   const language = (ctx.language as 'en') ?? 'en';
-  const count = primary.rows.length;
-  const labels = count === 1 ? entity.labels.one : entity.labels.many;
 
-  return `${labels[language] ?? labels.en}: ${count}`;
+  const line = (entityKey: string, count: number): string => {
+    const target = CATALOG.entities[entityKey];
+    if (!target) return '';
+    const labels = count === 1 ? target.labels.one : target.labels.many;
+    return `${labels[language] ?? labels.en}: ${count}`;
+  };
+
+  if (primary && entity) return line(primary.entity, primary.rows.length);
+
+  // A plan can be aggregate-only, and the planner does sometimes omit
+  // `answer.text` altogether. That combination previously fell through to '' —
+  // "how many invoices do I have?" answered with a blank message while the
+  // compiler had the number in hand. An empty reply reads as a broken product,
+  // and it is the one outcome worse than a terse one.
+  const compute = results.find((r): r is ComputeResult => r.op === 'compute');
+  if (compute && compute.value !== null) {
+    // Only a COUNT is a number of entities. Labelling a sum with the entity noun
+    // would read as "invoices: 5066.61" — a total presented as a tally. A
+    // non-count aggregate is named by the field it reduced instead.
+    if (compute.agg?.fn === 'count') return line(compute.entity, compute.value);
+
+    const target = CATALOG.entities[compute.entity];
+    const field = compute.agg?.field ? target?.fields[compute.agg.field] : undefined;
+    if (!field) return String(compute.value);
+
+    return `${field.labels[language] ?? field.labels.en}: ${formatValue(
+      compute.value,
+      field.format,
+      ctx
+    )}`;
+  }
+
+  return '';
 }

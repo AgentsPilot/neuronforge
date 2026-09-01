@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { Globe, Layout, Settings, Eye, EyeOff, ArrowLeft, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, type LucideIcon } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -24,6 +24,7 @@ import { MediaUploader } from '@/components/website/MediaUploader';
 import { WebsiteSetupWizard, type WizardResult } from '@/components/business-os/WebsiteSetupWizard';
 import { LandingPageWizard, type LandingPageWizardResult } from '@/components/business-os/LandingPageWizard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 
 const logger = createLogger({ module: 'WebsitePage' });
 
@@ -146,6 +147,20 @@ interface WebsiteTemplate {
   blocks: Array<{ block_type: string; position: number; type?: string }>;
 }
 
+/** A row from /api/website/blocks/services, as the wizard rewrites it. */
+interface PublicServiceRow {
+  id: string;
+  name: string;
+  description?: string;
+  price?: string;
+  priceRaw?: number;
+  duration?: string;
+  durationMinutes?: number;
+  icon?: string;
+  is_scheduled: boolean;
+  collection: 'online' | 'invoice' | null;
+}
+
 interface BusinessProfile {
   id: string;
   user_id: string;
@@ -153,12 +168,15 @@ interface BusinessProfile {
   vertical: string;
   sub_vertical: string | null;
   user_code?: string;
+  /** The business's logo. Owned by the profile; pages only choose to show it. */
+  logo_url?: string | null;
+  /** What the onboarding chat agreed: see wantsWebsite(). */
+  online_presence_mode?: string | null;
 }
 
 // Localized strings
 const LABELS = {
   en: {
-    back_to_dashboard: 'Back to Dashboard',
     title: 'Website',
     subtitle: 'Manage your professional website',
     tab_overview: 'Overview',
@@ -166,6 +184,7 @@ const LABELS = {
     tab_sections: 'Sections',
     tab_design: 'Design',
     tab_settings: 'Settings',
+    settings_needs_page: 'These settings — your web address and domain — belong to a website. Create one from Templates and they will appear here.',
     tab_templates: 'Templates',
     status_draft: 'Draft',
     status_live: 'Live',
@@ -177,7 +196,7 @@ const LABELS = {
     copy_link: 'Copy Link',
     link_copied: 'Link Copied!',
     no_website: 'No Website Yet',
-    no_website_desc: 'Choose a template to create your professional website.',
+    no_website_desc: 'Click “Create Website” above to build your professional site.',
     choose_template: 'Choose a Template',
     loading: 'Loading...',
     preview: 'Preview',
@@ -272,6 +291,8 @@ const LABELS = {
     sync_no_data: 'No business data to sync',
     generate_with_ai: 'Generate with AI',
     generating: 'Generating...',
+    writing_title: 'Writing your website',
+    writing_body: 'From your business name, description and services. This takes a few moments.',
     hero_image: 'Hero Image',
     upload_image: 'Upload Image',
     image_url: 'Image URL',
@@ -299,7 +320,6 @@ const LABELS = {
     journey_lead_capture: 'Lead Capture'
   },
   es: {
-    back_to_dashboard: 'Volver al Panel',
     title: 'Sitio Web',
     subtitle: 'Gestiona tu sitio web profesional',
     tab_overview: 'General',
@@ -307,6 +327,7 @@ const LABELS = {
     tab_sections: 'Secciones',
     tab_design: 'Diseño',
     tab_settings: 'Configuración',
+    settings_needs_page: 'Estos ajustes — tu dirección web y dominio — pertenecen a un sitio. Crea uno desde Plantillas y aparecerán aquí.',
     tab_templates: 'Plantillas',
     status_draft: 'Borrador',
     status_live: 'Publicado',
@@ -318,7 +339,7 @@ const LABELS = {
     copy_link: 'Copiar Enlace',
     link_copied: '¡Enlace Copiado!',
     no_website: 'Sin Sitio Web',
-    no_website_desc: 'Elige una plantilla para crear tu sitio web profesional.',
+    no_website_desc: 'Pulsa “Crear Sitio Web” arriba para crear tu sitio profesional.',
     choose_template: 'Elegir Plantilla',
     loading: 'Cargando...',
     preview: 'Vista Previa',
@@ -413,6 +434,8 @@ const LABELS = {
     sync_no_data: 'No hay datos de negocio para sincronizar',
     generate_with_ai: 'Generar con IA',
     generating: 'Generando...',
+    writing_title: 'Escribiendo tu sitio web',
+    writing_body: 'Con el nombre, la descripción y los servicios de tu negocio. Tardará unos momentos.',
     hero_image: 'Imagen Principal',
     upload_image: 'Subir Imagen',
     image_url: 'URL de Imagen',
@@ -440,14 +463,14 @@ const LABELS = {
     journey_lead_capture: 'Captura de Leads'
   },
   he: {
-    back_to_dashboard: 'חזרה ללוח הבקרה',
-    title: 'אתר אינטרנט',
-    subtitle: 'נהל את האתר המקצועי שלך',
+    title: 'נוכחות אונליין',
+    subtitle: 'נהל את הנוכחות אונליין שלך',
     tab_overview: 'סקירה',
     tab_journey: 'מסע הלקוח',
     tab_sections: 'חלקים',
     tab_design: 'עיצוב',
     tab_settings: 'הגדרות',
+    settings_needs_page: 'ההגדרות האלה — הכתובת והדומיין שלך — שייכות לאתר. צור אחד מתוך התבניות והן יופיעו כאן.',
     tab_templates: 'תבניות',
     status_draft: 'טיוטה',
     status_live: 'פעיל',
@@ -459,7 +482,7 @@ const LABELS = {
     copy_link: 'העתק קישור',
     link_copied: '!קישור הועתק',
     no_website: 'עדיין אין אתר',
-    no_website_desc: 'בחר תבנית ליצירת האתר המקצועי שלך.',
+    no_website_desc: 'לחץ על ״צור אתר״ למעלה כדי לבנות את האתר המקצועי שלך.',
     choose_template: 'בחר תבנית',
     loading: '...טוען',
     preview: 'תצוגה מקדימה',
@@ -554,6 +577,8 @@ const LABELS = {
     sync_no_data: 'אין נתוני עסק לסנכרון',
     generate_with_ai: 'צור עם AI',
     generating: '...יוצר',
+    writing_title: 'כותבים את האתר שלך',
+    writing_body: 'לפי שם העסק, התיאור והשירותים שלך. זה ייקח כמה רגעים.',
     hero_image: 'תמונה ראשית',
     upload_image: 'העלה תמונה',
     image_url: 'כתובת תמונה',
@@ -670,10 +695,25 @@ export default function WebsiteManagementPage() {
 
   const [viewMode, setViewMode] = useState<ViewMode>('overview');
   const [page, setPage] = useState<WebsitePage | null>(null);
+  const wizardPageRef = useRef<WebsitePage | null>(null);
+  const [generating, setGenerating] = useState(false);
   const [allPages, setAllPages] = useState<WebsitePage[]>([]);
   const [blocks, setBlocks] = useState<WebsiteBlock[]>([]);
   const [templates, setTemplates] = useState<WebsiteTemplate[]>([]);
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
+  /**
+   * Whether to offer building a website at all.
+   *
+   * A business that chose a booking page — or nothing — during onboarding was
+   * still shown the template picker and a "Create website" button, offering the
+   * thing they had just declined. Landing pages and smart links stay either
+   * way: for those businesses that IS their online presence.
+   *
+   * Only the offer is withdrawn, never the management of a page that already
+   * exists. That block renders on `page &&` below, so a live site keeps its
+   * editor rather than being stranded published with no way back in.
+   */
+  const offerWebsite = wantsWebsite(businessProfile?.online_presence_mode);
   const [hasPaidServices, setHasPaidServices] = useState(false);
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
@@ -1038,6 +1078,26 @@ export default function WebsiteManagementPage() {
           }
         }
 
+        // Check for ?view=design (from the dashboard's Design setup pill), so
+        // the theme is reachable in one click rather than three.
+        if (searchParams.get('view') === 'design') {
+          setViewMode('design');
+          router.replace('/business-os/website', { scroll: false });
+          return;
+        }
+
+        // Check for ?view=links, from the dashboard's "give clients a way to
+        // book" step on an account that declined a website. It opens the
+        // acquisition wizard — where a booking link is made — instead of
+        // falling through to the site builder below, which is the one thing
+        // this business has already said it does not want.
+        if (searchParams.get('view') === 'links') {
+          setViewMode('overview');
+          setShowLandingPageWizard(true);
+          router.replace('/business-os/website', { scroll: false });
+          return;
+        }
+
         // Check for ?wizard=true query param (from dashboard setup card)
         const wizardParam = searchParams.get('wizard');
         if (wizardParam === 'true') {
@@ -1048,9 +1108,13 @@ export default function WebsiteManagementPage() {
           // Auto-show wizard ONLY for first-time users with no generated content
           const hasNoPage = !pagesData.pages || pagesData.pages.length === 0;
 
-          // Only show wizard if there's truly no website at all
-          // Websites generated through onboarding already have content - don't show wizard for them
-          if (hasNoPage) {
+          // …and only for someone who actually wants a website.
+          //
+          // The wizard hides the whole header row, so a business reaching
+          // clients by smart link watched its four tabs vanish the moment the
+          // page finished loading — dropped into building a site it had
+          // already declined, with no way back to its own links.
+          if (hasNoPage && wantsWebsite(profileData?.profile?.online_presence_mode)) {
             setViewMode('wizard');
           }
         }
@@ -1063,13 +1127,101 @@ export default function WebsiteManagementPage() {
   };
 
   // Handle wizard completion - uses same API/tables as edit page
+  /**
+   * The page the wizard is configuring, created if it does not exist yet.
+   *
+   * Every step of both wizard handlers was written against an existing page —
+   * `if (!page) return;` — from when the wizard was reachable only once a
+   * website existed. It is now the front door from the header, so running it
+   * with no website walked all four steps, saved a draft, and configured
+   * nothing: the user came back to the same empty card.
+   *
+   * The ref rather than the state is what the preview step and the finish step
+   * share. Both can run before React has flushed `setPage`, and creating the
+   * page twice would leave the business with two homepages.
+   */
+  const ensureWizardPage = async (
+    templateId?: string
+  ): Promise<{ page: WebsitePage; created: boolean } | null> => {
+    if (page) return { page, created: false };
+    if (wizardPageRef.current) return { page: wizardPageRef.current, created: true };
+
+    const createResponse = await fetch('/api/website/pages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template_id: templateId,
+        page_type: 'homepage',
+        title: businessProfile?.company_name || 'My Website',
+        // Without this the route defaults to English, so a Hebrew business
+        // building its site through the wizard got a page of English template
+        // copy — the one thing it would certainly have to rewrite.
+        website_language: language,
+        // Given explicitly because the route derives one from the title by
+        // stripping everything outside a-z0-9 — a Hebrew business name leaves
+        // nothing behind, and the page would be created at "/".
+        slug: 'home',
+      }),
+    });
+    const createData = await createResponse.json();
+
+    if (!createData.success || !createData.page) {
+      logger.error({ error: createData.error }, 'Wizard could not create the website page');
+      return null;
+    }
+
+    const built = createData.page as WebsitePage;
+    wizardPageRef.current = built;
+    setPage(built);
+    setAllPages(prev => [...prev, built]);
+    return { page: built, created: true };
+  };
+
   const handleWizardComplete = async (result: WizardResult) => {
     try {
       logger.info({ result }, 'Wizard completed');
 
-      // Step 1: Apply template (recreates blocks with standard structure)
-      if (result.templateId && page) {
-        await fetch(`/api/website/pages/${page.id}/apply-template`, {
+      // The wizard has to be able to build the house it decorates.
+      const ensured = await ensureWizardPage(result.templateId);
+      if (!ensured) {
+        logger.error('Wizard finished without a page to configure');
+        return;
+      }
+      const target = ensured.page;
+
+      if (ensured.created) {
+        // A brand-new site gets its copy written the same way the onboarding
+        // build writes it — from the business's own name, description and
+        // services, in the owner's language. Without this the wizard was the
+        // one door onto the platform that handed a business a page of
+        // template sentences about somebody else.
+        //
+        // No apply-template here: generation installs the blocks and applies
+        // the chosen template's theme itself, so applying it first would only
+        // build a set of blocks to be deleted.
+        setGenerating(true);
+        try {
+          const generated = await fetch('/api/website/generate-from-profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: businessProfile?.user_id,
+              pageId: target.id,
+              templateId: result.templateId,
+            }),
+          });
+          const generatedData = await generated.json();
+          if (!generatedData.success) {
+            // The page exists and carries the template's standard blocks, so
+            // the site is still usable — it just says less than it should.
+            logger.error({ error: generatedData.error }, 'Website content generation failed; keeping template content');
+          }
+        } finally {
+          setGenerating(false);
+        }
+      } else if (result.templateId) {
+        // Step 1: Apply template (recreates blocks with standard structure)
+        await fetch(`/api/website/pages/${target.id}/apply-template`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ template_id: result.templateId })
@@ -1077,13 +1229,13 @@ export default function WebsiteManagementPage() {
       }
 
       // Step 2: Fetch fresh blocks after template application
-      const blocksResponse = await fetch(`/api/website/pages/${page?.id}/blocks-with-content`);
+      const blocksResponse = await fetch(`/api/website/pages/${target.id}/blocks-with-content`);
       const blocksData = await blocksResponse.json();
       const freshBlocks: WebsiteBlock[] = blocksData.success ? (blocksData.blocks || []) : [];
 
       // Step 3: Update subdomain
-      if (result.subdomain && page) {
-        await fetch(`/api/website/pages/${page.id}`, {
+      if (result.subdomain) {
+        await fetch(`/api/website/pages/${target.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ subdomain: result.subdomain })
@@ -1091,22 +1243,24 @@ export default function WebsiteManagementPage() {
         setSubdomain(result.subdomain);
       }
 
-      // Step 4: Update header block with logo (same as edit page)
-      if (result.logoUrl && page) {
+      // Step 4: record whether this site's header wears the business logo. The
+      // image itself lives on the business profile and is injected when blocks
+      // are read, so nothing here stores a URL.
+      if (result.showLogo !== undefined) {
         const headerBlock = freshBlocks.find(b => b.block_type === 'header');
         if (headerBlock) {
-          await fetch(`/api/website/pages/${page.id}/blocks/${headerBlock.id}`, {
+          await fetch(`/api/website/pages/${target.id}/blocks/${headerBlock.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              content: { ...headerBlock.content, logo_url: result.logoUrl }
+              content: { ...headerBlock.content, show_logo: result.showLogo }
             })
           });
         }
       }
 
       // Step 5: Update process block with client_flow (same as handleSaveJourney)
-      if (result.clientFlow && page) {
+      if (result.clientFlow) {
         const processBlock = freshBlocks.find(b => b.block_type === 'process');
         const isServicesOnly = result.clientFlow.length === 1 && result.clientFlow[0] === 'confirmation';
         const contentToSave = {
@@ -1116,13 +1270,13 @@ export default function WebsiteManagementPage() {
         };
 
         if (processBlock) {
-          await fetch(`/api/website/pages/${page.id}/blocks/${processBlock.id}`, {
+          await fetch(`/api/website/pages/${target.id}/blocks/${processBlock.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: contentToSave })
           });
         } else {
-          await fetch(`/api/website/pages/${page.id}/blocks`, {
+          await fetch(`/api/website/pages/${target.id}/blocks`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1135,7 +1289,7 @@ export default function WebsiteManagementPage() {
       }
 
       // Step 6: Update services block with hidden flags (same as edit page toggle)
-      if (page) {
+      {
         const servicesBlock = freshBlocks.find(b => b.block_type === 'services');
         if (servicesBlock) {
           // Fetch services from API (same source as edit page)
@@ -1145,17 +1299,24 @@ export default function WebsiteManagementPage() {
             if (servicesData.services && servicesData.services.length > 0) {
               const hiddenSet = new Set(result.hiddenServiceIds);
               // Build services array with hidden flag - same structure as edit page
-              const servicesWithHidden = servicesData.services.map((s: { id: string; name: string; description?: string; price?: string; duration?: string; icon?: string }) => ({
+              const servicesWithHidden = servicesData.services.map((s: PublicServiceRow) => ({
                 name: s.name,
                 description: s.description || '',
                 price: s.price,
+                priceRaw: s.priceRaw,
                 duration: s.duration,
+                durationMinutes: s.durationMinutes,
                 icon: s.icon || 'Briefcase',
+                // Kept, not dropped: without these the public page loses the
+                // two facts that decide the service's journey, and falls back
+                // to describing one story for the whole site.
+                is_scheduled: s.is_scheduled,
+                collection: s.collection,
                 hidden: hiddenSet.has(s.id)
               }));
 
               // Save to services block (same API as handleSaveBlockContent)
-              await fetch(`/api/website/pages/${page.id}/blocks/${servicesBlock.id}`, {
+              await fetch(`/api/website/pages/${target.id}/blocks/${servicesBlock.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1168,8 +1329,11 @@ export default function WebsiteManagementPage() {
       }
 
       // Step 7: Publish if requested
-      if (result.shouldPublish && page) {
-        await fetch(`/api/website/pages/${page.id}/publish`, {
+      // `page` here is the state as it was when the wizard opened — null for a
+      // site the wizard has just created — so publishing was skipped for
+      // exactly the case that needed it.
+      if (result.shouldPublish) {
+        await fetch(`/api/website/pages/${target.id}/publish`, {
           method: 'POST'
         });
       }
@@ -1194,14 +1358,18 @@ export default function WebsiteManagementPage() {
   // Handle saving wizard state before showing preview (Step 4)
   // This ensures the preview shows accurate data including hidden services
   const handleBeforePreview = async (data: Omit<WizardResult, 'shouldPublish'>) => {
-    if (!page) return;
-
     try {
       logger.info({ data }, 'Saving wizard state before preview');
 
+      // Built here if this is a new website, so the preview shows the site
+      // being described rather than nothing at all.
+      const ensured = await ensureWizardPage(data.templateId);
+      if (!ensured) return;
+      const target = ensured.page;
+
       // Step 1: Apply template if changed
-      if (data.templateId && data.templateId !== page.template_id) {
-        await fetch(`/api/website/pages/${page.id}/apply-template`, {
+      if (data.templateId && data.templateId !== target.template_id) {
+        await fetch(`/api/website/pages/${target.id}/apply-template`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ template_id: data.templateId })
@@ -1209,19 +1377,19 @@ export default function WebsiteManagementPage() {
       }
 
       // Step 2: Fetch fresh blocks
-      const blocksResponse = await fetch(`/api/website/pages/${page.id}/blocks-with-content`);
+      const blocksResponse = await fetch(`/api/website/pages/${target.id}/blocks-with-content`);
       const blocksData = await blocksResponse.json();
       const freshBlocks: WebsiteBlock[] = blocksData.success ? (blocksData.blocks || []) : [];
 
-      // Step 3: Update header block with logo
-      if (data.logoUrl) {
+      // Step 3: record the header's logo choice (the image comes from the profile)
+      if (data.showLogo !== undefined) {
         const headerBlock = freshBlocks.find(b => b.block_type === 'header');
         if (headerBlock) {
-          await fetch(`/api/website/pages/${page.id}/blocks/${headerBlock.id}`, {
+          await fetch(`/api/website/pages/${target.id}/blocks/${headerBlock.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              content: { ...headerBlock.content, logo_url: data.logoUrl }
+              content: { ...headerBlock.content, show_logo: data.showLogo }
             })
           });
         }
@@ -1238,7 +1406,7 @@ export default function WebsiteManagementPage() {
         };
 
         if (processBlock) {
-          await fetch(`/api/website/pages/${page.id}/blocks/${processBlock.id}`, {
+          await fetch(`/api/website/pages/${target.id}/blocks/${processBlock.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ content: contentToSave })
@@ -1254,16 +1422,20 @@ export default function WebsiteManagementPage() {
           const servicesData = await servicesResponse.json();
           if (servicesData.services && servicesData.services.length > 0) {
             const hiddenSet = new Set(data.hiddenServiceIds);
-            const servicesWithHidden = servicesData.services.map((s: { id: string; name: string; description?: string; price?: string; duration?: string; icon?: string }) => ({
+            const servicesWithHidden = servicesData.services.map((s: PublicServiceRow) => ({
               name: s.name,
               description: s.description || '',
               price: s.price,
+              priceRaw: s.priceRaw,
               duration: s.duration,
+              durationMinutes: s.durationMinutes,
               icon: s.icon || 'Briefcase',
+              is_scheduled: s.is_scheduled,
+              collection: s.collection,
               hidden: hiddenSet.has(s.id)
             }));
 
-            await fetch(`/api/website/pages/${page.id}/blocks/${servicesBlock.id}`, {
+            await fetch(`/api/website/pages/${target.id}/blocks/${servicesBlock.id}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -2313,8 +2485,6 @@ export default function WebsiteManagementPage() {
 
   // Save design settings
   const handleSaveDesign = async () => {
-    if (!page) return;
-
     try {
       setSavingDesign(true);
       setSaveMessage(null);
@@ -2323,19 +2493,39 @@ export default function WebsiteManagementPage() {
         colors: {
           primary: designForm.primaryColor,
           secondary: designForm.secondaryColor,
-          accent: page.theme?.colors?.accent || '#EC4899',
-          background: page.theme?.colors?.background || '#FFFFFF',
-          surface: page.theme?.colors?.surface || '#F9FAFB',
-          text: page.theme?.colors?.text || '#111827',
-          textSecondary: page.theme?.colors?.textSecondary || '#6B7280'
+          accent: page?.theme?.colors?.accent || '#EC4899',
+          background: page?.theme?.colors?.background || '#FFFFFF',
+          surface: page?.theme?.colors?.surface || '#F9FAFB',
+          text: page?.theme?.colors?.text || '#111827',
+          textSecondary: page?.theme?.colors?.textSecondary || '#6B7280'
         },
         fonts: {
           heading: designForm.headingFont,
           body: designForm.bodyFont
         },
-        borderRadius: page.theme?.borderRadius || '0.5rem',
-        spacing: page.theme?.spacing || 'normal'
+        borderRadius: page?.theme?.borderRadius || '0.5rem',
+        spacing: page?.theme?.spacing || 'normal'
       };
+
+      // The business's look, saved whether or not there is a website. This
+      // used to return early without a page, so the businesses with the most
+      // need of it — reaching clients by link — could not set one at all,
+      // while their invoices and emails read the same theme.
+      await fetch('/api/business-os/business-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ theme })
+      });
+
+      if (!page) {
+        setSaveMessage({
+          type: 'success',
+          text: language === 'he' ? 'נשמר בהצלחה!' : language === 'es' ? 'Guardado!' : 'Saved!'
+        });
+        setTimeout(() => setSaveMessage(null), 3000);
+        setSavingDesign(false);
+        return;
+      }
 
       logger.info({ pageId: page.id, theme }, 'Saving design settings');
 
@@ -2510,12 +2700,346 @@ export default function WebsiteManagementPage() {
     return icons[blockType] || Package;
   };
 
+  /**
+   * Landing pages and smart links.
+   *
+   * Extracted so it can render whether or not a website page exists. It lived
+   * inside the `page &&` branch, which meant a business with no website saw
+   * none of it — and for a business that declined a website during onboarding,
+   * this IS their online presence. It reads nothing off `page`.
+   */
+  const renderLeadGeneration = () => (
+    <>
+      {/* Row 2: Lead Generation Section (Landing Pages + Lead Capture) */}
+      <div
+        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
+        style={{ borderRadius: 'var(--v2-radius-card)' }}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139, 92, 246, 0.12)' }}>
+              <Megaphone className="w-5 h-5" style={{ color: '#8B5CF6' }} />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                {labels.landing_pages}
+              </h3>
+              <p className="text-sm text-[var(--v2-text-secondary)]">
+                {labels.landing_pages_desc}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Filter toggle for inactive smart links */}
+            {smartLinks.some(l => !l.is_active) && (
+              <button
+                onClick={() => setShowInactiveSmartLinks(!showInactiveSmartLinks)}
+                className={`flex items-center gap-2 px-3 py-2 text-sm border transition-all ${
+                  showInactiveSmartLinks
+                    ? 'bg-[#4F6EF7]/10 border-[#4F6EF7]/30 text-[#4F6EF7]'
+                    : 'bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-text-muted)]'
+                }`}
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {showInactiveSmartLinks ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                  showInactiveSmartLinks
+                    ? 'bg-[#4F6EF7]/20 text-[#4F6EF7]'
+                    : 'bg-[var(--v2-surface-hover)] text-[var(--v2-text-muted)]'
+                }`}>
+                  {smartLinks.filter(l => !l.is_active).length}
+                </span>
+              </button>
+            )}
+            <button
+              onClick={() => setShowLandingPageWizard(true)}
+              className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              <Plus className="h-4 w-4" />
+              {labels.create_landing_page}
+            </button>
+          </div>
+        </div>
+
+        {/* Combined Landing Pages & Smart Links List */}
+        <div className="space-y-3">
+          {/* Smart Links */}
+          {smartLinks.filter(link => link.is_active || showInactiveSmartLinks).map((link) => (
+            <div
+              key={`smart-${link.id}`}
+              className={`p-4 bg-[var(--v2-bg)] rounded-lg border ${!link.is_active ? 'border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-900/10' : 'border-[var(--v2-border)]'}`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-4">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
+                    <Link2 className="w-5 h-5" style={{ color: '#4F6EF7' }} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className={`font-medium ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
+                        {link.name === 'Contact Form'
+                          ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
+                          : (link.name || (language === 'he' ? 'קישור חכם' : 'Smart Link'))}
+                      </p>
+                      {link.is_active ? (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#4F6EF720', color: '#4F6EF7' }}>
+                          {language === 'he' ? 'קישור חכם' : language === 'es' ? 'Smart Link' : 'Smart Link'}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                          {language === 'he' ? 'לא פעיל' : language === 'es' ? 'Inactivo' : 'Inactive'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-1" dir="ltr">
+                      <span className={`text-xs font-mono ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-muted)]'}`}>
+                        /go/{link.code}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Activate/Deactivate toggle */}
+                  {!link.is_active ? (
+                    <button
+                      onClick={async () => {
+                        setTogglingSmartLinkStatus(link.id);
+                        try {
+                          const response = await fetch(`/api/smart-links/${link.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ is_active: true })
+                          });
+                          if (response.ok) {
+                            setSmartLinks(prev => prev.map(l =>
+                              l.id === link.id ? { ...l, is_active: true } : l
+                            ));
+                          }
+                        } catch (err) {
+                          logger.error({ err }, 'Failed to activate smart link');
+                        } finally {
+                          setTogglingSmartLinkStatus(null);
+                        }
+                      }}
+                      disabled={togglingSmartLinkStatus === link.id}
+                      className="px-2 py-1 text-xs font-medium text-green-600 bg-green-100 hover:bg-green-200 dark:bg-green-900/30 dark:hover:bg-green-900/50 rounded transition-colors disabled:opacity-50"
+                      title={language === 'he' ? 'הפעל' : language === 'es' ? 'Activar' : 'Activate'}
+                    >
+                      {togglingSmartLinkStatus === link.id ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        language === 'he' ? 'הפעל' : language === 'es' ? 'Activar' : 'Activate'
+                      )}
+                    </button>
+                  ) : (
+                    <>
+                      {/* Edit button - for booking links (full journey) or booking destination type */}
+                      {(link.metadata?.journeyType === 'full' || link.destination_type === 'booking') && (
+                        <button
+                          onClick={() => {
+                            setEditingSmartLink({
+                              id: link.id,
+                              name: link.name,
+                              metadata: link.metadata || { journeyType: 'full' }
+                            });
+                            setShowLandingPageWizard(true);
+                          }}
+                          className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
+                          title={language === 'he' ? 'עריכה' : language === 'es' ? 'Editar' : 'Edit'}
+                        >
+                          <PenLine className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          const url = `${window.location.origin}/go/${link.code}`;
+                          navigator.clipboard.writeText(url);
+                        }}
+                        className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
+                        title={language === 'he' ? 'העתק' : language === 'es' ? 'Copiar' : 'Copy'}
+                      >
+                        <Copy className="h-4 w-4" />
+                      </button>
+                      <a
+                        href={`/go/${link.code}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                        title={labels.preview}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </a>
+                      <button
+                        onClick={() => {
+                          const displayName = link.name === 'Contact Form'
+                            ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
+                            : (link.name || 'Smart Link');
+                          setDeletingSmartLink({ id: link.id, name: displayName });
+                          setDeleteSmartLinkDialogOpen(true);
+                        }}
+                        className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
+                        title={language === 'he' ? 'השבת' : language === 'es' ? 'Desactivar' : 'Deactivate'}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Smart Link Analytics - Compact row */}
+              <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--v2-text-muted)]">
+                    {language === 'he' ? 'קליקים:' : language === 'es' ? 'Clics:' : 'Clicks:'}
+                  </span>
+                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.click_count}</span>
+                </div>
+                <div className="w-px h-4 bg-[var(--v2-border)]" />
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--v2-text-muted)]">
+                    {language === 'he' ? 'המרות:' : language === 'es' ? 'Conversiones:' : 'Conversions:'}
+                  </span>
+                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.conversion_count}</span>
+                </div>
+                {link.click_count > 0 && (
+                  <>
+                    <div className="w-px h-4 bg-[var(--v2-border)]" />
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[var(--v2-text-muted)]">
+                        {language === 'he' ? 'אחוז המרה:' : language === 'es' ? 'Tasa:' : 'Rate:'}
+                      </span>
+                      <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                        {((link.conversion_count / link.click_count) * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Landing Pages */}
+          {allPages.filter(p => p.page_type === 'landing').map((p) => (
+            <div
+              key={p.id}
+              className="p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#22C58B20' }}>
+                    <FileText className="w-5 h-5" style={{ color: '#22C58B' }} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-[var(--v2-text-primary)]">
+                        {p.title}
+                      </p>
+                      <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#22C58B20', color: '#22C58B' }}>
+                        {language === 'he' ? 'דף נחיתה' : language === 'es' ? 'Landing Page' : 'Landing Page'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1" dir="ltr">
+                      {p.slug && (
+                        <span className="text-xs text-[var(--v2-text-muted)] font-mono">
+                          /{p.slug}
+                        </span>
+                      )}
+                      <span
+                        className={`px-2 py-0.5 text-xs font-medium rounded ${
+                          p.status === 'live'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                        }`}
+                      >
+                        {p.status === 'live' ? labels.status_live : labels.status_draft}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleSelectPage(p)}
+                  className="px-3 py-1.5 text-sm font-medium text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-all"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {labels.edit_page}
+                </button>
+                <a
+                  href={`/business-os/website/preview/${p.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                  title={labels.preview}
+                >
+                  <Eye className="h-4 w-4" />
+                </a>
+                <button
+                  onClick={() => handleDeletePageClick(p.id, p.title)}
+                  disabled={checkingActivity}
+                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors disabled:opacity-50"
+                  title={labels.delete_page}
+                >
+                  {checkingActivity ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+              {/* Landing Page Analytics - Compact row */}
+              <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}:</span>
+                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_today ?? 0}</span>
+                </div>
+                <div className="w-px h-4 bg-[var(--v2-border)]" />
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}:</span>
+                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_30d ?? 0}</span>
+                </div>
+                <div className="w-px h-4 bg-[var(--v2-border)]" />
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}:</span>
+                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.total_views ?? 0}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Empty state */}
+          {allPages.filter(p => p.page_type === 'landing').length === 0 && smartLinks.length === 0 && (
+            <div className="text-center py-8 bg-[var(--v2-surface)] rounded-lg">
+              <Megaphone className="w-10 h-10 mx-auto text-[var(--v2-text-muted)] mb-3 opacity-50" />
+              <p className="text-sm text-[var(--v2-text-secondary)] font-medium">
+                {labels.no_landing_pages}
+              </p>
+              <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                {labels.no_landing_pages_desc}
+              </p>
+            </div>
+          )}
+        </div>
+
+      </div>
+    </>
+  );
+
+
   return (
     <div className="min-h-screen bg-[var(--v2-bg)]">
-      <BusinessOSHeader />
 
       {/* Main Content with max-width like CRM dashboard */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+      <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
 
         {/* Page Header with blue theme (Website capability color) - matching CRM pattern */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -2547,16 +3071,6 @@ export default function WebsiteManagementPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
-            {/* Back to Dashboard */}
-            <button
-              onClick={() => router.push('/business-os')}
-              className="p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all flex-shrink-0"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={labels.back_to_dashboard}
-            >
-              <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
-            </button>
-
             {/* Back to Main Website - only when editing a landing page */}
             {page && page.page_type === 'landing' && viewMode !== 'wizard' && (
               <button
@@ -2578,7 +3092,24 @@ export default function WebsiteManagementPage() {
               </button>
             )}
 
-            {page && viewMode !== 'wizard' && (
+            {/* The tabs that are not the website's.
+                They were all hidden without an AgentsPilot page, which took
+                the theme with them — and the theme is not a website setting:
+                the invoice PDF, every transactional email and any landing page
+                or smart link are drawn from the same colours. A business
+                reaching clients by link had no way to set its own look, and
+                the readiness chain's design step pointed at a tab that did not
+                exist.
+
+                Templates works with no page at all — picking one is how a site
+                gets created. Settings shows what it can: its fields belong to a
+                published page, so without one it says so rather than offering a
+                form that cannot save. */}
+            {/* Shown in the wizard too.
+                Hiding the row while the wizard is open left no way out of it
+                short of finishing: someone who opened it to look, and thought
+                better of a website, was stuck building one. */}
+            {true && (
               <>
                 {/* Global Tabs - Design, Settings only (applies to all page types) */}
                 <div
@@ -2586,9 +3117,14 @@ export default function WebsiteManagementPage() {
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
                   {[
-                    { id: 'overview', icon: Eye, title: labels.tab_overview },
-                    { id: 'design', icon: Palette, title: labels.tab_design },
-                    { id: 'settings', icon: Settings, title: labels.tab_settings }
+                    { id: 'overview', icon: Eye, title: labels.tab_overview, needsPage: false },
+                    { id: 'design', icon: Palette, title: labels.tab_design, needsPage: false },
+                    // Moved up from the website section's own tab row. Choosing
+                    // a template is a change to the whole site, like design and
+                    // settings beside it — not one more thing inside the page
+                    // being edited, which is where it used to sit.
+                    { id: 'templates', icon: LayoutTemplate, title: labels.tab_templates, needsPage: true },
+                    { id: 'settings', icon: Settings, title: labels.tab_settings, needsPage: true }
                   ].map((tab) => (
                     <button
                       key={tab.id}
@@ -2608,10 +3144,15 @@ export default function WebsiteManagementPage() {
               </>
             )}
 
-            {/* Create Website Button when no page exists */}
+            {/* Create Website — offered whenever there is no site yet.
+                It used to be gated on `offerWebsite`, the answer given during
+                onboarding, so a business that said "just a booking link" had no
+                way to change its mind: no button, and the empty state below is
+                hidden from it too. Declining a website at sign-up is a decision
+                about that moment, not a permanent one. */}
             {!loading && !page && (
               <button
-                onClick={() => setViewMode('templates')}
+                onClick={() => setViewMode('wizard')}
                 className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
@@ -2635,75 +3176,53 @@ export default function WebsiteManagementPage() {
           </div>
         )}
 
-        {/* No Website - Template Selection */}
-        {!loading && !page && (
-          <div className="text-center py-16">
+        {/* No website yet — the invitation to make one.
+            Shown to everyone without a site, not only to those who asked for
+            one at sign-up. A business reaching clients by link saw nothing here
+            at all: no card, no template grid, and the header button hidden too,
+            so "I'd like a website after all" had no route. Only on Overview,
+            so it does not sit under the Design or Templates tabs which have
+            their own content. */}
+        {!loading && !page && viewMode === 'overview' && (
+          <div
+            className="text-center py-6 px-5 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            {/* An invitation, not a hero. The 80px badge and 16-unit padding
+                gave a card with one action the weight of a landing page — and
+                on a link-only business it sat above the links that are their
+                actual presence. */}
             <div
-              className="w-20 h-20 mx-auto rounded-2xl flex items-center justify-center mb-6"
+              className="w-9 h-9 mx-auto rounded-lg flex items-center justify-center mb-2.5"
               style={{ backgroundColor: 'rgba(79, 110, 247, 0.1)' }}
             >
-              <Globe className="w-10 h-10" style={{ color: WEBSITE_COLOR }} />
+              <Globe className="w-4 h-4" style={{ color: WEBSITE_COLOR }} />
             </div>
-            <h2 className="text-2xl font-bold text-[var(--v2-text-primary)] mb-2">
+            <h2 className="text-[15px] font-bold text-[var(--v2-text-primary)] mb-1">
               {labels.no_website}
             </h2>
-            <p className="text-[var(--v2-text-secondary)] mb-8 max-w-md mx-auto">
+            <p className="text-[13px] text-[var(--v2-text-secondary)] max-w-sm mx-auto leading-snug">
               {labels.no_website_desc}
             </p>
 
-            {/* Template Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto">
-              {templates.slice(0, 4).map((template) => {
-                const primaryColor = getTemplatePrimaryColor(template);
-                const secondaryColor = getTemplateSecondaryColor(template);
-                const accentColor = template.theme?.accent_color || secondaryColor;
-
-                return (
-                  <motion.button
-                    key={template.id}
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => handleCreateFromTemplate(template.id)}
-                    className="group bg-[var(--v2-surface)] border border-[var(--v2-border)] text-start hover:border-[#4F6EF7] hover:shadow-lg transition-all overflow-hidden"
-                    style={{ borderRadius: 'var(--v2-radius-card)' }}
-                  >
-                    {/* Color Preview Bar */}
-                    <div className="h-20 relative overflow-hidden">
-                      <div
-                        className="absolute inset-0"
-                        style={{
-                          background: `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor} 50%, ${secondaryColor} 50%, ${secondaryColor} 100%)`
-                        }}
-                      />
-                      <div
-                        className="absolute bottom-0 left-0 right-0 h-2"
-                        style={{ backgroundColor: accentColor }}
-                      />
-                    </div>
-
-                    {/* Template Info */}
-                    <div className="p-3">
-                      <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] mb-0.5 truncate">
-                        {getTranslatedTemplateName(template.name, language)}
-                      </h3>
-                      <p className="text-xs text-[var(--v2-text-muted)]">
-                        {template.theme?.brand_voice
-                          ? getTranslatedBrandVoice(template.theme.brand_voice, language)
-                          : getTranslatedVertical(template.vertical, language)}
-                      </p>
-                    </div>
-                  </motion.button>
-                );
-              })}
-            </div>
+            {/* No action inside the card.
+                It first held a grid of four template thumbnails, then a button
+                that repeated the "Create Website" already sitting in the header
+                above it. One action, in one place; this card only says what is
+                missing. */}
           </div>
         )}
 
-        {/* Website Management Content */}
-        {!loading && page && (
+        {/* Website Management Content.
+            The wrapper used to require a page, so a business without one saw
+            four tabs that did nothing when clicked. Design and Templates need
+            no page at all — the theme is the whole platform's look, and
+            picking a template is how a site gets created — so each tab now
+            states its own requirement. */}
+        {!loading && (
           <>
             {/* Overview Tab */}
-            {viewMode === 'overview' && (
+            {viewMode === 'overview' && page && (
               <div className="space-y-6">
                 {/* Landing Page Overview - shown when editing a landing page */}
                 {page.page_type === 'landing' && (
@@ -2975,8 +3494,8 @@ export default function WebsiteManagementPage() {
                       >
                         {[
                           { id: 'sections', icon: Layout, title: labels.tab_sections },
-                          { id: 'journey', icon: Target, title: labels.tab_journey },
-                          { id: 'templates', icon: LayoutTemplate, title: labels.tab_templates }
+                          { id: 'journey', icon: Target, title: labels.tab_journey }
+                          // Templates moved to the global tab row above.
                         ].map((tab) => (
                           <button
                             key={tab.id}
@@ -3056,327 +3575,7 @@ export default function WebsiteManagementPage() {
                   </div>
                 </div>
 
-                {/* Row 2: Lead Generation Section (Landing Pages + Lead Capture) */}
-                <div
-                  className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
-                  style={{ borderRadius: 'var(--v2-radius-card)' }}
-                >
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139, 92, 246, 0.12)' }}>
-                        <Megaphone className="w-5 h-5" style={{ color: '#8B5CF6' }} />
-                      </div>
-                      <div>
-                        <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                          {labels.landing_pages}
-                        </h3>
-                        <p className="text-sm text-[var(--v2-text-secondary)]">
-                          {labels.landing_pages_desc}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {/* Filter toggle for inactive smart links */}
-                      {smartLinks.some(l => !l.is_active) && (
-                        <button
-                          onClick={() => setShowInactiveSmartLinks(!showInactiveSmartLinks)}
-                          className={`flex items-center gap-2 px-3 py-2 text-sm border transition-all ${
-                            showInactiveSmartLinks
-                              ? 'bg-[#4F6EF7]/10 border-[#4F6EF7]/30 text-[#4F6EF7]'
-                              : 'bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-text-muted)]'
-                          }`}
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          {showInactiveSmartLinks ? (
-                            <EyeOff className="w-4 h-4" />
-                          ) : (
-                            <Eye className="w-4 h-4" />
-                          )}
-                          <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                            showInactiveSmartLinks
-                              ? 'bg-[#4F6EF7]/20 text-[#4F6EF7]'
-                              : 'bg-[var(--v2-surface-hover)] text-[var(--v2-text-muted)]'
-                          }`}>
-                            {smartLinks.filter(l => !l.is_active).length}
-                          </span>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setShowLandingPageWizard(true)}
-                        className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <Plus className="h-4 w-4" />
-                        {labels.create_landing_page}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Combined Landing Pages & Smart Links List */}
-                  <div className="space-y-3">
-                    {/* Smart Links */}
-                    {smartLinks.filter(link => link.is_active || showInactiveSmartLinks).map((link) => (
-                      <div
-                        key={`smart-${link.id}`}
-                        className={`p-4 bg-[var(--v2-bg)] rounded-lg border ${!link.is_active ? 'border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-900/10' : 'border-[var(--v2-border)]'}`}
-                      >
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-4">
-                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
-                              <Link2 className="w-5 h-5" style={{ color: '#4F6EF7' }} />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className={`font-medium ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
-                                  {link.name === 'Contact Form'
-                                    ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
-                                    : (link.name || (language === 'he' ? 'קישור חכם' : 'Smart Link'))}
-                                </p>
-                                {link.is_active ? (
-                                  <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#4F6EF720', color: '#4F6EF7' }}>
-                                    {language === 'he' ? 'קישור חכם' : language === 'es' ? 'Smart Link' : 'Smart Link'}
-                                  </span>
-                                ) : (
-                                  <span className="px-2 py-0.5 text-xs font-medium rounded bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
-                                    {language === 'he' ? 'לא פעיל' : language === 'es' ? 'Inactivo' : 'Inactive'}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-3 mt-1" dir="ltr">
-                                <span className={`text-xs font-mono ${!link.is_active ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-muted)]'}`}>
-                                  /go/{link.code}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            {/* Activate/Deactivate toggle */}
-                            {!link.is_active ? (
-                              <button
-                                onClick={async () => {
-                                  setTogglingSmartLinkStatus(link.id);
-                                  try {
-                                    const response = await fetch(`/api/smart-links/${link.id}`, {
-                                      method: 'PUT',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ is_active: true })
-                                    });
-                                    if (response.ok) {
-                                      setSmartLinks(prev => prev.map(l =>
-                                        l.id === link.id ? { ...l, is_active: true } : l
-                                      ));
-                                    }
-                                  } catch (err) {
-                                    logger.error({ err }, 'Failed to activate smart link');
-                                  } finally {
-                                    setTogglingSmartLinkStatus(null);
-                                  }
-                                }}
-                                disabled={togglingSmartLinkStatus === link.id}
-                                className="px-2 py-1 text-xs font-medium text-green-600 bg-green-100 hover:bg-green-200 dark:bg-green-900/30 dark:hover:bg-green-900/50 rounded transition-colors disabled:opacity-50"
-                                title={language === 'he' ? 'הפעל' : language === 'es' ? 'Activar' : 'Activate'}
-                              >
-                                {togglingSmartLinkStatus === link.id ? (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                ) : (
-                                  language === 'he' ? 'הפעל' : language === 'es' ? 'Activar' : 'Activate'
-                                )}
-                              </button>
-                            ) : (
-                              <>
-                                {/* Edit button - for booking links (full journey) or booking destination type */}
-                                {(link.metadata?.journeyType === 'full' || link.destination_type === 'booking') && (
-                                  <button
-                                    onClick={() => {
-                                      setEditingSmartLink({
-                                        id: link.id,
-                                        name: link.name,
-                                        metadata: link.metadata || { journeyType: 'full' }
-                                      });
-                                      setShowLandingPageWizard(true);
-                                    }}
-                                    className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
-                                    title={language === 'he' ? 'עריכה' : language === 'es' ? 'Editar' : 'Edit'}
-                                  >
-                                    <PenLine className="h-4 w-4" />
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => {
-                                    const url = `${window.location.origin}/go/${link.code}`;
-                                    navigator.clipboard.writeText(url);
-                                  }}
-                                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#4F6EF7] transition-colors"
-                                  title={language === 'he' ? 'העתק' : language === 'es' ? 'Copiar' : 'Copy'}
-                                >
-                                  <Copy className="h-4 w-4" />
-                                </button>
-                                <a
-                                  href={`/go/${link.code}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
-                                  title={labels.preview}
-                                >
-                                  <Eye className="h-4 w-4" />
-                                </a>
-                                <button
-                                  onClick={() => {
-                                    const displayName = link.name === 'Contact Form'
-                                      ? (language === 'he' ? 'טופס יצירת קשר' : language === 'es' ? 'Formulario de Contacto' : 'Contact Form')
-                                      : (link.name || 'Smart Link');
-                                    setDeletingSmartLink({ id: link.id, name: displayName });
-                                    setDeleteSmartLinkDialogOpen(true);
-                                  }}
-                                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
-                                  title={language === 'he' ? 'השבת' : language === 'es' ? 'Desactivar' : 'Deactivate'}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Smart Link Analytics - Compact row */}
-                        <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-[var(--v2-text-muted)]">
-                              {language === 'he' ? 'קליקים:' : language === 'es' ? 'Clics:' : 'Clicks:'}
-                            </span>
-                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.click_count}</span>
-                          </div>
-                          <div className="w-px h-4 bg-[var(--v2-border)]" />
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-[var(--v2-text-muted)]">
-                              {language === 'he' ? 'המרות:' : language === 'es' ? 'Conversiones:' : 'Conversions:'}
-                            </span>
-                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.conversion_count}</span>
-                          </div>
-                          {link.click_count > 0 && (
-                            <>
-                              <div className="w-px h-4 bg-[var(--v2-border)]" />
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-[var(--v2-text-muted)]">
-                                  {language === 'he' ? 'אחוז המרה:' : language === 'es' ? 'Tasa:' : 'Rate:'}
-                                </span>
-                                <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
-                                  {((link.conversion_count / link.click_count) * 100).toFixed(1)}%
-                                </span>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* Landing Pages */}
-                    {allPages.filter(p => p.page_type === 'landing').map((p) => (
-                      <div
-                        key={p.id}
-                        className="p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]"
-                      >
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#22C58B20' }}>
-                              <FileText className="w-5 h-5" style={{ color: '#22C58B' }} />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="font-medium text-[var(--v2-text-primary)]">
-                                  {p.title}
-                                </p>
-                                <span className="px-2 py-0.5 text-xs font-medium rounded" style={{ backgroundColor: '#22C58B20', color: '#22C58B' }}>
-                                  {language === 'he' ? 'דף נחיתה' : language === 'es' ? 'Landing Page' : 'Landing Page'}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2 mt-1" dir="ltr">
-                                {p.slug && (
-                                  <span className="text-xs text-[var(--v2-text-muted)] font-mono">
-                                    /{p.slug}
-                                  </span>
-                                )}
-                                <span
-                                  className={`px-2 py-0.5 text-xs font-medium rounded ${
-                                    p.status === 'live'
-                                      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                                      : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                                  }`}
-                                >
-                                  {p.status === 'live' ? labels.status_live : labels.status_draft}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleSelectPage(p)}
-                            className="px-3 py-1.5 text-sm font-medium text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-all"
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                          >
-                            {labels.edit_page}
-                          </button>
-                          <a
-                            href={`/business-os/website/preview/${p.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
-                            title={labels.preview}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </a>
-                          <button
-                            onClick={() => handleDeletePageClick(p.id, p.title)}
-                            disabled={checkingActivity}
-                            className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors disabled:opacity-50"
-                            title={labels.delete_page}
-                          >
-                            {checkingActivity ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-4 w-4" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-
-                        {/* Landing Page Analytics - Compact row */}
-                        <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}:</span>
-                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_today ?? 0}</span>
-                          </div>
-                          <div className="w-px h-4 bg-[var(--v2-border)]" />
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}:</span>
-                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_30d ?? 0}</span>
-                          </div>
-                          <div className="w-px h-4 bg-[var(--v2-border)]" />
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}:</span>
-                            <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.total_views ?? 0}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* Empty state */}
-                    {allPages.filter(p => p.page_type === 'landing').length === 0 && smartLinks.length === 0 && (
-                      <div className="text-center py-8 bg-[var(--v2-surface)] rounded-lg">
-                        <Megaphone className="w-10 h-10 mx-auto text-[var(--v2-text-muted)] mb-3 opacity-50" />
-                        <p className="text-sm text-[var(--v2-text-secondary)] font-medium">
-                          {labels.no_landing_pages}
-                        </p>
-                        <p className="text-xs text-[var(--v2-text-muted)] mt-1">
-                          {labels.no_landing_pages_desc}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                </div>
+                {renderLeadGeneration()}
                   </>
                 )}
               </div>
@@ -4051,21 +4250,35 @@ export default function WebsiteManagementPage() {
                                         className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                       />
                                     </div>
+                                    {/* The logo is the business's, uploaded once in
+                                        Settings. This page only chooses whether the
+                                        header wears it. */}
                                     <div>
                                       <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
-                                        {language === 'he' ? 'לוגו (אופציונלי)' : language === 'es' ? 'Logo (opcional)' : 'Logo (optional)'}
+                                        {language === 'he' ? 'לוגו' : language === 'es' ? 'Logo' : 'Logo'}
                                       </label>
-                                      <p className="text-xs text-[var(--v2-text-muted)] mb-2">
-                                        {language === 'he' ? 'מומלץ: 200x60 פיקסלים, PNG או SVG' : language === 'es' ? 'Recomendado: 200x60 píxeles, PNG o SVG' : 'Recommended: 200x60 pixels, PNG or SVG'}
-                                      </p>
-                                      <MediaUploader
-                                        value={(editingBlockContent.logo_url as string) || ''}
-                                        onChange={(url) => updateBlockField('logo_url', url)}
-                                        onRemove={() => updateBlockField('logo_url', '')}
-                                        placeholder={language === 'he' ? 'גרור לוגו או לחץ להעלאה' : language === 'es' ? 'Arrastra logo o haz clic' : 'Drag logo or click to upload'}
-                                        previewClassName="w-full h-20"
-                                        className="max-w-xs"
-                                      />
+                                      {businessProfile?.logo_url ? (
+                                        <label className="flex items-center gap-3 p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={editingBlockContent.show_logo === true}
+                                            onChange={(e) => updateBlockField('show_logo', e.target.checked)}
+                                            className="w-4 h-4 accent-[#4F6EF7]"
+                                          />
+                                          <img src={businessProfile.logo_url as string} alt="" className="h-8 w-auto object-contain" />
+                                          <span className="text-sm text-[var(--v2-text-secondary)]">
+                                            {language === 'he' ? 'הצג את הלוגו של העסק' : language === 'es' ? 'Mostrar el logo del negocio' : 'Show the business logo'}
+                                          </span>
+                                        </label>
+                                      ) : (
+                                        <p className="text-xs text-[var(--v2-text-muted)]">
+                                          {language === 'he'
+                                            ? 'עדיין לא הועלה לוגו. אפשר להעלות אותו בהגדרות ← העסק שלי.'
+                                            : language === 'es'
+                                              ? 'Aún no has subido un logo. Puedes subirlo en Ajustes → Negocio.'
+                                              : 'No logo uploaded yet. Add one in Settings → Business.'}
+                                        </p>
+                                      )}
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                       <div>
@@ -6142,6 +6355,13 @@ export default function WebsiteManagementPage() {
             )}
 
             {/* Design Tab */}
+            {/* No website, and none needed: landing pages and smart links are
+                this business's online presence, so they are what Overview
+                shows. */}
+            {viewMode === 'overview' && !page && (
+              <div className="space-y-6">{renderLeadGeneration()}</div>
+            )}
+
             {viewMode === 'design' && (
               <div
                 className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
@@ -6289,7 +6509,19 @@ export default function WebsiteManagementPage() {
             )}
 
             {/* Settings Tab */}
-            {viewMode === 'settings' && (
+            {viewMode === 'settings' && !page && (
+              <div
+                className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 text-center"
+                style={{ borderRadius: 'var(--v2-radius-card)' }}
+              >
+                <Globe className="w-8 h-8 mx-auto mb-3 text-[var(--v2-text-muted)] opacity-50" />
+                <p className="text-sm text-[var(--v2-text-secondary)]">
+                  {labels.settings_needs_page}
+                </p>
+              </div>
+            )}
+
+            {viewMode === 'settings' && page && (
               <div
                 className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
                 style={{ borderRadius: 'var(--v2-radius-card)' }}
@@ -6460,13 +6692,13 @@ export default function WebsiteManagementPage() {
                 </div>
 
                 {/* Current template indicator */}
-                {page.template_id && (
+                {page?.template_id && (
                   <div className="mb-6 p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]">
                     <p className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
                       {labels.current_template}
                     </p>
                     <p className="font-medium text-[var(--v2-text-primary)]">
-                      {getTranslatedTemplateName(templates.find(t => t.id === page.template_id)?.name || page.template_id, language)}
+                      {getTranslatedTemplateName(templates.find(t => t.id === page?.template_id)?.name || page?.template_id || '', language)}
                     </p>
                   </div>
                 )}
@@ -6474,7 +6706,9 @@ export default function WebsiteManagementPage() {
                 {/* Template Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {templates.map((template) => {
-                    const isCurrentTemplate = template.id === page.template_id;
+                    // No page yet means no current template — picking one here
+                    // is what creates the site.
+                    const isCurrentTemplate = !!page && template.id === page.template_id;
                     const primaryColor = getTemplatePrimaryColor(template);
                     const secondaryColor = getTemplateSecondaryColor(template);
                     const accentColor = template.theme?.accent_color || secondaryColor;
@@ -6531,11 +6765,45 @@ export default function WebsiteManagementPage() {
             )}
 
             {/* Wizard Tab */}
+            {viewMode === 'wizard' && generating && (
+              // Generation takes tens of seconds. Without this the finish
+              // button simply stopped responding, which reads as a broken
+              // wizard rather than as work being done.
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center"
+                style={{ background: 'rgba(15, 23, 42, 0.55)', backdropFilter: 'blur(2px)' }}
+                role="status"
+                aria-live="polite"
+              >
+                <div
+                  className="px-8 py-7 text-center max-w-sm mx-4"
+                  style={{
+                    background: 'var(--v2-surface)',
+                    border: '1px solid var(--v2-border)',
+                    borderRadius: 'var(--v2-radius-card)',
+                  }}
+                >
+                  <div
+                    className="mx-auto mb-4 animate-spin"
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: '50%',
+                      border: '2px solid var(--v2-border)',
+                      borderTopColor: '#4F6EF7',
+                    }}
+                  />
+                  <p className="text-sm font-medium text-[var(--v2-text-primary)]">{labels.writing_title}</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-[var(--v2-text-muted)]">{labels.writing_body}</p>
+                </div>
+              </div>
+            )}
+
             {viewMode === 'wizard' && (
               <WebsiteSetupWizard
                 templates={templates}
-                currentTemplateId={page?.template_id}
-                currentLogoUrl={blocks.find(b => b.block_type === 'header')?.content?.logo_url}
+                currentTemplateId={page?.template_id ?? undefined}
+                currentLogoUrl={businessProfile?.logo_url as string | undefined}
                 currentClientFlow={clientFlow.length > 0 ? clientFlow : undefined}
                 currentHiddenServiceNames={
                   (blocks.find(b => b.block_type === 'services')?.content?.services as Array<{ name: string; hidden?: boolean }> || [])
@@ -6771,7 +7039,8 @@ export default function WebsiteManagementPage() {
           subdomain={page?.subdomain || ''}
           businessInfo={{
             companyName: businessProfile?.company_name,
-            logoUrl: blocks.find(b => b.block_type === 'header')?.content?.logo_url as string | undefined
+            // The business's own logo, so the wizard can offer to show it.
+            logoUrl: businessProfile?.logo_url as string | undefined
           }}
           clientFlow={clientFlow}
           userCode={businessProfile?.user_code || ''}
@@ -6814,8 +7083,8 @@ export default function WebsiteManagementPage() {
                   generatedContent: result.generatedContent,
                   // Pass website language for localized content
                   language: language,
-                  // Pass business branding for header
-                  logoUrl: blocks.find(b => b.block_type === 'header')?.content?.logo_url as string | undefined,
+                  // Whether this landing page's header wears the business logo
+                  showLogo: result.showLogo,
                   companyName: businessProfile?.company_name
                 })
               });

@@ -128,7 +128,9 @@ export async function PUT(request: NextRequest) {
         invoice_payment_instructions: settings.invoice_payment_instructions || null,
         invoice_footer_text: settings.invoice_footer_text || null,
         invoice_number_prefix: settings.invoice_number_prefix || 'INV',
-        invoice_logo_url: null, // Logo upload handled separately
+        // The logo is not an invoice setting — it belongs to the business and is
+        // written through updateBranding. Passing it here is what used to null
+        // it on every save of this form.
       }
     );
 

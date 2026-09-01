@@ -37,6 +37,10 @@ interface LineItem {
   quantity: number;
   unit_price: number;
   total: number;
+  // Set when the line was filled from the service catalogue. The invoice itself
+  // carries one service, so the first line that names one attributes the whole
+  // invoice in the revenue-by-service breakdown.
+  service_id?: string | null;
 }
 
 interface Contact {
@@ -264,6 +268,7 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
       description: service.service_name,
       unit_price: service.price,
       total: updated[index].quantity * service.price,
+      service_id: service.id,
     };
     setLineItems(updated);
 
@@ -311,6 +316,9 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
           payment_terms: formData.payment_terms,
           notes: formData.notes,
           line_items: validItems,
+          // Which service this invoice is for, so the money lands on a row in
+          // the reports page's revenue-by-service card.
+          service_id: validItems.find(item => item.service_id)?.service_id || null,
           currency: currencyCode,
           status: 'draft',
           use_stripe: formData.send_via_stripe && hasStripeConnect,

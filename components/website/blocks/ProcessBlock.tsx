@@ -5,7 +5,8 @@ import {
   Users, Calendar, CreditCard, Mail, FileText, ClipboardCheck,
   Send, CheckCircle, ArrowRight, Sparkles, type LucideIcon
 } from 'lucide-react';
-import type { BlockRendererProps, ProcessStep } from './types';
+import type { BlockRendererProps, ProcessStep, JourneyServiceFacts } from './types';
+import { journeySteps } from '@/lib/business-os/clientJourney';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
 // Client flow step types
@@ -119,7 +120,58 @@ function StepIcon({ icon, fallback, size = 'md' }: StepIconProps) {
   return <span className="font-bold">{fallback}</span>;
 }
 
-export function ProcessBlock({ content, styles, theme, isRTL, className, locale = 'en' }: BlockRendererProps) {
+/**
+ * The steps this page can honestly describe, from the services themselves.
+ *
+ * The section used to render a stored `client_flow` — a single union written
+ * once at build time — while the booking widget resolved the journey per
+ * service from `journeySteps`. The page and the widget disagreed for any
+ * business whose services differ, which is most of them.
+ *
+ * Where the services agree, that shared journey is the section. Where they do
+ * not, only the steps every service has are described: a page that promised
+ * "secure payment" above a catalogue half of which is invoiced was the
+ * original complaint, and claiming a step for a service that does not have it
+ * is the one thing this section must not do. The differences belong next to
+ * each service, which is where the services section now shows them.
+ *
+ * Returns null when the page carries no service facts — an older page, or one
+ * whose catalogue is empty — and the stored flow is used instead.
+ */
+function flowFromServices(services: JourneyServiceFacts[] | undefined): ClientFlowStepKey[] | null {
+  if (!services || services.length === 0) return null;
+
+  const journeys = services.map(service =>
+    journeySteps(
+      { is_scheduled: service.is_scheduled, collection: service.collection, price: service.priceRaw },
+      // Not gated on the processor here: the section describes what buying
+      // this service involves, and an unconnected Stripe is a gap the owner
+      // has to close, not a step the client should stop being told about.
+      { processorReady: true }
+    )
+  );
+
+  const shared = journeys[0].filter(step => journeys.every(journey => journey.includes(step)));
+
+  const mapped = shared
+    .map(step => STEP_TO_FLOW_KEY[step])
+    .filter((key): key is ClientFlowStepKey => Boolean(key));
+
+  return mapped.length > 0 ? mapped : null;
+}
+
+/** The resolver's step names, in the words this section renders. */
+const STEP_TO_FLOW_KEY: Record<string, ClientFlowStepKey | undefined> = {
+  // 'service' is choosing what to buy, which is the section above this one.
+  service: undefined,
+  datetime: 'scheduling',
+  details: 'client_info',
+  payment: 'payment',
+  intake: 'intake',
+  confirmation: 'confirmation',
+};
+
+export function ProcessBlock({ content, styles, theme, isRTL, className, locale = 'en', journeyServices }: BlockRendererProps) {
   // Translation helper
   const t = (key: string, section: 'process' | 'common' = 'process') =>
     getBlockTranslation(section, key, locale);
@@ -132,9 +184,13 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
     layout = 'numbered'
   } = content as ProcessContent;
 
-  // Generate steps from client_flow if available, otherwise use AI-generated steps
-  const steps: ProcessStep[] = client_flow && client_flow.length > 0
-    ? client_flow.map((flowKey, index) => {
+  // The services decide the journey; the stored flow is what a page written
+  // before they were carried falls back to.
+  const resolvedFlow = flowFromServices(journeyServices) || client_flow;
+
+  // Generate steps from the resolved flow if available, otherwise use AI-generated steps
+  const steps: ProcessStep[] = resolvedFlow && resolvedFlow.length > 0
+    ? resolvedFlow.map((flowKey, index) => {
         const flowStep = CLIENT_FLOW_STEPS[flowKey]?.[locale] || CLIENT_FLOW_STEPS[flowKey]?.en;
         if (!flowStep) {
           // Fallback for unknown flow keys

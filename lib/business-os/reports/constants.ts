@@ -34,6 +34,9 @@ export const REPORTS_COLORS = {
   /** Purple accent color */
   ACCENT: '#8B5CF6',
 
+  /** Muted grey for the unattributed revenue row */
+  UNATTRIBUTED: '#94A3B8',
+
   /** Service revenue color palette (cycles through for multiple services) */
   SERVICE_PALETTE: [
     '#22C58B', // Green
@@ -50,3 +53,11 @@ export const DISPLAY_LIMITS = {
   /** Maximum number of services to show in revenue breakdown */
   MAX_SERVICES: 6,
 } as const;
+
+/**
+ * The service_id the stats API uses for revenue that belongs to no service —
+ * an ad-hoc invoice, a deposit, a payment taken outside the catalogue. Keeping
+ * it as a row is what makes the breakdown add up to the revenue card above it.
+ * Not a UUID, so it can never collide with a real service.
+ */
+export const UNATTRIBUTED_SERVICE_ID = 'unattributed';

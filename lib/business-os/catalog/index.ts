@@ -47,14 +47,24 @@ const TYPE_COMPATIBILITY: Record<FieldType, readonly string[]> = {
   date: ['date'],
   datetime: ['timestamp with time zone', 'timestamp without time zone'],
   uuid: ['uuid'],
-  // Enums in this repo are CHECK-constrained text columns, not PG enum types.
+  // Two shapes in this schema: CHECK-constrained text (invoices.status) and
+  // genuine PG enum types (crm_tasks.priority reports as 'public.task_priority').
+  // The latter is matched by prefix in isCompatible().
   enum: ['text', 'character varying', 'USER-DEFINED'],
   'string[]': ['text[]', 'ARRAY', 'character varying[]'],
   json: ['jsonb', 'json'],
 };
 
 function isCompatible(fieldType: FieldType, pgFormat: string): boolean {
-  return (TYPE_COMPATIBILITY[fieldType] ?? []).includes(pgFormat);
+  if ((TYPE_COMPATIBILITY[fieldType] ?? []).includes(pgFormat)) return true;
+
+  // A real Postgres enum type is reported by PostgREST as 'public.<type_name>'
+  // rather than a builtin. Accept any schema-qualified type for an enum field:
+  // the values themselves are declared in the semantic layer and pinned by a
+  // test, since PostgREST does not expose pg_enum members.
+  if (fieldType === 'enum' && /^[a-z_]+\.[a-z_]+$/i.test(pgFormat)) return true;
+
+  return false;
 }
 
 // =============================================================================
@@ -211,15 +221,111 @@ function buildCatalog(): ResolvedCatalog {
       }
     }
 
+    // --- writable foreign keys ----------------------------------------------
+    //
+    // A writable FK is the one write that can reach outside the caller's own
+    // rows: `user_id` scoping guards the row being written, not the row it points
+    // at. The executor refuses a reference the caller does not own, but it can
+    // only do that if it knows what the field points to — so declaring it is
+    // mandatory, and a `references` naming an unknown entity is a build failure.
+    for (const [fieldKey, field] of Object.entries(fields)) {
+      if (field.references && !SEMANTIC_CATALOG[field.references]) {
+        problems.push(
+          `${entityKey}.fields.${fieldKey}.references names unknown entity ` +
+            `'${field.references}'.`
+        );
+      }
+
+      const looksLikeForeignKey = field.type === 'uuid' && fieldKey.endsWith('_id');
+      if (field.writable === true && looksLikeForeignKey && !field.references) {
+        problems.push(
+          `${entityKey}.fields.${fieldKey} is a writable foreign key but declares no ` +
+            `'references'. Without it the executor cannot verify the caller owns the ` +
+            `row being pointed at, so the write could reference another tenant.`
+        );
+      }
+    }
+
     // --- actions ------------------------------------------------------------
     for (const [actionKey, action] of Object.entries(entity.actions ?? {})) {
+      // An action can declare PARAMETERS rather than columns — a message to
+      // send, a day and a pair of times. It says so with `writesRow: false`,
+      // and then there is nothing here to check against the table.
+      //
+      // Keyed off the explicit flag rather than the risk level: "is this a
+      // send?" happened to be true of the first such action and is not the
+      // question being asked.
+      if (action.writesRow === false) continue;
+
       for (const name of [...(action.requiredFields ?? []), ...(action.optionalFields ?? [])]) {
         if (!fields[name]) {
           problems.push(
             `${entityKey}.actions.${actionKey} references unknown field '${name}'.`
           );
+          continue;
+        }
+
+        // An action that offers a field the compiler will then refuse to write is
+        // a contradiction the catalog was happy to hold: `invoices.create` listed
+        // `contact_id` as optional while the field was never marked writable, so
+        // "create an invoice for Ofir" planned correctly and was rejected at
+        // validation. The two halves are authored in different parts of the file,
+        // which is exactly why this needs to fail the build rather than rely on
+        // whoever edits one remembering the other.
+        if (fields[name].writable !== true) {
+          problems.push(
+            `${entityKey}.actions.${actionKey} offers field '${name}', but ` +
+              `${entityKey}.fields.${name} is not marked writable. Either mark the ` +
+              `field writable or remove it from the action.`
+          );
         }
       }
+      // --- can this create actually insert a row? ---------------------------
+      //
+      // `invoices.create` and `activities.create` were both declared, both
+      // planned correctly, and both failed at the insert on EVERY call — one on
+      // a missing invoice_number, the other on a contact_id the catalog called
+      // optional while the column is NOT NULL. Neither was caught by anything:
+      // the drift test checks that declared fields EXIST, and the dry run that
+      // produces the confirmation card never reaches the handler.
+      //
+      // So this closes the class rather than the two instances. A column an
+      // insert genuinely fails without must be covered by something: a required
+      // field the user supplies, or an explicit declaration that the handler
+      // fills it in. `optionalFields` deliberately does not count — optional
+      // means it may be absent, which is precisely the activities bug.
+      // Defaulted rather than compared: the literal catalog narrows `writesRow`
+      // to `true | undefined`, so `!== false` is a comparison TypeScript can
+      // prove is always true — and a guard that cannot fail is not a guard.
+      const writesRow = action.writesRow ?? true;
+
+      if (action.risk === 'create' && writesRow) {
+        const mustSupply = physicalTable.columns
+          .filter((c) => c.required && !c.hasDefault && !c.isPrimaryKey)
+          .map((c) => c.name);
+
+        const columnOf = (fieldKey: string) => entity.fields[fieldKey]?.column ?? fieldKey;
+        const covered = new Set([
+          // Always from the caller's identity, never from a plan.
+          'user_id',
+          ...(action.requiredFields ?? []).map(columnOf),
+          ...(action.handlerSupplies ?? []),
+        ]);
+
+        const uncovered = mustSupply.filter((column) => !covered.has(column));
+
+        if (uncovered.length > 0) {
+          problems.push(
+            `${entityKey}.actions.${actionKey} cannot insert a row: ` +
+              `${uncovered.map((c) => `'${c}'`).join(', ')} ` +
+              `${uncovered.length === 1 ? 'is' : 'are'} NOT NULL with no default, and ` +
+              `neither requiredFields nor handlerSupplies covers ` +
+              `${uncovered.length === 1 ? 'it' : 'them'}. Either ask the user for ` +
+              `${uncovered.length === 1 ? 'it' : 'them'}, or declare what the handler fills in.`
+          );
+        }
+      }
+
       if (action.allowBulk && !action.maxFanout) {
         problems.push(
           `${entityKey}.actions.${actionKey} sets allowBulk without maxFanout. ` +
@@ -242,39 +348,58 @@ function buildCatalog(): ResolvedCatalog {
  * Content hash of the catalog's query-relevant structure.
  *
  * Forms part of every plan-cache key, so any schema or semantic change
- * invalidates every cached plan at once. Deliberately excludes labels and the
- * generator's timestamp: re-running the generator or fixing a typo in a Hebrew
- * label must not throw away the whole cache, but adding a field or changing an
- * enum must.
+ * invalidates every cached plan at once. Deliberately excludes display labels
+ * and the generator's introspection metadata: re-running the generator or fixing
+ * a typo in a Hebrew label must not throw away the whole cache, but adding a
+ * field or changing an enum must.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS A DENY-LIST AND NOT AN ALLOW-LIST
+ *
+ * It used to name the properties that count — table, scope, fields, relations,
+ * derived, actions — and by omission everything else did not. That is a hash
+ * which must be updated by hand every time the catalog schema grows, and it had
+ * already fallen behind: an action's `requiredFields` and `optionalFields` reach
+ * the planner's prompt, and changing them changed no version. Adding `meaning`
+ * repeated the failure immediately — a property added SPECIFICALLY to change how
+ * the planner chooses would have been served from a cache built without it.
+ *
+ * So the default flipped. Everything counts unless it is named here, and the two
+ * things named are the two that genuinely must not: `labels`/`enumLabels`, which
+ * are what a human is shown rather than what a plan is built from, and
+ * `physical`, which is introspection detail already proven compatible by the
+ * drift check. A new property is now covered the day it is added, by nobody
+ * remembering anything.
+ *
+ * Over-invalidating costs one round of re-planning. Under-invalidating serves a
+ * plan built from a catalog that no longer exists.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 function computeVersion(entities: Record<string, ResolvedEntity>): string {
-  const shape = Object.entries(entities)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, entity]) => ({
-      key,
-      table: entity.table,
-      scope: entity.userScope,
-      fields: Object.entries(entity.fields)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([fieldKey, field]) => [
-          fieldKey,
-          field.column,
-          field.type,
-          field.readable !== false,
-          field.writable === true,
-          field.enumValues ?? null,
-          field.semanticTerms ? Object.keys(field.semanticTerms).sort() : null,
-        ]),
-      relations: Object.entries(entity.relations ?? {}).sort(([a], [b]) => a.localeCompare(b)),
-      derived: Object.entries(entity.derived ?? {})
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, d]) => [k, d.type, d.expand]),
-      actions: Object.entries(entity.actions ?? {})
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([k, a]) => [k, a.risk, a.requiresConfirmation, a.allowBulk ?? false]),
-    }));
+  /** What a human reads, not what a plan is built from. */
+  const IGNORED = new Set(['labels', 'enumLabels', 'physical']);
 
-  return createHash('sha256').update(JSON.stringify(shape)).digest('hex').slice(0, 16);
+  // Key order in an object literal is not meaningful, so it must not reach the
+  // hash — otherwise moving a property up a file changes the version.
+  const stable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stable);
+
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => !IGNORED.has(key))
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, nested]) => [key, stable(nested)])
+      );
+    }
+
+    return value;
+  };
+
+  return createHash('sha256')
+    .update(JSON.stringify(stable(entities)))
+    .digest('hex')
+    .slice(0, 16);
 }
 
 // =============================================================================

@@ -19,6 +19,11 @@ const logger = createLogger({ module: 'WebsiteGenerationAPI' });
 
 const GenerationRequestSchema = z.object({
   userId: z.string().uuid('Invalid user ID'),
+  // Both optional, and both set by the setup wizard: it has already created
+  // the page and the owner has already chosen a template, so generation fills
+  // that page in those colours instead of creating a second site.
+  pageId: z.string().uuid('Invalid page ID').optional(),
+  templateId: z.string().min(1).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -46,7 +51,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { userId } = validationResult.data;
+    const { userId, pageId, templateId } = validationResult.data;
 
     // 3. Verify user can only generate for themselves
     if (user.id !== userId) {
@@ -56,11 +61,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    requestLogger.info({ userId }, 'Starting website generation');
+    requestLogger.info({ userId, pageId, templateId }, 'Starting website generation');
 
     // 4. Generate website
     const generationService = new WebsiteGenerationService();
-    const result = await generationService.generateWebsite(userId);
+    const result = await generationService.generateWebsite(userId, { pageId, templateId });
 
     if (!result.success) {
       requestLogger.error({ userId, error: result.error }, 'Website generation failed');

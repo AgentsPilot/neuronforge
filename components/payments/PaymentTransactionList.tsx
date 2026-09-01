@@ -439,7 +439,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
             <div className="absolute top-0 start-0 w-1 h-full bg-emerald-500" />
             <div className="flex items-center gap-2 mb-2">
               <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-emerald-600 dark:text-emerald-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.status.succeeded') || 'Succeeded'}
               </span>
             </div>
@@ -464,7 +464,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
             <div className="absolute top-0 start-0 w-1 h-full bg-yellow-500" />
             <div className="flex items-center gap-2 mb-2">
               <div className="w-2 h-2 rounded-full bg-yellow-500" />
-              <span className="text-xs font-semibold text-yellow-600 dark:text-yellow-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-yellow-600 dark:text-yellow-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.status.pending') || 'Pending'}
               </span>
             </div>
@@ -489,7 +489,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
             <div className="absolute top-0 start-0 w-1 h-full bg-red-500" />
             <div className="flex items-center gap-2 mb-2">
               <div className={`w-2 h-2 rounded-full bg-red-500 ${stats.failed.count > 0 ? 'animate-pulse' : ''}`} />
-              <span className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-red-600 dark:text-red-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.status.failed') || 'Failed'}
               </span>
             </div>
@@ -514,7 +514,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
             <div className="absolute top-0 start-0 w-1 h-full bg-orange-500" />
             <div className="flex items-center gap-2 mb-2">
               <div className="w-2 h-2 rounded-full bg-orange-500" />
-              <span className="text-xs font-semibold text-orange-600 dark:text-orange-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-orange-600 dark:text-orange-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.status.refunded') || 'Refunded'}
               </span>
             </div>
@@ -580,7 +580,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                   </th>
                   <th className="w-10 px-2 py-3"></th>
                   <th
-                    className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                    className={`px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors ${isRTL ? '' : 'uppercase tracking-wider'}`}
                     onClick={() => handleSort('amount')}
                   >
                     <div className="flex items-center">
@@ -589,7 +589,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                     </div>
                   </th>
                   <th
-                    className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                    className={`px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors ${isRTL ? '' : 'uppercase tracking-wider'}`}
                     onClick={() => handleSort('status')}
                   >
                     <div className="flex items-center">
@@ -598,7 +598,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                     </div>
                   </th>
                   <th
-                    className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                    className={`px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors ${isRTL ? '' : 'uppercase tracking-wider'}`}
                     onClick={() => handleSort('client')}
                   >
                     <div className="flex items-center">
@@ -606,11 +606,11 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                       {getSortIcon('client')}
                     </div>
                   </th>
-                  <th className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+                  <th className={`px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                     {t('payments.table.description') || 'Description'}
                   </th>
                   <th
-                    className="px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors"
+                    className={`px-4 py-3 text-start text-xs font-medium text-[var(--v2-text-muted)] cursor-pointer hover:text-[var(--v2-text-primary)] transition-colors ${isRTL ? '' : 'uppercase tracking-wider'}`}
                     onClick={() => handleSort('date')}
                   >
                     <div className="flex items-center">
@@ -618,7 +618,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                       {getSortIcon('date')}
                     </div>
                   </th>
-                  <th className="px-4 py-3 text-end text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wider">
+                  <th className={`px-4 py-3 text-end text-xs font-medium text-[var(--v2-text-muted)] ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                     {t('payments.table.actions') || 'Actions'}
                   </th>
                 </tr>
@@ -776,7 +776,12 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
 
                         {/* Actions */}
                         <td className="px-4 py-4 whitespace-nowrap text-end">
-                          {transaction.status === 'succeeded' && !hasRefund && (
+                          {/* Offered while anything remains, not only when the
+                              payment is untouched. `!hasRefund` made a partial
+                              refund a one-way door: refund 40% and the other 60%
+                              became unreachable from the UI entirely. */}
+                          {transaction.status === 'succeeded' &&
+                            transaction.amount - (transaction.refunded_amount || 0) > 0 && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -797,7 +802,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 ps-8">
                               {/* Payment Method */}
                               <div className="text-start">
-                                <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                   {t('payments.details.payment_method') || 'Payment Method'}
                                 </div>
                                 <div className="text-sm text-[var(--v2-text-primary)]">
@@ -810,7 +815,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                               {/* Service (if available) */}
                               {transaction.service_name && (
                                 <div className="text-start">
-                                  <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                  <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                     {t('payments.details.service') || 'Service'}
                                   </div>
                                   <div className="text-sm text-[var(--v2-text-primary)]">
@@ -822,7 +827,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                               {/* Payment Plan Installment (if available) */}
                               {transaction.installment_number && transaction.installment_total && (
                                 <div className="text-start">
-                                  <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                  <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                     {t('payments.details.installment') || 'Installment'}
                                   </div>
                                   <div className="text-sm text-[var(--v2-text-primary)]">
@@ -841,7 +846,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
 
                               {/* Transaction ID */}
                               <div className="text-start">
-                                <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                   {t('payments.details.transaction_id') || 'Transaction ID'}
                                 </div>
                                 <div className="flex items-center gap-1">
@@ -867,7 +872,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
 
                               {/* Created At */}
                               <div className="text-start">
-                                <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                   {t('payments.details.created_at') || 'Created'}
                                 </div>
                                 <div className="text-sm text-[var(--v2-text-primary)]">
@@ -878,7 +883,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                               {/* Paid At */}
                               {transaction.paid_at && (
                                 <div className="text-start">
-                                  <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                  <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                     {t('payments.details.paid_at') || 'Paid'}
                                   </div>
                                   <div className="text-sm text-[var(--v2-text-primary)]">
@@ -891,7 +896,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                               {hasRefund && (
                                 <>
                                   <div className="text-start">
-                                    <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                    <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                       {t('payments.details.refunded_at') || 'Refunded At'}
                                     </div>
                                     <div className="text-sm text-orange-600 dark:text-orange-400">
@@ -901,7 +906,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
 
                                   {transaction.refund_reason && (
                                     <div className="col-span-2 text-start">
-                                      <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                      <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                         {t('payments.details.refund_reason') || 'Refund Reason'}
                                       </div>
                                       <div className="text-sm text-[var(--v2-text-primary)]">
@@ -912,7 +917,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
 
                                   {transaction.refunded_amount && (
                                     <div className="text-start">
-                                      <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                      <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                         {t('payments.details.refunded_amount') || 'Refunded Amount'}
                                       </div>
                                       <div className="text-sm font-semibold text-orange-600 dark:text-orange-400">
@@ -931,7 +936,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                               {/* Source (if from website booking) */}
                               {transaction.metadata?.source === 'website_booking' && (
                                 <div className="text-start">
-                                  <div className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
+                                  <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                     {t('payments.details.source') || 'Source'}
                                   </div>
                                   <div className="text-sm text-[var(--v2-text-primary)]">

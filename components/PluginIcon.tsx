@@ -13,7 +13,10 @@ export const PluginIcon = ({ pluginId, className = "w-8 h-8", alt }: PluginIconP
   return (
     <img
       src={iconPath}
-      alt={alt || pluginId}
+      // `??`, not `||`: callers that pass alt="" mean the icon is decorative
+      // because a label sits beside it. With `||` the empty string fell through
+      // to the plugin id, so "facebook פייסבוק" was read out and copied.
+      alt={alt ?? pluginId}
       className={className}
       style={{
         objectFit: 'contain',

@@ -18,6 +18,7 @@
  * @module lib/business-os/bizql/planner
  */
 
+import { createHash } from 'crypto';
 import { CATALOG } from '@/lib/business-os/catalog';
 
 export interface ToolSchema {
@@ -73,7 +74,9 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
     type: 'object',
     description:
       'A filter. Use `field` for a normal or derived field. Use `relation` with ' +
-      'quantifier none/any to ask about the ABSENCE or PRESENCE of related rows.',
+      'quantifier none/any to ask about the ABSENCE or PRESENCE of related rows ' +
+      'that MATCH a nested `where`. A relation filter with no `where` adds nothing ' +
+      'and can silently empty the result — omit it instead.',
     properties: {
       field: { type: 'string', description: 'Field or derived-field name from the catalog.' },
       op: { type: 'string', enum: OPERATORS },
@@ -107,7 +110,11 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
             description:
               'The MINIMUM steps needed. Almost every question is ONE step. Do not add a ' +
               'second step to count rows you already fetched, and do not restate the same ' +
-              'query with different filters "just in case".',
+              'query with different filters "just in case". ' +
+              'BUT a question that asks TWO things needs a step for each, and the answer ' +
+              'sentence must reference both: "how many clients owe me and what is the ' +
+              'total" is a distinct count AND a sum, and answering only the first leaves ' +
+              'half the question silently unanswered.',
             items: {
               type: 'object',
               properties: {
@@ -148,9 +155,30 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
                   properties: {
                     fn: { type: 'string', enum: ['count', 'sum', 'avg', 'min', 'max'] },
                     field: { type: 'string' },
+                    distinct: {
+                      type: 'boolean',
+                      description:
+                        'For count only. Counts how many DIFFERENT values the field has ' +
+                        'rather than how many rows. Use it whenever the question counts a ' +
+                        'RELATED thing: "how many clients have unpaid invoices" is ' +
+                        '{fn:count, field:contact_id, distinct:true} over invoices, because ' +
+                        'one client with two invoices is one client. The field must be the ' +
+                        'one IDENTIFYING that thing — contact_id for clients, service_id ' +
+                        'for services. Counting distinct id is just counting rows.',
+                    },
                   },
                 },
-                group_by: { type: 'string' },
+                group_by: {
+                  type: 'string',
+                  description:
+                    'Break the aggregate down. Three forms: "status" — a field of this ' +
+                    'entity; "service" or "contact" — the NAME of a relation (r:), which ' +
+                    'groups by what that thing is called, and is what "per service" / ' +
+                    '"per client" means (never group by a raw id field: the user would be ' +
+                    'shown UUIDs); "sent_at:month" — a date field bucketed by ' +
+                    'day/week/month/year, which is what "per month" / "over time" means ' +
+                    '(grouping a bare timestamp puts every row in its own bucket).',
+                },
                 action: {
                   type: 'string',
                   description:
@@ -159,13 +187,29 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
                 target: {
                   type: 'object',
                   description:
-                    'Required for op=mutate except create. Must be an explicit row id you ' +
-                    'already know — never a guess.',
-                  properties: { id: { type: 'string' } },
+                    'Required for op=mutate except create and actions marked no-target. Give ONE of: "id", a literal row ' +
+                    'id you were actually given — never a guess; or "find", describing the ' +
+                    'row the user named, e.g. ' +
+                    '{"find":{"where":[{"field":"invoice_number","op":"eq","value":"INV-00002"}]}}. ' +
+                    'Prefer "find" whenever the user identified the row by name, number or ' +
+                    'any other field. The server resolves it to exactly one row and asks the ' +
+                    'user if several match.',
+                  properties: {
+                    id: { type: 'string' },
+                    find: {
+                      type: 'object',
+                      properties: { where: { type: 'array', items: predicateSchema } },
+                    },
+                  },
                 },
                 data: {
                   type: 'object',
-                  description: 'Field values for op=mutate. Only writable (*) fields.',
+                  description:
+                    'Field values for op=mutate. Only writable (*) fields. To link the ' +
+                    'record to another one the user named rather than gave an id for, ' +
+                    'describe it: {"contact_id":{"$find":{"where":[{"field":"first_name",' +
+                    '"op":"eq","value":"Ofir"}]}}}. The server resolves it to one row and ' +
+                    'asks if several match. Never invent an id.',
                 },
                 over: {
                   type: 'string',
@@ -194,7 +238,16 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
             description:
               'How to phrase the result, in the user language. Use {placeholders} that refer to ' +
               'step output — NEVER write actual numbers or names, since you have not seen the ' +
-              'data yet. Available: {sN.count}, {sN.value}, {sN.rows}.',
+              'data yet. ONLY these resolve: {sN.count} (how many rows), {sN.value} (an ' +
+              'aggregate), {sN.rows} (their names), {sN.first} (the first one), and ' +
+              '{sN.first.FIELD} for ONE field of the first row — which is how a ' +
+              'superlative is phrased, e.g. "your biggest invoice is ' +
+              '{s1.first.invoice_number}". For a RATE, use {sN.percent_of.sM}: it ' +
+              'divides step N by step M and formats a percentage, so "what is my ' +
+              'conversion rate" is two counting steps plus ' +
+              '"{s1.percent_of.s2} of enquiries became clients". You still cannot ' +
+              'reference a field on its own like {sN.first_name}; the rows are ' +
+              'displayed separately.',
             properties: {
               text: {
                 type: 'string',
@@ -232,17 +285,27 @@ export const PLANNER_SYSTEM_PROMPT = `You convert a small-business owner's reque
 You are given a CATALOG of entities. Notation:
   f: fields    d: derived fields    r: relations    a: actions
   name:type    [a|b|c] allowed stored values    * writable    [] means many
+  req=a+b on an action means those fields are mandatory; opt=c+d are also accepted —
+  put each detail the user gave in its OWN field rather than folding it into the text
 
 Relations work in "include" in BOTH directions: the contact on an invoice, or a
 contact's invoices. Query the entity the user asked ABOUT and include the rest.
 
 RULES
 1. Call emit_plan exactly once. Never answer in prose.
-2. Emit the FEWEST steps that answer the question — usually exactly one. A find step already
-   returns its rows, so never add a separate step just to count them.
+2. Emit the FEWEST steps that answer the question. A find step already returns its rows,
+   so never add a separate step just to count them.
+   THE ONE EXCEPTION: if the user asks you to DO something to many rows ("send them...",
+   "email everyone who...", "remind all the..."), that legitimately needs TWO steps —
+   a find, then a for_each over it. See rule 11. Stopping after the find would answer
+   only half of what was asked.
 3. Only use entities, fields, relations and semantic terms that appear in the catalog.
    Never invent a field name. If something you need is absent, use \`clarification\`.
-4. If a field shows semantic terms in {..}, you MUST filter it with {"$semantic":"term"}.
+4. FIRST choose the field the user means, THEN express the value.
+   Match their word against the field VALUES too, not only the field names:
+   "urgent" is a priority value, so "anything urgent" filters priority, not status.
+   Having chosen the field: if it shows semantic terms in {..}, you MUST filter it
+   with {"$semantic":"term"}.
    Writing the term as a plain string (e.g. "unpaid") matches no stored value and silently
    returns zero rows, which would tell the user something false.
    Prefer a declared semantic term over an equivalent you compose yourself:
@@ -252,29 +315,96 @@ RULES
    by this business and listed under THIS USER'S CONFIGURED VALUES. Filter it with the exact
    literal value from that list — never {"$semantic":...}. Map the user's wording onto the
    closest listed value yourself.
-5. For anything relative in time use {"$date":"ANCHOR"} where ANCHOR is one of:
-   now, today, tomorrow, yesterday, start_of_week, end_of_week, start_of_month, end_of_month.
+5. Copy names and other free-text values EXACTLY as the user wrote them, character for
+   character, in their own script. Never translate or transliterate one.
+   The database holds what the business actually typed: searching first_name for "Ofir"
+   when the user wrote "אופיר" — and the record says "אופיר" — matches nothing, and a
+   write that cannot find its person fails instead of happening.
+6. For anything relative in time use {"$date":"ANCHOR"} where ANCHOR is one of:
+   now, today, tomorrow, yesterday, start_of_day, end_of_day,
+   start_of_week, end_of_week, start_of_month, end_of_month.
    Never invent an anchor name and never hardcode a calendar date.
-6. Choose the op by what is being asked for, not by wording:
+7. Answer the question that was asked, including WHO it is about.
+   A question about people ("who owes me money", "which clients...") must carry the
+   person, so include the related contact:
+     "include":[{"relation":"contact","select":["first_name","last_name","email"]}]
+   Listing invoice rows without the client answers "what is unpaid", not "who owes me".
+   COUNTING is stricter than listing. If the question counts a related thing
+   ("how many CLIENTS have unpaid invoices"), counting the invoice rows answers a
+   different question with a bigger number — one client with two invoices is one
+   client. Either query that thing directly:
+     find/compute over contacts, filtered by {"relation":"invoices","quantifier":"any",
+     "where":[{"field":"status","op":"eq","value":{"$semantic":"unpaid"}}]}
+   or count the DISTINCT values of the field identifying it:
+     {"fn":"count","field":"contact_id","distinct":true}
+   Counting distinct "id" is just counting rows again.
+8. Choose the op by what is being asked for, not by wording:
    - a QUANTITY (a total, a sum, an average, "how much", "how many") -> op "compute" with agg.
    - a LIST or the identities of things -> op "find".
    Answering "how much am I owed" with a list of rows answers a different question.
-7. Derived fields (d:) are used exactly like normal fields, including with eq true/false.
-8. answer.text must be ONE short sentence in the user's own language, containing only
+9. Derived fields (d:) are used exactly like normal fields, including with eq true/false.
+10. answer.text must be ONE short sentence in the user's own language, containing only
    {placeholders} for any data. You have not seen the data, so never state a number or a
    name directly. Placeholders may only reference steps you emitted.
-9. If the request is ambiguous, set \`clarification\` and omit steps. Never guess a value
-   the user did not give.
-10. To act on MANY rows, emit a find step and then a for_each step over it:
-      s1: find the rows      s2: for_each over "s1" with an action and params
-    Use {"$item":"field"} in params to read from the current row. This is the ONLY
-    way to affect several rows; a mutate always targets exactly one id.
-    Only actions the catalog marks bulk-capable can be used this way, the user is
-    always shown who will be affected first, and there is a hard cap.
-11. WRITES (op "mutate") change the user's real business data, so:
+11. USE THE CONVERSATION. If a CONVERSATION SO FAR section is present:
+    - a message that answers a question you just asked must be COMBINED with the
+      original request and planned — asking again is never the right move;
+    - "it", "him", "her", "that one" and ordinals refer to the rows listed there;
+      use their ids instead of asking who is meant.
+    Re-asking something the user already answered makes the assistant unusable.
+12. Inferring the SUBJECT is fine; inferring a TARGET or a VALUE is not.
+   - A request for a SET is answered: "my open tasks", "unpaid invoices", "this week's
+     bookings" all describe a group, so return it.
+   - A request for ONE specific thing, with nothing to identify it by, must ASK.
+     "Find a contact" / "open the invoice" means the user has a particular one in mind
+     and has not said which. Listing everything is not finding it — ask which one.
+     (If they name it, or the conversation already identified it, proceed.)
+   - But a request to DO something whose target you cannot identify must ALWAYS ask.
+     "Send it to them" names neither a message nor recipients: ask, never guess. Reading
+     a pronoun as "everyone" is how a business emails its entire contact list by mistake.
+   - Never invent a value the user did not give.
+13. ACTING ON MANY ROWS — the two-step shape:
+      {"id":"s1","op":"find","entity":"contacts","where":[...],"select":["id","email"]}
+      {"id":"s2","op":"for_each","over":"s1","entity":"contacts","action":"send",
+       "params":{"to":{"$item":"email"},"subject":"...","body":"..."}}
+    {"$item":"field"} reads that field from the current row. You must write the subject
+    and body yourself, in the user's language.
+    This is the ONLY way to affect several rows — a mutate always targets exactly one id.
+    The find step MUST carry a filter saying who. If the user did not say who, ask with
+    \`clarification\` — never fall back to everyone. "send it to them" with no referent
+    is a question, not an instruction to contact every record you have.
+    Only actions shown as bulk-capable may be used; the user is always shown who will be
+    affected and must approve before anything happens.
+14. WRITES (op "mutate") change the user's real business data, so:
     - use only the actions listed after a: for that entity;
-    - every write except create needs target.id — an id you were GIVEN, never invented.
-      If you do not have the id, emit a find step or ask with \`clarification\` instead;
+    - every write except create needs a target. If the user identified the row by name,
+      number or any other field, describe it with target.find and the server will resolve
+      it — do NOT invent a uuid, and do not ask the user for one;
     - actions marked "confirm" are shown to the user for approval before anything happens,
       so describe the effect plainly in answer.text;
-    - never combine a write with unrelated reads in one plan.`;
+    - never combine a write with unrelated reads in one plan;
+    - a create takes NO target — it makes a new row. To attach it to something the
+      user named, describe that link in data with {"$find":{"where":[...]}};
+    - if a required field (req=) has no value the USER actually supplied, ask with
+      \`clarification\` naming what you need. Never send "", 0, or a made-up value
+      to satisfy a required field — a blank creates real, broken data, and asking
+      is the correct outcome, not a failure.`;
+
+/**
+ * Content hash of the planner's own instructions and tool schema.
+ *
+ * This belongs in the plan-cache key alongside CATALOG_VERSION, and leaving it
+ * out cost real time: after changing the prompt to teach the planner fan-out,
+ * every test kept returning the OLD find-only plan from cache. The model was
+ * doing the right thing; the cache was hiding it.
+ *
+ * The rule generalises — a cached artefact must be keyed on everything that
+ * could have produced it, not only on the data it queries.
+ */
+export function plannerVersion(): string {
+  return createHash('sha256')
+    .update(PLANNER_SYSTEM_PROMPT)
+    .update(JSON.stringify(buildPlanTool()))
+    .digest('hex')
+    .slice(0, 12);
+}

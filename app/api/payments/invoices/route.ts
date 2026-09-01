@@ -17,6 +17,9 @@ const LineItemSchema = z.object({
 
 const CreateInvoiceSchema = z.object({
   contact_id: z.string().uuid().optional().nullable(),
+  // The service being billed, when the invoice is for one. Attributes the
+  // invoice in the reports page's revenue-by-service breakdown.
+  service_id: z.string().uuid().optional().nullable(),
   invoice_number: z.string().optional(), // Will auto-generate if not provided
   client_name: z.string().min(1, 'Client name is required'),
   client_email: z.string().email('Valid email is required'),
@@ -54,6 +57,21 @@ export async function GET(request: NextRequest) {
     const includeStats = searchParams.get('include_stats') === 'true';
 
     requestLogger.info({ userId: user.id, status, contact_id, includeStats }, 'Listing payment invoices');
+
+    // Catch up the stored status before reading.
+    //
+    // `markOverdueInvoices` existed but nothing ever called it, so an invoice
+    // stayed 'sent' however long it was late: no overdue count, no overdue
+    // filter, and a dashboard that reported zero outstanding while invoices
+    // aged. Doing it here keeps the transition where the data is read, needs no
+    // scheduled job, and is idempotent — it usually updates nothing.
+    const overdueResult = await paymentInvoiceRepository.markOverdueInvoices(user.id);
+    if (overdueResult.error) {
+      // Not fatal: the list is still worth returning with stale statuses.
+      requestLogger.warn({ err: overdueResult.error, userId: user.id }, 'Could not refresh overdue invoices');
+    } else if (overdueResult.data) {
+      requestLogger.info({ userId: user.id, marked: overdueResult.data }, 'Invoices moved to overdue');
+    }
 
     // Fetch invoices, count, and optionally stats in parallel
     const promises: Promise<any>[] = [
@@ -148,6 +166,7 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       invoice_number,
       contact_id: validated.contact_id || null,
+      service_id: validated.service_id || null,
       client_name: validated.client_name,
       client_email: validated.client_email,
       amount: validated.amount,

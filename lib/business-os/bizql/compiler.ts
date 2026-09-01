@@ -18,7 +18,12 @@
  *      `readable: false` (internal notes) cannot be exfiltrated by asking.
  *   4. Limits are clamped to the entity's `maxLimit`.
  *
- * If you add a code path that builds a query, it MUST go through applyUserScope.
+ * If you add a code path that builds a query, it MUST open the table through
+ * `scopedFrom`. That is the only function that calls `.from()` on an entity's
+ * table, and it produces the select and the tenant filter together — so a new
+ * read path cannot be one forgotten line away from returning every tenant's
+ * rows. (Two helpers in the foreign-key repair filter inline instead; both
+ * refuse outright unless the entities involved are column-scoped.)
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module lib/business-os/bizql
@@ -47,6 +52,7 @@ import {
   type ComputeResult,
   type FindQuery,
   type FindResult,
+  type IncludeSpec,
   type Predicate,
   type Query,
   type QueryContext,
@@ -54,10 +60,16 @@ import {
   type QueryRow,
   type QueryValue,
   type SemanticValue,
+  type UnmatchedFilter,
 } from './types';
 import { resolveDateExpr } from './dates';
+import { relationPredicateProblem } from './predicateRules';
+import { parseGroupBy, bucketKey, type GroupSpec } from './groupBy';
 
 const logger = createLogger({ module: 'BizQLCompiler' });
+
+/** Guards the foreign-key repair: only an id-shaped value is worth looking up. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Ceiling on an anti-join's intermediate id set. Above this we refuse rather
@@ -68,6 +80,14 @@ const ANTI_JOIN_CAP = 10_000;
 
 /** Ceiling on rows scanned for a JS-side aggregate. */
 const AGGREGATE_SCAN_CAP = 5_000;
+
+/**
+ * Rows scanned to deduplicate an entity that records repeats.
+ *
+ * Matched to AGGREGATE_SCAN_CAP on purpose: a list and a count of the same
+ * entity must not disagree because they looked at different amounts of data.
+ */
+const DEDUPE_SCAN_CAP = 5_000;
 
 type Builder = PostgrestFilterBuilder<any, any, any, any, any>;
 
@@ -93,16 +113,222 @@ const box = (b: Builder): Boxed => ({ b });
 // SCOPING — the one function that must never be bypassed
 // =============================================================================
 
-function applyUserScope(builder: Builder, entity: ResolvedEntity, userId: string): Builder {
-  if (entity.userScope.kind !== 'column') {
-    // Relation-scoped entities are declared but not yet compilable. Refuse
-    // rather than emit an unscoped query.
+/**
+ * Alias for the ownership join, chosen not to collide with any relation a caller
+ * might also be selecting.
+ */
+const SCOPE_ALIAS = 'owner_scope';
+
+/**
+ * The join a relation-scoped entity needs in its SELECT to be scopable at all.
+ *
+ * Some tables carry no `user_id`: `smart_link_clicks` records a click against a
+ * link, and only the link knows whose it is. Ownership is then one hop away, and
+ * the hop must be an INNER join.
+ *
+ * `!inner` is the whole safety property. A plain PostgREST embed is a LEFT join:
+ * filtering `link.user_id` on one returns every click row with `link: null`
+ * attached, which is not a filtered result — it is the entire table, for every
+ * tenant, wearing a filter that did nothing. With `!inner`, a row whose link
+ * fails the filter is not returned at all.
+ */
+function userScopeEmbed(entity: ResolvedEntity): string | null {
+  if (entity.userScope.kind !== 'relation') return null;
+
+  const relationKey = entity.userScope.relation;
+  const relation = entity.relations?.[relationKey];
+  if (!relation) {
     throw new BizQLValidationError([
-      `entity '${entity.key}' uses relation-based user scoping, which the compiler ` +
-        `does not implement yet. Refusing to run an unscoped query.`,
+      `entity '${entity.key}' is scoped through relation '${relationKey}', which it ` +
+        `does not declare. Refusing to run an unscoped query.`,
     ]);
   }
-  return builder.eq(entity.userScope.column, userId);
+
+  const target = CATALOG.entities[relation.target];
+  if (!target || target.userScope.kind !== 'column') {
+    // Only one hop. A chain of relation-scoped entities is a scope whose
+    // correctness nobody can check by reading one definition.
+    throw new BizQLValidationError([
+      `entity '${entity.key}' is scoped through '${relation.target}', which is not ` +
+        `itself column-scoped. Refusing to run an unscoped query.`,
+    ]);
+  }
+
+  // Under its OWN alias, never the relation's name.
+  //
+  // `link_clicks` also displays its link, so the select already embeds
+  // `link:smart_links(...)`. Emitting the scope join under the same name made
+  // PostgREST join one table twice under one alias — "table name
+  // smart_link_clicks_link_1 specified more than once" — and the query failed
+  // outright. Aliasing the scope join keeps it independent of whatever the
+  // caller happens to be displaying, which is the property it needs: the tenant
+  // filter must not depend on the shape of the select around it.
+  return (
+    `${SCOPE_ALIAS}:${target.table}!${relation.via.column}` +
+    `!inner(${target.userScope.column})`
+  );
+}
+
+function applyUserScope(builder: Builder, entity: ResolvedEntity, userId: string): Builder {
+  if (entity.userScope.kind === 'column') {
+    return builder.eq(entity.userScope.column, userId);
+  }
+
+  const relation = entity.relations![entity.userScope.relation];
+  const target = CATALOG.entities[relation.target];
+
+  // Reaches the joined table, and only bites because the embed is `!inner`.
+  return builder.eq(
+    `${SCOPE_ALIAS}.${(target.userScope as { column: string }).column}`,
+    userId
+  );
+}
+
+/**
+ * The ONLY way this compiler opens a table.
+ *
+ * Scoping used to be a call you made after building a select, which meant a new
+ * read path was one forgotten line away from returning every tenant's rows. It
+ * is now impossible to obtain a builder without the scope: the select and the
+ * filter are produced together, from the same entity definition, here.
+ */
+function scopedFrom(
+  supabase: SupabaseClient,
+  entity: ResolvedEntity,
+  columns: string[],
+  userId: string
+): Builder {
+  const embed = userScopeEmbed(entity);
+  const select = [...(columns.length ? columns : ['id']), ...(embed ? [embed] : [])].join(',');
+
+  const builder = supabase.from(entity.table).select(select) as unknown as Builder;
+
+  return applyUserScope(builder, entity, userId);
+}
+
+// =============================================================================
+// UNMATCHED FILTERS — telling "nobody by that name" apart from "owes nothing"
+// =============================================================================
+
+/**
+ * A QueryContext with somewhere to record filters that named nothing.
+ *
+ * The collector is internal and per-query. It is NOT on the public
+ * `QueryContext`, because a caller must not be able to pre-seed it — what was
+ * unmatched is a fact the compiler observes, not an input it accepts.
+ */
+type CompileContext = QueryContext & {
+  /** Definitely unmatched: the sub-query itself found nothing. */
+  _unmatched?: UnmatchedFilter[];
+  /**
+   * Unmatched ONLY IF the result comes back empty.
+   *
+   * A filter on this entity's own name cannot be judged when it is applied —
+   * `description contains 'pottery workshop'` is a perfectly good filter, and
+   * whether anything answers to that name is not known until the rows come
+   * back. So it is held here and promoted at the end, when emptiness is a fact
+   * rather than a guess.
+   */
+  _candidates?: UnmatchedFilter[];
+};
+
+/**
+ * The literal the user actually named, from inside a relation predicate.
+ *
+ * Only text matched by equality or containment counts. A date range or a number
+ * comparison matching nothing is a genuine empty result — "no invoices over
+ * $10,000" is a true and useful answer — whereas a NAME matching nothing means
+ * the thing itself was never found, which is a different sentence entirely.
+ */
+function namedLiteral(where: Predicate[] | undefined): string | null {
+  for (const predicate of where ?? []) {
+    if (isFieldPredicate(predicate)) {
+      const { op, value } = predicate;
+      if ((op === 'eq' || op === 'contains' || op === 'starts_with') && typeof value === 'string') {
+        // A uuid is an id the planner carried, not a name a person said. The
+        // foreign-key repair already handles those.
+        if (!UUID_PATTERN.test(value) && value.trim().length > 1) return value;
+      }
+    }
+    if (isAndPredicate(predicate)) {
+      const nested = namedLiteral(predicate.and);
+      if (nested) return nested;
+    }
+    if (isOrPredicate(predicate)) {
+      const nested = namedLiteral(predicate.or);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+
+/**
+ * Note a filter that asks for something BY NAME.
+ *
+ * Only the fields by which a row is identified count — the label the entity is
+ * known by, and whatever free-text search covers. That distinction is the whole
+ * of the judgement here:
+ *
+ *   description contains "pottery workshop"  → a NAME. Nothing matching it means
+ *                                              no such thing exists.
+ *   amount > 10000                           → a CONDITION. Nothing matching it
+ *                                              is a true and useful answer.
+ *
+ * Getting this wrong in the cautious direction would be its own bug: answering
+ * "no invoices found matching 10000" to "any invoices over $10,000?" would turn
+ * a correct no into a non-answer.
+ */
+function recordIdentifyingFilter(
+  entity: ResolvedEntity,
+  field: ResolvedField,
+  op: string,
+  rawValue: QueryValue | undefined,
+  ctx: QueryContext
+): void {
+  const candidates = (ctx as CompileContext)._candidates;
+  if (!candidates) return;
+
+  if (op !== 'eq' && op !== 'contains' && op !== 'starts_with') return;
+  if (typeof rawValue !== 'string' || rawValue.trim().length < 2) return;
+  // An id is not a name; the foreign-key repair covers those.
+  if (UUID_PATTERN.test(rawValue)) return;
+
+  const labelKeys = Array.isArray(entity.labelField) ? entity.labelField : [entity.labelField];
+  const identifying = new Set([...labelKeys, ...(entity.searchableFields ?? [])]);
+
+  if (identifying.has(field.key)) {
+    candidates.push({ entity: entity.key, value: rawValue });
+  }
+}
+
+
+/**
+ * Decide what to report as unmatched, now that emptiness is known.
+ *
+ * Definite entries stand on their own — the sub-query behind them found nothing,
+ * whatever the outer result turned out to be. Candidates are promoted only when
+ * the result really is empty, because a name filter that matched something is
+ * not unmatched, however it was phrased.
+ */
+function reportUnmatched(
+  definite: UnmatchedFilter[],
+  candidates: UnmatchedFilter[],
+  isEmpty: boolean
+): { unmatched?: UnmatchedFilter[] } {
+  const all = [...definite, ...(isEmpty ? candidates : [])];
+  if (all.length === 0) return {};
+
+  // The same name can be filtered in more than one place in one query.
+  const seen = new Set<string>();
+  const unique = all.filter((u) => {
+    const key = `${u.entity}::${u.value}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { unmatched: unique };
 }
 
 // =============================================================================
@@ -329,6 +555,30 @@ function resolveValue(
     return Array.from(new Set(expanded));
   }
 
+  // Anything else object-shaped is an invention, and must not reach PostgREST.
+  //
+  // Asked "how much does Gregory Fenwick owe me", the planner emitted
+  //   {"field":"contact_id","op":"eq","value":{"$find":{"where":[…]}}}
+  // — a sub-query construct BizQL does not have. `value` accepts a literal, an
+  // array, {"$semantic":…} or {"$date":…}; an unrecognised object fell through
+  // this return and was handed to the database, which answered
+  //   invalid input syntax for type uuid: "[object Object]"
+  // and took the whole request down.
+  //
+  // The write path has refused unknown objects since `resolveWriteValue`, for
+  // the same reason and with the same reasoning. Reads did not, so an invented
+  // filter shape crashed instead of being repaired. The message names the forms
+  // that DO exist, because it is what the repair pass reads.
+  if (value !== null && typeof value === 'object') {
+    throw new BizQLValidationError([
+      `'${entity.key}.${field.key}' was given a value the compiler cannot use ` +
+        `(${JSON.stringify(value).slice(0, 80)}). A filter value must be a literal, ` +
+        `an array of literals, {"$semantic":"…"} or {"$date":"…"} — a filter cannot ` +
+        `contain another query. Find the rows you want in an earlier step, or filter ` +
+        `this entity's own fields directly.`,
+    ]);
+  }
+
   return value;
 }
 
@@ -356,6 +606,8 @@ function applyFieldPredicate(
       `operator '${op}' on '${entity.key}.${fieldKey}' requires a value.`,
     ]);
   }
+
+  recordIdentifyingFilter(entity, field, op, rawValue, ctx);
 
   let value = resolveValue(entity, field, rawValue, ctx);
 
@@ -436,19 +688,37 @@ async function resolveRelationPredicate(
       `unknown relation '${entity.key}.${predicate.relation}'.`,
     ]);
   }
-  if (relation.via.side !== 'remote') {
-    throw new BizQLValidationError([
-      `relation '${entity.key}.${predicate.relation}' is not a one-to-many relation; ` +
-        `quantifiers apply only to collections.`,
-    ]);
-  }
+  // The same rule the validator applies, from the same definition. A plan that
+  // reaches the compiler unvalidated (a cached plan, a direct API caller) must
+  // not get a different answer than one that went through validatePlan.
+  const shape = relationPredicateProblem(entity, predicate.relation, predicate.where);
+  if (shape) throw new BizQLValidationError([shape]);
 
   const target = requireEntity(relation.target);
 
-  // Pass 1: which target rows match, and which parent ids do they point at?
-  let sub = supabase.from(target.table).select(relation.via.column) as unknown as Builder;
-  sub = applyUserScope(sub, target, ctx.userId);
-  sub = sub.not(relation.via.column, 'is', null);
+  // A relation filter works in BOTH directions, with the same two passes:
+  //
+  //   one-to-many ('remote') — "contacts with an unpaid invoice". Collect the
+  //     PARENT ids the matching children point at, then filter parents by id.
+  //
+  //   many-to-one ('local')  — "invoices belonging to Ofir". Collect the matching
+  //     PARENT ids, then filter by this table's foreign key.
+  //
+  // Rejecting the second was wrong: "which invoices belong to X" is an ordinary
+  // question, and refusing it forced the planner into shapes that then failed.
+  const toOne = relation.via.side === 'local';
+
+  // What to select from the target: the FK back to us, or the target's own id.
+  const targetIdColumn = toOne
+    ? (target.fields.id?.column ?? 'id')
+    : relation.via.column;
+
+  let sub = scopedFrom(supabase, target, [targetIdColumn], ctx.userId);
+
+  if (!toOne) {
+    // A child with a null FK points at no parent, so it can never match.
+    sub = sub.not(relation.via.column, 'is', null);
+  }
 
   for (const inner of predicate.where ?? []) {
     sub = (await applyPredicate(supabase, sub, target, inner, ctx)).b;
@@ -460,7 +730,7 @@ async function resolveRelationPredicate(
   const ids: string[] = Array.from(
     new Set(
       (data ?? [])
-        .map((r: QueryRow): unknown => r[relation.via.column])
+        .map((r: QueryRow): unknown => r[targetIdColumn])
         .filter((v: unknown): v is string => typeof v === 'string' && v.length > 0)
     )
   );
@@ -469,11 +739,104 @@ async function resolveRelationPredicate(
     throw new ResultSetTooLargeError(target.key, ids.length, ANTI_JOIN_CAP);
   }
 
+  // Nothing matched, and the predicate named something. The filter that follows
+  // will empty the result — but for a reason the user needs to hear, because
+  // "you have no invoices for the pottery workshop" and "there is no pottery
+  // workshop" are answers to different questions.
+  //
+  // `none` is deliberately excluded: an anti-join over an empty set is not a
+  // failed lookup, it is the trivially-true case, and every row correctly
+  // matches.
+  if (ids.length === 0 && predicate.quantifier === 'any') {
+    const named = namedLiteral(predicate.where);
+    if (named) {
+      (ctx as CompileContext)._unmatched?.push({ entity: target.key, value: named });
+    }
+  }
+
   return {
-    column: CATALOG.entities[entity.key].fields.id?.column ?? 'id',
+    // Filter this table by its own id (one-to-many) or by the FK pointing at the
+    // matched parents (many-to-one).
+    column: toOne
+      ? relation.via.column
+      : (CATALOG.entities[entity.key].fields.id?.column ?? 'id'),
     ids,
     exclude: predicate.quantifier === 'none',
   };
+}
+
+/**
+ * Repairs a foreign-key filter that was handed an id from the wrong table.
+ *
+ * After a list of invoices, the conversation remembers each row as
+ * `{ id, label }` — and the label carries the CLIENT'S NAME, e.g.
+ * "אופיר עמר (INV-00003)". Asked "how much does אופיר owe me in total", the
+ * planner matches that name against the remembered rows and reuses that row's
+ * id, which is the INVOICE's id, as `contact_id`.
+ *
+ * Nothing matches, so `sum` over an empty set answered "אופיר owes you 0" —
+ * a confident, wrong financial figure, indistinguishable from a real zero.
+ * Writes have been guarded against this since assertReferencesOwned; reads
+ * were not.
+ *
+ * The id is not garbage, it is just the wrong end of the relationship: the row
+ * it identifies knows the contact. So dereference it — read the row and use the
+ * value it holds in the very column being filtered — and the user gets the
+ * answer they asked for instead of a zero.
+ *
+ * @returns the corrected value, or the original when there is nothing to fix.
+ */
+async function repairForeignKeyValue(
+  supabase: SupabaseClient,
+  entity: ResolvedEntity,
+  field: ResolvedField,
+  value: QueryValue,
+  ctx: QueryContext
+): Promise<QueryValue> {
+  const targetKey = field.references;
+  if (!targetKey || typeof value !== 'string' || !UUID_PATTERN.test(value)) return value;
+  if (entity.userScope.kind !== 'column') return value;
+
+  const target = CATALOG.entities[targetKey];
+  if (!target || target.userScope.kind !== 'column') return value;
+
+  // Does the id name a row in the table this column points at? Almost always
+  // yes, and then there is nothing to do.
+  const { data: referenced } = await supabase
+    .from(target.table)
+    .select('id')
+    .eq('id', value)
+    .eq(target.userScope.column, ctx.userId)
+    .maybeSingle();
+  if (referenced) return value;
+
+  // It does not. If it names a row of the entity being queried, that row holds
+  // the foreign key we actually wanted.
+  const { data: own } = await supabase
+    .from(entity.table)
+    .select(field.column)
+    .eq('id', value)
+    .eq(entity.userScope.column, ctx.userId)
+    .maybeSingle();
+
+  const dereferenced = (own as Record<string, unknown> | null)?.[field.column];
+  if (typeof dereferenced === 'string' && dereferenced) {
+    logger.warn(
+      {
+        entity: entity.key,
+        field: field.column,
+        suppliedId: value,
+        resolvedId: dereferenced,
+      },
+      'Foreign-key filter carried an id from the queried table; dereferenced it'
+    );
+    return dereferenced;
+  }
+
+  // Neither a valid reference nor a row we can dereference. Left alone: the
+  // filter will match nothing, which is the honest outcome for an id that
+  // names nothing this user owns.
+  return value;
 }
 
 async function applyPredicate(
@@ -483,6 +846,28 @@ async function applyPredicate(
   predicate: Predicate,
   ctx: QueryContext
 ): Promise<Boxed> {
+  // Relation is checked BEFORE field, matching validatePlan's precedence.
+  // These two disagreed once — the validator accepted a predicate carrying both
+  // and the compiler threw on it — so the ordering is deliberate, not incidental.
+  if (isRelationPredicate(predicate)) {
+    const { column, ids, exclude } = await resolveRelationPredicate(
+      supabase,
+      entity,
+      predicate,
+      ctx
+    );
+
+    if (exclude) {
+      if (ids.length === 0) return box(builder);
+      return box(builder.not(column, 'in', `(${ids.join(',')})`));
+    }
+
+    if (ids.length === 0) {
+      return box(builder.in(column, ['00000000-0000-0000-0000-000000000000']));
+    }
+    return box(builder.in(column, ids));
+  }
+
   // --- derived fields lower to relation predicates before anything else -----
   if (isFieldPredicate(predicate)) {
     const derived = entity.derived?.[predicate.field];
@@ -510,32 +895,17 @@ async function applyPredicate(
       );
     }
 
+    // A foreign key filtered with an id from the wrong table is repaired here
+    // rather than silently matching nothing — see repairForeignKeyValue.
+    const fieldMeta = entity.fields[predicate.field];
+    const value =
+      fieldMeta?.references && (predicate.op === 'eq' || predicate.op === 'neq')
+        ? await repairForeignKeyValue(supabase, entity, fieldMeta, predicate.value as QueryValue, ctx)
+        : predicate.value;
+
     return box(
-      applyFieldPredicate(builder, entity, predicate.field, predicate.op, predicate.value, ctx)
+      applyFieldPredicate(builder, entity, predicate.field, predicate.op, value, ctx)
     );
-  }
-
-  if (isRelationPredicate(predicate)) {
-    const { column, ids, exclude } = await resolveRelationPredicate(
-      supabase,
-      entity,
-      predicate,
-      ctx
-    );
-
-    if (exclude) {
-      // NOT EXISTS. With an empty set every row qualifies, and PostgREST cannot
-      // parse `not.in.()`, so skip the filter entirely.
-      if (ids.length === 0) return box(builder);
-      return box(builder.not(column, 'in', `(${ids.join(',')})`));
-    }
-
-    // EXISTS. An empty set means nothing qualifies; force an empty result
-    // rather than silently dropping the filter.
-    if (ids.length === 0) {
-      return box(builder.in(column, ['00000000-0000-0000-0000-000000000000']));
-    }
-    return box(builder.in(column, ids));
   }
 
   if (isAndPredicate(predicate)) {
@@ -597,8 +967,26 @@ function buildSelect(entity: ResolvedEntity, query: FindQuery): string {
     ? query.select
     : (entity.displayFields ?? Object.keys(entity.fields));
 
-  // The primary key is always fetched: actions and fan-out need a target id.
-  const keys = new Set<string>(['id', ...requested]);
+  // Always fetch what a row cannot be presented or processed without:
+  // the primary key, the label field(s), everything the card displays, and the
+  // dedupe key.
+  //
+  // Twice now a planner-chosen `select` has silently broken a downstream layer:
+  // omitting the label field made rows render as truncated uuids, and omitting
+  // the dedupe key made deduplication a no-op — the same finding appeared
+  // twenty times because every key read as empty. These columns are not the
+  // caller's to omit.
+  const labelKeys = Array.isArray(entity.labelField)
+    ? entity.labelField
+    : [entity.labelField];
+
+  const keys = new Set<string>([
+    'id',
+    ...labelKeys,
+    ...(entity.displayFields ?? []),
+    ...(entity.dedupeBy ? [entity.dedupeBy] : []),
+    ...requested,
+  ]);
   const columns: string[] = [];
 
   for (const key of keys) {
@@ -612,7 +1000,17 @@ function buildSelect(entity: ResolvedEntity, query: FindQuery): string {
     columns.push(field.column);
   }
 
-  for (const include of query.include ?? []) {
+  // Merge the caller's includes with the relations the catalog says a row needs
+  // in order to be meaningful, without duplicating one the caller already asked for.
+  const requestedRelations = new Set((query.include ?? []).map((i) => i.relation));
+  const includes: IncludeSpec[] = [
+    ...(query.include ?? []),
+    ...(entity.displayRelations ?? [])
+      .filter((r) => !requestedRelations.has(r) && entity.relations?.[r])
+      .map((r): IncludeSpec => ({ relation: r })),
+  ];
+
+  for (const include of includes) {
     const relation = entity.relations?.[include.relation];
     if (!relation) {
       throw new BizQLValidationError([
@@ -664,11 +1062,12 @@ export async function compileAndRunFind(
   const maxLimit = entity.maxLimit ?? 500;
   const limit = Math.min(query.limit ?? entity.defaultLimit ?? 50, maxLimit);
 
-  let builder = supabase
-    .from(entity.table)
-    .select(buildSelect(entity, query)) as unknown as Builder;
+  // Per query, and created here rather than accepted from the caller.
+  const unmatched: UnmatchedFilter[] = [];
+  const candidates: UnmatchedFilter[] = [];
+  ctx = { ...ctx, _unmatched: unmatched, _candidates: candidates } as CompileContext;
 
-  builder = applyUserScope(builder, entity, ctx.userId);
+  let builder = scopedFrom(supabase, entity, [buildSelect(entity, query)], ctx.userId);
 
   // Scope embedded child rows explicitly as well.
   //
@@ -677,12 +1076,17 @@ export async function compileAndRunFind(
   // whole product's isolation rests on user_id filters, and "it is implied by
   // the join" is the kind of reasoning that stops being true after a schema
   // change nobody re-examined.
-  for (const include of (query as unknown as FindQuery).include ?? []) {
-    const relation = entity.relations?.[include.relation];
+  const embedded = new Set<string>([
+    ...((query as unknown as FindQuery).include ?? []).map((i) => i.relation),
+    ...(entity.displayRelations ?? []),
+  ]);
+
+  for (const relationKey of embedded) {
+    const relation = entity.relations?.[relationKey];
     if (!relation) continue;
     const target = CATALOG.entities[relation.target];
     if (target?.userScope.kind === 'column') {
-      builder = builder.eq(`${include.relation}.${target.userScope.column}`, ctx.userId);
+      builder = builder.eq(`${relationKey}.${target.userScope.column}`, ctx.userId);
     }
   }
 
@@ -700,13 +1104,47 @@ export async function compileAndRunFind(
   if (query.offset) {
     builder = builder.range(query.offset, query.offset + limit); // inclusive; +1 row probe
   } else {
-    builder = builder.limit(limit + 1); // one extra row detects truncation
+    // With a dedupe key, the window has to be wide enough to reach PAST the
+    // repeats, not merely wider than the limit.
+    //
+    // A multiple of the limit is the intuitive choice and it is wrong: the
+    // duplication factor is a property of the DATA, not of how many rows were
+    // asked for. `insights` holds ~500 copies of one detection, so a 20x window
+    // (200 rows) landed entirely inside the first detector — "show me my
+    // insights" answered with ONE finding while "how many insights" said two,
+    // and neither number was reachable from the other. A fixed scan cap keeps
+    // the two consistent; the rows are narrow and this runs once.
+    const fetchSize = entity.dedupeBy
+      ? Math.max(limit + 1, DEDUPE_SCAN_CAP)
+      : limit + 1;
+    builder = builder.limit(fetchSize);
   }
 
   const { data, error } = await builder;
   if (error) throw error;
 
-  const rows = (data ?? []) as QueryRow[];
+  let rows = (data ?? []) as QueryRow[];
+  let collapsed = 0;
+
+  // Collapse repeated rows before the limit is applied, so a page of results is
+  // a page of DISTINCT results rather than one finding twenty times.
+  const dedupeField = entity.dedupeBy ? entity.fields[entity.dedupeBy] : undefined;
+  if (dedupeField) {
+    const seen = new Set<string>();
+    const unique: QueryRow[] = [];
+
+    for (const row of rows) {
+      const key = String(row[dedupeField.column] ?? '');
+      if (key && seen.has(key)) {
+        collapsed++;
+        continue;
+      }
+      if (key) seen.add(key);
+      unique.push(row);
+    }
+    rows = unique;
+  }
+
   const truncated = rows.length > limit;
 
   logger.debug(
@@ -725,7 +1163,66 @@ export async function compileAndRunFind(
     rows: truncated ? rows.slice(0, limit) : rows,
     truncated,
     limit,
+    ...(collapsed > 0 ? { collapsed } : {}),
+    ...(reportUnmatched(unmatched, candidates, rows.length === 0)),
   };
+}
+
+/**
+ * Turn the foreign keys a grouping produced into the labels they stand for.
+ *
+ * One query, `id in (…)`, through the same `applyUserScope` as every other read
+ * — a label lookup is still a read of someone's data, and skipping the scope
+ * here would let a group key confirm the existence of another account's row.
+ *
+ * An id that resolves to nothing keeps its own key rather than becoming '—': it
+ * means the referenced row is gone or not this user's, and collapsing several
+ * such ids into one bucket would merge unrelated groups.
+ */
+async function resolveGroupLabels(
+  supabase: SupabaseClient,
+  group: Extract<GroupSpec, { kind: 'relation' }>,
+  keys: string[],
+  ctx: QueryContext
+): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+
+  const ids = keys.filter((key) => key !== '—');
+  if (ids.length === 0) return labels;
+
+  const target = CATALOG.entities[group.targetEntity];
+
+  try {
+    const builder = scopedFrom(
+      supabase,
+      target,
+      ['id', ...group.targetColumns],
+      ctx.userId
+    ).in('id', ids);
+
+    const { data, error } = await builder.limit(ids.length);
+    if (error) throw error;
+
+    for (const row of (data ?? []) as QueryRow[]) {
+      // A label can span columns — a contact is first name plus last name.
+      const label = group.targetColumns
+        .map((column) => row[column])
+        .filter((part) => part !== null && part !== undefined && String(part) !== '')
+        .join(' ')
+        .trim();
+
+      if (label) labels.set(String(row.id), label);
+    }
+  } catch (error) {
+    // Ids are a poor answer but a truthful one; failing the whole aggregate
+    // because the names could not be fetched would be worse.
+    logger.warn(
+      { err: error, entity: group.targetEntity },
+      'Could not resolve group labels; showing ids'
+    );
+  }
+
+  return labels;
 }
 
 export async function compileAndRunCompute(
@@ -736,37 +1233,78 @@ export async function compileAndRunCompute(
   const entity = requireEntity(query.entity);
   const { fn, field: aggFieldKey } = query.agg;
 
+  const unmatched: UnmatchedFilter[] = [];
+  const candidates: UnmatchedFilter[] = [];
+  ctx = { ...ctx, _unmatched: unmatched, _candidates: candidates } as CompileContext;
+
   if (fn !== 'count' && !aggFieldKey) {
     throw new BizQLValidationError([`aggregate '${fn}' requires a field.`]);
   }
 
   const aggField = aggFieldKey ? requireReadableField(entity, aggFieldKey) : undefined;
-  const groupField = query.group_by ? requireReadableField(entity, query.group_by) : undefined;
+
+  // `group_by` is a small grammar, not a field key — see lib/business-os/bizql/groupBy.
+  let group: GroupSpec | undefined;
+  if (query.group_by) {
+    const parsed = parseGroupBy(entity, query.group_by);
+    if (parsed.problem) {
+      throw new BizQLValidationError([`group_by: ${parsed.problem}`]);
+    }
+    group = parsed.spec;
+  }
+
+  // Whatever form the grouping takes, it reduces to one column on this table:
+  // the field itself, the date being bucketed, or the foreign key whose labels
+  // are resolved after the scan.
+  const groupColumn = group
+    ? group.kind === 'relation'
+      ? group.fkColumn
+      : group.column
+    : undefined;
 
   const columns = [
     ...(aggField ? [aggField.column] : []),
-    ...(groupField ? [groupField.column] : []),
+    ...(groupColumn ? [groupColumn] : []),
+    // Same lesson as buildSelect: a dedupe key that is not fetched reads as
+    // undefined for every row, and the distinct count silently equals the raw one.
+    ...(fn === 'count' && entity.dedupeBy
+      ? [entity.fields[entity.dedupeBy]?.column ?? entity.dedupeBy]
+      : []),
   ];
 
-  let builder = supabase
-    .from(entity.table)
-    .select(columns.length ? columns.join(',') : 'id') as unknown as Builder;
-
-  builder = applyUserScope(builder, entity, ctx.userId);
-
-  // Scope embedded child rows explicitly as well.
+  // An aggregate reads only the columns it reduces over — it never embeds a
+  // related resource, because nothing renders a card from an aggregate.
   //
-  // A child reached through its parent's FK already belongs to the same tenant,
-  // so this is redundant today — which is exactly why it is worth having. The
-  // whole product's isolation rests on user_id filters, and "it is implied by
-  // the join" is the kind of reasoning that stops being true after a schema
+  // This list and the select below MUST be built from the same value. They were
+  // not: the select carried only the aggregate column while the scoping loop
+  // below iterated `entity.displayRelations`, emitting `.eq('contact.user_id',…)`
+  // against a query with no `contact` embed. PostgREST rejects that outright, so
+  // EVERY aggregate over an entity with a display relation failed —
+  // "how many invoices do I have?" among them. The golden set did not catch it
+  // because it asserts on the plan without executing it.
+  //
+  // Keeping the loop (rather than deleting it as dead) is deliberate: if compute
+  // ever does embed a relation, isolation must not depend on someone remembering
+  // to add it back. The whole product's tenant boundary is `user_id` filters, and
+  // "the join implies it" is the reasoning that stops being true after a schema
   // change nobody re-examined.
-  for (const include of (query as unknown as FindQuery).include ?? []) {
-    const relation = entity.relations?.[include.relation];
-    if (!relation) continue;
-    const target = CATALOG.entities[relation.target];
+  const embeddedRelations = ((query as unknown as FindQuery).include ?? [])
+    .map((i) => i.relation)
+    .filter((relationKey) => Boolean(entity.relations?.[relationKey]));
+
+  const embeds = embeddedRelations.map((relationKey) => {
+    const target = CATALOG.entities[entity.relations![relationKey].target];
+    return `${relationKey}:${target.table}(id)`;
+  });
+
+  const selectParts = [...(columns.length ? columns : ['id']), ...embeds];
+
+  let builder = scopedFrom(supabase, entity, selectParts, ctx.userId);
+
+  for (const relationKey of embeddedRelations) {
+    const target = CATALOG.entities[entity.relations![relationKey].target];
     if (target?.userScope.kind === 'column') {
-      builder = builder.eq(`${include.relation}.${target.userScope.column}`, ctx.userId);
+      builder = builder.eq(`${relationKey}.${target.userScope.column}`, ctx.userId);
     }
   }
 
@@ -803,25 +1341,114 @@ export async function compileAndRunCompute(
   const numeric = (row: QueryRow): number =>
     aggField ? Number(row[aggField.column] ?? 0) : 0;
 
-  if (groupField) {
+  if (group) {
+    const column = groupColumn!;
     const buckets = new Map<string, number[]>();
+
     for (const row of scanned) {
-      const key = String(row[groupField.column] ?? '—');
+      const raw = row[column];
+
+      // A bucketed row whose date is null has no place on a timeline, and
+      // inventing one ("—" beside real months) would put a bar on a trend chart
+      // that answers nothing. Rows without the date are left out and the group
+      // list says so by their absence.
+      const key =
+        group.kind === 'bucket'
+          ? bucketKey(raw, group.bucket, ctx.timezone ?? 'UTC')
+          : raw === null || raw === undefined || raw === ''
+            ? '—'
+            : String(raw);
+
+      if (key === null) continue;
+
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key)!.push(numeric(row));
     }
-    const groups = Array.from(buckets.entries())
-      .map(([key, values]) => ({ key, value: reduce(values) ?? 0 }))
-      .sort((a, b) => b.value - a.value);
 
-    return { op: 'compute', entity: query.entity, value: null, groups, approximate };
+    // Ids are meaningless to a reader, so a relation grouping resolves them to
+    // the target's own label before anything is shown. One extra query, scoped
+    // to this user like every other read.
+    const labels =
+      group.kind === 'relation'
+        ? await resolveGroupLabels(supabase, group, [...buckets.keys()], ctx)
+        : undefined;
+
+    const groups = Array.from(buckets.entries()).map(([key, values]) => ({
+      key: labels?.get(key) ?? key,
+      value: reduce(values) ?? 0,
+    }));
+
+    // A trend reads in time order; everything else reads biggest-first. Sorting
+    // months by amount would answer "which month was best" — a different
+    // question from the one that asked for a series.
+    groups.sort((a, b) => (group.kind === 'bucket' ? a.key.localeCompare(b.key) : b.value - a.value));
+
+    return {
+      op: 'compute',
+      entity: query.entity,
+      agg: { fn, field: aggFieldKey },
+      value: null,
+      groups,
+      approximate,
+      ...(reportUnmatched(unmatched, candidates, groups.length === 0)),
+    };
+  }
+
+  // "How many CLIENTS have unpaid invoices" — count the different values of a
+  // field, not the rows carrying them.
+  //
+  // The rows here are invoices; the question is about clients. One client with
+  // two invoices is one client, and the row count answers a different question
+  // with a bigger number. Blank values are excluded: a row with no client is not
+  // an anonymous client, it is a row with nothing to count.
+  if (fn === 'count' && query.agg.distinct && aggField) {
+    const distinct = new Set(
+      scanned
+        .map((row) => row[aggField.column])
+        .filter((value) => value !== null && value !== undefined && value !== '')
+        .map(String)
+    );
+
+    return {
+      op: 'compute',
+      entity: query.entity,
+      agg: { fn, field: aggFieldKey, distinct: true },
+      value: distinct.size,
+      approximate,
+      ...(reportUnmatched(unmatched, candidates, distinct.size === 0)),
+    };
+  }
+
+  // Counting an entity that records repeats must count the DISTINCT things, or
+  // the aggregate contradicts the list beside it: `insights` answered "you have
+  // 1,000" while the very same catalog rule collapsed those rows to 2 findings.
+  // Only `count` is affected — summing an amount over duplicate rows is a
+  // different question, and one the dedupe key cannot answer.
+  if (fn === 'count' && entity.dedupeBy) {
+    const keyColumn = entity.fields[entity.dedupeBy]?.column ?? entity.dedupeBy;
+    const distinct = new Set(scanned.map((row) => String(row[keyColumn] ?? '')));
+
+    return {
+      op: 'compute',
+      entity: query.entity,
+      agg: { fn, field: aggFieldKey },
+      value: distinct.size,
+      approximate,
+      collapsed: scanned.length - distinct.size,
+      ...(reportUnmatched(unmatched, candidates, distinct.size === 0)),
+    };
   }
 
   return {
     op: 'compute',
     entity: query.entity,
+    agg: { fn, field: aggFieldKey },
     value: reduce(scanned.map(numeric)),
     approximate,
+    // `scanned.length`, never the aggregate's value: a sum of genuine zeroes is
+    // 0 over real rows, and calling that "no such thing" would be the mirror of
+    // the bug being fixed.
+    ...(reportUnmatched(unmatched, candidates, scanned.length === 0)),
   };
 }
 

@@ -134,7 +134,7 @@ interface OnboardingState {
    - Create homepage with blocks
    - Vertical-specific theming
 
-5. **Onboarding UI** (`/app/onboarding-v2/page.tsx`)
+5. **Onboarding UI** (`/app/onboarding-chat/page.tsx`)
    - Chat interface
    - RTL support
    - Preview screen
@@ -308,7 +308,7 @@ interface OnboardingState {
 - [ ] Test conversation flow in English
 
 ### Phase 2: UI Enhancements ⬜ TODO
-- [ ] Refactor `/app/onboarding-v2/page.tsx`
+- [x] Built `/app/onboarding-chat/page.tsx` (the `/onboarding-v2` route was deleted 2026-08-31)
 - [ ] Add RTL styling to chat messages
 - [ ] Create preview screen component
 - [ ] Implement progress indicator
@@ -343,7 +343,7 @@ interface OnboardingState {
 
 | File | Changes |
 |------|---------|
-| `/app/onboarding-v2/page.tsx` | Integrate state machine, RTL styling, preview |
+| `/app/onboarding-chat/page.tsx` | State machine, RTL, live setup panel, plan cards |
 | `/app/api/onboarding/build/route.ts` | Create services, trigger website generation |
 | `/components/business-os/ChatCommandPanel.tsx` | RTL-aware message styling |
 | `/messages/en.json`, `/messages/he.json`, `/messages/es.json` | Add onboarding keys |

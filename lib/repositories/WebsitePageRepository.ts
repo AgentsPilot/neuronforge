@@ -486,6 +486,41 @@ export class WebsitePageRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * The public hostnames this user's pages are served on.
+   *
+   * Used to detect whether a connected analytics property already measures a
+   * page AgentPilot tracks itself — which decides whether the two collectors'
+   * visit counts are duplicates or genuinely additive.
+   */
+  async getHostedHosts(userId: string): Promise<RepositoryResult<string[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_pages')
+        .select('subdomain, custom_domain')
+        .eq('user_id', userId)
+        .not('subdomain', 'is', null);
+
+      if (error) throw error;
+
+      const baseHost = process.env.NEXT_PUBLIC_WEBSITE_BASE_HOST || 'agentpilot.io';
+      const hosts = new Set<string>();
+
+      for (const page of (data as any[]) || []) {
+        // A custom domain is what analytics would actually report, so it counts
+        // as the same surface as the subdomain it replaces.
+        if (page.custom_domain) hosts.add(String(page.custom_domain).toLowerCase());
+        if (page.subdomain) hosts.add(`${String(page.subdomain).toLowerCase()}.${baseHost}`);
+      }
+
+      return { data: [...hosts], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to resolve hosted hosts');
+      return { data: null, error: error as Error };
+    }
+  }
+
 }
 
 // Singleton export

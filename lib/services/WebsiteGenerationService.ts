@@ -16,6 +16,7 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { getWebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
+import { getTemplateById, templateToPageTheme } from '@/lib/website-builder/templates';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { v4 as uuid } from 'uuid';
@@ -34,6 +35,46 @@ interface WebsiteContent {
     paragraphs: string[];
   };
   serviceDescriptions: Record<string, string | { description: string; icon?: string }>;
+  /**
+   * Copy for the three blocks that used to be filled from a phrasebook.
+   *
+   * The booking, contact and call-to-action blocks were built from static
+   * translations — "Book Your Session" on a site selling only downloads — and
+   * the CTA repeated the hero headline word for word. Optional so an older
+   * generation still renders; the phrasebook remains the fallback.
+   */
+  booking?: { title?: string; description?: string };
+  contact?: { title?: string; description?: string };
+  cta?: { title?: string; description?: string; buttonText?: string };
+  /**
+   * The heading above each section.
+   *
+   * These were the last strings a phrasebook still wrote. They were in the
+   * right language — but every business on the platform got the same five
+   * headings, so a site whose every paragraph was written for this business
+   * announced them under "Services" and "How It Works". Optional, with the
+   * phrasebook behind them, so an older generation still renders.
+   */
+  sectionTitles?: {
+    about?: string;
+    services?: string;
+    process?: string;
+    testimonials?: string;
+    faq?: string;
+  };
+  /**
+   * What the two buttons above the fold say.
+   *
+   * The label on a button is the shortest and most-read copy on the page, and
+   * it was the least considered: "Book a Session" on a site selling a course,
+   * "Book Now" in a header for a business that invoices.
+   */
+  buttons?: {
+    /** The hero's primary button. */
+    heroCta?: string;
+    /** The button in the header, beside the navigation. */
+    headerCta?: string;
+  };
   processSteps: Array<{
     title: string;
     description: string;
@@ -58,16 +99,27 @@ interface WebsiteContent {
 
 export class WebsiteGenerationService {
   /**
-   * Generate complete website for a user based on their business profile
+   * Generate complete website for a user based on their business profile.
+   *
+   * Two callers, and they arrive differently. The onboarding build has nothing
+   * yet and lets this create everything. The setup wizard has already created
+   * a page and already has a template the owner picked from a gallery — so it
+   * passes both, and generation fills that page rather than creating a second
+   * one and overruling the choice with the model's colours.
    */
-  async generateWebsite(userId: string): Promise<{
+  async generateWebsite(userId: string, options: {
+    /** Fill this page instead of creating one. Its blocks are replaced. */
+    pageId?: string;
+    /** The owner's chosen template. Its theme wins over the model's. */
+    templateId?: string;
+  } = {}): Promise<{
     success: boolean;
     homepageId?: string;
     blocksCreated?: number;
     error?: string;
   }> {
     try {
-      logger.info({ userId }, 'Starting website generation');
+      logger.info({ userId, ...options }, 'Starting website generation');
 
       // 1. Fetch business profile and services
       const profileResult = await businessProfileRepository.findByUserId(userId);
@@ -78,7 +130,11 @@ export class WebsiteGenerationService {
 
       const profile = profileResult.data;
 
-      const servicesResult = await schedulingServiceRepository.listAll(userId);
+      // Bookable services only — the same rule every public surface uses.
+      // Generating a site from every row put a deactivated or draft service in
+      // the services block and the process copy, where a client could read
+      // about something they can never book.
+      const servicesResult = await schedulingServiceRepository.listAll(userId, true);
       if (servicesResult.error) {
         logger.warn({ err: servicesResult.error, userId }, 'Failed to fetch services (proceeding with empty array)');
       }
@@ -106,8 +162,16 @@ export class WebsiteGenerationService {
       // 4. Create homepage
       const websitePageRepository = getWebsitePageRepository(supabaseServer);
 
+      // The owner picked a template from a gallery and watched the preview
+      // change; the model picked three hex values it will never be asked
+      // about. Where both exist, the choice that was made deliberately wins.
+      const chosenTemplate = options.templateId ? getTemplateById(options.templateId) : undefined;
+      if (options.templateId && !chosenTemplate) {
+        logger.warn({ userId, templateId: options.templateId }, 'Unknown template id — falling back to the generated theme');
+      }
+
       // Convert LLM theme format to PageTheme format
-      const pageTheme = {
+      const generatedTheme = {
         colors: {
           primary: websiteContent.theme.primaryColor,
           secondary: websiteContent.theme.secondaryColor,
@@ -125,30 +189,76 @@ export class WebsiteGenerationService {
         spacing: 'normal' as const,
       };
 
-      const homepageResult = await websitePageRepository.create({
-        user_id: userId,
-        page_type: 'homepage',
-        slug: 'home',
+      // The look belongs to the business, so it is stored there as well as on
+      // the page. Without this the template chosen during onboarding reached
+      // the website and stopped: the invoices, the emails, the landing pages
+      // and the booking links all went out in platform colours.
+      const pageTheme = chosenTemplate ? templateToPageTheme(chosenTemplate) : generatedTheme;
+
+      // Asserted because `PageTheme` is an interface with no index signature,
+      // and updateBranding stores branding as free-form JSON.
+      await businessProfileRepository.updateBranding(userId, { theme: pageTheme as unknown as Record<string, unknown> });
+
+      // What the copy says about the page, whichever way we get there.
+      const pageFacts = {
         title: websiteContent.title,
         meta_description: websiteContent.metaDescription,
         seo_keywords: websiteContent.keywords,
-        status: 'draft', // Website starts as draft - user must explicitly publish
         subdomain,
         website_language: (profile.language || 'en') as 'en' | 'es' | 'he',
         theme: pageTheme,
-      });
+      };
+
+      const homepageResult = options.pageId
+        ? await websitePageRepository.update(options.pageId, userId, pageFacts)
+        : await websitePageRepository.create({
+            user_id: userId,
+            page_type: 'homepage',
+            slug: 'home',
+            status: 'draft', // Website starts as draft - user must explicitly publish
+            ...pageFacts,
+          });
 
       if (homepageResult.error || !homepageResult.data) {
-        logger.error({ err: homepageResult.error, userId }, 'Failed to create homepage');
-        return { success: false, error: 'Failed to create homepage' };
+        logger.error({ err: homepageResult.error, userId, pageId: options.pageId }, 'Failed to write homepage');
+        return { success: false, error: options.pageId ? 'Failed to update homepage' : 'Failed to create homepage' };
       }
 
       const homepage = homepageResult.data;
-      logger.info({ userId, homepageId: homepage.id, subdomain }, 'Homepage created');
+      logger.info({ userId, homepageId: homepage.id, subdomain, filled: Boolean(options.pageId) }, 'Homepage ready');
 
       // 5. Create website blocks
-      const blocks = this.buildBlocks(homepage.id, websiteContent, services, profile.language || 'en', profile.company_name || 'Your Business');
+      //
+      // The same plan the prompt was written from, so the copy that came back
+      // has somewhere to go and nothing is built that was never asked for.
+      const sections = this.planSections(services);
+
+      const blocks = this.buildBlocks(
+        homepage.id,
+        websiteContent,
+        services,
+        profile.language || 'en',
+        profile.company_name || 'Your Business',
+        (profile.extracted_data as { needs_intake?: boolean } | null)?.needs_intake === true,
+        sections,
+      );
       const websiteBlockRepository = getWebsiteBlockRepository(supabaseServer);
+
+      // A page we were handed already has blocks — the standard set installed
+      // when it was created — so writing ours on top would give the site two
+      // heroes and two service lists. They are replaced, not appended.
+      //
+      // After `buildBlocks`, which is pure: if generation is going to fail it
+      // should fail before anything is removed. And after the page update
+      // above returned data, which is what proves this page is the caller's —
+      // `deleteByPageId` takes no user id of its own.
+      if (options.pageId) {
+        const cleared = await websiteBlockRepository.deleteByPageId(options.pageId);
+        if (cleared.error) {
+          logger.error({ err: cleared.error, userId, pageId: options.pageId }, 'Failed to clear existing blocks');
+          return { success: false, error: 'Failed to replace the existing page content' };
+        }
+      }
 
       let blocksCreated = 0;
       for (const block of blocks) {
@@ -187,13 +297,14 @@ export class WebsiteGenerationService {
    * Call LLM to generate website content
    */
   private async callLLM(profile: any, services: any[]): Promise<WebsiteContent> {
-    const prompt = this.buildPrompt(profile, services);
+    const sections = this.planSections(services);
+    const prompt = this.buildPrompt(profile, services, sections);
     const language = profile.language || 'en';
 
     const systemPrompts: Record<string, string> = {
-      en: 'You are a professional website copywriter. Generate compelling, clear, and SEO-optimized website content in English.',
-      he: 'אתה כותב תוכן אתרים מקצועי. צור תוכן מושך, ברור ומותאם לקידום אתרים. חובה לכתוב את כל התוכן בעברית בלבד - כל השדות כולל כותרות, תיאורים, שאלות ותשובות, ועדויות לקוחות.',
-      es: 'Eres un redactor profesional de sitios web. Genera contenido atractivo, claro y optimizado para SEO. Todo el contenido debe estar en español - incluyendo títulos, descripciones, preguntas y respuestas, y testimonios.',
+      en: 'You are a professional website copywriter. Generate compelling, clear, and SEO-optimized website content in English — every field, including section headings and button labels.',
+      he: 'אתה כותב תוכן אתרים מקצועי. צור תוכן מושך, ברור ומותאם לקידום אתרים. חובה לכתוב את כל התוכן בעברית בלבד - כל השדות כולל כותרות הסעיפים, תיאורים, שאלות ותשובות, עדויות לקוחות וטקסט הכפתורים.',
+      es: 'Eres un redactor profesional de sitios web. Genera contenido atractivo, claro y optimizado para SEO. Todo el contenido debe estar en español - incluyendo los títulos de las secciones, descripciones, preguntas y respuestas, testimonios y el texto de los botones.',
     };
 
     try {
@@ -226,7 +337,52 @@ export class WebsiteGenerationService {
    * Build LLM prompt for website generation
    * Uses ALL profile data collected during onboarding for comprehensive website content
    */
-  private buildPrompt(profile: any, services: any[]): string {
+  /**
+   * Which sections this business's site is made of.
+   *
+   * Made once and used twice — by the prompt, so the model is asked for the
+   * copy that will actually be placed, and by the block builder, so nothing is
+   * generated that has no home. They used to decide separately: the prompt
+   * always asked for a booking heading and testimonials, while the builder
+   * dropped the booking block for a business with no services, so a shop was
+   * paying for copy nobody would ever read and a client could meet a "Book
+   * Your Session" heading over a catalogue of downloads.
+   */
+  private planSections(services: any[]): {
+    services: boolean;
+    process: boolean;
+    booking: boolean;
+    testimonials: boolean;
+    faq: boolean;
+    contact: boolean;
+    cta: boolean;
+  } {
+    const hasServices = services.length > 0;
+    const anyScheduled = services.some(s => s.is_scheduled !== false);
+
+    return {
+      services: hasServices,
+      // A process block describes how someone gets what they came for; with
+      // nothing to sell there is no process to describe.
+      process: hasServices,
+      // Only where something is actually booked against a time.
+      booking: hasServices && anyScheduled,
+      testimonials: true,
+      faq: true,
+      contact: true,
+      cta: true,
+    };
+  }
+
+  /**
+   * Every string on the page comes back in the business's language.
+   *
+   * The enumerated list matters more than the blanket rule — a model reads
+   * "generate all content in Hebrew", then writes an English button label
+   * because nothing named button labels. Each new section is added to all
+   * three lists, not just to the JSON contract.
+   */
+  private buildPrompt(profile: any, services: any[], sections: ReturnType<WebsiteGenerationService['planSections']>): string {
     const vertical = profile.vertical || 'business';
     const subVertical = profile.sub_vertical || null;
     const companyName = profile.company_name || 'Business';
@@ -245,12 +401,24 @@ export class WebsiteGenerationService {
     const targetAudience = extractedData.target_audience || [];
     const clientsPerWeek = profile.clients_per_week || extractedData.clients_per_week || null;
 
+    // A product has no duration and a quoted service has no price, so neither
+    // is stated as a fact the copy can lean on — "null minutes" in the prompt
+    // becomes "null minutes" on the page.
     const serviceList = services
-      .map(s => `- ${s.service_name}: ${s.duration_minutes} minutes${s.price ? `, ${s.price} ${s.currency}` : ', Free'}`)
+      .map(s => {
+        const parts = [
+          s.duration_minutes ? `${s.duration_minutes} minutes` : null,
+          s.is_scheduled === false ? 'no appointment needed' : null,
+          s.price === null || s.price === undefined
+            ? 'price agreed per client'
+            : s.price > 0 ? `${s.price} ${s.currency}` : 'Free',
+        ].filter(Boolean);
+        return `- ${s.service_name}: ${parts.join(', ')}`;
+      })
       .join('\n');
 
     const languageInstructions: Record<string, string> = {
-      en: 'LANGUAGE REQUIREMENT: Generate ALL content values in English only.',
+      en: 'LANGUAGE REQUIREMENT: Generate ALL content values in English only — including every heading, paragraph, service description, process step, FAQ, testimonial, every section title (sectionTitles), the call-to-action text, and EVERY BUTTON LABEL (buttons.heroCta, buttons.headerCta, cta.buttonText).',
       he: `
 !!! קריטי - דרישת שפה !!!
 צור את כל התוכן בעברית בלבד. זה כולל:
@@ -260,6 +428,11 @@ export class WebsiteGenerationService {
 - שלבי תהליך (processSteps - title ו-description)
 - שאלות ותשובות (faq - question ו-answer)
 - עדויות לקוחות (testimonials - quote ו-role)
+- כותרת ותיאור ההזמנה (booking - title ו-description)
+- כותרת ותיאור טופס יצירת הקשר (contact - title ו-description)
+- קריאה לפעולה כולל טקסט הכפתור (cta - title, description ו-buttonText)
+- כותרות כל הסעיפים (sectionTitles - about, services, process, testimonials, faq)
+- טקסט הכפתורים בראש העמוד (buttons - heroCta ו-headerCta)
 - מטא תיאור (metaDescription)
 - מילות מפתח (keywords)
 
@@ -275,6 +448,11 @@ Genera TODO el contenido en español únicamente. Esto incluye:
 - Pasos del proceso (processSteps - title y description)
 - Preguntas frecuentes (faq - question y answer)
 - Testimonios (testimonials - quote y role)
+- Título y descripción de la reserva (booking - title y description)
+- Título y descripción del formulario de contacto (contact - title y description)
+- Llamada a la acción incluido el TEXTO DEL BOTÓN (cta - title, description y buttonText)
+- Los títulos de TODAS las secciones (sectionTitles - about, services, process, testimonials, faq)
+- El TEXTO DE LOS BOTONES de la cabecera y del hero (buttons - heroCta y headerCta)
 - Meta descripción (metaDescription)
 - Palabras clave (keywords)
 
@@ -373,32 +551,57 @@ Generate the following as JSON. Use the business profile information above to:
       "Paragraph 3: Approach to working with clients and expected outcomes"
     ]
   },
-  "serviceDescriptions": {
+${sections.services ? `  "serviceDescriptions": {
     "Service Name": {
       "description": "Benefit-focused description explaining what client gets and why it matters (20-40 words)",
       "icon": "Choose appropriate icon from: MessageCircle, Brain, Target, Dumbbell, Hand, Flower2, Camera, Scale, Palette, Code, BookOpen, Music, Scissors, Sparkles, Heart, Users, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Video, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, Check, Zap, Eye, Shield, Award, Globe, Lock, CreditCard, Activity, Compass, Moon, Building, Feather, BarChart, Star, TrendingUp"
     }
   },
-  "processSteps": [
+` : ''}${sections.booking ? `  "booking": {
+    "title": "Heading above the booking widget — say what the client is actually doing, not a generic 'Book Now'",
+    "description": "One line telling them what happens next (10-20 words)"
+  },
+` : ''}${sections.contact ? `  "contact": {
+    "title": "Heading for the contact form",
+    "description": "One line inviting the right kind of enquiry for this business (10-20 words)"
+  },
+` : ''}${sections.cta ? `  "cta": {
+    "title": "Closing call to action — must NOT repeat the hero headline",
+    "description": "One line of encouragement specific to this business (10-20 words)",
+    "buttonText": "Button label, 2-4 words, matching what the services actually offer"
+  },
+` : ''}${sections.process ? `  "processSteps": [
     {
       "title": "Step title",
       "description": "Brief description of what happens (10-20 words)",
       "icon": "calendar" // Valid: calendar, clipboard, check, user, phone, mail, heart, star
     }
   ],
-  "testimonials": [
+` : ''}${sections.testimonials ? `  "testimonials": [
     {
       "quote": "Realistic testimonial quote that reflects the service quality (20-40 words)",
       "author": "First Name L.",
       "role": "Client role or description"
     }
   ],
-  "faq": [
+` : ''}${sections.faq ? `  "faq": [
     {
       "question": "Common question clients might ask",
       "answer": "Clear, helpful answer (20-50 words)"
     }
   ],
+` : ''}
+  "sectionTitles": {
+    "about": "Heading for the about section — 2-5 words in this business's own language, not the generic word for 'About'"${sections.services ? `,
+    "services": "Heading for the services section (2-4 words)"` : ''}${sections.process ? `,
+    "process": "Heading for the how-it-works section (2-5 words)"` : ''}${sections.testimonials ? `,
+    "testimonials": "Heading for the testimonials section (2-5 words)"` : ''}${sections.faq ? `,
+    "faq": "Heading for the questions section (2-5 words)"` : ''}
+  },
+  "buttons": {
+    "heroCta": "The main button under the headline: 2-4 words naming what happens when it is pressed",
+    "headerCta": "The button in the header, 2-3 words"
+  },
   "theme": {
     "primaryColor": "#hexcolor",
     "secondaryColor": "#hexcolor",
@@ -501,7 +704,8 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
   /**
    * Build website blocks from generated content
    */
-  private buildBlocks(pageId: string, content: WebsiteContent, services: any[], language: string = 'en', companyName: string = 'Your Business'): any[] {
+  private buildBlocks(pageId: string, content: WebsiteContent, services: any[], language: string = 'en', companyName: string = 'Your Business', needsIntake: boolean = false, sections?: ReturnType<WebsiteGenerationService['planSections']>): any[] {
+    const plan = sections ?? this.planSections(services);
     // Block title translations
     const blockTitles: Record<string, Record<string, string>> = {
       about: { en: 'About', he: 'אודות', es: 'Acerca de' },
@@ -531,6 +735,24 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
     const t = (key: string) => blockTitles[key]?.[language] || blockTitles[key]?.en || key;
     const menu = (key: string) => menuLabels[key]?.[language] || menuLabels[key]?.en || key;
 
+    /**
+     * The AI's heading for a section, or the phrasebook's.
+     *
+     * Trimmed and length-checked rather than trusted: a heading is rendered in
+     * display type, and a model that answers with a sentence would break the
+     * layout of a page nobody is going to proofread before it is published.
+     */
+    const heading = (key: keyof NonNullable<WebsiteContent['sectionTitles']>, fallbackKey: string) => {
+      const written = content.sectionTitles?.[key]?.trim();
+      return written && written.length <= 40 ? written : t(fallbackKey);
+    };
+
+    /** Same rule, tighter: a button label has less room than a heading. */
+    const button = (written: string | undefined, fallback: string) => {
+      const label = written?.trim();
+      return label && label.length <= 24 ? label : fallback;
+    };
+
     return [
       // Header block with navigation menu
       {
@@ -546,7 +768,7 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
             { label: menu('contact'), anchor: '#contact' },
           ],
           cta_button: services.length > 0
-            ? { text: menu('bookNow'), link: '#booking' }
+            ? { text: button(content.buttons?.headerCta, menu('bookNow')), link: '#booking' }
             : null,
           style: 'blur',
         },
@@ -560,7 +782,7 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         content: {
           headline: content.hero.headline,
           subheadline: content.hero.subheadline,
-          cta_text: services.length > 0 ? t('ctaBooking') : t('ctaContact'),
+          cta_text: button(content.buttons?.heroCta, services.length > 0 ? t('ctaBooking') : t('ctaContact')),
           cta_link: services.length > 0 ? '#booking' : '#contact',
         },
       },
@@ -571,7 +793,7 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         block_type: 'about',
         position: 2,
         content: {
-          title: t('about'),
+          title: heading('about', 'about'),
           // AboutBlock expects 'content' as a string, not 'paragraphs' array
           content: content.about.paragraphs.join('\n\n'),
         },
@@ -583,7 +805,7 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         block_type: 'services',
         position: 3,
         content: {
-          title: t('services'),
+          title: heading('services', 'services'),
           services: services.map(s => {
             const serviceData = content.serviceDescriptions[s.service_name];
             // Handle both old format (string) and new format (object with description and icon)
@@ -603,6 +825,11 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
               priceRaw: s.price, // Raw price for booking modal
               price: s.price ? `${s.currency === 'ILS' ? '₪' : s.currency === 'EUR' ? '€' : '$'}${s.price}` : null,
               currency: s.currency,
+              // The two facts that decide this service's journey, carried to
+              // the public page so it can describe the journey the booking
+              // widget will actually run rather than one page-wide story.
+              is_scheduled: s.is_scheduled !== false,
+              collection: s.collection ?? null,
             };
           }),
         },
@@ -614,11 +841,27 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         block_type: 'process',
         position: 4,
         content: {
-          title: t('process'),
+          title: heading('process', 'process'),
           steps: content.processSteps,
-          // Default client flow for booking - enables service action buttons
+          // Built from what the business actually sells, not from a default.
+          //
+          // This was always `scheduling, client_info, confirmation` for anyone
+          // with services — so a shop selling only downloads got a page whose
+          // process block described picking a time, and a business that asked
+          // for an intake form never collected one, because `intake` was not in
+          // the list this page's booking reads.
+          //
+          // The booking journey itself comes from the service now; what is left
+          // here is what the page describes and whether an intake form is
+          // collected, so both follow the same facts.
           client_flow: services.length > 0
-            ? ['scheduling', 'client_info', 'confirmation']
+            ? [
+                ...(services.some(s => s.is_scheduled !== false) ? ['scheduling'] : []),
+                'client_info',
+                ...(services.some(s => s.collection === 'online' && (s.price || 0) > 0) ? ['payment'] : []),
+                ...(needsIntake ? ['intake'] : []),
+                'confirmation',
+              ]
             : ['confirmation'],
           services_only: services.length === 0,
         },
@@ -630,7 +873,7 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         block_type: 'testimonials',
         position: 5,
         content: {
-          title: t('testimonials'),
+          title: heading('testimonials', 'testimonials'),
           testimonials: content.testimonials || [],
         },
       },
@@ -641,19 +884,19 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         block_type: 'faq',
         position: 6,
         content: {
-          title: t('faq'),
+          title: heading('faq', 'faq'),
           questions: content.faq || [],
         },
       },
 
       // Booking widget block (if services exist)
-      ...(services.length > 0 ? [{
+      ...(plan.booking ? [{
         page_id: pageId,
         block_type: 'booking_widget',
         position: 7,
         content: {
-          title: t('booking'),
-          description: t('bookingDescription'),
+          title: content.booking?.title || t('booking'),
+          description: content.booking?.description || t('bookingDescription'),
         },
       }] : []),
 
@@ -663,7 +906,8 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         block_type: 'contact_form',  // Must match block registry key
         position: 8,
         content: {
-          title: t('contact'),
+          title: content.contact?.title || t('contact'),
+          description: content.contact?.description,
           fields: ['name', 'email', 'phone', 'message'],
         },
       },
@@ -674,10 +918,13 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         block_type: 'cta',
         position: 9,
         content: {
-          title: content.hero.headline,
-          description: t('cta'),
-          cta_text: services.length > 0 ? t('ctaSchedule') : t('ctaGetInTouch'),
-          cta_link: services.length > 0 ? '#booking' : '#contact',
+          // The closing call to action repeated the hero headline word for
+          // word, so a visitor scrolling the whole page read the same sentence
+          // twice.
+          title: content.cta?.title || content.hero.headline,
+          description: content.cta?.description || t('cta'),
+          cta_text: content.cta?.buttonText || (plan.booking ? t('ctaSchedule') : t('ctaGetInTouch')),
+          cta_link: plan.booking ? '#booking' : '#contact',
         },
       },
 

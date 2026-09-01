@@ -19,12 +19,16 @@ import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executo
 import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
 import { AirtablePluginExecutor } from './airtable-plugin-executor';
 import { DocumentExtractorPluginExecutor } from './document-extractor-plugin-executor';
+import { BusinessOsPluginExecutor } from './business-os-plugin-executor';
 import { NotionPluginExecutor } from './notion-plugin-executor';
 import { OutlookPluginExecutor } from './outlook-plugin-executor';
 import { OneDrivePluginExecutor } from './onedrive-plugin-executor';
 import { DiscordPluginExecutor } from './discord-plugin-executor';
 import { SalesforcePluginExecutor } from './salesforce-plugin-executor';
 import { MetaAdsPluginExecutor } from './meta-ads-plugin-executor';
+import { MetaInsightsPluginExecutor } from './meta-insights-plugin-executor';
+import { GoogleAnalyticsPluginExecutor } from './google-analytics-plugin-executor';
+import { GoogleBusinessProfilePluginExecutor } from './google-business-profile-plugin-executor';
 import { DropboxPluginExecutor } from './dropbox-plugin-executor';
 import { StripePluginExecutor } from './stripe-plugin-executor';
 
@@ -52,12 +56,16 @@ export class PluginExecuterV2 {
     'linkedin': LinkedInPluginExecutor,
     'airtable': AirtablePluginExecutor,
     'document-extractor': DocumentExtractorPluginExecutor,
+    'business-os': BusinessOsPluginExecutor,
     'notion': NotionPluginExecutor,
     'outlook': OutlookPluginExecutor,
     'onedrive': OneDrivePluginExecutor,
     'discord': DiscordPluginExecutor,
     'salesforce': SalesforcePluginExecutor,
     'meta-ads': MetaAdsPluginExecutor,
+    'meta-insights': MetaInsightsPluginExecutor,
+    'google-analytics': GoogleAnalyticsPluginExecutor,
+    'google-business-profile': GoogleBusinessProfilePluginExecutor,
     'dropbox': DropboxPluginExecutor,
     'stripe': StripePluginExecutor,
     // Add new plugin executors here

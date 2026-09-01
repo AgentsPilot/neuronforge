@@ -25,7 +25,10 @@
 import { createHash, randomUUID } from 'crypto';
 import { createLogger } from '@/lib/logger';
 import { commandSessionRepository } from '@/lib/repositories/CommandSessionRepository';
-import type { MutateQuery, QueryRow } from '../types';
+import type { ForEachQuery, MutateQuery, QueryRow } from '../types';
+
+/** A step that changes something. Both kinds can be parked for confirmation. */
+export type WriteStep = MutateQuery | ForEachQuery;
 
 const logger = createLogger({ module: 'BizQLConfirmation' });
 
@@ -35,7 +38,7 @@ const CAPABILITY = 'bizql.pending_write';
 export interface PendingWrite {
   confirmationId: string;
   /** The frozen, fully-resolved write. Replayed verbatim on confirm. */
-  steps: MutateQuery[];
+  steps: WriteStep[];
   /**
    * For a fan-out: the exact rows resolved at preview time, keyed by step id.
    *
@@ -52,20 +55,44 @@ export interface PendingWrite {
 }
 
 /**
+ * Stable JSON: object keys sorted, recursively.
+ *
+ * Required because the fingerprint below is computed before storage and checked
+ * after reading back, and the round trip goes through Postgres `jsonb` — which
+ * does NOT preserve key order. Plain JSON.stringify therefore produces a
+ * different string for a semantically identical object, the fingerprint never
+ * matches, and every confirmation is silently rejected.
+ *
+ * That is precisely what happened: park() succeeded, take() always returned
+ * null, and no unit test caught it because they mocked the store.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+
+  return `{${entries.join(',')}}`;
+}
+
+/**
  * Fingerprint of the exact writes the user approved.
  *
  * Stored alongside the plan and re-checked on confirm, so a bug that mutated the
  * stored plan between turns cannot cause an unapproved write to execute.
  */
-function fingerprint(steps: MutateQuery[]): string {
-  return createHash('sha256').update(JSON.stringify(steps)).digest('hex').slice(0, 16);
+function fingerprint(steps: WriteStep[]): string {
+  return createHash('sha256').update(stableStringify(steps)).digest('hex').slice(0, 16);
 }
 
 export class ConfirmationStore {
   /** Park a write and return the id the user's "yes" will refer to. */
   async park(args: {
     userId: string;
-    steps: MutateQuery[];
+    steps: WriteStep[];
     preview: string[];
     utterance: string;
     language: string;
@@ -138,7 +165,7 @@ export class ConfirmationStore {
     if (session.status !== 'awaiting_confirmation') return null;
 
     const params = session.resolved_params as Record<string, unknown>;
-    const steps = params.steps as MutateQuery[] | undefined;
+    const steps = params.steps as WriteStep[] | undefined;
 
     if (!Array.isArray(steps) || steps.length === 0) return null;
 

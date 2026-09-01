@@ -20,7 +20,7 @@ import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-recei
 import { generateRefundConfirmationEmail } from '@/lib/email/templates/refund-confirmation';
 import { generateWelcomeEmail, generateReturningContactEmail } from '@/lib/email/templates/welcome-email';
 import { generateIntakeRequestEmail } from '@/lib/email/templates/intake-request';
-import type { BrandingData } from '@/lib/email/templates/base-template';
+import { resolveEmailBranding } from '@/lib/email/branding';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -63,26 +63,11 @@ export function verifyBookingToken(token: string): { bookingId: string; email: s
   }
 }
 
-/**
- * Build branding data from business profile
- */
-function buildBrandingData(profile: {
-  company_name?: string | null;
-  business_name?: string | null;
-  logo_url?: string | null;
-  primary_color?: string | null;
-  secondary_color?: string | null;
-  website_url?: string | null;
-}, locale?: Locale): BrandingData {
-  return {
-    businessName: profile.company_name || profile.business_name || 'Business',
-    logoUrl: profile.logo_url || undefined,
-    primaryColor: profile.primary_color || '#4F46E5',
-    secondaryColor: profile.secondary_color || '#818CF8',
-    websiteUrl: profile.website_url || undefined,
-    locale
-  };
-}
+// Branding now comes from `resolveEmailBranding` (lib/email/branding.ts), which
+// reads the user's website theme. The local builder that used to live here read
+// business_profiles.primary_color / .secondary_color / .logo_url — columns that
+// do not exist on that table — so it returned the hardcoded fallback for every
+// user, every time.
 
 /**
  * Fetch user's preferred language from user_preferences table
@@ -227,7 +212,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, booking.client_email);
@@ -399,7 +384,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate invoice number (simple format: INV-YYYYMMDD-XXXX)
       const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -513,7 +498,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get booking and service details if bookingId provided
       let serviceName: string | undefined;
@@ -639,7 +624,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get booking URL from website subdomain
       let bookAgainUrl: string | undefined;
@@ -738,7 +723,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, booking.client_email);
@@ -823,7 +808,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get website URL for booking link
       const websiteUrl = profileResult.data?.website_url || undefined;
@@ -908,7 +893,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get website URL for booking link
       const websiteUrl = profileResult.data?.website_url || undefined;
@@ -1003,7 +988,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Check if intake form is enabled for this business
       // This is stored in business_profile or website configuration
@@ -1131,7 +1116,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get booking URL from website subdomain
       let bookAgainUrl: string | undefined;

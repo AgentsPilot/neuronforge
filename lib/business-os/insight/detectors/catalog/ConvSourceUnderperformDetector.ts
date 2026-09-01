@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
 import { buildClientStageFilter } from '@/lib/crm/StageTypeUtils';
+import { resolveChannel } from '@/lib/business-os/channel-insights/channelFromReferrer';
 
 interface SourceStats {
   source: string;
@@ -64,10 +65,14 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
     const sixtyDaysAgo = new Date();
     sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
 
-    // Get all contacts with source info from last 60 days
+    // Get all contacts with source info from last 60 days.
+    // referrer_domain and utm_source are generated columns over source_metadata,
+    // which lib/utils/attribution.ts has been recording for every lead. The flat
+    // `source` column is kept only as a fallback for rows captured before that,
+    // and for contacts entered by hand.
     const { data: contacts, error } = await this.supabase
       .from('crm_contacts')
-      .select('id, source, stage, created_at')
+      .select('id, source, stage, created_at, referrer_domain, utm_source')
       .eq('user_id', userId)
       .gte('created_at', sixtyDaysAgo.toISOString());
 
@@ -90,7 +95,12 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
     const sourceStats: Record<string, SourceStats> = {};
 
     contacts.forEach((contact) => {
-      const source = contact.source || 'unknown';
+      // Resolve the real acquisition channel where attribution exists, so
+      // "Instagram" and "Facebook" are separate rows rather than collapsing
+      // into whatever free text the `source` column happens to hold.
+      const resolved = resolveChannel(contact.referrer_domain, contact.utm_source);
+      const source =
+        resolved.basis === 'none' ? contact.source || 'unknown' : resolved.channel;
 
       if (!sourceStats[source]) {
         sourceStats[source] = {
@@ -148,8 +158,11 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
 
     const severity = this.definition.severityFn(avgDeviation, totalUnderperformingLeads);
 
-    // Calculate opportunity cost (leads that could have converted at avg rate)
-    const avgDealValue = 300; // Estimated average deal value
+    // Calculate opportunity cost (leads that could have converted at avg rate).
+    // Priced from what this business actually charges rather than a constant —
+    // a £300 assumption is wrong in both directions for most users, and the
+    // number is shown to them as money.
+    const avgDealValue = await this.resolveAverageDealValue(userId);
     const expectedConversions = underperformers.reduce(
       (sum, s) => sum + s.totalLeads * (avgConversionRate / 100),
       0
@@ -210,5 +223,53 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
 
     this.logDetection(userId, result);
     return result;
+  }
+
+  /**
+   * What this business typically earns per converted client.
+   *
+   * Prefers real collected revenue; falls back to the average price of the
+   * services on offer; and only if neither exists uses a generic figure — a new
+   * business with no history still needs a number to reason with, but it should
+   * be the last resort, not the default.
+   */
+  private async resolveAverageDealValue(userId: string): Promise<number> {
+    const FALLBACK = 300;
+
+    try {
+      const { data: transactions } = await this.supabase
+        .from('payment_transactions')
+        .select('amount')
+        .eq('user_id', userId)
+        .eq('status', 'succeeded')
+        .limit(200);
+
+      const amounts = (transactions || [])
+        .map((t: { amount: number | string | null }) => Number(t.amount) || 0)
+        .filter((n: number) => n > 0);
+
+      if (amounts.length >= 3) {
+        return amounts.reduce((sum: number, n: number) => sum + n, 0) / amounts.length;
+      }
+
+      // Too little history to average — use what the business charges instead.
+      const { data: services } = await this.supabase
+        .from('scheduling_services')
+        .select('price')
+        .eq('user_id', userId)
+        .eq('is_active', true);
+
+      const prices = (services || [])
+        .map((s: { price: number | string | null }) => Number(s.price) || 0)
+        .filter((n: number) => n > 0);
+
+      if (prices.length > 0) {
+        return prices.reduce((sum: number, n: number) => sum + n, 0) / prices.length;
+      }
+    } catch {
+      // A pricing lookup must never take down the detection itself.
+    }
+
+    return FALLBACK;
   }
 }

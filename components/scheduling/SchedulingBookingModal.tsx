@@ -10,9 +10,12 @@ import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
 import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { createLogger } from '@/lib/logger';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
 import type { Country } from 'react-phone-number-input';
+
+const logger = createLogger({ module: 'SchedulingBookingModal' });
 
 interface CRMContact {
   id: string;
@@ -349,6 +352,8 @@ export function SchedulingBookingModal({
   });
   const [loading, setLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Why a delete didn't happen, shown inside the confirmation strip itself.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   // Client search state
@@ -423,6 +428,8 @@ export function SchedulingBookingModal({
   useEffect(() => {
     // Clear form errors when modal opens/closes or booking changes
     setFormErrors({});
+    setDeleteError(null);
+    setShowDeleteConfirm(false);
 
     if (booking) {
       // Use formatDateTimeLocal to convert UTC times to local datetime-local format
@@ -820,6 +827,7 @@ export function SchedulingBookingModal({
   const handleDelete = async () => {
     if (!booking) return;
     setLoading(true);
+    setDeleteError(null);
 
     try {
       const response = await fetch(`/api/scheduling/bookings/${booking.id}`, {
@@ -828,14 +836,34 @@ export function SchedulingBookingModal({
       });
 
       if (response.ok) {
+        setShowDeleteConfirm(false);
         onBookingUpdated();
+        return;
+      }
+
+      // A paid booking is refused rather than deleted — the money is a record to
+      // refund deliberately. The confirmation strip stays open and states why,
+      // so the answer appears where the click was, not somewhere else on screen.
+      const data = await response.json().catch(() => null);
+      if (data?.code === 'BOOKING_HAS_PAID_INVOICE') {
+        setDeleteError(
+          t('scheduling.booking.delete_blocked_paid')
+            || 'This booking has already been paid for and cannot be deleted. Refund the payment first, or cancel the booking instead.'
+        );
+      } else {
+        setDeleteError(data?.error || t('scheduling.booking.delete_failed') || 'Failed to delete booking');
       }
     } catch (error) {
-      console.error('Failed to delete booking:', error);
+      logger.error({ err: error, bookingId: booking.id }, 'Failed to delete booking');
+      setDeleteError(t('scheduling.booking.delete_failed') || 'Failed to delete booking');
     } finally {
       setLoading(false);
-      setShowDeleteConfirm(false);
     }
+  };
+
+  const dismissDeleteConfirm = () => {
+    setShowDeleteConfirm(false);
+    setDeleteError(null);
   };
 
   const getClientInitials = () => {
@@ -1547,33 +1575,54 @@ export function SchedulingBookingModal({
                 {formErrors.submit}
               </div>
             )}
-            {/* Delete confirmation overlay */}
+            {/* Delete confirmation overlay — becomes the refusal when the
+                delete is blocked, so the answer replaces the question in place
+                instead of appearing elsewhere in the dialog. */}
             {showDeleteConfirm ? (
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-red-600 dark:text-red-400 flex-1">
-                  {t('scheduling.booking.delete_confirm_message')}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteConfirm(false)}
-                    disabled={loading}
-                    className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {t('button.cancel')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    disabled={loading}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    {loading ? t('scheduling.booking.deleting') : t('scheduling.booking.confirm_delete')}
-                  </button>
-                </div>
+                {deleteError ? (
+                  <>
+                    <p className="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 flex-1">
+                      <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                      <span>{deleteError}</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={dismissDeleteConfirm}
+                      className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {t('button.close') || t('button.cancel')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-red-600 dark:text-red-400 flex-1">
+                      {t('scheduling.booking.delete_confirm_message')}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={dismissDeleteConfirm}
+                        disabled={loading}
+                        className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        {t('button.cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDelete}
+                        disabled={loading}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        {loading ? t('scheduling.booking.deleting') : t('scheduling.booking.confirm_delete')}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="flex items-center justify-between gap-3">
@@ -1619,7 +1668,7 @@ export function SchedulingBookingModal({
                   {booking && (
                     <button
                       type="button"
-                      onClick={() => setShowDeleteConfirm(true)}
+                      onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }}
                       disabled={loading}
                       className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all disabled:opacity-50"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}

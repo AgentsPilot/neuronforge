@@ -25,7 +25,11 @@ export type EntityType =
   | 'execution'
   | 'system'
   | 'scheduling_service'
-  | 'scheduling_booking';
+  | 'scheduling_booking'
+  | 'payment_invoice'
+  | 'crm_contact'
+  | 'business_profile'
+  | 'website_page';
 
 /**
  * Compliance frameworks this event relates to

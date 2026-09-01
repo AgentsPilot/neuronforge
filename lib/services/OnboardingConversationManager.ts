@@ -20,6 +20,8 @@ import {
   ExtractedData,
   BusinessStoryExtraction,
   ClientWorkflowExtraction,
+  CollectionMethod,
+  PricingModel,
   ClientAcquisitionExtraction,
   ClientTrackingExtraction,
   InferredConfiguration,
@@ -37,9 +39,11 @@ export type Language = 'en' | 'he' | 'es';
 
 export type OnboardingStep =
   | 'language_selection'
+  | 'business_name'      // What is the business called? Asked, never inferred
   | 'business_story'
   | 'client_workflow'
   | 'service_details'  // Follow-up when user didn't provide specific service details
+  | 'payment_collection'  // How does the money reach you? (decides Stripe vs bank details)
   | 'client_acquisition'  // Q4: How do clients find you? (determines website need)
   | 'client_tracking'     // Q5: How do you track clients? (determines CRM need)
   | 'preview'
@@ -50,10 +54,51 @@ export type OnboardingStep =
 export interface Service {
   id?: string;
   service_name: string;
-  duration_minutes: number;
-  price: number;
+  /** Null for a service not booked against a time — a product or deliverable. */
+  duration_minutes: number | null;
+  /** Null where the fee is agreed per client. Zero only where it is free. */
+  price: number | null;
   currency: string;
+  /** Does booking this involve picking a time? */
+  is_scheduled: boolean;
+  /** How the money arrives. Null while the service is free. */
+  collection: 'online' | 'invoice' | null;
+  /** Paying over time, where they said so. Carried through to the build. */
+  payment_plan?: {
+    installment_count: number;
+    installment_frequency: 'weekly' | 'biweekly' | 'monthly';
+  } | null;
 }
+
+/**
+ * Every step a conversation can be in.
+ *
+ * Exported because the chat route also has to decide whether a stored
+ * conversation can be resumed, and it used to keep its own copy of this list.
+ * Adding a question to the flow then made every conversation in progress look
+ * invalid to that copy: the user answered the new question and was thrown back
+ * to the first one, in English, with everything they had said discarded.
+ *
+ * One list. Add a step here and both the state machine and the route learn it.
+ */
+export const ONBOARDING_STEPS = new Set<OnboardingStep>([
+  'language_selection',
+  'business_name',
+  'business_story',
+  'client_workflow',
+  'service_details',
+  // No longer asked — each service carries its own `collection`. Kept in the
+  // set so a conversation already sitting on this step still resumes: the chat
+  // route validates a stored step against this list and discards the whole
+  // conversation when it is missing.
+  'payment_collection',
+  'client_acquisition',
+  'client_tracking',
+  'preview',
+  'preview_adjustment',
+  'building',
+  'complete',
+]);
 
 export interface OnboardingState {
   currentStep: OnboardingStep;
@@ -147,18 +192,36 @@ From their response, extract:
    - duration_minutes: session length if mentioned (30, 45, 60, 90, 120 are common). Default to 60 if it's clearly a session/appointment but no duration given.
    - price: numeric price. Use null if NOT mentioned (NOT 0). Only use 0 if user explicitly says "free".
    - is_scheduled: true if it's an appointment/session, false if it's a product/deliverable
+   - collection: how the money for THIS service arrives.
+     "online" only when they describe the client paying by card at the moment of booking.
+     "invoice" when they mention an invoice, bank transfer, Bit, cash, or paying later.
+     null when they did not say, or the service is free.
+     Do NOT guess "online" — defaulting to it would force them to connect a card
+     processor they may never want.
 
 IMPORTANT about price:
 - If user ONLY provides service name without price (e.g., "ייעוץ אישי", "personal consultation"), set price: null
 - ONLY set price: 0 if user explicitly says "free", "חינם", "gratis", etc.
 - price: null means "price not provided yet, need to ask"
 - price: 0 means "explicitly free service"
+- payment_plan: set ONLY when they describe paying over time for that service —
+  "3 payments of 200", "monthly for 6 months", "בתשלומים", "en cuotas". Give
+  { "installment_count": number, "installment_frequency": "weekly"|"biweekly"|"monthly" }.
+  The price stays the TOTAL, not the instalment. Null when they pay once.
+- currency: the ISO code for whatever they wrote the price in — "$80" is USD,
+  "150 ש"ח" or "₪150" is ILS, "€40" is EUR, "£60" is GBP. Use null when they
+  gave a bare number. DO NOT infer it from the language they are speaking: a
+  business can work in Hebrew and charge in dollars, and guessing puts the
+  wrong symbol on every price they will ever send a client.
 
-2. pricing_model - ONE of:
-   - "fixed" - set prices per service (most common)
-   - "custom" - quotes/invoices per project
-   - "free" - no payment involved (ONLY if user explicitly says services are free)
-   - "mixed" - some free, some paid
+2. pricing_model - ONE of. These match the three answers offered on screen, so
+   map the user's words to the same three ideas:
+   - "fixed" - a price list; every service has a set price ("services with fixed prices")
+   - "custom" - quoted per client or per project; no price list ("customised per client")
+   - "mixed" - BOTH: some services have a set price, others are quoted per client
+     ("a combination of both"). Also use this when some services are free and
+     others are paid.
+   - "free" - nothing is charged at all (ONLY if they explicitly say so)
 
 3. payment_timing - ONE of:
    - "before" - pay to book / upfront payment
@@ -171,7 +234,21 @@ IMPORTANT about price:
    - "manual" - prefers to schedule themselves
    - "both" - flexible
 
-5. needs_more_details - boolean: Set to true if:
+5b. needs_intake - true when they mention clients filling in a form, a
+   questionnaire, health details or paperwork before the appointment.
+   false when they say they do not, null when they never raised it.
+
+5. collection_method - HOW the money physically reaches them. ONE of:
+   - "card_online" - client pays by card when booking (card/credit/Stripe/PayPal mentioned)
+   - "invoice" - an invoice goes out and the client transfers, or calls to pay (bank transfer, wire, Bit, "they send me the money", "I invoice them")
+   - "in_person" - cash or a card machine in the room
+   - "mixed" - explicitly both online and offline
+   - "none" - nothing is charged
+   - null - they did not say. DO NOT GUESS: a price on its own says nothing about
+     how it is collected, and guessing "card" makes us demand a Stripe account
+     from someone who takes bank transfers.
+
+6. needs_more_details - boolean: Set to true if:
    - User only mentioned pricing model (e.g., "fixed prices") but no specific services
    - User didn't provide service names or prices
    - User provided service name but NO PRICE (we need to ask for price!)
@@ -184,13 +261,24 @@ Examples:
 - "ייעוץ אישי" or "Personal consultation" (no price) = needs_more_details: true (has name but missing price)
 - "ייעוץ אישי 60 דקות" (no price) = needs_more_details: true (has name+duration but missing price)
 - "שירותים עם מחירים קבועים" = needs_more_details: true (only says "fixed price services")
+- "300 a session, they pay me by bank transfer after" = collection_method: "invoice", payment_timing: "after"
+- "250 ש"ח, משלמים לי בביט או העברה" = collection_method: "invoice"
+- "$80, they pay on the website when booking" = collection_method: "card_online", payment_timing: "before", currency: "USD"
+- "הדרכה אישית 90 דקות 150 דולר" = currency: "USD" — Hebrew words, dollar price
+- "ייעוץ 200" = currency: null (a bare number says nothing)
+- "ליווי שנתי 6000 ש"ח, אפשר ב-12 תשלומים" = price: 6000, currency: ILS, payment_plan: { installment_count: 12, installment_frequency: "monthly" }
+- "Programme is $1200, or 3 monthly payments" = price: 1200, currency: USD, payment_plan: { installment_count: 3, installment_frequency: "monthly" }
+- "50 an hour, cash when they come" = collection_method: "in_person"
+- "120 per session" (nothing about HOW) = collection_method: null
 
 Return ONLY valid JSON:
 {
-  "services": [{ "name": string, "duration_minutes": number | null, "price": number | null, "is_scheduled": boolean }],
+  "services": [{ "name": string, "duration_minutes": number | null, "price": number | null, "currency": "USD" | "ILS" | "EUR" | "GBP" | null, "payment_plan": { "installment_count": number, "installment_frequency": "weekly" | "biweekly" | "monthly" } | null, "is_scheduled": boolean, "collection": "online" | "invoice" | null }],
   "pricing_model": "fixed" | "custom" | "free" | "mixed",
+  "needs_intake": boolean | null,
   "payment_timing": "before" | "after" | "installments" | "none",
   "booking_method": "online" | "manual" | "both",
+  "collection_method": "card_online" | "invoice" | "in_person" | "mixed" | "none" | null,
   "needs_more_details": boolean
 }`;
 
@@ -349,18 +437,7 @@ export class OnboardingConversationManager {
   /**
    * Valid step names for the enhanced onboarding flow
    */
-  private readonly VALID_STEPS = new Set<OnboardingStep>([
-    'language_selection',
-    'business_story',
-    'client_workflow',
-    'service_details',
-    'client_acquisition',  // Q4: How do clients find you?
-    'client_tracking',     // Q5: How do you track clients?
-    'preview',
-    'preview_adjustment',
-    'building',
-    'complete',
-  ]);
+  private readonly VALID_STEPS = ONBOARDING_STEPS;
 
   /**
    * Update state based on user message using deep LLM extraction
@@ -398,8 +475,28 @@ export class OnboardingConversationManager {
         } else {
           updatedState.language = 'en';
         }
+        updatedState.currentStep = 'business_name';
+        break;
+
+      case 'business_name': {
+        // Taken exactly as typed.
+        //
+        // The name used to be inferred from whatever they wrote about their
+        // business, and fell back to "your business" when they never said it —
+        // so an account could be built under a name nobody chose, and every
+        // invoice and email would carry it. A name is not something to deduce.
+        const name = message.trim();
+
+        updatedState.collectedData.businessProfile = {
+          ...updatedState.collectedData.businessProfile,
+          company_name: name,
+          language: updatedState.language,
+        };
+
+        logger.info({ companyName: name }, 'Business name given');
         updatedState.currentStep = 'business_story';
         break;
+      }
 
       case 'business_story':
         // Deep extraction of business context
@@ -407,11 +504,31 @@ export class OnboardingConversationManager {
         const businessStory = await this.extractBusinessStory(message);
         logger.info({ businessStory }, 'Business story extracted');
 
+        // Their own words win over the model's paraphrase.
+        //
+        // The extraction returns a tidy summary, and it writes it in whatever
+        // language it feels like — a Hebrew conversation was producing an
+        // English sentence, which then became the source text for the whole
+        // website. What the person typed about their own business is better
+        // material than a restatement of it, and it is the thing they will
+        // recognise when they come to correct it in settings.
+        //
+        // The summary is kept only where nothing usable was typed.
+        const ownWords = message.trim();
+        if (ownWords.length >= 20) {
+          businessStory.description = ownWords;
+        }
+
         updatedState.collectedData.businessStory = businessStory;
 
         // Also update legacy fields for backwards compatibility
         updatedState.collectedData.businessProfile = {
-          company_name: businessStory.company_name || undefined,
+          // The typed name wins: it was asked for directly, and the extraction
+          // is reading prose that may not contain it at all.
+          company_name:
+            updatedState.collectedData.businessProfile?.company_name
+            || businessStory.company_name
+            || undefined,
           vertical: businessStory.vertical,
           language: updatedState.language,
         };
@@ -424,21 +541,35 @@ export class OnboardingConversationManager {
       case 'client_workflow':
         // Extract services and workflow
         const clientWorkflow = await this.extractClientWorkflow(message);
+
+        // One of the three offered answers is not a matter of interpretation.
+        const chosenModel = this.pricingModelFromChip(message);
+        if (chosenModel) clientWorkflow.pricing_model = chosenModel;
+
         updatedState.collectedData.clientWorkflow = clientWorkflow;
 
         // Check if we need more details (user just said "fixed prices" without specific services)
         const needsMoreDetails = clientWorkflow.needs_more_details === true ||
           (!clientWorkflow.services || clientWorkflow.services.length === 0);
 
-        if (needsMoreDetails && clientWorkflow.pricing_model !== 'custom') {
-          // Need to ask for specific service details
+        if (needsMoreDetails) {
+          // Ask what they offer — including when every price is quoted per
+          // client. This used to skip the question entirely for custom
+          // pricing, so those businesses finished onboarding with no services
+          // at all and were then told by the dashboard to go and add some:
+          // the very thing they had just said they could not do as a menu.
+          //
+          // A quote-based business still has services. What it does not have
+          // is a price list, so the prompt asks for names and durations and
+          // leaves the money to the conversation with each client.
           updatedState.currentStep = 'service_details';
           logger.info({ pricingModel: clientWorkflow.pricing_model }, 'Need more service details');
           break;
         }
 
-        // Proceed to client_acquisition (Q4: How do clients find you?)
-        updatedState.currentStep = 'client_acquisition';
+        // Ask how the money reaches them, if that is still unknown and there
+        // is money at all. Otherwise straight on to how clients find them.
+        updatedState.currentStep = this.nextStepAfterServices(updatedState);
         break;
 
       case 'service_details':
@@ -475,7 +606,7 @@ export class OnboardingConversationManager {
           // User said they're done, proceed to next step
           updatedState.pendingQuestion = undefined;
           logger.info({ servicesCount: updatedState.collectedData.clientWorkflow?.services?.length }, 'User done adding services');
-          updatedState.currentStep = 'client_acquisition';
+          updatedState.currentStep = this.nextStepAfterServices(updatedState);
           break;
         }
 
@@ -504,11 +635,28 @@ export class OnboardingConversationManager {
         const mergedWorkflow = {
           ...updatedState.collectedData.clientWorkflow,
           services: allServices,
+          // The toggle in the services form is an answer, not a hint. Reading
+          // it back deterministically means an extraction that misses the
+          // sentence cannot quietly drop a form the user asked for — and the
+          // build's intake card depends on this being true.
+          ...(this.readIntakeNeed(message) ? { needs_intake: true } : {}),
         };
         updatedState.collectedData.clientWorkflow = mergedWorkflow;
 
-        // Check if any services are missing price (price is null, not 0)
-        const servicesMissingPrice = allServices.filter(s => s.price === null || s.price === undefined);
+        // Check if any services are missing price (price is null, not 0).
+        //
+        // Not asked when pricing is quoted per client: there is no answer, and
+        // asking anyway is how a consultant ends up with an invented number on
+        // a booking page. A null price means "on request" from here on.
+        // "Some fixed, some quoted" is the commonest shape of all, and it is
+        // per service: a workshop with a price, a bespoke programme without.
+        // Chasing a price for the quoted half would force an invented number
+        // onto exactly the services that cannot have one.
+        const pricingModel = updatedState.collectedData.clientWorkflow?.pricing_model;
+        const priceIsOptional = pricingModel === 'custom' || pricingModel === 'mixed';
+        const servicesMissingPrice = priceIsOptional
+          ? []
+          : allServices.filter(s => s.price === null || s.price === undefined);
         if (servicesMissingPrice.length > 0) {
           // Need to ask for price
           updatedState.pendingQuestion = 'need_price';
@@ -525,8 +673,23 @@ export class OnboardingConversationManager {
         }
 
         // No new services provided, proceed to next step
+        updatedState.currentStep = this.nextStepAfterServices(updatedState);
+        break;
+
+      case 'payment_collection': {
+        // One answer decides the whole money branch of their setup: a card
+        // processor, or bank details on an invoice, or nothing at all.
+        const collection = this.readCollectionMethod(message, updatedState.language);
+
+        updatedState.collectedData.clientWorkflow = {
+          ...updatedState.collectedData.clientWorkflow,
+          collection_method: collection,
+        };
+        logger.info({ collection }, 'Collection method chosen');
+
         updatedState.currentStep = 'client_acquisition';
         break;
+      }
 
       case 'client_acquisition':
         // Q4: Extract how clients find them (determines website need)
@@ -540,7 +703,9 @@ export class OnboardingConversationManager {
 
       case 'client_tracking':
         // Q5: Extract how they track clients (determines CRM need)
-        const clientTracking = await this.extractClientTracking(message);
+        // One of the four offered answers is not a matter of interpretation.
+        const clientTracking =
+          this.trackingFromChip(message) ?? (await this.extractClientTracking(message));
         updatedState.collectedData.clientTracking = clientTracking;
         logger.info({ clientTracking }, 'Client tracking extracted');
 
@@ -616,15 +781,36 @@ export class OnboardingConversationManager {
     state.collectedData.pipelineStages = configuration.pipeline_stages;
     state.collectedData.wantsWebsite = configuration.online_presence_mode !== 'none';
 
-    // Convert services to legacy format
+    // Convert services to legacy format.
+    //
+    // This shape is the one the build prefers, so anything dropped here is
+    // dropped for good. Three things used to be: a quoted price became free
+    // (`|| 0`), the currency was replaced by a guess from the reading language,
+    // and the instalment arrangement vanished — so "6000₪ or twelve monthly
+    // payments" arrived as a free service with no plan.
     if (clientWorkflow.services && clientWorkflow.services.length > 0) {
-      const currency = CURRENCY_BY_LANGUAGE[state.language];
-      state.collectedData.services = clientWorkflow.services.map(s => ({
-        service_name: s.name,
-        duration_minutes: s.duration_minutes || 60,
-        price: s.price || 0,
-        currency,
-      }));
+      const fallbackCurrency = CURRENCY_BY_LANGUAGE[state.language];
+      state.collectedData.services = clientWorkflow.services.map(s => {
+        const scheduled = s.is_scheduled !== false;
+        const priced = s.price !== null && s.price !== undefined && s.price > 0;
+        return {
+          service_name: s.name,
+          // Kept whatever they said, booked or not: a workshop can run two
+          // hours and still be sold as a product. Null only where no length
+          // was ever given — coercing that to 60 minutes is what made every
+          // service look like an appointment.
+          duration_minutes: s.duration_minutes ?? null,
+          // Null is "we agree it per client"; only an explicit 0 is free.
+          price: s.price === null || s.price === undefined ? null : s.price,
+          // What they wrote the price in, and the language only where they never said.
+          currency: s.currency || fallbackCurrency,
+          is_scheduled: scheduled,
+          // Never 'online' by default: that is the one value that makes a card
+          // processor mandatory, and nobody has asked for one yet.
+          collection: priced ? (s.collection === 'online' ? 'online' : 'invoice') : null,
+          payment_plan: s.payment_plan || null,
+        };
+      });
     }
 
     logger.info({
@@ -733,44 +919,48 @@ export class OnboardingConversationManager {
       lowerMsg.includes('sitio') ||
       lowerMsg.includes('profesional');
 
-    // Check for email campaigns selection (Email campaigns / קמפיינים / Campañas)
-    const needsCampaigns =
-      lowerMsg.includes('campaign') ||
-      lowerMsg.includes('email') ||
-      lowerMsg.includes('reminder') ||
-      lowerMsg.includes('קמפיין') ||
-      lowerMsg.includes('תזכורות') ||
-      lowerMsg.includes('מייל') ||
-      lowerMsg.includes('campaña') ||
-      lowerMsg.includes('recordatorio');
-
-    // Check for social media selection (Social media / רשתות חברתיות / redes sociales)
-    const needsSocialMedia =
-      lowerMsg.includes('social') ||
-      lowerMsg.includes('רשתות') ||
-      lowerMsg.includes('חברתיות') ||
-      lowerMsg.includes('redes');
-
-    // Check for "none" selection (None / לא צריך / No necesito)
-    const needsNone =
-      lowerMsg.includes('none') ||
-      lowerMsg.includes('לא צריך כרגע') ||
-      lowerMsg.includes('no necesito');
+    // Connecting the accounts they already have.
+    //
+    // The platform reads from Facebook, Instagram, Google Analytics and a
+    // Google listing: it syncs their numbers daily so the dashboard can say
+    // where clients actually came from. It does not post, and it does not run
+    // campaigns — which is what the two options this replaces implied, and
+    // neither of them was a thing we do.
+    const needsChannels =
+      lowerMsg.includes('facebook') ||
+      lowerMsg.includes('instagram') ||
+      lowerMsg.includes('google') ||
+      lowerMsg.includes('connect') ||
+      lowerMsg.includes('פייסבוק') ||
+      lowerMsg.includes('אינסטגרם') ||
+      lowerMsg.includes('גוגל') ||
+      lowerMsg.includes('לחבר') ||
+      lowerMsg.includes('conectar');
 
     // Build acquisition channels array
     const channels: string[] = [];
     if (needsWebsite) channels.push('website');
-    if (needsCampaigns) channels.push('email_campaigns');
-    if (needsSocialMedia) channels.push('social_media');
+    if (needsChannels) channels.push('channel_insights');
 
     const result: ClientAcquisitionExtraction = {
       acquisition_channels: channels,
-      has_website: false,  // They don't have one yet (if they did, why would they need one?)
-      wants_more_clients_online: needsWebsite || needsCampaigns || needsSocialMedia,
-      primary_channel: needsWebsite ? 'website' : needsSocialMedia ? 'social_media' : 'referrals',
-      needs_website: needsWebsite && !needsNone,
-      needs_campaigns: needsCampaigns && !needsNone,
-      needs_social_media: needsSocialMedia && !needsNone,
+      // Not known from this answer, and it used to be asserted as false with
+      // the reasoning "if they had one, why would they need one?" — which
+      // mistakes declining our website for having none. A business with its
+      // own site is exactly the one that wants its Facebook and Google
+      // connected and nothing else.
+      has_website: null,
+      wants_more_clients_online: needsWebsite || needsChannels,
+      primary_channel: needsWebsite ? 'website' : needsChannels ? 'social_media' : 'referrals',
+      // A chosen option wins over a stray "not now".
+      //
+      // These used to be ANDed with it, so a conversation that still offers the
+      // old blanket chip could send "connect Google, not now" and come back
+      // wanting neither — the decline silently cancelling the thing they had
+      // just asked for. "Not now" only means anything when it is the only
+      // answer.
+      needs_website: needsWebsite,
+      needs_channel_insights: needsChannels,
     };
 
     logger.info({ message, result }, 'Extracted client acquisition from multi-select');
@@ -866,6 +1056,185 @@ export class OnboardingConversationManager {
    * Handles formats like: "100", "₪100", "100 שקל", "$50", "50 dollars", etc.
    * Returns the numeric price or null if extraction fails.
    */
+/**
+   * Where to go once the services are settled.
+   *
+   * The money question is asked only when it can change the answer: there has
+   * to be a price, and they must not have already said how they collect it
+   * while describing their services. Asking a free workshop how it takes card
+   * payments is the kind of question that makes setup feel long.
+   *
+   * It matters because the code used to infer this from the price alone, and
+   * inferred "Stripe" — sending a business that invoices and takes a bank
+   * transfer through an identity check for an account it will never open,
+   * while never asking for the account number its invoices actually need.
+   */
+/**
+   * Which collection method an answer means.
+   *
+   * Matches the four offered chips first, then the phrases people type instead
+   * of tapping them. Anything unrecognised is treated as an invoice rather than
+   * a card: the invoice path asks for bank details they already know, while
+   * guessing "card" sends them into a Stripe identity check they may not need.
+   */
+  private readCollectionMethod(message: string, language: Language): CollectionMethod {
+    const text = message.trim().toLowerCase();
+
+    // The offered answers are matched exactly, before any keyword is read.
+    //
+    // This is not an optimisation. The labels now spell out their consequence
+    // — "שולח חשבונית והם מעבירים — בלי סליקה", "I invoice them ... — no card
+    // payments" — and a keyword search finds "card" in a sentence that exists
+    // to say there will be no card. The invoicing business would have been
+    // classified as taking cards and sent to Stripe: the exact outcome all of
+    // this was built to prevent.
+    const CHIPS: Array<[CollectionMethod, string[]]> = [
+      // Two answers, because there are two situations that differ in what has
+      // to be configured: the platform takes the money, or the business does.
+      // How they collect it themselves — transfer, app, cash — changes nothing
+      // about setup, so it is not worth a question.
+      ['card_online', [
+        'הלקוח משלם אונליין בכרטיס — צריך חיבור סליקה', 'El cliente paga online con tarjeta — hace falta pasarela', 'The client pays online by card — needs a payment gateway',
+      ]],
+      ['invoice', [
+        'אני גובה את הכסף בעצמי — חשבונית, העברה, ביט או מזומן', 'Cobro yo mismo — factura, transferencia o efectivo', 'I collect the money myself — invoice, transfer or cash',
+      ]],
+    ];
+
+    for (const [method, labels] of CHIPS) {
+      if (labels.some(label => text === label.toLowerCase())) return method;
+    }
+
+    // Typed rather than tapped. Read the words, most specific first, and treat
+    // an explicit "without a card" as settling the question however many times
+    // the word "card" appears in the sentence.
+    const mentions = (...needles: string[]) => needles.some(needle => text.includes(needle));
+
+    const refusesCard = mentions(
+      'no card', 'without card', 'not by card', 'בלי סליקה', 'ללא סליקה', 'בלי אשראי', 'ללא אשראי',
+      'sin pasarela', 'sin tarjeta'
+    );
+
+    if (mentions('cash', 'in person', 'מזומן', 'במקום', 'פנים מול פנים', 'efectivo', 'en persona')) {
+      return 'in_person';
+    }
+    if (mentions('both', 'depends', 'שילוב', 'תלוי', 'שניהם', 'ambos', 'depende')) {
+      return 'mixed';
+    }
+    if (mentions('invoice', 'transfer', 'bank', 'bit', 'חשבונית', 'העברה', 'ביט', 'בנק', 'factura', 'transferencia')) {
+      return 'invoice';
+    }
+    if (!refusesCard && mentions('card', 'online', 'stripe', 'credit', 'אשראי', 'כרטיס', 'באתר', 'אונליין', 'tarjeta', 'en línea')) {
+      return 'card_online';
+    }
+
+    // Nothing recognisable. An invoice asks for bank details they already have;
+    // guessing "card" sends them through an identity check they may not need.
+    return 'invoice';
+  }
+
+  /**
+   * The pricing model behind one of the three answers we offered.
+   *
+   * The chips are fixed text, so matching them needs no model call and cannot
+   * drift: "a combination of both" came back as `fixed` because the extraction
+   * schema had defined `mixed` as "some free, some paid" — a different idea
+   * from the one the button offers — and the user was then asked for a price
+   * on every service including the ones they quote.
+   *
+   * Anything typed rather than tapped still goes to the extraction.
+   */
+  /**
+   * The tracking method behind one of the four answers we offered.
+   *
+   * Read directly rather than through the extraction, because one of these
+   * answers decides something large: "I already have a CRM" is the single case
+   * where `needs_crm` is false, and getting it wrong either builds a client
+   * pipeline nobody asked for or withholds one from a business tracking clients
+   * on paper. A fixed label should not be left to interpretation.
+   *
+   * Anything typed rather than tapped still goes to the extraction.
+   */
+  private trackingFromChip(message: string): ClientTrackingExtraction | null {
+    const text = message.trim().toLowerCase();
+
+    const CHIPS: Array<[ClientTrackingExtraction, string[]]> = [
+      [
+        { current_method: 'existing_crm', current_tools: [], tracks_progress: true, has_existing_crm: true, needs_crm: false, needs_pipeline: false },
+        ['כבר יש לי מערכת crm', 'ya tengo un crm', 'i already have a crm'],
+      ],
+      [
+        { current_method: 'spreadsheet', current_tools: ['excel'], tracks_progress: false, has_existing_crm: false, needs_crm: true, needs_pipeline: true },
+        ['אקסל או גוגל שיטס', 'excel o google sheets', 'excel or google sheets'],
+      ],
+      [
+        { current_method: 'paper', current_tools: ['paper'], tracks_progress: false, has_existing_crm: false, needs_crm: true, needs_pipeline: true },
+        ['נייר, מחברת או אפליקציית פתקים', 'papel, cuaderno o app de notas', 'paper, a notebook or a notes app'],
+      ],
+      [
+        { current_method: 'memory', current_tools: [], tracks_progress: false, has_existing_crm: false, needs_crm: true, needs_pipeline: true },
+        ['הכל בראש שלי', 'todo en mi cabeza', 'all in my head'],
+      ],
+    ];
+
+    for (const [extraction, labels] of CHIPS) {
+      if (labels.some(label => text === label.toLowerCase())) return extraction;
+    }
+    return null;
+  }
+
+  private pricingModelFromChip(message: string): PricingModel | null {
+    const text = message.trim().toLowerCase();
+
+    const CHIPS: Array<[PricingModel, string[]]> = [
+      ['mixed', ['שילוב של שניהם', 'combinación de ambos', 'a combination of both', 'combination of both']],
+      ['custom', ['מותאם אישית ללקוח', 'personalizado por cliente', 'customised per client', 'customized per client']],
+      ['fixed', ['שירותים עם מחירים קבועים', 'servicios con precios fijos', 'services with fixed prices']],
+    ];
+
+    for (const [model, labels] of CHIPS) {
+      if (labels.some(label => text === label.toLowerCase())) return model;
+    }
+    return null;
+  }
+
+  /**
+   * Where the conversation goes once the services are known.
+   *
+   * It used to detour through `payment_collection` — "when someone books a paid
+   * service, how does the money reach you?" — and that question is gone. It was
+   * never one a person could answer about everything they sell at once: a
+   * practice can take a card for a ₪250 session and invoice for a ₪6,000
+   * programme, and a single business-wide answer got one of them wrong.
+   *
+   * Each service now carries its own `collection`, extracted alongside its price
+   * and confirmed on the plan screen where all the services are visible
+   * together. Whether a card processor is needed is then a conclusion — some
+   * service is collected online — rather than something to ask a
+   * non-technical user about their business in the abstract.
+   *
+   * `payment_collection` stays in `ONBOARDING_STEPS` and keeps its handler:
+   * conversations already sitting on it must still resume, and the route
+   * discards any conversation whose step is not in that set.
+   */
+  /**
+   * Whether the services form's intake switch was on.
+   *
+   * Matched on the exact sentence that switch appends, in each language it can
+   * append it in. Anything else is left to the extraction, which sees the free
+   * text too.
+   */
+  private readIntakeNeed(message: string): boolean {
+    const text = message.toLowerCase();
+    return text.includes('לקוחות ממלאים טופס לפני הפגישה')
+      || text.includes('rellenan un formulario antes de la cita')
+      || text.includes('fill in a form before the appointment');
+  }
+
+  private nextStepAfterServices(_state: OnboardingState): OnboardingStep {
+    return 'client_acquisition';
+  }
+
   private extractPriceFromMessage(message: string): number | null {
     const trimmed = message.trim();
 
@@ -1097,7 +1466,15 @@ export class OnboardingConversationManager {
         // Only after user selects their language will subsequent messages use that language
         return {
           response: 'What language would you like to use?',
-          suggestions: ['English', 'עברית (Hebrew)', 'Español (Spanish)'],
+          // Flags, as the language switcher elsewhere in the platform shows
+          // them: at this point the user has not chosen a language yet, so a
+          // flag is the one label that reads before any of the words do.
+          suggestions: ['🇺🇸 English', '🇮🇱 עברית (Hebrew)', '🇪🇸 Español (Spanish)'],
+        };
+
+      case 'business_name':
+        return {
+          response: responses.business_name_prompt,
         };
 
       case 'business_story':
@@ -1136,6 +1513,14 @@ export class OnboardingConversationManager {
           response: responses.service_details_prompt,
         };
 
+      case 'payment_collection':
+        // The question that decides whether Stripe is ever mentioned to this
+        // business. Single-select: they are four different setups, not a menu.
+        return {
+          response: responses.payment_collection_prompt,
+          suggestions: responses.payment_collection_options,
+        };
+
       case 'client_acquisition':
         // Q4: What digital tools do you need? (multi-select)
         return {
@@ -1148,6 +1533,7 @@ export class OnboardingConversationManager {
         // Q5: How do you track clients? (determines CRM need)
         return {
           response: responses.client_tracking_prompt,
+          suggestions: responses.client_tracking_options,
         };
 
       case 'preview':
@@ -1240,9 +1626,14 @@ export class OnboardingConversationManager {
     if (services && services.length > 0) {
       lines.push(`**${t.services_title}**`);
       services.forEach(s => {
-        const priceStr = s.price > 0
-          ? `**${s.currency} ${s.price}**`
-          : `_${t.free}_`;
+        // Three states, not two. A price agreed per client is null, and
+        // reading null as "free" told the user their consultancy was being
+        // set up to give the work away.
+        const priceStr = s.price === null || s.price === undefined
+          ? `_${t.quoted}_`
+          : s.price > 0
+            ? `**${s.currency} ${s.price}**`
+            : `_${t.free}_`;
         const durationStr = t.minutes_abbrev
           ? `${s.duration_minutes}${t.minutes_abbrev}`
           : `${s.duration_minutes} min`;
@@ -1288,6 +1679,7 @@ export class OnboardingConversationManager {
         capabilities_title: 'הכלים שלך',
         services_title: 'שירותים',
         free: 'חינם',
+        quoted: 'לפי הצעת מחיר',
         minutes_abbrev: ' דק׳',
         payment_title: 'תשלומים',
         payment_none: 'שירותים חינמיים',
@@ -1310,6 +1702,7 @@ export class OnboardingConversationManager {
         capabilities_title: 'Tus herramientas',
         services_title: 'Servicios',
         free: 'Gratis',
+        quoted: 'A convenir',
         minutes_abbrev: ' min',
         payment_title: 'Pagos',
         payment_none: 'Servicios gratuitos',
@@ -1332,6 +1725,7 @@ export class OnboardingConversationManager {
       capabilities_title: 'Your Tools',
       services_title: 'Services',
       free: 'Free',
+      quoted: 'On request',
       minutes_abbrev: ' min',
       payment_title: 'Payments',
       payment_none: 'Free services',
@@ -1350,21 +1744,33 @@ export class OnboardingConversationManager {
     if (language === 'he') {
       return {
         language_prompt: 'באיזו שפה תרצו להשתמש?',
-        business_story_prompt: 'מעולה! ספרו לי על העסק שלכם - מה אתם עושים ומה הביא אתכם לכאן היום?',
+        business_name_prompt: 'מעולה! נתחיל מהשם — איך קוראים לעסק שלך?',
+        business_story_prompt: 'תודה! ועכשיו ספרו לי על העסק - מה אתם עושים ומה הביא אתכם לכאן היום?',
         client_workflow_prompt: 'תודה! איך אתם עובדים עם לקוחות? יש לכם שירותים עם מחירים קבועים, או שזה יותר מותאם אישית ללקוח?',
         client_workflow_options: ['שירותים עם מחירים קבועים', 'מותאם אישית ללקוח', 'שילוב של שניהם'],
         service_details_prompt: 'מצוין! אפשר לספר לי קצת יותר על השירותים שלכם? לדוגמה: שם השירות, משך (בדקות), ומחיר.',
+        service_details_quote_prompt: 'מצוין! גם אם המחיר נקבע מול כל לקוח — מה אתם מציעים? לדוגמה: שם השירות ומשך (בדקות). את המחיר נשאיר להצעת מחיר.',
+        service_details_mixed_prompt: 'מצוין! ספרו לי על השירותים שלכם — שם ומשך (בדקות). איפה שיש מחיר קבוע כתבו אותו, ואיפה שהמחיר נקבע מול הלקוח פשוט אל תכתבו.',
         need_price_prompt: 'מה המחיר של {services}?',
         more_services_prompt: 'נהדר! הוספתי {count} שירות(ים). יש לך עוד שירותים להוסיף?',
         more_services_options: ['יש לי עוד', 'זה הכל'],
-        client_acquisition_prompt: 'מה מהדברים הבאים היית רוצה? (בחר את כל מה שמתאים)',
-        client_acquisition_options: [
-          'אתר מקצועי',
-          'קמפיינים ותזכורות במייל',
-          'נוכחות ברשתות חברתיות',
-          'לא צריך כרגע',
+        payment_collection_prompt: 'וכשמישהו מזמין שירות בתשלום — הוא משלם אונליין, או שאתה גובה את הכסף בעצמך?',
+        payment_collection_options: [
+          'הלקוח משלם אונליין בכרטיס — צריך חיבור סליקה',
+          'אני גובה את הכסף בעצמי — חשבונית, העברה, ביט או מזומן',
         ],
-        client_tracking_prompt: 'איך את/ה עוקב/ת אחרי הלקוחות שלך והתקדמותם? יש לך כלי מסוים או שהכל בראש?',
+        client_acquisition_prompt: 'עכשיו — איך לקוחות ימצאו אותך ויזמינו? סמן כל מה שרלוונטי (או כלום), ואקים את מה שסימנת.',
+        client_acquisition_options: [
+          'שאבנה לך אתר מקצועי',
+          'לחבר פייסבוק, אינסטגרם או גוגל — לראות מאיפה מגיעים הלקוחות',
+        ],
+        client_tracking_prompt: 'ואיך את/ה עוקב/ת היום אחרי הלקוחות וההתקדמות שלהם?',
+        client_tracking_options: [
+          'אקסל או גוגל שיטס',
+          'נייר, מחברת או אפליקציית פתקים',
+          'הכל בראש שלי',
+          'כבר יש לי מערכת CRM',
+        ],
         default_company: 'העסק שלך',
         preview_options: ['כן, בואו נתחיל!', 'אני רוצה לשנות משהו'],
         adjustment_prompt: 'מה תרצה לשנות?',
@@ -1378,21 +1784,33 @@ export class OnboardingConversationManager {
     if (language === 'es') {
       return {
         language_prompt: '¿Qué idioma te gustaría usar?',
-        business_story_prompt: '¡Genial! Cuéntame sobre tu negocio - ¿qué haces y qué te trajo aquí hoy?',
+        business_name_prompt: '¡Genial! Empecemos por el nombre — ¿cómo se llama tu negocio?',
+        business_story_prompt: '¡Gracias! Ahora cuéntame sobre tu negocio - ¿qué haces y qué te trajo aquí hoy?',
         client_workflow_prompt: '¡Gracias! ¿Cómo trabajas con tus clientes? ¿Tienes servicios con precios fijos, o es más personalizado por cliente?',
         client_workflow_options: ['Servicios con precios fijos', 'Personalizado por cliente', 'Combinación de ambos'],
         service_details_prompt: '¡Perfecto! ¿Puedes contarme más sobre tus servicios? Por ejemplo: nombre del servicio, duración (en minutos) y precio.',
+        service_details_quote_prompt: '¡Perfecto! Aunque el precio lo acuerdes con cada cliente — ¿qué ofreces? Por ejemplo: nombre del servicio y duración (en minutos). El precio lo dejamos para el presupuesto.',
+        service_details_mixed_prompt: '¡Perfecto! Cuéntame tus servicios — nombre y duración (en minutos). Donde tengas precio fijo, escríbelo; donde lo acuerdes con el cliente, simplemente déjalo en blanco.',
         need_price_prompt: '¿Cuál es el precio de {services}?',
         more_services_prompt: '¡Genial! Agregué {count} servicio(s). ¿Tienes más servicios para agregar?',
         more_services_options: ['Tengo más', 'Eso es todo'],
-        client_acquisition_prompt: '¿Cuáles de las siguientes cosas te gustaría tener? (selecciona todas las que apliquen)',
-        client_acquisition_options: [
-          'Sitio web profesional',
-          'Campañas y recordatorios por email',
-          'Presencia en redes sociales',
-          'No necesito por ahora',
+        payment_collection_prompt: 'Y cuando alguien reserva un servicio de pago, ¿paga online o lo cobras tú?',
+        payment_collection_options: [
+          'El cliente paga online con tarjeta — hace falta pasarela',
+          'Cobro yo mismo — factura, transferencia o efectivo',
         ],
-        client_tracking_prompt: '¿Cómo llevas el seguimiento de tus clientes y su progreso? ¿Usas alguna herramienta o está todo en tu cabeza?',
+        client_acquisition_prompt: 'Ahora — ¿cómo van a encontrarte y reservar tus clientes? Marca lo que corresponda (o nada) y construiré lo que elijas.',
+        client_acquisition_options: [
+          'Que te construya un sitio web profesional',
+          'Conectar Facebook, Instagram o Google — ver de dónde vienen tus clientes',
+        ],
+        client_tracking_prompt: '¿Y cómo haces hoy el seguimiento de tus clientes y su progreso?',
+        client_tracking_options: [
+          'Excel o Google Sheets',
+          'Papel, cuaderno o app de notas',
+          'Todo en mi cabeza',
+          'Ya tengo un CRM',
+        ],
         default_company: 'tu negocio',
         preview_options: ['Sí, ¡comencemos!', 'Quiero cambiar algo'],
         adjustment_prompt: '¿Qué te gustaría cambiar?',
@@ -1406,21 +1824,33 @@ export class OnboardingConversationManager {
     // English (default)
     return {
       language_prompt: 'What language would you like to use?',
-      business_story_prompt: "Great! Tell me about your business - what do you do and what brought you here today?",
+      business_name_prompt: "Great! Let's start with the name — what is your business called?",
+      business_story_prompt: "Thanks! Now tell me about the business - what do you do and what brought you here today?",
       client_workflow_prompt: "Thanks! How do you typically work with clients? Do you have set services and prices, or is it more custom per client?",
       client_workflow_options: ['Fixed services and prices', 'Custom per client', 'A mix of both'],
       service_details_prompt: "Perfect! Can you tell me more about your services? For example: service name, duration (in minutes), and price.",
+      service_details_quote_prompt: "Perfect! Even if you quote each client separately — what do you offer? For example: service name and duration (in minutes). We'll leave the price to the quote.",
+      service_details_mixed_prompt: "Perfect! Tell me about your services — name and duration (in minutes). Where you have a set price, write it; where you agree it with the client, just leave it out.",
       need_price_prompt: "What is the price for {services}?",
       more_services_prompt: "Great! I've added {count} service(s). Do you have more services to add?",
       more_services_options: ['I have more', "That's all"],
-      client_acquisition_prompt: "Which of the following would you like to have? (select all that apply)",
-      client_acquisition_options: [
-        'Professional website',
-        'Email campaigns & reminders',
-        'Social media presence',
-        'None of these for now',
+      payment_collection_prompt: "And when someone books a paid service — do they pay online, or do you collect the money yourself?",
+      payment_collection_options: [
+        'The client pays online by card — needs a payment gateway',
+        'I collect the money myself — invoice, transfer or cash',
       ],
-      client_tracking_prompt: "How do you currently keep track of your clients and their progress? Do you use any tools or is it mostly in your head?",
+      client_acquisition_prompt: "Now — how will clients find you and book? Tick whatever applies (or nothing), and I will build what you choose.",
+      client_acquisition_options: [
+        'Build me a professional website',
+        'Connect Facebook, Instagram or Google — see where clients come from',
+      ],
+      client_tracking_prompt: "And how do you keep track of your clients and their progress today?",
+      client_tracking_options: [
+        'Excel or Google Sheets',
+        'Paper, a notebook or a notes app',
+        "All in my head",
+        'I already have a CRM',
+      ],
       default_company: 'your business',
       preview_options: ["Yes, let's get started!", 'I want to change something'],
       adjustment_prompt: "What would you like to change?",

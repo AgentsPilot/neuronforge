@@ -13,6 +13,8 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { STAGE_TRANSLATIONS } from '@/lib/business-os/stageLabels';
+import { getVerticalLabel } from '@/lib/business-os/verticalLabels';
 
 const logger = createLogger({ service: 'OnboardingConfigurationService' });
 
@@ -29,8 +31,34 @@ export type PaymentMode = 'none' | 'upfront' | 'invoicing' | 'installments';
 export interface ExtractedService {
   name: string;
   duration_minutes?: number | null;
-  price?: number;
+  price?: number | null;
+  /**
+   * Two facts that decide this service's client journey, and with it what the
+   * setup must ask for. Both belong to the service: one business can sell an
+   * appointment paid by card and a programme billed against an invoice, and
+   * only the first of those needs a card processor connected.
+   */
   is_scheduled?: boolean;
+  collection?: 'online' | 'invoice' | null;
+  /**
+   * What they wrote the price in, when they wrote it — never inferred from the
+   * language they are speaking. A Hebrew-speaking practice serving clients
+   * abroad charges in dollars, and guessing from the interface language put the
+   * wrong symbol on every price it had.
+   */
+  currency?: string | null;
+  /**
+   * Paid off over time — "3 monthly payments of 200".
+   *
+   * Defined per service because that is how the platform stores it: a
+   * `payment_plans` row hangs off a service and describes the offer. Naming one
+   * in the chat is the same act as building one in the service settings, so it
+   * should not require going there afterwards to say what was already said.
+   */
+  payment_plan?: {
+    installment_count: number;
+    installment_frequency: 'weekly' | 'biweekly' | 'monthly';
+  } | null;
 }
 
 export interface BusinessStoryExtraction {
@@ -52,19 +80,48 @@ export interface ClientWorkflowExtraction {
   pricing_model?: PricingModel;
   payment_timing?: PaymentTiming;
   booking_method?: BookingMethod;
+  /**
+   * How the money physically reaches them — the question `payment_timing` was
+   * being made to answer and could not. Null when they did not say, which is
+   * respected rather than guessed: a price says nothing about collection, and
+   * assuming cards demands a Stripe account from a business taking transfers.
+   */
+  collection_method?: CollectionMethod | null;
+  /**
+   * Clients fill in a form before their appointment.
+   *
+   * One answer for the business rather than one per service, because that is
+   * how the platform stores it: a single `user_intake_settings` row with a
+   * template. What the form asks is theirs to choose, which is why the build
+   * hands it back as work only they can do rather than inventing questions for
+   * their clients.
+   */
+  needs_intake?: boolean;
   needs_more_details?: boolean;
 }
+
+/** How the money physically reaches the business. */
+export type CollectionMethod = 'card_online' | 'invoice' | 'in_person' | 'mixed' | 'none';
 
 // NEW: Q4 - What digital tools do you need? (multi-select)
 export interface ClientAcquisitionExtraction {
   acquisition_channels?: string[];  // website, email_campaigns, social_media
-  has_website?: boolean;
+  /** Null when the answer does not say — declining our website is not the
+   *  same as having none of their own. */
+  has_website?: boolean | null;
   website_quality?: 'good' | 'outdated' | 'basic' | null;
   wants_more_clients_online?: boolean;
   primary_channel?: string;
   needs_website?: boolean;       // User selected "Professional website"
-  needs_campaigns?: boolean;     // User selected "Email campaigns & reminders"
-  needs_social_media?: boolean;  // User selected "Social media presence"
+  /**
+   * They want the accounts they already have connected — Facebook, Instagram,
+   * Google — so the dashboard can report where clients came from.
+   *
+   * Replaces `needs_campaigns` and `needs_social_media`, which offered to run
+   * campaigns and build a social presence. The platform does neither: it reads
+   * those channels, it does not write to them.
+   */
+  needs_channel_insights?: boolean;
 }
 
 // NEW: Q5 - How do you track clients?
@@ -115,7 +172,11 @@ export interface InferredConfiguration {
 
   // Payment Configuration
   payment_mode: PaymentMode;
+  /** How the money reaches them. Decides whether Stripe is ever mentioned. */
+  collection_method: CollectionMethod;
   needs_stripe_connect: boolean;
+  /** Clients fill in a form before their appointment. */
+  needs_intake: boolean;
 
   // CRM Configuration
   pipeline_stages: PipelineStage[];
@@ -301,46 +362,6 @@ const SUB_VERTICAL_PIPELINES: Record<string, PipelineStage[]> = {
 };
 
 // Stage label translations by stage_key
-const STAGE_TRANSLATIONS: Record<string, Record<string, string>> = {
-  // Common stages
-  inquiry: { en: 'Inquiry', he: 'פנייה', es: 'Consulta' },
-  lead: { en: 'Lead', he: 'ליד', es: 'Prospecto' },
-  qualified: { en: 'Qualified', he: 'מתאים', es: 'Calificado' },
-  intake: { en: 'Intake', he: 'קליטה', es: 'Admisión' },
-  consultation: { en: 'Consultation', he: 'ייעוץ', es: 'Consulta' },
-  discovery_call: { en: 'Discovery Call', he: 'שיחת היכרות', es: 'Llamada de Descubrimiento' },
-  proposal: { en: 'Proposal', he: 'הצעה', es: 'Propuesta' },
-  negotiation: { en: 'Negotiation', he: 'משא ומתן', es: 'Negociación' },
-  active_client: { en: 'Active Client', he: 'לקוח פעיל', es: 'Cliente Activo' },
-  active_project: { en: 'Active Project', he: 'פרויקט פעיל', es: 'Proyecto Activo' },
-  active_case: { en: 'Active Case', he: 'תיק פעיל', es: 'Caso Activo' },
-  active_student: { en: 'Active Student', he: 'תלמיד פעיל', es: 'Estudiante Activo' },
-  enrolled: { en: 'Enrolled', he: 'רשום', es: 'Inscrito' },
-  retained: { en: 'Retained', he: 'משתמר', es: 'Retenido' },
-  completed: { en: 'Completed', he: 'הושלם', es: 'Completado' },
-  closed: { en: 'Closed', he: 'סגור', es: 'Cerrado' },
-  inactive: { en: 'Inactive', he: 'לא פעיל', es: 'Inactivo' },
-  churned: { en: 'Churned', he: 'עזב', es: 'Cancelado' },
-  first_session: { en: 'First Session', he: 'פגישה ראשונה', es: 'Primera Sesión' },
-  regular_client: { en: 'Regular Client', he: 'לקוח קבוע', es: 'Cliente Regular' },
-  new_client: { en: 'New Client', he: 'לקוח חדש', es: 'Cliente Nuevo' },
-  regular: { en: 'Regular', he: 'קבוע', es: 'Regular' },
-  vip: { en: 'VIP', he: 'VIP', es: 'VIP' },
-  trial: { en: 'Trial', he: 'ניסיון', es: 'Prueba' },
-  member: { en: 'Member', he: 'חבר', es: 'Miembro' },
-  premium: { en: 'Premium', he: 'פרימיום', es: 'Premium' },
-  customer: { en: 'Customer', he: 'לקוח', es: 'Cliente' },
-  // Sub-vertical specific stages
-  initial_consultation: { en: 'Initial Consultation', he: 'ייעוץ ראשוני', es: 'Consulta Inicial' },
-  family_enrolled: { en: 'Family Enrolled', he: 'משפחה רשומה', es: 'Familia Inscrita' },
-  in_progress: { en: 'In Progress', he: 'בתהליך', es: 'En Progreso' },
-  active_engagement: { en: 'Active Engagement', he: 'התקשרות פעילה', es: 'Compromiso Activo' },
-  assessment: { en: 'Assessment', he: 'הערכה', es: 'Evaluación' },
-  interested: { en: 'Interested', he: 'מעוניין', es: 'Interesado' },
-  registered: { en: 'Registered', he: 'רשום', es: 'Registrado' },
-  attended: { en: 'Attended', he: 'השתתף', es: 'Asistió' },
-  follow_up: { en: 'Follow Up', he: 'מעקב', es: 'Seguimiento' },
-};
 
 // ============================================================
 // PAIN POINT TO CAPABILITY/BUILDING BLOCK MAPPINGS
@@ -455,6 +476,7 @@ export class OnboardingConfigurationService {
     // Compute each aspect
     const onlinePresenceMode = this.computeOnlinePresenceMode(extracted);
     const paymentMode = this.computePaymentMode(extracted);
+    const collectionMethod = this.computeCollectionMethod(extracted, paymentMode);
     const { capabilities, buildingBlocks, reasons } = this.computeCapabilitiesAndBlocks(extracted);
 
     // Check if CRM capability was added (if not, don't include pipeline)
@@ -482,7 +504,19 @@ export class OnboardingConfigurationService {
 
       // Payment
       payment_mode: paymentMode,
-      needs_stripe_connect: paymentMode !== 'none',
+      collection_method: collectionMethod,
+      // A processor is needed only where cards are actually taken. This used to
+      // be `paymentMode !== 'none'`, which asked every business that charges
+      // anything at all to open a Stripe account — including the ones that
+      // invoice and take a bank transfer.
+      // Read off the services, never asked. A processor is needed when some
+      // service is collected online — a practice that takes a card for a
+      // session and invoices for a programme needs one; a consultancy that
+      // invoices for everything never does. The business-wide
+      // `collection_method` above is kept as a summary for older readers, but
+      // it is not what decides this any more.
+      needs_stripe_connect: services.some(service => service.collection === 'online'),
+      needs_intake: extracted.needs_intake === true,
 
       // CRM - Only include pipeline if CRM capability is being added
       // Pipeline stages help organize client journey tracking
@@ -580,6 +614,31 @@ export class OnboardingConfigurationService {
   }
 
   /**
+   * How the money reaches the business.
+   *
+   * Prefers what they actually said. Falls back on payment timing only as a
+   * reading-across for older conversations — "pay to book" almost always meant
+   * a card, "invoice after" almost always meant a transfer — and never invents
+   * a card processor for a business that simply named a price.
+   */
+  private computeCollectionMethod(data: ExtractedData, paymentMode: PaymentMode): CollectionMethod {
+    if (data.collection_method) return data.collection_method;
+
+    if (paymentMode === 'none') return 'none';
+
+    switch (data.payment_timing) {
+      case 'before': return 'card_online';
+      case 'after':
+      case 'installments': return 'invoice';
+      default:
+        // Priced, and they never said how. An invoice is the safe assumption:
+        // it asks for bank details they already have, rather than sending them
+        // through a Stripe identity check they may not need at all.
+        return 'invoice';
+    }
+  }
+
+  /**
    * Get CRM pipeline stages for a vertical/sub-vertical
    * Priority: sub_vertical > vertical > default
    */
@@ -673,17 +732,27 @@ export class OnboardingConfigurationService {
     }
 
     // 3. Add based on payment needs
-    const hasPaidServices = data.services?.some(s => s.price && s.price > 0);
-    if (hasPaidServices) {
+    // What gets switched on is read off the services, not guessed from a
+    // business-wide timing answer.
+    //
+    // `payment_timing === 'after' || pricing_model === 'custom'` was standing
+    // in for "this business invoices". It got that wrong in both directions: a
+    // practice taking cards at booking AND billing a programme afterwards
+    // matched only the first branch, so invoicing was never switched on for
+    // the half of its catalogue that needs it — and the user was later asked
+    // to configure invoices for a capability nothing had enabled.
+    const pricedServices = (data.services || []).filter(s => s.price && s.price > 0);
+
+    if (pricedServices.length > 0) {
       addCapability('payments', 'You have paid services');
 
-      if (data.payment_timing === 'before' || data.pricing_model === 'fixed') {
+      if (pricedServices.some(s => s.collection === 'online')) {
         addBlock('payments', 'online_payments');
       }
-      if (data.payment_timing === 'after' || data.pricing_model === 'custom') {
+      if (pricedServices.some(s => s.collection === 'invoice')) {
         addBlock('payments', 'invoicing');
       }
-      if (data.payment_timing === 'installments') {
+      if (pricedServices.some(s => s.payment_plan && s.payment_plan.installment_count >= 2)) {
         addBlock('payments', 'installments');
       }
     }
@@ -719,15 +788,13 @@ export class OnboardingConfigurationService {
     });
 
     // 6. Add based on Q4 multi-select (explicit digital tools selection)
-    if (data.clientAcquisition?.needs_campaigns) {
-      addCapability('email_automation', 'You want email campaigns & reminders');
-      addBlock('email_automation', 'automated_reminders');
-      addBlock('email_automation', 'follow_ups');
-      addBlock('email_automation', 'campaigns');
-    }
-
-    if (data.clientAcquisition?.needs_social_media) {
-      addCapability('campaigns', 'You want social media presence');
+    if (data.clientAcquisition?.needs_channel_insights) {
+      addCapability('insights', 'You want to see where your clients come from');
+      // And the precise one. `insights` is also granted for seeing 5+ clients a
+      // week, for a data-analysis goal and by a pain-point mapping, so it can
+      // never answer "did this person ask for their accounts to be connected?"
+      // — which is the only question the channels card needs answered.
+      addCapability('channel_insights', 'You want to connect Facebook, Instagram or Google');
     }
 
     // 7. Volume-based additions
@@ -735,10 +802,7 @@ export class OnboardingConfigurationService {
 
     if (clientsPerWeek >= 5) {
       addBlock('crm', 'pipeline_stages');
-      // Only add email_automation if not already added from Q4
-      if (!data.clientAcquisition?.needs_campaigns) {
-        addCapability('email_automation', `You see ${clientsPerWeek}+ clients/week`);
-      }
+      addCapability('email_automation', `You see ${clientsPerWeek}+ clients/week`);
     }
 
     if (clientsPerWeek >= 10) {
@@ -807,42 +871,9 @@ export class OnboardingConfigurationService {
    * Supports both raw verticals (teacher, wellness) and normalized verticals (tutor, therapist)
    */
   getVerticalDisplayName(vertical: string, language: 'en' | 'he' | 'es' = 'en'): string {
-    const names: Record<string, Record<string, string>> = {
-      // Template-compatible verticals (normalized)
-      therapist: { en: 'Therapist', he: 'מטפל/ת', es: 'Terapeuta' },
-      coach: { en: 'Coach', he: 'מאמן/ת', es: 'Coach' },
-      consultant: { en: 'Consultant', he: 'יועץ/ת', es: 'Consultor' },
-      lawyer: { en: 'Lawyer', he: 'עורך/ת דין', es: 'Abogado' },
-      photographer: { en: 'Photographer', he: 'צלם/ת', es: 'Fotógrafo' },
-      realtor: { en: 'Realtor', he: 'סוכן נדל"ן', es: 'Agente Inmobiliario' },
-      trainer: { en: 'Trainer', he: 'מדריך/ה', es: 'Entrenador' },
-      tutor: { en: 'Tutor / Teacher', he: 'מורה / מדריך', es: 'Tutor / Profesor' },
-      beauty: { en: 'Beauty Professional', he: 'מקצועות היופי', es: 'Profesional de Belleza' },
-
-      // Raw verticals (before normalization) - for display in conversation
-      wellness: { en: 'Wellness', he: 'בריאות ורווחה', es: 'Bienestar' },
-      beauty: { en: 'Beauty', he: 'יופי וטיפוח', es: 'Belleza' },
-      makeup_artist: { en: 'Makeup Artist', he: 'מאפרת', es: 'Maquilladora' },
-      makeup: { en: 'Makeup Artist', he: 'מאפרת', es: 'Maquilladora' },
-      esthetician: { en: 'Esthetician', he: 'קוסמטיקאית', es: 'Esteticista' },
-      nail_tech: { en: 'Nail Technician', he: 'מניקוריסטית', es: 'Manicurista' },
-      hairdresser: { en: 'Hairdresser', he: 'ספר/ית', es: 'Peluquero/a' },
-      hairstylist: { en: 'Hairstylist', he: 'מעצב/ת שיער', es: 'Estilista' },
-      barber: { en: 'Barber', he: 'ספר', es: 'Barbero' },
-      spa: { en: 'Spa', he: 'ספא', es: 'Spa' },
-      fitness: { en: 'Fitness', he: 'כושר', es: 'Fitness' },
-      designer: { en: 'Designer', he: 'מעצב/ת', es: 'Diseñador' },
-      accountant: { en: 'Accountant', he: 'רואה חשבון', es: 'Contador' },
-      doctor: { en: 'Doctor', he: 'רופא/ה', es: 'Doctor' },
-      dentist: { en: 'Dentist', he: 'רופא/ת שיניים', es: 'Dentista' },
-      teacher: { en: 'Teacher / Educator', he: 'מורה / מחנך', es: 'Profesor / Educador' },
-      educator: { en: 'Educator', he: 'מחנך/ת', es: 'Educador' },
-      instructor: { en: 'Instructor', he: 'מדריך/ה', es: 'Instructor' },
-      other: { en: 'Service Provider', he: 'נותן שירות', es: 'Proveedor de Servicios' },
-      default: { en: 'Service Provider', he: 'נותן שירות', es: 'Proveedor de Servicios' },
-    };
-
-    return names[vertical]?.[language] || vertical;
+    // The table moved to lib/business-os/verticalLabels so the interface can
+    // read it too — the settings page was printing the raw key.
+    return getVerticalLabel(vertical, language);
   }
 }
 

@@ -14,6 +14,7 @@ import {
   Page,
   Text,
   View,
+  Image,
   StyleSheet,
   renderToBuffer,
 } from '@react-pdf/renderer';
@@ -27,6 +28,7 @@ import {
 import type { PaymentInvoice, InvoiceLineItem, InvoiceAddress } from '@/lib/repositories/PaymentRepository';
 import type { InvoiceSettings } from '@/lib/repositories/BusinessProfileRepository';
 import { createLogger } from '@/lib/logger';
+import { registerThemeFont } from './themeFonts';
 
 const logger = createLogger({ module: 'InvoicePDFGenerator' });
 
@@ -196,7 +198,10 @@ const VERTICAL_CONFIGS: Record<string, VerticalConfig> = {
  */
 export interface InvoicePDFData {
   invoice: PaymentInvoice;
-  businessSettings: InvoiceSettings;
+  businessSettings: InvoiceSettings & {
+    /** The business's logo. Owned by the profile — the invoice only wears it. */
+    logo_url?: string | null;
+  };
   businessName?: string;
   businessVertical?: string;
   contactName?: string;
@@ -204,6 +209,18 @@ export interface InvoicePDFData {
   contactPhone?: string;
   contactAddress?: InvoiceAddress;
   language?: Language;
+  /**
+   * The business's own design, from its website theme — the same source the
+   * emails use. Absent falls back to the per-vertical palette, which is what
+   * every invoice looked like before.
+   */
+  branding?: {
+    primaryColor?: string;
+    accentColor?: string;
+    /** Already registered with react-pdf, or omitted. See lib/pdf/themeFonts.ts. */
+    headingFont?: string;
+    bodyFont?: string;
+  };
 }
 
 /**
@@ -328,14 +345,22 @@ interface InvoiceDocumentProps {
 }
 
 const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
-  const { invoice, businessSettings, businessName, businessVertical } = data;
+  const { invoice, businessSettings, businessName, businessVertical, branding } = data;
   const language = data.language || 'en';
   const isRTL = language === 'he';
-  const config = getVerticalConfig(businessVertical);
+  // The business's own colours where it has them; the vertical palette is the
+  // fallback for a business that has never chosen any.
+  const verticalConfig = getVerticalConfig(businessVertical);
+  const config = {
+    primaryColor: branding?.primaryColor || verticalConfig.primaryColor,
+    accentColor: branding?.accentColor || verticalConfig.accentColor,
+  };
   const labels = getLabels(language);
 
-  // For Hebrew, use RTL page style from react-pdf-rtl
-  const fontFamily = isRTL ? 'Rubik' : 'Helvetica';
+  // Hebrew keeps Rubik: the Latin faces a theme names almost never carry Hebrew
+  // glyphs, and the invoice would render as empty boxes.
+  const fontFamily = isRTL ? 'Rubik' : (branding?.bodyFont || 'Helvetica');
+  const headingFontFamily = isRTL ? 'Rubik' : (branding?.headingFont || branding?.bodyFont || 'Helvetica');
 
   // Prepare data
   const lineItems = invoice.line_items || [];
@@ -371,7 +396,17 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
     invoiceSection: {
       width: '40%',
     },
+    logo: {
+      // Matches the height the email header uses, so an invoice and its
+      // covering email look like the same business.
+      height: 48,
+      maxWidth: 160,
+      objectFit: 'contain',
+      marginBottom: 8,
+      alignSelf: isRTL ? 'flex-end' : 'flex-start',
+    },
     companyName: {
+      fontFamily: headingFontFamily,
       fontSize: 18,
       fontWeight: 700,
       color: config.primaryColor,
@@ -391,6 +426,7 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
       marginBottom: 2,
     },
     invoiceNumber: {
+      fontFamily: headingFontFamily,
       fontSize: 12,
       fontWeight: 700,
       color: config.primaryColor,
@@ -578,6 +614,13 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.companySection}>
+            {/* The logo was passed to this generator for months and never drawn,
+                so the PDF was the one invoice surface with no branding at all.
+                A broken or unreachable URL must not fail the render, hence the
+                plain presence check and the company name underneath regardless. */}
+            {businessSettings.logo_url ? (
+              <Image style={styles.logo} src={businessSettings.logo_url} />
+            ) : null}
             <SmartText style={styles.companyName} isRTL={isRTL}>{companyName}</SmartText>
             {businessAddressLines.map((line, idx) => (
               <SmartText key={idx} style={styles.companyAddress} isRTL={isRTL}>{line}</SmartText>
@@ -756,8 +799,20 @@ export async function generateInvoicePDFAsync(data: InvoicePDFData): Promise<Buf
     ensureHebrewSetup();
   }
 
+  // Register the business's theme fonts before the document names them.
+  // Skipped for Hebrew, which keeps Rubik — see lib/pdf/themeFonts.ts. Either
+  // may come back null, and the styles fall back on their own.
+  let branding = data.branding;
+  if (!isRTL && branding && (branding.headingFont || branding.bodyFont)) {
+    const [headingFont, bodyFont] = await Promise.all([
+      registerThemeFont(branding.headingFont),
+      registerThemeFont(branding.bodyFont),
+    ]);
+    branding = { ...branding, headingFont: headingFont ?? undefined, bodyFont: bodyFont ?? undefined };
+  }
+
   // Create the document element
-  const doc = React.createElement(InvoiceDocument, { data });
+  const doc = React.createElement(InvoiceDocument, { data: { ...data, branding } });
 
   // Render to buffer
   const buffer = await renderToBuffer(doc);

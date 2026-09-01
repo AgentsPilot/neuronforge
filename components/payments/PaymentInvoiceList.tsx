@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { createLogger } from '@/lib/logger';
 import { InvoiceModal } from './InvoiceModal';
+import { RefundModal } from './RefundModal';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import {
   FileText,
@@ -12,6 +14,7 @@ import {
   Download,
   Link2,
   X,
+  AlertTriangle,
   Loader2,
   Check,
   ExternalLink,
@@ -20,6 +23,7 @@ import {
   ChevronRight,
   Mail,
   CreditCard,
+  RotateCcw,
 } from 'lucide-react';
 
 const logger = createLogger({ module: 'PaymentInvoiceList' });
@@ -38,7 +42,10 @@ interface PaymentInvoice {
   invoice_number: string;
   amount: number;
   currency: string;
-  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
+  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled' | 'refunded' | 'partially_refunded';
+  /** Derived from the invoice's payments by trigger — never written directly. */
+  refunded_amount?: number | null;
+  refund_status?: 'none' | 'partial' | 'full' | null;
   contact_id: string | null;
   client_name: string | null;
   client_email: string | null;
@@ -68,11 +75,27 @@ interface PaymentInvoiceListProps {
   highlightId?: string | null;
 }
 
+/**
+ * Column tracks for the invoice table, defined once.
+ *
+ * The header and each row are SEPARATE grids — the header is a sibling of the
+ * rows, not their parent — so every one of them resolves its own tracks. The
+ * last track was `auto`, which measures whatever that grid contains: five
+ * action buttons on an overdue invoice, two on a paid one, and the words
+ * "Actions" in the header. Each grid therefore had a different last column, the
+ * `1fr` columns absorbed the difference by different amounts, and the headers
+ * ended up standing over the wrong data — a column apparently without a header.
+ *
+ * Every track is now fixed or fractional, so all of them resolve identically.
+ * 208px fits the widest action set: five 36px buttons with four 6px gaps.
+ */
+const INVOICE_GRID = 'grid-cols-[120px_1fr_1fr_85px_85px_95px_80px_208px]';
+
 export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highlightId }: PaymentInvoiceListProps) {
   const { t, isRTL, language } = useLanguage();
   const [invoices, setInvoices] = useState<PaymentInvoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<'all' | 'draft' | 'sent' | 'paid' | 'overdue'>('all');
+  const [filter, setFilter] = useState<'all' | 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled'>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showSendModal, setShowSendModal] = useState<PaymentInvoice | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -82,6 +105,18 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
   const [totalCount, setTotalCount] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [hasStripeConnect, setHasStripeConnect] = useState<boolean | null>(null);
+  /**
+   * The invoice the user is being asked to confirm voiding, and anything that
+   * went wrong while acting on the list.
+   *
+   * Both used to be browser popups — a confirm() to void and eight alert()s for
+   * failures — which sit outside the page, cannot be styled or translated in
+   * place, and read as a browser error rather than the product answering.
+   */
+  const [refundTarget, setRefundTarget] = useState<PaymentInvoice | null>(null);
+  const [voidTarget, setVoidTarget] = useState<PaymentInvoice | null>(null);
+  const [voidError, setVoidError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
   const handleCreateInvoice = () => {
     if (onCreateInvoice) {
@@ -93,15 +128,27 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
 
   useEffect(() => {
     setPage(0);
-    // Fetch stats on initial load only
-    fetchInvoices(0, !stats);
+    // Stats travel with every fetch, not just the first.
+    //
+    // They were requested only while `stats` was still null, so the cards kept
+    // the numbers from the moment the page loaded: sending, cancelling or
+    // paying an invoice — or the server moving one to overdue — changed the
+    // list underneath cards that never moved. The extra query reads one row per
+    // invoice and is answered alongside the list.
+    fetchInvoices(0);
   }, [filter]);
 
-  // Check if Stripe Connect is configured
+  // Check if Stripe Connect is configured.
+  //
+  // This asked `/stripe-connect/refresh-status`, which only accepts POST — so
+  // every mount got a 405, the catch swallowed it, and hasStripeConnect was
+  // permanently false, hiding the payment-link button on every invoice. It also
+  // would have called out to Stripe on each page view; reading the stored
+  // account is what this needs, and `/stripe-connect` GET returns exactly that.
   useEffect(() => {
     const checkStripeConnect = async () => {
       try {
-        const response = await fetch('/api/payments/stripe-connect/refresh-status');
+        const response = await fetch('/api/payments/stripe-connect');
         const result = await response.json();
         setHasStripeConnect(result.success && result.data?.charges_enabled === true);
       } catch {
@@ -136,11 +183,23 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
     );
   });
 
-  const fetchInvoices = async (pageNum: number = 0, fetchStats: boolean = false) => {
+  const fetchInvoices = async (pageNum: number = 0, fetchStats: boolean = true) => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
-      if (filter !== 'all') params.set('status', filter);
+      // Sent means every issued invoice, late ones included — an overdue
+      // invoice is still one the client was asked to pay. Overdue stays a
+      // narrower view of the same set.
+      if (filter === 'sent') {
+        params.set('status', 'sent,pending,overdue');
+      } else if (filter === 'paid') {
+        // A refunded invoice was paid. Narrowing to status='paid' alone would
+        // make it vanish from this tab the moment it was refunded, which reads
+        // as the record having been deleted.
+        params.set('status', 'paid,refunded,partially_refunded');
+      } else if (filter !== 'all') {
+        params.set('status', filter);
+      }
       if (fetchStats) params.set('include_stats', 'true');
       params.set('limit', String(PAGE_SIZE));
       params.set('offset', String(pageNum * PAGE_SIZE));
@@ -186,11 +245,11 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
       if (result.success) {
         fetchInvoices(); // Refresh list
       } else {
-        alert(result.error || 'Failed to send invoice');
+        setListError(result.error || t('payments.send_failed'));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to send invoice');
-      alert('Failed to send invoice');
+      setListError(t('payments.send_failed'));
     } finally {
       setActionLoading(null);
     }
@@ -201,17 +260,15 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
     try {
       setActionLoading(invoice.id);
 
-      // If we have a Stripe PDF URL, open it directly
-      if (invoice.stripe_invoice_pdf) {
-        window.open(invoice.stripe_invoice_pdf, '_blank');
-        return;
-      }
-
-      // Otherwise, fetch from our endpoint
+      // Always ask our endpoint, even when Stripe has a PDF of its own.
+      // Stripe's copy is always English, in Stripe's layout, with none of the
+      // business's logo, colours or fonts — which is why a downloaded invoice
+      // looked nothing like the one that arrives by email. The endpoint falls
+      // back to Stripe (as a redirect) only if our own generation fails.
       const response = await fetch(`/api/payments/invoices/${invoice.id}/pdf`);
 
       if (response.redirected) {
-        // Stripe PDF URL redirect
+        // Our generation failed and the endpoint handed back Stripe's copy.
         window.open(response.url, '_blank');
       } else if (response.ok) {
         // Custom PDF blob
@@ -224,11 +281,11 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
         URL.revokeObjectURL(url);
       } else {
         const result = await response.json();
-        alert(result.error || 'Failed to download PDF');
+        setListError(result.error || t('payments.pdf_failed'));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to download PDF');
-      alert('Failed to download PDF');
+      setListError(t('payments.pdf_failed'));
     } finally {
       setActionLoading(null);
     }
@@ -256,39 +313,53 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
         setCopiedLink(invoice.id);
         setTimeout(() => setCopiedLink(null), 2000);
       } else {
-        alert(result.error || 'Failed to get payment link');
+        setListError(result.error || t('payments.link_failed'));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to copy payment link');
-      alert('Failed to copy payment link');
+      setListError(t('payments.link_failed'));
     } finally {
       setActionLoading(null);
     }
   };
 
-  // Void/Cancel invoice
-  const handleVoidInvoice = async (invoiceId: string) => {
-    if (!confirm(t('payments.confirm_void') || 'Are you sure you want to void this invoice?')) {
-      return;
-    }
+  /**
+   * Void the invoice the confirmation dialog is holding.
+   *
+   * Sent as PUT. This used to be PATCH, which no handler on the route exports,
+   * so every void since this list shipped returned 405 and died in an alert
+   * saying "Failed to void invoice" — the action had never once worked.
+   */
+  const handleVoidInvoice = async () => {
+    if (!voidTarget) return;
+    const invoiceId = voidTarget.id;
 
     try {
       setActionLoading(invoiceId);
+      setVoidError(null);
       const response = await fetch(`/api/payments/invoices/${invoiceId}`, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'cancelled' }),
       });
-      const result = await response.json();
+      const result = await response.json().catch(() => null);
 
-      if (result.success) {
+      if (result?.success) {
+        setVoidTarget(null);
         fetchInvoices();
-      } else {
-        alert(result.error || 'Failed to void invoice');
+        return;
       }
+
+      // The server refuses to void money that has already arrived. Say what to
+      // do about it rather than repeating its sentence.
+      setVoidError(
+        result?.code === 'INVOICE_PAID'
+          ? t('payments.void_blocked_paid')
+          : result?.error || t('payments.void_failed')
+      );
     } catch (error) {
-      logger.error({ err: error }, 'Failed to void invoice');
-      alert('Failed to void invoice');
+      logger.error({ err: error, invoiceId }, 'Failed to void invoice');
+      setVoidError(t('payments.void_failed'));
     } finally {
       setActionLoading(null);
     }
@@ -338,8 +409,27 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
         dot: 'bg-slate-400',
         accent: 'slate'
       },
+      // Money went back. Orange rather than red: a refund is a completed,
+      // deliberate act, not a failure like an overdue invoice.
+      refunded: {
+        bg: 'bg-orange-50 dark:bg-orange-900/20',
+        text: 'text-orange-700 dark:text-orange-300',
+        border: 'border-orange-200 dark:border-orange-800',
+        dot: 'bg-orange-500',
+        accent: 'orange'
+      },
+      partially_refunded: {
+        bg: 'bg-amber-50 dark:bg-amber-900/20',
+        text: 'text-amber-700 dark:text-amber-300',
+        border: 'border-amber-200 dark:border-amber-800',
+        dot: 'bg-amber-500',
+        accent: 'amber'
+      },
     };
-    return configs[status];
+    // Falls back rather than returning undefined. The caller dereferences
+    // `config.bg` immediately, so an unrecognised status used to crash the whole
+    // list — which is what a widened status union did until this was added.
+    return configs[status] ?? configs.draft;
   };
 
   const getStatusBadge = (status: PaymentInvoice['status']) => {
@@ -368,6 +458,31 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
       month: 'short',
       day: 'numeric',
     });
+  };
+
+  /**
+   * Is this invoice past its due date?
+   *
+   * Judged from the date rather than from `status`, because the status only
+   * becomes 'overdue' when something writes it — a row can be late for a week
+   * while still saying 'sent'. Compared date-to-date so an invoice due today is
+   * never late because of the time of day.
+   */
+  const isOverdue = (invoice: PaymentInvoice): boolean => {
+    if (!invoice.due_date) return false;
+    // A refunded invoice was paid — the money arrived and then went back — so
+    // it can never be late. Without these two it would start showing as overdue
+    // the moment its due date passed, chasing a client who already paid.
+    if (['paid', 'cancelled', 'draft', 'refunded', 'partially_refunded'].includes(invoice.status)) {
+      return false;
+    }
+
+    const due = new Date(invoice.due_date);
+    const dueMidnight = new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime();
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    return todayMidnight > dueMidnight;
   };
 
   const translatePaymentTerms = (terms: string | null | undefined): string => {
@@ -442,8 +557,27 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
   return (
     <div className="space-y-4" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Stats Summary Bar - Modern Design */}
+      {/* Where the failures that used to be browser alerts land. Dismissible,
+          because it reports the last action rather than the state of the list. */}
+      {listError && (
+        <div
+          className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+        >
+          <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+          <p className="text-sm text-red-600 dark:text-red-400 flex-1 leading-relaxed">{listError}</p>
+          <button
+            onClick={() => setListError(null)}
+            className="text-red-500 hover:text-red-700 shrink-0"
+            aria-label={t('button.cancel')}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {stats && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           {/* Draft */}
           <button
             onClick={() => setFilter(filter === 'draft' ? 'all' : 'draft')}
@@ -457,7 +591,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
             <div className="absolute top-0 start-0 w-1 h-full bg-gray-400" />
             <div className="flex items-center gap-2 mb-2">
               <div className="w-2 h-2 rounded-full bg-gray-400" />
-              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-gray-500 dark:text-gray-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.invoice_status.draft') || 'Draft'}
               </span>
             </div>
@@ -482,7 +616,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
             <div className="absolute top-0 start-0 w-1 h-full bg-blue-500" />
             <div className="flex items-center gap-2 mb-2">
               <div className="w-2 h-2 rounded-full bg-blue-500" />
-              <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-blue-600 dark:text-blue-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.invoice_status.sent') || 'Sent'}
               </span>
             </div>
@@ -507,7 +641,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
             <div className="absolute top-0 start-0 w-1 h-full bg-emerald-500" />
             <div className="flex items-center gap-2 mb-2">
               <div className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-emerald-600 dark:text-emerald-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.invoice_status.paid') || 'Paid'}
               </span>
             </div>
@@ -532,7 +666,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
             <div className="absolute top-0 start-0 w-1 h-full bg-red-500" />
             <div className="flex items-center gap-2 mb-2">
               <div className={`w-2 h-2 rounded-full bg-red-500 ${stats.overdue.count > 0 ? 'animate-pulse' : ''}`} />
-              <span className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wider">
+              <span className={`text-xs font-semibold text-red-600 dark:text-red-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                 {t('payments.invoice_status.overdue') || 'Overdue'}
               </span>
             </div>
@@ -541,6 +675,33 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
             </div>
             <div className="text-xs text-[var(--v2-text-muted)]">
               {stats.overdue.count} {stats.overdue.count === 1 ? t('payments.invoice_singular') || 'invoice' : t('payments.invoice_plural') || 'invoices'}
+            </div>
+          </button>
+
+          {/* Cancelled — money that was invoiced and then written off. Kept
+              visible rather than hidden: an invoice cancelled by mistake is
+              otherwise unreachable, and the total is worth knowing. */}
+          <button
+            onClick={() => setFilter(filter === 'cancelled' ? 'all' : 'cancelled')}
+            className={`relative p-4 bg-[var(--v2-surface)] border-2 transition-all duration-200 text-start group overflow-hidden ${
+              filter === 'cancelled'
+                ? 'border-slate-400 dark:border-slate-500 shadow-md'
+                : 'border-transparent hover:border-slate-300 dark:hover:border-slate-600'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="absolute top-0 start-0 w-1 h-full bg-slate-400" />
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-2 h-2 rounded-full bg-slate-400" />
+              <span className={`text-xs font-semibold text-slate-500 dark:text-slate-400 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
+                {t('payments.invoice_status.cancelled') || 'Cancelled'}
+              </span>
+            </div>
+            <div className="text-2xl font-bold text-[var(--v2-text-muted)] mb-0.5 line-through decoration-1">
+              {formatStatAmount(stats.cancelled.total)}
+            </div>
+            <div className="text-xs text-[var(--v2-text-muted)]">
+              {stats.cancelled.count} {stats.cancelled.count === 1 ? t('payments.invoice_singular') || 'invoice' : t('payments.invoice_plural') || 'invoices'}
             </div>
           </button>
         </div>
@@ -574,7 +735,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
       ) : (
         <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden" style={{ borderRadius: 'var(--v2-radius-card)' }}>
           {/* Table Header */}
-          <div className="hidden md:grid grid-cols-[120px_1fr_1fr_85px_85px_95px_80px_auto] gap-3 px-4 py-2.5 bg-[var(--v2-bg)] border-b border-[var(--v2-border)] text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+          <div className={`hidden md:grid ${INVOICE_GRID} gap-3 px-4 py-2.5 bg-[var(--v2-bg)] border-b border-[var(--v2-border)] text-[10px] font-semibold text-[var(--v2-text-muted)] ${isRTL ? '' : 'uppercase tracking-wider'}`}>
             <div className="text-start">{t('payments.invoice') || 'Invoice'}</div>
             <div className="text-start">{t('payments.client') || 'Client'}</div>
             <div className="text-start">{t('payments.service') || 'Service'}</div>
@@ -598,7 +759,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
                 } transition-colors`}
               >
                 {/* Desktop row */}
-                <div className="hidden md:grid grid-cols-[120px_1fr_1fr_85px_85px_95px_80px_auto] gap-3 px-4 py-3 items-center">
+                <div className={`hidden md:grid ${INVOICE_GRID} gap-3 px-4 py-3 items-center`}>
                   {/* Invoice # */}
                   <div className="min-w-0 text-start">
                     <div className="flex items-center gap-2">
@@ -639,8 +800,10 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
                     )}
                   </div>
 
-                  {/* Due Date */}
-                  <div className={`${isRTL ? 'text-start' : 'text-end'} text-sm whitespace-nowrap ${invoice.status === 'overdue' ? 'text-red-600 dark:text-red-400 font-medium' : 'text-[var(--v2-text-primary)]'}`}>
+                  {/* Due Date — late is judged by the date, so an invoice reads
+                      as overdue the day it passes rather than whenever a job
+                      last rewrote its status. */}
+                  <div className={`${isRTL ? 'text-start' : 'text-end'} text-sm whitespace-nowrap ${isOverdue(invoice) ? 'text-red-600 dark:text-red-400 font-medium' : 'text-[var(--v2-text-primary)]'}`}>
                     {formatDate(invoice.due_date)}
                   </div>
 
@@ -661,6 +824,22 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
 
                   {/* Actions */}
                   <div className={`flex items-center ${isRTL ? 'justify-start' : 'justify-end'} gap-1.5 flex-shrink-0`}>
+                    {/* Refund. Paid invoices previously offered only a PDF and a
+                        link to Stripe — there was no way to return a client's
+                        money from this screen at all. Shown while any of the
+                        payment remains: a partially refunded invoice can still
+                        give back the rest. */}
+                    {(invoice.status === 'paid' || invoice.status === 'partially_refunded') &&
+                      invoice.amount - (invoice.refunded_amount || 0) > 0 && (
+                      <button
+                        onClick={() => setRefundTarget(invoice)}
+                        className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-colors"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('payments.refund') || 'Refund'}
+                      >
+                        <RotateCcw className="w-5 h-5 text-orange-500" />
+                      </button>
+                    )}
                     {invoice.status === 'draft' && (
                       <button
                         onClick={() => handleSendInvoiceClick(invoice)}
@@ -715,7 +894,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
                     )}
                     {['draft', 'sent', 'overdue'].includes(invoice.status) && (
                       <button
-                        onClick={() => handleVoidInvoice(invoice.id)}
+                        onClick={() => { setVoidError(null); setVoidTarget(invoice); }}
                         disabled={actionLoading === invoice.id}
                         className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 transition-colors"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -757,7 +936,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
                       <Download className="h-3.5 w-3.5" />
                     </Button>
                     {['draft', 'sent', 'overdue'].includes(invoice.status) && (
-                      <Button variant="outline" size="sm" onClick={() => handleVoidInvoice(invoice.id)} className="h-7 px-2.5 text-xs text-red-600 border-red-200">
+                      <Button variant="outline" size="sm" onClick={() => { setVoidError(null); setVoidTarget(invoice); }} className="h-7 px-2.5 text-xs text-red-600 border-red-200">
                         <X className="h-3.5 w-3.5" />
                       </Button>
                     )}
@@ -845,11 +1024,35 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
       {/* Create Invoice Modal */}
       {showCreateModal && (
         <InvoiceModal
+          // Required by the modal and never passed; the `showCreateModal &&`
+          // above is what actually gated it, so `isOpen` arrived undefined.
+          isOpen
           onClose={() => setShowCreateModal(false)}
           onSave={() => {
             setShowCreateModal(false);
             fetchInvoices();
           }}
+        />
+      )}
+
+      {/* Refund Modal — a SIBLING of the create modal, not a child of it.
+          Refunding an invoice has nothing to do with creating one, so gating it
+          on showCreateModal would have meant it could only ever open while the
+          create dialog was already up. */}
+      {refundTarget && (
+        <RefundModal
+          isOpen={!!refundTarget}
+          onClose={() => setRefundTarget(null)}
+          /* The invoice is named, not a transaction: the server resolves which
+             payment sits behind it, so this list never has to know. */
+          invoiceId={refundTarget.id}
+          originalAmount={refundTarget.amount}
+          currency={refundTarget.currency}
+          alreadyRefunded={refundTarget.refunded_amount || 0}
+          contactName={refundTarget.client_name || undefined}
+          isRTL={isRTL}
+          onSuccess={() => { setRefundTarget(null); fetchInvoices(); }}
+          onError={(message) => logger.error({ message }, 'Refund failed')}
         />
       )}
 
@@ -951,6 +1154,91 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
           </div>
         </div>
       )}
+
+      {/* Void confirmation. The platform dialog rather than a browser confirm:
+          it can name the invoice, say what voiding actually does to a document
+          the client may already be holding, and show the server's refusal in
+          place instead of a second popup. */}
+      <Dialog
+        open={!!voidTarget}
+        onOpenChange={open => {
+          if (!open) {
+            setVoidTarget(null);
+            setVoidError(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
+              {t('payments.void_title')}
+            </DialogTitle>
+          </DialogHeader>
+
+          {voidTarget && (
+            <div className="space-y-3">
+              <div
+                className="flex items-center justify-between gap-3 p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                    {voidTarget.invoice_number}
+                  </p>
+                  <p className="text-xs text-[var(--v2-text-muted)] truncate">
+                    {voidTarget.client_name || voidTarget.client_email || t('payments.unknown_client')}
+                  </p>
+                </div>
+                <span className="text-sm font-bold text-[var(--v2-text-primary)] shrink-0">
+                  <bdi>{formatAmount(voidTarget.amount, voidTarget.currency)}</bdi>
+                </span>
+              </div>
+
+              {/* A draft was never sent, so voiding it costs the client nothing.
+                  One the client has already received is a document they hold,
+                  and voiding it is a statement to them — worth saying so. */}
+              <p className="text-sm text-[var(--v2-text-secondary)] leading-relaxed">
+                {voidTarget.status === 'draft'
+                  ? t('payments.void_body_draft')
+                  : t('payments.void_body_sent')}
+              </p>
+
+              {voidError && (
+                <p
+                  className="text-sm text-red-600 dark:text-red-400 p-3 bg-red-500/10 border border-red-500/20 leading-relaxed"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {voidError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setVoidTarget(null);
+                    setVoidError(null);
+                  }}
+                  disabled={actionLoading === voidTarget.id}
+                >
+                  {t('button.cancel')}
+                </Button>
+                <Button
+                  onClick={handleVoidInvoice}
+                  disabled={actionLoading === voidTarget.id}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {actionLoading === voidTarget.id && (
+                    <Loader2 className="w-4 h-4 me-2 animate-spin" />
+                  )}
+                  {t('payments.void_confirm')}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

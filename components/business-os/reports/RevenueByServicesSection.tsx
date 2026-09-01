@@ -1,8 +1,8 @@
 'use client';
 
-import { Briefcase } from 'lucide-react';
+import { Briefcase, Receipt } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { REPORTS_COLORS, DISPLAY_LIMITS } from '@/lib/business-os/reports/constants';
+import { REPORTS_COLORS, DISPLAY_LIMITS, UNATTRIBUTED_SERVICE_ID } from '@/lib/business-os/reports/constants';
 
 interface ServiceRevenue {
   service_id: string;
@@ -24,6 +24,7 @@ function ServiceBar({
   maxValue,
   color,
   percentage,
+  isUnattributed,
   getLabel
 }: {
   serviceName: string;
@@ -33,15 +34,17 @@ function ServiceBar({
   maxValue: number;
   color: string;
   percentage: number;
+  isUnattributed: boolean;
   getLabel: (key: string) => string;
 }) {
   const barPercentage = maxValue > 0 ? Math.min((revenue / maxValue) * 100, 100) : 0;
+  const Icon = isUnattributed ? Receipt : Briefcase;
 
   return (
     <div className="flex-1 min-w-0">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
-          <Briefcase className="w-4 h-4" style={{ color }} />
+          <Icon className="w-4 h-4" style={{ color }} />
           <span className="text-xs text-[var(--v2-text-secondary)] truncate">{serviceName}</span>
         </div>
         <div className="flex items-center gap-1">
@@ -82,15 +85,25 @@ export function RevenueByServicesSection({
       es: 'Sin datos de ingresos por servicio',
       he: 'אין נתוני הכנסות לפי שירות'
     },
+    // A row counts what was charged for the service — invoices raised and
+    // payments taken — not how many times it was booked.
     booking: {
-      en: 'booking',
-      es: 'reserva',
-      he: 'הזמנה'
+      en: 'charge',
+      es: 'cargo',
+      he: 'חיוב'
     },
     bookings: {
-      en: 'bookings',
-      es: 'reservas',
-      he: 'הזמנות'
+      en: 'charges',
+      es: 'cargos',
+      he: 'חיובים'
+    },
+    // Money that belongs to no service in the catalogue — an ad-hoc invoice, a
+    // deposit, a payment taken outside a booking. Shown so the rows still add up
+    // to the revenue figure above them.
+    unattributed: {
+      en: 'Not tied to a service',
+      es: 'Sin servicio asociado',
+      he: 'לא משויך לשירות'
     }
   };
 
@@ -100,10 +113,17 @@ export function RevenueByServicesSection({
   const total = services.reduce((sum, s) => sum + s.revenue, 0);
   const maxValue = Math.max(...services.map(s => s.revenue), 1);
 
-  // Sort services by revenue (highest first) and take top services
-  const topServices = [...services]
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, DISPLAY_LIMITS.MAX_SERVICES);
+  // Sort services by revenue (highest first) and take top services. The
+  // unattributed remainder is not a service, so it keeps its place at the end
+  // rather than competing for one of the visible slots.
+  const attributed = services.filter(s => s.service_id !== UNATTRIBUTED_SERVICE_ID);
+  const unattributed = services.find(s => s.service_id === UNATTRIBUTED_SERVICE_ID);
+  const topServices = [
+    ...[...attributed]
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, DISPLAY_LIMITS.MAX_SERVICES),
+    ...(unattributed ? [unattributed] : [])
+  ];
 
   if (topServices.length === 0) {
     return (
@@ -141,18 +161,22 @@ export function RevenueByServicesSection({
       <div className="space-y-4">
         {topServices.map((service, index) => {
           const percentage = total > 0 ? Math.round((service.revenue / total) * 100) : 0;
-          const color = REPORTS_COLORS.SERVICE_PALETTE[index % REPORTS_COLORS.SERVICE_PALETTE.length];
+          const isUnattributed = service.service_id === UNATTRIBUTED_SERVICE_ID;
+          const color = isUnattributed
+            ? REPORTS_COLORS.UNATTRIBUTED
+            : REPORTS_COLORS.SERVICE_PALETTE[index % REPORTS_COLORS.SERVICE_PALETTE.length];
 
           return (
             <ServiceBar
               key={service.service_id}
-              serviceName={service.service_name}
+              serviceName={isUnattributed ? getLabel('unattributed') : service.service_name}
               revenue={service.revenue}
               count={service.count}
               formattedRevenue={formatCurrency(service.revenue, { showFree: false })}
               maxValue={maxValue}
               color={color}
               percentage={percentage}
+              isUnattributed={isUnattributed}
               getLabel={getLabel}
             />
           );

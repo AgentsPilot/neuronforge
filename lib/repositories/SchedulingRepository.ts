@@ -19,6 +19,16 @@ export type PaymentType = 'full' | 'installments';
 export type InstallmentFrequency = 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
 export type FirstPaymentDue = 'on_booking' | 'days_after';
 
+/**
+ * How money for one service arrives.
+ *
+ * Per service, not per business: a practice can sell an appointment paid by
+ * card and a programme billed against an invoice, and only the first of those
+ * needs a card processor connected. Null means the service is free, or that
+ * nobody has said yet.
+ */
+export type ServiceCollection = 'online' | 'invoice';
+
 export interface ServiceAISuggestions {
   reasoning: string;
   confidence: number;
@@ -30,9 +40,14 @@ export interface SchedulingService {
   user_id: string;
   service_name: string;
   description: string | null;
-  duration_minutes: number;
+  /** Null for a service not booked against a time — a product or deliverable. */
+  duration_minutes: number | null;
   price: number | null;
   currency: ServiceCurrency;
+  /** Does booking this involve picking a time? False for a product. */
+  is_scheduled: boolean;
+  /** How the money arrives. Null while the service is free. */
+  collection: ServiceCollection | null;
   buffer_minutes: number;
   max_bookings_per_day: number | null;
   advance_booking_days: number;
@@ -56,9 +71,11 @@ export interface SchedulingServiceInsert {
   user_id: string;
   service_name: string;
   description?: string | null;
-  duration_minutes: number;
+  duration_minutes?: number | null;
   price?: number | null;
   currency?: ServiceCurrency;
+  is_scheduled?: boolean;
+  collection?: ServiceCollection | null;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -79,9 +96,11 @@ export interface SchedulingServiceInsert {
 export interface SchedulingServiceUpdate {
   service_name?: string;
   description?: string | null;
-  duration_minutes?: number;
+  duration_minutes?: number | null;
   price?: number | null;
   currency?: ServiceCurrency;
+  is_scheduled?: boolean;
+  collection?: ServiceCollection | null;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -373,6 +392,20 @@ export class SchedulingServiceRepository {
   /**
    * List all services for user
    */
+  /**
+   * What "bookable" means, in one place.
+   *
+   * Two independent flags have to hold: `is_active` is the Power toggle the
+   * owner flips, and `status` is draft versus published. They answer different
+   * questions, and every public surface has to ask both — filtering on one let
+   * a deactivated service disappear from the website while every smart link
+   * went on selling it.
+   *
+   * Exported as a rule rather than repeated as a pair of `.eq()` calls so the
+   * next surface cannot pick one and forget the other.
+   */
+  static readonly BOOKABLE = { is_active: true, status: 'active' as const };
+
   async listAll(
     userId: string,
     activeOnly: boolean = false
@@ -384,9 +417,7 @@ export class SchedulingServiceRepository {
         .eq('user_id', userId);
 
       if (activeOnly) {
-        // Filter by both is_active flag AND status field
-        // This ensures draft/inactive services don't show on public website
-        query = query.eq('is_active', true).eq('status', 'active');
+        query = query.match(SchedulingServiceRepository.BOOKABLE);
       }
 
       query = query.order('created_at', { ascending: false });

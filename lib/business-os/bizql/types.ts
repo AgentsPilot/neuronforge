@@ -41,6 +41,8 @@ export interface DateExpr {
     | 'today'
     | 'tomorrow'
     | 'yesterday'
+    | 'start_of_day'
+    | 'end_of_day'
     | 'start_of_week'
     | 'end_of_week'
     | 'start_of_month'
@@ -199,7 +201,21 @@ export interface ComputeQuery {
   op: 'compute';
   entity: string;
   where?: Predicate[];
-  agg: { fn: AggregateFn; field?: string };
+  agg: {
+    fn: AggregateFn;
+    field?: string;
+    /**
+     * Count how many DIFFERENT values a field has, not how many rows.
+     *
+     * "כמה לקוחות יש חשבוניות פתוחות" counts clients, and the rows being counted
+     * are invoices — one client with two invoices is one client. Without this
+     * the only available answer was the row count, which silently answered a
+     * different question with a bigger number.
+     *
+     * Only meaningful for `count`; ignored otherwise.
+     */
+    distinct?: boolean;
+  };
   group_by?: string;
 }
 
@@ -219,8 +235,16 @@ export interface MutateQuery {
   entity: string;
   /** Catalog action key: 'create' | 'update' | 'delete' | 'mark_paid' | … */
   action: string;
-  /** Which row. Omitted for `create`. */
-  target?: { id: string };
+  /**
+   * Which row. Omitted for `create`.
+   *
+   * Either a literal id, or a `find` describing the row in the user's own terms
+   * ("invoice INV-00002"). A described target is resolved to exactly ONE id
+   * server-side BEFORE anything is previewed or confirmed — see resolveTarget.ts.
+   * The write itself only ever receives a literal id, so a set of rows remains
+   * inexpressible however the target was written.
+   */
+  target?: { id: string } | { find: { where: Predicate[] } };
   /** Field values, keyed by catalog field name (not column name). */
   data?: Record<string, ScalarValue>;
 }
@@ -281,25 +305,72 @@ export interface QueryRow {
   [key: string]: unknown;
 }
 
+/**
+ * A filter that matched nothing because the THING NAMED does not exist.
+ *
+ * The distinction this preserves is the difference between two sentences that
+ * look identical and mean opposite things:
+ *
+ *   "Gregory Fenwick owes you 0"      — there is no Gregory Fenwick.
+ *   "Gregory Fenwick owes you 0"      — he is a client, and he is square with you.
+ *
+ * The first is a confident falsehood. An empty result is not the same fact as a
+ * zero, and a system that renders them the same way will eventually state a
+ * wrong financial figure to someone who believes it — which is exactly what
+ * happened, in Hebrew, for ₪2,050.
+ */
+export interface UnmatchedFilter {
+  /** The entity searched: 'contacts', 'services'. */
+  entity: string;
+  /** What the user called it, verbatim. */
+  value: string;
+}
+
 export interface FindResult {
   op: 'find';
   entity: string;
   rows: QueryRow[];
+  /** Repeated rows collapsed by the entity's dedupe key. Reported, not hidden. */
+  collapsed?: number;
   /** True when `limit` truncated the result — never hidden from the caller. */
   truncated: boolean;
   limit: number;
+  /**
+   * Filters that matched nothing because what they named does not exist.
+   * Present only when non-empty, so callers can test truthiness.
+   */
+  unmatched?: UnmatchedFilter[];
 }
 
 export interface ComputeResult {
   op: 'compute';
   entity: string;
+  /**
+   * What was aggregated.
+   *
+   * Carried on the RESULT, not just the query, because the renderer has to know
+   * it: formatting was previously decided by asking "does this entity have any
+   * money field at all?", so counting services rendered as "$4.00 services".
+   * A count is dimensionless whatever the entity holds, and a sum takes its unit
+   * from the field summed — neither is knowable from the entity alone.
+   */
+  agg: { fn: string; field?: string; distinct?: boolean };
   value: number | null;
   groups?: Array<{ key: string; value: number }>;
+  /**
+   * Filters that matched nothing because what they named does not exist.
+   *
+   * This matters far more on an aggregate than on a list: an empty list looks
+   * empty, whereas `sum` over no rows renders as a perfectly ordinary 0.
+   */
+  unmatched?: UnmatchedFilter[];
   /**
    * True when the aggregate ran over a capped scan and may therefore be
    * incomplete. Callers MUST surface this rather than presenting a wrong total.
    */
   approximate: boolean;
+  /** Repeated rows collapsed by the entity's dedupe key before counting. */
+  collapsed?: number;
 }
 
 export interface MutateResult {
@@ -340,6 +411,34 @@ export class BizQLValidationError extends Error {
   constructor(public readonly problems: string[]) {
     super(`Invalid BizQL query:\n  - ${problems.join('\n  - ')}`);
     this.name = 'BizQLValidationError';
+  }
+}
+
+/**
+ * A write that cannot proceed because the user has not said enough yet.
+ *
+ * Distinct from a generic validation failure because the correct response is a
+ * QUESTION, not an error: "add a new service" is a perfectly reasonable thing to
+ * say, it just does not yet contain a name or a duration.
+ *
+ * Catching this server-side rather than instructing the planner to ask is
+ * deliberate. Told to ask, the model asked in English and fabricated blanks in
+ * Hebrew — `{service_name:"", duration_minutes:0}` — and a rule it follows most
+ * of the time is not a guarantee. The catalog already knows which fields an
+ * action requires, so the server can decide this every time, in every language.
+ */
+export class MissingFieldsError extends BizQLValidationError {
+  constructor(
+    public readonly entity: string,
+    public readonly action: string,
+    /** Catalog field keys still needed, in the order the catalog declares them. */
+    public readonly fields: string[]
+  ) {
+    super([
+      `'${entity}.${action}' needs a real value for: ${fields.join(', ')}. ` +
+        `Ask the user rather than filling in a blank.`,
+    ]);
+    this.name = 'MissingFieldsError';
   }
 }
 

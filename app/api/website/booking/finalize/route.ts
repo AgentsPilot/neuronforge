@@ -15,6 +15,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import Stripe from 'stripe';
+import {
+  locatePaymentIntentAccount,
+  resolveUserConnectAccounts,
+  type ChargeAccountColumns,
+} from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteBookingFinalizeAPI' });
@@ -168,9 +174,43 @@ export async function POST(request: NextRequest) {
     // Create payment transaction record if we have a payment_intent_id
     let paymentTransactionId: string | null = null;
     if (data.payment_intent_id && serviceDetails?.price) {
+      // Which Stripe account this charge lives on — asked of Stripe, not taken
+      // from the browser.
+      //
+      // This route finalises from the client, so nothing it sends is evidence.
+      // The account still has to be recorded here or the payment is
+      // unrefundable: these are direct charges, and a refund issued against the
+      // wrong account either errors or returns money from the wrong balance.
+      //
+      // A failure to resolve is not fatal. The payment is real and must be
+      // recorded either way; it is simply marked unresolved, which makes the
+      // refund path refuse rather than guess, and puts the row in the
+      // reconciler's queue.
+      let accountContext: ChargeAccountColumns = {
+        stripe_connect_account_id: null,
+        charge_account_kind: 'platform',
+        account_resolution: 'unknown',
+      };
+
+      try {
+        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+        const candidates = await resolveUserConnectAccounts(supabaseServer, ownerId);
+        accountContext = await locatePaymentIntentAccount(
+          stripe,
+          data.payment_intent_id,
+          candidates
+        );
+      } catch (accountError) {
+        requestLogger.warn(
+          { err: accountError, paymentIntentId: data.payment_intent_id },
+          'Could not resolve the Stripe account for this payment; recording it as unresolved'
+        );
+      }
+
       const { data: paymentTransaction, error: paymentError } = await supabaseServer
         .from('payment_transactions')
         .insert({
+          ...accountContext,
           user_id: ownerId,
           contact_id: contactId,
           service_id: booking.service_id, // Proper column for revenue tracking (added in migration 20260809)

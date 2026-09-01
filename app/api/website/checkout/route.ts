@@ -253,40 +253,25 @@ export async function POST(request: NextRequest) {
          connectError.code === 'account_invalid');
 
       if (isAccessRevoked) {
-        requestLogger.warn(
+        // REFUSE — same reasoning as the payment-intent route.
+        //
+        // These are direct charges with no application fee and no transfer or
+        // payout code anywhere in the codebase, so a platform charge never
+        // reaches the business. The client would be billed, see success, and the
+        // money would sit in the platform balance permanently.
+        requestLogger.error(
           { stripeAccountId, err: connectError },
-          'Connect account access revoked - falling back to direct platform charges'
+          'Connect account access revoked — refusing the charge rather than capturing to the platform'
         );
 
-        // Fall back to direct platform charges (no stripeAccount param)
-        session = await stripe.checkout.sessions.create({
-          mode: 'payment',
-          payment_method_types: ['card'],
-          line_items: [
-            {
-              price_data: {
-                currency: data.currency.toLowerCase(),
-                product_data: {
-                  name: data.description
-                },
-                unit_amount: Math.round(data.amount * 100)
-              },
-              quantity: 1
-            }
-          ],
-          customer_email: data.customer_email,
-          success_url: successUrl,
-          cancel_url: cancelUrl,
-          metadata: {
-            subdomain: effectiveSubdomain || '',
-            owner_id: ownerId,
-            booking_id: data.booking_id || '',
-            service_id: data.service_id || '',
-            fallback_mode: 'direct_platform_charge',
-            original_connect_account: stripeAccountId,
-            ...data.metadata
-          }
-        });
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Payments are temporarily unavailable. Please try again later.',
+            code: 'PAYMENT_ACCOUNT_UNAVAILABLE'
+          },
+          { status: 503 }
+        );
       } else {
         // Re-throw other errors
         throw connectError;

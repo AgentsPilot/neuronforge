@@ -105,7 +105,11 @@ export interface VectorMaturityData {
   litCount: number;
   totalVectors: number;
   accountAgeDays: number;
+  /** English fallback. Prefer `noteKey`, which the reader's language can reach. */
   note: string;
+  noteKey: 'vecs.note.cold' | 'vecs.note.full' | 'vecs.note.partial';
+  /** Vector keys still learning, for the partial note's list. */
+  noteLearning: string[];
 }
 
 // ===========================

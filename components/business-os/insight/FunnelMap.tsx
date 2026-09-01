@@ -211,12 +211,17 @@ export function FunnelMap({
                 position: 'relative',
                 padding: '14px 6px 12px',
                 borderRadius: '15px',
-                border: selectedKey === station.k
-                  ? '1.5px solid #F97316'
-                  : '1.5px solid #E7E9F1',
                 background: station.off
                   ? 'repeating-linear-gradient(135deg, #FBFCFE 0 7px, #F5F6FA 7px 8px)'
                   : '#fff',
+                // Longhand only. This carried `border` as well, and React warns
+                // on every rerender that mixing the shorthand with borderStyle
+                // and borderColor for the same value leads to styling bugs —
+                // which is exactly what it did: the shorthand reset style to
+                // `solid`, so whether a blueprint station drew dashed depended
+                // on the order React happened to apply the two. Selecting a
+                // station rerenders, so the warning repeated for every click.
+                borderWidth: '1.5px',
                 borderStyle: station.off ? 'dashed' : 'solid',
                 borderColor: station.off ? '#D8DCE8' : (selectedKey === station.k ? '#F97316' : '#E7E9F1'),
                 boxShadow: selectedKey === station.k ? '0 0 0 3px rgba(249,115,22,0.11)' : 'none',

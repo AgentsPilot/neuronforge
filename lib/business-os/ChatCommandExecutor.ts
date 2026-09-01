@@ -371,8 +371,8 @@ const RESPONSES: Record<string, Record<string, string>> = {
   },
   // Invoice
   'invoice.create.response': {
-    en: `To create an invoice for <b>{contact}</b> ({amount}), please use the invoices tab. <a href="/business-os/reports?tab=invoices" style="color: #F97316; text-decoration: underline;">Open invoices →</a>`,
-    he: `כדי ליצור חשבונית עבור <b>{contact}</b> ({amount}), השתמש בלשונית החשבוניות. <a href="/business-os/reports?tab=invoices" style="color: #F97316; text-decoration: underline;">פתח חשבוניות ←</a>`,
+    en: `To create an invoice for <b>{contact}</b> ({amount}), please use the invoices tab. <a href="/business-os/payments" style="color: #F97316; text-decoration: underline;">Open invoices →</a>`,
+    he: `כדי ליצור חשבונית עבור <b>{contact}</b> ({amount}), השתמש בלשונית החשבוניות. <a href="/business-os/payments" style="color: #F97316; text-decoration: underline;">פתח חשבוניות ←</a>`,
   },
   'invoice.create.contact.default': {
     en: 'client',
@@ -3576,7 +3576,7 @@ async function executeInvoiceQuery(
     return {
       success: true,
       response: t('invoice.query.none', lang),
-      route: '/business-os/reports?tab=invoices',
+      route: '/business-os/payments',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3594,7 +3594,7 @@ async function executePaymentRecord(
     return {
       success: false,
       response: t('error.general', lang),
-      route: '/business-os/reports?tab=transactions',
+      route: '/business-os/payments',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3660,7 +3660,7 @@ async function executePaymentRecord(
     return {
       success: false,
       response: t('error.general', lang),
-      route: '/business-os/reports?tab=transactions',
+      route: '/business-os/payments',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3719,8 +3719,8 @@ function executeNavigate(entities: Record<string, any>, lang: string): CommandRe
     services: '/business-os',
     scheduling: '/business-os',
     calendar: '/business-os',
-    payments: '/business-os/reports?tab=transactions',
-    invoices: '/business-os/reports?tab=invoices',
+    payments: '/business-os/payments',
+    invoices: '/business-os/payments',
     settings: '/business-os/settings',
     config: '/business-os/settings',
     home: '/business-os',

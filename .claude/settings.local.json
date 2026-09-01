@@ -43,7 +43,8 @@
       "Bash(npm install:*)",
       "Bash(DOTENV_CONFIG_PATH=.env.local npx tsx:*)",
       "Bash(npx tsx scripts/test-slot-filling-localization.ts)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(python3 -)"
     ]
   }
 }

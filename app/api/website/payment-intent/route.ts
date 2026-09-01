@@ -155,27 +155,65 @@ export async function POST(request: NextRequest) {
            connectError.code === 'account_invalid');
 
         if (isAccessRevoked) {
-          requestLogger.warn(
+          // REFUSE. This used to fall back to a platform charge.
+          //
+          // These are direct charges — there is no application fee, no
+          // `transfer_data`, no `on_behalf_of` anywhere in this codebase, and no
+          // transfer or payout code of any kind. So a platform charge does not
+          // reach the business: the client's money lands in the platform balance
+          // and stays there, with nothing that would ever forward it.
+          //
+          // The client saw a successful payment, the business never received it,
+          // and the only trace was `fallback_mode` in Stripe metadata that
+          // nothing reads. Losing a sale is recoverable; taking someone's money
+          // into the wrong account is not.
+          requestLogger.error(
             { stripeAccountId, err: connectError },
-            'Connect account access revoked - falling back to direct platform charges'
+            'Connect account access revoked — refusing the charge rather than capturing to the platform'
           );
 
-          // Fall back to direct platform charges
-          paymentIntent = await stripe.paymentIntents.create({
-            ...paymentIntentData,
-            metadata: {
-              ...paymentIntentData.metadata,
-              fallback_mode: 'direct_platform_charge',
-              original_connect_account: stripeAccountId || ''
-            }
-          });
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Payments are temporarily unavailable. Please try again later.',
+              code: 'PAYMENT_ACCOUNT_UNAVAILABLE'
+            },
+            { status: 503 }
+          );
         } else {
           throw connectError;
         }
       }
     } else {
-      // No Connect account - use platform directly
-      paymentIntent = await stripe.paymentIntents.create(paymentIntentData);
+      // REFUSE. This used to charge the platform account directly.
+      //
+      // Identical reasoning to the revoked-account branch above, which was
+      // fixed while this one — the same failure, one branch over — was not.
+      // These are direct charges: no application fee, no `transfer_data`, no
+      // `on_behalf_of`, and no transfer or payout code anywhere in this repo.
+      // A platform charge therefore does not reach the business. The client's
+      // money lands in the platform balance and stays there.
+      //
+      // It is not even recorded: `payment_intent.succeeded` is dispatched only
+      // for Connect events, so a platform intent reaches no handler and appears
+      // in no ledger. The customer sees a successful payment; the business sees
+      // nothing, forever.
+      //
+      // Losing a sale is recoverable. Taking someone's money into an account
+      // that will never forward it is not.
+      requestLogger.error(
+        { ownerId },
+        'No Stripe Connect account for this business — refusing the charge rather than capturing to the platform'
+      );
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Payments are temporarily unavailable. Please try again later.',
+          code: 'PAYMENT_ACCOUNT_UNAVAILABLE'
+        },
+        { status: 503 }
+      );
     }
 
     requestLogger.info(

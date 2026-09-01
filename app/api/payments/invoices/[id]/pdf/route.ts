@@ -18,6 +18,10 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import type { Locale } from '@/lib/i18n/config';
+// The business's colours, fonts and logo. Named for email because that is where
+// it was first needed; the source — the website theme — is the business's own
+// design, and an invoice should wear it too.
+import { resolveEmailBranding as resolveBusinessBranding } from '@/lib/email/branding';
 
 const logger = createLogger({ module: 'InvoicePDFAPI' });
 
@@ -56,41 +60,14 @@ export async function GET(
       );
     }
 
-    // 3. Check if we have a Stripe PDF URL
-    if (invoice.stripe_invoice_pdf) {
-      requestLogger.info({ invoiceId, stripeUrl: invoice.stripe_invoice_pdf }, 'Redirecting to Stripe PDF');
-      return NextResponse.redirect(invoice.stripe_invoice_pdf);
-    }
-
-    // 4. If we have a Stripe invoice ID but no PDF URL, fetch it from Stripe
-    if (invoice.stripe_invoice_id) {
-      const { data: stripeAccount } = await stripeConnectRepository.findByUserId(user.id);
-
-      if (stripeAccount?.stripe_account_id) {
-        try {
-          const stripeInvoiceService = getStripeInvoiceService();
-          const pdfUrl = await stripeInvoiceService.getInvoicePdf(
-            invoice.stripe_invoice_id,
-            stripeAccount.stripe_account_id
-          );
-
-          if (pdfUrl) {
-            // Cache the PDF URL for future requests
-            await paymentInvoiceRepository.updateStripeFields(invoiceId, user.id, {
-              stripe_invoice_pdf: pdfUrl
-            });
-
-            requestLogger.info({ invoiceId, stripeUrl: pdfUrl }, 'Redirecting to fetched Stripe PDF');
-            return NextResponse.redirect(pdfUrl);
-          }
-        } catch (stripeError) {
-          requestLogger.error({ err: stripeError, invoiceId }, 'Failed to fetch Stripe PDF URL');
-          // Fall through to generate custom PDF
-        }
-      }
-    }
-
-    // 5. Generate custom PDF using InvoicePDFGenerator
+    // 3. Generate the business's own PDF.
+    //
+    // This used to redirect to Stripe's hosted PDF whenever one existed, which
+    // was for every invoice sent through Stripe. That document is Stripe's:
+    // always English, Stripe's layout, and no trace of the business's logo,
+    // colours or fonts. The invoice a business hands its client is its own, so
+    // it is generated here and Stripe's copy is kept only as a fallback for
+    // when generation fails (below).
     requestLogger.info({ invoiceId }, 'Generating custom PDF');
 
     // Get business profile for invoice settings and vertical
@@ -152,29 +129,50 @@ export async function GET(
       }
     }
 
-    // Generate the PDF (async)
-    const pdfBuffer = await generateInvoicePDFAsync({
-      invoice,
-      businessSettings: {
-        invoice_company_name: settingsWithProfile.invoice_company_name,
-        invoice_address: settingsWithProfile.invoice_address || {},
-        invoice_tax_id: settingsWithProfile.invoice_tax_id,
-        invoice_bank_name: settingsWithProfile.invoice_bank_name,
-        invoice_bank_account: settingsWithProfile.invoice_bank_account,
-        invoice_bank_routing: settingsWithProfile.invoice_bank_routing,
-        invoice_payment_instructions: settingsWithProfile.invoice_payment_instructions,
-        invoice_footer_text: settingsWithProfile.invoice_footer_text,
-        invoice_number_prefix: settingsWithProfile.invoice_number_prefix || 'INV',
-        invoice_logo_url: settingsWithProfile.invoice_logo_url,
-      },
-      businessName: settingsWithProfile.company_name || undefined,
-      businessVertical: settingsWithProfile.vertical || undefined,
-      contactName,
-      contactEmail,
-      contactPhone,
-      contactAddress,
-      language,
-    });
+    // The business's design, from the same resolver the emails use, so an
+    // invoice and the mail carrying it look like the same business.
+    const businessBranding = await resolveBusinessBranding(user.id, language, settingsWithProfile);
+
+    // Generate the PDF (async). Stripe's hosted copy is the fallback if this
+    // fails — a plain English document beats no document at all.
+    let pdfBuffer: Buffer;
+    try {
+      pdfBuffer = await generateInvoicePDFAsync({
+        invoice,
+        businessSettings: {
+          invoice_company_name: settingsWithProfile.invoice_company_name,
+          invoice_address: settingsWithProfile.invoice_address || {},
+          invoice_tax_id: settingsWithProfile.invoice_tax_id,
+          invoice_bank_name: settingsWithProfile.invoice_bank_name,
+          invoice_bank_account: settingsWithProfile.invoice_bank_account,
+          invoice_bank_routing: settingsWithProfile.invoice_bank_routing,
+          invoice_payment_instructions: settingsWithProfile.invoice_payment_instructions,
+          invoice_footer_text: settingsWithProfile.invoice_footer_text,
+          invoice_number_prefix: settingsWithProfile.invoice_number_prefix || 'INV',
+          logo_url: settingsWithProfile.logo_url,
+        },
+        businessName: settingsWithProfile.company_name || undefined,
+        businessVertical: settingsWithProfile.vertical || undefined,
+        contactName,
+        contactEmail,
+        contactPhone,
+        contactAddress,
+        language,
+        branding: {
+          primaryColor: businessBranding.primaryColor,
+          accentColor: businessBranding.secondaryColor,
+          headingFont: businessBranding.headingFont,
+          bodyFont: businessBranding.bodyFont,
+        },
+      });
+    } catch (generationError) {
+      requestLogger.error({ err: generationError, invoiceId }, 'Custom PDF generation failed');
+      if (invoice.stripe_invoice_pdf) {
+        requestLogger.warn({ invoiceId }, 'Falling back to the Stripe-hosted PDF');
+        return NextResponse.redirect(invoice.stripe_invoice_pdf);
+      }
+      throw generationError;
+    }
 
     requestLogger.info({ invoiceId }, 'Custom PDF generated successfully');
 

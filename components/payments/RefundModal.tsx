@@ -7,7 +7,7 @@
  * Optionally supports deleting the associated booking after refund (for CRM drawer).
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, Loader2, AlertTriangle, RotateCcw, Trash2 } from 'lucide-react';
@@ -16,7 +16,13 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 interface RefundModalProps {
   isOpen: boolean;
   onClose: () => void;
-  transactionId: string;
+  /**
+   * What is being refunded. Exactly one is needed — the server resolves the
+   * payment behind an invoice or a booking, so a caller that only knows an
+   * invoice does not have to go looking for its transaction first.
+   */
+  transactionId?: string;
+  invoiceId?: string;
   originalAmount: number;
   currency: string;
   alreadyRefunded?: number;
@@ -33,6 +39,7 @@ export function RefundModal({
   isOpen,
   onClose,
   transactionId,
+  invoiceId,
   originalAmount,
   currency,
   alreadyRefunded = 0,
@@ -50,6 +57,24 @@ export function RefundModal({
   const [reason, setReason] = useState('');
   const [notifyContact, setNotifyContact] = useState(true);
   const [deleteBooking, setDeleteBooking] = useState(false);
+
+  /**
+   * One id per opening of this modal, so a double click, a retry after a
+   * timeout, and React's development double-invoke all carry the SAME value and
+   * produce one refund. A ref rather than state: regenerating it on re-render
+   * would defeat the entire point.
+   */
+  const requestId = useRef<string>('');
+  if (isOpen && !requestId.current) {
+    requestId.current =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `refund-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+  useEffect(() => {
+    // A new intent next time this opens.
+    if (!isOpen) requestId.current = '';
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -75,25 +100,28 @@ export function RefundModal({
     setLoading(true);
 
     try {
-      const blockId = refundType === 'full' ? 'refund_full' : 'refund_partial';
-      const parameters: Record<string, unknown> = {
-        transaction_id: transactionId,
-        reason: reason || undefined,
-        notify_contact: notifyContact
-      };
-
-      if (refundType === 'partial') {
-        parameters.amount = refundAmount;
-      }
-
-      const response = await fetch('/api/payments/blocks/execute', {
+      // One endpoint for every surface. This used to post a `refund_full` /
+      // `refund_partial` block to /api/payments/blocks/execute, which threw on a
+      // processor registry that is never populated — so this button has never
+      // actually issued a refund.
+      //
+      // A full refund sends NO amount, meaning "everything still remaining".
+      // Sending the original amount, as the block did, asks for more than is
+      // left once a partial refund has happened.
+      const response = await fetch('/api/payments/refunds', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          block_id: blockId,
-          parameters
+          // Whichever the caller has. The invoices tab knows an invoice, the
+          // payments tab a transaction, the CRM drawer a booking.
+          transaction_id: transactionId,
+          invoice_id: invoiceId,
+          booking_id: transactionId || invoiceId ? undefined : bookingId,
+          amount: refundType === 'partial' ? refundAmount : undefined,
+          reason: reason || undefined,
+          client_request_id: requestId.current
         })
       });
 

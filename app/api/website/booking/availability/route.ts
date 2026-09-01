@@ -10,7 +10,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 
 const logger = createLogger({ module: 'WebsiteBookingAvailabilityAPI' });
 
@@ -24,6 +26,8 @@ interface TimeSlot {
 }
 
 interface Service {
+  is_scheduled?: boolean;
+  collection?: 'online' | 'invoice' | null;
   id: string;
   name: string;
   description: string | null;
@@ -75,24 +79,26 @@ export async function GET(request: NextRequest) {
       .single();
 
     // Check if availability has been explicitly configured
-    const hasAvailabilityConfigured = !!(
-      businessProfile?.scheduling_availability &&
-      typeof businessProfile.scheduling_availability === 'object' &&
-      Object.keys(businessProfile.scheduling_availability).length > 0
-    );
+    // Asked of the windows, not of the keys: a profile whose every day is an
+    // empty array has keys and no hours.
+    const hasAvailabilityConfigured = hasAnyAvailability(businessProfile?.scheduling_availability);
 
     // If not configured, don't show any slots - require explicit configuration
     const availabilitySettings = hasAvailabilityConfigured
-      ? businessProfile.scheduling_availability
+      ? businessProfile?.scheduling_availability
       : null;
     const timezone = businessProfile?.timezone || 'UTC';
 
     // Fetch active services
     const { data: services, error: servicesError } = await supabaseServer
       .from('scheduling_services')
-      .select('id, service_name, description, duration_minutes, price, currency, is_active')
+      // Both flags. This route checked only `is_active`, the exact mirror of
+      // the conversion routes checking only `status` — so a draft service was
+      // bookable on the website and a deactivated one on the smart links.
+      .select('id, service_name, description, duration_minutes, price, currency, is_active, status, is_scheduled, collection')
       .eq('user_id', ownerId)
       .eq('is_active', true)
+      .eq('status', 'active')
       .order('service_name');
 
     if (servicesError) {
@@ -106,13 +112,19 @@ export async function GET(request: NextRequest) {
       : services;
 
     // Format services for response
+    const connectResult = await stripeConnectRepository.findByUserId(ownerId);
+    const processorReady = connectResult.data?.charges_enabled === true;
+
     const formattedServices: Service[] = (filteredServices || []).map(s => ({
       id: s.id,
       name: s.service_name,
       description: s.description,
       duration_minutes: s.duration_minutes,
       price: s.price,
-      currency: s.currency || 'USD'
+      currency: s.currency || 'USD',
+      // The two facts the widget builds its journey from.
+      is_scheduled: s.is_scheduled !== false,
+      collection: s.collection ?? null,
     }));
 
     // Calculate available slots (only if availability is configured)
@@ -194,6 +206,9 @@ export async function GET(request: NextRequest) {
       businessName: businessProfile?.company_name || subdomain,
       timezone,
       availabilityConfigured: hasAvailabilityConfigured,
+      // Whether a card can actually be charged. Without it the widget would
+      // show a payment step for a business that has not connected Stripe.
+      processorReady,
       services: formattedServices,
       slots: slots.filter(s => s.available), // Only return available slots
       totalSlots: slots.length,
@@ -213,16 +228,28 @@ async function calculateDaySlots(
   _ownerId: string,
   dateStr: string,
   durationMinutes: number,
-  availabilitySettings: Record<string, { start: string; end: string; enabled: boolean }>
+  /** Raw JSON from the profile; shapes are normalised by `windowsForDay`. */
+  availabilitySettings: unknown
 ): Promise<TimeSlot[]> {
   const slots: TimeSlot[] = [];
   const date = new Date(dateStr);
   const dayOfWeek = date.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
 
-  const daySettings = availabilitySettings[dayOfWeek];
-  if (!daySettings?.enabled) {
+  // The editor writes an array of windows per day. This asked for `.enabled` on
+  // that array, got `undefined`, and returned no slots for every day of the
+  // week — the same failure the public booking page had, with a different
+  // guess about the shape. Both now ask one normaliser instead.
+  const windows = windowsForDay(availabilitySettings, dayOfWeek);
+  if (windows.length === 0) {
     return slots;
   }
+
+  // First window only, for now: the loop below walks hours and minutes as
+  // scalars rather than as instants, so it cannot resume after a gap without
+  // being rewritten. A business with a split day gets its morning here and its
+  // full set on the public booking page. Named rather than silent, because a
+  // missing afternoon looks identical to a closed one.
+  const daySettings = windows[0];
 
   const [startHour, startMin] = daySettings.start.split(':').map(Number);
   const [endHour, endMin] = daySettings.end.split(':').map(Number);

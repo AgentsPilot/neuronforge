@@ -6,6 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
+import { resolveAccountOwner } from '@/lib/payments/stripeAccountContext';
+import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import Stripe from 'stripe';
 
 // Disable body parsing for webhook signature verification
@@ -884,6 +886,248 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
  * - Update payment_invoices status to 'paid'
  * - Create payment_transaction record
  */
+/**
+ * The payment intent that settled an invoice, across Stripe API versions.
+ *
+ * Pre-2025 the Invoice object carried `payment_intent` directly. That field was
+ * removed; settlement now hangs off `invoice.payments[].payment.payment_intent`,
+ * and the list is not always inlined in a webhook payload — the payload is
+ * serialized at the endpoint's configured API version, which nobody here
+ * controls.
+ *
+ * Both shapes are read, and the invoice is re-fetched with the list expanded
+ * only if neither is present. That last call costs one request on a path that
+ * runs once per payment, and buys the difference between a refundable payment
+ * and an unrefundable one.
+ */
+async function resolveInvoicePaymentIntent(
+  invoice: Stripe.Invoice,
+  connectAccountId: string
+): Promise<string | null> {
+  const asId = (value: unknown): string | null =>
+    typeof value === 'string' ? value : (value as { id?: string })?.id ?? null;
+
+  // Old shape.
+  const legacy = asId((invoice as unknown as { payment_intent?: unknown }).payment_intent);
+  if (legacy) return legacy;
+
+  // New shape, when the payload inlined it.
+  type InvoicePayments = { data?: Array<{ payment?: { payment_intent?: unknown } }> };
+  const inlined = asId(
+    (invoice as unknown as { payments?: InvoicePayments }).payments?.data?.[0]?.payment?.payment_intent
+  );
+  if (inlined) return inlined;
+
+  // New shape, not inlined — ask for it.
+  try {
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+    const expanded = (await stripe.invoices.retrieve(
+      invoice.id as string,
+      { expand: ['payments'] } as Stripe.InvoiceRetrieveParams,
+      { stripeAccount: connectAccountId }
+    )) as unknown as { payments?: InvoicePayments };
+
+    return asId(expanded.payments?.data?.[0]?.payment?.payment_intent);
+  } catch (error) {
+    console.error('❌ [Webhook] Could not expand invoice payments:', error);
+    return null;
+  }
+}
+
+/**
+ * A refund that happened at Stripe rather than here.
+ *
+ * Someone refunding from the Stripe dashboard is a normal thing to do, and until
+ * now it was invisible: the app's numbers kept reporting money it no longer had.
+ * Worse, the next refund attempted in the app would compute what remains from a
+ * stale total and could return more than the charge held.
+ *
+ * Every refund Stripe reports is written into the ledger, keyed on its own id.
+ * The unique index on `processor_refund_id` is what makes this converge with the
+ * app and the reconciler instead of counting the same refund three times — this
+ * handler can run repeatedly and produce the same single row. The transaction
+ * and invoice totals then follow by trigger.
+ */
+async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: string | null) {
+  console.log('💸 [Webhook] Processing charge.refunded:', charge.id);
+
+  const paymentIntentId =
+    typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
+
+  // Located by either reference, because which one was recorded depends on the
+  // flow that created the payment.
+  let query = supabaseAdmin
+    .from('payment_transactions')
+    .select('id, user_id, invoice_id, currency')
+    .limit(1);
+
+  query = paymentIntentId
+    ? query.eq('stripe_payment_intent_id', paymentIntentId)
+    : query.eq('stripe_charge_id', charge.id);
+
+  const { data: matches } = await query;
+  const transaction = matches?.[0];
+
+  if (!transaction) {
+    // Refunded money against a payment this app never recorded. Not droppable —
+    // it means the books are wrong in a way only Stripe can see.
+    console.error('❌ [Webhook] charge.refunded for an unknown payment:', {
+      chargeId: charge.id,
+      paymentIntentId
+    });
+    return;
+  }
+
+  for (const stripeRefund of charge.refunds?.data ?? []) {
+    const amountMajor = stripeRefund.amount / 100;
+
+    const { error } = await supabaseAdmin.from('payment_refunds').upsert(
+      {
+        user_id: transaction.user_id,
+        transaction_id: transaction.id,
+        invoice_id: transaction.invoice_id,
+        amount: amountMajor,
+        amount_minor: stripeRefund.amount,
+        currency: (stripeRefund.currency || transaction.currency).toUpperCase(),
+        // Stripe can report a refund as still pending for some payment methods;
+        // only a succeeded one may count toward the refunded total.
+        status: stripeRefund.status === 'succeeded' ? 'succeeded' : 'pending',
+        processor_type: 'stripe',
+        processor_refund_id: stripeRefund.id,
+        stripe_connect_account_id: connectAccountId,
+        // Deterministic, so a redelivery of this event cannot open a second row.
+        idempotency_key: `stripe:${stripeRefund.id}`,
+        source: 'webhook',
+        succeeded_at:
+          stripeRefund.status === 'succeeded'
+            ? new Date(stripeRefund.created * 1000).toISOString()
+            : null,
+        metadata: { origin: 'charge.refunded', charge_id: charge.id }
+      },
+      { onConflict: 'processor_refund_id' }
+    );
+
+    if (error) {
+      console.error('❌ [Webhook] Failed to record refund:', error);
+      throw new Error(`Failed to record refund ${stripeRefund.id}: ${error.message}`);
+    }
+  }
+
+  console.log('✅ [Webhook] Recorded', charge.refunds?.data?.length ?? 0, 'refund(s) for', charge.id);
+}
+
+/**
+ * A standalone payment on a connected account.
+ *
+ * Upserted on `stripe_payment_intent_id`, which is UNIQUE, so this cannot
+ * duplicate a row that `booking/finalize` or `checkout.session.completed`
+ * already wrote — whichever arrives first wins and the other is a no-op.
+ *
+ * Invoice-backed payments are skipped: `invoice.paid` handles those, and it
+ * knows which invoice to attach the payment to, which this does not.
+ */
+async function handleConnectPaymentIntentSucceeded(
+  intent: Stripe.PaymentIntent,
+  connectAccountId: string
+) {
+  const invoiceRef = (intent as unknown as { invoice?: string | { id: string } }).invoice;
+  if (invoiceRef) {
+    console.log('ℹ️  [Webhook] payment_intent belongs to an invoice; invoice.paid owns it');
+    return;
+  }
+
+  const ownerId = intent.metadata?.owner_id;
+  if (!ownerId) {
+    // Without an owner there is no user to attribute the money to. Reported
+    // rather than dropped: it means a charge path is not tagging its intents.
+    console.error('❌ [Webhook] payment_intent.succeeded with no owner_id in metadata:', intent.id);
+    return;
+  }
+
+  if (!(await accountOwns(connectAccountId, ownerId))) {
+    // `owner_id` is metadata on the connected account's own object, so the
+    // account writes it. Inserted unchecked it becomes a payment row under any
+    // user_id the account chooses — money in the attacker's balance, revenue on
+    // the victim's books.
+    console.error(
+      '🚨 [Webhook] payment_intent.succeeded claims an owner that does not own this account — refusing',
+      { connectAccountId, claimedOwnerId: ownerId, intentId: intent.id }
+    );
+    return;
+  }
+
+  const { data: existing } = await supabaseAdmin
+    .from('payment_transactions')
+    .select('id')
+    .eq('stripe_payment_intent_id', intent.id)
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    console.log('ℹ️  [Webhook] Payment already recorded:', intent.id);
+    return;
+  }
+
+  const { error } = await supabaseAdmin.from('payment_transactions').insert({
+    user_id: ownerId,
+    contact_id: intent.metadata?.contact_id || null,
+    amount: intent.amount_received / 100,
+    currency: intent.currency.toUpperCase(),
+    status: 'succeeded',
+    processor_type: 'stripe',
+    payment_method: 'card',
+    stripe_payment_intent_id: intent.id,
+    paid_at: new Date(intent.created * 1000).toISOString(),
+    description: intent.description || 'Website payment',
+    refund_status: 'none',
+    refunded_amount: 0,
+    metadata: {
+      booking_id: intent.metadata?.booking_id || null,
+      service_id: intent.metadata?.service_id || null,
+      source: 'payment_intent_webhook'
+    },
+    ...describeChargeAccount(connectAccountId)
+  });
+
+  if (error) {
+    console.error('❌ [Webhook] Failed to record payment:', error);
+    throw new Error(`Failed to record payment ${intent.id}: ${error.message}`);
+  }
+
+  console.log('✅ [Webhook] Recorded standalone payment:', intent.id);
+}
+
+/**
+ * Does this connected account belong to the business that owns this record?
+ *
+ * Cached per invocation: a webhook may check the same account more than once,
+ * and this is two queries.
+ */
+const accountOwnerCache = new Map<string, string | null>();
+
+async function accountOwns(connectAccountId: string, ownerId: string | null | undefined): Promise<boolean> {
+  if (!ownerId) return false;
+
+  if (!accountOwnerCache.has(connectAccountId)) {
+    accountOwnerCache.set(
+      connectAccountId,
+      await resolveAccountOwner(supabaseAdmin, connectAccountId)
+    );
+  }
+
+  const owner = accountOwnerCache.get(connectAccountId) ?? null;
+
+  // An account we cannot map to any business is not proof of ownership. It is
+  // also not necessarily an attack — a newly connected account whose row has
+  // not landed yet reads the same way — so it is logged rather than silent.
+  if (!owner) {
+    console.warn('⚠️  [Webhook] Connect account maps to no known business:', connectAccountId);
+    return false;
+  }
+
+  return owner === ownerId;
+}
+
 async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string) {
   console.log('💳 [Webhook] Processing Connect invoice.paid:', invoice.id, 'Account:', connectAccountId);
   console.log('💳 [Webhook] Invoice metadata:', JSON.stringify(invoice.metadata || {}));
@@ -906,7 +1150,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   if (invoiceByStripeId) {
     platformInvoice = invoiceByStripeId;
-    console.log('✅ [Webhook] Found platform invoice by stripe_invoice_id:', platformInvoice.id);
+    console.log('✅ [Webhook] Found platform invoice by stripe_invoice_id:', invoiceByStripeId.id);
   } else {
     console.log('ℹ️  [Webhook] No platform invoice found by stripe_invoice_id, checking metadata...');
 
@@ -924,7 +1168,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
       if (invoiceByMetadata && !metadataLookupError) {
         platformInvoice = invoiceByMetadata;
-        console.log('✅ [Webhook] Found platform invoice by metadata.invoice_id:', platformInvoice.id);
+        console.log('✅ [Webhook] Found platform invoice by metadata.invoice_id:', invoiceByMetadata.id);
 
         // Update the invoice with stripe_invoice_id for future lookups
         await supabaseAdmin
@@ -933,10 +1177,27 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
             stripe_invoice_id: invoice.id,
             updated_at: new Date().toISOString()
           })
-          .eq('id', platformInvoice.id);
+          .eq('id', invoiceByMetadata.id);
         console.log('✅ [Webhook] Updated invoice with stripe_invoice_id');
       }
     }
+  }
+
+  if (platformInvoice && !(await accountOwns(connectAccountId, platformInvoice.user_id))) {
+    // The event came from one business's account, but names another business's
+    // invoice. Both lookups above resolve by ID ALONE — a stripe_invoice_id or a
+    // UUID in metadata — and metadata on a connected account is written by that
+    // account. So without this check a business could create and pay an invoice
+    // on its own account carrying a competitor's invoice UUID, and we would mark
+    // the competitor's invoice paid and insert a payment row under their user_id
+    // while the money sat in the attacker's balance.
+    //
+    // Refused rather than repaired: there is no benign reading of it.
+    console.error(
+      '🚨 [Webhook] Connect invoice.paid names an invoice owned by a different business — refusing',
+      { connectAccountId, invoiceId: platformInvoice.id }
+    );
+    return;
   }
 
   if (!platformInvoice) {
@@ -947,24 +1208,51 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
 
   console.log('✅ [Webhook] Found platform invoice:', platformInvoice.id, platformInvoice.invoice_number);
 
-  // Update platform invoice to paid
-  const { error: updateError } = await supabaseAdmin
-    .from('payment_invoices')
-    .update({
-      status: 'paid',
-      paid_at: new Date().toISOString(),
-      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
-      stripe_invoice_pdf: invoice.invoice_pdf,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', platformInvoice.id);
+  const paidAt = new Date().toISOString();
 
-  if (updateError) {
-    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+  // Already recorded? Stripe can deliver invoice.paid more than once, and a
+  // failed attempt is now retried, so this handler has to be safe to run twice.
+  // Without this guard a retry would add a second payment against one invoice
+  // and double the recorded revenue.
+  const { data: existingTx } = await supabaseAdmin
+    .from('payment_transactions')
+    .select('id')
+    .eq('invoice_id', platformInvoice.id)
+    .in('status', ['succeeded', 'refunded'])
+    .limit(1)
+    .maybeSingle();
+
+  if (existingTx) {
+    console.log('ℹ️  [Webhook] Payment already recorded for invoice:', platformInvoice.invoice_number);
     return;
   }
 
-  // Create payment_transaction record
+  // The payment intent, from wherever this API version keeps it.
+  //
+  // `invoice.payment_intent` was REMOVED from the Invoice object in the 2025
+  // API versions; settlement now hangs off `invoice.payments[].payment`. This
+  // account is already on the newer shape — all three paid invoices returned
+  // `payment_intent: undefined` while carrying a real
+  // `payments.data[0].payment.payment_intent`.
+  //
+  // Reading only the old field would record every invoice payment with a null
+  // id, and Stripe needs the payment intent or the charge to refund against —
+  // so each of those payments would be permanently unrefundable. Both shapes are
+  // read, and the list is fetched if the webhook payload did not inline it.
+  const paymentIntentId = await resolveInvoicePaymentIntent(invoice, connectAccountId);
+
+  if (!paymentIntentId) {
+    console.warn(
+      '⚠️  [Webhook] invoice.paid carried no payment intent in either shape — this payment will not be refundable:',
+      { invoiceId: platformInvoice.id, stripeInvoiceId: invoice.id }
+    );
+  }
+
+  // The payment is recorded BEFORE the invoice is marked paid.
+  //
+  // It used to be the other way round with the failure only logged, so a failed
+  // insert left an invoice that looked settled with no money behind it. This
+  // order means a failure leaves the invoice UNPAID — visible, and retryable.
   const { error: txError } = await supabaseAdmin
     .from('payment_transactions')
     .insert({
@@ -977,22 +1265,51 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
       payment_method: 'card',
       description: `Payment for invoice ${platformInvoice.invoice_number}`,
       processor_type: 'stripe',
-      stripe_payment_intent_id: typeof invoice.payment_intent === 'string' ? invoice.payment_intent : invoice.payment_intent?.id || null,
+      stripe_payment_intent_id: paymentIntentId,
       stripe_customer_id: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id || null,
-      paid_at: new Date().toISOString(),
+      paid_at: paidAt,
       metadata: {
         stripe_invoice_id: invoice.id,
         connect_account_id: connectAccountId,
         invoice_number: platformInvoice.invoice_number
       },
       refund_status: 'none',
-      refunded_amount: 0
+      refunded_amount: 0,
+      // Where this charge lives, taken from Stripe's own answer rather than
+      // looked up again later. A refund issued against the wrong account does
+      // not fail safely — it either errors or returns money from the wrong
+      // balance — and after the fact there is nothing in the database that could
+      // tell the two apart.
+      ...describeChargeAccount(connectAccountId)
     });
 
   if (txError) {
     console.error('❌ [Webhook] Failed to create payment transaction:', txError);
-  } else {
-    console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+    throw new Error(
+      `Failed to record payment for invoice ${platformInvoice.id}: ${txError.message}`
+    );
+  }
+
+  console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+
+  // Then the invoice. The update_invoice_on_payment trigger also does this when
+  // the transaction lands; this is idempotent and covers databases without it.
+  const { error: updateError } = await supabaseAdmin
+    .from('payment_invoices')
+    .update({
+      status: 'paid',
+      paid_at: paidAt,
+      stripe_hosted_invoice_url: invoice.hosted_invoice_url,
+      stripe_invoice_pdf: invoice.invoice_pdf,
+      updated_at: paidAt
+    })
+    .eq('id', platformInvoice.id);
+
+  if (updateError) {
+    console.error('❌ [Webhook] Failed to update platform invoice:', updateError);
+    throw new Error(
+      `Failed to mark invoice ${platformInvoice.id} paid: ${updateError.message}`
+    );
   }
 
   // Update linked booking's payment_status if invoice has a booking_id
@@ -1108,54 +1425,86 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
       return;
     }
 
+    if (!(await accountOwns(connectAccountId, platformInvoice.user_id))) {
+      // Same hole as the invoice.paid path: the invoice is found by a UUID that
+      // travelled in metadata written by the connected account.
+      console.error(
+        '🚨 [Webhook] Connect checkout names an invoice owned by a different business — refusing',
+        { connectAccountId, invoiceId }
+      );
+      return;
+    }
+
     if (platformInvoice.status === 'paid') {
       console.log('ℹ️  [Webhook] Invoice already marked as paid:', invoiceId);
       return;
     }
 
-    // Update invoice to paid
-    const { error: updateError } = await supabaseAdmin
-      .from('payment_invoices')
-      .update({
-        status: 'paid',
-        paid_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', invoiceId);
-
-    if (updateError) {
-      console.error('❌ [Webhook] Failed to update invoice status:', updateError);
-      return;
-    }
-
-    console.log('✅ [Webhook] Invoice marked as paid:', platformInvoice.invoice_number);
-
-    // Create payment transaction record
+    // The payment is recorded BEFORE the invoice is marked paid.
+    //
+    // The order used to be the other way round, and the insert that followed
+    // could never succeed: it set `type: 'payment'`, a column that does not
+    // exist on payment_transactions, and `status: 'completed'`, which is not one
+    // of pending/succeeded/failed/refunded. Postgres rejected every row, the
+    // failure was only logged, and the invoice had already been marked paid — so
+    // the money vanished from the records while the invoice looked settled.
+    //
+    // Writing the payment first means a failure here leaves the invoice UNPAID:
+    // visible, wrong in the safe direction, and retryable.
+    const paidAt = new Date().toISOString();
     const amountPaid = (session.amount_total || 0) / 100;
+
     const { error: txError } = await supabaseAdmin
       .from('payment_transactions')
       .insert({
         user_id: platformInvoice.user_id,
         contact_id: platformInvoice.contact_id,
         invoice_id: invoiceId,
-        type: 'payment',
         amount: amountPaid,
         currency: platformInvoice.currency || 'USD',
-        status: 'completed',
+        status: 'succeeded',
+        processor_type: 'stripe',
         payment_method: 'card',
+        paid_at: paidAt,
         stripe_payment_intent_id: session.payment_intent as string,
         description: `Payment for invoice ${platformInvoice.invoice_number}`,
         metadata: {
           checkout_session_id: session.id,
           connect_account_id: connectAccountId
-        }
+        },
+        // Same reasoning as the invoice handler: recorded at charge time,
+        // never inferred at refund time.
+        ...describeChargeAccount(connectAccountId)
       });
 
     if (txError) {
+      // Thrown, not logged and swallowed. The caller turns this into a non-2xx
+      // so Stripe retries; swallowing it is what produced paid-looking invoices
+      // with no payment behind them.
       console.error('❌ [Webhook] Failed to create payment transaction:', txError);
-    } else {
-      console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+      throw new Error(`Failed to record payment for invoice ${invoiceId}: ${txError.message}`);
     }
+
+    console.log('✅ [Webhook] Payment transaction created for invoice:', platformInvoice.invoice_number);
+
+    // Now the invoice. The update_invoice_on_payment trigger already does this
+    // when the transaction lands, so this is belt-and-braces for databases where
+    // that trigger is not present — and it is idempotent either way.
+    const { error: updateError } = await supabaseAdmin
+      .from('payment_invoices')
+      .update({
+        status: 'paid',
+        paid_at: paidAt,
+        updated_at: paidAt
+      })
+      .eq('id', invoiceId);
+
+    if (updateError) {
+      console.error('❌ [Webhook] Failed to update invoice status:', updateError);
+      throw new Error(`Failed to mark invoice ${invoiceId} paid: ${updateError.message}`);
+    }
+
+    console.log('✅ [Webhook] Invoice marked as paid:', platformInvoice.invoice_number);
 
     // Update CRM contact stage to 'customer' if applicable
     if (platformInvoice.contact_id) {
@@ -1368,6 +1717,10 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
  * Main webhook handler
  */
 export async function POST(request: NextRequest) {
+  // Set once this request has claimed the event. The catch needs it to release
+  // the claim, and it must survive out of the try block to do so.
+  let processedEventId: string | null = null;
+
   try {
     const body = await request.text();
     const signature = request.headers.get('stripe-signature');
@@ -1379,27 +1732,64 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!webhookSecret) {
-      console.error('❌ STRIPE_WEBHOOK_SECRET not configured');
+    // Either secret verifies.
+    //
+    // Connected-account events can arrive at the same endpoint as platform ones,
+    // or at a separate endpoint with its own secret, depending on how Stripe is
+    // configured — and that is a dashboard setting nobody here controls.
+    // Accepting both means this code is correct either way, so the fix does not
+    // have to be coordinated with a dashboard change.
+    const secrets = [
+      process.env.STRIPE_WEBHOOK_SECRET,
+      process.env.STRIPE_CONNECT_WEBHOOK_SECRET
+    ].filter(Boolean) as string[];
+
+    if (secrets.length === 0) {
+      console.error('❌ No Stripe webhook secret configured');
       return NextResponse.json(
         { error: 'Webhook secret not configured' },
         { status: 500 }
       );
     }
 
-    // Verify webhook signature
     const stripeService = getStripeService();
-    const event = stripeService.constructWebhookEvent(body, signature, webhookSecret);
+    let event: Stripe.Event | null = null;
+    let verificationError: unknown = null;
+
+    for (const secret of secrets) {
+      try {
+        event = stripeService.constructWebhookEvent(body, signature, secret);
+        break;
+      } catch (err) {
+        verificationError = err;
+      }
+    }
+
+    if (!event) {
+      // A signature that matches no configured secret is not ours. 400 is
+      // correct here — unlike a handler failure, retrying will not help.
+      console.error('❌ [Webhook] Signature verification failed:', verificationError);
+      return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+    }
 
     console.log('📥 [Webhook] Received event:', event.type, 'ID:', event.id);
 
     // ============================================================================
     // IDEMPOTENCY CHECK: Prevent duplicate processing of the same webhook event
     // ============================================================================
+    // Two-phase, because "seen" and "done" are different facts.
+    //
+    // Recording the id before processing is correct — it is what stops two
+    // concurrent deliveries both running the handler. What was missing was any
+    // way back: a handler that threw left its row behind, so every Stripe retry
+    // of that event was discarded as a duplicate. For an event that moves money
+    // that is a one-way valve, and it is how client payments were lost.
+    //
+    // Only 'completed' suppresses a retry now. A 'failed' row is reclaimed
+    // below so Stripe's next delivery can do the work.
     const { data: existingEvent, error: checkError } = await supabaseAdmin
       .from('processed_webhook_events')
-      .select('event_id')
+      .select('event_id, status')
       .eq('event_id', event.id)
       .maybeSingle();
 
@@ -1408,38 +1798,67 @@ export async function POST(request: NextRequest) {
       // Continue processing - don't fail webhook if check fails
     }
 
-    if (existingEvent) {
+    if (existingEvent?.status === 'completed') {
       console.log(`⏭️  [Webhook] Event ${event.id} already processed, skipping duplicate`);
       return NextResponse.json({ received: true, duplicate: true });
     }
 
-    // Record this event as being processed (before actual processing to handle concurrent requests)
-    const { error: insertError } = await supabaseAdmin
-      .from('processed_webhook_events')
-      .insert({
-        event_id: event.id,
-        event_type: event.type,
-        processed_at: new Date().toISOString(),
-        metadata: {
-          created: event.created,
-          livemode: event.livemode
-        }
-      });
+    if (existingEvent?.status === 'processing') {
+      // Another delivery of the same event is in flight right now.
+      console.log(`⏭️  [Webhook] Event ${event.id} is being processed by another request, skipping`);
+      return NextResponse.json({ received: true, duplicate: true });
+    }
 
-    if (insertError) {
-      // If insert fails due to unique constraint (race condition), another request is processing this
-      if (insertError.code === '23505') { // PostgreSQL unique violation
-        console.log(`⏭️  [Webhook] Event ${event.id} is being processed by another request, skipping`);
-        return NextResponse.json({ received: true, duplicate: true });
+    if (existingEvent) {
+      // A previous attempt failed. Claim it for this attempt.
+      console.log(`🔁 [Webhook] Retrying previously failed event ${event.id}`);
+      await supabaseAdmin
+        .from('processed_webhook_events')
+        .update({ status: 'processing', failure_message: null, processed_at: new Date().toISOString() })
+        .eq('event_id', event.id);
+      processedEventId = event.id;
+    } else {
+      const { error: insertError } = await supabaseAdmin
+        .from('processed_webhook_events')
+        .insert({
+          event_id: event.id,
+          event_type: event.type,
+          status: 'processing',
+          processed_at: new Date().toISOString(),
+          metadata: {
+            created: event.created,
+            livemode: event.livemode
+          }
+        });
+
+      if (insertError) {
+        // Unique violation means another request claimed it between our SELECT
+        // and this INSERT. Theirs wins.
+        if (insertError.code === '23505') {
+          console.log(`⏭️  [Webhook] Event ${event.id} is being processed by another request, skipping`);
+          return NextResponse.json({ received: true, duplicate: true });
+        }
+        console.error('❌ [Webhook] Error recording event:', insertError);
+        // Continue processing even if we couldn't record the event
+      } else {
+        processedEventId = event.id;
       }
-      console.error('❌ [Webhook] Error recording event:', insertError);
-      // Continue processing even if we couldn't record the event
     }
 
     console.log(`✅ [Webhook] Event ${event.id} recorded, processing...`);
 
-    // Check if this is a Connect webhook (from a connected account)
-    const connectAccountId = request.headers.get('stripe-account');
+    // Which account this event belongs to — a business's connected account, or
+    // the platform.
+    //
+    // This read a `stripe-account` request header, which Stripe does not send on
+    // webhook deliveries; a connected-account event carries its account on the
+    // event body. So this was always false and no client payment ever reached
+    // the handlers below: 12 invoices existed against zero payment
+    // transactions, with paid ones still reading `overdue`.
+    //
+    // Platform events have no `event.account`, so they take exactly the path
+    // they take today.
+    const connectAccountId = event.account ?? null;
     const isConnectEvent = !!connectAccountId;
 
     if (isConnectEvent) {
@@ -1494,25 +1913,93 @@ export async function POST(request: NextRequest) {
         }
         break;
 
+      // Platform subscriptions ONLY — this is the platform's own SaaS billing.
+      //
+      // These were the last money events not gated on `isConnectEvent`, and the
+      // gap was a cross-tenant write. Both handlers key solely on
+      // `subscription.metadata.user_id`, and on a Connect event that metadata is
+      // written by the CONNECTED BUSINESS (subscriptions are created on
+      // connected accounts by the Stripe plugin executor). So a business could
+      // set `metadata.user_id` to another tenant's id and rewrite that tenant's
+      // plan, credits and status — or cancel it outright.
+      //
+      // A connected account's own subscriptions are its business, not ours.
       case 'customer.subscription.updated':
+        if (isConnectEvent) break;
         await handleSubscriptionUpdated(event.data.object as Stripe.Subscription);
         break;
 
       case 'customer.subscription.deleted':
+        if (isConnectEvent) break;
         await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
+        break;
+
+      // Refunds issued outside this app — from the Stripe dashboard, or by
+      // Stripe itself. Handled for both platform and connected accounts:
+      // wherever the charge lives, the ledger has to learn about it.
+      case 'charge.refunded':
+        await handleChargeRefunded(event.data.object as Stripe.Charge, connectAccountId);
+        break;
+
+      // A payment that succeeded without any invoice behind it — a website or
+      // landing-page sale. Recorded here because the browser is not a reliable
+      // reporter: `booking/finalize` runs client-side, so a customer who closes
+      // the tab after paying leaves money in Stripe with no row at all.
+      //
+      // Connected accounts only. A platform payment_intent.succeeded belongs to
+      // subscription billing, which is not this system's concern.
+      case 'payment_intent.succeeded':
+        if (isConnectEvent) {
+          await handleConnectPaymentIntentSucceeded(
+            event.data.object as Stripe.PaymentIntent,
+            connectAccountId!
+          );
+        }
         break;
 
       default:
         console.log('ℹ️ [Webhook] Unhandled event type:', event.type);
     }
 
+    // Only now is it safe to suppress future deliveries of this event.
+    await supabaseAdmin
+      .from('processed_webhook_events')
+      .update({ status: 'completed', completed_at: new Date().toISOString() })
+      .eq('event_id', event.id);
+
     return NextResponse.json({ received: true });
 
   } catch (error: any) {
     console.error('❌ [Webhook] Error:', error);
+
+    // Release the event so Stripe's retry can reprocess it. Without this the id
+    // stays claimed and every retry is discarded as a duplicate — the failure
+    // mode that lost real payments.
+    //
+    // `processedEventId` is null when we failed before claiming anything (bad
+    // signature, malformed body), where there is nothing to release.
+    if (processedEventId) {
+      try {
+        await supabaseAdmin
+          .from('processed_webhook_events')
+          .update({
+            status: 'failed',
+            failure_message: String(error?.message ?? error).slice(0, 500)
+          })
+          .eq('event_id', processedEventId);
+      } catch (releaseError) {
+        // Nothing further to do — the original failure is the one that matters,
+        // and swallowing this keeps it from masking the real error.
+        console.error('❌ [Webhook] Could not release failed event:', releaseError);
+      }
+    }
+
+    // 5xx, not 400. Stripe retries on any non-2xx, but a 4xx says "this request
+    // was malformed, sending it again will not help" — which is the opposite of
+    // true when our own handler threw.
     return NextResponse.json(
       { error: error.message || 'Webhook processing failed' },
-      { status: 400 }
+      { status: 500 }
     );
   }
 }

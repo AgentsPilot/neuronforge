@@ -12,6 +12,8 @@ import { createLogger } from '@/lib/logger';
 import type { Detector, DetectionResult, DetectionRun } from './types';
 import { getCorrelationEngine } from '../correlation';
 import type { CorrelationSummary } from '../correlation/types';
+import { InsightRepository, type VectorKey } from '../repository/InsightRepository';
+import type { BusinessEventCategory } from '../events/types';
 
 // Import detector catalog - Original 6
 import { CashArOverdueDetector } from './catalog/CashArOverdueDetector';
@@ -58,11 +60,38 @@ import { PricingIntroOfferStuckDetector } from './catalog/PricingIntroOfferStuck
 const logger = createLogger({ module: 'DetectorEngine' });
 
 /**
+ * Which of the seven vectors each detector's category belongs to.
+ *
+ * A vector is `dark` until the business has enough of the thing it watches to
+ * say anything honest about it. Telling a one-day-old account its calendar is
+ * 0% filled is not advice — the calendar is empty by definition — so detectors
+ * whose vector is dark do not run at all.
+ *
+ * `wins` has no detector category: win insights are recorded from events, not
+ * detected, so nothing here maps to it.
+ */
+const CATEGORY_VECTOR: Record<BusinessEventCategory, VectorKey> = {
+  acquisition: 'conv',   // traffic — gated on visitors, like conversion
+  conversion: 'conv',
+  sales: 'leads',
+  cash_flow: 'cash',
+  retention: 'ret',
+  operations: 'ops',
+  pricing: 'price',
+};
+
+/**
  * Engine that runs all detectors
  */
 export class DetectorEngine {
   private supabase: SupabaseClient;
   private detectors: Detector[];
+  /**
+   * How many detectors the last runForUser() actually evaluated, rather than
+   * skipped as dark. Read straight after that call — callers process users one
+   * at a time, so there is nothing to interleave with.
+   */
+  private lastEvaluatedCount = 0;
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase;
@@ -121,13 +150,51 @@ export class DetectorEngine {
   }
 
   /**
+   * Detectors actually evaluated for the user most recently passed to
+   * runForUser() — the registered count minus those skipped as dark.
+   */
+  getLastEvaluatedCount(): number {
+    return this.lastEvaluatedCount;
+  }
+
+  /**
+   * Vectors with no data behind them yet, so nothing they cover can be judged.
+   *
+   * On failure this returns an empty set — every detector runs — because a
+   * maturity lookup that breaks should not silence the whole engine.
+   */
+  private async getDarkVectors(userId: string): Promise<Set<VectorKey>> {
+    const repository = new InsightRepository(this.supabase);
+    const { data, error } = await repository.getVectorMaturity(userId);
+
+    if (error || !data) {
+      logger.warn({ err: error, userId }, 'Vector maturity unavailable; running every detector');
+      return new Set();
+    }
+
+    return new Set(data.vectors.filter(v => v.state === 'dark').map(v => v.key));
+  }
+
+  /**
    * Run all detectors for a single user
    */
   async runForUser(userId: string): Promise<DetectionResult[]> {
     const results: DetectionResult[] = [];
+    const darkVectors = await this.getDarkVectors(userId);
+    let evaluated = 0;
 
     for (const detector of this.detectors) {
+      const vector = CATEGORY_VECTOR[detector.definition.category];
+      if (vector && darkVectors.has(vector)) {
+        logger.debug(
+          { userId, detectorId: detector.definition.id, vector },
+          'Detector skipped: its vector has no data to reason from yet'
+        );
+        continue;
+      }
+
       try {
+        evaluated++;
         const result = await detector.evaluate(userId);
         if (result) {
           results.push(result);
@@ -143,6 +210,15 @@ export class DetectorEngine {
         );
       }
     }
+
+    this.lastEvaluatedCount = evaluated;
+    logger.info({
+      userId,
+      evaluated,
+      skipped: this.detectors.length - evaluated,
+      fired: results.length,
+      darkVectors: [...darkVectors]
+    }, 'Detector run complete');
 
     return results;
   }
@@ -187,7 +263,7 @@ export class DetectorEngine {
         try {
           const results = await this.runForUser(userId);
           run.usersProcessed++;
-          run.detectorsRun += this.detectors.length;
+          run.detectorsRun += this.lastEvaluatedCount;
           run.insightsGenerated += results.length;
         } catch (error) {
           logger.error({ err: error, userId, runId }, 'Failed to process user');

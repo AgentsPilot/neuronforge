@@ -6,16 +6,19 @@
  * Steps: 1) Branding+Template 2) Client Journey 3) Services Review 4) Preview & Publish
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Globe, ChevronRight, ChevronLeft, Check, X,
   Calendar, CreditCard, FileText, CheckCircle,
   ChevronUp, ChevronDown, Plus, Loader2, Eye,
-  Sparkles, Rocket, ExternalLink, Monitor, Tablet, Smartphone, Maximize2
+  Rocket, ExternalLink, Monitor, Tablet, Smartphone, Maximize2,
+  Settings,
 } from 'lucide-react';
 import { MediaUploader } from '@/components/website/MediaUploader';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
+import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
 
 // Template name translations
 const TEMPLATE_NAMES: Record<string, { en: string; es: string; he: string }> = {
@@ -139,7 +142,8 @@ interface WebsiteSetupWizardProps {
 
 export interface WizardResult {
   templateId: string;
-  logoUrl?: string;
+  /** Whether the site header shows the business logo. */
+  showLogo?: boolean;
   clientFlow: FlowStepKey[];
   hiddenServiceIds: string[];
   subdomain: string;
@@ -199,12 +203,14 @@ const LABELS = {
     loading_templates: 'Loading templates...',
     upload_logo: 'Upload Your Logo (Optional)',
     logo_hint: 'Recommended: Square image, at least 200x200px',
+    show_logo: 'Show it in this site\'s header',
     // Step 2
     step2_title: 'Client Journey',
     step2_subtitle: 'What happens when a client wants to book?',
     drag_to_reorder: 'Use arrows to reorder steps',
     click_to_add: 'Click to add:',
     always_included: 'Always included',
+    journey_note: 'The booking steps a client walks are set by each service — a date only where one is booked, a card only where it is paid online. What you arrange here is what the page shows.',
     tip_simple: 'Tip: Keep it simple',
     tip_simple_desc: 'Most therapists use just Booking + Confirmation. You can add payment later.',
     services_only: 'Just want to show services?',
@@ -212,8 +218,8 @@ const LABELS = {
     // Step 3
     step3_title: 'Your Services',
     step3_subtitle: 'Toggle services to show or hide on your website',
-    services_synced: 'Services are synced from your Scheduling capability',
     manage_services: 'Manage Services',
+    service_draft: 'Not published yet',
     no_services: 'No services found',
     no_services_desc: 'Add services in the Scheduling section to display them on your website.',
     // Step 4
@@ -240,19 +246,21 @@ const LABELS = {
     loading_templates: 'Cargando plantillas...',
     upload_logo: 'Subir Tu Logo (Opcional)',
     logo_hint: 'Recomendado: Imagen cuadrada, mínimo 200x200px',
+    show_logo: 'Mostrarlo en el encabezado de este sitio',
     step2_title: 'Viaje del Cliente',
     step2_subtitle: '¿Qué pasa cuando un cliente quiere reservar?',
     drag_to_reorder: 'Usa las flechas para reordenar',
     click_to_add: 'Clic para agregar:',
     always_included: 'Siempre incluido',
+    journey_note: 'Los pasos de reserva los define cada servicio — fecha solo si se reserva, tarjeta solo si se cobra en línea. Aquí organizas lo que muestra la página.',
     tip_simple: 'Tip: Mantenlo simple',
     tip_simple_desc: 'La mayoría usa solo Reserva + Confirmación. Puedes agregar pago después.',
     services_only: '¿Solo quieres mostrar servicios?',
     services_only_desc: 'Elimina todos los pasos opcionales. Los servicios se mostrarán sin botón de reserva.',
     step3_title: 'Tus Servicios',
     step3_subtitle: 'Activa o desactiva servicios para mostrar en tu sitio',
-    services_synced: 'Los servicios están sincronizados desde Programación',
     manage_services: 'Gestionar Servicios',
+    service_draft: 'Aún sin publicar',
     no_services: 'No hay servicios',
     no_services_desc: 'Agrega servicios en Programación para mostrarlos en tu sitio.',
     step4_title: '¡Tu Sitio Está Listo!',
@@ -278,19 +286,21 @@ const LABELS = {
     loading_templates: 'טוען תבניות...',
     upload_logo: 'העלה לוגו (אופציונלי)',
     logo_hint: 'מומלץ: תמונה מרובעת, לפחות 200x200 פיקסלים',
+    show_logo: 'הצג אותו בכותרת האתר הזה',
     step2_title: 'מסע הלקוח',
     step2_subtitle: 'מה קורה כשלקוח רוצה להזמין?',
     drag_to_reorder: 'השתמש בחצים לשינוי סדר',
     click_to_add: 'לחץ להוספה:',
     always_included: 'תמיד כלול',
+    journey_note: 'שלבי ההזמנה שהלקוח עובר נקבעים בכל שירות — תאריך רק כשקובעים תור, כרטיס רק כשגובים אונליין. כאן מסדרים מה הדף מציג.',
     tip_simple: 'טיפ: שמור על פשטות',
     tip_simple_desc: 'רוב המטפלים משתמשים רק בהזמנה + אישור. אפשר להוסיף תשלום מאוחר יותר.',
     services_only: 'רוצה להציג רק שירותים?',
     services_only_desc: 'הסר את כל השלבים האופציונליים. השירותים יוצגו ללא כפתור הזמנה.',
     step3_title: 'השירותים שלך',
     step3_subtitle: 'הפעל או כבה שירותים להצגה באתר',
-    services_synced: 'השירותים מסונכרנים מניהול התורים',
     manage_services: 'נהל שירותים',
+    service_draft: 'עדיין לא פורסם',
     no_services: 'לא נמצאו שירותים',
     no_services_desc: 'הוסף שירותים בניהול התורים כדי להציג אותם באתר.',
     step4_title: 'האתר שלך מוכן!',
@@ -317,24 +327,95 @@ export function WebsiteSetupWizard({
   onBeforePreview,
   embedded = false
 }: WebsiteSetupWizardProps) {
-  const { language, availableCurrencies } = useLanguage();
+  const { language, availableCurrencies, t } = useLanguage();
   const labels = LABELS[language] || LABELS.en;
   const isRTL = language === 'he';
 
   // Wizard state
   const [currentStep, setCurrentStep] = useState(1);
-  const totalSteps = 4;
+  /**
+   * Three steps: set up, services, ready.
+   *
+   * The second used to be a client-journey builder, and it could not be
+   * honoured — the booking journey belongs to each service, so a flow arranged
+   * here was overruled at render for any service that disagreed with it. What
+   * it really controlled was whether an intake form is collected and whether
+   * the page is services-only, and both of those are facts we already hold.
+   */
+  const totalSteps = 3;
 
   // Step 1: Branding & Template
   const [selectedTemplateId, setSelectedTemplateId] = useState(currentTemplateId || templates[0]?.id || '');
   const [logoUrl, setLogoUrl] = useState(currentLogoUrl || '');
+  // Whether this site's header wears the logo. The image lives on the business
+  // profile; this only records the choice for this website.
+  const [showLogo, setShowLogo] = useState(!!currentLogoUrl);
+
+  /**
+   * Save an uploaded logo to the business profile.
+   *
+   * The wizard used to write the URL into the website's header block, which is
+   * how the business logo ended up existing only inside a website. Every other
+   * surface — invoices, emails, booking pages — reads the profile.
+   */
+  const persistLogo = async (url: string | null) => {
+    setLogoUrl(url || '');
+    setShowLogo(!!url);
+    try {
+      await fetch('/api/business-os/business-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logo_url: url }),
+      });
+    } catch {
+      // The wizard must not stall on a branding write; the logo can be set
+      // again from Settings.
+    }
+  };
 
   // Step 2: Client Journey
-  const [clientFlow, setClientFlow] = useState<FlowStepKey[]>(currentClientFlow);
+  /**
+   * Derived, not chosen. Kept in the shape the page's process block stores so
+   * every consumer of `client_flow` keeps working.
+   */
+  const [services, setServices] = useState<SchedulingService[]>([]);
+  /** Whether the business collects an intake form — one setting, fetched once. */
+  const [intakeEnabled, setIntakeEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/intake/settings')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => { if (!cancelled) setIntakeEnabled(!!data?.settings?.is_enabled); })
+      .catch(() => {
+        // Never fatal: without it the flow simply omits a step it cannot confirm.
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const clientFlow: FlowStepKey[] = useMemo(() => {
+    if (services.length === 0) return ['confirmation'];
+    return [
+      ...(services.some(s => (s as { is_scheduled?: boolean }).is_scheduled !== false) ? ['scheduling' as FlowStepKey] : []),
+      'client_info' as FlowStepKey,
+      ...(services.some(s => (s as { collection?: string; price?: number | null }).collection === 'online' && ((s as { price?: number | null }).price || 0) > 0) ? ['payment' as FlowStepKey] : []),
+      ...(intakeEnabled ? ['intake' as FlowStepKey] : []),
+      'confirmation' as FlowStepKey,
+    ];
+  }, [services, intakeEnabled]);
 
   // Step 3: Services
-  const [services, setServices] = useState<SchedulingService[]>([]);
   const [hiddenServiceIds, setHiddenServiceIds] = useState<Set<string>>(new Set());
+
+  /**
+   * The services dialog, opened from this step.
+   *
+   * "Manage services" used to be a link to /business-os, which threw away the
+   * half-built site the wizard was holding. Services are edited in the
+   * configuration dialog everywhere else in the product, so it opens here too —
+   * over the wizard, with the wizard's state intact behind it.
+   */
+  const [isServicesDialogOpen, setIsServicesDialogOpen] = useState(false);
   const [loadingServices, setLoadingServices] = useState(false);
   // Store hidden service names for matching when services load
   const [hiddenServiceNames] = useState<Set<string>>(new Set(currentHiddenServiceNames));
@@ -351,28 +432,50 @@ export function WebsiteSetupWizard({
 
   // Fetch services when reaching step 3
   useEffect(() => {
-    if (currentStep === 3 && services.length === 0) {
+    if (currentStep === 2 && services.length === 0) {
       fetchServices();
     }
   }, [currentStep]);
 
   // Refresh preview when entering step 4
   useEffect(() => {
-    if (currentStep === 4) {
+    if (currentStep === 3) {
       setPreviewLoading(true);
       setPreviewKey(prev => prev + 1);
     }
   }, [currentStep]);
 
-  const fetchServices = async () => {
+  /**
+   * @param silent Refetch without the spinner.
+   *
+   * Used when returning from the services dialog: the list is already on
+   * screen, and replacing it with a loader for a moment reads as the wizard
+   * resetting rather than as one service being added.
+   */
+  const fetchServices = async ({ silent = false }: { silent?: boolean } = {}) => {
     try {
-      setLoadingServices(true);
+      if (!silent) setLoadingServices(true);
       const response = await fetch('/api/scheduling/services');
       const data = await response.json();
       if (data.success && data.services) {
-        // Map service_name to name for consistency with interface
+        /*
+         * Drafts belong here, and only deactivated services do not.
+         *
+         * This kept `status === 'active'` alone. But editing a service in the
+         * configuration dialog sets it back to `draft` — that is the deliberate
+         * "changed it, publish it again" gate — so renaming a service made it
+         * vanish from this step entirely. The list looked like it had not
+         * refreshed when in fact it had, and had correctly dropped the very
+         * service the person was looking at.
+         *
+         * `is_active` is the other flag and a different question: the Power
+         * toggle, an explicit "stop offering this". That one does belong out.
+         *
+         * Nothing here reaches the public site — the wizard only collects which
+         * ids to hide — so showing a draft cannot publish one.
+         */
         const mapped = data.services
-          .filter((s: { status: string }) => s.status === 'active')
+          .filter((s: { is_active?: boolean }) => s.is_active !== false)
           .map((s: { id: string; service_name: string; description: string | null; duration_minutes: number; price: number | null; currency: string; status: string }) => ({
             ...s,
             name: s.service_name // Map service_name to name
@@ -398,53 +501,9 @@ export function WebsiteSetupWizard({
   };
 
   // Client flow helpers
-  const activeFlowSteps = FLOW_STEPS.filter(s => clientFlow.includes(s.key));
-  const inactiveFlowSteps = FLOW_STEPS.filter(s => !clientFlow.includes(s.key) && s.removable);
-
-  const moveInFlow = (key: FlowStepKey, direction: 'up' | 'down') => {
-    const index = clientFlow.indexOf(key);
-    if (index === -1) return;
-
-    const newFlow = [...clientFlow];
-    const confirmationIndex = newFlow.indexOf('confirmation');
-
-    if (direction === 'up' && index > 0) {
-      [newFlow[index - 1], newFlow[index]] = [newFlow[index], newFlow[index - 1]];
-    } else if (direction === 'down' && index < newFlow.length - 1) {
-      // Don't move past confirmation
-      if (index + 1 < confirmationIndex || key === 'confirmation') {
-        [newFlow[index], newFlow[index + 1]] = [newFlow[index + 1], newFlow[index]];
-      }
-    }
-
-    // Ensure confirmation is always last
-    const confIdx = newFlow.indexOf('confirmation');
-    if (confIdx !== -1 && confIdx !== newFlow.length - 1) {
-      newFlow.splice(confIdx, 1);
-      newFlow.push('confirmation');
-    }
-
-    setClientFlow(newFlow);
-  };
-
-  const addToFlow = (key: FlowStepKey) => {
-    if (!clientFlow.includes(key)) {
-      // Insert before confirmation
-      const newFlow = [...clientFlow];
-      const confIndex = newFlow.indexOf('confirmation');
-      if (confIndex !== -1) {
-        newFlow.splice(confIndex, 0, key);
-      } else {
-        newFlow.push(key);
-      }
-      setClientFlow(newFlow);
-    }
-  };
-
-  const removeFromFlow = (key: FlowStepKey) => {
-    if (key === 'confirmation') return;
-    setClientFlow(clientFlow.filter(k => k !== key));
-  };
+  // The flow list and its editing handlers are gone with the step that used
+  // them: the journey belongs to each service, and `clientFlow` is derived
+  // above from what the business actually sells.
 
   // Service toggle
   const toggleService = (serviceId: string) => {
@@ -462,13 +521,13 @@ export function WebsiteSetupWizard({
   // Navigation
   const goNext = async () => {
     if (currentStep < totalSteps) {
-      // Before going to Step 4 (Preview), save current state for accurate preview
-      if (currentStep === 3 && onBeforePreview) {
+      // Before the final step, save current state for an accurate preview
+      if (currentStep === 2 && onBeforePreview) {
         setSavingForPreview(true);
         try {
           await onBeforePreview({
             templateId: selectedTemplateId,
-            logoUrl: logoUrl || undefined,
+            showLogo,
             clientFlow,
             hiddenServiceIds: Array.from(hiddenServiceIds),
             subdomain
@@ -494,7 +553,7 @@ export function WebsiteSetupWizard({
     }
     onComplete({
       templateId: selectedTemplateId,
-      logoUrl: logoUrl || undefined,
+      showLogo,
       clientFlow,
       hiddenServiceIds: Array.from(hiddenServiceIds),
       subdomain,
@@ -585,8 +644,8 @@ export function WebsiteSetupWizard({
         <div className="shrink-0">
           <MediaUploader
             value={logoUrl}
-            onChange={setLogoUrl}
-            onRemove={() => setLogoUrl('')}
+            onChange={(url) => persistLogo(url)}
+            onRemove={() => persistLogo(null)}
             folder="logos"
             placeholder=""
             previewClassName="w-14 h-14 rounded-lg"
@@ -596,132 +655,22 @@ export function WebsiteSetupWizard({
         <div className="min-w-0">
           <h3 className="text-sm font-medium text-[var(--v2-text-primary)]">{labels.upload_logo}</h3>
           <p className="text-xs text-[var(--v2-text-muted)]">{labels.logo_hint}</p>
+          {logoUrl && (
+            <label className="mt-2 flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showLogo}
+                onChange={(e) => setShowLogo(e.target.checked)}
+                className="w-3.5 h-3.5 accent-[var(--v2-primary)]"
+              />
+              <span className="text-xs text-[var(--v2-text-secondary)]">{labels.show_logo}</span>
+            </label>
+          )}
         </div>
       </div>
     </div>
   );
 
-  const renderStep2 = () => (
-    <div className="space-y-4">
-      {/* Active Flow Steps - Compact */}
-      <div className="space-y-2">
-        {activeFlowSteps.map((step, index) => {
-          const StepIcon = step.icon;
-          const isConfirmation = step.key === 'confirmation';
-          const flowIndex = clientFlow.indexOf(step.key);
-          const canMoveUp = flowIndex > 0;
-          const canMoveDown = flowIndex < clientFlow.length - 2;
-
-          return (
-            <div
-              key={step.key}
-              className="flex items-center gap-3"
-            >
-              {/* Step Icon */}
-              <div
-                className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
-                style={{ backgroundColor: step.color }}
-              >
-                <StepIcon className="w-4 h-4 text-white" />
-              </div>
-
-              {/* Step Content */}
-              <div
-                className="flex-1 px-3 py-2 rounded-lg border"
-                style={{
-                  backgroundColor: `${step.color}08`,
-                  borderColor: `${step.color}30`
-                }}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold" style={{ color: step.color }}>
-                      {index + 1}
-                    </span>
-                    <span className="text-sm font-medium text-gray-900">
-                      {step.label[language] || step.label.en}
-                    </span>
-                  </div>
-
-                  {/* Controls */}
-                  <div className="flex items-center gap-1">
-                    {!isConfirmation && (
-                      <>
-                        <button
-                          onClick={() => moveInFlow(step.key, 'up')}
-                          disabled={!canMoveUp}
-                          className={`p-0.5 rounded ${canMoveUp ? 'text-gray-400 hover:text-gray-600' : 'text-gray-200 cursor-not-allowed'}`}
-                        >
-                          <ChevronUp className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => moveInFlow(step.key, 'down')}
-                          disabled={!canMoveDown}
-                          className={`p-0.5 rounded ${canMoveDown ? 'text-gray-400 hover:text-gray-600' : 'text-gray-200 cursor-not-allowed'}`}
-                        >
-                          <ChevronDown className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => removeFromFlow(step.key)}
-                          className="p-0.5 rounded text-gray-300 hover:text-red-500"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
-                    {isConfirmation && (
-                      <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                        {labels.always_included}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Inactive Steps to Add - Compact */}
-      {inactiveFlowSteps.length > 0 && (
-        <div className="flex gap-2 flex-wrap pt-2 border-t border-[var(--v2-border)]">
-          <span className="text-xs text-[var(--v2-text-muted)] self-center">{labels.click_to_add}</span>
-          {inactiveFlowSteps.map((step) => {
-            const StepIcon = step.icon;
-            return (
-              <button
-                key={step.key}
-                onClick={() => addToFlow(step.key)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 border border-dashed rounded-lg text-sm transition-all hover:bg-gray-50"
-                style={{ borderColor: `${step.color}50`, color: step.color }}
-              >
-                <StepIcon className="w-4 h-4" />
-                {step.label[language] || step.label.en}
-                <Plus className="w-3 h-3 opacity-50" />
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Tips - More compact */}
-      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2">
-        <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-        <p className="text-xs text-amber-700">
-          <span className="font-medium">{labels.tip_simple}:</span> {labels.tip_simple_desc}
-        </p>
-      </div>
-
-      {clientFlow.length === 1 && clientFlow[0] === 'confirmation' && (
-        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-2">
-          <Eye className="w-4 h-4 text-blue-500 shrink-0" />
-          <p className="text-xs text-blue-700">
-            <span className="font-medium">{labels.services_only}:</span> {labels.services_only_desc}
-          </p>
-        </div>
-      )}
-    </div>
-  );
 
   const renderStep3 = () => (
     <div className="space-y-4">
@@ -736,14 +685,18 @@ export function WebsiteSetupWizard({
           </div>
           <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-1">{labels.no_services}</h3>
           <p className="text-sm text-[var(--v2-text-secondary)] mb-3">{labels.no_services_desc}</p>
-          <a
-            href="/business-os"
+          {/* Same action as the button below the list — a business with no
+              services yet is exactly who needs the dialog, and sending them to
+              another page would lose the wizard. */}
+          <button
+            type="button"
+            onClick={() => setIsServicesDialogOpen(true)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#4F6EF7] text-white text-sm hover:bg-[#3B5AE5] transition-all"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >
+            <Settings className="w-4 h-4" />
             {labels.manage_services}
-            <ChevronRight className="w-4 h-4" />
-          </a>
+          </button>
         </div>
       ) : (
         <>
@@ -768,30 +721,62 @@ export function WebsiteSetupWizard({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className={`font-medium truncate ${isHidden ? 'text-[var(--v2-text-secondary)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
-                          {service.name}
-                        </h4>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h4 className={`font-medium truncate ${isHidden ? 'text-[var(--v2-text-secondary)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
+                            {service.name}
+                          </h4>
+                          {/* A draft is one of your services and is not on your
+                              site. Editing a service sets it back to draft, so
+                              this is what a renamed service looks like until it
+                              is published — visible here, deliberately, rather
+                              than silently missing. */}
+                          {(service as { status?: string }).status === 'draft' && (
+                            <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/30 whitespace-nowrap">
+                              {labels.service_draft}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2">
                           {service.price != null && !isHidden && (
                             <span className="text-sm font-semibold text-green-600 whitespace-nowrap">
                               {currencySymbol}{service.price}
                             </span>
                           )}
-                          {/* Show/Hide Toggle Button */}
+                          {/*
+                            On or off the site.
+
+                            A switch rather than the tick/cross button that was
+                            here: an icon showing the CURRENT state reads as
+                            "this is a tick, pressing it does the tick thing",
+                            and a cross is as easily read as "delete this
+                            service" as "hide it". A switch shows both the state
+                            and the fact that there are two of them.
+
+                            Built here rather than with `components/ui/switch`:
+                            that one paints itself `var(--v2-primary)`, the
+                            platform brand colour set at runtime by the theme
+                            provider — not this page's blue, which every other
+                            control in the wizard uses. A toggle in a different
+                            colour from the buttons beside it reads as belonging
+                            to something else.
+
+                            `translateX` is signed by direction rather than a
+                            Tailwind class, because a knob that slides right in
+                            Hebrew slides out of its own track.
+                          */}
                           <button
                             type="button"
+                            role="switch"
+                            aria-checked={!isHidden}
+                            aria-label={service.name}
                             onClick={() => toggleService(service.id)}
-                            className={`p-1.5 rounded-lg transition-all ${
-                              isHidden
-                                ? 'bg-gray-100 text-gray-400 hover:bg-gray-200'
-                                : 'bg-[#4F6EF7]/10 text-[#4F6EF7] hover:bg-[#4F6EF7]/20'
-                            }`}
+                            className="relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full p-0.5 transition-colors focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]/40"
+                            style={{ backgroundColor: isHidden ? 'var(--v2-border)' : '#4F6EF7' }}
                           >
-                            {isHidden ? (
-                              <X className="w-4 h-4" />
-                            ) : (
-                              <Check className="w-4 h-4" />
-                            )}
+                            <span
+                              className="block h-5 w-5 rounded-full bg-white shadow transition-transform duration-200"
+                              style={{ transform: `translateX(${isHidden ? 0 : (isRTL ? -20 : 20)}px)` }}
+                            />
                           </button>
                         </div>
                       </div>
@@ -801,10 +786,35 @@ export function WebsiteSetupWizard({
                         </p>
                       )}
                       {!isHidden && (
-                        <div className="flex items-center gap-1 mt-2">
-                          <Calendar className="w-3 h-3 text-[var(--v2-text-secondary)]" />
-                          <span className="text-xs text-[var(--v2-text-secondary)]">{service.duration_minutes} min</span>
-                        </div>
+                        <>
+                          {service.duration_minutes ? (
+                            <div className="flex items-center gap-1 mt-2">
+                              <Calendar className="w-3 h-3 text-[var(--v2-text-secondary)]" />
+                              {/* `t`, not the local labels object: the minute is a unit the whole
+                                  product already translates, and a fourth copy of it here
+                                  is a fourth place to forget. */}
+                              <span className="text-xs text-[var(--v2-text-secondary)]">
+                                {service.duration_minutes} {t('scheduling.service.minutes')}
+                              </span>
+                            </div>
+                          ) : null}
+                          {/* What a client picking this service walks through —
+                              the same strip the smart-link editor shows. The
+                              website listed a duration and a price and said
+                              nothing about the journey, so the two surfaces
+                              described the same service differently. */}
+                          <div className="mt-2">
+                            <ClientJourneyStrip
+                              compact
+                              intakeEnabled={intakeEnabled}
+                              service={{
+                                scheduled: (service as { is_scheduled?: boolean }).is_scheduled !== false,
+                                collection: (service as { collection?: 'online' | 'invoice' | null }).collection ?? null,
+                                price: service.price,
+                              }}
+                            />
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
@@ -813,19 +823,21 @@ export function WebsiteSetupWizard({
             })}
           </div>
 
-          <div className="p-2.5 bg-blue-50 rounded-lg flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-blue-600" />
-              <span className="text-xs text-blue-700">{labels.services_synced}</span>
-            </div>
-            <a
-              href="/business-os"
-              className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-0.5"
-            >
-              {labels.manage_services}
-              <ChevronRight className="w-3 h-3" />
-            </a>
-          </div>
+          {/* Just the control.
+              This used to explain that services are "synced from your
+              Scheduling capability" — a sentence about our internal wiring,
+              answering a question nobody asked, next to a link that navigated
+              away and abandoned the half-built site. Both are gone: the button
+              opens the services dialog over the wizard, and the list behind it
+              refreshes when it closes. */}
+          <button
+            type="button"
+            onClick={() => setIsServicesDialogOpen(true)}
+            className="w-full p-2.5 rounded-lg border border-dashed border-[var(--v2-border)] text-xs font-medium text-[var(--v2-text-secondary)] hover:border-[#4F6EF7]/50 hover:text-[#4F6EF7] hover:bg-[#4F6EF7]/5 transition-all flex items-center justify-center gap-1.5"
+          >
+            <Settings className="w-3.5 h-3.5" />
+            {labels.manage_services}
+          </button>
         </>
       )}
     </div>
@@ -1092,15 +1104,13 @@ export function WebsiteSetupWizard({
       <div className="mb-4">
         <h2 className="text-lg font-bold text-[var(--v2-text-primary)] mb-1">
           {currentStep === 1 && labels.step1_title}
-          {currentStep === 2 && labels.step2_title}
-          {currentStep === 3 && labels.step3_title}
-          {currentStep === 4 && labels.step4_title}
+          {currentStep === 2 && labels.step3_title}
+          {currentStep === 3 && labels.step4_title}
         </h2>
         <p className="text-sm text-[var(--v2-text-secondary)]">
           {currentStep === 1 && labels.step1_subtitle}
-          {currentStep === 2 && labels.step2_subtitle}
-          {currentStep === 3 && labels.step3_subtitle}
-          {currentStep === 4 && labels.step4_subtitle}
+          {currentStep === 2 && labels.step3_subtitle}
+          {currentStep === 3 && labels.step4_subtitle}
         </p>
       </div>
 
@@ -1118,9 +1128,11 @@ export function WebsiteSetupWizard({
             transition={{ duration: 0.15 }}
           >
             {currentStep === 1 && renderStep1()}
-            {currentStep === 2 && renderStep2()}
-            {currentStep === 3 && renderStep3()}
-            {currentStep === 4 && renderStep4()}
+            {/* The journey builder that used to sit here is gone; services
+                follow immediately. Labels keep their original keys rather than
+                being renumbered across three languages. */}
+            {currentStep === 2 && renderStep3()}
+            {currentStep === 3 && renderStep4()}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -1159,10 +1171,43 @@ export function WebsiteSetupWizard({
   );
 
   // Embedded mode - render without full-page wrapper
+  /*
+    Services, edited over the wizard rather than instead of it.
+
+    Held in a variable because this component returns from TWO places — an
+    embedded layout and a full-page one — and the embedded branch is the one
+    that actually renders inside the website page. Mounting the dialog in the
+    full-page return alone is exactly why "Manage services" appeared to do
+    nothing: the state flipped and there was no dialog in the tree to hear it.
+
+    `visibleTabs` narrows it to services alone; the dialog hides its own tab bar
+    when only one is visible. Closing refreshes SILENTLY — the list is already
+    on screen, and swapping it for a spinner reads as the wizard resetting
+    rather than as one service being added. `onServicePublished` fires the same
+    refresh, so a service published without closing the dialog still appears
+    behind it.
+  */
+  const servicesDialog = (
+    <ConfigurationDialog
+      isOpen={isServicesDialogOpen}
+      onClose={() => {
+        setIsServicesDialogOpen(false);
+        fetchServices({ silent: true });
+      }}
+      initialTab="services"
+      visibleTabs={['services']}
+      onServicePublished={() => fetchServices({ silent: true })}
+      // A rename is saved without the dialog closing, so the list behind it
+      // updates on the edit rather than waiting for the close.
+      onServiceEdited={() => fetchServices({ silent: true })}
+    />
+  );
+
   if (embedded) {
     return (
       <div dir={isRTL ? 'rtl' : 'ltr'}>
         {wizardContent}
+        {servicesDialog}
       </div>
     );
   }
@@ -1237,9 +1282,8 @@ export function WebsiteSetupWizard({
                   transition={{ duration: 0.2 }}
                 >
                   {currentStep === 1 && renderStep1()}
-                  {currentStep === 2 && renderStep2()}
-                  {currentStep === 3 && renderStep3()}
-                  {currentStep === 4 && renderStep4()}
+                  {currentStep === 2 && renderStep3()}
+                  {currentStep === 3 && renderStep4()}
                 </motion.div>
               </AnimatePresence>
             </div>
@@ -1274,6 +1318,8 @@ export function WebsiteSetupWizard({
           </div>
         )}
       </div>
+
+      {servicesDialog}
     </div>
   );
 }

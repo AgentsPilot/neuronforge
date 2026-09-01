@@ -36,7 +36,37 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
     return null;
   }
 
-  const { vectors, note } = vectorMaturity;
+  const { vectors, note, noteKey, noteLearning, litCount } = vectorMaturity;
+
+  /**
+   * The note, in the reader's language.
+   *
+   * It used to arrive as finished English prose built in the repository, where
+   * there is no reader and therefore no language — so a Hebrew business was
+   * told "Reading 0 of 7. I start watching the moment you publish" in English.
+   * The server now sends a key and, for the partial case, the vector KEYS still
+   * learning, which localise through the same `insight.vector.{key}` lookup the
+   * pills already use.
+   *
+   * Falls back to the English `note` if a response predates `noteKey`.
+   */
+  const localizedNote = (() => {
+    if (!noteKey) return note;
+
+    const sentence = t(noteKey, { lit: litCount });
+
+    if (noteKey !== 'vecs.note.partial' || !noteLearning?.length) return sentence;
+
+    const names = noteLearning.map(key => {
+      const nameKey = `insight.vector.${key}`;
+      const translated = t(nameKey);
+      return translated !== nameKey ? translated : key;
+    });
+
+    // A separate sentence rather than a clause, so no language has to agree a
+    // verb with a list whose length changes.
+    return `${sentence} ${t('vecs.note.learning', { list: names.join(', ') })}`;
+  })();
 
   return (
     <div
@@ -81,7 +111,7 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
       </div>
 
       {/* Explanation Note: .vec-note */}
-      {note && (
+      {localizedNote && (
         <div
           className="vec-note"
           style={{
@@ -92,7 +122,7 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
           }}
         >
-          {note}
+          {localizedNote}
         </div>
       )}
     </div>

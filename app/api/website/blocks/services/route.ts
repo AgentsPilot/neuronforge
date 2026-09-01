@@ -62,6 +62,10 @@ interface BlockService {
   duration?: string;
   durationMinutes?: number;
   isActive: boolean;
+  /** Does booking this involve picking a time? */
+  is_scheduled: boolean;
+  /** How the money arrives, or null where the service is free. */
+  collection: 'online' | 'invoice' | null;
 }
 
 function transformServiceForBlock(service: SchedulingService): BlockService {
@@ -77,7 +81,10 @@ function transformServiceForBlock(service: SchedulingService): BlockService {
     currency,
     duration: service.duration_minutes ? `${service.duration_minutes} min` : undefined,
     durationMinutes: service.duration_minutes,
-    isActive: service.is_active
+    isActive: service.is_active,
+    // Carried so the public page can describe each service's own journey.
+    is_scheduled: service.is_scheduled !== false,
+    collection: service.collection ?? null
   };
 }
 

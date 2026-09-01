@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
       entityId: 'analytics',
       userId: user.id,
       resourceName: 'System Analytics Dashboard',
-      metadata: { timeRange: range, heroMetrics: enhancedData.heroMetrics },
+      details: { timeRange: range, heroMetrics: enhancedData.heroMetrics },
       severity: 'info',
       request,
     }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));

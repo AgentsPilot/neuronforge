@@ -11,6 +11,7 @@ import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
 import type { PageTheme } from '@/components/website/blocks/types';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale, getDirection } from '@/lib/i18n/config';
+import { PageViewTracker } from '@/components/website/PageViewTracker';
 
 // Force dynamic rendering - no caching at page level
 export const dynamic = 'force-dynamic';
@@ -134,6 +135,10 @@ export default async function PublicWebsitePage({ params }: PageProps) {
 
   return (
     <>
+      {/* Records the visit from the browser. Server-side tracking read the
+          headers of the internal data fetch, so every visitor looked identical. */}
+      <PageViewTracker subdomain={subdomain} />
+
       {/* Google Fonts */}
       {fontLinks && (
         // eslint-disable-next-line @next/next/no-page-custom-font

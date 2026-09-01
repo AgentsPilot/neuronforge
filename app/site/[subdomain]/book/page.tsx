@@ -39,13 +39,16 @@ interface BusinessData {
   success: boolean;
   businessName: string;
   timezone: string;
+  processorReady?: boolean;
   services: Array<{
     id: string;
     name: string;
     description: string | null;
-    duration_minutes: number;
+    duration_minutes: number | null;
     price: number | null;
     currency: string;
+    is_scheduled?: boolean;
+    collection?: 'online' | 'invoice' | null;
   }>;
   theme?: {
     colors?: {
@@ -214,7 +217,8 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
             primaryColor={primaryColor}
             locale={language}
             initialServiceId={initialServiceId}
-            clientFlow={customFlow}
+            // The journey follows the service now, so no flow is passed.
+            processorReady={businessData.processorReady === true}
           />
         </div>
 

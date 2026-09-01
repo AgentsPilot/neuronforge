@@ -120,7 +120,7 @@ export default function AuthCallbackPage() {
         if (onboardingCompleted === false || onboardingCompleted === undefined) {
           // User hasn't completed onboarding - redirect to onboarding
           console.log('User needs to complete onboarding, redirecting to /onboarding...');
-          setTimeout(() => router.push('/onboarding'), 1000);
+          setTimeout(() => router.push('/onboarding-chat'), 1000);
         } else {
           // Onboarding complete - go to dashboard
           console.log('Onboarding already completed, redirecting to /dashboard...');

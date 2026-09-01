@@ -11,6 +11,18 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
+import { channelConnectionRepository } from '@/lib/repositories/ChannelConnectionRepository';
+import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import {
+  isBusinessProfileComplete,
+  missingProfileFields,
+  isInvoicingComplete,
+  missingInvoiceFields,
+  isThemeCustomized,
+  type ProfileField,
+  type InvoiceField,
+} from '@/lib/business-os/setup/profileReadiness';
+import { UNATTRIBUTED_SERVICE_ID } from '@/lib/business-os/reports/constants';
 
 const logger = createLogger({ module: 'BusinessOSStatsAPI' });
 
@@ -39,7 +51,32 @@ interface PipelineStageCount {
   count: number;
 }
 
+/**
+ * What the onboarding chat decided about how this business runs.
+ *
+ * Written to the profile at signup and, until now, read by almost nothing —
+ * which is why the dashboard asked every business the same nine setup questions
+ * regardless of what it had already been told.
+ */
+interface BusinessShapeStats {
+  /**
+   * Payment plans defined on services.
+   *
+   * 'automatic' means at least one charges by itself, which runs as a Stripe
+   * subscription schedule on the connected account — so the processor stops
+   * being optional whatever the business said about how it usually takes money.
+   */
+  plans: 'none' | 'manual' | 'automatic';
+  payment_mode: string | null;
+  /** The explicit answer, once the chat starts asking how money is collected. */
+  collection_method: string | null;
+  online_presence_mode: string | null;
+  has_priced_services: boolean;
+}
+
 interface CapabilityStats {
+  /** The three answers that decide what this business has to configure. */
+  business_shape: BusinessShapeStats;
   website: {
     status: 'active' | 'inactive';
     visitors_30d: number;
@@ -47,6 +84,19 @@ interface CapabilityStats {
     page_count: number;
     wants_website: boolean;
     has_live_pages: boolean;
+    /**
+     * A client has some way to reach and book: a published site, a landing
+     * page, or a smart link. Any one of them will do — which is the whole
+     * point, since a business can sell without ever building a website.
+     */
+    is_reachable: boolean;
+    has_smart_links: boolean;
+    /**
+     * The business has chosen its own colours and fonts, rather than sitting on
+     * the platform's. Not only a website concern: the same theme is drawn on
+     * the invoice PDF and every transactional email.
+     */
+    theme_customized: boolean;
     url?: string;
     draft_page_id?: string; // For quick publish from dashboard
     // Detailed breakdown
@@ -78,6 +128,12 @@ interface CapabilityStats {
     upcoming_count: number;
     services_count: number;
     active_services_count: number;
+    /** Services a client picks a time for — decides whether hours are needed. */
+    scheduled_services_count: number;
+    /** Priced services collected by card at booking — decides whether Stripe is needed. */
+    online_services_count: number;
+    /** Priced services billed afterwards — decides whether bank details are needed. */
+    invoiced_services_count: number;
     open_days_count: number;
     stripe_connected: boolean;
     calendar_synced: boolean;
@@ -102,6 +158,22 @@ interface CapabilityStats {
     first_booking_date?: string;
     // Note: first_booking_amount removed - total_amount no longer on scheduling_bookings
   };
+  /**
+   * The two readiness steps that live in user settings. Absent — not false —
+   * when the fields could not be read, so the dashboard can tell "not done"
+   * apart from "not known" and omit the chips rather than nag wrongly.
+   */
+  profile_readiness?: {
+    profile_complete: boolean;
+    invoicing_complete: boolean;
+    profile_missing: ProfileField[];
+    invoicing_missing: InvoiceField[];
+  };
+  /** Connected social/analytics accounts. Null per platform = not connected. */
+  channels: Record<
+    'meta' | 'instagram' | 'google_analytics' | 'google_business_profile',
+    { account_name: string | null; is_backfilling: boolean; needs_reconnect: boolean } | null
+  >;
   payments: {
     status: 'active' | 'inactive';
     revenue_30d: number;
@@ -170,6 +242,15 @@ export async function GET(request: NextRequest) {
 
     requestLogger.info({ userId: user.id, period }, 'Fetching Business OS stats');
 
+    // An invoice past its due date is only counted as overdue once something
+    // writes that status, and until now nothing did — the dashboard reported no
+    // overdue invoices while they aged. Idempotent, and it usually writes
+    // nothing, so it is cheap enough to do on the read that displays the count.
+    const overdueRefresh = await paymentInvoiceRepository.markOverdueInvoices(user.id);
+    if (overdueRefresh.error) {
+      requestLogger.warn({ err: overdueRefresh.error, userId: user.id }, 'Could not refresh overdue invoices');
+    }
+
     // 3. Calculate date ranges
     const now = new Date();
     // Reporting window. 'all' uses the epoch rather than dropping the filter, so
@@ -231,6 +312,7 @@ export async function GET(request: NextRequest) {
       { count: activeServicesCount },
       businessProfileResult,
       { count: paidServicesCount },
+      { data: serviceShapes },
       stripeConnectResult,
       stripePluginResult,
       // Payments stats
@@ -245,11 +327,14 @@ export async function GET(request: NextRequest) {
       { count: executions30d },
       // Website pages
       { data: websitePages },
+      // Active smart links
+      { count: activeSmartLinks },
+      // Payment plan templates
+      { data: paymentPlans },
       // Website bookings (bookings from website source)
       { count: websiteBookings30d },
       // === DETAILED BREAKDOWN RESULTS ===
       { data: bookingsByStatus },
-      { data: completedBookingsWithRevenue },
       { data: contactsBySource },
       { count: activeLeads },
       { count: activeClients },
@@ -259,18 +344,19 @@ export async function GET(request: NextRequest) {
       { count: formSubmissions30d },
       { data: revenueThisWeekData },
       { data: revenueLastWeekData },
-      { data: bookingRevenueThisWeekData },
-      { data: bookingRevenueLastWeekData },
       { data: paidInvoicesThisWeekData },
       { data: paidInvoicesLastWeekData },
       { data: paidInvoices30dData },
       { count: bookingsThisWeek },
       { count: bookingsLastWeek },
-      { data: serviceRevenueData },
+      { data: serviceRevenueTransactions, error: serviceRevenueTransactionsError },
+      { data: serviceRevenueInvoices, error: serviceRevenueInvoicesError },
+      { data: servicesForRevenue },
       { data: bookedValueThisWeekData },
       { data: bookedValueLastWeekData },
       { data: bookedValuePeriodData },
       intakeSettingsResult,
+      channelConnectionsResult,
     ] = await Promise.all([
       // CRM: total contacts
       supabaseServer
@@ -330,10 +416,27 @@ export async function GET(request: NextRequest) {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .eq('status', 'active'),
-      // Business profile for availability and userCode (use maybeSingle to avoid error when no profile exists)
+      // Business profile: availability, userCode, and the answers that decide
+      // what the dashboard asks for.
+      //
+      // The select used to name two columns while five were read off the
+      // result. `online_presence_mode`, `payment_mode`, `collection_method`
+      // and the calendar fields all came back undefined, so a business that
+      // had chosen a booking link looked like one that had answered nothing —
+      // and every rule downstream fell back to its "we don't know" branch,
+      // which is what told it to publish a website it had declined.
       supabaseServer
         .from('business_profiles')
-        .select('scheduling_availability, user_code')
+        .select(`
+          scheduling_availability,
+          user_code,
+          online_presence_mode,
+          payment_mode,
+          collection_method,
+          calendar_sync_enabled,
+          calendar_sync_provider,
+          theme
+        `)
         .eq('user_id', user.id)
         .maybeSingle(),
       // Check for paid services (price > 0)
@@ -343,6 +446,18 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .eq('status', 'active')
         .gt('price', 0),
+      // The shape of what this business sells.
+      //
+      // Whether it needs working hours, a card processor or company and bank
+      // details is not a property of the business — it is read off the
+      // services. A practice taking a card for a session and invoicing for a
+      // programme needs both; a consultancy that invoices for everything needs
+      // no processor at all and must never be asked for one.
+      supabaseServer
+        .from('scheduling_services')
+        .select('is_scheduled, collection, price')
+        .eq('user_id', user.id)
+        .eq('status', 'active'),
       // Stripe connection check - stripe_connect_accounts table
       supabaseServer
         .from('stripe_connect_accounts')
@@ -359,7 +474,7 @@ export async function GET(request: NextRequest) {
       // Payments: revenue in last 30 days (status='succeeded' per migration)
       supabaseServer
         .from('payment_transactions')
-        .select('amount')
+        .select('amount, invoice_id')
         .eq('user_id', user.id)
         .eq('status', 'succeeded')
         .gte('created_at', periodStart),
@@ -403,8 +518,22 @@ export async function GET(request: NextRequest) {
       // Website: all pages
       supabaseServer
         .from('website_pages')
-        .select('id, status, subdomain, custom_domain')
+        .select('id, status, subdomain, custom_domain, page_type, theme')
         .eq('user_id', user.id),
+      // A smart link is the third way a client can reach a booking page, and
+      // the only one that needs no site at all.
+      supabaseServer
+        .from('smart_links')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('is_active', true),
+      // Payment plans defined on services — the offer, not any one client's
+      // agreement. Their processors decide whether Stripe is compulsory.
+      supabaseServer
+        .from('payment_plans')
+        .select('allowed_processors, preferred_processor')
+        .eq('user_id', user.id)
+        .eq('is_active', true),
       // Website: bookings from website source in last 30 days
       supabaseServer
         .from('scheduling_bookings')
@@ -418,13 +547,6 @@ export async function GET(request: NextRequest) {
         .from('scheduling_bookings')
         .select('status')
         .eq('user_id', user.id)
-        .gte('start_time', periodStart),
-      // Scheduling: bookings with payment amounts (for total revenue)
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('total_amount')
-        .eq('user_id', user.id)
-        .eq('status', 'completed')
         .gte('start_time', periodStart),
       // CRM: contacts by source
       supabaseServer
@@ -468,47 +590,33 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .eq('source', 'website_form')
         .gte('created_at', periodStart),
-      // Payments: revenue this week (last 7 days)
+      // Payments: revenue this week (last 7 days). invoice_id comes along so a
+      // paid invoice and the transaction that settled it count once, not twice.
       supabaseServer
         .from('payment_transactions')
-        .select('amount')
+        .select('amount, invoice_id')
         .eq('user_id', user.id)
         .eq('status', 'succeeded')
         .gte('created_at', sevenDaysAgo),
       // Payments: revenue last week (7-14 days ago)
       supabaseServer
         .from('payment_transactions')
-        .select('amount')
+        .select('amount, invoice_id')
         .eq('user_id', user.id)
         .eq('status', 'succeeded')
         .gte('created_at', fourteenDaysAgoDate)
         .lt('created_at', sevenDaysAgo),
-      // Booking revenue this week (completed bookings in last 7 days)
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('total_amount')
-        .eq('user_id', user.id)
-        .eq('status', 'completed')
-        .gte('start_time', sevenDaysAgo),
-      // Booking revenue last week (completed bookings 7-14 days ago)
-      supabaseServer
-        .from('scheduling_bookings')
-        .select('total_amount')
-        .eq('user_id', user.id)
-        .eq('status', 'completed')
-        .gte('start_time', fourteenDaysAgoDate)
-        .lt('start_time', sevenDaysAgo),
       // Paid invoices this week (paid_at in last 7 days)
       supabaseServer
         .from('payment_invoices')
-        .select('amount')
+        .select('id, amount')
         .eq('user_id', user.id)
         .eq('status', 'paid')
         .gte('paid_at', sevenDaysAgo),
       // Paid invoices last week (paid_at 7-14 days ago)
       supabaseServer
         .from('payment_invoices')
-        .select('amount')
+        .select('id, amount')
         .eq('user_id', user.id)
         .eq('status', 'paid')
         .gte('paid_at', fourteenDaysAgoDate)
@@ -516,7 +624,7 @@ export async function GET(request: NextRequest) {
       // Paid invoices 30 days (for total revenue)
       supabaseServer
         .from('payment_invoices')
-        .select('amount')
+        .select('id, amount')
         .eq('user_id', user.id)
         .eq('status', 'paid')
         .gte('paid_at', periodStart),
@@ -533,14 +641,30 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .gte('start_time', fourteenDaysAgoDate)
         .lt('start_time', sevenDaysAgo),
-      // Revenue by service (completed bookings with service info)
+      // Revenue by service — money charged for a service, whichever way it came
+      // in. Two sources, merged into one row per service below:
+      //   * payment_transactions — direct/checkout payments
+      //   * payment_invoices     — what was billed for the service
+      // An invoice settled through Stripe also produces a transaction carrying
+      // invoice_id, so the two are joined on that key rather than summed twice.
       supabaseServer
-        .from('scheduling_bookings')
-        .select('service_id, total_amount, scheduling_services(service_name)')
+        .from('payment_transactions')
+        .select('service_id, invoice_id, amount')
         .eq('user_id', user.id)
-        .eq('status', 'completed')
-        .gte('start_time', periodStart)
-        .not('service_id', 'is', null),
+        .eq('status', 'succeeded')
+        .gte('created_at', periodStart),
+      supabaseServer
+        .from('payment_invoices')
+        .select('id, service_id, booking_id, amount, status')
+        .eq('user_id', user.id)
+        .in('status', ['pending', 'sent', 'overdue', 'paid'])
+        .gte('created_at', periodStart),
+      // Service names for those rows. Names live only on the service row, so a
+      // deleted service leaves its revenue attributed but unnamed.
+      supabaseServer
+        .from('scheduling_services')
+        .select('id, service_name')
+        .eq('user_id', user.id),
       // Booked VALUE this week — what clients ordered in the last 7 days, priced
       // from the service, independent of whether payment has been collected.
       // Dated by created_at (when it was booked), not start_time (when it happens).
@@ -567,7 +691,65 @@ export async function GET(request: NextRequest) {
         .gte('created_at', periodStart),
       // Intake form configuration (repository — no row means never set up)
       intakeRepository.getSettings(user.id),
+      // Connected social/analytics channels, for the readiness chips
+      channelConnectionRepository.findByUser(user.id),
     ]);
+
+    // Business profile and invoice details — the two readiness steps that live
+    // in user settings rather than in the configuration dialog.
+    //
+    // Started here and awaited at the end, so it runs alongside the analytics
+    // and milestone fetches below rather than adding a fourth sequential round
+    // trip to an endpoint that already makes three.
+    //
+    // Kept out of the batch above and wrapped in its own catch because it reads
+    // `logo_url`, which only exists once the business-logo migration has run.
+    // A failure here means one absent block and two hidden chips, never a
+    // degraded stats response.
+    const profileReadinessPromise: Promise<
+      | {
+          profile_complete: boolean;
+          invoicing_complete: boolean;
+          profile_missing: ProfileField[];
+          invoicing_missing: InvoiceField[];
+        }
+      | undefined
+    > = (async () => {
+      try {
+        const [{ data: profileRow, error: profileError }, { data: orgRow }] = await Promise.all([
+          supabaseServer
+            .from('business_profiles')
+            .select(
+              'company_name, vertical, logo_url, invoice_company_name, invoice_tax_id, invoice_address, invoice_bank_name, invoice_bank_account, invoice_payment_instructions'
+            )
+            .eq('user_id', user.id)
+            .maybeSingle(),
+          // The rest of the same settings form. Keyed by owner, not user_id.
+          supabaseServer
+            .from('organizations')
+            .select('settings')
+            .eq('owner_user_id', user.id)
+            .maybeSingle(),
+        ]);
+
+        if (profileError) throw profileError;
+
+        const orgSettings = (orgRow?.settings ?? {}) as Record<string, string | null>;
+
+        return {
+          profile_complete: isBusinessProfileComplete(profileRow, orgSettings),
+          invoicing_complete: isInvoicingComplete(profileRow),
+          profile_missing: missingProfileFields(profileRow, orgSettings),
+          invoicing_missing: missingInvoiceFields(profileRow),
+        };
+      } catch (err) {
+        // Left undefined so the dashboard omits both chips. Claiming a step is
+        // unfinished because we could not read it would nag about work that
+        // may well be done.
+        requestLogger.warn({ err }, 'Could not read profile readiness — chips omitted');
+        return undefined;
+      }
+    })();
 
     // Fetch website analytics
     let websiteVisitors30d = 0;
@@ -633,31 +815,44 @@ export async function GET(request: NextRequest) {
       firstBookingData,
     }, 'Milestone data fetched');
 
-    // Calculate revenue from payments data (payment_transactions only)
-    const paymentTransactionsRevenue30d = (paymentsData || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+    // Revenue is collected money, and it is collected in exactly two shapes: a
+    // payment_transaction, or an invoice marked paid outside one. An invoice
+    // settled through Stripe is both — the transaction carries its invoice_id —
+    // so the invoice side drops whatever a transaction already accounts for.
+    type MoneyRow = { amount: number | string | null };
+    type TransactionRow = MoneyRow & { invoice_id: string | null };
+    type PaidInvoiceRow = MoneyRow & { id: string };
 
-    // Calculate weekly revenue comparison
-    // Note: Revenue should ONLY come from payment_transactions (single source of truth)
-    // booking.total_amount was removed to prevent double-counting
-    // Invoice payments are recorded in payment_transactions with invoice_id, so no need to sum separately
-    const paymentRevenueThisWeek = (revenueThisWeekData || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-    const paymentRevenueLastWeek = (revenueLastWeekData || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+    const sumAmounts = (rows: unknown): number =>
+      ((rows as MoneyRow[] | null) || []).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
 
-    // Legacy data compatibility: For old bookings that don't have payment_transactions yet
-    // This will be 0 once all bookings use the new flow
-    const bookingRevenueThisWeek = (bookingRevenueThisWeekData || []).reduce((sum: number, b: any) => sum + (b.total_amount || 0), 0);
-    const bookingRevenueLastWeek = (bookingRevenueLastWeekData || []).reduce((sum: number, b: any) => sum + (b.total_amount || 0), 0);
+    const settledInvoiceIdsIn = (transactions: unknown): Set<string> =>
+      new Set(
+        ((transactions as TransactionRow[] | null) || [])
+          .map(t => t.invoice_id)
+          .filter((id): id is string => !!id)
+      );
 
-    // Invoice revenue - only count invoices that were NOT paid via payment_transactions
-    // (Invoices paid via Stripe are already in payment_transactions with invoice_id)
-    const invoiceRevenueThisWeek = (paidInvoicesThisWeekData || []).reduce((sum: number, inv: any) => sum + (inv.amount || 0), 0);
-    const invoiceRevenueLastWeek = (paidInvoicesLastWeekData || []).reduce((sum: number, inv: any) => sum + (inv.amount || 0), 0);
-    const invoiceRevenue30d = (paidInvoices30dData || []).reduce((sum: number, inv: any) => sum + (inv.amount || 0), 0);
+    const sumInvoicesNotSettledByTransaction = (invoices: unknown, transactions: unknown): number => {
+      const settled = settledInvoiceIdsIn(transactions);
+      return ((invoices as PaidInvoiceRow[] | null) || [])
+        .filter(inv => !settled.has(inv.id))
+        .reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
+    };
 
-    // Total weekly revenue = payment_transactions only
-    // (includes both booking payments and invoice payments that went through Stripe)
-    const revenueThisWeek = paymentRevenueThisWeek + bookingRevenueThisWeek + invoiceRevenueThisWeek;
-    const revenueLastWeek = paymentRevenueLastWeek + bookingRevenueLastWeek + invoiceRevenueLastWeek;
+    const paymentTransactionsRevenue30d = sumAmounts(paymentsData);
+    const paymentRevenueThisWeek = sumAmounts(revenueThisWeekData);
+    const paymentRevenueLastWeek = sumAmounts(revenueLastWeekData);
+
+    const invoiceRevenueThisWeek = sumInvoicesNotSettledByTransaction(paidInvoicesThisWeekData, revenueThisWeekData);
+    const invoiceRevenueLastWeek = sumInvoicesNotSettledByTransaction(paidInvoicesLastWeekData, revenueLastWeekData);
+    const invoiceRevenue30d = sumInvoicesNotSettledByTransaction(paidInvoices30dData, paymentsData);
+
+    // Total weekly revenue = payment_transactions plus invoices paid outside them.
+    // Bookings carry no amount of their own since total_amount was dropped, so
+    // there is no third term here any more.
+    const revenueThisWeek = paymentRevenueThisWeek + invoiceRevenueThisWeek;
+    const revenueLastWeek = paymentRevenueLastWeek + invoiceRevenueLastWeek;
 
     // Booked value — the worth of what clients ordered, priced from the service,
     // whether or not it has been paid for. This is what the dashboard's
@@ -688,13 +883,6 @@ export async function GET(request: NextRequest) {
         bookingStatusCounts[b.status as keyof typeof bookingStatusCounts]++;
       }
     });
-
-    // Legacy: Total revenue from completed bookings with total_amount
-    // This will be 0 for all new bookings (total_amount field removed from new bookings)
-    // Kept for backward compatibility with old data
-    const schedulingRevenue30d = (completedBookingsWithRevenue || []).reduce(
-      (sum: number, b: { total_amount: number | null }) => sum + (b.total_amount || 0), 0
-    );
 
     // Contacts by source breakdown
     const sourceCountMap: Record<string, number> = {};
@@ -790,6 +978,12 @@ export async function GET(request: NextRequest) {
     const openDaysCount = countOpenDays(businessProfile?.scheduling_availability);
     const hasPaidServices = (paidServicesCount || 0) > 0;
 
+    // Three answers, all read from the services rather than asked.
+    const shapes = (serviceShapes || []) as Array<{ is_scheduled?: boolean | null; collection?: string | null; price?: number | null }>;
+    const scheduledServicesCount = shapes.filter(x => x.is_scheduled !== false).length;
+    const onlineServicesCount = shapes.filter(x => x.collection === 'online' && (x.price || 0) > 0).length;
+    const invoicedServicesCount = shapes.filter(x => x.collection === 'invoice' && (x.price || 0) > 0).length;
+
     // Get or generate user_code for lead capture links
     let userCode = businessProfile?.user_code || null;
     if (!userCode && businessProfile) {
@@ -822,7 +1016,53 @@ export async function GET(request: NextRequest) {
     const allPages = websitePages || [];
     const livePages = allPages.filter((p: any) => p.status === 'live');
     const hasLivePages = livePages.length > 0;
-    const wantsWebsite = activeCapabilityKeys.has('website') || allPages.length > 0;
+    /**
+     * Whether this business wants a website at all.
+     *
+     * The presence mode is the business's own answer, given in onboarding, and
+     * it overrules everything else: `booking_only` means a link they can paste
+     * into WhatsApp and no site. The website capability is activated for
+     * almost every account — it is what makes the builder available — so
+     * reading it as "they want a site" told a business that had explicitly
+     * declined one to go and publish it.
+     *
+     * A page that already exists still counts, whatever the mode says: someone
+     * who has started building has changed their mind in the only way that
+     * matters.
+     */
+    const presenceMode = (businessProfile as any)?.online_presence_mode ?? null;
+    const wantsWebsite = allPages.length > 0
+      || (presenceMode === 'booking_only' || presenceMode === 'none'
+        ? false
+        : activeCapabilityKeys.has('website'));
+
+    // Can a client actually reach a booking page? Publishing a website is only
+    // one of the three ways: a live landing page or an active smart link sells
+    // just as well, and a business that took the smart-link route was being
+    // told to build a site it does not need.
+    const hasSmartLinks = (activeSmartLinks || 0) > 0;
+
+    // Does any plan actually intend to charge by itself?
+    //
+    // Read from `preferred_processor` alone. `allowed_processors` defaults to
+    // every processor the platform supports, so treating "stripe is allowed" as
+    // "stripe will be used" classified virtually every plan as automatic —
+    // inferring an intention out of a default nobody chose.
+    //
+    // Either way this only decides whether a card processor is OFFERED. A plan
+    // never makes one compulsory: instalments are a schedule, and a business
+    // can invoice each one and take a transfer.
+    const planKind: 'none' | 'manual' | 'automatic' = (() => {
+      const plans = paymentPlans || [];
+      if (plans.length === 0) return 'none';
+
+      const chargesItself = plans.some(
+        (plan: any) => plan.preferred_processor && plan.preferred_processor !== 'manual'
+      );
+
+      return chargesItself ? 'automatic' : 'manual';
+    })();
+    const isReachable = hasLivePages || hasSmartLinks;
 
     // Get website URL from first page with subdomain/custom_domain
     let websiteUrl: string | undefined;
@@ -836,39 +1076,127 @@ export async function GET(request: NextRequest) {
     const draftPage = allPages.find((p: any) => p.status === 'draft' && p.subdomain);
     const draftPageId = draftPage?.id;
 
-    // Process service revenue data from payment_transactions (not bookings)
-    // This ensures accurate revenue tracking without double-counting
-    // Note: serviceRevenueData query needs to be updated to query payment_transactions instead of scheduling_bookings
-    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number }> = {};
+    // Has the business chosen a look of its own? The homepage carries the theme
+    // the emails and invoice PDF are drawn from, so this is not only a website
+    // question.
+    // The business's own look first, a page's second.
+    //
+    // Read from the homepage alone, the design step could never complete for a
+    // business without a website — the very businesses that now can set a look,
+    // and whose invoices and emails use it.
+    const themePage = allPages.find((p: any) => p.page_type === 'homepage') || allPages[0];
+    const themeCustomized = isThemeCustomized(
+      ((businessProfile as any)?.theme) ?? themePage?.theme
+    );
 
-    // Temporary: Still reading from bookings for legacy compatibility
-    // TODO: Update the serviceRevenueData query to use payment_transactions.service_id
-    (serviceRevenueData || []).forEach((booking: any) => {
-      if (booking.service_id && booking.total_amount) {
-        const serviceId = booking.service_id;
-        const serviceName = booking.scheduling_services?.service_name || 'Unknown Service';
-        const amount = booking.total_amount || 0;
+    // === REVENUE BY SERVICE ===
+    // One row per service, whatever the money came in through: a direct payment
+    // or an invoice. An invoice settled through Stripe exists on both sides —
+    // the transaction carries invoice_id — so those are counted once.
+    //
+    // An invoice names its service in service_id, or implies it through the
+    // booking it was raised for. Plenty of money legitimately belongs to no
+    // catalogue service — ad-hoc invoices, deposits, work billed one-off — and
+    // older invoices predate the service_id column. None of it is guessed at
+    // from line-item text; it collects in one unattributed row instead, so the
+    // breakdown always adds up to the revenue shown above it.
+    if (serviceRevenueTransactionsError || serviceRevenueInvoicesError) {
+      requestLogger.warn({
+        err: serviceRevenueTransactionsError || serviceRevenueInvoicesError
+      }, 'Revenue-by-service source query failed; the breakdown will be short');
+    }
 
-        if (!serviceRevenueMap[serviceId]) {
-          serviceRevenueMap[serviceId] = {
-            service_name: serviceName,
-            revenue: 0,
-            count: 0
-          };
-        }
+    const serviceNameById = new Map<string, string>(
+      (servicesForRevenue || []).map((s: { id: string; service_name: string }) => [s.id, s.service_name])
+    );
 
-        serviceRevenueMap[serviceId].revenue += amount;
-        serviceRevenueMap[serviceId].count += 1;
+    // Resolve the service for invoices that only know their booking.
+    type RevenueInvoice = {
+      id: string;
+      service_id: string | null;
+      booking_id: string | null;
+      amount: number | string | null;
+      status: string;
+    };
+    const revenueInvoices = (serviceRevenueInvoices || []) as RevenueInvoice[];
+    const bookingServiceById = new Map<string, string>();
+    const unattributedBookingIds = Array.from(new Set(
+      revenueInvoices
+        .filter(inv => !inv.service_id && inv.booking_id)
+        .map(inv => inv.booking_id as string)
+    ));
+    if (unattributedBookingIds.length > 0) {
+      const { data: invoiceBookings, error: invoiceBookingsError } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('id, service_id')
+        .eq('user_id', user.id)
+        .in('id', unattributedBookingIds);
+      if (invoiceBookingsError) {
+        requestLogger.warn({ err: invoiceBookingsError }, 'Failed to resolve invoice bookings for revenue by service');
       }
+      (invoiceBookings || []).forEach((b: { id: string; service_id: string | null }) => {
+        if (b.service_id) bookingServiceById.set(b.id, b.service_id);
+      });
+    }
+
+    const invoiceServiceId = (inv: RevenueInvoice): string | null =>
+      inv.service_id || (inv.booking_id ? bookingServiceById.get(inv.booking_id) ?? null : null);
+
+    const serviceRevenueMap: Record<string, { service_name: string; revenue: number; count: number }> = {};
+    const addServiceRevenue = (serviceId: string | null, amount: number | string | null) => {
+      const key = serviceId || UNATTRIBUTED_SERVICE_ID;
+      if (!serviceRevenueMap[key]) {
+        serviceRevenueMap[key] = {
+          // The client localizes the unattributed row; a service that has since
+          // been deleted keeps its money but loses its name.
+          service_name: serviceId ? serviceNameById.get(serviceId) || 'Unknown Service' : 'Other',
+          revenue: 0,
+          count: 0
+        };
+      }
+      // amount is DECIMAL and may arrive as a string.
+      serviceRevenueMap[key].revenue += Number(amount) || 0;
+      serviceRevenueMap[key].count += 1;
+    };
+
+    const invoiceById = new Map<string, RevenueInvoice>(revenueInvoices.map(inv => [inv.id, inv]));
+    const settledInvoiceIds = new Set<string>();
+
+    type RevenueTransaction = { service_id: string | null; invoice_id: string | null; amount: number | string | null };
+    ((serviceRevenueTransactions || []) as RevenueTransaction[]).forEach(tx => {
+      const linkedInvoice = tx.invoice_id ? invoiceById.get(tx.invoice_id) : undefined;
+      if (linkedInvoice) settledInvoiceIds.add(linkedInvoice.id);
+      // A payment raised against an invoice inherits that invoice's service.
+      addServiceRevenue(tx.service_id || (linkedInvoice ? invoiceServiceId(linkedInvoice) : null), tx.amount);
     });
 
-    // Convert to array and sort by revenue
-    const serviceRevenueArray = Object.entries(serviceRevenueMap).map(([service_id, data]) => ({
-      service_id,
-      service_name: data.service_name,
-      revenue: data.revenue,
-      count: data.count
-    }));
+    revenueInvoices.forEach(inv => {
+      if (settledInvoiceIds.has(inv.id)) return; // already counted as its transaction
+      addServiceRevenue(invoiceServiceId(inv), inv.amount);
+    });
+
+    // Biggest service first, with the unattributed row pinned last however large
+    // it is — it is a remainder, not a service competing for the top of the list.
+    const serviceRevenueArray = Object.entries(serviceRevenueMap)
+      .map(([service_id, data]) => ({
+        service_id,
+        service_name: data.service_name,
+        revenue: data.revenue,
+        count: data.count
+      }))
+      .sort((a, b) => {
+        if (a.service_id === UNATTRIBUTED_SERVICE_ID) return 1;
+        if (b.service_id === UNATTRIBUTED_SERVICE_ID) return -1;
+        return b.revenue - a.revenue;
+      });
+
+    // What the service rows add up to. This is the same money already counted in
+    // payments.revenue_30d, sliced by service — reporting it under `scheduling`
+    // as well is a second view of it, not a second amount to be added anywhere.
+    const serviceRevenueTotal = serviceRevenueArray.reduce((sum, s) => sum + s.revenue, 0);
+
+    // Started well above so it overlapped the analytics and milestone fetches.
+    const profileReadiness = await profileReadinessPromise;
 
     // 7. Build capability stats object
     // A capability is "active" if:
@@ -876,6 +1204,13 @@ export async function GET(request: NextRequest) {
     // - It's in user_capabilities with is_active=true, OR
     // - It has data (for capabilities that auto-activate on first use)
     const stats: CapabilityStats = {
+      business_shape: {
+        plans: planKind,
+        payment_mode: (businessProfile as any)?.payment_mode ?? null,
+        collection_method: (businessProfile as any)?.collection_method ?? null,
+        online_presence_mode: presenceMode,
+        has_priced_services: hasPaidServices,
+      },
       website: {
         status: activeCapabilityKeys.has('website') ? 'active' : 'inactive',
         visitors_30d: websiteVisitors30d,
@@ -883,6 +1218,9 @@ export async function GET(request: NextRequest) {
         page_count: allPages.length,
         wants_website: wantsWebsite,
         has_live_pages: hasLivePages,
+        is_reachable: isReachable,
+        has_smart_links: hasSmartLinks,
+        theme_customized: themeCustomized,
         url: websiteUrl,
         draft_page_id: draftPageId, // For quick publish from dashboard
         // Detailed breakdown
@@ -915,6 +1253,9 @@ export async function GET(request: NextRequest) {
         upcoming_count: upcomingBookings || 0,
         services_count: servicesCount || 0,
         active_services_count: activeServicesCount || 0,
+        scheduled_services_count: scheduledServicesCount,
+        online_services_count: onlineServicesCount,
+        invoiced_services_count: invoicedServicesCount,
         open_days_count: openDaysCount,
         stripe_connected: stripeConnected,
         calendar_synced: calendarSynced,
@@ -929,10 +1270,12 @@ export async function GET(request: NextRequest) {
         completed_30d: bookingStatusCounts.completed,
         cancelled_30d: bookingStatusCounts.cancelled,
         no_show_30d: bookingStatusCounts.no_show,
-        total_revenue_30d: schedulingRevenue30d,
-        // Value of what was booked (ordered), paid or not — priced from the service.
-        // Unlike total_revenue_30d above, this is not tied to the removed
-        // scheduling_bookings.total_amount column, so it reflects current data.
+        // What the service_revenue rows below add up to — the same money as
+        // payments.revenue_30d, restricted to what could be tied to a service.
+        total_revenue_30d: serviceRevenueTotal,
+        // Value of what was booked (ordered), paid or not — priced from the
+        // service. Distinct from total_revenue_30d above, which is money billed
+        // or collected rather than ordered.
         booked_value_this_week: bookedValueThisWeek,
         booked_value_last_week: bookedValueLastWeek,
         booked_value_period: bookedValuePeriod,
@@ -942,13 +1285,48 @@ export async function GET(request: NextRequest) {
         first_booking_date: firstBookingDate,
         // first_booking_amount removed - total_amount no longer on scheduling_bookings
       },
+      // The two readiness steps configured in user settings. Omitted entirely
+      // when the fields could not be read, so the dashboard can tell "not done"
+      // apart from "not known" and hide the chips rather than nag wrongly.
+      ...(profileReadiness ? { profile_readiness: profileReadiness } : {}),
+      // Social and analytics accounts the user has opted into having analysed.
+      // Drives the readiness chips; absent rows simply mean "not connected".
+      channels: (() => {
+        const rows = channelConnectionsResult?.data ?? [];
+        const enabled = rows.filter(c => c.insights_enabled);
+        const staleBefore = Date.now() - 48 * 60 * 60 * 1000;
+
+        const forPlatform = (platform: string) => {
+          const row = enabled.find(c => c.platform === platform);
+          if (!row) return null;
+          const syncedAt = row.last_synced_at ? new Date(row.last_synced_at).getTime() : 0;
+          return {
+            account_name: row.account_name,
+            // Only set on a successful sync, so a repeatedly failing connection
+            // must not read as "still fetching" indefinitely.
+            is_backfilling: !row.backfill_completed_at && !row.last_sync_error,
+            // Meta tokens are long-lived but not refreshable, so connections do
+            // expire — surfaced as a reconnect prompt rather than silent staleness.
+            needs_reconnect: !!row.last_sync_error || (syncedAt > 0 && syncedAt < staleBefore),
+          };
+        };
+
+        return {
+          meta: forPlatform('facebook_page'),
+          instagram: forPlatform('instagram'),
+          google_analytics: forPlatform('ga4'),
+          google_business_profile: forPlatform('google_business_profile'),
+        };
+      })(),
       payments: {
         // Core capability - always active
         status: activeCapabilityKeys.has('payments') ? 'active' : 'inactive',
-        // Total revenue = paid + owed (pending invoices)
-        revenue_30d: paymentTransactionsRevenue30d + schedulingRevenue30d + invoiceRevenue30d + pendingInvoicesAmount,
+        // Total revenue = paid + owed (pending invoices).
+        // The by-service breakdown is a view over these same transactions and
+        // invoices, never a third source, so it is not added here.
+        revenue_30d: paymentTransactionsRevenue30d + invoiceRevenue30d + pendingInvoicesAmount,
         // Revenue already collected (paid)
-        revenue_paid_30d: paymentTransactionsRevenue30d + schedulingRevenue30d + invoiceRevenue30d,
+        revenue_paid_30d: paymentTransactionsRevenue30d + invoiceRevenue30d,
         // Revenue owed (pending invoices not yet paid)
         revenue_owed_30d: pendingInvoicesAmount,
         // Revenue breakdown by source (for RevenueSourcesSection)

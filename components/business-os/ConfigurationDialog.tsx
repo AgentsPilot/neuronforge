@@ -37,11 +37,45 @@ interface ConfigurationDialogProps {
   onServiceCreated?: (service: { name: string; duration: number; price: number; currency: string }) => void; // Callback when service created from chat
   onCloseWithUnpublished?: (serviceName: string) => void; // Callback when user closes with unpublished changes
   onServicePublished?: (serviceName: string) => void; // Callback when any service is published from within the dialog
+  /**
+   * Any edit to an existing service, saved.
+   *
+   * Distinct from `onServicePublished`, which fires only when a draft goes
+   * live. A caller showing its own copy of the service list — the website
+   * wizard does — needs to know about a rename the moment it is saved, not
+   * when the dialog eventually closes.
+   */
+  onServiceEdited?: (serviceId: string) => void;
 }
 
-export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit, visibleTabs, servicePrefill, availabilityDaysToAdd, onServiceCreated, onCloseWithUnpublished, onServicePublished }: ConfigurationDialogProps) {
+export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit, visibleTabs, servicePrefill, availabilityDaysToAdd, onServiceCreated, onCloseWithUnpublished, onServicePublished, onServiceEdited }: ConfigurationDialogProps) {
   const { t, isRTL } = useLanguage();
   const [activeTab, setActiveTab] = useState<ConfigTab>(initialTab || 'services');
+
+  /**
+   * Whether an intake form is collected after a booking.
+   *
+   * Held here rather than in the services list, because this dialog already
+   * owns the intake tab and the list only needs it to draw a row honestly.
+   */
+  const [intakeEnabled, setIntakeEnabled] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+
+    fetch('/api/intake/settings')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!cancelled) setIntakeEnabled(!!data?.settings?.is_enabled);
+      })
+      .catch(() => {
+        // Never fatal: without the flag the journey omits a step it cannot
+        // confirm, which is the safer of the two mistakes.
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   // Services state
   const [services, setServices] = useState<SchedulingService[]>([]);
@@ -140,7 +174,8 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   // Track when a service was edited (saved as draft)
   const handleServiceEdited = useCallback((serviceId: string) => {
     setEditedServiceId(serviceId);
-  }, []);
+    onServiceEdited?.(serviceId);
+  }, [onServiceEdited]);
 
   // Track when a service was published - clear the edited state and notify parent
   const handleServicePublishedWithId = useCallback((serviceId: string) => {
@@ -539,6 +574,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                 </div>
               ) : (
                 <SchedulingServicesList
+                  intakeEnabled={intakeEnabled}
                   services={services}
                   onServicePublished={silentRefreshServices}
                   onServicePublishedWithId={handleServicePublishedWithId}

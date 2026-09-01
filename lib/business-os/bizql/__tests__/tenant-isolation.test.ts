@@ -256,6 +256,87 @@ describe('BizQL tenant isolation', () => {
       runQuery(client, { op: 'find', entity: 'invoices' }, { userId: '' })
     ).rejects.toThrow(BizQLValidationError);
   });
+
+  describe('an entity with no user_id of its own', () => {
+    // `link_clicks` records a click against a link; only the link knows whose it
+    // is. Ownership is one join away, which makes it the one entity where the
+    // tenant boundary is not a column comparison — and therefore the one worth
+    // asserting in detail.
+
+    it('reaches ownership through an INNER join, not a bare embed', async () => {
+      const { client, queries } = makeFakeClient({ smart_link_clicks: [] });
+
+      await compileAndRunFind(client, { op: 'find', entity: 'link_clicks' }, { userId: USER });
+
+      const query = queries.find((q) => q.table === 'smart_link_clicks');
+      expect(query).toBeDefined();
+
+      // `!inner` is the entire safety property. A plain embed is a LEFT join, so
+      // the filter below would match every row in the table with a null link
+      // attached — the whole table, for every tenant, wearing a filter that did
+      // nothing.
+      expect(query!.select).toContain('!inner');
+      expect(query!.select).toContain('owner_scope:smart_links');
+
+      // And the filter must reference the joined table, not the click table.
+      const scoped = query!.filters.some(
+        (f) => f.method === 'eq' && f.args[0] === 'owner_scope.user_id' && f.args[1] === USER
+      );
+      expect(scoped).toBe(true);
+    });
+
+    it('scopes the aggregate path too', async () => {
+      const { client, queries } = makeFakeClient({ smart_link_clicks: [] });
+
+      await compileAndRunCompute(
+        client,
+        { op: 'compute', entity: 'link_clicks', agg: { fn: 'count' } },
+        { userId: USER }
+      );
+
+      const query = queries.find((q) => q.table === 'smart_link_clicks');
+      expect(query!.select).toContain('!inner');
+      expect(
+        query!.filters.some((f) => f.args[0] === 'owner_scope.user_id' && f.args[1] === USER)
+      ).toBe(true);
+    });
+
+    it('never joins under the relation name the select may also be using', async () => {
+      // Both embeds under one alias made PostgREST join the same table twice as
+      // itself and fail the query outright. The tenant filter must not depend on
+      // what the caller happens to be displaying.
+      const { client, queries } = makeFakeClient({ smart_link_clicks: [] });
+
+      await compileAndRunFind(
+        client,
+        { op: 'find', entity: 'link_clicks', include: [{ relation: 'link' }] },
+        { userId: USER }
+      );
+
+      const select = queries.find((q) => q.table === 'smart_link_clicks')!.select;
+      expect(select).toContain('owner_scope:smart_links');
+      expect(select).not.toMatch(/(^|,)link:smart_links[^,]*!inner/);
+    });
+
+    it('refuses an entity scoped through something that is not itself scoped', async () => {
+      // One hop only. A chain of relation-scoped entities is a boundary nobody
+      // can verify by reading a single definition.
+      const { CATALOG } = await import('@/lib/business-os/catalog');
+      const entity = CATALOG.entities.link_clicks;
+      const original = entity.userScope;
+
+      // Point the scope at a relation the entity does not declare.
+      (entity as { userScope: unknown }).userScope = { kind: 'relation', relation: 'nope' };
+      try {
+        const { client } = makeFakeClient();
+        await expect(
+          compileAndRunFind(client, { op: 'find', entity: 'link_clicks' }, { userId: USER })
+        ).rejects.toThrow(/Refusing to run an unscoped query/);
+      } finally {
+        (entity as { userScope: unknown }).userScope = original;
+      }
+    });
+  });
 });
 
 describe('BizQL field exposure', () => {
@@ -317,6 +398,91 @@ describe('BizQL field exposure', () => {
     const limitCall = queries[0].filters.find((f) => f.method === 'limit');
     // maxLimit is 500 for invoices; the compiler fetches limit+1 to detect truncation.
     expect(limitCall!.args[0]).toBe(501);
+  });
+});
+
+describe('BizQL relation filters — both directions', () => {
+  /**
+   * "Which invoices belong to Ofir" is an ordinary question, and rejecting it
+   * (because contact is many-to-one, not a collection) forced the planner into
+   * shapes that failed at query time. It was the third time the validator and
+   * the compiler disagreed about what was legal.
+   */
+  it('filters a to-ONE relation by matching the parent, then the foreign key', async () => {
+    const { client, queries } = makeFakeClient({
+      crm_contacts: [{ id: 'contact-1' }],
+    });
+
+    await compileAndRunFind(
+      client,
+      {
+        op: 'find',
+        entity: 'invoices',
+        where: [
+          {
+            relation: 'contact',
+            quantifier: 'any',
+            where: [{ field: 'first_name', op: 'eq', value: 'Ofir' }],
+          },
+        ],
+      },
+      { userId: USER }
+    );
+
+    // Pass 1 looks up contacts; pass 2 filters invoices by their FK.
+    const contactQuery = queries.find((q) => q.table === 'crm_contacts')!;
+    expect(contactQuery.select).toContain('id');
+
+    const invoiceQuery = queries.find((q) => q.table === 'payment_invoices')!;
+    const fkFilter = invoiceQuery.filters.find(
+      (f) => f.method === 'in' && f.args[0] === 'contact_id'
+    );
+    expect(fkFilter!.args[1]).toEqual(['contact-1']);
+
+    expectAllQueriesScoped(queries, USER);
+  });
+
+  it('filters a to-MANY relation by matching children, then the parent id', async () => {
+    const { client, queries } = makeFakeClient({
+      payment_invoices: [{ contact_id: 'contact-9' }],
+    });
+
+    await compileAndRunFind(
+      client,
+      {
+        op: 'find',
+        entity: 'contacts',
+        where: [{ relation: 'invoices', quantifier: 'any' }],
+      },
+      { userId: USER }
+    );
+
+    const contactQuery = queries.find((q) => q.table === 'crm_contacts')!;
+    const idFilter = contactQuery.filters.find(
+      (f) => f.method === 'in' && f.args[0] === 'id'
+    );
+    expect(idFilter!.args[1]).toEqual(['contact-9']);
+
+    expectAllQueriesScoped(queries, USER);
+  });
+
+  it('scopes the parent lookup to the calling user', async () => {
+    // The join must not be able to match another tenant's contact.
+    const { client, queries } = makeFakeClient({ crm_contacts: [{ id: 'c1' }] });
+
+    await compileAndRunFind(
+      client,
+      {
+        op: 'find',
+        entity: 'invoices',
+        where: [
+          { relation: 'contact', quantifier: 'any', where: [{ field: 'first_name', op: 'eq', value: 'X' }] },
+        ],
+      },
+      { userId: USER }
+    );
+
+    expectAllQueriesScoped(queries, USER);
   });
 });
 

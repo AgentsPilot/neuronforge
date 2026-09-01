@@ -5,7 +5,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Clock, Settings, ChevronDown, ChevronRight, Check, Tag, Trash2, Loader2, AlertCircle, CreditCard } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import type { SchedulingService, ServiceCurrency, PaymentType, InstallmentFrequency, FirstPaymentDue } from '@/lib/repositories/SchedulingRepository';
+import { ServicePaymentOptions } from './ServicePaymentOptions';
+import { ServiceCurrencySelect, CURRENCY_OPTIONS, getCurrencySymbol } from './ServiceCurrencySelect';
+import type { SchedulingService, ServiceCurrency, ServiceCollection, PaymentType, InstallmentFrequency, FirstPaymentDue } from '@/lib/repositories/SchedulingRepository';
+import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 
 interface SchedulingServiceModalProps {
   service?: SchedulingService;
@@ -27,6 +30,12 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
     duration_minutes: 60,
     price: 0,
     currency: currencyCode as ServiceCurrency,
+    // The two facts that decide this service's client journey. Both belong to
+    // the service: one business can sell an appointment paid by card and a
+    // programme billed against an invoice, and only the first needs a
+    // processor connected.
+    is_scheduled: true,
+    collection: 'invoice' as ServiceCollection,
     buffer_minutes: 15,
     max_bookings_per_day: null as number | null,
     advance_booking_days: 30,
@@ -40,19 +49,8 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
     first_payment_days: 0
   });
 
-  const currencyOptions: { code: ServiceCurrency; label: string; symbol: string }[] = [
-    { code: 'USD', label: '$ USD', symbol: '$' },
-    { code: 'EUR', label: '€ EUR', symbol: '€' },
-    { code: 'ILS', label: '₪ ILS', symbol: '₪' },
-    { code: 'GBP', label: '£ GBP', symbol: '£' }
-  ];
 
-  const getCurrencySymbol = (code: ServiceCurrency) => {
-    return currencyOptions.find(c => c.code === code)?.symbol || '₪';
-  };
   const [loading, setLoading] = useState(false);
-  const [currencyDropdownOpen, setCurrencyDropdownOpen] = useState(false);
-  const currencyDropdownRef = useRef<HTMLDivElement>(null);
 
   // Delete state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -62,16 +60,32 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
   // Advanced options toggle
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Close currency dropdown when clicking outside
+  /**
+   * Whether an intake form is collected after a booking.
+   *
+   * Business-wide, so it is fetched once rather than stored per service — and
+   * only to draw the journey honestly. A form the business actually collects
+   * is a step the client actually walks, and leaving it out of the picture
+   * makes the picture wrong.
+   */
+  const [intakeEnabled, setIntakeEnabled] = useState(false);
+
   useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (currencyDropdownRef.current && !currencyDropdownRef.current.contains(event.target as Node)) {
-        setCurrencyDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+    if (!isOpen) return;
+    let cancelled = false;
+
+    fetch('/api/intake/settings')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!cancelled) setIntakeEnabled(!!data?.settings?.is_enabled);
+      })
+      .catch(() => {
+        // Never fatal: without the flag the strip simply omits a step it
+        // cannot confirm, which is the safer of the two mistakes.
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   useEffect(() => {
     if (service) {
@@ -81,9 +95,14 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
       const baseData = {
         service_name: service.service_name,
         description: service.description || '',
-        duration_minutes: service.duration_minutes,
+        duration_minutes: service.duration_minutes ?? 60,
         price: service.price || 0,
         currency: (service.currency || 'USD') as ServiceCurrency,
+        // Defaults chosen so an account that predates these columns behaves
+        // exactly as it did: everything was an appointment, and nothing was
+        // ever assumed to need a card processor.
+        is_scheduled: service.is_scheduled !== false,
+        collection: (service.collection || 'invoice') as ServiceCollection,
         buffer_minutes: service.buffer_minutes,
         max_bookings_per_day: service.max_bookings_per_day,
         advance_booking_days: service.advance_booking_days,
@@ -118,6 +137,10 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
         duration_minutes: 60,
         price: 0,
         currency: currencyCode as ServiceCurrency,
+        is_scheduled: true,
+        // Never 'online' by default: that would make a card processor
+        // mandatory for a business that has not said it wants one.
+        collection: 'invoice' as ServiceCollection,
         buffer_minutes: 15,
         max_bookings_per_day: null as number | null,
         advance_booking_days: 30,
@@ -159,7 +182,14 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          ...formData,
+          // Kept whatever the booking answer was: the length describes the
+          // service, not how a client gets it. A free service is still not
+          // collected at all.
+          duration_minutes: formData.duration_minutes || null,
+          collection: formData.price > 0 ? formData.collection : null,
+        })
       });
 
       if (response.ok) {
@@ -324,10 +354,113 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
               {t('scheduling.modal.time_pricing')}
             </h3>
 
+            {/* Does a client pick a time for this?
+                Asked explicitly rather than inferred from a blank duration: a
+                field left empty by accident must not silently switch booking
+                off for a service people are meant to book. */}
+            <div>
+              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                {t('scheduling.modal.needs_time')}
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                {([true, false] as const).map(value => (
+                  <button
+                    key={String(value)}
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, is_scheduled: value }))}
+                    className={`p-3 text-start border transition-all ${
+                      formData.is_scheduled === value
+                        ? 'border-[#14B8A6] bg-[#14B8A6]/10'
+                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
+                    }`}
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                        formData.is_scheduled === value ? 'border-[#14B8A6]' : 'border-[var(--v2-text-muted)]'
+                      }`}>
+                        {formData.is_scheduled === value && <div className="w-2 h-2 rounded-full bg-[#14B8A6]" />}
+                      </div>
+                      <span className={`text-sm font-medium ${
+                        formData.is_scheduled === value ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'
+                      }`}>
+                        {value ? t('scheduling.modal.needs_time.yes') : t('scheduling.modal.needs_time.no')}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* How the money arrives — only where there is money.
+                This is what replaces asking the business, once, whether it
+                "needs a card processor": a question nobody could answer about
+                everything they sell at the same time. */}
+            {formData.price > 0 && (
+              <div>
+                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                  {t('scheduling.modal.collection')}
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['online', 'invoice'] as const).map(value => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, collection: value }))}
+                      className={`p-3 text-start border transition-all ${
+                        formData.collection === value
+                          ? 'border-[#22C58B] bg-[#22C58B]/10'
+                          : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
+                      }`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                          formData.collection === value ? 'border-[#22C58B]' : 'border-[var(--v2-text-muted)]'
+                        }`}>
+                          {formData.collection === value && <div className="w-2 h-2 rounded-full bg-[#22C58B]" />}
+                        </div>
+                        <span className={`text-sm font-medium ${
+                          formData.collection === value ? 'text-[#22C58B]' : 'text-[var(--v2-text-primary)]'
+                        }`}>
+                          {value === 'online'
+                            ? t('scheduling.modal.collection.online')
+                            : t('scheduling.modal.collection.invoice')}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[var(--v2-text-muted)] mt-1 leading-snug">
+                        {value === 'online'
+                          ? t('scheduling.modal.collection.online.why')
+                          : t('scheduling.modal.collection.invoice.why')}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* The consequence, beside the setting. */}
+            <div className="p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+              <span className="block text-[11px] font-semibold tracking-wide text-[var(--v2-text-muted)] mb-2">
+                {t('journey.label')}
+              </span>
+              <ClientJourneyStrip
+                service={{
+                  scheduled: formData.is_scheduled,
+                  collection: formData.price > 0 ? formData.collection : null,
+                  price: formData.price,
+                }}
+                intakeEnabled={intakeEnabled}
+              />
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div>
+                {/* Independent of whether a time is booked: a workshop can run
+                    two hours and still be sold as a product. */}
                 <label htmlFor="duration_minutes" className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                  {t('scheduling.modal.duration')} <span className="text-red-500">*</span>
+                  {t('scheduling.modal.duration')}
+                  {formData.is_scheduled && <span className="text-red-500"> *</span>}
                 </label>
                 <div className="relative">
                   <input
@@ -337,7 +470,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
                     max="480"
                     value={formData.duration_minutes}
                     onChange={(e) => setFormData(prev => ({ ...prev, duration_minutes: parseInt(e.target.value) }))}
-                    required
+                    required={formData.is_scheduled}
                     className="w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
@@ -363,41 +496,12 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     />
                   </div>
-                  <div className="relative" ref={currencyDropdownRef}>
-                    <button
-                      type="button"
-                      onClick={() => setCurrencyDropdownOpen(!currencyDropdownOpen)}
-                      className="flex items-center justify-between gap-2 w-24 px-3 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm hover:bg-[var(--v2-surface-hover)] transition-all cursor-pointer"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <span className="font-medium">{getCurrencySymbol(formData.currency)} {formData.currency}</span>
-                      <ChevronDown className={`h-4 w-4 text-[var(--v2-text-muted)] transition-transform ${currencyDropdownOpen ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {currencyDropdownOpen && (
-                      <div
-                        className="absolute top-full mt-1 w-32 bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-lg z-50 overflow-hidden"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        {currencyOptions.map(opt => (
-                          <button
-                            key={opt.code}
-                            type="button"
-                            onClick={() => {
-                              setFormData(prev => ({ ...prev, currency: opt.code }));
-                              setCurrencyDropdownOpen(false);
-                            }}
-                            className={`w-full flex items-center justify-between px-3 py-2.5 text-sm hover:bg-[var(--v2-surface-hover)] transition-colors ${
-                              formData.currency === opt.code ? 'bg-[#14B8A6]/10 text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'
-                            }`}
-                          >
-                            <span className="font-medium">{opt.symbol} {opt.code}</span>
-                            {formData.currency === opt.code && <Check className="h-4 w-4" />}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  {/* The platform's currency control, shared with the
+                      onboarding chat so both offer the same thing. */}
+                  <ServiceCurrencySelect
+                    value={formData.currency}
+                    onChange={code => setFormData(prev => ({ ...prev, currency: code }))}
+                  />
                 </div>
               </div>
             </div>
@@ -431,179 +535,14 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
           {/* Collapsible Advanced Options */}
           {showAdvanced && (
             <div className="space-y-6 pt-2">
-              {/* Payment Options Section - only show if service has a price */}
-              {formData.price > 0 && (
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-[var(--v2-text-muted)] uppercase tracking-wide flex items-center gap-2">
-                  <CreditCard className="h-4 w-4" />
-                  {t('scheduling.modal.payment_options')}
-                </h3>
-
-                {/* Payment Type Toggle */}
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, payment_type: 'full', installment_count: 1 }))}
-                    className={`p-4 text-start border transition-all ${
-                      formData.payment_type === 'full'
-                        ? 'border-[#14B8A6] bg-[#14B8A6]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                        formData.payment_type === 'full' ? 'border-[#14B8A6]' : 'border-[var(--v2-text-muted)]'
-                      }`}>
-                        {formData.payment_type === 'full' && <div className="w-2 h-2 rounded-full bg-[#14B8A6]" />}
-                      </div>
-                      <span className={`text-sm font-medium ${formData.payment_type === 'full' ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_full')}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                      {t('scheduling.modal.payment_full_desc')}
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, payment_type: 'installments', installment_count: prev.installment_count > 1 ? prev.installment_count : 2 }))}
-                    className={`p-4 text-start border transition-all ${
-                      formData.payment_type === 'installments'
-                        ? 'border-[#14B8A6] bg-[#14B8A6]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                        formData.payment_type === 'installments' ? 'border-[#14B8A6]' : 'border-[var(--v2-text-muted)]'
-                      }`}>
-                        {formData.payment_type === 'installments' && <div className="w-2 h-2 rounded-full bg-[#14B8A6]" />}
-                      </div>
-                      <span className={`text-sm font-medium ${formData.payment_type === 'installments' ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_installments')}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                      {t('scheduling.modal.payment_installments_desc')}
-                    </p>
-                  </button>
-                </div>
-
-                {/* Installment Details - only show when installments selected */}
-                {formData.payment_type === 'installments' && (
-                  <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                    <div>
-                      <label htmlFor="installment_count" className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                        {t('scheduling.modal.installment_count')}
-                      </label>
-                      <input
-                        id="installment_count"
-                        type="number"
-                        min="2"
-                        max="24"
-                        value={formData.installment_count}
-                        onChange={(e) => setFormData(prev => ({ ...prev, installment_count: Math.max(2, Math.min(24, parseInt(e.target.value) || 2)) }))}
-                        className="w-full px-4 py-2.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                      <p className="text-xs text-[var(--v2-text-muted)] mt-1.5">
-                        {formData.price > 0 && formData.installment_count >= 2
-                          ? `${getCurrencySymbol(formData.currency)}${(formData.price / formData.installment_count).toFixed(2)} ${t('scheduling.modal.per_installment')}`
-                          : ''
-                        }
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                        {t('scheduling.modal.installment_frequency')}
-                      </label>
-                      <Select
-                        value={formData.installment_frequency}
-                        onValueChange={(value) => setFormData(prev => ({ ...prev, installment_frequency: value as InstallmentFrequency }))}
-                      >
-                        <SelectTrigger
-                          className="w-full bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
-                          <SelectItem value="weekly" className="text-[var(--v2-text-primary)] focus:bg-[#14B8A6]/10 focus:text-[#0D9488]">
-                            {t('scheduling.modal.frequency_weekly')}
-                          </SelectItem>
-                          <SelectItem value="biweekly" className="text-[var(--v2-text-primary)] focus:bg-[#14B8A6]/10 focus:text-[#0D9488]">
-                            {t('scheduling.modal.frequency_biweekly')}
-                          </SelectItem>
-                          <SelectItem value="monthly" className="text-[var(--v2-text-primary)] focus:bg-[#14B8A6]/10 focus:text-[#0D9488]">
-                            {t('scheduling.modal.frequency_monthly')}
-                          </SelectItem>
-                          <SelectItem value="quarterly" className="text-[var(--v2-text-primary)] focus:bg-[#14B8A6]/10 focus:text-[#0D9488]">
-                            {t('scheduling.modal.frequency_quarterly')}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                )}
-
-                {/* First Payment Due (Optional) */}
-                <div className="space-y-3">
-                  <label className="block text-sm font-medium text-[var(--v2-text-primary)]">
-                    {t('scheduling.modal.first_payment_due')}
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, first_payment_due: 'on_booking', first_payment_days: 0 }))}
-                      className={`p-3 text-start border transition-all ${
-                        formData.first_payment_due === 'on_booking'
-                          ? 'border-[#14B8A6] bg-[#14B8A6]/10'
-                          : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                      }`}
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <span className={`text-sm font-medium ${formData.first_payment_due === 'on_booking' ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_on_booking')}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormData(prev => ({ ...prev, first_payment_due: 'days_after', first_payment_days: prev.first_payment_days || 7 }))}
-                      className={`p-3 text-start border transition-all ${
-                        formData.first_payment_due === 'days_after'
-                          ? 'border-[#14B8A6] bg-[#14B8A6]/10'
-                          : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                      }`}
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <span className={`text-sm font-medium ${formData.first_payment_due === 'days_after' ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_days_after')}
-                      </span>
-                    </button>
-                  </div>
-
-                  {formData.first_payment_due === 'days_after' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="365"
-                        value={formData.first_payment_days}
-                        onChange={(e) => setFormData(prev => ({ ...prev, first_payment_days: Math.max(1, Math.min(365, parseInt(e.target.value) || 1)) }))}
-                        className="w-20 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                      <span className="text-sm text-[var(--v2-text-secondary)]">
-                        {t('scheduling.modal.days_after_booking')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-              )}
+              {/* Payment Options Section - only show if service has a price.
+                  The controls live in ServicePaymentOptions so the onboarding
+                  chat can offer exactly these rather than a lookalike. */}
+              <ServicePaymentOptions
+                formData={formData}
+                setFormData={setFormData as any}
+                getCurrencySymbol={getCurrencySymbol}
+              />
 
               {/* Booking Settings Section */}
               <div className="space-y-4">

@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'ConversionBookingAvailabilityAPI' });
@@ -31,9 +32,14 @@ interface Service {
   id: string;
   name: string;
   description: string | null;
-  duration_minutes: number;
+  /** Null where the service declares no length — a product, or a fee-per-client. */
+  duration_minutes: number | null;
   price: number | null;
   currency: string;
+  /** Does booking this involve picking a time? Decides the date step. */
+  is_scheduled: boolean;
+  /** How the money arrives. Decides the payment step. */
+  collection: 'online' | 'invoice' | null;
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -74,18 +80,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const ownerId = businessProfile.user_id;
 
     // Check if availability has been explicitly configured
-    const hasAvailabilityConfigured = !!(
-      businessProfile.scheduling_availability &&
-      typeof businessProfile.scheduling_availability === 'object' &&
-      Object.keys(businessProfile.scheduling_availability).length > 0
-    );
+    // Asked of the windows, not of the keys. A profile whose every day is an
+    // empty array has keys and no hours — it would have reported "configured"
+    // and then produced nothing, which is the report that hid this bug.
+    const hasAvailabilityConfigured = hasAnyAvailability(businessProfile.scheduling_availability);
 
     // Fetch active services
     const { data: services, error: servicesError } = await supabaseServer
       .from('scheduling_services')
-      .select('id, service_name, description, duration_minutes, price, currency')
+      // Both flags, always.
+      //
+      // `is_active` is the Power toggle and `status` is draft/published — two
+      // different questions, and the toggle sets only the first. Filtering on
+      // `status` alone left a deactivated service off the website (which checks
+      // both) while every smart link went on selling it.
+      // `is_scheduled` and `collection` are what decide this service's client
+      // journey, and leaving them out is why the public page showed the same
+      // journey for everything. The widget asks `is_scheduled !== false`, so an
+      // ABSENT field reads as scheduled — a product with no date step was still
+      // sent to pick a time, and a service collected online had no payment step
+      // because its collection never arrived either.
+      //
+      // The sibling route /api/conversion/[userCode] already selected both. The
+      // page happens to take its services from THIS one.
+      .select('id, service_name, description, duration_minutes, price, currency, is_scheduled, collection')
       .eq('user_id', ownerId)
       .eq('status', 'active')
+      .eq('is_active', true)
       .order('created_at', { ascending: true });
 
     if (servicesError) {
@@ -100,7 +121,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       description: s.description,
       duration_minutes: s.duration_minutes,
       price: s.price,
-      currency: s.currency || 'USD'
+      currency: s.currency || 'USD',
+      // Normalised the same way the sibling route does, so the two cannot
+      // disagree about a service: a null `is_scheduled` means an older row that
+      // predates the column, and those were appointments.
+      is_scheduled: s.is_scheduled !== false,
+      collection: s.collection ?? null
     }));
 
     // Default timezone (column doesn't exist in business_profiles)
@@ -170,8 +196,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
  */
 async function calculateAvailableSlots(
   userId: string,
-  durationMinutes: number,
-  availability: Record<string, { start: string; end: string }>,
+  /**
+   * Null where the service declares no length. Not coerced to an hour: a
+   * missing duration is missing information, and inventing sixty minutes is
+   * what made every service implicitly an appointment. The slot grid's own
+   * interval is the smallest honest block to hold.
+   */
+  durationMinutes: number | null,
+  /** Raw JSON from the profile; shapes are normalised by `windowsForDay`. */
+  availability: unknown,
   timezone: string,
   startDate: string,
   daysAhead: number
@@ -200,49 +233,49 @@ async function calculateAvailableSlots(
     currentDate.setDate(currentDate.getDate() + i);
 
     const dayOfWeek = dayNames[currentDate.getDay()];
-    const dayAvailability = availability[dayOfWeek];
 
-    if (!dayAvailability || !dayAvailability.start || !dayAvailability.end) {
-      continue;
-    }
+    // A day is a LIST of windows — a morning and an evening are two, with a gap
+    // the client cannot book. Reading only the first would quietly hide the
+    // second; reading `.start` off the list, which is what this did, hid both.
+    for (const window of windowsForDay(availability, dayOfWeek)) {
+      const [startHour, startMin] = window.start.split(':').map(Number);
+      const [endHour, endMin] = window.end.split(':').map(Number);
 
-    // Parse availability times
-    const [startHour, startMin] = dayAvailability.start.split(':').map(Number);
-    const [endHour, endMin] = dayAvailability.end.split(':').map(Number);
+      // Generate time slots (30-minute intervals)
+      const slotInterval = 30; // minutes
+      const blockMinutes = durationMinutes ?? slotInterval;
+      let currentTime = new Date(currentDate);
+      currentTime.setHours(startHour, startMin, 0, 0);
 
-    // Generate time slots (30-minute intervals)
-    const slotInterval = 30; // minutes
-    let currentTime = new Date(currentDate);
-    currentTime.setHours(startHour, startMin, 0, 0);
+      const dayEnd = new Date(currentDate);
+      dayEnd.setHours(endHour, endMin, 0, 0);
 
-    const dayEnd = new Date(currentDate);
-    dayEnd.setHours(endHour, endMin, 0, 0);
+      while (currentTime.getTime() + blockMinutes * 60 * 1000 <= dayEnd.getTime()) {
+        const slotEnd = new Date(currentTime.getTime() + blockMinutes * 60 * 1000);
 
-    while (currentTime.getTime() + durationMinutes * 60 * 1000 <= dayEnd.getTime()) {
-      const slotEnd = new Date(currentTime.getTime() + durationMinutes * 60 * 1000);
+        // Check if slot is in the past
+        const isPast = currentTime < now;
 
-      // Check if slot is in the past
-      const isPast = currentTime < now;
+        // Check for conflicts with existing bookings
+        const hasConflict = (existingBookings || []).some(booking => {
+          const bookingStart = new Date(booking.start_time);
+          const bookingEnd = new Date(booking.end_time);
+          return (
+            (currentTime >= bookingStart && currentTime < bookingEnd) ||
+            (slotEnd > bookingStart && slotEnd <= bookingEnd) ||
+            (currentTime <= bookingStart && slotEnd >= bookingEnd)
+          );
+        });
 
-      // Check for conflicts with existing bookings
-      const hasConflict = (existingBookings || []).some(booking => {
-        const bookingStart = new Date(booking.start_time);
-        const bookingEnd = new Date(booking.end_time);
-        return (
-          (currentTime >= bookingStart && currentTime < bookingEnd) ||
-          (slotEnd > bookingStart && slotEnd <= bookingEnd) ||
-          (currentTime <= bookingStart && slotEnd >= bookingEnd)
-        );
-      });
+        slots.push({
+          start: currentTime.toISOString(),
+          end: slotEnd.toISOString(),
+          available: !isPast && !hasConflict
+        });
 
-      slots.push({
-        start: currentTime.toISOString(),
-        end: slotEnd.toISOString(),
-        available: !isPast && !hasConflict
-      });
-
-      // Move to next slot
-      currentTime = new Date(currentTime.getTime() + slotInterval * 60 * 1000);
+        // Move to next slot
+        currentTime = new Date(currentTime.getTime() + slotInterval * 60 * 1000);
+      }
     }
   }
 

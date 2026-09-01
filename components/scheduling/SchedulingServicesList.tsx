@@ -3,9 +3,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Clock, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
+import { Clock, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency } from '@/lib/repositories/SchedulingRepository';
+import { createLogger } from '@/lib/logger';
+import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency, ServiceCollection } from '@/lib/repositories/SchedulingRepository';
+import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
+
+const logger = createLogger({ module: 'SchedulingServicesList' });
 
 // Configuration theme color: Pink (#D14E97)
 const CONFIG_COLOR = '#D14E97';
@@ -24,21 +28,57 @@ interface SchedulingServicesListProps {
   autoEditServiceId?: string; // Auto-start editing a specific service (from chat)
   onAutoEditConsumed?: () => void; // Callback when auto-edit is consumed
   onServiceEdited?: (serviceId: string) => void; // Callback when a service is edited (saved as draft)
+  /**
+   * The business collects an intake form after a booking.
+   *
+   * Passed in rather than fetched here: the dialog that owns this list already
+   * knows, and a list does not need a network call to draw a row.
+   */
+  intakeEnabled?: boolean;
 }
 
 
-export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited }: SchedulingServicesListProps) {
+export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false }: SchedulingServicesListProps) {
   const { t, formatCurrency, currencyCode } = useLanguage();
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [recentlyEditedId, setRecentlyEditedId] = useState<string | null>(null); // Track recently edited service for highlight animation
   // Row editing state - stores all editable values for a row
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
+
+  /**
+   * Which rows have their client journey open.
+   *
+   * The journey used to render under every service, always — nine columns of
+   * settings and a strip of what they add up to, for every row at once. Folded
+   * away by default the table is half as tall, and the journey becomes
+   * something you ask for about one service rather than something you scroll
+   * past for all of them.
+   *
+   * A Set, not a single id: opening one service does not close another, so two
+   * can be compared. Collapsed is the default for every row — including a row
+   * that was just added, which lands in the table already understood.
+   */
+  const [openJourneyIds, setOpenJourneyIds] = useState<Set<string>>(new Set());
+
+  const toggleJourney = (serviceId: string) => {
+    setOpenJourneyIds(prev => {
+      const next = new Set(prev);
+      if (next.has(serviceId)) {
+        next.delete(serviceId);
+      } else {
+        next.add(serviceId);
+      }
+      return next;
+    });
+  };
   const [editRowValues, setEditRowValues] = useState<{
     name: string;
     duration: string;
     buffer: string;
     price: string;
     currency: ServiceCurrency;
+    is_scheduled: boolean;
+    collection: ServiceCollection;
     payment_type: PaymentType;
     installment_count: number;
     installment_frequency: InstallmentFrequency;
@@ -50,6 +90,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     buffer: '',
     price: '',
     currency: 'ILS',
+    is_scheduled: true,
+    collection: 'invoice' as ServiceCollection,
     payment_type: 'full',
     installment_count: 1,
     installment_frequency: 'monthly',
@@ -89,6 +131,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     buffer: '0',
     price: '0',
     currency: 'ILS' as ServiceCurrency,
+    is_scheduled: true,
+    collection: 'invoice' as ServiceCollection,
     payment_type: 'full' as PaymentType,
     installment_count: 1,
     installment_frequency: 'monthly' as InstallmentFrequency,
@@ -107,6 +151,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const [deleteError, setDeleteError] = useState<{ message: string; bookingCount?: number } | null>(null);
   // Toggle active state
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // Which service's journey is mid-save, so its pills stop accepting presses.
+  const [journeySavingId, setJourneySavingId] = useState<string | null>(null);
 
   // Description mini-dialog state
   const [descriptionDialogId, setDescriptionDialogId] = useState<string | null>(null);
@@ -204,6 +250,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         buffer: (newRowPrefill?.buffer_minutes || 0).toString(),
         price: (newRowPrefill?.price || 0).toString(),
         currency: (newRowPrefill?.currency as ServiceCurrency) || defaultCurrency,
+        is_scheduled: true,
+        collection: 'invoice' as ServiceCollection,
         payment_type: (newRowPrefill?.payment_type as PaymentType) || 'full',
         installment_count: newRowPrefill?.installment_count || 1,
         installment_frequency: (newRowPrefill?.installment_frequency as InstallmentFrequency) || 'monthly',
@@ -241,6 +289,10 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           buffer: serviceToEdit.buffer_minutes?.toString() || '0',
           price: serviceToEdit.price?.toString() || '0',
           currency: serviceToEdit.currency || 'ILS',
+          is_scheduled: true,
+          collection: 'invoice' as ServiceCollection,
+          // An account whose services predate these columns reads as it always
+          // did: everything an appointment, nothing assumed to need a processor.
           payment_type: serviceToEdit.payment_type || 'full',
           installment_count: serviceToEdit.installment_count || 1,
           installment_frequency: serviceToEdit.installment_frequency || 'monthly',
@@ -290,6 +342,54 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       // Silently fail - user can retry
     } finally {
       setPublishingId(null);
+    }
+  };
+
+  /**
+   * Change the journey by pressing it.
+   *
+   * The two facts the strip draws — does the client pick a time, and does the
+   * money arrive online — are the same two columns above it, so this saves
+   * exactly what the row edit would have saved. It exists because the shortest
+   * way to say "no, they should not pay online" is to press the step that says
+   * they will, rather than to open the row editor and find the right control.
+   *
+   * Optimistic like the active toggle, and reverted the same way: the strip
+   * redraws on the press, and puts itself back if the write fails.
+   */
+  const saveJourneyPatch = async (
+    service: SchedulingService,
+    patch: { scheduled?: boolean; collection?: ServiceCollection }
+  ) => {
+    if (journeySavingId) return;
+
+    const update: Partial<SchedulingService> = {};
+    if (patch.scheduled !== undefined) update.is_scheduled = patch.scheduled;
+    if (patch.collection !== undefined) update.collection = patch.collection;
+    if (Object.keys(update).length === 0) return;
+
+    setJourneySavingId(service.id);
+    setOptimisticUpdates(prev => ({ ...prev, [service.id]: { ...prev[service.id], ...update } }));
+
+    try {
+      const response = await fetch(`/api/scheduling/services/${service.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(update),
+      });
+
+      if (!response.ok) throw new Error(`PATCH responded ${response.status}`);
+      onSilentRefresh?.();
+    } catch (err) {
+      // Put the strip back to what the server still believes.
+      setOptimisticUpdates(prev => {
+        const next = { ...prev };
+        delete next[service.id];
+        return next;
+      });
+      logger.error({ err, serviceId: service.id }, 'Failed to save journey change');
+    } finally {
+      setJourneySavingId(null);
     }
   };
 
@@ -549,6 +649,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       buffer: '0',
       price: '0',
       currency: getValidCurrency(currencyCode),
+      is_scheduled: true,
+      collection: 'invoice' as ServiceCollection,
       payment_type: 'full',
       installment_count: 1,
       installment_frequency: 'monthly',
@@ -565,6 +667,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       buffer: '0',
       price: '0',
       currency: getValidCurrency(currencyCode),
+      is_scheduled: true,
+      collection: 'invoice' as ServiceCollection,
       payment_type: 'full',
       installment_count: 1,
       installment_frequency: 'monthly',
@@ -584,7 +688,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           service_name: newRowValues.name,
-          duration_minutes: parseInt(newRowValues.duration) || 60,
+          duration_minutes: newRowValues.duration.trim() !== '' ? (parseInt(newRowValues.duration) || null) : null,
+          is_scheduled: newRowValues.is_scheduled,
+          collection: parseFloat(newRowValues.price) > 0 ? newRowValues.collection : null,
           buffer_minutes: parseInt(newRowValues.buffer) || 0,
           price: parseFloat(newRowValues.price) || 0,
           currency: newRowValues.currency,
@@ -626,6 +732,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           buffer: '0',
           price: '0',
           currency: getValidCurrency(currencyCode),
+          is_scheduled: true,
+          collection: 'invoice' as ServiceCollection,
           payment_type: 'full',
           installment_count: 1,
           installment_frequency: 'monthly',
@@ -649,6 +757,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       buffer: service.buffer_minutes?.toString() || '0',
       price: service.price?.toString() || '0',
       currency: getValidCurrency(service.currency),
+      is_scheduled: true,
+      collection: 'invoice' as ServiceCollection,
       payment_type: service.payment_type || 'full',
       installment_count: service.installment_count || 1,
       installment_frequency: service.installment_frequency || 'monthly',
@@ -666,6 +776,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       buffer: '',
       price: '',
       currency: 'ILS',
+      is_scheduled: true,
+      collection: 'invoice' as ServiceCollection,
       payment_type: 'full',
       installment_count: 1,
       installment_frequency: 'monthly',
@@ -677,9 +789,16 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const saveRowEdit = async (serviceId: string) => {
     if (savingRow) return;
 
+    const priced = editRowValues.price !== '' && parseFloat(editRowValues.price) > 0;
+
     const updateData = {
       service_name: editRowValues.name,
-      duration_minutes: parseInt(editRowValues.duration) || 60,
+      // A product is not booked against a time, and a free service is not
+      // collected at all — storing either would describe something that never
+      // happens to a client.
+      duration_minutes: editRowValues.duration.trim() !== '' ? (parseInt(editRowValues.duration) || null) : null,
+      is_scheduled: editRowValues.is_scheduled,
+      collection: priced ? editRowValues.collection : null,
       buffer_minutes: parseInt(editRowValues.buffer) || 0,
       price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
       currency: editRowValues.currency,
@@ -688,7 +807,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       installment_frequency: editRowValues.installment_frequency,
       first_payment_due: editRowValues.first_payment_due,
       first_payment_days: editRowValues.first_payment_days,
-      status: 'draft' // Set to draft on edit - requires explicit publish
+      status: 'draft' as const // Set to draft on edit - requires explicit publish
     };
 
     // Optimistic update
@@ -705,6 +824,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       buffer: '',
       price: '',
       currency: 'ILS',
+      is_scheduled: true,
+      collection: 'invoice' as ServiceCollection,
       payment_type: 'full',
       installment_count: 1,
       installment_frequency: 'monthly',
@@ -733,11 +854,10 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       } else {
         // Log error for debugging
         const errorData = await response.json().catch(() => ({}));
-        console.error('Service update failed:', { status: response.status, ...errorData });
-        console.error('Sent data:', updateData);
-        if (errorData.details) {
-          console.error('Validation errors:', errorData.details);
-        }
+        logger.error(
+          { status: response.status, serviceId, errorData, updateData, validation: errorData.details },
+          'Service update failed'
+        );
         setOptimisticUpdates(prev => {
           const updated = { ...prev };
           delete updated[serviceId];
@@ -746,7 +866,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         onSilentRefresh?.();
       }
     }).catch((err) => {
-      console.error('Service update error:', err);
+      logger.error({ err, serviceId }, 'Service update error');
       setOptimisticUpdates(prev => {
         const updated = { ...prev };
         delete updated[serviceId];
@@ -810,6 +930,28 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     const isPublishing = publishingId === service.id;
     const isEditing = editingRowId === service.id;
     const isRecentlyEdited = recentlyEditedId === service.id;
+    const isJourneyOpen = openJourneyIds.has(service.id);
+
+    /**
+     * A service and its open journey are two <tr>s, and they were painting
+     * themselves differently.
+     *
+     * The settings row carried `hover:bg-...` and the journey row carried
+     * nothing, so the moment you clicked to open one your cursor was still on
+     * the settings row — it tinted, the strip beneath it did not, and the pair
+     * came apart into two colours. Every row did this; it was obvious on the
+     * LAST one, where there is no row underneath to make the change read as
+     * ordinary striping and the mismatch sits against the card's bottom edge.
+     *
+     * So the background is decided once and both rows are given the same one.
+     * Exclusive branches rather than stacked classes: `bg-amber-500/5` and
+     * `bg-[var(--v2-bg)]` are the same kind of utility, and which of them won
+     * would come down to stylesheet order.
+     */
+    const rowBackground = isJourneyOpen
+      // Already tinted, so hovering must not change it again.
+      ? (isDraft ? 'bg-amber-500/10' : 'bg-[var(--v2-bg)]')
+      : (isDraft ? 'bg-amber-500/5 hover:bg-amber-500/10' : 'hover:bg-[var(--v2-bg)]');
 
     if (isEditing) {
       return (
@@ -823,6 +965,26 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               className="w-full px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
               autoFocus
             />
+          </td>
+          {/* Needs a time? Decides whether the client journey has a date step,
+              and whether working hours are asked of this business at all. */}
+          <td className="px-4 py-3">
+            <div className="flex gap-1">
+              {([true, false] as const).map(value => (
+                <button
+                  key={String(value)}
+                  type="button"
+                  onClick={() => setEditRowValues(prev => ({ ...prev, is_scheduled: value }))}
+                  className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors ${
+                    editRowValues.is_scheduled === value
+                      ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
+                      : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                  }`}
+                >
+                  {value ? t('config.services.needs_time.yes') : t('config.services.needs_time.no')}
+                </button>
+              ))}
+            </div>
           </td>
           {/* Duration */}
           <td className="px-4 py-3">
@@ -876,6 +1038,33 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               />
             </div>
           </td>
+          {/* How the money arrives. This is what replaced asking the business,
+              once, whether it needs a card processor — a question nobody could
+              answer about everything they sell at the same time. */}
+          <td className="px-4 py-3">
+            {parseFloat(editRowValues.price) > 0 ? (
+              <div className="flex gap-1">
+                {(['online', 'invoice'] as const).map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setEditRowValues(prev => ({ ...prev, collection: value }))}
+                    className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors truncate ${
+                      editRowValues.collection === value
+                        ? 'border-[#22C58B] bg-[#22C58B]/10 text-[#22C58B] font-semibold'
+                        : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                    }`}
+                  >
+                    {value === 'online'
+                      ? t('config.services.collection.online')
+                      : t('config.services.collection.invoice')}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className="text-xs text-[var(--v2-text-muted)]">{t('journey.pay.free')}</span>
+            )}
+          </td>
           {/* Payment Plan */}
           <td className="px-4 py-3 text-xs text-[var(--v2-text-secondary)]">
             <button
@@ -890,10 +1079,18 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               title={t('scheduling.modal.payment_options')}
             >
               <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
-              {editRowValues.payment_type === 'installments' && editRowValues.installment_count > 1 ? (
-                <span>{editRowValues.installment_count}x {getFrequencyShortLabel(editRowValues.installment_frequency)}</span>
+              {parseFloat(editRowValues.price) > 0 ? (
+                editRowValues.payment_type === 'installments' && editRowValues.installment_count > 1 ? (
+                  <span>{editRowValues.installment_count}x {getFrequencyShortLabel(editRowValues.installment_frequency)}</span>
+                ) : (
+                  <span>{t('scheduling.modal.payment_full')}</span>
+                )
               ) : (
-                <span>{t('scheduling.modal.payment_full')}</span>
+                /* Nothing to pay, so nothing to plan. "Full Payment" against a
+                   price of zero describes a payment that never happens — and
+                   this is the same word the price column already uses for the
+                   same service, in whichever language. */
+                <span>{t('journey.pay.free')}</span>
               )}
             </button>
           </td>
@@ -925,13 +1122,45 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     }
 
     return (
+      <>
       <tr
         key={service.id}
-        className={`border-b border-[var(--v2-border)] last:border-b-0 hover:bg-[var(--v2-bg)] transition-colors group ${isDraft ? 'bg-amber-500/5' : ''} ${isRecentlyEdited ? 'recently-edited-row' : ''}`}
+        onClick={(e) => {
+          // The row is the control, but it is full of other controls — publish,
+          // activate, edit, delete, the description and payment dialogs. Anything
+          // that lands on one of those is that control's click, not the row's.
+          // Guarding here rather than adding stopPropagation to a dozen buttons
+          // means a button added later cannot forget to opt out.
+          if ((e.target as HTMLElement).closest('button, input, select, a, [role="combobox"]')) return;
+          toggleJourney(service.id);
+        }}
+        className={`transition-colors group cursor-pointer ${rowBackground} ${
+          // No dividing line while the journey is open, so the strip reads as
+          // part of this service rather than as the next row down.
+          isJourneyOpen ? '' : 'border-b border-[var(--v2-border)] last:border-b-0'
+        } ${isRecentlyEdited ? 'recently-edited-row' : ''}`}
       >
         {/* Service Name */}
         <td className="px-4 py-3">
           <div className="flex items-center gap-3">
+            {/* A real button, not a decorative caret: the row's own click
+                handler is mouse-only, and this is what makes the journey
+                reachable from the keyboard and nameable to a screen reader. */}
+            <button
+              type="button"
+              onClick={() => toggleJourney(service.id)}
+              aria-expanded={isJourneyOpen}
+              aria-controls={`journey-${service.id}`}
+              className="p-0.5 -m-0.5 text-[var(--v2-text-muted)] hover:text-[#D14E97] transition-colors flex-shrink-0"
+              title={t('journey.label')}
+            >
+              <ChevronRight
+                // Closed points along the reading direction — right in English,
+                // left in Hebrew. Open points down in both. Exactly one rotate
+                // class applies at a time, so they cannot fight each other.
+                className={`h-4 w-4 transition-transform ${isJourneyOpen ? 'rotate-90' : 'rtl:rotate-180'}`}
+              />
+            </button>
             <div
               className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0 border ${
                 isDraft
@@ -959,13 +1188,31 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             </button>
           </div>
         </td>
-        {/* Duration */}
+        {/* Needs a time? */}
         <td className="px-4 py-3">
-          <div className="flex items-center gap-1.5 text-sm text-[var(--v2-text-secondary)]">
-            <Clock className="h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
-            <span>{effectiveService.duration_minutes}</span>
-            <span className="text-[var(--v2-text-muted)]">{t('scheduling.service.minutes')}</span>
-          </div>
+          {effectiveService.is_scheduled === false ? (
+            <span className="text-xs px-2 py-1 rounded-full border border-[var(--v2-border)] text-[var(--v2-text-muted)]">
+              {t('config.services.needs_time.no')}
+            </span>
+          ) : (
+            <span className="text-xs px-2 py-1 rounded-full border border-[#14B8A6]/40 text-[#14B8A6] bg-[#14B8A6]/10">
+              {t('config.services.needs_time.yes')}
+            </span>
+          )}
+        </td>
+        {/* Duration — shown whatever the answer to "needs a time", because a
+            service can run two hours and still not be booked against a slot. An
+            em dash only where there genuinely is no length. */}
+        <td className="px-4 py-3">
+          {effectiveService.duration_minutes == null ? (
+            <span className="text-sm text-[var(--v2-text-muted)]">—</span>
+          ) : (
+            <div className="flex items-center gap-1.5 text-sm text-[var(--v2-text-secondary)]">
+              <Clock className="h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
+              <span>{effectiveService.duration_minutes}</span>
+              <span className="text-[var(--v2-text-muted)]">{t('scheduling.service.minutes')}</span>
+            </div>
+          )}
         </td>
         {/* Buffer */}
         <td className="px-4 py-3">
@@ -982,6 +1229,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             <span>{formatCurrency(effectiveService.price, { currencyOverride: service.currency })}</span>
           </div>
         </td>
+        {/* How it is paid — what decides whether this business is ever asked
+            to connect a card processor. */}
+        <td className="px-4 py-3">
+          {(effectiveService.price || 0) <= 0 ? (
+            <span className="text-xs text-[var(--v2-text-muted)]">{t('journey.pay.free')}</span>
+          ) : effectiveService.collection === 'online' ? (
+            <span className="text-xs px-2 py-1 rounded-full border border-[#22C58B]/40 text-[#22C58B] bg-[#22C58B]/10">
+              {t('config.services.collection.online')}
+            </span>
+          ) : (
+            <span className="text-xs px-2 py-1 rounded-full border border-[#8B5CF6]/40 text-[#8B5CF6] bg-[#8B5CF6]/10">
+              {t('config.services.collection.invoice')}
+            </span>
+          )}
+        </td>
         {/* Payment Plan */}
         <td className="px-4 py-3 text-xs text-[var(--v2-text-secondary)]">
           <button
@@ -993,10 +1255,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
             title={t('scheduling.modal.payment_options')}
           >
             <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
-            {effectiveService.payment_type === 'installments' && effectiveService.installment_count ? (
-              <span>{effectiveService.installment_count}x {getFrequencyShortLabel(effectiveService.installment_frequency)}</span>
+            {(effectiveService.price || 0) > 0 ? (
+              effectiveService.payment_type === 'installments' && effectiveService.installment_count ? (
+                <span>{effectiveService.installment_count}x {getFrequencyShortLabel(effectiveService.installment_frequency)}</span>
+              ) : (
+                <span>{t('scheduling.modal.payment_full')}</span>
+              )
             ) : (
-              <span>{t('scheduling.modal.payment_full')}</span>
+              <span>{t('journey.pay.free')}</span>
             )}
           </button>
         </td>
@@ -1055,6 +1321,52 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           </div>
         </td>
       </tr>
+
+      {/* What your client walks through for this service.
+          The columns above are the settings; this is what they add up to —
+          and the two were never on screen together, which is how a business
+          discovered its booking link led nowhere from a client's email.
+
+          Now folded away until asked for. `pt-0` and the missing divider above
+          keep it flush against its own row: the settings and what they add up
+          to are one block, not two rows that happen to be adjacent. */}
+      {/* `last:border-b-0` matters here and not only on the settings row: when
+          the LAST service is open THIS row becomes the table's last child, and
+          without the exemption it drew a rule directly on top of the card's own
+          bottom border. `recently-edited-row` too, so the highlight covers the
+          pair rather than half of it. */}
+      {isJourneyOpen && (
+      <tr
+        key={`${service.id}-journey`}
+        id={`journey-${service.id}`}
+        className={`border-b border-[var(--v2-border)] last:border-b-0 ${rowBackground} ${isRecentlyEdited ? 'recently-edited-row' : ''}`}
+      >
+        {/* Indented past the chevron and the initials badge, so the strip sits
+            under its own service rather than starting at the table edge — and
+            with room above the label instead of butting against the row. `ps-`
+            not `pl-`, so Hebrew indents from the right. */}
+        <td colSpan={9} className="ps-14 pe-4 pt-2 pb-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="text-[10px] font-semibold tracking-wide text-[var(--v2-text-muted)]">
+              {t('journey.label')}
+            </span>
+            <ClientJourneyStrip
+              compact
+              editable
+              saving={journeySavingId === service.id}
+              onChange={(patch) => saveJourneyPatch(service, patch)}
+              intakeEnabled={intakeEnabled}
+              service={{
+                scheduled: effectiveService.is_scheduled !== false,
+                collection: (effectiveService.collection as ServiceCollection | null) ?? null,
+                price: effectiveService.price,
+              }}
+            />
+          </div>
+        </td>
+      </tr>
+      )}
+      </>
     );
   };
 
@@ -1086,13 +1398,16 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           <table className="w-full">
             <thead>
               <tr className="bg-[var(--v2-bg)] border-b border-[var(--v2-border)] text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">
-                <th className="px-4 py-2.5 text-start w-[28%]">{t('config.services.column.service')}</th>
-                <th className="px-4 py-2.5 text-start w-[14%]">{t('config.services.column.duration')}</th>
-                <th className="px-4 py-2.5 text-start w-[14%]">{t('config.services.column.buffer')}</th>
-                <th className="px-4 py-2.5 text-start w-[12%]">{t('config.services.column.price')}</th>
-                <th className="px-4 py-2.5 text-start w-[10%]">{t('config.services.column.payment')}</th>
-                <th className="px-4 py-2.5 text-start w-[10%]">{t('config.services.column.status')}</th>
-                <th className="px-4 py-2.5 text-end w-[12%]">{t('config.services.column.actions')}</th>
+                <th className="px-4 py-2.5 text-start w-[20%]">{t('config.services.column.service')}</th>
+                {/* The two facts that decide this service's client journey. */}
+                <th className="px-4 py-2.5 text-start w-[11%]">{t('config.services.column.needs_time')}</th>
+                <th className="px-4 py-2.5 text-start w-[10%]">{t('config.services.column.duration')}</th>
+                <th className="px-4 py-2.5 text-start w-[9%]">{t('config.services.column.buffer')}</th>
+                <th className="px-4 py-2.5 text-start w-[11%]">{t('config.services.column.price')}</th>
+                <th className="px-4 py-2.5 text-start w-[12%]">{t('config.services.column.collection')}</th>
+                <th className="px-4 py-2.5 text-start w-[9%]">{t('config.services.column.payment')}</th>
+                <th className="px-4 py-2.5 text-start w-[8%]">{t('config.services.column.status')}</th>
+                <th className="px-4 py-2.5 text-end w-[10%]">{t('config.services.column.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -1122,6 +1437,25 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                       className="w-full px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
                       autoFocus
                     />
+                  </td>
+                  {/* Needs a time? */}
+                  <td className="px-4 py-3">
+                    <div className="flex gap-1">
+                      {([true, false] as const).map(value => (
+                        <button
+                          key={String(value)}
+                          type="button"
+                          onClick={() => setNewRowValues(prev => ({ ...prev, is_scheduled: value }))}
+                          className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors ${
+                            newRowValues.is_scheduled === value
+                              ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
+                              : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                          }`}
+                        >
+                          {value ? t('config.services.needs_time.yes') : t('config.services.needs_time.no')}
+                        </button>
+                      ))}
+                    </div>
                   </td>
                   {/* Duration */}
                   <td className="px-4 py-3">
@@ -1175,6 +1509,31 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                       />
                     </div>
                   </td>
+                  {/* How it is paid */}
+                  <td className="px-4 py-3">
+                    {parseFloat(newRowValues.price) > 0 ? (
+                      <div className="flex gap-1">
+                        {(['online', 'invoice'] as const).map(value => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => setNewRowValues(prev => ({ ...prev, collection: value }))}
+                            className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors truncate ${
+                              newRowValues.collection === value
+                                ? 'border-[#22C58B] bg-[#22C58B]/10 text-[#22C58B] font-semibold'
+                                : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                            }`}
+                          >
+                            {value === 'online'
+                              ? t('config.services.collection.online')
+                              : t('config.services.collection.invoice')}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-[var(--v2-text-muted)]">{t('journey.pay.free')}</span>
+                    )}
+                  </td>
                   {/* Payment Plan */}
                   <td className="px-4 py-3 text-xs text-[var(--v2-text-secondary)]">
                     <button
@@ -1189,10 +1548,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                       title={t('scheduling.modal.payment_options')}
                     >
                       <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
-                      {newRowValues.payment_type === 'installments' && newRowValues.installment_count > 1 ? (
-                        <span>{newRowValues.installment_count}x {getFrequencyShortLabel(newRowValues.installment_frequency)}</span>
+                      {parseFloat(newRowValues.price) > 0 ? (
+                        newRowValues.payment_type === 'installments' && newRowValues.installment_count > 1 ? (
+                          <span>{newRowValues.installment_count}x {getFrequencyShortLabel(newRowValues.installment_frequency)}</span>
+                        ) : (
+                          <span>{t('scheduling.modal.payment_full')}</span>
+                        )
                       ) : (
-                        <span>{t('scheduling.modal.payment_full')}</span>
+                        <span>{t('journey.pay.free')}</span>
                       )}
                     </button>
                   </td>

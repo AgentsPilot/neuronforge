@@ -106,6 +106,14 @@ export async function GET(request: NextRequest) {
       vectorMaturity = vectorResult.data;
     }
 
+    // Returning an insight to the dashboard is the moment it reaches the user,
+    // so it counts as surfaced. Detector cooldowns key off last_surfaced_at;
+    // leaving it to the "opened it" action alone meant a detection nobody
+    // clicked was re-detected every fifteen minutes for weeks.
+    if (insights.length > 0) {
+      await repository.markManySurfaced(insights, user.id);
+    }
+
     // Also get autonomous work feed
     const workFeed = new AutonomousWorkFeed(supabaseServer);
     const myDayData = await workFeed.getMyDayData(user.id);

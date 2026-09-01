@@ -18,6 +18,12 @@ interface CalendarSyncStatus {
   };
 }
 
+/** Which plugin backs each sync provider — the two names differ. */
+const PROVIDER_PLUGIN: Record<'google_calendar' | 'outlook', string> = {
+  google_calendar: 'google-calendar',
+  outlook: 'outlook',
+};
+
 interface ConnectedPlugin {
   key: string;
   name?: string;
@@ -158,6 +164,14 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
     setConnectionStatus(null);
 
     try {
+      // Turn sync off FIRST when this is the calendar sync runs on. Disconnecting
+      // only removes the plugin; the business profile would still say sync is on
+      // with a provider that no longer exists, leaving the busy times it imported
+      // blocking slots with nothing left to refresh or remove them.
+      if (syncEnabled && PROVIDER_PLUGIN[activeProvider ?? 'google_calendar'] === pluginKey) {
+        await fetch('/api/scheduling/calendar-sync/disable', { method: 'POST' });
+      }
+
       const pluginAPIClient = getPluginAPIClient();
       const result = await pluginAPIClient.disconnectPlugin(user.id, pluginKey);
 
@@ -170,6 +184,9 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
           await refreshPlugins();
           // Also refresh sync status in case the disconnected plugin was being used for sync
           await fetchSyncStatus();
+          // Drops the imported busy times from the calendar view in the same
+          // pass, rather than leaving them on screen until a reload.
+          onSyncChanged?.();
         }, 2000);
       } else {
         setConnectionStatus({
@@ -451,6 +468,68 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
     );
   };
 
+  /**
+   * The connected calendars, each with a disconnect button.
+   *
+   * Disconnecting used to be a click on the plugin icon, discoverable only by
+   * hovering it and reading the tooltip — so the only visible exit was "Disable
+   * Sync", which stops collecting but leaves the account attached. Naming the
+   * accounts also answers "which Google account is this?", which the icon alone
+   * never could.
+   */
+  const renderConnectedList = (tone: 'teal' | 'green') => {
+    const entries = [
+      { key: 'google-calendar', plugin: googlePlugin, connected: googleConnected },
+      { key: 'outlook', plugin: outlookPlugin, connected: outlookConnected },
+    ].filter(e => e.connected);
+
+    if (entries.length === 0) return null;
+
+    const divider = tone === 'green'
+      ? 'border-green-200 dark:border-green-800'
+      : 'border-teal-200 dark:border-teal-800';
+
+    return (
+      <div className={`mt-3 pt-3 border-t ${divider} flex flex-col gap-1.5`}>
+        <span className="text-xs font-medium text-[var(--v2-text-secondary)]">
+          {t('scheduling.calendar_sync.connected_accounts')}
+        </span>
+        {entries.map(({ key, plugin }) => {
+          const isActive = syncEnabled && PROVIDER_PLUGIN[activeProvider ?? 'google_calendar'] === key;
+          const busy = disconnectingPlugin === key;
+
+          return (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2 min-w-0">
+                <PluginIcon pluginId={key} className="w-4 h-4 shrink-0" alt="" />
+                <span className="text-sm text-[var(--v2-text-primary)] truncate">
+                  {getPluginDisplayName(key)}
+                  {plugin?.username ? ` · ${plugin.username}` : ''}
+                </span>
+                {isActive && (
+                  <span className="text-xs text-[var(--v2-text-secondary)] whitespace-nowrap">
+                    · {t('scheduling.calendar_sync.active_badge')}
+                  </span>
+                )}
+              </span>
+              <button
+                onClick={() => handleDisconnectPrompt(key)}
+                disabled={busy}
+                className="text-xs font-medium text-red-500 hover:text-red-600 disabled:opacity-50 whitespace-nowrap"
+              >
+                {busy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  t('scheduling.calendar_sync.disconnect_button')
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   // Disconnect Confirmation Modal (same as Footer)
   const renderDisconnectModal = () => {
     if (!disconnectPrompt) return null;
@@ -493,10 +572,31 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
               {getPluginDisplayName(disconnectPrompt)}
             </p>
 
-            {/* Description */}
-            <p className="text-sm text-[var(--v2-text-secondary)] text-center mb-6">
-              {t('scheduling.calendar_sync.disconnect_desc')}
-            </p>
+            {/* Disconnecting the calendar sync runs on costs more than the
+                others: it stops sync and drops the imported busy times. Said
+                here, before the click, not discovered afterwards. */}
+            {(() => {
+              const stopsSync =
+                syncEnabled &&
+                PROVIDER_PLUGIN[activeProvider ?? 'google_calendar'] === disconnectPrompt;
+
+              return (
+                <>
+                  <p
+                    className={`text-sm text-[var(--v2-text-secondary)] text-center ${
+                      stopsSync ? 'mb-3' : 'mb-6'
+                    }`}
+                  >
+                    {t('scheduling.calendar_sync.disconnect_desc')}
+                  </p>
+                  {stopsSync && (
+                    <p className="text-sm text-amber-600 dark:text-amber-400 text-center mb-6">
+                      {t('scheduling.calendar_sync.disconnect_stops_sync')}
+                    </p>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Actions */}
             <div className="flex gap-3">
@@ -579,8 +679,8 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
             <div className="flex items-center gap-4">
               {/* Show all calendar icons - connected ones with green dot, not connected without */}
               <div className="flex gap-2">
-                {renderPluginButton('google-calendar', googlePlugin, googleConnected, googleConnected)}
-                {renderPluginButton('outlook', outlookPlugin, outlookConnected, outlookConnected)}
+                {renderPluginButton('google-calendar', googlePlugin, googleConnected)}
+                {renderPluginButton('outlook', outlookPlugin, outlookConnected)}
               </div>
               <div>
                 <div className="flex items-center gap-2">
@@ -627,6 +727,7 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
               )}
             </div>
           </div>
+          {renderConnectedList('teal')}
         </div>
         {renderDisconnectModal()}
       </>
@@ -652,8 +753,8 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
           <div className="flex items-center gap-4">
             {/* Show both calendar icons - active with green, other as connected/not connected */}
             <div className="flex gap-2">
-              {renderPluginButton('google-calendar', googlePlugin, googleConnected, googleConnected)}
-              {renderPluginButton('outlook', outlookPlugin, outlookConnected, outlookConnected)}
+              {renderPluginButton('google-calendar', googlePlugin, googleConnected)}
+              {renderPluginButton('outlook', outlookPlugin, outlookConnected)}
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -705,6 +806,7 @@ export function CalendarSyncSettings({ onSyncChanged }: CalendarSyncSettingsProp
             </button>
           </div>
         </div>
+        {renderConnectedList('green')}
       </div>
       {renderDisconnectModal()}
     </>

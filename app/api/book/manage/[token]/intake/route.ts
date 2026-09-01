@@ -85,10 +85,10 @@ export async function GET(
 
     // Fetch business info for branding early - needed for all responses (language, branding)
     // Note: logo_url and primary_color columns don't exist in business_profiles table
-    // Use invoice_logo_url as fallback for logo, and hardcode default primary color
+    // The logo comes from the business profile — see lib/branding/businessLogo.ts
     const { data: profile, error: profileError } = await supabaseServer
       .from('business_profiles')
-      .select('company_name, invoice_logo_url, language')
+      .select('company_name, logo_url, language')
       .eq('user_id', booking.user_id)
       .single();
 
@@ -105,7 +105,7 @@ export async function GET(
 
     const businessData = profile ? {
       name: profile.company_name,
-      logoUrl: profile.invoice_logo_url,
+      logoUrl: profile.logo_url,
       primaryColor: '#4F46E5', // Default color since primary_color column doesn't exist
       language: profile.language || 'en'
     } : null;

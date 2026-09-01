@@ -13,7 +13,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { OnboardingConversationManager, OnboardingState, Language } from '@/lib/services/OnboardingConversationManager';
+import {
+  OnboardingConversationManager,
+  ONBOARDING_STEPS,
+  OnboardingState,
+  Language,
+} from '@/lib/services/OnboardingConversationManager';
 import { onboardingConfigurationService } from '@/lib/services/OnboardingConfigurationService';
 import { z } from 'zod';
 
@@ -58,18 +63,6 @@ export async function POST(request: NextRequest) {
     let messageSequence = 0;
 
     // Valid steps for the enhanced onboarding flow (with Q4 and Q5 smart questions)
-    const VALID_STEPS = new Set([
-      'language_selection',
-      'business_story',
-      'client_workflow',
-      'service_details',
-      'client_acquisition',  // Q4: How do clients find you?
-      'client_tracking',     // Q5: How do you track clients?
-      'preview',
-      'preview_adjustment',
-      'building',
-      'complete',
-    ]);
 
     // Always check for existing conversation data by user_id (not conversationId)
     // This ensures we pick up where we left off within the same session
@@ -94,7 +87,14 @@ export async function POST(request: NextRequest) {
         const restoredState = JSON.parse(lastMessage.metadata.state_snapshot);
 
         // Check if the restored state uses old step names (from previous onboarding flow)
-        if (!VALID_STEPS.has(restoredState.currentStep)) {
+        // A step this build does not recognise means the conversation was
+        // started by an older version of the flow, and its state cannot be
+        // resumed. Read from the state machine rather than a copy kept here:
+        // this file used to hold its own list, so adding a question to the
+        // conversation silently made every conversation in flight look invalid
+        // — the user answered it and was thrown back to the first question, in
+        // English, with everything they had said discarded.
+        if (!ONBOARDING_STEPS.has(restoredState.currentStep)) {
           requestLogger.warn({
             userId: user.id,
             oldStep: restoredState.currentStep
@@ -209,6 +209,8 @@ export async function POST(request: NextRequest) {
         total: totalSteps
       },
       showPreview: result.showPreview,
+      // The live setup picture, on every turn.
+      setup: readSetupSignals(result.updatedState.collectedData, result.updatedState.currentStep),
       conversationId: user.id, // Use user.id as conversation identifier
       previewData: result.showPreview ? {
         businessProfile: {
@@ -239,15 +241,82 @@ export async function POST(request: NextRequest) {
 }
 
 /**
+ * What the conversation knows so far, in the shape the setup chain reads.
+ *
+ * Sent on every turn rather than only at the preview, because the panel beside
+ * the chat is the point: the user watches their setup assemble while they
+ * answer, instead of being shown a summary card once the questions are over.
+ *
+ * Every field may be null. A step whose rule depends on an unanswered question
+ * is drawn as a ghost — visible as something coming, never claimed either way.
+ */
+function readSetupSignals(collected: any, currentStep: string) {
+  const services: Array<{ price?: number | null; collection?: string | null }> =
+    collected?.clientWorkflow?.services || collected?.services || [];
+
+  const hasPricedServices = services.length > 0
+    ? services.some(service => (service.price ?? 0) > 0)
+    : null;
+
+  /**
+   * How money reaches this business, summarised from what its services say.
+   *
+   * The chat no longer asks — a single answer could not describe a practice
+   * that takes a card for a session and invoices for a programme. The panel
+   * still wants one word for its money node, so it is read back off the
+   * services rather than from an answer nobody gave.
+   */
+  const collection = ((): string | null => {
+    const priced = services.filter(service => (service.price ?? 0) > 0);
+    if (priced.length === 0) return services.length > 0 ? 'none' : null;
+
+    const online = priced.some(service => service.collection === 'online');
+    const billed = priced.some(service => service.collection !== 'online');
+    if (online && billed) return 'mixed';
+    if (online) return 'card_online';
+    return 'invoice';
+  })();
+
+  const presence = collected?.configuration?.online_presence_mode
+    ?? (collected?.clientAcquisition?.needs_website === true
+      ? 'full_website'
+      : collected?.clientAcquisition?.needs_website === false
+        ? 'booking_only'
+        : null);
+
+  // What the build will create, so the panel can say how much of this the
+  // platform does rather than the person.
+  const willProvision: string[] = [];
+  if (services.length > 0) willProvision.push('services');
+  if (collected?.pipelineStages?.length) willProvision.push('clients');
+  if (presence) willProvision.push('reach');
+
+  return {
+    // What the conversation has actually learned, in the order it asks.
+    business: collected?.businessProfile?.company_name || collected?.businessStory?.company_name || null,
+    servicesCount: services.length,
+    hasPricedServices,
+    collection,
+    presence,
+    tracksClients: collected?.clientTracking?.current_method != null
+      || (collected?.pipelineStages?.length || 0) > 0,
+    currentStep,
+    willProvision,
+  };
+}
+
+/**
  * Calculate progress percentage based on current step
  * Updated for enhanced onboarding flow with Q4 and Q5 smart questions
  */
 function calculateProgress(step: string): number {
   const stepProgress: Record<string, number> = {
     'language_selection': 1,
+    'business_name': 2,
     'business_story': 2,
     'client_workflow': 3,
     'service_details': 4,
+    'payment_collection': 5,  // How does the money reach you?
     'client_acquisition': 5,  // Q4: How do clients find you?
     'client_tracking': 6,     // Q5: How do you track clients?
     'preview': 7,

@@ -35,6 +35,11 @@ import {
   renderUserVocabulary,
 } from './catalogPrompt';
 import { getPlanCache, type CacheLayer } from '../cache/PlanCache';
+import { recordCachedTurn } from '../telemetry/turnUsage';
+import {
+  renderContextForPrompt,
+  type ConversationContext,
+} from '../memory/ConversationMemory';
 
 const logger = createLogger({ module: 'BizQLPlanner' });
 
@@ -66,9 +71,20 @@ export interface Plan {
 export interface PlanRequest {
   message: string;
   userId: string;
+  /** Recent turns and last-shown rows, so pronouns and answers resolve. */
+  context?: ConversationContext;
   /** BCP-47-ish language hint. Only used to tell the model which language to answer in. */
   language?: string;
   timezone?: string;
+  /**
+   * Identifies ONE question, across every call it takes to answer it.
+   *
+   * A turn can be a plan plus a repair, or a cache hit and no call at all.
+   * Without this, usage rows are per-API-call and cost-per-question cannot be
+   * computed — only cost-per-call, which hides both repair overhead and the
+   * savings from a cache hit. The route passes its correlationId.
+   */
+  turnId?: string;
 }
 
 export interface PlanOutcome {
@@ -144,8 +160,22 @@ export class BizQLPlanner {
     // Cache first. This belongs in the planner rather than the route because
     // caching IS the planner's job — avoiding an LLM call — and putting it here
     // means every caller benefits and the eval harness measures it.
+    // A context-dependent turn is deliberately NOT cached, in either direction.
+    // "show him" means something different in every conversation, so serving a
+    // cached plan for it would apply one user's referent to another's question.
+    const contextual = Boolean(
+      request.context?.pendingQuestion || request.context?.lastRows?.items.length
+    );
+
     const cache = getPlanCache();
-    const cached = await cache.lookup(request.message, request.language ?? 'en', request.userId);
+    const cached = contextual
+      ? { layer: 'miss' as const, literals: [], normalized: '' }
+      : await cache.lookup(
+          request.message,
+          request.language ?? 'en',
+          request.userId,
+          request.turnId
+        );
 
     if (cached.plan) {
       // A cached plan is still validated: the catalog may have changed in ways
@@ -155,6 +185,19 @@ export class BizQLPlanner {
 
       if (problems.length === 0) {
         logger.debug({ layer: cached.layer }, 'Served plan from cache');
+
+        // A turn that cost nothing still happened. Without a row here the cache
+        // hit rate is unmeasurable and cost-per-turn divides by the wrong
+        // denominator — see telemetry/turnUsage.ts.
+        if (request.turnId) {
+          void recordCachedTurn({
+            userId: request.userId,
+            turnId: request.turnId,
+            servedBy: cached.layer as 'exact' | 'semantic',
+            latencyMs: Date.now() - started,
+          });
+        }
+
         return {
           ok: true,
           plan: cached.plan,
@@ -196,9 +239,12 @@ export class BizQLPlanner {
       }),
     ]);
 
+    const conversation = request.context ? renderContextForPrompt(request.context) : '';
+
     const system =
       `${PLANNER_SYSTEM_PROMPT}\n\nCATALOG\n${catalogText}` +
-      (vocabulary ? `\n\nTHIS USER'S CONFIGURED VALUES\n${vocabulary}` : '');
+      (vocabulary ? `\n\nTHIS USER'S CONFIGURED VALUES\n${vocabulary}` : '') +
+      (conversation ? `\n\nCONVERSATION SO FAR\n${conversation}` : '');
     const user = request.language
       ? `Answer in language: ${request.language}\n\nRequest: ${request.message}`
       : `Request: ${request.message}`;
@@ -231,7 +277,17 @@ export class BizQLPlanner {
             // instead of expensively.
             max_tokens: MAX_PLAN_TOKENS,
           },
-          { userId: request.userId, feature: 'business-os-chat', component: 'BizQLPlanner' }
+          {
+            userId: request.userId,
+            feature: 'business-os-chat',
+            component: 'BizQLPlanner',
+            sessionId: request.turnId,
+            // A repair is a SECOND full-prompt call for one question. Tagged so
+            // its overhead is visible: repairs were the dominant cost driver at
+            // several points during development and looked identical to first
+            // attempts in the data.
+            activity_type: repairAttempted ? 'repair' : 'plan',
+          }
         );
 
         promptTokens = response.usage?.prompt_tokens ?? promptTokens;
@@ -340,8 +396,8 @@ export class BizQLPlanner {
         // Store only a freshly planned, valid result. Writes are never cached:
         // a mutate carries a concrete target id, so it is tenant-specific by
         // construction and would be useless — or dangerous — to replay.
-        const hasWrite = plan.steps.some((s) => s.op === 'mutate');
-        if (!hasWrite) {
+        const hasWrite = plan.steps.some((s) => s.op === 'mutate' || s.op === 'for_each');
+        if (!hasWrite && !contextual) {
           void cache
             .store({
               normalized: cached.normalized,

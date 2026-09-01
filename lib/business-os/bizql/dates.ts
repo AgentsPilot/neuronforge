@@ -92,6 +92,15 @@ export function resolveDateExpr(
     case 'yesterday':
       resolved = addDays(today, -1);
       break;
+    // Synonyms for the day boundaries. The planner reaches for these naturally
+    // when expressing "today" as a range, and rejecting them cost a repair pass
+    // for no benefit — `today` already IS midnight.
+    case 'start_of_day':
+      resolved = today;
+      break;
+    case 'end_of_day':
+      resolved = addDays(today, 1); // exclusive upper bound
+      break;
     case 'start_of_week': {
       // Week starts Sunday, matching this product's scheduling model.
       const dow = new Date(today).getUTCDay();

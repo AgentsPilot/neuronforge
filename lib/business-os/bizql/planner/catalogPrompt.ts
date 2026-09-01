@@ -98,7 +98,19 @@ export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): stri
 
   for (const key of keys) {
     const entity = CATALOG.entities[key];
-    const lines: string[] = [`${key} (${entity.labels.one.en}/${entity.labels.many.en})`];
+    // Aliases on the header line, where the entity is chosen. This is the first
+    // decision every plan makes, and "how many לקוחות" pointed at `invoices`
+    // because nothing said that `contacts` is what a business calls its clients.
+    const alsoKnownAs = entity.aliases?.length ? `, ${entity.aliases.join(', ')}` : '';
+    const lines: string[] = [
+      `${key} (${entity.labels.one.en}/${entity.labels.many.en}${alsoKnownAs})`,
+    ];
+
+    // Before the fields, because it decides whether this entity is the right
+    // one at all — and that choice is made before any field is considered.
+    if (entity.meaning) {
+      lines.push(`  m: ${entity.meaning}`);
+    }
 
     const fields = Object.keys(entity.fields)
       .map((f) => renderField(f, entity))
@@ -129,8 +141,26 @@ export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): stri
       const actions = Object.entries(entity.actions ?? {});
       if (actions.length) {
         lines.push(
+          // Required fields are shown because their absence is what made the
+          // planner invent them: not knowing that services.create needs a name
+          // and a duration, it emitted {service_name:"", duration_minutes:0} —
+          // every key present, every value a placeholder. A model cannot ask for
+          // what it does not know is missing.
           `  a: ${actions
-            .map(([k, a]) => `${k}(${a.risk}${a.requiresConfirmation ? ',confirm' : ''})`)
+            .map(([k, a]) => {
+              const flags = [a.risk, ...(a.requiresConfirmation ? ['confirm'] : [])];
+              const required = a.requiredFields?.length
+                ? `,req=${a.requiredFields.join('+')}`
+                : '';
+              // Optional fields are shown for the same reason required ones are:
+              // a model cannot fill a field it does not know the action accepts.
+              // "הוסף משימה לאופיר להתקשר מחר" was folding "מחר" INTO the title
+              // instead of setting due_date, so the task arrived with no date.
+              const optional = a.optionalFields?.length
+                ? `,opt=${a.optionalFields.join('+')}`
+                : '';
+              return `${k}(${flags.join(',')}${required}${optional})`;
+            })
             .join(' ')}`
         );
       }

@@ -8,16 +8,35 @@ import { useLanguage } from '@/lib/business-os/LanguageContext';
 // Types
 // ===========================
 
+/**
+ * One line of projection copy as the API sends it.
+ *
+ * Mirrors `ProjectionLine` in lib/business-os/insight/projection/ImpactProjector.
+ * The server cannot know the interface language, so it names a dictionary key
+ * and the numbers that fill it; `text` is the English rendering, kept as the
+ * fallback. Without this the panel printed the server's English under a
+ * translated heading.
+ */
+export interface ProjectionLine {
+  text: string;
+  key?: string;
+  params?: Record<string, string | number>;
+}
+
 export interface InsightProjection {
   doNothing: {
     summary: string;
     details: string;
+    summaryLine?: ProjectionLine;
+    detailsLine?: ProjectionLine;
     projectedLoss?: number;
     projectedEffort?: string;
   };
   letMeHandleIt: {
     summary: string;
     details: string;
+    summaryLine?: ProjectionLine;
+    detailsLine?: ProjectionLine;
     projectedOutcome: {
       cashRecovered?: number;
       timeSaved?: number;
@@ -119,7 +138,7 @@ export function InsightDetailModal({
   onAction,
   loading = false,
 }: InsightDetailModalProps) {
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, formatCurrency } = useLanguage();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -136,15 +155,6 @@ export function InsightDetailModal({
     } finally {
       setActionLoading(null);
     }
-  };
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(value);
   };
 
   const formatMinutes = (minutes: number) => {
@@ -220,7 +230,7 @@ export function InsightDetailModal({
                     </span>
                   </div>
                   <span className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                    {formatCurrency(insight.estimated_impact_usd)}
+                    {formatCurrency(insight.estimated_impact_usd, { showFree: false })}
                   </span>
                 </div>
               )}
@@ -288,7 +298,7 @@ export function InsightDetailModal({
                       <div className="flex items-center gap-1.5">
                         <TrendingUp className="w-3.5 h-3.5 text-[#22C58B]" />
                         <span className="text-xs text-[#22C58B] font-medium">
-                          ~{formatCurrency(projection.letMeHandleIt.projectedOutcome.cashRecovered)} recovered
+                          ~{formatCurrency(projection.letMeHandleIt.projectedOutcome.cashRecovered, { showFree: false })} recovered
                         </span>
                       </div>
                     )}

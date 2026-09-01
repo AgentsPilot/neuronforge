@@ -4,10 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Loader2, Check, Clock } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { BeforeAfterPanel, type ProjectionColumn } from './BeforeAfterPanel';
-import { VectorsStrip } from './VectorsStrip';
-import { HandledSection, type HandledEntry } from './HandledSection';
 import type { InsightData, InsightProjection } from './InsightDetailModal';
-import type { VectorMaturityData } from '@/lib/business-os/insight/repository/InsightRepository';
 
 // ===========================
 // Types
@@ -36,8 +33,6 @@ interface InsightAdvisorCardProps {
   currentIndex: number;
   projection?: InsightProjection;
   automationConfig?: AutomationConfig;
-  vectorMaturity?: VectorMaturityData | null;
-  handledEntries?: HandledEntry[];
   stage?: CardStage;
   onIndexChange: (index: number) => void;
   onAction: (action: 'run' | 'snooze' | 'dismiss', insightId: string, params?: Record<string, unknown>) => Promise<void>;
@@ -79,8 +74,6 @@ export function InsightAdvisorCard({
   currentIndex,
   projection,
   automationConfig,
-  vectorMaturity,
-  handledEntries,
   stage = 'run',
   onIndexChange,
   onAction,
@@ -234,21 +227,49 @@ export function InsightAdvisorCard({
     setAutoValue(Math.max(7, Math.min(45, autoValue + delta * 7)));
   };
 
+  /**
+   * Projection copy in the reader's language.
+   *
+   * The projector runs on the server with no access to the interface language,
+   * so it sends a dictionary key and the numbers to fill it, alongside an
+   * English rendering. Prefer the key; fall back to the English only when there
+   * is no key or the dictionary has no entry — `t` returns the key itself when
+   * a string is missing, which would otherwise print `insight.generic.do_nothing`
+   * on the card.
+   *
+   * Without this the panel showed the server's English under a Hebrew heading.
+   */
+  const renderLine = (
+    line: { text: string; key?: string; params?: Record<string, string | number> } | undefined,
+    fallback: string | undefined
+  ): string => {
+    if (line?.key) {
+      const translated = t(line.key, line.params);
+      if (translated && translated !== line.key) return translated;
+    }
+    return line?.text || fallback || '';
+  };
+
   // Build projection columns for BeforeAfterPanel
   const projectionColumns: { left: ProjectionColumn; right: ProjectionColumn } | null =
     effectiveStage === 'setup'
       ? setupContent.projection
       : projection
         ? {
+            // These read `doNothing` / `letMeHandleIt`, the field names the
+            // projection actually carries. They were snake_case here, so every
+            // projection silently fell through to the generic fallback text.
             left: {
               label: t('insight.projection.do_nothing') || 'If you do nothing',
-              value: projection.do_nothing?.outcome || `${insight?.affected_count || 0} outstanding`,
-              subtext: projection.do_nothing?.detail || '',
+              value: renderLine(projection.doNothing?.summaryLine, projection.doNothing?.summary)
+                || `${insight?.affected_count || 0} outstanding`,
+              subtext: renderLine(projection.doNothing?.detailsLine, projection.doNothing?.details),
             },
             right: {
               label: t('insight.projection.handle_it') || 'If I handle it',
-              value: projection.handle_it?.outcome || `~${formatCurrency(insight?.estimated_impact_usd || 0)} recovered`,
-              subtext: projection.handle_it?.detail || '',
+              value: renderLine(projection.letMeHandleIt?.summaryLine, projection.letMeHandleIt?.summary)
+                || `~${formatCurrency(insight?.estimated_impact_usd || 0, { showFree: false })} recovered`,
+              subtext: renderLine(projection.letMeHandleIt?.detailsLine, projection.letMeHandleIt?.details),
             },
           }
         : null;
@@ -351,6 +372,48 @@ export function InsightAdvisorCard({
           >
             {getCategoryLabel()}
           </span>
+
+          {/* Which of several insights this is, and a way to reach the others.
+              The card only ever shows one at a time, so without this the rest
+              are invisible — the parent has always tracked the index and passed
+              onIndexChange; nothing rendered a control for it. */}
+          {insights.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <span
+                style={{
+                  fontSize: '11.5px',
+                  fontWeight: 500,
+                  color: '#697187',
+                  whiteSpace: 'nowrap',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {t('insight.nav.position', { current: currentIndex + 1, total: insights.length })}
+              </span>
+              <div style={{ display: 'flex', gap: '5px' }}>
+                {insights.map((entry, i) => (
+                  <button
+                    key={entry.id ?? i}
+                    onClick={() => onIndexChange(i)}
+                    aria-label={t('insight.nav.goTo', { number: i + 1 })}
+                    aria-current={i === currentIndex}
+                    style={{
+                      // The active one is a stadium rather than a bigger dot:
+                      // size alone is hard to read at 6px, length is not.
+                      width: i === currentIndex ? '14px' : '6px',
+                      height: '6px',
+                      borderRadius: i === currentIndex ? '4px' : '50%',
+                      background: i === currentIndex ? '#F97316' : '#D6DAE6',
+                      border: 'none',
+                      padding: 0,
+                      cursor: i === currentIndex ? 'default' : 'pointer',
+                      transition: 'width 0.2s, background 0.2s',
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Headline: .adv-h */}
@@ -852,13 +915,10 @@ export function InsightAdvisorCard({
         )}
       </div>
 
-      {/* Vectors strip (inside card, border-top) */}
-      {vectorMaturity && <VectorsStrip vectorMaturity={vectorMaturity} standalone={false} />}
-
-      {/* Handled section (inside card, border-top) */}
-      {handledEntries && handledEntries.length > 0 && (
-        <HandledSection entries={handledEntries} standalone={false} />
-      )}
+      {/* The vectors strip and "what I've handled" used to render here as well
+          as in LiveDashboard, so both appeared twice — with different numbers —
+          whenever there was a pending insight. LiveDashboard owns them now, and
+          shows them whether or not an insight is pending. */}
     </div>
   );
 }

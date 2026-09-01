@@ -108,7 +108,10 @@ export async function POST(request: NextRequest) {
 
     // Calculate end time
     const startTime = new Date(data.start_time);
-    const endTime = new Date(startTime.getTime() + service.duration_minutes * 60 * 1000);
+    // A service that is not booked against a time has no duration, so its
+    // "appointment" is a point rather than a span. Multiplying null gives NaN,
+    // and an invalid end time is written to the row without complaint.
+    const endTime = new Date(startTime.getTime() + (service.duration_minutes || 0) * 60 * 1000);
 
     // Check for conflicts (double-check availability)
     const { data: conflicts } = await supabaseServer

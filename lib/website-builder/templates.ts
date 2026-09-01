@@ -14,6 +14,7 @@
  * 3. User content persists across template changes
  */
 
+import type { PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import {
   HeaderBlock,
   HeroBlock,
@@ -2506,6 +2507,49 @@ export function getTemplatesByVertical(vertical: string): WebsiteTemplate[] {
 // Helper function to get template by ID
 export function getTemplateById(id: string): WebsiteTemplate | undefined {
   return WEBSITE_TEMPLATES.find(t => t.id === id);
+}
+
+/**
+ * A template's look, in the shape a page stores it.
+ *
+ * Lived as a byte-identical private copy in the page-create route and the
+ * apply-template route, and website generation was about to add a third. A
+ * template's colours are one fact; three transcriptions of it are three places
+ * for it to drift.
+ */
+export function templateToPageTheme(template: WebsiteTemplate): PageTheme {
+  // Use explicit font_heading/font_body if available, otherwise fallback to font_family
+  const headingFont = template.theme.font_heading || template.theme.font_family.split(',')[0].trim();
+  const bodyFont = template.theme.font_body || template.theme.font_family.split(',')[0].trim();
+
+  // Determine background and text colors (support dark templates)
+  const isDarkTemplate = template.theme.background_color &&
+    (template.theme.background_color.startsWith('#0') ||
+     template.theme.background_color.startsWith('#1') ||
+     template.theme.background_color === '#000000');
+
+  const backgroundColor = template.theme.background_color || '#ffffff';
+  const textColor = template.theme.text_color || (isDarkTemplate ? '#ffffff' : '#1a1a1a');
+  const textSecondary = isDarkTemplate ? '#9ca3af' : '#6b7280';
+  const surfaceColor = isDarkTemplate ? '#1f2937' : '#f9fafb';
+
+  return {
+    colors: {
+      primary: template.theme.primary_color,
+      secondary: template.theme.secondary_color,
+      accent: template.theme.accent_color || template.theme.secondary_color,
+      background: backgroundColor,
+      surface: surfaceColor,
+      text: textColor,
+      textSecondary: textSecondary
+    },
+    fonts: {
+      heading: headingFont,
+      body: bodyFont
+    },
+    spacing: 'normal',
+    borderRadius: '8px'
+  };
 }
 
 // Helper function to get all verticals

@@ -433,7 +433,7 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
   }
 
   // Onboarding check is handled by middleware
-  // Middleware checks business_profiles table and redirects to /onboarding-v2 if needed
+  // Middleware checks business_profiles table and redirects to /onboarding-chat if needed
   // No client-side check here to avoid race conditions and ensure consistency
 
   const sidebarContent = (

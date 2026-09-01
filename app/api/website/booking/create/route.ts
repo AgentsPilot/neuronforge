@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
     if (isScheduledBooking) {
       // Calculate end time for scheduled bookings
       startTime = new Date(data.start_time!);
-      endTime = new Date(startTime.getTime() + service.duration_minutes * 60 * 1000);
+      endTime = new Date(startTime.getTime() + (service.duration_minutes || 0) * 60 * 1000);
 
       // Check for conflicts (only for scheduled bookings)
       const { data: conflicts } = await supabaseServer

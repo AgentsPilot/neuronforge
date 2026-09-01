@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { CRMPipelineView } from '@/components/crm/CRMPipelineView';
 import { CRMContactList } from '@/components/crm/CRMContactList';
 import { CRMTaskList } from '@/components/crm/CRMTaskList';
@@ -14,6 +13,7 @@ import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 
 const logger = createLogger({ module: 'CRMPage' });
 
@@ -251,10 +251,9 @@ export default function CRMPage() {
 
   return (
     <div className="min-h-screen bg-[var(--v2-bg)]">
-      <BusinessOSHeader />
 
       {/* Main Content with max-width like dashboard */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+      <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
 
         {/* Page Header with purple theme (CRM capability color) */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">

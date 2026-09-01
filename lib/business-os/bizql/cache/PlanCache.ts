@@ -27,6 +27,7 @@ import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { EmbeddingService } from '@/lib/services/EmbeddingService';
 import { CATALOG_VERSION } from '@/lib/business-os/catalog';
 import type { Plan } from '../planner/Planner';
+import { plannerVersion } from '../planner/planTool';
 import {
   cacheKey,
   dehydratePlan,
@@ -39,6 +40,14 @@ import {
 const logger = createLogger({ module: 'BizQLPlanCache' });
 
 const TABLE = 'business_chat_plan_cache';
+
+/**
+ * Everything a cached plan depends on: the schema/vocabulary it was built
+ * against AND the instructions that produced it.
+ */
+function cacheVersion(): string {
+  return `${CATALOG_VERSION}.${plannerVersion()}`;
+}
 
 export type CacheLayer = 'exact' | 'semantic' | 'miss';
 
@@ -68,20 +77,54 @@ function isMissingTable(error: { code?: string; message?: string } | null): bool
 }
 
 async function threshold(): Promise<number> {
-  // Higher than the help bot's 0.85. A wrong support answer is wrong; a wrong
-  // PLAN silently queries something the user did not ask about.
   return SystemConfigService.getNumber(
     supabaseServer,
     'bizchat_plan_semantic_threshold',
-    0.92
+    0.97
   );
 }
 
+/**
+ * L2 semantic matching is OFF by default. This is a deliberate retreat.
+ *
+ * WHAT HAPPENED
+ *
+ *   "מי חייב לי מתחת ל 100 שקל"  (owes me UNDER 100)
+ *     matched a cached plan meaning "100 OR MORE" at similarity 0.9520,
+ *     and returned 13 invoices — the exact opposite of the question.
+ *
+ * WHY IT IS NOT A TUNING PROBLEM
+ *
+ * Measured cosine similarity between semantically OPPOSITE questions:
+ *
+ *     under vs over (Hebrew)          0.9166
+ *     with vs without an intake form  0.9131
+ *     paid vs unpaid                  0.8996
+ *
+ * Genuine paraphrases — the whole point of L2 — sit in the same band. The
+ * distinction the cache must make (paraphrase vs negation) is not separable at
+ * the similarity level available, because negation and comparison words are
+ * lexically tiny and semantically opposite. Any threshold low enough to be
+ * useful is also low enough to invert a question.
+ *
+ * Nor does negative caching save it: that demotes plans which FAIL, and an
+ * inverted plan succeeds — it just answers the wrong question, confidently.
+ *
+ * THE COST OF TURNING IT OFF IS ~NOTHING
+ *
+ * The measured 72% token saving (1,788 -> 500) was achieved while
+ * `createEmbedding` was broken and L2 never ran at all. That win is entirely L1
+ * exact-match plus slot normalisation, and both still work.
+ *
+ * Re-enable per environment via `bizchat_plan_semantic_cache_enabled` if a
+ * verification step is added — e.g. re-planning a semantic hit and comparing —
+ * but not on similarity alone.
+ */
 async function semanticEnabled(): Promise<boolean> {
   return SystemConfigService.getBoolean(
     supabaseServer,
     'bizchat_plan_semantic_cache_enabled',
-    true
+    false
   );
 }
 
@@ -94,14 +137,16 @@ export class PlanCache {
   async lookup(
     utterance: string,
     language: string,
-    userId: string
+    userId: string,
+    /** Groups the L2 embedding's cost with the rest of this turn. */
+    turnId?: string
   ): Promise<CacheLookup & { literals: ExtractedLiteral[]; normalized: string }> {
     const { normalized, literals } = normalizeUtterance(utterance);
     const miss = { layer: 'miss' as const, literals, normalized };
 
     if (cacheUnavailable) return miss;
 
-    const key = cacheKey(normalized, language, CATALOG_VERSION);
+    const key = cacheKey(normalized, language, cacheVersion());
 
     // ---- L1: exact ---------------------------------------------------------
     try {
@@ -151,13 +196,19 @@ export class PlanCache {
         process.env.OPENAI_API_KEY!,
         supabaseServer
       );
-      const { embedding, tokens } = await embeddingService.generateEmbedding(normalized);
+      // Attributed to the chat, not the help bot. The embedding is spent
+      // answering THIS question and belongs on this turn's bill.
+      const { embedding, tokens } = await embeddingService.generateEmbedding(normalized, {
+        userId,
+        feature: 'business-os-chat',
+        turnId,
+      });
 
       const { data, error } = await supabaseServer.rpc(
         'search_business_chat_plans_semantic',
         {
           query_embedding: JSON.stringify(embedding),
-          p_catalog_version: CATALOG_VERSION,
+          p_catalog_version: cacheVersion(),
           p_language: language,
           p_user_id: userId,
           similarity_threshold: await threshold(),
@@ -245,7 +296,7 @@ export class PlanCache {
 
       const entities = [...new Set((plan.steps ?? []).map((s) => s.entity))];
 
-      const hash = cacheKey(normalized, language, CATALOG_VERSION);
+      const hash = cacheKey(normalized, language, cacheVersion());
       const scope = portable ? null : userId;
 
       const row = {
@@ -253,7 +304,7 @@ export class PlanCache {
         utterance_normalized: normalized,
         utterance_hash: hash,
         language,
-        catalog_version: CATALOG_VERSION,
+        catalog_version: cacheVersion(),
         plan: dehydrated,
         param_slots: literals.map((l) => ({ slot: l.slot, kind: l.kind })),
         entities,

@@ -10,12 +10,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/repositories/WebsiteContentRepository';
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
-import { WebsiteAnalyticsRepository, hashIP, detectDeviceType } from '@/lib/repositories/WebsiteAnalyticsRepository';
 
 const logger = createLogger({ module: 'PublicWebsiteAPI' });
 
@@ -108,7 +108,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     // Fetch live services from Scheduling capability
     // Needed for services blocks AND pricing/CTA blocks (for live pricing data)
-    let liveServices: Array<{ id: string; name: string; description: string; icon: string; price?: string; priceRaw?: number; currency?: string; duration?: string; durationMinutes?: number }> = [];
+    let liveServices: Array<{
+      id: string; name: string; description: string; icon: string;
+      price?: string; priceRaw?: number; currency?: string;
+      duration?: string; durationMinutes?: number | null;
+      /** The two facts a booking journey is built from. */
+      is_scheduled?: boolean; collection?: 'online' | 'invoice' | null;
+      hidden?: boolean;
+    }> = [];
     const hasServicesBlock = blocks.some(b => b.block_type === 'services');
     const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
     const hasCtaBlock = blocks.some(b => b.block_type === 'cta');
@@ -129,6 +136,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             currency: s.currency,
             duration: s.duration_minutes ? `${s.duration_minutes} min` : undefined,
             durationMinutes: s.duration_minutes,
+            // The two facts the booking widget builds its journey from. Without
+            // them the website decided from the price alone and asked an
+            // invoiced client for a card.
+            is_scheduled: s.is_scheduled !== false,
+            collection: s.collection ?? null,
             hidden: false
           }));
         }
@@ -137,8 +149,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // The header's logo is the BUSINESS's logo, not the page's. The block only
+    // records whether to show one (`show_logo`); the image is injected here at
+    // read time so a site can never drift from the profile, and so changing the
+    // logo once changes it everywhere.
+    const headerShowsLogo = blocks.some(
+      b => b.block_type === 'header' && (b.content as Record<string, unknown>)?.show_logo === true
+    );
+    const businessLogoUrl = headerShowsLogo
+      ? await resolveBusinessLogo(userId)
+      : null;
+
     // Merge central content into blocks
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {
+      if (block.block_type === 'header') {
+        const headerContent = block.content as Record<string, unknown>;
+        return {
+          ...block,
+          content: {
+            ...headerContent,
+            // Absent rather than empty: HeaderBlock renders logo_text when
+            // there is no logo_url, and an empty string is not falsy enough for
+            // every consumer downstream.
+            logo_url: headerContent?.show_logo === true && businessLogoUrl ? businessLogoUrl : undefined,
+          },
+        };
+      }
+
       const sectionName = BLOCK_TO_SECTION_MAP[block.block_type];
 
       // For landing pages, inject live service data into pricing and CTA blocks
@@ -273,10 +310,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return block;
     });
 
-    // Track page view (non-blocking)
-    trackPageView(subdomain, pageResult.data.id, userId, request).catch(err =>
-      requestLogger.warn({ err }, 'Failed to track page view')
-    );
+    // Page views are recorded by <PageViewTracker> in the browser, not here.
+    // This route is reached via an internal server-to-server fetch from
+    // app/site/[subdomain]/page.tsx, so `request` carries the headers of THAT
+    // request — tracking here recorded a null referrer, Node's user-agent and
+    // the app server's IP for every visitor.
 
     return NextResponse.json({
       success: true,
@@ -297,48 +335,5 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       { success: false, error: 'Failed to load website' },
       { status: 500 }
     );
-  }
-}
-
-// Track page view for analytics
-async function trackPageView(
-  subdomain: string,
-  pageId: string,
-  userId: string,
-  request: NextRequest
-): Promise<void> {
-  try {
-    const analyticsRepo = new WebsiteAnalyticsRepository(supabaseServer);
-
-    const userAgent = request.headers.get('user-agent') || null;
-    const referer = request.headers.get('referer') || null;
-
-    // Get IP from various headers (Vercel, Cloudflare, or direct)
-    const ip =
-      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      request.headers.get('x-real-ip') ||
-      request.headers.get('cf-connecting-ip') ||
-      'unknown';
-
-    // Hash IP for privacy
-    const ipHash = ip !== 'unknown' ? hashIP(ip) : null;
-
-    // Detect device type
-    const deviceType = detectDeviceType(userAgent);
-
-    await analyticsRepo.trackPageView({
-      page_id: pageId,
-      user_id: userId,
-      subdomain,
-      user_agent: userAgent,
-      referer,
-      ip_hash: ipHash,
-      device_type: deviceType
-    });
-
-    logger.debug({ subdomain, deviceType, hasReferer: !!referer }, 'Page view tracked');
-  } catch (error) {
-    // Don't throw - just log the error (non-blocking)
-    logger.warn({ err: error, subdomain }, 'Failed to track page view');
   }
 }

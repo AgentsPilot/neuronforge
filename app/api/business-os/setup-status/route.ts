@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { CALENDAR_PLUGIN_KEYS } from '@/lib/plugins/pluginKeys';
+import { isThemeCustomized } from '@/lib/business-os/setup/profileReadiness';
 
 const logger = createLogger({ module: 'SetupStatusAPI' });
 
@@ -66,7 +68,7 @@ export async function GET(request: NextRequest) {
         .from('plugin_connections')
         .select('plugin_key')
         .eq('user_id', user.id)
-        .in('plugin_key', ['google_calendar', 'outlook_calendar'])
+        .in('plugin_key', CALENDAR_PLUGIN_KEYS)
         .eq('status', 'active'),
       // Stripe Connect account - stored in separate table
       supabaseServer
@@ -77,7 +79,7 @@ export async function GET(request: NextRequest) {
       // Website page - check if user has a published homepage
       supabaseServer
         .from('website_pages')
-        .select('id, published, subdomain')
+        .select('id, published, subdomain, theme')
         .eq('user_id', user.id)
         .eq('page_type', 'homepage')
         .maybeSingle(),
@@ -97,8 +99,17 @@ export async function GET(request: NextRequest) {
 
     // Stripe is connected if the user has a stripe_connect_account with charges enabled or onboarding completed
     const hasStripe = !!(stripeConnectAccount && (stripeConnectAccount.charges_enabled || stripeConnectAccount.onboarding_completed));
-    const hasCalendar = connectedPlugins.has('google_calendar') || connectedPlugins.has('outlook_calendar');
+    // Against the same constant the query filters on. Written as literals here,
+    // these read 'google_calendar' and 'outlook_calendar' — neither of which is
+    // a real plugin key, so the step stayed incomplete however many calendars
+    // the user connected. The query was corrected; this check was missed.
+    const hasCalendar = CALENDAR_PLUGIN_KEYS.some(key => connectedPlugins.has(key));
     const hasWebsite = !!(websitePage?.published && websitePage?.subdomain);
+
+    // The look of the business: the same theme drives the site, the invoice PDF
+    // and every transactional email, so it is worth prompting for even before a
+    // site is published.
+    const hasTheme = isThemeCustomized(websitePage?.theme);
 
     // 4. Build steps array (order matters for display)
     // Only include steps that are NOT complete - we only show what's missing
@@ -108,6 +119,7 @@ export async function GET(request: NextRequest) {
       { id: 'payments', complete: hasStripe },
       { id: 'calendar', complete: hasCalendar },
       { id: 'website', complete: hasWebsite },
+      { id: 'design', complete: hasTheme },
     ];
 
     const completedCount = steps.filter(s => s.complete).length;

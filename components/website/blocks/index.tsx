@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import type { Locale } from '@/lib/i18n/config';
 import { getDirection } from '@/lib/i18n/config';
-import type { BlockType, BlockStyles, PageTheme, FlowStep, SelectedServiceData } from './types';
+import type { BlockType, BlockStyles, PageTheme, FlowStep, SelectedServiceData, JourneyServiceFacts, BlockRendererProps } from './types';
 import { normalizeClientFlow } from './types';
 
 // Block Components
@@ -72,22 +72,10 @@ export {
 export * from './types';
 
 // Block registry
-const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<{
-  content: Record<string, unknown>;
-  styles?: BlockStyles;
-  theme?: PageTheme;
-  locale: Locale;
-  isRTL: boolean;
-  className?: string;
-  useLiveData?: boolean;
-  blockId?: string;
-  pageId?: string;
-  clientFlow?: FlowStep[];
-  bookingUrl?: string;
-  subdomain?: string;
-  isPreview?: boolean;
-  onOpenBooking?: (service: SelectedServiceData) => void;
-}>> = {
+// Typed from the one contract every block already implements, rather than a
+// transcription of it: the copy that used to live here had drifted, and a prop
+// added to `BlockRendererProps` was rejected here for not existing.
+const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<BlockRendererProps>> = {
   header: HeaderBlock,
   hero: HeroBlock,
   services: ServicesBlock,
@@ -317,6 +305,14 @@ export function WebsiteBlocks({
       || undefined;
   // Normalize the flow to expand legacy 'booking' step to ['scheduling', 'client_info']
   const clientFlow = rawClientFlow ? normalizeClientFlow(rawClientFlow) : undefined;
+  // The services this page offers, as the two facts that decide each one's
+  // journey. Read from the services block because that is where the page
+  // stores its catalogue; a page written before these were carried simply has
+  // none, and the blocks fall back to the stored client_flow.
+  const servicesBlock = sortedBlocks.find(b => b.block_type === 'services');
+  const journeyServices = ((servicesBlock?.content?.services as JourneyServiceFacts[] | undefined) || [])
+    .filter(service => !service.hidden);
+
   // Booking URL must be explicitly provided or stored in process block
   // No default fallback - if not set, booking buttons won't show (handled by ServicesBlock)
   const bookingUrl = explicitBookingUrl || (processBlock?.content?.booking_url as string | undefined);
@@ -380,6 +376,7 @@ export function WebsiteBlocks({
               blockId={block.id}
               pageId={pageId}
               clientFlow={clientFlow}
+              journeyServices={journeyServices}
               bookingUrl={bookingUrl}
               subdomain={subdomain}
               isPreview={isPreview}

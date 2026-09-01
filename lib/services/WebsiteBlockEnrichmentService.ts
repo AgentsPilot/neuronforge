@@ -258,7 +258,12 @@ export class WebsiteBlockEnrichmentService {
         description: service.description || '',
         icon: websiteAIContentService.getServiceIcon(service.service_name),
         price: service.price ? this.formatPrice(service.price, service.currency) : undefined,
-        duration: service.duration_minutes ? this.formatDuration(service.duration_minutes, language) : undefined
+        priceRaw: service.price ?? undefined,
+        duration: service.duration_minutes ? this.formatDuration(service.duration_minutes, language) : undefined,
+        // Carried so the public page can describe each service's own journey
+        // rather than one story for the whole site.
+        is_scheduled: service.is_scheduled !== false,
+        collection: service.collection ?? null
       }));
 
       // Localized titles

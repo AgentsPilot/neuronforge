@@ -16,7 +16,7 @@ import {
   Video,
   User,
   Phone,
-  BarChart3,
+
   Users,
   Zap,
   CloudUpload,
@@ -36,11 +36,12 @@ import {
   BookOpen,
   Briefcase,
   Camera,
+  MapPin,
   Send,
   Headphones,
   FileSpreadsheet,
   Grid3X3,
-  ClipboardList,
+
   Activity,
   Bell,
 } from 'lucide-react'
@@ -212,14 +213,6 @@ export const pluginList: PluginDefinition[] = [
     category: 'productivity',
     isPopular: true,
   },
-  {
-    pluginKey: 'clickup-docs',
-    name: 'ClickUp',
-    description: 'Create tasks, update status, fetch lists and priorities, automate project and task workflows',
-    detailedDescription: 'Project management platform with task tracking, document collaboration, and workflow automation. Supports creating and updating tasks, managing project status, time tracking, and team collaboration features.',
-    icon: <ClipboardList className="w-5 h-5 text-purple-600" />,
-    category: 'productivity',
-  },
 
   // 📊 CRM & Sales
   {
@@ -243,11 +236,29 @@ export const pluginList: PluginDefinition[] = [
 
   // 📈 Marketing & Ads
   {
-    pluginKey: 'google-ads',
-    name: 'Google Ads',
-    description: 'Campaign insights, performance summaries',
-    detailedDescription: 'Online advertising platform for campaign management and performance tracking. Provides campaign creation, keyword management, ad performance analytics, budget optimization, and conversion tracking.',
-    icon: <TrendingUp className="w-5 h-5 text-blue-600" />,
+    pluginKey: 'google-analytics',
+    name: 'Google Analytics',
+    description: 'See your website traffic and where visitors come from',
+    detailedDescription: 'Read-only Google Analytics 4 reporting: sessions, users, page views, landing pages, and which sources send traffic. Works for any GA4-measured site, including ones not hosted here. Cannot change any GA4 setting.',
+    icon: <TrendingUp className="w-5 h-5 text-orange-500" />,
+    category: 'marketing',
+    isPopular: true,
+  },
+  {
+    pluginKey: 'google-business-profile',
+    name: 'Google Business Profile',
+    description: 'See how people find you on Google Search and Maps',
+    detailedDescription: 'Read-only Business Profile performance: how often your listing appeared on Search and Maps, and how many people called, asked for directions, or visited your website. Cannot edit your listing or reply to reviews.',
+    icon: <MapPin className="w-5 h-5 text-blue-600" />,
+    category: 'marketing',
+    isPopular: true,
+  },
+  {
+    pluginKey: 'meta-insights',
+    name: 'Facebook & Instagram',
+    description: 'See how many people your Page and Instagram reach',
+    detailedDescription: 'Read-only insights for your Facebook Page and linked Instagram Business account: reach, impressions, engagement, profile views, follower growth, and per-post performance including boosted reach. Cannot post content or change any setting.',
+    icon: <Camera className="w-5 h-5 text-pink-600" />,
     category: 'marketing',
     isPopular: true,
   },
@@ -261,33 +272,7 @@ export const pluginList: PluginDefinition[] = [
     isPopular: true,
   },
 
-  // 📂 Project & Task Management
-  {
-    pluginKey: 'clickup-project',
-    name: 'ClickUp',
-    description: 'Project progress, automated updates',
-    detailedDescription: 'All-in-one project management suite with customizable workflows. Offers task management, time tracking, goal setting, document collaboration, and team productivity analytics with flexible hierarchy structures.',
-    icon: <ClipboardList className="w-5 h-5 text-purple-600" />,
-    category: 'project',
-  },
   // 💰 Finance & Billing
-  {
-    pluginKey: 'quickbooks',
-    name: 'QuickBooks',
-    description: 'Invoices, expenses, summaries',
-    detailedDescription: 'Accounting software for small business financial management. Handles invoicing, expense tracking, tax preparation, payroll processing, and financial reporting with bank integration and automated bookkeeping.',
-    icon: <DollarSign className="w-5 h-5 text-green-600" />,
-    category: 'finance',
-    isPopular: true,
-  },
-  {
-    pluginKey: 'xero',
-    name: 'Xero',
-    description: 'Financial reports, invoices',
-    detailedDescription: 'Cloud-based accounting platform for business financial management. Provides invoice creation, expense management, bank reconciliation, financial reporting, and multi-currency support with real-time collaboration.',
-    icon: <BarChart3 className="w-5 h-5 text-blue-600" />,
-    category: 'finance',
-  },
   {
     pluginKey: 'stripe',
     name: 'Stripe',
@@ -296,14 +281,6 @@ export const pluginList: PluginDefinition[] = [
     icon: <CreditCard className="w-5 h-5 text-purple-600" />,
     category: 'finance',
     isPopular: true,
-  },
-  {
-    pluginKey: 'paypal',
-    name: 'PayPal',
-    description: 'Transaction lookup, basic financial insights',
-    detailedDescription: 'Digital payment platform for sending, receiving, and managing transactions. Supports payment processing, invoice creation, transaction history, dispute management, and integration with e-commerce platforms.',
-    icon: <CreditCard className="w-5 h-5 text-blue-600" />,
-    category: 'finance',
   },
 
   // 🔄 Integration Platforms

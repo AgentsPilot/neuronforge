@@ -10,6 +10,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { generateDiff } from '@/lib/audit/diff';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'CRMContactAPI' });
@@ -102,7 +103,10 @@ export async function PUT(
 
     requestLogger.info({ userId: user.id, contactId: id }, 'Updating CRM contact');
 
-    // 3. Update contact
+    // 3. Update contact. The previous row is read first so the audit entry can
+    // say what the value changed FROM — passing the request payload alone
+    // records only where a field landed, which is the less useful half.
+    const before = await crmContactRepository.findById(id, user.id);
     const result = await crmContactRepository.update(id, user.id, validated);
 
     if (result.error) {
@@ -121,7 +125,13 @@ export async function PUT(
         entityType: 'crm_contact',
         entityId: id,
         resourceName: `${result.data!.first_name || ''} ${result.data!.last_name || ''}`.trim() || result.data!.email || 'Contact',
-        changes: validated,
+        // A real before/after diff where the previous row could be read; the
+        // submitted values alone when it could not.
+        // updated_at moves on every write, so it would appear in every entry
+        // and say nothing.
+        changes: (before.data
+          ? generateDiff(before.data, result.data!, { ignoreFields: ['updated_at'] })
+          : validated) ?? undefined,
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));

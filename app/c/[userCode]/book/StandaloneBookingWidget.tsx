@@ -12,6 +12,8 @@ import PhoneInput from 'react-phone-number-input';
 import type { CountryCode } from 'libphonenumber-js/core';
 import { WebsiteCountrySelect } from '@/components/website/blocks/WebsiteCountrySelect';
 import 'react-phone-number-input/style.css';
+import { journeySteps, shouldTakePayment } from '@/lib/business-os/clientJourney';
+import type { CollectionMethod } from '@/lib/business-os/setup/setupGraph';
 
 interface Service {
   id: string;
@@ -20,6 +22,10 @@ interface Service {
   duration_minutes: number;
   price: number | null;
   currency: string;
+  /** Does booking this involve picking a time? */
+  is_scheduled?: boolean | null;
+  /** How the money arrives, or null where the service is free. */
+  collection?: 'online' | 'invoice' | null;
 }
 
 interface TimeSlot {
@@ -39,52 +45,46 @@ interface StandaloneBookingWidgetProps {
   locale?: 'en' | 'es' | 'he';
   initialServiceId?: string;
   clientFlow?: ClientFlowStep[] | null; // Custom flow from URL param
+  /**
+   * How the business collects. A priced service is not the same as a card
+   * taken at booking — a clinic that invoices charges for its work and asks
+   * for nothing on this screen.
+   */
+  collectionMethod?: CollectionMethod | null;
+  /** Stripe connected with charges enabled. False drops the payment step. */
+  processorReady?: boolean;
 }
 
 type Step = 'service' | 'datetime' | 'details' | 'payment' | 'confirmation';
 
-// Map ClientFlowStep to internal Step
-function mapFlowToSteps(clientFlow: ClientFlowStep[] | null | undefined, hasPayment: boolean): Step[] {
-  // Default flow if none specified
-  if (!clientFlow || clientFlow.length === 0) {
-    const steps: Step[] = ['service', 'datetime', 'details'];
-    if (hasPayment) steps.push('payment');
-    steps.push('confirmation');
-    return steps;
-  }
-
-  const steps: Step[] = ['service']; // Always start with service selection
-
-  for (const flowStep of clientFlow) {
-    if (flowStep === 'scheduling' || flowStep === 'booking') {
-      if (!steps.includes('datetime')) {
-        steps.push('datetime');
-      }
-    }
-    if (flowStep === 'client_info' || flowStep === 'booking') {
-      if (!steps.includes('details')) {
-        steps.push('details');
-      }
-    }
-    if (flowStep === 'payment' && hasPayment) {
-      if (!steps.includes('payment')) {
-        steps.push('payment');
-      }
-    }
-    // intake step would go here if implemented
-    if (flowStep === 'confirmation') {
-      if (!steps.includes('confirmation')) {
-        steps.push('confirmation');
-      }
-    }
-  }
-
-  // Ensure confirmation is always last
-  if (!steps.includes('confirmation')) {
-    steps.push('confirmation');
-  }
-
-  return steps;
+/**
+ * The steps this link walks a client through, for the service they picked.
+ *
+ * Was `mapFlowToSteps(clientFlow, hasPayment)` — a flow stored on the link,
+ * decided when the link was made, with only the payment step per service. A
+ * business whose catalogue holds a booked session and a downloadable product
+ * had one flow describing both, and the product asked the client to pick a
+ * time for a thing that has no time.
+ *
+ * The service decides it now, through the same resolver the website's booking
+ * page runs, so the two surfaces cannot drift apart again. `intake` is not in
+ * the list because this widget has no intake screen to send anyone to.
+ */
+function stepsForService(
+  service: Service | null,
+  collectionMethod: CollectionMethod | null | undefined,
+  processorReady: boolean
+): Step[] {
+  return journeySteps(
+    {
+      is_scheduled: service?.is_scheduled,
+      // The service's own answer, falling back to the business-wide one for a
+      // service saved before services carried it.
+      collection: service?.collection ?? collectionMethod,
+      price: service?.price,
+    },
+    { processorReady, intakeEnabled: false }
+  ) as Step[];
 }
 
 // Simple translations
@@ -191,7 +191,9 @@ export function StandaloneBookingWidget({
   primaryColor,
   locale = 'en',
   initialServiceId,
-  clientFlow
+  clientFlow,
+  collectionMethod = null,
+  processorReady = false
 }: StandaloneBookingWidgetProps) {
   const t = translations[locale] || translations.en;
   const isRTL = locale === 'he';
@@ -199,9 +201,36 @@ export function StandaloneBookingWidget({
   const [step, setStep] = useState<Step>('service');
   const [selectedService, setSelectedService] = useState<Service | null>(null);
 
-  // Determine which steps are active based on clientFlow
-  const hasPayment = selectedService ? (selectedService.price || 0) > 0 : false;
-  const activeSteps = mapFlowToSteps(clientFlow, hasPayment);
+  /**
+   * Whether this booking asks for payment.
+   *
+   * Three things have to be true, and the price is only the first. The step
+   * used to appear on price alone, which put a card form in front of clients
+   * of businesses that invoice — and, worse, in front of clients of businesses
+   * that do collect online but have not finished connecting Stripe, where the
+   * screen had no processor behind it at all.
+   */
+  const takesPayment = (service: Service | null) =>
+    shouldTakePayment({
+      // The SERVICE's own answer, falling back to the business-wide one — the
+      // same expression `stepsForService` uses, and it has to be, because these
+      // two decisions describe one journey.
+      //
+      // This read only `collectionMethod`, so the two disagreed the moment a
+      // business moved collection onto its services and left the profile null:
+      // `journeySteps` saw the service's 'online' and put a payment step in the
+      // flow, while this saw null and decided nothing was owed. The client was
+      // walked to a payment step the widget believed took no payment. The
+      // mirror case is worse — a service set to `invoice` inside a card-taking
+      // business had no payment step and a widget that thought it should charge.
+      price: service?.price,
+      collection: service?.collection ?? collectionMethod,
+      processorReady,
+    });
+
+  // Determined by the service the client picked, not by the link.
+  const hasPayment = takesPayment(selectedService);
+  const activeSteps = stepsForService(selectedService, collectionMethod, processorReady);
 
   // Navigate to next step in the flow (respecting activeSteps)
   const goToNextStep = () => {
@@ -235,9 +264,8 @@ export function StandaloneBookingWidget({
       const service = services.find(s => s.id === initialServiceId);
       if (service) {
         setSelectedService(service);
-        // Determine next step based on clientFlow, not hardcoded to 'datetime'
-        const hasPaymentForService = (service.price || 0) > 0;
-        const steps = mapFlowToSteps(clientFlow, hasPaymentForService);
+        // Determine the next step from this service's own journey.
+        const steps = stepsForService(service, collectionMethod, processorReady);
         // Skip 'service' step and go to the next step in the flow
         const nextStep = steps.length > 1 ? steps[1] : 'confirmation';
         setStep(nextStep);
@@ -363,9 +391,9 @@ export function StandaloneBookingWidget({
                 key={service.id}
                 onClick={() => {
                   setSelectedService(service);
-                  // Use activeSteps to determine next step (may skip datetime if not in flow)
-                  const hasPaymentForService = (service.price || 0) > 0;
-                  const steps = mapFlowToSteps(clientFlow, hasPaymentForService);
+                  // This service's own journey decides where the client goes
+                  // next — a product skips the date step entirely.
+                  const steps = stepsForService(service, collectionMethod, processorReady);
                   const nextStep = steps.length > 1 ? steps[1] : 'confirmation';
                   setStep(nextStep);
                 }}

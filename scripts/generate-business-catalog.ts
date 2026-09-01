@@ -27,13 +27,35 @@ config({ path: '.env.local', quiet: true });
 
 /** Tables the AI worker is allowed to know about. Extend deliberately. */
 const TABLES = [
+  // Core CRM / scheduling / money
   'crm_contacts',
   'crm_tasks',
+  'crm_activities',
   'payment_invoices',
   'payment_transactions',
   'scheduling_bookings',
   'scheduling_services',
+  // Backs contacts.stage — read for its values, not exposed as an entity.
   'crm_pipeline_stages',
+  // The business itself: its trade, and the hours clients can book into.
+  'business_profiles',
+  // Marketing / advisor surfaces the owner actually asks about
+  'insights',
+  'website_pages',
+  'website_page_views',
+  // The sections a page is built from — what the owner means by 'my about section'.
+  'website_blocks',
+  'smart_links',
+  'smart_link_clicks',
+  'email_sends',
+  // Channel reach — "how many people saw me on Facebook last month".
+  'channel_metrics_daily',
+  // Which marketing accounts are connected, and whether they are still syncing.
+  'channel_connections',
+  // The owner's automations. They ask whether these are working, and until now
+  // the answer lived only in a dashboard.
+  'agents',
+  'agent_executions',
 ];
 
 interface OpenApiProperty {
@@ -120,6 +142,11 @@ async function main() {
         format: prop.format ?? 'unknown',
         jsonType: prop.type ?? 'unknown',
         required: required.has(name),
+        // PostgREST's `required` is NOT "you must supply this": `id` is required
+        // and defaults to gen_random_uuid(). Only required AND no default means
+        // an insert without it fails — which is exactly the shape of the two bugs
+        // this was added to catch.
+        hasDefault: prop.default !== undefined,
         isPrimaryKey: meta.isPrimaryKey,
         ...(meta.foreignKey ? { foreignKey: meta.foreignKey } : {}),
         ...(meta.description ? { description: meta.description } : {}),

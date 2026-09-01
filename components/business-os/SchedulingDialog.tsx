@@ -422,7 +422,7 @@ export function SchedulingDialog({
     const service = services.find(s => s.id === serviceId);
     if (service) {
       const start = new Date(formData.start_time);
-      const end = new Date(start.getTime() + service.duration_minutes * 60 * 1000);
+      const end = new Date(start.getTime() + (service.duration_minutes || 0) * 60 * 1000);
       setFormData(prev => ({
         ...prev,
         service_id: serviceId,

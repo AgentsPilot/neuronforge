@@ -72,7 +72,7 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
     pathname.startsWith('/auth') ||
-    pathname.startsWith('/onboarding') || // Both /onboarding, /onboarding-v2, and /onboarding-chat
+    pathname.startsWith('/onboarding') || // /onboarding-chat and its build screen
     pathname.startsWith('/about') ||
     pathname.startsWith('/features') ||
     pathname.startsWith('/pricing') ||
@@ -146,13 +146,14 @@ export async function middleware(request: NextRequest) {
           console.log('🔍 [MIDDLEWARE] Profile:', profile, 'Error:', profileError?.message)
           console.log('🔍 [MIDDLEWARE] Onboarding completed:', profile?.onboarding_completed)
 
-          // If no profile or onboarding not completed → redirect to onboarding-v2
+          // If no profile or onboarding not completed → the onboarding chat.
           // IMPORTANT: We ONLY check business_profiles table, NOT user_metadata
-          // This ensures all users go through onboarding-v2, even if they completed old onboarding
+          // This ensures all users go through onboarding, even if they completed
+          // an older version of it.
           if (profileError || !profile || !profile.onboarding_completed) {
-            console.log('✅ [MIDDLEWARE] REDIRECTING TO /onboarding-v2')
+            console.log('✅ [MIDDLEWARE] REDIRECTING TO /onboarding-chat')
             const url = request.nextUrl.clone()
-            url.pathname = '/onboarding-v2'
+            url.pathname = '/onboarding-chat'
             return NextResponse.redirect(url)
           } else {
             console.log('⏭️  [MIDDLEWARE] Onboarding completed, skipping redirect')

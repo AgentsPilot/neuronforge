@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
         entityType: 'crm_contact',
         entityId: result.data!.id,
         resourceName: `${result.data!.first_name || ''} ${result.data!.last_name || ''}`.trim() || result.data!.email || 'Contact',
-        metadata: {
+        details: {
           stage: result.data!.stage,
           tags: result.data!.tags
         },

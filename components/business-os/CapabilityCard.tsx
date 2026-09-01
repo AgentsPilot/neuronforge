@@ -11,9 +11,12 @@ const CARD_CONFIG = {
     nameKey: 'cap.website.name',
     subtitleKey: 'cap.website.subtitle',
     actionKey: 'cap.website.action',
-    defaultName: 'Website',
-    defaultSubtitle: 'Your online presence',
-    defaultAction: 'View site'
+    // "Website" was too narrow: a business may have no website at all and
+    // reach people through landing pages or a smart link instead. The card
+    // covers all of it, so it is named for what it covers.
+    defaultName: 'Online presence',
+    defaultSubtitle: 'Site, landing pages and links',
+    defaultAction: 'Open'
   },
   people: {
     color: '#8B5CF6',

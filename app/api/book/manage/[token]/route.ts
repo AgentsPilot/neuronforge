@@ -90,7 +90,7 @@ export async function GET(
     // Note: logo_url and primary_color columns don't exist in business_profiles table
     const { data: profile } = await supabaseServer
       .from('business_profiles')
-      .select('company_name, invoice_logo_url, website_url, language')
+      .select('company_name, logo_url, website_url, language')
       .eq('user_id', booking.user_id)
       .single();
 
@@ -119,7 +119,7 @@ export async function GET(
       },
       business: profile ? {
         name: profile.company_name,
-        logoUrl: profile.invoice_logo_url,
+        logoUrl: profile.logo_url,
         primaryColor: '#4F46E5', // Default color since primary_color column doesn't exist
         websiteUrl: profile.website_url,
         language: profile.language || 'en'

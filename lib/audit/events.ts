@@ -186,6 +186,11 @@ export const AUDIT_EVENTS = {
   PILOT_CONFIG_UPDATED: 'PILOT_CONFIG_UPDATED', // Pilot settings changed
   PILOT_STRUCTURAL_REPAIR_APPLIED: 'PILOT_STRUCTURAL_REPAIR_APPLIED', // Pre-execution auto-repair fired — indicates a generator bug
 
+  // Business OS money
+  PAYMENT_REFUNDED: 'PAYMENT_REFUNDED',
+  PAYMENT_BLOCK_EXECUTED: 'PAYMENT_BLOCK_EXECUTED',
+  INVOICE_MARKED_PAID: 'INVOICE_MARKED_PAID',
+
   // Per-Step Intelligent Routing events
   PILOT_ROUTING_DECISION: 'PILOT_ROUTING_DECISION', // Model selected for step
   PILOT_ROUTING_ENABLED: 'PILOT_ROUTING_ENABLED', // Per-step routing enabled
@@ -770,6 +775,26 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'Structural auto-repair fired on a workflow before execution',
+  },
+
+  // Money leaving the business. Registered because an unregistered event falls
+  // through getEventMetadata to severity 'info' and the description
+  // "Unknown event" — which is how refunds were being recorded until now.
+  [AUDIT_EVENTS.PAYMENT_REFUNDED]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'A payment was refunded to a client',
+  },
+  [AUDIT_EVENTS.PAYMENT_BLOCK_EXECUTED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A payment block was executed',
+  },
+  // Money asserted to have arrived, on a human's word rather than a processor's.
+  [AUDIT_EVENTS.INVOICE_MARKED_PAID]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'An invoice was marked paid manually',
   },
 };
 

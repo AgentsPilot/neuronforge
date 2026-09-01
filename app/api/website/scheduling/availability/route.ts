@@ -228,7 +228,7 @@ export async function GET(request: NextRequest) {
     // Get service details (for duration)
     const { data: service, error: serviceError } = await supabaseServer
       .from('scheduling_services')
-      .select('id, service_name, duration_minutes, is_active')
+      .select('id, service_name, duration_minutes, is_active, status')
       .eq('id', service_id)
       .eq('user_id', ownerId)
       .single();
@@ -240,7 +240,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (!service.is_active) {
+    // Both flags: the Power toggle and draft/published are different questions,
+    // and a service that is either switched off or unpublished is not bookable.
+    if (!service.is_active || service.status !== 'active') {
       return NextResponse.json(
         { success: false, error: 'Service is not available' },
         { status: 400 }

@@ -11,12 +11,53 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import {
+  paymentInvoiceRepository,
+  paymentTransactionRepository,
+  stripeConnectRepository,
+  type PaymentInvoice
+} from '@/lib/repositories/PaymentRepository';
+import { getStripeInvoiceService } from '@/lib/stripe/StripeInvoiceService';
+import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingBookingAPI' });
 const auditTrail = AuditTrailService.getInstance();
+
+/**
+ * Void an invoice at Stripe so a deleted booking's invoice stops being payable.
+ *
+ * Best effort by design: the local row is going away either way, and a Stripe
+ * invoice that is already void, paid or never finalized will reject the call.
+ * Losing the void is worth a warning, not a failed delete.
+ */
+async function voidStripeInvoice(
+  invoice: PaymentInvoice,
+  userId: string,
+  // Structural, so any child logger shape fits without a cast.
+  requestLogger: { warn: (context: Record<string, unknown>, message: string) => void }
+): Promise<void> {
+  if (!invoice.stripe_invoice_id) return;
+
+  try {
+    const stripeAccount = await stripeConnectRepository.findByUserId(userId);
+    const connectAccountId = stripeAccount.data?.stripe_account_id;
+    if (!connectAccountId) {
+      requestLogger.warn({
+        invoiceId: invoice.id, stripeInvoiceId: invoice.stripe_invoice_id
+      }, 'No Stripe account to void the invoice through');
+      return;
+    }
+
+    await getStripeInvoiceService().voidInvoice(invoice.stripe_invoice_id, connectAccountId);
+  } catch (err) {
+    requestLogger.warn({
+      err, invoiceId: invoice.id, stripeInvoiceId: invoice.stripe_invoice_id
+    }, 'Failed to void Stripe invoice; deleting the local record anyway');
+  }
+}
 
 // Validation schema for updates
 // Note: client_* fields removed - client data is now only in crm_contacts (via contact_id)
@@ -292,7 +333,108 @@ export async function DELETE(
       );
     }
 
-    // 3. Delete booking
+    // 3. Settle what was billed for this booking before touching the booking.
+    //
+    // payment_invoices.booking_id is ON DELETE SET NULL, so an invoice outlives
+    // its booking as an orphan: still owed, still payable through its Stripe
+    // link, and no longer traceable to anything. So an unpaid invoice goes with
+    // the booking, and a paid one blocks the delete outright — money that
+    // changed hands is a record to refund deliberately, not to erase.
+    const invoicesResult = await paymentInvoiceRepository.findByBookingId(bookingId, user.id);
+    if (invoicesResult.error) {
+      requestLogger.error({ err: invoicesResult.error, userId: user.id, bookingId }, 'Failed to load invoices for booking');
+      return NextResponse.json(
+        { success: false, error: 'Failed to delete booking' },
+        { status: 500 }
+      );
+    }
+
+    const bookingInvoices = invoicesResult.data || [];
+
+    // A refund leaves the invoice sitting at 'paid' — refunding updates the
+    // booking and the transaction, never the invoice — so the booking's own
+    // payment_status is what says whether the money went back.
+    const wasRefunded = getResult.data.payment_status === 'refunded';
+    const paidInvoices = wasRefunded
+      ? []
+      : bookingInvoices.filter(isSettledInvoice);
+
+    // Money can also have arrived without the invoice being marked paid.
+    const settledResult = await paymentTransactionRepository.findSettledForBooking(
+      bookingId,
+      bookingInvoices.map(inv => inv.id),
+      user.id
+    );
+    if (settledResult.error) {
+      requestLogger.error({ err: settledResult.error, userId: user.id, bookingId }, 'Failed to check payments for booking');
+      return NextResponse.json(
+        { success: false, error: 'Failed to delete booking' },
+        { status: 500 }
+      );
+    }
+    const settledPayments = settledResult.data || [];
+
+    if (paidInvoices.length > 0 || settledPayments.length > 0) {
+      requestLogger.info({
+        userId: user.id,
+        bookingId,
+        paidInvoices: paidInvoices.map(inv => inv.invoice_number),
+        settledPayments: settledPayments.length
+      }, 'Refused to delete booking that has been paid for');
+
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'BOOKING_HAS_PAID_INVOICE',
+          error: 'This booking has already been paid for and cannot be deleted. Refund the payment first, or cancel the booking instead.',
+          details: {
+            paid_invoice_numbers: paidInvoices.map(inv => inv.invoice_number),
+            paid_amount: [
+              ...paidInvoices.map(inv => Number(inv.amount) || 0),
+              ...settledPayments
+                .filter(t => !t.invoice_id || !paidInvoices.some(inv => inv.id === t.invoice_id))
+                .map(t => Number(t.amount) || 0)
+            ].reduce((sum, amount) => sum + amount, 0)
+          }
+        },
+        { status: 409 }
+      );
+    }
+
+    // Nothing is owed to the client and nothing is held from them: drop the
+    // OPEN invoices raised for this booking, voiding each at the processor
+    // first so nobody can still open the hosted page and pay for a session that
+    // no longer exists. An invoice that was paid and later refunded is left
+    // alone — deleting a settled record would erase financial history.
+    const openInvoices = bookingInvoices.filter(inv => !isSettledInvoice(inv));
+    for (const invoice of openInvoices) {
+      await voidStripeInvoice(invoice, user.id, requestLogger);
+
+      const invoiceDeleteResult = await paymentInvoiceRepository.delete(invoice.id, user.id);
+      if (invoiceDeleteResult.error) {
+        requestLogger.error({
+          err: invoiceDeleteResult.error, userId: user.id, bookingId, invoiceId: invoice.id
+        }, 'Failed to delete invoice for booking');
+        return NextResponse.json(
+          { success: false, error: 'Failed to delete the invoice for this booking' },
+          { status: 500 }
+        );
+      }
+
+      auditTrail
+        .log({
+          action: 'PAYMENT_INVOICE_DELETED',
+          userId: user.id,
+          entityType: 'payment_invoice',
+          entityId: invoice.id,
+          resourceName: invoice.invoice_number,
+          severity: 'warning',
+          request
+        })
+        .catch(err => requestLogger.error({ err }, 'Audit failed'));
+    }
+
+    // 4. Delete booking
     const result = await schedulingBookingRepository.delete(bookingId, user.id);
 
     if (result.error) {
@@ -303,7 +445,7 @@ export async function DELETE(
       );
     }
 
-    // 4. Get contact name for audit log
+    // 5. Get contact name for audit log
     let deleteContactName = 'Client';
     if (getResult.data.contact_id) {
       const deleteContactResult = await crmContactRepository.findById(getResult.data.contact_id, user.id);
@@ -312,7 +454,7 @@ export async function DELETE(
       }
     }
 
-    // 5. Audit log (non-blocking)
+    // 6. Audit log (non-blocking)
     auditTrail
       .log({
         action: 'SCHEDULING_BOOKING_DELETED',
@@ -324,11 +466,16 @@ export async function DELETE(
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
 
-    // 5. Return success
-    requestLogger.info({ bookingId, userId: user.id }, 'Booking deleted successfully');
+    // 7. Return success
+    requestLogger.info({
+      bookingId,
+      userId: user.id,
+      deletedInvoices: openInvoices.length
+    }, 'Booking deleted successfully');
     return NextResponse.json({
       success: true,
-      message: 'Booking deleted successfully'
+      message: 'Booking deleted successfully',
+      deleted_invoices: openInvoices.map(inv => inv.invoice_number)
     });
 
   } catch (error) {

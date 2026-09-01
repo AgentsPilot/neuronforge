@@ -164,7 +164,7 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
       invoice_bank_account,
       invoice_bank_routing,
       invoice_payment_instructions,
-      invoice_logo_url,
+      logo_url,
       language
     `)
     .eq('user_id', invoice.user_id)
@@ -271,9 +271,9 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
             <div className="flex justify-between items-start">
               {/* Business Info */}
               <div className="flex items-center gap-3">
-                {profile?.invoice_logo_url ? (
+                {profile?.logo_url ? (
                   <img
-                    src={profile.invoice_logo_url}
+                    src={profile.logo_url}
                     alt={businessName}
                     className="h-12 w-auto object-contain"
                   />

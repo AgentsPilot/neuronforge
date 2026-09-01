@@ -1629,6 +1629,9 @@ export function CRMContactDrawerV2({
               <PaymentsSection
                 key={paymentsKey}
                 contactId={contact.id}
+                /* Already loaded for the bookings section — the money list heads
+                   each row with the session it paid for. */
+                sessions={sessions}
                 contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
                 contactEmail={contact.email || undefined}
                 t={t}
