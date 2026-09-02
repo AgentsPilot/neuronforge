@@ -1,9 +1,31 @@
 'use client';
 
 /**
- * Website Preview Page
- * Preview a website page without publishing
- * Accessible at /business-os/website/preview/[pageId]
+ * Website Preview — /website-preview/[pageId]
+ *
+ * Preview a page without publishing it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DELIBERATELY OUTSIDE /business-os.
+ *
+ * This used to live at /business-os/website/preview/[id], which put it under
+ * `app/business-os/layout.tsx` — and that layout renders the platform header
+ * and tab bar around everything beneath it. The wizard shows this page in a
+ * 320px iframe, so the Business OS header and tabs were rendered a SECOND time
+ * inside the preview, on top of the site being previewed. `?embedded=true`
+ * could not help: it strips this page's own toolbar, and a child route cannot
+ * opt out of an ancestor layout in Next.
+ *
+ * Moved rather than wrapped in a route group, which would have meant relocating
+ * all nine business-os pages into a `(chrome)` group for one route's benefit.
+ *
+ * Not served from `app/site/[subdomain]` either — that resolves published pages
+ * by subdomain, and a draft in the wizard has neither.
+ *
+ * Access is unchanged: the data comes from
+ * /api/website/pages/[id]/blocks-with-content, which authenticates and checks
+ * ownership. Being outside the segment costs nothing there.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { useState, useEffect } from 'react';
@@ -73,30 +95,29 @@ export default function WebsitePreviewPage() {
   } | null>(null);
   const [blocks, setBlocks] = useState<BlockData[]>([]);
 
-  // Get language from URL parameter (passed by parent component) or fall back to browser language
-  // This ensures the loading state uses the platform language, not browser language
-  const [uiLocale, setUiLocale] = useState<Locale>(() => {
-    if (typeof window !== 'undefined') {
-      // First check URL parameter (platform language passed by parent)
-      const urlParams = new URLSearchParams(window.location.search);
-      const langParam = urlParams.get('lang');
-      if (langParam && isValidLocale(langParam)) {
-        return langParam;
-      }
-      // Fall back to browser language
-      const browserLang = navigator.language?.split('-')[0] || defaultLocale;
-      return isValidLocale(browserLang) ? browserLang : defaultLocale;
-    }
-    return defaultLocale;
-  });
+  /*
+   * The platform's language, from `?lang=`.
+   *
+   * This was `useState` seeded from `window.location.search`, which does not
+   * exist during the server render — so the first paint was always English and
+   * only corrected after hydration. For a fast page that IS the whole visible
+   * lifetime of the loading state, which is why "Loading preview..." stayed in
+   * English for a Hebrew business.
+   *
+   * Derived from the search params instead, so the URL decides immediately and
+   * the server and client agree. The browser's language is only a fallback for
+   * a link that carried no `lang`, and it settles after mount because it cannot
+   * be read on the server.
+   */
+  const langParam = searchParams.get('lang');
+  const [browserLocale, setBrowserLocale] = useState<Locale>(defaultLocale);
 
-  // Update locale after hydration if URL param changes
   useEffect(() => {
-    const langParam = searchParams.get('lang');
-    if (langParam && isValidLocale(langParam) && langParam !== uiLocale) {
-      setUiLocale(langParam);
-    }
-  }, [searchParams, uiLocale]);
+    const browserLang = navigator.language?.split('-')[0];
+    if (browserLang && isValidLocale(browserLang)) setBrowserLocale(browserLang);
+  }, []);
+
+  const uiLocale: Locale = langParam && isValidLocale(langParam) ? langParam : browserLocale;
 
   useEffect(() => {
     if (pageId) {
@@ -167,10 +188,19 @@ export default function WebsitePreviewPage() {
     const loadingLabels = LABELS[uiLocale as keyof typeof LABELS] || LABELS.en;
     const loadingIsRTL = getDirection(uiLocale) === 'rtl';
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center" dir={loadingIsRTL ? 'rtl' : 'ltr'}>
+      // The dark full-height panel belongs to the standalone preview, where it
+      // is the page. Inside the wizard's 320px iframe it is a black rectangle
+      // flashing where the site is about to appear, so the embedded state stays
+      // light and fills only the frame it was given.
+      <div
+        className={`flex items-center justify-center ${
+          isEmbedded ? 'h-full min-h-[240px] bg-white' : 'min-h-screen bg-gray-900'
+        }`}
+        dir={loadingIsRTL ? 'rtl' : 'ltr'}
+      >
         <div className="text-center space-y-4">
-          <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto" />
-          <p className="text-gray-400">{loadingLabels.loadingPreview}</p>
+          <Loader2 className={`w-12 h-12 animate-spin mx-auto ${isEmbedded ? 'text-[#4F6EF7]' : 'text-blue-500'}`} />
+          <p className={isEmbedded ? 'text-gray-500' : 'text-gray-400'}>{loadingLabels.loadingPreview}</p>
         </div>
       </div>
     );
@@ -181,7 +211,12 @@ export default function WebsitePreviewPage() {
     const errorLabels = LABELS[uiLocale as keyof typeof LABELS] || LABELS.en;
     const errorIsRTL = getDirection(uiLocale) === 'rtl';
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center" dir={errorIsRTL ? 'rtl' : 'ltr'}>
+      <div
+        className={`flex items-center justify-center ${
+          isEmbedded ? 'h-full min-h-[240px] bg-white' : 'min-h-screen bg-gray-900'
+        }`}
+        dir={errorIsRTL ? 'rtl' : 'ltr'}
+      >
         <div className="text-center space-y-4">
           <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto">
             <Globe className="w-8 h-8 text-red-500" />
@@ -267,7 +302,10 @@ export default function WebsitePreviewPage() {
 
   // Full preview mode with toolbar
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
+    // Light canvas, dark toolbar. The whole shell was gray-900, so a website —
+    // which is a light document — sat in a black frame that read as part of the
+    // design rather than as the tool around it.
+    <div className="min-h-screen bg-[var(--v2-bg,#f3f4f6)] flex flex-col">
       {/* Google Fonts - Heebo (platform standard) */}
       {/* eslint-disable-next-line @next/next/no-page-custom-font */}
       <link rel="stylesheet" href={heeboFontLink} />
@@ -310,7 +348,7 @@ export default function WebsitePreviewPage() {
       </div>
 
       {/* Preview Frame */}
-      <div className="flex-1 overflow-auto p-4 flex justify-center">
+      <div className="flex-1 overflow-auto p-4 flex justify-center bg-gray-100 dark:bg-gray-800">
         <div
           className="bg-white shadow-2xl transition-all duration-300 overflow-auto"
           style={{

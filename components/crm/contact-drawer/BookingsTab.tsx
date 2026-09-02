@@ -228,7 +228,11 @@ export function BookingsTab({
       confirmed: { text: t('crm.booking.status.confirmed') || 'Upcoming', color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-500/10' },
       completed: { text: t('crm.booking.status.completed') || 'Completed', color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-500/10' },
       cancelled: { text: t('crm.booking.status.cancelled') || 'Cancelled', color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-500/10' },
-      no_show: { text: t('crm.booking.status.no_show') || 'No Show', color: 'text-slate-600 dark:text-slate-400', bgColor: 'bg-slate-500/10' }
+      no_show: { text: t('crm.booking.status.no_show') || 'No Show', color: 'text-slate-600 dark:text-slate-400', bgColor: 'bg-slate-500/10' },
+      // `pending` was missing, so it fell through to the fallback below and
+      // rendered the raw database value — an English "pending" sitting in the
+      // middle of a Hebrew card. It is the status every unpaid booking has.
+      pending: { text: t('crm.booking.status.pending') || 'Awaiting payment', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-500/10' }
     };
     return labels[status] || { text: status, color: 'text-[var(--v2-text-muted)]', bgColor: 'bg-[var(--v2-surface)]' };
   };

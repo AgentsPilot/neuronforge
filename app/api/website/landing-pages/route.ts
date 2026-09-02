@@ -9,6 +9,8 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, WebsitePageInsert, PageTheme } from '@/lib/repositories/WebsitePageRepository';
+import { adoptBusinessTemplate, adoptBusinessTheme } from '@/lib/business-os/businessTemplate';
+import { resolveBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
 import { z } from 'zod';
 
@@ -22,7 +24,16 @@ function getBlocksForOfferingType(
   offeringType: string | undefined,
   language: string = 'en'
 ): Array<{ block_type: string; defaultContent: Record<string, unknown> }> {
-  const needsBooking = !offeringType || BOOKABLE_TYPES.includes(offeringType.toLowerCase());
+  // A booking section is added only when the offering is known to be bookable.
+  //
+  // `!offeringType ||` made "we don't know" mean "yes": `offering_type` comes
+  // from the generated content, so any page whose generation did not classify
+  // the offering — which is every page where generation was skipped or fell
+  // back — got a booking widget it had not asked for. The other branch already
+  // covers this case properly, adding a CTA block and pointing the header and
+  // hero at `#pricing` instead of `#booking`, so nothing is left without a
+  // destination.
+  const needsBooking = !!offeringType && BOOKABLE_TYPES.includes(offeringType.toLowerCase());
   const isCourse = offeringType?.toLowerCase() === 'course';
 
   // Localized CTA text
@@ -136,6 +147,8 @@ const CreateLandingPageSchema = z.object({
       body: z.string()
     })
   }),
+  /** The template the page was built from, when the wizard chose one. */
+  templateId: z.string().min(1).max(200).optional(),
   generatedContent: z.record(z.unknown()).optional(),
   shouldPublish: z.boolean().default(false),
   // Client flow steps - 'scheduling' and 'client_info' are the new split steps, 'booking' is legacy
@@ -200,9 +213,14 @@ export async function POST(request: NextRequest) {
     const pageRepo = new WebsitePageRepository(supabaseServer);
     const blockRepo = new WebsiteBlockRepository(supabaseServer);
 
-    // Get user's homepage to inherit subdomain
-    const homepageResult = await pageRepo.getHomepage(user.id);
-    const subdomain = homepageResult.data?.subdomain;
+    /*
+     * The business's address, not just the homepage's.
+     *
+     * This asked only the homepage, so a business without a website created
+     * every landing page with `subdomain: null` — and could then never publish
+     * one, because publishing refuses a page with no address.
+     */
+    const subdomain = await resolveBusinessSubdomain(user.id);
 
     // Convert theme to PageTheme format
     const pageTheme: PageTheme = {
@@ -227,10 +245,14 @@ export async function POST(request: NextRequest) {
     const pageData: WebsitePageInsert = {
       user_id: user.id,
       page_type: 'landing',
-      slug: `/${validated.slug}`,
+      // No leading slash. It was stored as `/${slug}`, so a page saved as
+      // `test-1` came back as `/test-1` and every URL built from it —
+      // `{subdomain}.agentpilot.io/{slug}` — doubled the separator.
+      slug: validated.slug.replace(/^\/+/, ''),
       title: validated.serviceName,
       subdomain: subdomain || null,
       status: validated.shouldPublish ? 'live' : 'draft',
+      template_id: validated.templateId || null,
       theme: pageTheme,
       // Store the language for RTL support and localized content
       website_language: validated.language
@@ -240,6 +262,23 @@ export async function POST(request: NextRequest) {
 
     if (pageResult.error || !pageResult.data) {
       throw pageResult.error || new Error('Failed to create landing page');
+    }
+
+    /*
+     * If this is the first thing the business has published, its template
+     * becomes the business's template.
+     *
+     * The wizard now picks from the real catalogue, so there is an id to record
+     * and `adoptBusinessTemplate` can set both halves — the choice and the
+     * colours it implies. The theme-only path remains for a page created
+     * without one, which still has to claim the look or a website generated
+     * afterwards would choose its own and leave the landing page the odd one
+     * out. A business that already has a template keeps it; this does nothing.
+     */
+    if (validated.templateId) {
+      await adoptBusinessTemplate(user.id, validated.templateId);
+    } else {
+      await adoptBusinessTheme(user.id, pageTheme as unknown as Record<string, unknown>);
     }
 
     // Get offering type from AI-generated content to determine which blocks to include

@@ -27,7 +27,9 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
-import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
+import { ServiceDescriptionField } from '@/components/business-os/ServiceDescriptionField';
+import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -90,8 +92,44 @@ interface EditingSmartLink {
   } | null;
 }
 
+/**
+ * A template, as much of one as this wizard needs.
+ *
+ * Declared structurally rather than imported from the catalogue so the wizard
+ * does not pull the whole 33-template module into the client bundle for four
+ * colour values.
+ */
+export interface WizardTemplate {
+  id: string;
+  name: string;
+  vertical: string;
+  theme: {
+    // All optional: the website page's own `WebsiteTemplate` — which is what
+    // gets passed in — declares them that way, and carries `font_family`
+    // rather than the split heading/body pair. Requiring them here made a
+    // template from that list unassignable to this one.
+    primary_color?: string;
+    secondary_color?: string;
+    accent_color?: string;
+    font_heading?: string;
+    font_body?: string;
+    font_family?: string;
+    brand_voice?: string;
+  };
+}
+
 interface LandingPageWizardProps {
   existingTheme?: ExistingTheme | null;
+  /**
+   * The templates to choose from when the business has not settled on one.
+   *
+   * A landing page used to pick from four hardcoded style presets, which are
+   * colours and nothing else — so a page created before any website left the
+   * business with a look but no template, and `business_profiles.template_id`
+   * stayed empty. Everything generated afterwards is built from the template,
+   * so the first surface has to establish a real one.
+   */
+  templates?: WizardTemplate[];
   subdomain?: string;
   businessInfo?: BusinessInfo | null;
   clientFlow?: ClientFlowStep[];
@@ -110,6 +148,8 @@ export interface LandingPageWizardResult {
   serviceId?: string;
   serviceName?: string;
   stylePreset?: string;
+  /** The template this page was built from, when one was chosen here. */
+  templateId?: string;
   theme?: ExistingTheme;
   slug?: string;
   shouldPublish?: boolean;
@@ -350,6 +390,9 @@ const LABELS = {
     create_new_service: 'Create New Service',
     service_name: 'Service Name',
     service_description: 'Description',
+    generation_failed: 'We could not write this page from your service. It has been filled in with a starting draft you can edit.',
+    preview_building: 'Writing your page…',
+    generation_timeout: 'Writing this page took too long and was stopped. It has been filled in with a starting draft you can edit.',
     service_description_placeholder: 'Describe your service in detail. The AI will use this to generate compelling landing page content...',
     service_duration: 'Duration (minutes)',
     service_price: 'Price',
@@ -359,8 +402,6 @@ const LABELS = {
     all_services_desc: 'Let visitors choose from all your available services',
     multi_select_hint: 'Select services to include (or skip to show all)',
     // Step 2 - Journey
-    step_journey_title: 'Build Client Journey',
-    step_journey_subtitle: 'Drag to reorder or add/remove steps',
     journey_add_step: 'Add step',
     journey_step_booking: 'Schedule',
     journey_step_booking_desc: 'Pick a date & time',
@@ -385,6 +426,7 @@ const LABELS = {
     step3_subtitle: 'Review your landing page and go live',
     generating: 'Generating your landing page...',
     slug_label: 'Landing page URL',
+    slug_required: 'Give the page a web address — it is how people reach it.',
     preview: 'Preview',
     edit: 'Edit',
     open_preview: 'Open Full Preview',
@@ -447,6 +489,9 @@ const LABELS = {
     create_new_service: 'Crear Nuevo Servicio',
     service_name: 'Nombre del Servicio',
     service_description: 'Descripción',
+    generation_failed: 'No pudimos redactar esta página desde tu servicio. Se completó con un borrador inicial que puedes editar.',
+    preview_building: 'Redactando tu página…',
+    generation_timeout: 'La redacción tardó demasiado y se detuvo. Se completó con un borrador inicial que puedes editar.',
     service_description_placeholder: 'Describe tu servicio en detalle. La IA usará esto para generar contenido atractivo...',
     service_duration: 'Duración (minutos)',
     service_price: 'Precio',
@@ -455,8 +500,6 @@ const LABELS = {
     all_services: 'Todos los Servicios',
     all_services_desc: 'Dejar que los visitantes elijan de todos tus servicios disponibles',
     multi_select_hint: 'Selecciona servicios a incluir (o salta para mostrar todos)',
-    step_journey_title: 'Construir Recorrido del Cliente',
-    step_journey_subtitle: 'Arrastra para reordenar o añade/elimina pasos',
     journey_add_step: 'Añadir paso',
     journey_step_booking: 'Agendar',
     journey_step_booking_desc: 'Elegir fecha y hora',
@@ -479,6 +522,7 @@ const LABELS = {
     step3_subtitle: 'Revisa tu landing page y publícala',
     generating: 'Generando tu landing page...',
     slug_label: 'URL de la landing page',
+    slug_required: 'Dale una dirección web a la página — es como llegan a ella.',
     preview: 'Vista Previa',
     edit: 'Editar',
     open_preview: 'Abrir Vista Completa',
@@ -541,6 +585,9 @@ const LABELS = {
     create_new_service: 'צור שירות חדש',
     service_name: 'שם השירות',
     service_description: 'תיאור',
+    generation_failed: 'לא הצלחנו לכתוב את הדף מהשירות שלכם. הוא מולא בטיוטה התחלתית שאפשר לערוך.',
+    preview_building: 'כותבים את הדף שלכם…',
+    generation_timeout: 'כתיבת הדף ארכה זמן רב מדי ונעצרה. הוא מולא בטיוטה התחלתית שאפשר לערוך.',
     service_description_placeholder: 'תאר את השירות שלך בפירוט. הבינה המלאכותית תשתמש בזה כדי ליצור תוכן משכנע לדף הנחיתה...',
     service_duration: 'משך (דקות)',
     service_price: 'מחיר',
@@ -549,8 +596,6 @@ const LABELS = {
     all_services: 'כל השירותים',
     all_services_desc: 'אפשר למבקרים לבחור מכל השירותים הזמינים שלך',
     multi_select_hint: 'בחר שירותים לכלול (או דלג להצגת הכל)',
-    step_journey_title: 'בנה מסע לקוח',
-    step_journey_subtitle: 'גרור לשינוי סדר או הוסף/הסר שלבים',
     journey_add_step: 'הוסף שלב',
     journey_step_booking: 'תיאום',
     journey_step_booking_desc: 'בחירת תאריך ושעה',
@@ -573,6 +618,7 @@ const LABELS = {
     step3_subtitle: 'בדוק את דף הנחיתה שלך ופרסם',
     generating: 'יוצר את דף הנחיתה שלך...',
     slug_label: 'כתובת דף הנחיתה',
+    slug_required: 'תנו לדף כתובת — זו הדרך שבה מגיעים אליו.',
     preview: 'תצוגה מקדימה',
     edit: 'עריכה',
     open_preview: 'פתח תצוגה מלאה',
@@ -586,6 +632,7 @@ const LABELS = {
 
 export function LandingPageWizard({
   existingTheme,
+  templates = [],
   subdomain = '',
   businessInfo,
   clientFlow,
@@ -638,8 +685,9 @@ export function LandingPageWizard({
       // journey is the service's, not the link's.
       return 4;
     }
-    // Landing page: Step 0 + Service + Journey + Style (optional) + Preview
-    return hasExistingTheme ? 4 : 5;
+    // Landing page: Step 0 + Service + Style (optional) + Preview. The journey
+    // step is gone — it is the service's, and the service step already shows it.
+    return hasExistingTheme ? 3 : 4;
   };
 
   const totalSteps = getTotalSteps();
@@ -653,6 +701,21 @@ export function LandingPageWizard({
   const [services, setServices] = useState<SchedulingService[]>([]);
   const [loadingServices, setLoadingServices] = useState(true);
   const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+
+  /*
+   * A landing page is written from the service's description.
+   *
+   * `serviceDescription` is passed straight to the generator and the prompt
+   * builds the hero, the benefits, the FAQ and the pricing copy out of it —
+   * with nothing there it sends "No description provided" and the model writes
+   * a page about a name. So a service without one stops the wizard here and
+   * asks for it, rather than producing a page nobody wants and leaving the
+   * business to work out why it reads like it is about no one.
+   */
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [describeServiceId, setDescribeServiceId] = useState<string | null>(null);
+  /** Why the page's copy is the fallback rather than written for this service. */
+  const [generationFailed, setGenerationFailed] = useState<string | null>(null);
   // Multi-select for smart links - allows selecting multiple services
   // If editing, pre-populate from metadata
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
@@ -827,14 +890,30 @@ export function LandingPageWizard({
     }
   };
 
-  // Generate slug from service name
+  /**
+   * A URL suggestion from the service name, or nothing.
+   *
+   * This kept only `a-z0-9`, so a Hebrew service name left just its digits
+   * behind: "בדיקה 2" became "-2" — a leading hyphen and a stray number offered
+   * as the page's address. Every Hebrew and Arabic business got the same, and
+   * two services numbered 2 and 3 produced "-2" and "-3".
+   *
+   * There is no honest transliteration to make here, so it does not invent one.
+   * A name with nothing usable in it returns '' and the field stays blank for
+   * the person to fill in — which is also why saving and publishing now require
+   * it. A bad suggestion is worse than none: it is the one people accept.
+   */
   const generateSlug = (name: string): string => {
-    return name
+    const slug = name
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, '')
       .replace(/\s+/g, '-')
       .replace(/-+/g, '-')
-      .trim();
+      // The old version stopped here, keeping the hyphens this leaves behind.
+      .replace(/^-+|-+$/g, '');
+
+    // Digits alone are not a name — "2" is what is left of "בדיקה 2".
+    return /[a-z]/.test(slug) ? slug : '';
   };
 
   // Get selected theme
@@ -842,15 +921,49 @@ export function LandingPageWizard({
     if (hasExistingTheme && useExistingTheme && existingTheme) {
       return existingTheme;
     }
+    // A real template outranks the colour presets: it is the thing the rest of
+    // the product keys off, and the one this page will establish for the
+    // business if nothing has yet.
+    const template = templates.find(t => t.id === selectedTemplateId);
+    if (template) {
+      // `font_family` is the older single-field form; some templates carry only
+      // that, so it is the fallback for both halves rather than a third branch.
+      const family = template.theme.font_family?.split(',')[0].trim();
+      return {
+        colors: {
+          primary: template.theme.primary_color || STYLE_PRESETS[0].theme.colors.primary,
+          secondary: template.theme.secondary_color || STYLE_PRESETS[0].theme.colors.secondary,
+        },
+        fonts: {
+          heading: template.theme.font_heading || family || STYLE_PRESETS[0].theme.fonts.heading,
+          body: template.theme.font_body || family || STYLE_PRESETS[0].theme.fonts.body,
+        },
+      };
+    }
     const preset = STYLE_PRESETS.find(p => p.id === selectedPresetId);
     return preset?.theme || STYLE_PRESETS[0].theme;
   };
 
   // Helper to format price with correct currency symbol
+  /*
+   * `CurrencyCode` is 'USD' | 'ILS' | 'EUR' | 'GBP'.
+   *
+   * This cast asserted `... | 'CAD' | 'AUD'` — two codes the type does not
+   * contain — so it never type-checked, and a service stored as CAD would have
+   * been handed to `formatCurrency` as a currency it cannot format. A service's
+   * `currency` column is a free-form string, so the value has to be CHECKED
+   * rather than asserted: an unsupported one falls back to the viewer's own
+   * currency instead of being forced through.
+   */
+  const toCurrencyCode = (code: string): CurrencyCode | undefined =>
+    (['USD', 'ILS', 'EUR', 'GBP'] as readonly string[]).includes(code)
+      ? (code as CurrencyCode)
+      : undefined;
+
   const formatPrice = (price: number | null | undefined, currencyCode: string) => {
     if (price == null) return language === 'he' ? 'צרו קשר' : language === 'es' ? 'Contáctenos' : 'Contact us';
     // Use the global formatCurrency from LanguageContext for locale-aware formatting
-    return formatCurrency(price, { showFree: false, currencyOverride: currencyCode as 'USD' | 'EUR' | 'GBP' | 'ILS' | 'CAD' | 'AUD' });
+    return formatCurrency(price, { showFree: false, currencyOverride: toCurrencyCode(currencyCode) });
   };
 
   // Store preview data in sessionStorage and return a key
@@ -936,8 +1049,23 @@ export function LandingPageWizard({
 
     setSlug(generateSlug(selectedService.name));
     setGeneratingContent(true);
+    setGenerationFailed(null);
+
+    /*
+     * A spinner that cannot outlive the request.
+     *
+     * `generatingContent` is cleared only in this function's `finally`, so a
+     * request that never settles — a killed serverless function, a dropped
+     * connection — left the wizard spinning with nothing on screen to say so
+     * and nothing in the console, because the log line is after the `await`.
+     * Ninety seconds is well past a real generation, which takes about seven.
+     */
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90_000);
+
     try {
       const response = await fetch('/api/website/landing-pages/generate', {
+        signal: controller.signal,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -972,12 +1100,42 @@ export function LandingPageWizard({
       }
     } catch (error) {
       console.error('[LandingPageWizard] Error calling generate API:', error);
-      // Use default content on error
+      // Say so, rather than presenting boilerplate as if it were generated.
+      setGenerationFailed(
+        (error as Error)?.name === 'AbortError' ? labels.generation_timeout : labels.generation_failed
+      );
       setGeneratedContent(getDefaultGeneratedContent(selectedService));
     } finally {
+      clearTimeout(timeout);
       setGeneratingContent(false);
     }
   };
+
+  /*
+   * The preview step must never wait on something nobody started.
+   *
+   * Its iframe renders a bare spinner until `previewDataKey` exists, and that
+   * key is only set by an effect requiring `generatedContent`. So any route
+   * onto this step that does not generate leaves a spinner turning forever
+   * with NOTHING in the console — no request was ever made, so there is no
+   * failure to log. `handleServiceSelect` is exactly such a route: it sets the
+   * step itself rather than going through `goNext`, so the generation call in
+   * `goNext`'s step-1 branch never runs.
+   *
+   * Rather than patch that one path and wait for the next, the step asks for
+   * what it needs. `generateContent` sets `generatedContent` on success AND on
+   * failure — it falls back to a draft — so this runs once and cannot loop.
+   */
+  useEffect(() => {
+    if (creationType !== 'landing-page') return;
+    if (currentStep !== (hasExistingTheme ? 2 : 3)) return;
+    if (generatingContent || generatedContent || !selectedService) return;
+
+    void generateContent();
+    // `generateContent` is redefined every render; the guards above are what
+    // stop this repeating, not the dependency list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creationType, currentStep, hasExistingTheme, generatingContent, generatedContent, selectedService]);
 
   // Create smart link via API
   const createSmartLink = async (
@@ -1187,26 +1345,36 @@ export function LandingPageWizard({
       return;
     }
 
-    // Landing Page flow
+    /*
+     * Landing Page flow — no journey step.
+     *
+     * There used to be one between Service and Style, headed "Build Client
+     * Journey / Drag to reorder or add or remove steps". It had not been a
+     * builder for some time: the journey belongs to the service, so the screen
+     * had become a read-only list — and the service-selection step before it
+     * already shows the very same strip for the very same service. A whole step
+     * of a four-step wizard to look twice at one thing, under a heading
+     * promising an editor that is not there.
+     *
+     * The smart-link flow dropped its equivalent step for the same reason.
+     */
     if (creationType === 'landing-page') {
+      // A template is what the page is generated from, so the step that picks
+      // one cannot be skipped past without picking.
+      if (currentStep === 2 && !hasExistingTheme && templates.length > 0 && !selectedTemplateId) {
+        return;
+      }
       if (currentStep === 1 && selectedServiceId) {
-        // Service → Journey
+        // Service → Style, or straight to Preview when the theme is settled.
         setCurrentStep(2);
+        if (hasExistingTheme) await generateContent();
       } else if (currentStep === 2) {
-        // Journey → Style or Preview
-        if (hasExistingTheme) {
-          setCurrentStep(3);
-          await generateContent();
-        } else {
-          setCurrentStep(3);
-        }
-      } else if (currentStep === 3) {
         if (hasExistingTheme) {
           // Already at preview
           return;
         }
         // Style → Preview
-        setCurrentStep(4);
+        setCurrentStep(3);
         await generateContent();
       }
     }
@@ -1258,6 +1426,13 @@ export function LandingPageWizard({
     const service = services.find(s => s.id === serviceId);
     if (!service) return;
 
+    // No description, no page. Ask for it here instead of advancing.
+    if (!service.description || !service.description.trim()) {
+      setDescribeServiceId(serviceId);
+      return;
+    }
+    setDescribeServiceId(null);
+
     // Set slug from service name
     setSlug(generateSlug(service.name));
 
@@ -1284,6 +1459,10 @@ export function LandingPageWizard({
   };
 
   const handleComplete = async (shouldPublish: boolean) => {
+    // Guarded here as well: the buttons are disabled, but a handler that
+    // trusts its own UI is one refactor from creating an unreachable page.
+    if (!slug.trim()) return;
+
     console.log('[LandingPageWizard] handleComplete called', { shouldPublish, selectedService: !!selectedService });
 
     if (!selectedService) {
@@ -1304,6 +1483,9 @@ export function LandingPageWizard({
       serviceId: selectedService.id,
       serviceName: selectedService.name,
       stylePreset: hasExistingTheme && useExistingTheme ? 'existing' : selectedPresetId,
+      // The template this page is built from, so the page records it and — if
+      // the business has none yet — adopts it as its own.
+      templateId: hasExistingTheme && useExistingTheme ? undefined : (selectedTemplateId ?? undefined),
       theme: getSelectedTheme(),
       slug,
       shouldPublish,
@@ -1664,7 +1846,7 @@ export function LandingPageWizard({
               rows={4}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
                 {labels.service_duration}
@@ -1740,10 +1922,15 @@ export function LandingPageWizard({
               const currencySymbol = availableCurrencies[serviceCurrency]?.symbol || '$';
 
               return (
+                <div key={service.id}>
                 <button
-                  key={service.id}
                   onClick={() => handleServiceSelect(service.id)}
-                  className={`relative text-start p-4 rounded-xl border transition-all ${
+                  // `w-full`: the button used to be the grid's own child and so
+                  // stretched to the column. Wrapping it in a div — needed so the
+                  // description field can sit outside a button — made it size to
+                  // its content instead, giving every service a card as wide as
+                  // its own name.
+                  className={`relative w-full text-start p-4 rounded-xl border transition-all ${
                     isSelected
                       ? 'ring-2 ring-[#4F6EF7] border-[#4F6EF7] bg-[#4F6EF7]/5'
                       : 'border-[var(--v2-border)] hover:border-[#4F6EF7]/50 bg-[var(--v2-surface)]'
@@ -1789,6 +1976,29 @@ export function LandingPageWizard({
                     )}
                   </div>
                 </button>
+
+                {/* Outside the button, because it contains a form. */}
+                {describeServiceId === service.id && (
+                  <div
+                    className="mt-2 p-4 bg-[var(--v2-bg)] border border-[var(--v2-border)]"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <ServiceDescriptionField
+                      service={service}
+                      language={language as 'en' | 'es' | 'he'}
+                      autoFocus
+                      onSaved={(serviceId, description) => {
+                        setServices(prev => prev.map(item =>
+                          item.id === serviceId ? { ...item, description } : item
+                        ));
+                        setDescribeServiceId(null);
+                        setSlug(generateSlug(service.name));
+                        setCurrentStep(2);
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
               );
             })}
           </div>
@@ -1875,47 +2085,16 @@ export function LandingPageWizard({
    *
    * So the step now reports what this page's service will actually do.
    */
-  const renderJourneyStep = () => {
-    const shown = creationType === 'landing-page'
-      ? services.filter(s => s.id === selectedServiceId)
-      : services.filter(s => selectedServiceIds.includes(s.id));
-
-    const list = shown.length > 0 ? shown : services;
-
-    return (
-      <div className="space-y-3">
-        <p className="text-sm text-[var(--v2-text-muted)]">
-          {labels.journey_follows_service}
-        </p>
-
-        {list.map(service => (
-          <div
-            key={service.id}
-            className="p-3 rounded-xl border border-[var(--v2-border)] bg-[var(--v2-surface)]"
-          >
-            <div className="flex items-baseline gap-2 flex-wrap mb-2">
-              <span className="text-sm font-medium text-[var(--v2-text-primary)]">{service.name}</span>
-              <span className="text-xs text-[var(--v2-text-muted)]">
-                {[
-                  service.duration_minutes ? `${service.duration_minutes} ${labels.minutes_abbr}` : null,
-                  service.price != null ? `${service.price}` : null,
-                ].filter(Boolean).join(' · ')}
-              </span>
-            </div>
-            <ClientJourneyStrip
-              compact
-              service={{
-                scheduled: service.is_scheduled !== false,
-                collection: service.collection ?? null,
-                price: service.price,
-              }}
-            />
-          </div>
-        ))}
-      </div>
-    );
-  };
-
+  /*
+   * Removed: the landing page's journey step.
+   *
+   * It rendered a read-only strip per service under the heading "Build Client
+   * Journey / Drag to reorder or add or remove steps" — an editor that had
+   * stopped existing once the journey became a property of the service. The
+   * service-selection step before it already shows the same strip for the same
+   * service, so this was a whole step of a four-step wizard spent looking twice
+   * at one thing.
+   */
   // Render Step 3: Style Selection (only shown if no existing theme)
   const renderStep2Style = () => (
     <div className="space-y-4">
@@ -1977,39 +2156,55 @@ export function LandingPageWizard({
           {hasExistingTheme && (
             <p className="text-sm text-[var(--v2-text-muted)] text-center pt-2">{labels.or_choose_preset}</p>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            {STYLE_PRESETS.map((preset) => {
-              const isSelected = selectedPresetId === preset.id && !useExistingTheme;
+          {/*
+            The real templates, not a private palette.
+
+            This offered four hardcoded STYLE_PRESETS — colour pairs with no id
+            the rest of the product recognises — so a landing page created
+            before any website gave the business a look but no template, and
+            everything generated afterwards had nothing to be consistent with.
+            These are the same templates the website wizard and the Templates
+            tab offer, so whichever surface a business builds first, it is
+            choosing from one catalogue.
+          */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {templates.map((template) => {
+              const isSelected = selectedTemplateId === template.id && !useExistingTheme;
+              const primary = template.theme.primary_color || '#4F6EF7';
+              const secondary = template.theme.secondary_color || '#6366F1';
+              const accent = template.theme.accent_color || secondary;
 
               return (
                 <button
-                  key={preset.id}
+                  key={template.id}
                   onClick={() => {
-                    setSelectedPresetId(preset.id);
+                    setSelectedTemplateId(template.id);
                     setUseExistingTheme(false);
                   }}
-                  className={`relative text-start p-3 rounded-xl border transition-all ${
+                  className={`relative w-full text-start p-3 rounded-xl border transition-all ${
                     isSelected
                       ? 'ring-2 ring-[#4F6EF7] border-[#4F6EF7]'
                       : 'border-[var(--v2-border)] hover:border-[#4F6EF7]/50'
                   }`}
                 >
-                  {/* Color preview */}
-                  <div className="h-16 rounded-lg overflow-hidden mb-2 flex">
+                  {/* Same swatch the Templates tab uses, so one template looks
+                      like itself wherever it is offered. */}
+                  <div className="h-16 rounded-lg overflow-hidden mb-2 relative">
                     <div
-                      className="flex-1"
-                      style={{ backgroundColor: preset.theme.colors.primary }}
+                      className="absolute inset-0"
+                      style={{
+                        background: `linear-gradient(135deg, ${primary} 0%, ${primary} 50%, ${secondary} 50%, ${secondary} 100%)`
+                      }}
                     />
-                    <div
-                      className="flex-1"
-                      style={{ backgroundColor: preset.theme.colors.secondary }}
-                    />
+                    <div className="absolute bottom-0 left-0 right-0 h-1.5" style={{ backgroundColor: accent }} />
                   </div>
-                  <h4 className="text-sm font-medium text-[var(--v2-text-primary)]">
-                    {preset.name[language] || preset.name.en}
+                  <h4 className="text-sm font-medium text-[var(--v2-text-primary)] truncate">
+                    {getTranslatedTemplateName(template.name, language as 'en' | 'es' | 'he')}
                   </h4>
-                  <p className="text-xs text-[var(--v2-text-muted)]">
-                    {preset.description[language] || preset.description.en}
+                  <p className="text-xs text-[var(--v2-text-muted)] truncate">
+                    {template.theme.brand_voice
+                      ? getTranslatedBrandVoice(template.theme.brand_voice, language as 'en' | 'es' | 'he')
+                      : getTranslatedVertical(template.vertical, language as 'en' | 'es' | 'he')}
                   </p>
                   {isSelected && (
                     <div className="absolute top-2 right-2 w-5 h-5 bg-[#4F6EF7] rounded-full flex items-center justify-center">
@@ -2035,6 +2230,17 @@ export function LandingPageWizard({
   // Render Step 3: Preview & Publish (or Step 2 if theme exists)
   const renderStepPreview = () => (
     <div className="space-y-4">
+      {/* Why this page reads like a template rather than like the service. It
+          used to fall back to boilerplate in silence, so a failed generation
+          was indistinguishable from a poor one. */}
+      {generationFailed && !generatingContent && (
+        <div
+          className="p-3 text-xs bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
+          style={{ borderRadius: 'var(--v2-radius-button)' }}
+        >
+          {generationFailed}
+        </div>
+      )}
       {generatingContent ? (
         <div className="flex flex-col items-center justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-[#4F6EF7] mb-3" />
@@ -2097,14 +2303,17 @@ export function LandingPageWizard({
                 {previewDataKey ? (
                   <iframe
                     key={previewDataKey}
-                    src={`/business-os/website/landing-preview?dataKey=${previewDataKey}&lang=${language}`}
+                    src={`/landing-preview?dataKey=${previewDataKey}&lang=${language}`}
                     className="w-full h-full border-0"
                     title="Landing Page Preview"
                     style={{ minHeight: '400px' }}
                   />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center">
+                  /* Says what it is waiting for. A bare spinner here was
+                     indistinguishable from a spinner that would never stop. */
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-2">
                     <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                    <p className="text-xs text-[var(--v2-text-muted)]">{labels.preview_building}</p>
                   </div>
                 )}
               </div>
@@ -2130,18 +2339,27 @@ export function LandingPageWizard({
             </div>
           </div>
 
+          {/* The address is required for both actions — a draft with no URL is a
+              page nothing can reach, and publishing without one fails at the
+              server anyway. Said here rather than left to two dead buttons. */}
+          {!slug.trim() && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              {labels.slug_required}
+            </p>
+          )}
+
           {/* Actions */}
           <div className="flex gap-3">
             <button
               onClick={() => handleComplete(false)}
-              disabled={loading}
-              className="flex-1 px-4 py-2 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] font-medium hover:bg-[var(--v2-surface-hover)] transition-all rounded-lg flex items-center justify-center"
+              disabled={loading || !slug.trim()}
+              className="flex-1 px-4 py-2 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] font-medium hover:bg-[var(--v2-surface-hover)] transition-all rounded-lg flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {labels.save_draft}
             </button>
             <button
               onClick={() => handleComplete(true)}
-              disabled={loading || publishing}
+              disabled={loading || publishing || !slug.trim()}
               className="flex-1 px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] flex items-center justify-center gap-1.5 disabled:opacity-50 transition-all rounded-lg"
             >
               {publishing ? (
@@ -2185,15 +2403,14 @@ export function LandingPageWizard({
 
     // Landing Page flow
     if (creationType === 'landing-page') {
-      if (currentStep === 1) return renderStep1(); // Service selection
-      if (currentStep === 2) return renderJourneyStep(); // Journey builder
+      if (currentStep === 1) return renderStep1(); // Service selection — shows the journey
       if (hasExistingTheme) {
-        // 4-step flow: Step 3 is preview
-        if (currentStep === 3) return renderStepPreview();
+        // 3-step flow: Step 2 is preview
+        if (currentStep === 2) return renderStepPreview();
       } else {
-        // 5-step flow: Step 3 is style, Step 4 is preview
-        if (currentStep === 3) return renderStep2Style();
-        if (currentStep === 4) return renderStepPreview();
+        // 4-step flow: Step 2 is style, Step 3 is preview
+        if (currentStep === 2) return renderStep2Style();
+        if (currentStep === 3) return renderStepPreview();
       }
     }
 
@@ -2215,11 +2432,10 @@ export function LandingPageWizard({
 
     if (creationType === 'landing-page') {
       if (currentStep === 1) return labels.step1_title;
-      if (currentStep === 2) return labels.step_journey_title;
       if (hasExistingTheme) {
         return labels.step3_title; // Preview
       } else {
-        if (currentStep === 3) return labels.step2_title; // Style
+        if (currentStep === 2) return labels.step2_title; // Style
         return labels.step3_title; // Preview
       }
     }
@@ -2241,11 +2457,10 @@ export function LandingPageWizard({
 
     if (creationType === 'landing-page') {
       if (currentStep === 1) return labels.step1_subtitle;
-      if (currentStep === 2) return labels.step_journey_subtitle;
       if (hasExistingTheme) {
         return labels.step3_subtitle;
       } else {
-        if (currentStep === 3) return labels.step2_subtitle;
+        if (currentStep === 2) return labels.step2_subtitle;
         return labels.step3_subtitle;
       }
     }
@@ -2262,8 +2477,10 @@ export function LandingPageWizard({
     }
     // Landing page preview has its own buttons
     if (creationType === 'landing-page') {
-      if (hasExistingTheme && currentStep === 3) return true;
-      if (!hasExistingTheme && currentStep === 4) return true;
+      // Preview owns its own actions. One lower than before, since the journey
+      // step between Service and Style is gone.
+      if (hasExistingTheme && currentStep === 2) return true;
+      if (!hasExistingTheme && currentStep === 3) return true;
     }
     return false;
   };
@@ -2320,7 +2537,7 @@ export function LandingPageWizard({
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-[var(--v2-surface)] rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-[var(--v2-surface)] rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
       >
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--v2-border)] flex items-center justify-between">

@@ -24,23 +24,28 @@ const LABELS = {
     pay: 'Pay Now',
     processing: 'Processing...',
     secure: 'Secure payment',
-    poweredBy: 'Powered by Stripe'
+    poweredBy: 'Powered by Stripe',
+    // Never names the business's payment configuration — that is the owner's
+    // concern, not their client's.
+    unavailable: 'Payment is unavailable right now. Please try again shortly.'
   },
   es: {
     pay: 'Pagar Ahora',
     processing: 'Procesando...',
     secure: 'Pago seguro',
-    poweredBy: 'Desarrollado por Stripe'
+    poweredBy: 'Desarrollado por Stripe',
+    unavailable: 'El pago no está disponible ahora. Inténtalo de nuevo en unos minutos.'
   },
   he: {
     pay: 'שלם עכשיו',
     processing: '...מעבד',
     secure: 'תשלום מאובטח',
-    poweredBy: 'מופעל על ידי Stripe'
+    poweredBy: 'מופעל על ידי Stripe',
+    unavailable: 'התשלום אינו זמין כרגע. נסו שוב בעוד מספר דקות.'
   }
 };
 
-export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, className }: BlockRendererProps) {
+export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, className, subdomain }: BlockRendererProps) {
   const {
     text,
     amount,
@@ -63,20 +68,37 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
     }).format(amount);
   };
 
+  const [error, setError] = useState<string | null>(null);
+
+  /**
+   * This button has never worked, for anyone.
+   *
+   * It posted to `/api/payments/create-checkout`, whose schema requires
+   * `subdomain`, `customer_name` and `customer_email` — none of which it sent,
+   * and the last two of which a bare Pay button cannot know: nobody has typed a
+   * name at this point. So every click returned 400. It then read `data.url`
+   * while the route returns `checkout_url`, so even a success would have gone
+   * nowhere. And the failure branch was a bare `setLoading(false)`, which looks
+   * exactly like nothing happening.
+   *
+   * `/api/website/checkout` is the route built for public-site payments: it
+   * resolves the business from the subdomain and asks for no customer identity.
+   * It is also the one the booking widgets use, so a site now has one payment
+   * path rather than two.
+   */
   const handlePayment = async () => {
     setLoading(true);
+    setError(null);
 
     try {
-      // Create Stripe Checkout session
-      const response = await fetch('/api/payments/create-checkout', {
+      const response = await fetch('/api/website/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          price_id,
+          subdomain,
           amount,
           currency,
-          description,
-          payment_type,
+          description: description || 'Payment',
           success_url: success_url || `${window.location.origin}/payment/success`,
           cancel_url: cancel_url || window.location.href
         })
@@ -84,13 +106,18 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
 
       const data = await response.json();
 
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        // Handle error
-        setLoading(false);
+      if (data.success && data.checkoutUrl) {
+        window.location.href = data.checkoutUrl;
+        return;
       }
-    } catch (error) {
+
+      // Said out loud. A button that silently stops spinning is
+      // indistinguishable from a button that does nothing — which is what this
+      // was. The business's payment configuration is never named here.
+      setError(labels.unavailable);
+      setLoading(false);
+    } catch {
+      setError(labels.unavailable);
       setLoading(false);
     }
   };
@@ -152,6 +179,15 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
               </>
             )}
           </button>
+
+          {/* The failure, said. It used to be a bare `setLoading(false)` — a
+              button that stops spinning and does nothing, which reads as a
+              broken page rather than a payment that could not start. */}
+          {error && (
+            <p className="mt-4 text-sm text-red-600 dark:text-red-400" role="alert">
+              {error}
+            </p>
+          )}
 
           {/* Security badges */}
           <div className="mt-6 flex items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">

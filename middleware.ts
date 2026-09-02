@@ -25,6 +25,37 @@ const RESERVED_SUBDOMAINS = [
   'preview'
 ]
 
+/**
+ * Paths that must never be rewritten under `/v2`.
+ *
+ * The V2 rewrite moves everything not on this list to `/v2{path}`. A route
+ * added outside these prefixes silently starts 404ing for every V2 account,
+ * and the failure looks nothing like its cause — which is exactly what happened
+ * when the website preview moved out of `/business-os` and began resolving to
+ * `/v2/website-preview/...`.
+ *
+ * `/website-preview` is here rather than under `/business-os` because that
+ * segment's layout paints the platform header and tab bar, and this page is
+ * rendered inside a 320px iframe where that chrome has no business appearing.
+ */
+const V2_REWRITE_EXEMPT = [
+  '/v2',
+  '/onboarding',
+  '/business-os',
+  '/invoice',
+  '/website-preview',
+  // Same reason as the line above: the landing page wizard's preview iframe.
+  // It lived under `/business-os`, so it inherited that segment's header and
+  // tabs — the whole platform chrome, rendered a second time inside a preview
+  // frame — and every load went through the onboarding check on its way there.
+  '/landing-preview',
+] as const;
+
+/** Whether this path keeps its own URL under the V2 rewrite. */
+function isV2Exempt(pathname: string): boolean {
+  return V2_REWRITE_EXEMPT.some(prefix => pathname.startsWith(prefix));
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const host = request.headers.get('host') || ''
@@ -181,7 +212,9 @@ export async function middleware(request: NextRequest) {
   // Check for manual override via query param (for testing)
   const uiParam = request.nextUrl.searchParams.get('ui')
   if (uiParam === 'v1' || uiParam === 'v2') {
-    if (uiParam === 'v2' && !pathname.startsWith('/v2')) {
+    // Same exemptions as the database-driven rewrite below — a manual `?ui=v2`
+    // must not send a preview iframe somewhere the automatic path would not.
+    if (uiParam === 'v2' && !isV2Exempt(pathname)) {
       const url = request.nextUrl.clone()
       url.pathname = `/v2${pathname}`
       return NextResponse.redirect(url)
@@ -215,7 +248,7 @@ export async function middleware(request: NextRequest) {
 
     // If V2 is enabled and not already on V2 route, redirect
     // EXCEPT for onboarding routes, business-os routes, and public invoice pages - they should stay as-is
-    if (uiVersion === 'v2' && !pathname.startsWith('/v2') && !pathname.startsWith('/onboarding') && !pathname.startsWith('/business-os') && !pathname.startsWith('/invoice')) {
+    if (uiVersion === 'v2' && !isV2Exempt(pathname)) {
       const url = request.nextUrl.clone()
       url.pathname = `/v2${pathname}`
       return NextResponse.redirect(url)

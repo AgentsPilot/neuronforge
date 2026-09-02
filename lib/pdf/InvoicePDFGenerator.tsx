@@ -724,8 +724,17 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
           </View>
         </View>
 
-        {/* Payment Information */}
-        {(businessSettings.invoice_bank_name || businessSettings.invoice_payment_instructions) && (
+        {/* Payment Information.
+
+            Gated on ANY of the four fields. It required a bank NAME or
+            instructions, while the public page accepted a name or an account
+            number — so a business that filled in only its account number got
+            the details on the web page and none in the PDF. The email carried
+            none either, which meant none in anything the client was sent. */}
+        {(businessSettings.invoice_bank_name ||
+          businessSettings.invoice_bank_account ||
+          businessSettings.invoice_bank_routing ||
+          businessSettings.invoice_payment_instructions) && (
           <View style={styles.paymentSection}>
             <SmartText style={styles.paymentHeader} isRTL={isRTL}>{labels.paymentInfo}</SmartText>
             {businessSettings.invoice_bank_name && (

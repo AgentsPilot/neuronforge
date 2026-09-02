@@ -30,6 +30,7 @@ export type StepId =
   | 'invoicing'
   | 'calendar'
   | 'intake'
+  | 'service_descriptions'
   | 'meta_insights'
   | 'google_analytics';
 
@@ -241,6 +242,19 @@ export const SETUP_STEPS: GraphNode[] = [
   { id: 'services', requires: [], owner: 'platform', mandatory: 'always' },
   // The form attaches to a service booking.
   { id: 'intake', requires: ['services'], owner: 'platform', mandatory: 'optional', belongsTo: 'services' },
+
+  // What each service actually is, in the owner's words.
+  //
+  // Optional on purpose: a business with no descriptions can still take a
+  // client end to end, so this must never stand between them and trading. It
+  // is here because the website's copy for a service is written from its
+  // description — without one the model writes a paragraph guessed from the
+  // service's name, and the page reads like it was written by somebody who has
+  // never met the business.
+  //
+  // Never asked during the onboarding chat, where speed matters more; the
+  // question belongs to the dashboard, once there is a reason to answer it.
+  { id: 'service_descriptions', requires: ['services'], owner: 'user', mandatory: 'optional', belongsTo: 'services' },
 
   // Open hours with nothing to book render an empty booking page — and hours
   // asked of a business that sells only downloads are an empty demand. Applies

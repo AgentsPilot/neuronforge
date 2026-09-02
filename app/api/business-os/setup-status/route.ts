@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -98,7 +99,16 @@ export async function GET(request: NextRequest) {
       Object.values(availability).some(slots => Array.isArray(slots) && slots.length > 0));
 
     // Stripe is connected if the user has a stripe_connect_account with charges enabled or onboarding completed
-    const hasStripe = !!(stripeConnectAccount && (stripeConnectAccount.charges_enabled || stripeConnectAccount.onboarding_completed));
+    /**
+     * `||` marked the Payments step COMPLETE for an account that cannot charge:
+     * `onboarding_completed` is written as `charges_enabled AND
+     * payouts_enabled`, so a business whose charges Stripe had disabled still
+     * satisfied the second half. The checklist lied in the most damaging
+     * direction — telling an owner they were set up to take money when they
+     * were not.
+     */
+    const stripeCapability = await resolvePaymentCollectionCapability(supabaseServer, user.id);
+    const hasStripe = stripeCapability.canCollect;
     // Against the same constant the query filters on. Written as literals here,
     // these read 'google_calendar' and 'outlook_calendar' — neither of which is
     // a real plugin key, so the step stayed incomplete however many calendars

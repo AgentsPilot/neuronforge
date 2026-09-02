@@ -37,6 +37,15 @@ export interface WebsitePage {
   favicon_url: string | null;
   og_image_url: string | null;
   website_language: WebsiteLanguage;
+  /**
+   * When AI last wrote this page's content.
+   *
+   * NULL means never — the page holds the static scaffold that page creation
+   * installs, and writing it is safe. Non-null means regenerating would delete
+   * every block and replace copy the business may have edited since, so it has
+   * to be asked for rather than done on the way past.
+   */
+  content_generated_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,6 +97,15 @@ export interface WebsitePageUpdate {
   favicon_url?: string | null;
   og_image_url?: string | null;
   website_language?: WebsiteLanguage;
+  /**
+   * The template this page is styled from.
+   *
+   * Declared on `WebsitePageInsert` but not here, while `apply-template` wrote
+   * it on every call — the one update that route exists to make. It reached the
+   * database because the column is real and PostgREST does not check
+   * TypeScript, but every caller was told the field did not exist.
+   */
+  template_id?: string | null;
 }
 
 export interface RepositoryResult<T> {

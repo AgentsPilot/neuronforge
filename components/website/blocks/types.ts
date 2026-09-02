@@ -1,3 +1,4 @@
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 /**
  * Website Block Renderer Types
  * Shared types for all block renderers with i18n/RTL support
@@ -156,7 +157,13 @@ export interface BlockRendererProps {
   /** Preview mode - enables in-page booking modal instead of navigation */
   isPreview?: boolean;
   /** Callback when booking modal should open (preview mode) - receives selected service */
-  onOpenBooking?: (service: SelectedServiceData) => void;
+  /**
+   * Open the booking flow.
+   *
+   * `null` means no service chosen yet — a header or hero CTA is not about any
+   * one service, so the modal opens at its catalogue step and the client picks.
+   */
+  onOpenBooking?: (service: SelectedServiceData | null) => void;
 }
 
 /** Service data passed when opening booking modal */
@@ -167,6 +174,30 @@ export interface SelectedServiceData {
   duration_minutes: number;
   price: number | null;
   currency: string;
+  /**
+   * The two facts that decide this service's journey.
+   *
+   * They were not here, so the booking modal could not know whether the thing
+   * the client had just picked needed a time or took a card — it fell back to a
+   * page-level flow and, failing that, to a hardcoded
+   * ['scheduling','client_info','payment','confirmation']. The service CARD
+   * beside it was already printing the correct journey from these same two
+   * facts, so a client could read "no booking needed · pay by card" and then be
+   * asked to choose an appointment slot.
+   *
+   * Optional because an older page's blocks do not carry them; the modal falls
+   * back to the stored flow when they are absent.
+   */
+  is_scheduled?: boolean | null;
+  collection?: 'online' | 'invoice' | null;
+  /**
+   * How this service may be paid over time.
+   *
+   * Travels with the service for the same reason the two facts above do: the
+   * payment step has to describe what the client is agreeing to, and a plan
+   * that stops at the pricing card never reaches the modal that takes the card.
+   */
+  paymentPlan?: ServicePaymentPlan;
 }
 
 // Common service type

@@ -1,6 +1,7 @@
 'use client';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { shouldTakePayment, collectsOnline } from '@/lib/business-os/clientJourney';
 import type { ServiceCollection } from '@/lib/repositories/SchedulingRepository';
 
 /**
@@ -97,9 +98,22 @@ function tint(hex: string, alpha: number) {
   return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${alpha})`;
 }
 
-/** Whether this service asks for money on the way through. */
+/**
+ * Whether this service asks for money on the way through.
+ *
+ * Uses `shouldTakePayment` — the same rule the public widgets walk. It used to
+ * compare `collection === 'online'` literally, which differs on exactly one
+ * value: a service whose collection has never been set. `collectsOnline` reads
+ * that as online (a legacy row keeps the behaviour it always had), this read it
+ * as not-online, and the owner's journey strip therefore showed a different
+ * journey from the one their client would actually walk.
+ */
 export function journeyTakesPayment(service: JourneyService, processorReady: boolean): boolean {
-  return (service.price || 0) > 0 && service.collection === 'online' && processorReady;
+  return shouldTakePayment({
+    price: service.price,
+    collection: service.collection,
+    processorReady,
+  });
 }
 
 export function ClientJourneyStrip({
@@ -117,7 +131,9 @@ export function ClientJourneyStrip({
   const bodyFont = isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif';
 
   const priced = (service.price || 0) > 0;
-  const online = priced && service.collection === 'online';
+  // Same normalisation as the journey itself, so an unset collection is not
+  // described one way here and walked another way by the client.
+  const online = priced && collectsOnline(service.collection);
   const invoiced = priced && service.collection === 'invoice';
 
   /**

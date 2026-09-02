@@ -317,8 +317,59 @@ export function WebsiteBlocks({
   // No default fallback - if not set, booking buttons won't show (handled by ServicesBlock)
   const bookingUrl = explicitBookingUrl || (processBlock?.content?.booking_url as string | undefined);
 
-  const handleOpenBooking = (service: SelectedServiceData) => {
-    setSelectedService(service);
+  /*
+   * The one service this page is about, when it is about one.
+   *
+   * A landing page is built for a single service and its pricing block carries
+   * that service's id, name, price, duration and journey — injected live on
+   * every read. A website's pricing block carries several, and then there is no
+   * single answer.
+   *
+   * Uses the `pricingBlock` already resolved above for the client flow.
+   */
+  const pageService: SelectedServiceData | null = (() => {
+    const content = pricingBlock?.content as {
+      serviceId?: string;
+      serviceName?: string;
+      currency?: string;
+      durationMinutes?: number;
+      plans?: Array<Record<string, unknown>>;
+    } | undefined;
+
+    const plans = content?.plans || [];
+    if (plans.length !== 1) return null;
+
+    const plan = plans[0];
+    const id = (plan.serviceId as string) || content?.serviceId;
+    if (!id) return null;
+
+    return {
+      id,
+      name: (plan.serviceName as string) || content?.serviceName || (plan.name as string) || '',
+      description: (plan.description as string) ?? null,
+      duration_minutes: (plan.durationMinutes as number) || content?.durationMinutes || 60,
+      price: (plan.priceRaw as number) ?? null,
+      currency: (plan.currency as string) || content?.currency || 'USD',
+      is_scheduled: plan.is_scheduled as boolean | null | undefined,
+      collection: plan.collection as 'online' | 'invoice' | null | undefined,
+      // The split travels with the service, so a page-level CTA opens the same
+      // dialog — same terms — as the button on the pricing card.
+      paymentPlan: plan.paymentPlan as SelectedServiceData['paymentPlan'],
+    };
+  })();
+
+  /**
+   * @param service The one the client picked, or null from a page-level CTA.
+   *
+   * A header or hero button on a WEBSITE is not about any particular service,
+   * so the modal opens at its catalogue step and the client chooses there. On a
+   * landing page it is — the whole page is about one service — and opening the
+   * catalogue asked the client to pick from a list the page never mentioned,
+   * while the button beside it in the pricing card opened straight onto the
+   * service. Same button, same words, two different dialogs.
+   */
+  const handleOpenBooking = (service: SelectedServiceData | null) => {
+    setSelectedService(service ?? pageService);
     setBookingModalOpen(true);
   };
 

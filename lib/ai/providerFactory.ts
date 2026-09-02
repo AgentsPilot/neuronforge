@@ -240,6 +240,8 @@ export interface SimpleProvider {
     messages: Array<{ role: string; content: string }>;
     response_format?: { type: string };
     temperature?: number;
+    /** Callers cap their own output; without this the cap was silently dropped. */
+    max_tokens?: number;
   }): Promise<{ content: string }>;
   getProvider(name: ProviderName): BaseAIProvider;
 }
@@ -257,6 +259,7 @@ export function getProviderFactory(): SimpleProvider {
       messages: Array<{ role: string; content: string }>;
       response_format?: { type: string };
       temperature?: number;
+      max_tokens?: number;
     }): Promise<{ content: string }> {
       const provider = ProviderFactory.getProvider('openai') as any;
 
@@ -272,6 +275,10 @@ export function getProviderFactory(): SimpleProvider {
 
       if (params.temperature !== undefined) {
         chatParams.temperature = params.temperature;
+      }
+
+      if (params.max_tokens !== undefined) {
+        chatParams.max_tokens = params.max_tokens;
       }
 
       // Call chatCompletion with a minimal context (no tracking for simple calls)

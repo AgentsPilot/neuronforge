@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
+import { journeyGapsForSmartLink, describeJourneyGaps } from '@/lib/business-os/journeyReadiness';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { z } from 'zod';
 
@@ -130,6 +131,29 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    /*
+     * A link may not be switched ON while the journey behind it cannot run.
+     *
+     * A smart link has no publish step — it goes live the moment it is active —
+     * so this is the only gate it has. Checked only when TURNING IT ON: a
+     * business must always be able to switch a broken link off, and must never
+     * be blocked from editing one by a gap it is on its way to fixing.
+     */
+    if (validated.is_active === true) {
+      const gaps = await journeyGapsForSmartLink(user.id, {
+        destination_type: validated.destination_type ?? existingResult.data.destination_type,
+        // A PATCH need not carry the URL; the stored one is what would go live.
+        destination_url: destinationUrl ?? existingResult.data.destination_url,
+      });
+      if (gaps.length > 0) {
+        requestLogger.info({ linkId: id, gaps: gaps.map(g => g.kind) }, 'Refused to activate a link whose journey cannot run');
+        return NextResponse.json(
+          { success: false, error: describeJourneyGaps(gaps), reason: gaps[0].kind },
+          { status: 400 }
+        );
+      }
+    }
+
     // Update the link
     const result = await smartLinkRepository.update(id, user.id, {
       name: validated.name,
@@ -186,7 +210,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, error: 'Link not found' }, { status: 404 });
     }
 
-    // Soft delete (deactivate)
+    // A permanent delete. The link's clicks and attributed revenue go with it
+    // (ON DELETE CASCADE). Switching a link off without losing its history is
+    // what PUT { is_active: false } is for.
     const result = await smartLinkRepository.delete(id, user.id);
 
     if (result.error) {

@@ -136,7 +136,12 @@ const CHANNEL_COLORS: Record<Channel, string> = {
   direct: '#94A3B8',
 };
 
-const CHANNEL_LABELS: Record<Channel, Record<string, string>> = {
+/**
+ * Exported so the dashboard's verdict names a channel exactly as this card
+ * does. A verdict saying "google" while the card beside it says "גוגל" is two
+ * components disagreeing about one word.
+ */
+export const CHANNEL_LABELS: Record<Channel, Record<string, string>> = {
   instagram: { en: 'Instagram', es: 'Instagram', he: 'אינסטגרם' },
   facebook: { en: 'Facebook', es: 'Facebook', he: 'פייסבוק' },
   google: { en: 'Google', es: 'Google', he: 'גוגל' },

@@ -23,9 +23,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
-import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import type { CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -35,13 +34,12 @@ import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'WebsiteIntakeFormAPI' });
 
-// Instantiated directly rather than via getWebsitePageRepository(), which caches its
-// first-injected client (see the Website section of the module-plugins roadmap).
-const websitePageRepository = new WebsitePageRepository(supabaseServer);
-
 // Base intake form schema
 const IntakeFormBaseSchema = z.object({
-  subdomain: z.string().min(1, 'Subdomain is required'),
+  // Optional now: a smart link has no subdomain and identifies its business by
+  // short code instead. One of the two is still required, enforced below.
+  subdomain: z.string().optional(),
+  user_code: z.string().optional(),
   template: z.enum(['general', 'therapist', 'coach', 'consultant', 'fitness']),
   booking_id: z.string().uuid().optional(),
   name: z.string().min(1, 'Name is required').max(200),
@@ -141,21 +139,26 @@ export async function POST(request: NextRequest) {
       generateSessionId: true
     });
 
-    // Look up the website owner by subdomain (no status filter — intake must also work
-    // on draft/preview sites, matching the previous behaviour)
-    const { data: websitePage, error: pageError } = await websitePageRepository.findBySubdomainAny(
-      data.subdomain
-    );
+    // Either identifier resolves the business — the schema no longer demands a
+    // subdomain, so the requirement is enforced here where it can say which.
+    if (!data.subdomain && !data.user_code) {
+      return NextResponse.json(
+        { success: false, error: 'Either subdomain or user_code is required' },
+        { status: 400 }
+      );
+    }
 
-    if (pageError || !websitePage) {
-      requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');
+    const owner = await resolvePublicOwner({ subdomain: data.subdomain, userCode: data.user_code });
+
+    if (!owner) {
+      requestLogger.warn({ subdomain: data.subdomain, userCode: data.user_code }, 'Website not found');
       return NextResponse.json(
         { success: false, error: 'Website not found' },
         { status: 404 }
       );
     }
 
-    const ownerId = websitePage.user_id;
+    const ownerId = owner.userId;
 
     // DEFERRED DECISION (merge 2026-09-02) - should completing an intake form advance
     // the contact's CRM pipeline stage?

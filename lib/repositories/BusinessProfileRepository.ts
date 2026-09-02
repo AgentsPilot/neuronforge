@@ -73,7 +73,8 @@ export type SchedulingAvailability = Record<string, { start: string; end: string
  * covers the base CREATE (20260721) plus every later ALTER:
  * services (20260722), scheduling_availability (20260722), calendar sync fields
  * (20260723), setup_checklist_dismissed (20260723), process_steps (20260728),
- * dismissed_setup_steps (20260802). Nullability follows the DB: only id/user_id/
+ * dismissed_setup_steps (20260802), template_id (20260903), subdomain (20260904).
+ * Nullability follows the DB: only id/user_id/
  * vertical are NOT NULL; defaulted-but-nullable columns are `| null`.
  */
 export interface BusinessProfile {
@@ -181,6 +182,13 @@ export interface BusinessProfile {
   // Payment collection method (20260831_collection_method)
   collection_method: string | null;
 
+  // Which website template the business is wearing, and the one subdomain every
+  // surface it publishes lives under. Both nullable text with no default -- a
+  // business that has chosen neither has NULL.
+  // (20260903_business_template / 20260904_business_subdomain)
+  template_id: string | null;
+  subdomain: string | null;
+
   // Timestamps
   created_at: string | null;
   updated_at: string | null;
@@ -266,6 +274,8 @@ export interface BusinessProfileInsert {
   show_logo_on_smart_links?: boolean;
   theme?: Record<string, unknown> | null;
   collection_method?: string | null;
+  template_id?: string | null;
+  subdomain?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -1083,7 +1093,7 @@ export class BusinessProfileRepository {
   }>> {
     try {
       // Note: Only selecting columns that exist in the schema
-      // currency, primary_color, customer_journey are not in the DB yet - using defaults
+      // currency and customer_journey are not in the DB yet - using defaults
       const { data, error } = await this.supabase
         .from('business_profiles')
         .select(`
@@ -1094,7 +1104,8 @@ export class BusinessProfileRepository {
           show_logo_on_smart_links,
           vertical,
           language,
-          collection_method
+          collection_method,
+          theme
         `)
         .eq('user_code', userCode)
         .single();
@@ -1115,7 +1126,18 @@ export class BusinessProfileRepository {
         vertical: data.vertical,
         language: data.language,
         currency: null, // Not in DB yet - API will default to 'USD'
-        primaryColor: null, // Not in DB yet - API will default to '#4F6EF7'
+        /*
+         * The business's own colour, from the template it chose.
+         *
+         * This was hardcoded `null` — "not in DB yet" — so every smart link's
+         * contact and booking page rendered in the platform's default blue no
+         * matter what template the business was on. The column it was waiting
+         * for does exist: `theme`, the same one the invoice PDF and every
+         * transactional email already read. A business that has chosen nothing
+         * still falls through to the default, as before.
+         */
+        primaryColor:
+          ((data as { theme?: { colors?: { primary?: string } } | null }).theme?.colors?.primary) ?? null,
         customerJourney: null, // Not in DB yet - API will default to standard journey
         collectionMethod: data.collection_method ?? null
       };

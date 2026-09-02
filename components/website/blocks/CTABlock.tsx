@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { ArrowRight, Calendar } from 'lucide-react';
+import { resolveBookingAction } from './bookingAction';
 import type { BlockRendererProps, SelectedServiceData } from './types';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
@@ -20,6 +21,9 @@ interface CTAContent {
   serviceName?: string;
   priceRaw?: number;
   currency?: string;
+  /** The two facts this service's journey is built from, injected live. */
+  is_scheduled?: boolean | null;
+  collection?: 'online' | 'invoice' | null;
   durationMinutes?: number;
 }
 
@@ -92,6 +96,14 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
   const hasServiceLinked = !!rawContent.serviceId && UUID_REGEX.test(rawContent.serviceId);
   const hasBookingCapability = !!(bookingUrl || (isPreview && onOpenBooking));
 
+  // For the unlinked case below: the same resolver the header and hero use.
+  const ctaBooking = resolveBookingAction({
+    isPreview,
+    onOpenBooking,
+    bookingUrl,
+    fallbackHref: buttonLink,
+  });
+
   // Helper to convert to SelectedServiceData for booking modal
   const toSelectedServiceData = (): SelectedServiceData | null => {
     // Only allow booking if we have a valid serviceId (required for booking API)
@@ -106,7 +118,10 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
       description: description || null,
       duration_minutes: rawContent.durationMinutes || 60,
       price: rawContent.priceRaw ?? null,
-      currency: rawContent.currency || 'USD'
+      currency: rawContent.currency || 'USD',
+      // Same as pricing: the journey is the service's, injected live.
+      is_scheduled: rawContent.is_scheduled,
+      collection: rawContent.collection
     };
   };
 
@@ -195,9 +210,24 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
               </a>
             ) : null
           ) : (
-            // No service linked - use regular link
+            /*
+             * No service linked — a homepage's closing call to action.
+             *
+             * It fell through to a plain anchor, so the last "book a session"
+             * on the page merely scrolled. It now starts the booking the same
+             * way the header does: the modal in preview, the booking URL when
+             * published, and the stored anchor only where neither exists.
+             * No service is passed, because this button is about the business
+             * rather than any one thing it sells.
+             */
             <a
-              href={buttonLink}
+              href={ctaBooking.kind === 'link' ? ctaBooking.href : buttonLink}
+              onClick={(e) => {
+                if (ctaBooking.kind === 'open') {
+                  e.preventDefault();
+                  ctaBooking.onClick();
+                }
+              }}
               className={`inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all hover:scale-105 ${
                 style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
               }`}

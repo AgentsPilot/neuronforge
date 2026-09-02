@@ -17,7 +17,7 @@ import { FunnelMap, FunnelStation, FunnelGap, GhostProjection } from './FunnelMa
 import { FunnelDrawer, type DrawerContent } from './FunnelDrawer';
 import { SystemReadiness } from './SystemReadiness';
 import { UsageCard } from '@/components/business-os/UsageCard';
-import type { ChannelRow } from './ChannelSourcesSection';
+import { CHANNEL_LABELS, type ChannelRow } from './ChannelSourcesSection';
 import { ChannelsOverviewCard } from './ChannelsOverviewCard';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { FirstLightMilestones, Milestone } from './FirstLightMilestones';
@@ -132,6 +132,18 @@ interface LiveDashboardProps {
   onChannelsChanged?: () => void;
   /** Failure from the last readiness action, shown under the chip row. */
   actionError?: { action: string; message: string } | null;
+  /**
+   * Whether a client can actually reach this business right now.
+   *
+   * `stats.website.is_reachable`: a published site, a published landing page,
+   * OR an active smart link — any one will do, because a business can sell
+   * without ever building a website. This has to be told to the dashboard
+   * rather than guessed from the setup list, which is a list of things to do,
+   * not a record of what is live.
+   */
+  isReachable?: boolean;
+  /** How that reach is achieved, so the verdict can name the right thing. */
+  reachSurfaces?: { livePages: boolean; smartLinks: boolean };
   funnelStats?: FunnelStats;
   pipelineStages?: PipelineStage[];  // Real CRM pipeline stages
   milestoneData?: MilestoneData;
@@ -266,6 +278,8 @@ export function LiveDashboard({
   pendingActions,
   actionError,
   onChannelsChanged,
+  isReachable,
+  reachSurfaces,
   funnelStats,
   pipelineStages = [],
   milestoneData,
@@ -450,10 +464,48 @@ export function LiveDashboard({
   // ===========================
 
   const stats = funnelStats || { found: 0, touch: 0, booked: 0, paid: 0, paidAmount: 0 };
-  // Check if website is published OR if there's no website in setup (user doesn't need one)
-  // If no website item exists at all, consider it "not blocking" for funnel display
+
+  /*
+   * Is anything of this business actually live?
+   *
+   * This read `websiteItem ? websiteItem.completed : true` — the WEBSITE step
+   * in the setup list, defaulting to true when there is no such step. So a
+   * business that had declined a website, which is the case where the step is
+   * absent, was declared published on the strength of a default: the dashboard
+   * said "You're live. Since you published." to someone whose only page was a
+   * draft and who had published nothing at all.
+   *
+   * The real answer is `is_reachable` from the stats call — a live page or an
+   * active smart link, either one — because a smart link IS the publication for
+   * a business that needs no website. The setup item stays as the fallback for
+   * a caller that has not passed the fact.
+   */
   const websiteItem = setupItems.find(item => item.id === 'website');
-  const hasPublished = websiteItem ? websiteItem.completed : true; // No website requirement = not in setup mode
+  const hasPublished = isReachable ?? (websiteItem ? websiteItem.completed : false);
+
+  /**
+   * What this business actually publishes under, named for the verdict.
+   *
+   * Not hardcoded to a website: a smart link is the publication for a business
+   * that needs no site, and saying "since you published your site" to one would
+   * describe work it deliberately declined.
+   */
+  const liveSinceLabel = reachSurfaces?.livePages
+    ? (t('verdict.live.when') || 'Since you published')
+    : reachSurfaces?.smartLinks
+      ? (t('verdict.live.when.link') || 'Since your link went out')
+      : (t('verdict.live.when') || 'Since you published');
+
+  /** The channel actually producing leads, if one is. */
+  const topLeadChannel = (() => {
+    const rows = (channelPerformance?.rows || []).filter(row => row.leads > 0);
+    if (rows.length === 0) return null;
+    const best = rows.reduce((a, b) => (b.leads > a.leads ? b : a));
+    return {
+      leads: best.leads,
+      label: CHANNEL_LABELS[best.channel]?.[language] || CHANNEL_LABELS[best.channel]?.en || best.channel,
+    };
+  })();
 
   /**
    * Whether being reachable means a link rather than a site.
@@ -728,13 +780,27 @@ export function LiveDashboard({
     }
 
     if (stats.found > 0) {
+      /*
+       * Say where they came from, and name what is actually live.
+       *
+       * "Since you published" was printed whatever the business had published —
+       * and it was printed to businesses that had published nothing, because
+       * the flag behind it defaulted to true. A business reached by a smart
+       * link has published a link, not a site, and the sentence has to be able
+       * to say so. Where a channel is actually producing leads, that is the
+       * more useful fact than a visitor count.
+       */
+      const source = topLeadChannel
+        ? ` ${t('verdict.live.via') || 'Most came from'} ${topLeadChannel.label}.`
+        : '';
+
       return {
         status: 'ok' as const,
-        text: `${t('verdict.live') || 'You\'re live'}. ${stats.found} ${t('verdict.live.found') || 'people have found you'}.`,
+        text: `${t('verdict.live') || 'You\'re live'}. ${stats.found} ${t('verdict.live.found') || 'people have found you'}.${source}`,
         sub: stats.found < 25
           ? (t('verdict.live.early') || 'At this point that tells me nothing — I\'d expect the first enquiry around 25 visitors.')
           : (t('verdict.live.sub') || 'Looking good so far.'),
-        when: t('verdict.live.when') || 'Since you published',
+        when: liveSinceLabel,
       };
     }
 

@@ -10,6 +10,7 @@
 
 import {
   buildMoneyItems,
+  outstandingOf,
   totalMoney,
   type MoneyBooking,
   type MoneyInvoice,
@@ -354,5 +355,84 @@ describe('totals never count the same money twice', () => {
 
     expect(totals.byCurrency.ILS).toEqual({ collected: 600, outstanding: 0, refunded: 0 });
     expect(totals.byCurrency.USD).toEqual({ collected: 0, outstanding: 40, refunded: 0 });
+  });
+});
+
+/**
+ * A payment plan's unpaid periods are owed money.
+ *
+ * They are not entries — an entry is an invoice or a payment — so summing
+ * entries alone reported a client mid-plan as owing nothing, and every AR
+ * figure was blind to plan money.
+ */
+describe('outstandingOf with a payment plan', () => {
+  const planItem = (periods: Array<{ n: number; amount: number; status: string }>) => ({
+    key: 'bk-1',
+    kind: 'booking' as const,
+    title: 'Coaching',
+    amount: 0,
+    refunded: 0,
+    currency: 'ILS',
+    status: 'awaiting_payment' as const,
+    method: 'plan' as const,
+    date: '2026-09-01',
+    contactName: null,
+    entries: [],
+    simple: false,
+    plan: {
+      id: 'plan-1',
+      installmentCount: periods.length,
+      periodsPaid: periods.filter(p => p.status === 'paid').length,
+      status: 'active',
+      periods: periods.map(p => ({
+        id: `p${p.n}`,
+        installmentNumber: p.n,
+        amount: p.amount,
+        dueDate: '2026-10-01',
+        status: p.status,
+        paidAt: null,
+        transactionId: null,
+      })),
+    },
+  });
+
+  it('counts the periods still to come', () => {
+    const item = planItem([
+      { n: 1, amount: 200, status: 'paid' },
+      { n: 2, amount: 200, status: 'pending' },
+      { n: 3, amount: 200, status: 'pending' },
+    ]);
+
+    expect(outstandingOf(item as never)).toBe(400);
+  });
+
+  it('is exact when the split is uneven', () => {
+    // ₪100 over 3 is 33.33 / 33.33 / 33.34 — the remainder sits on the last
+    // period, so multiplying an average would give a different number.
+    const item = planItem([
+      { n: 1, amount: 33.33, status: 'paid' },
+      { n: 2, amount: 33.33, status: 'pending' },
+      { n: 3, amount: 33.34, status: 'pending' },
+    ]);
+
+    expect(outstandingOf(item as never)).toBeCloseTo(66.67, 2);
+  });
+
+  it('owes nothing once every period is paid', () => {
+    const item = planItem([
+      { n: 1, amount: 200, status: 'paid' },
+      { n: 2, amount: 200, status: 'paid' },
+    ]);
+
+    expect(outstandingOf(item as never)).toBe(0);
+  });
+
+  it('counts an overdue period as owed, not as lost', () => {
+    const item = planItem([
+      { n: 1, amount: 200, status: 'paid' },
+      { n: 2, amount: 200, status: 'overdue' },
+    ]);
+
+    expect(outstandingOf(item as never)).toBe(200);
   });
 });

@@ -36,6 +36,7 @@ import type {
   ContactFormData,
   SessionCardData,
   SessionPayment,
+  SessionPaymentPlan,
   ContactTask,
   ContactDocument,
   ContactEmail,
@@ -44,6 +45,11 @@ import type {
   BookingJourneyStep,
   Appointment
 } from './types';
+// The same split Stripe's prices are built from, so what the card shows for a
+// period is the figure actually charged. Both are pure functions — no server
+// imports — so they are safe in a client component.
+import { planPhases } from '@/lib/payments/planSchedule';
+import { fromMinorUnits } from '@/lib/payments/refundMath';
 
 // Extended booking data that includes confirmation email info
 interface ExtendedBookingData {
@@ -149,8 +155,41 @@ function buildJourneySteps(
                       payment.invoiceDueDate &&
                       new Date(payment.invoiceDueDate) < new Date();
 
-    // Show refund status or overdue status in details if applicable
+    /*
+     * Say which arrangement this is, not just a number.
+     *
+     * For a plan the amount alone is actively misleading: ₪333 next to a
+     * ₪1,000 service reads as a partial payment or a discount. The owner needs
+     * the shape — how much now, how many periods, how often, and what it comes
+     * to — which is the same breakdown the client agreed to at checkout.
+     */
+    const planPeriodText: Record<string, string> = {
+      en: 'of', es: 'de', he: 'מתוך'
+    };
+    const planEveryText: Record<string, Record<string, string>> = {
+      en: { weekly: 'weekly', biweekly: 'every 2 weeks', monthly: 'monthly', quarterly: 'quarterly' },
+      es: { weekly: 'semanal', biweekly: 'cada 2 semanas', monthly: 'mensual', quarterly: 'trimestral' },
+      he: { weekly: 'שבועי', biweekly: 'דו-שבועי', monthly: 'חודשי', quarterly: 'רבעוני' }
+    };
+    const planTotalText: Record<string, string> = {
+      en: 'total', es: 'total', he: 'סה״כ'
+    };
+
     let paymentDetails = formatAmount(payment.amount, payment.currency);
+
+    if (payment.plan) {
+      const lang = planEveryText[language] ? language : 'en';
+      const periodsPaid = payment.plan.periodsPaid ?? (payment.status === 'paid' ? 1 : 0);
+
+      // "₪333.33 · 1 of 3 · monthly · ₪1,000.00 total"
+      paymentDetails = [
+        formatAmount(payment.plan.installmentAmount, payment.currency),
+        `${periodsPaid} ${planPeriodText[lang]} ${payment.plan.installmentCount}`,
+        planEveryText[lang][payment.plan.frequency],
+        `${formatAmount(payment.plan.totalAmount, payment.currency)} ${planTotalText[lang]}`
+      ].join(' • ');
+    }
+
     if (payment.status === 'refunded') {
       paymentDetails = `${paymentDetails} (${refundedText[language] || refundedText.en})`;
     } else if (isOverdue) {
@@ -616,10 +655,49 @@ export function CRMContactDrawerV2({
       };
 
       // Check if this service is free (price 0 or null)
-      const bookingWithService = booking as SchedulingBooking & { service?: { service_name: string; price?: number; currency?: string } };
+      const bookingWithService = booking as SchedulingBooking & {
+        service?: {
+          service_name: string;
+          price?: number;
+          currency?: string;
+          payment_type?: string | null;
+          installment_count?: number | null;
+          installment_frequency?: string | null;
+        };
+      };
       const servicePrice = bookingWithService.service?.price ?? 0;
       const serviceCurrency = bookingWithService.service?.currency || 'USD';
       const isFreeService = servicePrice === 0;
+
+      /*
+       * Sold in installments?
+       *
+       * The card showed `servicePrice` for every booking, so a service sold as
+       * "3 monthly payments of ₪333" appeared as a flat ₪1,000 — the whole
+       * agreement, presented as if it had been collected. The owner could not
+       * tell a paid-in-full sale from a plan on its first period.
+       *
+       * `planPhases` is the same split Stripe's prices are built from, so the
+       * per-period figure here is the figure actually charged, and the
+       * remainder lands on the final period rather than silently going missing.
+       */
+      const service = bookingWithService.service;
+      const isPlan =
+        service?.payment_type === 'installments' &&
+        (service.installment_count ?? 1) > 1 &&
+        servicePrice > 0;
+
+      const sessionPlan: SessionPaymentPlan | undefined = isPlan
+        ? {
+            installmentCount: service!.installment_count!,
+            installmentAmount: fromMinorUnits(
+              planPhases(servicePrice, serviceCurrency, service!.installment_count!)[0].amountMinor,
+              serviceCurrency
+            ),
+            totalAmount: servicePrice,
+            frequency: (service!.installment_frequency || 'monthly') as SessionPaymentPlan['frequency'],
+          }
+        : undefined;
 
       // Extract invoice data from booking if available
       const bookingWithInvoice = booking as SchedulingBooking & { invoice?: { id: string; status: string; due_date: string | null; sent_at: string | null; paid_at: string | null } };
@@ -631,9 +709,12 @@ export function CRMContactDrawerV2({
         status: 'free' as const
       } : servicePrice > 0 ? {
         id: booking.payment_id || undefined,
-        amount: servicePrice,
+        // One period for a plan, the whole price otherwise — what this payment
+        // is, never what the agreement totals.
+        amount: sessionPlan ? sessionPlan.installmentAmount : servicePrice,
         currency: serviceCurrency,
         status: mapPaymentStatus(booking.payment_status),
+        plan: sessionPlan,
         paidAt: invoiceData?.paid_at || undefined,
         // Invoice data for resend functionality and due date display
         invoiceId: invoiceData?.id,

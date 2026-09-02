@@ -53,30 +53,21 @@ export default function LandingPreviewPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<PreviewData | null>(null);
 
-  // Get language from URL parameter (passed by parent component) or fall back to browser language
-  // This ensures the loading state uses the platform language, not browser language
-  const [uiLocale, setUiLocale] = useState<Locale>(() => {
-    if (typeof window !== 'undefined') {
-      // First check URL parameter (platform language passed by parent)
-      const urlParams = new URLSearchParams(window.location.search);
-      const langParam = urlParams.get('lang');
-      if (langParam && isValidLocale(langParam)) {
-        return langParam;
-      }
-      // Fall back to browser language
-      const browserLang = navigator.language?.split('-')[0] || defaultLocale;
-      return isValidLocale(browserLang) ? browserLang : defaultLocale;
-    }
-    return defaultLocale;
-  });
+  /*
+   * Same as the website preview: derived from `?lang=`, not seeded from
+   * `window` in a `useState`. That initialiser cannot run on the server, so the
+   * first paint was always English and only corrected after hydration — which
+   * for a fast page is the entire visible life of the loading state.
+   */
+  const langParam = searchParams.get('lang');
+  const [browserLocale, setBrowserLocale] = useState<Locale>(defaultLocale);
 
-  // Update locale after hydration if URL param changes
   useEffect(() => {
-    const langParam = searchParams.get('lang');
-    if (langParam && isValidLocale(langParam) && langParam !== uiLocale) {
-      setUiLocale(langParam);
-    }
-  }, [searchParams, uiLocale]);
+    const browserLang = navigator.language?.split('-')[0];
+    if (browserLang && isValidLocale(browserLang)) setBrowserLocale(browserLang);
+  }, []);
+
+  const uiLocale: Locale = langParam && isValidLocale(langParam) ? langParam : browserLocale;
 
   useEffect(() => {
     loadPreviewData();

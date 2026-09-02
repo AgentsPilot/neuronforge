@@ -519,9 +519,27 @@ const OUTSTANDING_STATUSES: MoneyStatus[] = ['awaiting_payment', 'overdue', 'fai
  * counts as owed — which they would, the first time either definition moved.
  */
 export function outstandingOf(item: MoneyItem): number {
-  return item.entries
+  const fromEntries = item.entries
     .filter(entry => OUTSTANDING_STATUSES.includes(entry.status))
     .reduce((sum, entry) => sum + entry.amount, 0);
+
+  /**
+   * A payment plan's unpaid periods are owed money too.
+   *
+   * They are not entries — an entry is an invoice or a payment, and a period is
+   * neither until it is charged — so summing entries alone reported a client
+   * eleven months into a twelve-month plan as owing nothing. Every AR figure,
+   * every "outstanding" card and every overdue metric was blind to plan money.
+   *
+   * Counted from the periods rather than from `installmentCount - periodsPaid`
+   * so an uneven split is exact: the final period carries the remainder, and
+   * multiplying an average would be a different number.
+   */
+  const fromPlan = (item.plan?.periods ?? [])
+    .filter(period => period.status !== 'paid')
+    .reduce((sum, period) => sum + period.amount, 0);
+
+  return fromEntries + fromPlan;
 }
 
 export function totalMoney(items: MoneyItem[]): MoneyTotals {

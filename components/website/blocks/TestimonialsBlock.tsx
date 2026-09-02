@@ -20,13 +20,48 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
   const rawContent = content as TestimonialsContent;
   const {
     subtitle,
-    testimonials = [],
+    testimonials: rawTestimonials = [],
     layout = 'carousel'
   } = rawContent;
+
+  /*
+   * Only testimonials this block can actually draw.
+   *
+   * The content arrives from three places that guarantee nothing about its
+   * shape: a model's JSON (`content.testimonials || []`, straight through), a
+   * static template, and hand editing. The block trusted every field —
+   * `testimonials[safeIndex].author.charAt(0)` — so one entry without an
+   * author took down the whole page with a TypeError, and the public site with
+   * it.
+   *
+   * A quote is the only thing a testimonial cannot do without. An author is
+   * nice and is guessed from the other names a generator might use; anything
+   * with no quote is not a testimonial and is dropped rather than rendered as
+   * an empty card.
+   */
+  const testimonials = (Array.isArray(rawTestimonials) ? rawTestimonials : [])
+    .filter((item): item is TestimonialItem => {
+      const quote = (item as { quote?: unknown } | null)?.quote;
+      return typeof quote === 'string' && quote.trim().length > 0;
+    })
+    .map(item => {
+      const loose = item as TestimonialItem & { name?: string; client?: string };
+      return { ...item, author: loose.author || loose.name || loose.client || '' };
+    });
   // Always use translated title for section headers
   const title = t('whatClientsSay');
 
   const [currentIndex, setCurrentIndex] = useState(0);
+  /*
+   * Clamped, because the list can shrink under the index.
+   *
+   * Filtering above can drop entries between renders, and the autoplay timer
+   * advances on the OLD length. `testimonials[safeIndex]` then reads
+   * undefined and every field access after it throws.
+   */
+  const safeIndex = testimonials.length > 0
+    ? Math.min(currentIndex, testimonials.length - 1)
+    : 0;
   const [isAutoPlaying, setIsAutoPlaying] = useState(true);
   const primaryColor = theme?.colors.primary || '#4F6EF7';
   const secondaryColor = theme?.colors.secondary || '#E8DDD4';
@@ -45,6 +80,19 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
 
     return () => clearInterval(timer);
   }, [layout, isAutoPlaying, testimonials.length]);
+
+  /*
+   * Nothing to show, so nothing is shown.
+   *
+   * A business with no reviews used to get invented ones — "Amazing
+   * experience!" from "Sarah M." — on its real public site. Those are gone, so
+   * this section can legitimately be empty, and an empty "What Clients Say"
+   * heading over blank space is worse than no section: it reads as broken
+   * rather than as not-yet-filled.
+   *
+   * After the hooks, so the hook order never changes between renders.
+   */
+  if (testimonials.length === 0) return null;
 
   const next = () => {
     setIsAutoPlaying(false);
@@ -314,9 +362,9 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                 />
 
                 <div className="relative text-center">
-                  {testimonials[currentIndex].rating && (
+                  {testimonials[safeIndex].rating && (
                     <div className="flex justify-center mb-6">
-                      {renderStars(testimonials[currentIndex].rating)}
+                      {renderStars(testimonials[safeIndex].rating)}
                     </div>
                   )}
 
@@ -327,12 +375,12 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                       color: isDark ? '#e5e7eb' : '#374151'
                     }}
                   >
-                    &ldquo;{testimonials[currentIndex].quote}&rdquo;
+                    &ldquo;{testimonials[safeIndex].quote}&rdquo;
                   </p>
 
                   {/* Author with gradient border avatar */}
                   <div className="flex items-center justify-center gap-5">
-                    {testimonials[currentIndex].image ? (
+                    {testimonials[safeIndex].image ? (
                       <div
                         className="relative"
                         style={{
@@ -342,8 +390,8 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                         }}
                       >
                         <img
-                          src={testimonials[currentIndex].image}
-                          alt={testimonials[currentIndex].author}
+                          src={testimonials[safeIndex].image}
+                          alt={testimonials[safeIndex].author}
                           className="w-16 h-16 rounded-full object-cover border-3"
                           style={{ borderColor: isDark ? '#1f2937' : '#ffffff' }}
                         />
@@ -355,7 +403,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                           background: `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})`
                         }}
                       >
-                        {testimonials[currentIndex].author.charAt(0)}
+                        {(testimonials[safeIndex].author || '\u2014').charAt(0)}
                       </div>
                     )}
                     <div className={`text-${isRTL ? 'right' : 'left'}`}>
@@ -366,13 +414,13 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                           color: isDark ? '#ffffff' : textColor
                         }}
                       >
-                        {testimonials[currentIndex].author}
+                        {testimonials[safeIndex].author}
                       </p>
-                      {(testimonials[currentIndex].role || testimonials[currentIndex].company) && (
+                      {(testimonials[safeIndex].role || testimonials[safeIndex].company) && (
                         <p style={{ color: isDark ? '#9ca3af' : '#6b7280' }}>
-                          {testimonials[currentIndex].role}
-                          {testimonials[currentIndex].role && testimonials[currentIndex].company ? ` ${t('at', 'common')} ` : ''}
-                          {testimonials[currentIndex].company}
+                          {testimonials[safeIndex].role}
+                          {testimonials[safeIndex].role && testimonials[safeIndex].company ? ` ${t('at', 'common')} ` : ''}
+                          {testimonials[safeIndex].company}
                         </p>
                       )}
                     </div>

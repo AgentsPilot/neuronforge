@@ -17,6 +17,16 @@ import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteGenerationAPI' });
 
+/**
+ * A gpt-4o call building a whole website from a ~4k-token prompt routinely takes
+ * 20-60s. Without this the platform default kills the function mid-flight, the
+ * caller's `await response.json()` throws, and it lands in a swallowed catch —
+ * indistinguishable from "the AI just doesn't work". Matches the ceiling the
+ * other LLM routes in this repo already declare.
+ */
+export const maxDuration = 60;
+
+
 const GenerationRequestSchema = z.object({
   userId: z.string().uuid('Invalid user ID'),
   // Both optional, and both set by the setup wizard: it has already created

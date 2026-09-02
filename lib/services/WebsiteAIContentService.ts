@@ -10,7 +10,20 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { ProviderFactory } from '@/lib/ai/providerFactory';
+/*
+ * `getProviderFactory()`, not `ProviderFactory.getProvider()`.
+ *
+ * Every call in this file is `provider.complete({...})`, and no provider has a
+ * `complete` method — `BaseAIProvider` declares only `chatCompletion`. So each
+ * of the six call sites threw `provider.complete is not a function`, which the
+ * routes above caught and returned as a 500: "Failed to regenerate field".
+ * TypeScript had been reporting all six as `Property 'complete' does not exist
+ * on type 'BaseAIProvider'`, but `next.config.js` ignores build errors, so it
+ * shipped and every AI feature here was dead on arrival.
+ *
+ * `complete()` exists only on the SimpleProvider wrapper this returns.
+ */
+import { getProviderFactory } from '@/lib/ai/providerFactory';
 
 const logger = createLogger({ service: 'WebsiteAIContentService' });
 
@@ -271,7 +284,7 @@ export class WebsiteAIContentService {
 
     logger.info({ blockType, fieldToRegenerate, targetLanguage }, 'Regenerating single field');
 
-    const provider = ProviderFactory.getProvider('openai');
+    const provider = getProviderFactory();
     const languageNames: Record<WebsiteLanguage, string> = {
       en: 'English',
       es: 'Spanish',
@@ -304,7 +317,7 @@ export class WebsiteAIContentService {
   async enhanceTestimonial(text: string, language: WebsiteLanguage): Promise<string> {
     logger.info({ language, textLength: text.length }, 'Enhancing testimonial');
 
-    const provider = ProviderFactory.getProvider('openai');
+    const provider = getProviderFactory();
     const languageNames: Record<WebsiteLanguage, string> = {
       en: 'English',
       es: 'Spanish',
@@ -340,7 +353,7 @@ Enhanced testimonial (just the text, no quotes):`;
     profile: BusinessProfileData,
     language: WebsiteLanguage
   ): Promise<Record<string, unknown>> {
-    const provider = ProviderFactory.getProvider('openai');
+    const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
 
     const prompt = `Generate hero section content for a ${profile.vertical} business website.
@@ -384,7 +397,7 @@ Return ONLY valid JSON, no markdown.`;
     profile: BusinessProfileData,
     language: WebsiteLanguage
   ): Promise<Record<string, unknown>> {
-    const provider = ProviderFactory.getProvider('openai');
+    const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
 
     const prompt = `Generate about section content for a ${profile.vertical} business website.
@@ -514,7 +527,7 @@ Return ONLY valid JSON, no markdown.`;
     services: SchedulingServiceData[],
     language: WebsiteLanguage
   ): Promise<Record<string, unknown>> {
-    const provider = ProviderFactory.getProvider('openai');
+    const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
     const serviceNames = services.map(s => s.service_name).join(', ');
 
@@ -571,7 +584,7 @@ Return ONLY valid JSON, no markdown.`;
     services: SchedulingServiceData[],
     language: WebsiteLanguage
   ): Promise<Record<string, unknown>> {
-    const provider = ProviderFactory.getProvider('openai');
+    const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
 
     const prompt = `Generate features section for a ${profile.vertical} business website.
@@ -689,24 +702,31 @@ Return ONLY valid JSON, no markdown.`;
     profile: BusinessProfileData,
     language: WebsiteLanguage
   ): Promise<Record<string, unknown>> {
+    /*
+     * `#services`, not `#booking`.
+     *
+     * A homepage no longer installs a booking section — each service carries
+     * its own button instead — so a CTA anchored at `#booking` scrolled
+     * nowhere. The services list is where a booking can actually start.
+     */
     const content: Record<WebsiteLanguage, Record<string, string>> = {
       en: {
         title: 'Ready to Get Started?',
         subtitle: 'Book your first session today',
         cta_text: 'Book Now',
-        cta_link: '#booking'
+        cta_link: '#services'
       },
       es: {
         title: '¿Listo para Comenzar?',
         subtitle: 'Reserva tu primera sesión hoy',
         cta_text: 'Reservar',
-        cta_link: '#booking'
+        cta_link: '#services'
       },
       he: {
         title: 'מוכן להתחיל?',
         subtitle: 'קבע את הפגישה הראשונה שלך היום',
         cta_text: 'הזמן עכשיו',
-        cta_link: '#booking'
+        cta_link: '#services'
       }
     };
 

@@ -7,8 +7,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { loadServicePaymentPlans } from '@/lib/business-os/servicePaymentPlan';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 
@@ -64,6 +66,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       requestLogger.warn({ err: servicesError }, 'Failed to fetch services');
     }
 
+    // How each service may be paid over time. A smart link sells the same
+    // services the website does, so it has to describe them the same way.
+    const plansByService = await loadServicePaymentPlans(config.userId);
+
     // Format services for the response
     const formattedServices = (services || []).map(s => ({
       id: s.id,
@@ -76,7 +82,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // link's widget fell back to a flow stored on the link, which described
       // the same journey for a booked session and a downloadable product.
       is_scheduled: s.is_scheduled !== false,
-      collection: s.collection ?? null
+      collection: s.collection ?? null,
+      // How this service may be paid over time. Undefined for most, and the
+      // widget then shows a single price as it always has.
+      paymentPlan: plansByService[s.id]
     }));
 
     // Check if user has any paid services (for payment link availability)
@@ -91,8 +100,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
      * payment step has nothing behind it, so the public pages drop it and the
      * booking completes without one.
      */
-    const connectResult = await stripeConnectRepository.findByUserId(config.userId);
-    const processorReady = connectResult.data?.charges_enabled === true;
+    const capability = await resolvePaymentCollectionCapability(supabaseServer, config.userId);
+    const processorReady = capability.canCollect;
 
     requestLogger.info(
       { userCode, companyName: config.companyName, serviceCount: formattedServices.length, processorReady },

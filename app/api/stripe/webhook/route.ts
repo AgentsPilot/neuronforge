@@ -7,6 +7,11 @@ import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
 import { QuotaAllocationService } from '@/lib/services/QuotaAllocationService';
 import { resolveAccountOwner } from '@/lib/payments/stripeAccountContext';
+import { subscriptionIdFromInvoice, subscriptionMetadataFromInvoice } from '@/lib/payments/invoiceSubscription';
+import { bindPlanSubscription } from '@/lib/payments/bindPlanSubscription';
+import { fromMinorUnits } from '@/lib/payments/refundMath';
+import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
+import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
 import Stripe from 'stripe';
 
@@ -38,7 +43,7 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   let pilotCredits = parseInt(invoice.metadata?.credits || '0');
 
   // If metadata not in invoice, fetch from subscription
-  const invoiceSubscription = (invoice as any).subscription;
+  const invoiceSubscription = subscriptionIdFromInvoice(invoice);
   if (!userId) {
     const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY!);
 
@@ -240,7 +245,7 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
       period_end: invoice.lines?.data[0]?.period?.end ? new Date(invoice.lines.data[0].period.end * 1000).toISOString() : new Date().toISOString(),
       metadata: {
         stripe_customer_id: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id,
-        stripe_subscription_id: (invoice as any).subscription,
+        stripe_subscription_id: subscriptionIdFromInvoice(invoice),
         line_items: invoice.lines.data.map(line => ({
           description: line.description,
           amount: line.amount,
@@ -278,7 +283,7 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
     await auditLog({
       action: hasProration ? 'SUBSCRIPTION_UPGRADED' : 'SUBSCRIPTION_RENEWED',
       entityType: 'subscription',
-      entityId: String((invoice as any).subscription || invoice.id),
+      entityId: String(subscriptionIdFromInvoice(invoice) || invoice.id),
       userId: userId,
       resourceName: `Subscription Payment`,
       details: {
@@ -403,7 +408,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     await auditLog({
       action: 'PAYMENT_FAILED',
       entityType: 'subscription',
-      entityId: String((invoice as any).subscription || invoice.id),
+      entityId: String(subscriptionIdFromInvoice(invoice) || invoice.id),
       userId: userId,
       resourceName: `Subscription Payment Failure`,
       details: {
@@ -1030,17 +1035,35 @@ async function handleConnectPaymentIntentSucceeded(
   intent: Stripe.PaymentIntent,
   connectAccountId: string
 ) {
-  const invoiceRef = (intent as unknown as { invoice?: string | { id: string } }).invoice;
-  if (invoiceRef) {
-    console.log('ℹ️  [Webhook] payment_intent belongs to an invoice; invoice.paid owns it');
-    return;
-  }
-
+  /*
+   * `intent.invoice` is GONE on this API version — Stripe removed the
+   * PaymentIntent→Invoice back-reference in Basil, the same release that moved
+   * `invoice.subscription` into `invoice.parent`. The cast that used to read it
+   * silently returned undefined, so the guard it protected never fired.
+   *
+   * Nothing was double-recorded, because the owner check below catches the same
+   * intents for a different reason: an invoice's PaymentIntent is created by
+   * STRIPE at finalisation and carries no metadata of ours, so it has no
+   * `owner_id` and is dropped there. That is the guard doing its job by
+   * accident, which is worth saying out loud rather than relying on quietly.
+   *
+   * Payment-plan periods take exactly this path — every one of them — so the
+   * "no owner_id" case is separated below from a genuinely untagged charge,
+   * which is a real fault and still an error.
+   */
   const ownerId = intent.metadata?.owner_id;
   if (!ownerId) {
-    // Without an owner there is no user to attribute the money to. Reported
-    // rather than dropped: it means a charge path is not tagging its intents.
-    console.error('❌ [Webhook] payment_intent.succeeded with no owner_id in metadata:', intent.id);
+    const looksStripeGenerated = Object.keys(intent.metadata || {}).length === 0;
+
+    if (looksStripeGenerated) {
+      // An invoice or subscription period. `invoice.paid` owns it.
+      console.log('ℹ️  [Webhook] Untagged payment_intent (invoice-backed); invoice.paid owns it:', intent.id);
+    } else {
+      // Tagged by one of our surfaces, but not with an owner — a charge path is
+      // not identifying the business it belongs to, and the money cannot be
+      // attributed. That is a fault.
+      console.error('❌ [Webhook] payment_intent.succeeded with no owner_id in metadata:', intent.id);
+    }
     return;
   }
 
@@ -1068,20 +1091,31 @@ async function handleConnectPaymentIntentSucceeded(
     return;
   }
 
+  const currency = intent.currency.toUpperCase();
+
   const { error } = await supabaseAdmin.from('payment_transactions').insert({
     user_id: ownerId,
     contact_id: intent.metadata?.contact_id || null,
-    amount: intent.amount_received / 100,
-    currency: intent.currency.toUpperCase(),
+    // `/ 100` assumed every currency has two decimal places. JPY has none, so a
+    // ¥5,000 payment was recorded as 50 — under-reporting revenue a hundredfold
+    // and leaving the refund guard comparing figures on two different scales.
+    amount: fromMinorUnits(intent.amount_received, currency),
+    currency,
     status: 'succeeded',
     processor_type: 'stripe',
     payment_method: 'card',
     stripe_payment_intent_id: intent.id,
+    // THE COLUMNS, not metadata. Both readers — `findSettledForBooking` and
+    // `resolveRefundTarget` — query the columns, so money written only into
+    // metadata was money that could not be refunded or attributed to its work.
+    booking_id: intent.metadata?.booking_id || null,
+    service_id: intent.metadata?.service_id || null,
     paid_at: new Date(intent.created * 1000).toISOString(),
     description: intent.description || 'Website payment',
     refund_status: 'none',
     refunded_amount: 0,
     metadata: {
+      // Kept as well, not instead: rows written before this carry it only here.
       booking_id: intent.metadata?.booking_id || null,
       service_id: intent.metadata?.service_id || null,
       source: 'payment_intent_webhook'
@@ -1095,6 +1129,111 @@ async function handleConnectPaymentIntentSucceeded(
   }
 
   console.log('✅ [Webhook] Recorded standalone payment:', intent.id);
+}
+
+/**
+ * One period of a payment plan was collected.
+ *
+ * Returns true when this invoice belonged to a plan, so the caller knows not to
+ * treat it as an ordinary invoice. Dedupes on the Stripe invoice id, which the
+ * unique index on `payment_plan_installments.stripe_invoice_id` also enforces —
+ * a redelivered webhook must not mark a second period paid.
+ */
+async function recordPlanPeriodPaid(
+  invoice: Stripe.Invoice,
+  subscriptionId: string,
+  connectAccountId: string
+): Promise<boolean> {
+  const plan = await paymentPlanSubscriptionRepository.findBySubscriptionId(subscriptionId);
+  if (!plan.data) return false;
+
+  // The plan is found by a globally unique Stripe id, so ownership still has to
+  // be proved against the account the event came from.
+  if (!(await accountOwns(connectAccountId, plan.data.user_id))) {
+    console.error(
+      '🚨 [Webhook] Plan period from an account that does not own the plan — refusing',
+      { connectAccountId, subscriptionId }
+    );
+    return true;
+  }
+
+  const { data: alreadyRecorded } = await supabaseAdmin
+    .from('payment_plan_installments')
+    .select('id')
+    .eq('stripe_invoice_id', invoice.id)
+    .maybeSingle();
+
+  if (alreadyRecorded) {
+    console.log('ℹ️  [Webhook] Plan period already recorded:', invoice.id);
+    return true;
+  }
+
+  const currency = (invoice.currency || plan.data.currency).toUpperCase();
+  const amount = fromMinorUnits(invoice.amount_paid ?? 0, currency);
+  const periodsPaid = plan.data.periods_paid + 1;
+
+  // The money first, then the plan's own state — the same order settlement
+  // follows everywhere else, so a failure leaves money recorded and a count
+  // behind, never a count ahead of money that never arrived.
+  const { error: txError } = await supabaseAdmin.from('payment_transactions').insert({
+    user_id: plan.data.user_id,
+    contact_id: plan.data.contact_id,
+    booking_id: plan.data.booking_id,
+    service_id: plan.data.service_id,
+    amount,
+    currency,
+    status: 'succeeded',
+    processor_type: 'stripe',
+    payment_method: 'card',
+    paid_at: new Date().toISOString(),
+    description: `Payment ${periodsPaid} of ${plan.data.installment_count}`,
+    refund_status: 'none',
+    refunded_amount: 0,
+    /*
+     * The Stripe invoice id lives in metadata, NOT in a column.
+     *
+     * `payment_transactions` has no `stripe_invoice_id` — it has `invoice_id`,
+     * a UUID pointing at `payment_invoices`. Writing the Stripe id to a column
+     * that does not exist made PostgREST reject the whole insert ("Could not
+     * find the 'stripe_invoice_id' column ... in the schema cache"), which threw
+     * and failed the webhook, so no plan period was ever recorded.
+     *
+     * Dedupe does not depend on this: it is enforced by the unique index on
+     * `payment_plan_installments.stripe_invoice_id`, which is a real column,
+     * and checked above before anything is written.
+     */
+    metadata: {
+      source: 'payment_plan',
+      subscription_id: subscriptionId,
+      stripe_invoice_id: invoice.id,
+    },
+    ...describeChargeAccount(connectAccountId),
+  });
+
+  if (txError) {
+    console.error('❌ [Webhook] Could not record a plan period:', txError);
+    throw txError;
+  }
+
+  // Mark the projected instalment, so "2 of 3 paid" is answerable locally.
+  await supabaseAdmin
+    .from('payment_plan_installments')
+    .update({
+      status: 'paid',
+      paid_at: new Date().toISOString(),
+      stripe_invoice_id: invoice.id,
+    })
+    .eq('subscription_id', plan.data.id)
+    .eq('installment_number', periodsPaid);
+
+  await paymentPlanSubscriptionRepository.recordPeriodPaid(plan.data.id, periodsPaid);
+
+  if (periodsPaid >= plan.data.installment_count) {
+    await paymentPlanSubscriptionRepository.close(plan.data.id, 'completed');
+  }
+
+  console.log('✅ [Webhook] Plan period recorded:', periodsPaid, 'of', plan.data.installment_count);
+  return true;
 }
 
 /**
@@ -1131,6 +1270,82 @@ async function accountOwns(connectAccountId: string, ownerId: string | null | un
 async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountId: string) {
   console.log('💳 [Webhook] Processing Connect invoice.paid:', invoice.id, 'Account:', connectAccountId);
   console.log('💳 [Webhook] Invoice metadata:', JSON.stringify(invoice.metadata || {}));
+
+  /**
+   * A payment plan period.
+   *
+   * Stripe raises one invoice per period against the subscription, so this is
+   * where a plan's money actually arrives — every period after the first, and
+   * the first one too. Without this branch a plan charged correctly and the
+   * platform recorded none of it: the money list would show "0 of 12 paid"
+   * forever while the client's card was debited every month.
+   */
+  const subscriptionId = subscriptionIdFromInvoice(invoice);
+
+  if (subscriptionId) {
+    /*
+     * The first period of a plan sold through the BOOKING MODAL.
+     *
+     * The hosted Checkout page bounds its plans at `checkout.session.completed`,
+     * because a session exists to be told about. The embedded flow has no
+     * session: `/api/website/payment-intent` creates the subscription directly
+     * with `default_incomplete` and the client confirms it in the modal, so the
+     * first time this platform hears that the plan is real is right here, when
+     * its opening invoice is paid.
+     *
+     * Bounding it is what stops it billing forever — `end_behavior: 'cancel'`
+     * after the agreed number of periods. It happens BEFORE the period is
+     * recorded because `recordPlanPeriodPaid` looks the plan up by its local
+     * mirror, and until this runs there is no mirror to find.
+     *
+     * A schedule cannot be created from an `incomplete` subscription, which is
+     * why this waits for payment rather than running at creation time. The
+     * window is one period wide — a month, typically — so a retried delivery
+     * has room to succeed before anything could be charged twice.
+     */
+    const planMeta = subscriptionMetadataFromInvoice(invoice);
+
+    if (planMeta.plan_count && planMeta.owner_id) {
+      if (await accountOwns(connectAccountId, planMeta.owner_id)) {
+        try {
+          const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+          await bindPlanSubscription({
+            stripe: stripeClient,
+            connectAccountId,
+            subscriptionId,
+            customerId:
+              typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id ?? null,
+            ownerId: planMeta.owner_id,
+            bookingId: planMeta.booking_id || null,
+            serviceId: planMeta.service_id || null,
+            planTotal: Number(planMeta.plan_total ?? 0),
+            planCurrency: planMeta.plan_currency || invoice.currency?.toUpperCase() || 'USD',
+            planCount: Number(planMeta.plan_count),
+            planFrequency: (planMeta.plan_frequency || 'monthly') as PlanFrequency,
+            paymentPlanId: planMeta.payment_plan_id || null,
+          });
+        } catch (bindError) {
+          // Loud, and deliberately rethrown: an unbounded subscription charges a
+          // client indefinitely. Failing the webhook makes Stripe retry, which
+          // is the behaviour that protects the client.
+          console.error('🚨 [Webhook] Could not bound a plan subscription:', subscriptionId, bindError);
+          throw bindError;
+        }
+      } else {
+        console.error(
+          '🚨 [Webhook] Plan metadata claims an owner this account does not own — refusing',
+          { connectAccountId, subscriptionId }
+        );
+      }
+    }
+
+    const handled = await recordPlanPeriodPaid(invoice, subscriptionId, connectAccountId);
+    // A period belongs to its plan, not to a platform invoice. Returning here
+    // stops the ordinary invoice path treating it as an unmatched Stripe
+    // invoice and doing nothing with it twice.
+    if (handled) return;
+  }
 
   // Look up the platform invoice by Stripe invoice ID
   let platformInvoice: {
@@ -1409,6 +1624,61 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
   const invoiceId = session.metadata?.invoice_id;
   const bookingId = session.metadata?.booking_id;
 
+  /**
+   * A payment plan's first charge. Bound it, or it bills forever.
+   *
+   * A Checkout Session cannot create a Subscription Schedule, so the session is
+   * opened in `subscription` mode and the schedule is attached here, the moment
+   * the subscription exists. `end_behavior: 'cancel'` is what stops it after the
+   * agreed number of periods — an open subscription would keep charging the
+   * client past the end of what they signed up for, which is the single worst
+   * outcome available in this file.
+   *
+   * Attached from the subscription rather than created fresh: releasing and
+   * recreating would drop the payment method the client just entered.
+   */
+  if (session.mode === 'subscription' && session.subscription && session.metadata?.plan_count) {
+    const subscriptionId =
+      typeof session.subscription === 'string' ? session.subscription : session.subscription.id;
+    const ownerId = session.metadata?.owner_id;
+
+    try {
+      // The webhook has no module-level client; the one at the invoice handler
+      // is function-scoped. Constructed here for the same reason.
+      const stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+      if (ownerId && (await accountOwns(connectAccountId, ownerId))) {
+        await bindPlanSubscription({
+          stripe: stripeClient,
+          connectAccountId,
+          subscriptionId,
+          customerId:
+            typeof session.customer === 'string' ? session.customer : session.customer?.id ?? null,
+          ownerId,
+          bookingId: bookingId || null,
+          serviceId: session.metadata?.service_id || null,
+          planTotal: Number(session.metadata?.plan_total ?? 0),
+          planCurrency: session.metadata?.plan_currency || 'USD',
+          planCount: Number(session.metadata.plan_count),
+          planFrequency: (session.metadata?.plan_frequency || 'monthly') as PlanFrequency,
+        });
+      } else {
+        console.error(
+          '🚨 [Webhook] Plan checkout names an owner this account does not own — refusing',
+          { connectAccountId, subscriptionId }
+        );
+      }
+    } catch (scheduleError) {
+      // Loud, and deliberately not swallowed: an unbounded subscription charges
+      // a client indefinitely, so this needs a human, not a log line.
+      console.error(
+        '🚨 [Webhook] Could not bound a payment plan — subscription may bill indefinitely:',
+        { subscriptionId, connectAccountId, error: scheduleError }
+      );
+      throw scheduleError;
+    }
+  }
+
   // Handle invoice payment via Checkout Session
   if (invoiceId) {
     console.log('📄 [Webhook] Checkout session for invoice:', invoiceId);
@@ -1574,6 +1844,30 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
  */
 async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connectAccountId: string) {
   console.log('⚠️ [Webhook] Processing Connect invoice.payment_failed:', invoice.id, 'Account:', connectAccountId);
+
+  /**
+   * A plan period that did not go through.
+   *
+   * Recorded against the plan so the business can be told something useful —
+   * "their card was declined on payment 3 of 12" — rather than discovering it
+   * when the total never arrives. Stripe keeps retrying on its own schedule;
+   * this only mirrors the state.
+   */
+  const failedSubscriptionId = subscriptionIdFromInvoice(invoice);
+
+  if (failedSubscriptionId) {
+    const plan = await paymentPlanSubscriptionRepository.findBySubscriptionId(failedSubscriptionId);
+
+    if (plan.data && (await accountOwns(connectAccountId, plan.data.user_id))) {
+      await paymentPlanSubscriptionRepository.recordFailure(
+        plan.data.id,
+        (invoice as unknown as { last_finalization_error?: { code?: string } }).last_finalization_error?.code ?? null
+      );
+
+      console.log('⚠️ [Webhook] Plan marked past_due:', plan.data.id);
+      return;
+    }
+  }
 
   // Look up the platform invoice by Stripe invoice ID
   const { data: platformInvoice, error: lookupError } = await supabaseAdmin

@@ -1,21 +1,24 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { motion } from 'framer-motion';
-import { Globe, Layout, Settings, Eye, EyeOff, ArrowLeft, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, type LucideIcon } from 'lucide-react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { Globe, Layout, Settings, Eye, EyeOff, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, type LucideIcon } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import { createLogger } from '@/lib/logger';
+import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
+import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/components/UserProvider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { WebsitePage, PageTheme } from '@/lib/repositories/WebsitePageRepository';
-import type { WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
+import type { WebsiteBlock, BlockType } from '@/lib/repositories/WebsiteBlockRepository';
+import type { FlowStepKey } from '@/lib/business-os/clientJourney';
 import { TestimonialEditor } from '@/components/website/TestimonialEditor';
 import { ProcessStepEditor } from '@/components/website/ProcessStepEditor';
 import type { TestimonialItem, ProcessStep } from '@/components/website/blocks/types';
@@ -25,6 +28,7 @@ import { WebsiteSetupWizard, type WizardResult } from '@/components/business-os/
 import { LandingPageWizard, type LandingPageWizardResult } from '@/components/business-os/LandingPageWizard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
 
 const logger = createLogger({ module: 'WebsitePage' });
 
@@ -172,6 +176,14 @@ interface BusinessProfile {
   logo_url?: string | null;
   /** What the onboarding chat agreed: see wantsWebsite(). */
   online_presence_mode?: string | null;
+  /**
+   * The business in its own words, from the onboarding chat.
+   *
+   * Sent to the templates endpoint so the recommendation can read prose as well
+   * as the coarse vertical label. It is also the single best piece of context
+   * the copywriting prompt gets.
+   */
+  description?: string | null;
 }
 
 // Localized strings
@@ -180,11 +192,37 @@ const LABELS = {
     title: 'Website',
     subtitle: 'Manage your professional website',
     tab_overview: 'Overview',
+    landing_page_failed: 'We could not create that landing page. Nothing was saved — try again.',
+    journey_no_services: 'No services on this page yet, so there is no journey to show.',
+    journey_edit_in_services: 'Change a journey by editing its service →',
+    delete_website_title: 'Delete this website',
+    delete_website_body: 'Removes the site, every section, and the text you wrote for it. If it is published it goes offline immediately. This cannot be undone.',
+    delete_website_action: 'Delete website',
+    delete_website_confirm_title: 'Delete this website?',
+    delete_website_confirm_body: 'The site, its sections and all the copy you wrote will be permanently removed. Your services, bookings and clients are not affected.',
+    delete_website_confirm_live: 'This site is live. Visitors will stop being able to reach it as soon as you confirm.',
+    delete_website_confirm_action: 'Yes, delete it',
+    delete_website_failed: 'We could not delete the website. Nothing was changed — try again.',
+    toggle_section_failed: 'We could not change that section. It has been put back the way it was — try again.',
+    publish_landing: 'Publish',
+    unpublish_landing: 'Unpublish',
+    publish_landing_title: 'Publish this landing page',
+    publish_landing_url: 'Public address',
+    publish_landing_url_hint: 'This is the address clients will open. You can change it now.',
+    publish_landing_failed: 'We could not publish the page. Nothing was changed — try again.',
+    publish_landing_needs_address: 'Choose the address your pages will be published under.',
+    template_change_failed: 'We could not change the template. Nothing was changed — try again.',
+    template_unselect: 'Click to unselect this template',
+    template_in_use: 'This template is in use. Delete the website and landing pages built from it before unselecting.',
+    generation_failed: 'We could not write your site just now. The sections below are placeholders you can edit, or try again.',
+    generation_degraded: 'Your site was built, but some of the writing fell back to standard text. Worth a read before publishing.',
     tab_journey: 'Client Journey',
     tab_sections: 'Sections',
     tab_design: 'Design',
     tab_settings: 'Settings',
-    settings_needs_page: 'These settings — your web address and domain — belong to a website. Create one from Templates and they will appear here.',
+    settings_needs_page: 'You have no web address yet. Publish a landing page or create a website, and it will appear here.',
+    settings_address_label: 'Your web address',
+    settings_address_hint: 'Every page and link you publish is served from this address. Creating a website will use it too.',
     tab_templates: 'Templates',
     status_draft: 'Draft',
     status_live: 'Live',
@@ -221,7 +259,7 @@ const LABELS = {
     unique_visitors: 'Unique Visitors',
     page_views: 'Analytics',
     journey_title: 'Client Journey',
-    journey_desc: 'Define what happens when clients want to work with you',
+    journey_desc: 'What each service puts your clients through. Set on the service itself — this is where you see it.',
     journey_step_scheduling: 'Schedule Appointment',
     journey_step_scheduling_desc: 'Client selects date and time',
     journey_step_client_info: 'Client Information',
@@ -235,7 +273,7 @@ const LABELS = {
     journey_step_confirmation: 'Confirmation',
     journey_step_confirmation_desc: 'Client receives confirmation email',
     journey_add_step: 'Add Step',
-    journey_save: 'Save Journey',
+    journey_save: 'Save section',
     journey_saving: 'Saving...',
     journey_always_included: 'Always included',
     journey_services_only: 'Show services without booking flow',
@@ -270,7 +308,7 @@ const LABELS = {
     delete_page_title: 'Delete Page',
     delete_page_confirm: 'Are you sure you want to delete this page?',
     delete_page_has_activity: 'This page has activity ({count} views). Are you sure you want to delete it?',
-    delete_page_deactivate: 'The page will be deactivated but not permanently deleted.',
+    delete_page_deactivate: 'It will be deleted permanently and cannot be recovered. To take it offline instead, use Unpublish.',
     delete_confirm: 'Delete',
     delete_deactivate: 'Deactivate',
     edit_page: 'Edit',
@@ -323,11 +361,37 @@ const LABELS = {
     title: 'Sitio Web',
     subtitle: 'Gestiona tu sitio web profesional',
     tab_overview: 'General',
+    landing_page_failed: 'No pudimos crear esa landing page. No se guardó nada — inténtalo de nuevo.',
+    journey_no_services: 'Aún no hay servicios en esta página, así que no hay recorrido que mostrar.',
+    journey_edit_in_services: 'Cambia un recorrido editando su servicio →',
+    delete_website_title: 'Eliminar este sitio',
+    delete_website_body: 'Elimina el sitio, todas sus secciones y el texto que escribiste. Si está publicado, dejará de estar disponible de inmediato. No se puede deshacer.',
+    delete_website_action: 'Eliminar sitio',
+    delete_website_confirm_title: '¿Eliminar este sitio?',
+    delete_website_confirm_body: 'El sitio, sus secciones y todo el texto que escribiste se eliminarán definitivamente. Tus servicios, reservas y clientes no se ven afectados.',
+    delete_website_confirm_live: 'Este sitio está publicado. Dejará de ser accesible en cuanto confirmes.',
+    delete_website_confirm_action: 'Sí, eliminarlo',
+    delete_website_failed: 'No pudimos eliminar el sitio. No se cambió nada — inténtalo de nuevo.',
+    toggle_section_failed: 'No pudimos cambiar esa sección. Se restauró como estaba — inténtalo de nuevo.',
+    publish_landing: 'Publicar',
+    unpublish_landing: 'Despublicar',
+    publish_landing_title: 'Publicar esta página de destino',
+    publish_landing_url: 'Dirección pública',
+    publish_landing_url_hint: 'Esta es la dirección que abrirán tus clientes. Puedes cambiarla ahora.',
+    publish_landing_failed: 'No pudimos publicar la página. No se cambió nada — inténtalo de nuevo.',
+    publish_landing_needs_address: 'Elige la dirección bajo la que se publicarán tus páginas.',
+    template_change_failed: 'No pudimos cambiar la plantilla. No se cambió nada — inténtalo de nuevo.',
+    template_unselect: 'Haz clic para deseleccionar esta plantilla',
+    template_in_use: 'Esta plantilla está en uso. Elimina el sitio y las páginas de destino creadas con ella antes de deseleccionarla.',
+    generation_failed: 'No pudimos redactar tu sitio ahora. Las secciones de abajo son textos de ejemplo que puedes editar, o inténtalo de nuevo.',
+    generation_degraded: 'Tu sitio se creó, pero parte del texto es genérico. Conviene revisarlo antes de publicar.',
     tab_journey: 'Recorrido del Cliente',
     tab_sections: 'Secciones',
     tab_design: 'Diseño',
     tab_settings: 'Configuración',
-    settings_needs_page: 'Estos ajustes — tu dirección web y dominio — pertenecen a un sitio. Crea uno desde Plantillas y aparecerán aquí.',
+    settings_needs_page: 'Aún no tienes dirección web. Publica una página de destino o crea un sitio y aparecerá aquí.',
+    settings_address_label: 'Tu dirección web',
+    settings_address_hint: 'Cada página y enlace que publiques se sirve desde esta dirección. Un sitio web también la usará.',
     tab_templates: 'Plantillas',
     status_draft: 'Borrador',
     status_live: 'Publicado',
@@ -364,7 +428,7 @@ const LABELS = {
     unique_visitors: 'Visitantes Únicos',
     page_views: 'Analíticas',
     journey_title: 'Recorrido del Cliente',
-    journey_desc: 'Define qué sucede cuando los clientes quieren trabajar contigo',
+    journey_desc: 'Lo que cada servicio hace pasar a tus clientes. Se define en el servicio; aquí lo ves.',
     journey_step_scheduling: 'Programar Cita',
     journey_step_scheduling_desc: 'El cliente selecciona fecha y hora',
     journey_step_client_info: 'Información del Cliente',
@@ -378,7 +442,7 @@ const LABELS = {
     journey_step_confirmation: 'Confirmación',
     journey_step_confirmation_desc: 'El cliente recibe email de confirmación',
     journey_add_step: 'Agregar Paso',
-    journey_save: 'Guardar Recorrido',
+    journey_save: 'Guardar sección',
     journey_saving: 'Guardando...',
     journey_always_included: 'Siempre incluido',
     journey_services_only: 'Mostrar servicios sin flujo de reserva',
@@ -413,7 +477,7 @@ const LABELS = {
     delete_page_title: 'Eliminar Página',
     delete_page_confirm: '¿Estás seguro de que quieres eliminar esta página?',
     delete_page_has_activity: 'Esta página tiene actividad ({count} visitas). ¿Estás seguro de que quieres eliminarla?',
-    delete_page_deactivate: 'La página será desactivada pero no eliminada permanentemente.',
+    delete_page_deactivate: 'Se eliminará permanentemente y no se podrá recuperar. Para retirarla sin borrarla, usa Despublicar.',
     delete_confirm: 'Eliminar',
     delete_deactivate: 'Desactivar',
     edit_page: 'Editar',
@@ -466,11 +530,37 @@ const LABELS = {
     title: 'נוכחות אונליין',
     subtitle: 'נהל את הנוכחות אונליין שלך',
     tab_overview: 'סקירה',
+    landing_page_failed: 'לא הצלחנו ליצור את דף הנחיתה. שום דבר לא נשמר — נסו שוב.',
+    journey_no_services: 'אין עדיין שירותים בדף הזה, ולכן אין מסע להציג.',
+    journey_edit_in_services: 'לשינוי מסע — ערכו את השירות שלו ←',
+    delete_website_title: 'מחיקת האתר',
+    delete_website_body: 'מוחק את האתר, כל הסעיפים והטקסט שכתבתם עבורו. אם האתר מפורסם הוא יירד מיד. לא ניתן לבטל.',
+    delete_website_action: 'מחיקת האתר',
+    delete_website_confirm_title: 'למחוק את האתר?',
+    delete_website_confirm_body: 'האתר, הסעיפים שלו וכל הטקסט שכתבתם יימחקו לצמיתות. השירותים, התורים והלקוחות שלכם לא מושפעים.',
+    delete_website_confirm_live: 'האתר מפורסם. מרגע האישור מבקרים לא יוכלו להגיע אליו.',
+    delete_website_confirm_action: 'כן, למחוק',
+    delete_website_failed: 'לא הצלחנו למחוק את האתר. שום דבר לא שונה — נסו שוב.',
+    toggle_section_failed: 'לא הצלחנו לשנות את המקטע. הוא הוחזר למצבו הקודם — נסו שוב.',
+    publish_landing: 'פרסום',
+    unpublish_landing: 'ביטול פרסום',
+    publish_landing_title: 'פרסום דף הנחיתה',
+    publish_landing_url: 'כתובת ציבורית',
+    publish_landing_url_hint: 'זו הכתובת שהלקוחות יפתחו. אפשר לשנות אותה עכשיו.',
+    publish_landing_failed: 'לא הצלחנו לפרסם את הדף. שום דבר לא שונה — נסו שוב.',
+    publish_landing_needs_address: 'בחרו את הכתובת שתחתיה יפורסמו הדפים שלכם.',
+    template_change_failed: 'לא הצלחנו לשנות את התבנית. שום דבר לא שונה — נסו שוב.',
+    template_unselect: 'לחצו כדי לבטל את בחירת התבנית',
+    template_in_use: 'התבנית בשימוש. מחקו את האתר ואת דפי הנחיתה שנבנו ממנה לפני ביטול הבחירה.',
+    generation_failed: 'לא הצלחנו לכתוב את האתר כרגע. הסעיפים למטה הם טקסט זמני שאפשר לערוך, או נסו שוב.',
+    generation_degraded: 'האתר נבנה, אבל חלק מהטקסט הוא כללי. כדאי לעבור עליו לפני הפרסום.',
     tab_journey: 'מסע הלקוח',
     tab_sections: 'חלקים',
     tab_design: 'עיצוב',
     tab_settings: 'הגדרות',
-    settings_needs_page: 'ההגדרות האלה — הכתובת והדומיין שלך — שייכות לאתר. צור אחד מתוך התבניות והן יופיעו כאן.',
+    settings_needs_page: 'עדיין אין לכם כתובת אינטרנט. פרסמו דף נחיתה או צרו אתר, והיא תופיע כאן.',
+    settings_address_label: 'הכתובת שלכם',
+    settings_address_hint: 'כל דף וקישור שתפרסמו מוגשים מהכתובת הזו. גם אתר שתיצרו ישתמש בה.',
     tab_templates: 'תבניות',
     status_draft: 'טיוטה',
     status_live: 'פעיל',
@@ -507,7 +597,7 @@ const LABELS = {
     unique_visitors: 'מבקרים ייחודיים',
     page_views: 'אנליטיקס',
     journey_title: 'מסע הלקוח',
-    journey_desc: 'הגדר מה קורה כשלקוחות רוצים לעבוד איתך',
+    journey_desc: 'מה כל שירות מעביר את הלקוחות שלכם. נקבע בשירות עצמו — כאן רואים את זה.',
     journey_step_scheduling: 'תיאום פגישה',
     journey_step_scheduling_desc: 'הלקוח בוחר תאריך ושעה',
     journey_step_client_info: 'פרטי לקוח',
@@ -521,7 +611,7 @@ const LABELS = {
     journey_step_confirmation: 'אישור',
     journey_step_confirmation_desc: 'הלקוח מקבל מייל אישור',
     journey_add_step: 'הוסף שלב',
-    journey_save: 'שמור מסע לקוח',
+    journey_save: 'שמירת הסעיף',
     journey_saving: 'שומר...',
     journey_always_included: 'תמיד כלול',
     journey_services_only: 'הצג שירותים ללא תהליך הזמנה',
@@ -556,7 +646,7 @@ const LABELS = {
     delete_page_title: 'מחיקת דף',
     delete_page_confirm: 'האם אתה בטוח שברצונך למחוק דף זה?',
     delete_page_has_activity: 'לדף זה יש פעילות ({count} צפיות). האם אתה בטוח שברצונך למחוק אותו?',
-    delete_page_deactivate: 'הדף יושבת אך לא יימחק לצמיתות.',
+    delete_page_deactivate: 'הוא יימחק לצמיתות ולא ניתן יהיה לשחזר אותו. כדי להוריד אותו מהאוויר בלבד, השתמשו בביטול פרסום.',
     delete_confirm: 'מחק',
     delete_deactivate: 'השבת',
     edit_page: 'ערוך',
@@ -608,83 +698,6 @@ const LABELS = {
 };
 
 // Template name translations
-const TEMPLATE_NAMES: Record<string, { en: string; es: string; he: string }> = {
-  // Therapist
-  'Warm & Welcoming': { en: 'Warm & Welcoming', es: 'Cálido y Acogedor', he: 'חם ומזמין' },
-  'Professional & Clinical': { en: 'Professional & Clinical', es: 'Profesional y Clínico', he: 'מקצועי וקליני' },
-  'Modern & Minimal': { en: 'Modern & Minimal', es: 'Moderno y Minimalista', he: 'מודרני ומינימליסטי' },
-  'Specialized (Trauma-Focused)': { en: 'Specialized (Trauma-Focused)', es: 'Especializado (Trauma)', he: 'מתמחה (טראומה)' },
-  // Coach
-  'Inspiring Transformation': { en: 'Inspiring Transformation', es: 'Transformación Inspiradora', he: 'טרנספורמציה מעוררת השראה' },
-  'Professional Executive': { en: 'Professional Executive', es: 'Ejecutivo Profesional', he: 'מנהל מקצועי' },
-  'Wellness & Mindfulness': { en: 'Wellness & Mindfulness', es: 'Bienestar y Mindfulness', he: 'בריאות ומיינדפולנס' },
-  'Career Transition': { en: 'Career Transition', es: 'Transición de Carrera', he: 'מעבר קריירה' },
-  // Consultant
-  'Professional Services': { en: 'Professional Services', es: 'Servicios Profesionales', he: 'שירותים מקצועיים' },
-  'Technology Advisory': { en: 'Technology Advisory', es: 'Asesoría Tecnológica', he: 'ייעוץ טכנולוגי' },
-  'Marketing Consultant': { en: 'Marketing Consultant', es: 'Consultor de Marketing', he: 'יועץ שיווק' },
-  'Financial Advisory': { en: 'Financial Advisory', es: 'Asesoría Financiera', he: 'ייעוץ פיננסי' },
-  // Lawyer
-  'Professional Law Firm': { en: 'Professional Law Firm', es: 'Firma de Abogados', he: 'משרד עורכי דין' },
-  'Personal Injury Specialist': { en: 'Personal Injury Specialist', es: 'Especialista en Lesiones', he: 'מומחה נזקי גוף' },
-  'Family Law Practice': { en: 'Family Law Practice', es: 'Derecho de Familia', he: 'דיני משפחה' },
-  'Criminal Defense': { en: 'Criminal Defense', es: 'Defensa Penal', he: 'סנגוריה פלילית' },
-  // Photographer
-  'Minimal Portfolio': { en: 'Minimal Portfolio', es: 'Portafolio Minimalista', he: 'תיק עבודות מינימליסטי' },
-  'Wedding Photography': { en: 'Wedding Photography', es: 'Fotografía de Bodas', he: 'צילום חתונות' },
-  'Commercial Photography': { en: 'Commercial Photography', es: 'Fotografía Comercial', he: 'צילום מסחרי' },
-  'Portrait Photography': { en: 'Portrait Photography', es: 'Fotografía de Retratos', he: 'צילום פורטרטים' },
-  // Real Estate
-  'Luxury Real Estate': { en: 'Luxury Real Estate', es: 'Bienes Raíces de Lujo', he: 'נדל"ן יוקרתי' },
-  'Family Homes Specialist': { en: 'Family Homes Specialist', es: 'Especialista en Hogares', he: 'מומחה בתי משפחה' },
-  'Commercial Real Estate': { en: 'Commercial Real Estate', es: 'Bienes Raíces Comerciales', he: 'נדל"ן מסחרי' },
-  'First-Time Buyer Expert': { en: 'First-Time Buyer Expert', es: 'Experto en Primeros Compradores', he: 'מומחה רוכשים ראשונים' },
-  // Personal Trainer
-  'Gym Fitness Pro': { en: 'Gym Fitness Pro', es: 'Profesional del Fitness', he: 'מאמן כושר מקצועי' },
-  'Wellness Coach': { en: 'Wellness Coach', es: 'Coach de Bienestar', he: 'מאמן בריאות' },
-  'Sports Performance': { en: 'Sports Performance', es: 'Rendimiento Deportivo', he: 'ביצועי ספורט' },
-  // Tutor
-  'Academic Tutor': { en: 'Academic Tutor', es: 'Tutor Académico', he: 'מורה פרטי' },
-  'Test Prep Expert': { en: 'Test Prep Expert', es: 'Experto en Preparación', he: 'מומחה הכנה למבחנים' },
-  'Language Tutor': { en: 'Language Tutor', es: 'Tutor de Idiomas', he: 'מורה לשפות' }
-};
-
-// Vertical translations
-const VERTICAL_NAMES: Record<string, { en: string; es: string; he: string }> = {
-  therapist: { en: 'Therapist', es: 'Terapeuta', he: 'מטפל' },
-  coach: { en: 'Coach', es: 'Coach', he: 'מאמן' },
-  consultant: { en: 'Consultant', es: 'Consultor', he: 'יועץ' },
-  lawyer: { en: 'Lawyer', es: 'Abogado', he: 'עורך דין' },
-  photographer: { en: 'Photographer', es: 'Fotógrafo', he: 'צלם' },
-  real_estate: { en: 'Real Estate', es: 'Bienes Raíces', he: 'נדל"ן' },
-  personal_trainer: { en: 'Personal Trainer', es: 'Entrenador Personal', he: 'מאמן אישי' },
-  tutor: { en: 'Tutor', es: 'Tutor', he: 'מורה פרטי' }
-};
-
-// Helper function to get translated template name
-const getTranslatedTemplateName = (name: string, lang: 'en' | 'es' | 'he'): string => {
-  return TEMPLATE_NAMES[name]?.[lang] || name;
-};
-
-// Helper function to get translated vertical name
-const getTranslatedVertical = (vertical: string, lang: 'en' | 'es' | 'he'): string => {
-  return VERTICAL_NAMES[vertical]?.[lang] || vertical;
-};
-
-// Brand voice translations
-const BRAND_VOICE_TRANSLATIONS: Record<string, { en: string; es: string; he: string }> = {
-  'warm': { en: 'Warm', es: 'Cálido', he: 'חם ומזמין' },
-  'professional': { en: 'Professional', es: 'Profesional', he: 'מקצועי וקליני' },
-  'minimal': { en: 'Minimal', es: 'Minimalista', he: 'מודרני ומינימליסטי' },
-  'bold': { en: 'Bold', es: 'Audaz', he: 'נועז' },
-  'elegant': { en: 'Elegant', es: 'Elegante', he: 'אלגנטי' },
-  'creative': { en: 'Creative', es: 'Creativo', he: 'יצירתי' },
-};
-
-// Helper function to get translated brand voice
-const getTranslatedBrandVoice = (voice: string, lang: 'en' | 'es' | 'he'): string => {
-  return BRAND_VOICE_TRANSLATIONS[voice]?.[lang] || voice;
-};
 
 export default function WebsiteManagementPage() {
   const router = useRouter();
@@ -697,9 +710,162 @@ export default function WebsiteManagementPage() {
   const [page, setPage] = useState<WebsitePage | null>(null);
   const wizardPageRef = useRef<WebsitePage | null>(null);
   const [generating, setGenerating] = useState(false);
+  /**
+   * Something the person needs to be told about the last generation.
+   *
+   * Failures used to be logged and swallowed — the wizard carried on to the
+   * preview and the business saw a finished-looking site made of English
+   * placeholders, with nothing anywhere saying the writing had not happened.
+   */
+  const [generationNotice, setGenerationNotice] = useState<{ kind: 'error' | 'warning'; message: string } | null>(null);
+
+  /**
+   * Why a smart link could not be switched on, against the link it belongs to.
+   *
+   * The activate button checked only `response.ok` and did nothing else, so the
+   * moment activation could be REFUSED — a link whose journey has no working
+   * hours behind it, or no card processor — the button became one that silently
+   * does nothing. A refusal the person cannot see is worse than no gate at all.
+   */
+  const [smartLinkNotice, setSmartLinkNotice] = useState<{ id: string; message: string } | null>(null);
+
+  const [deleteWebsiteOpen, setDeleteWebsiteOpen] = useState(false);
+  const [deletingWebsite, setDeletingWebsite] = useState(false);
+
+  /**
+   * Delete the website: the page, its sections, and the copy behind them.
+   *
+   * `purge_content=true` is what makes this different from deleting a landing
+   * page. `website_content` is per-business rather than per-page, so without it
+   * the words survive and quietly reappear on the next site — which is not what
+   * anybody means by "delete my website".
+   *
+   * `mode=permanent`, because archiving would leave a site the business can
+   * neither see nor reach, and they have just said they want it gone.
+   */
+  const handleDeleteWebsite = async () => {
+    if (!page || deletingWebsite) return;
+    setDeletingWebsite(true);
+    try {
+      const response = await fetch(
+        `/api/website/pages/${page.id}?mode=permanent&purge_content=true`,
+        { method: 'DELETE' }
+      );
+      const data = await response.json();
+
+      if (!data.success) {
+        logger.error({ error: data.error, pageId: page.id }, 'Failed to delete website');
+        setGenerationNotice({ kind: 'error', message: labels.delete_website_failed });
+        return;
+      }
+
+      if (data.contentPurged === false) {
+        // The page is gone but the copy is not. Said plainly rather than
+        // reported as a clean delete.
+        setGenerationNotice({ kind: 'warning', message: data.warning || labels.delete_website_failed });
+      }
+
+      logger.info({ pageId: page.id }, 'Website deleted');
+      setDeleteWebsiteOpen(false);
+
+      // Back to the state a business with no website is in, without a reload:
+      // everything on this screen was about the page that no longer exists.
+      setPage(null);
+      setAllPages(prev => prev.filter(p => p.id !== page.id));
+      setBlocks([]);
+      wizardPageRef.current = null;
+      setViewMode('overview');
+    } catch (error) {
+      logger.error({ err: error, pageId: page.id }, 'Website delete request failed');
+      setGenerationNotice({ kind: 'error', message: labels.delete_website_failed });
+    } finally {
+      setDeletingWebsite(false);
+    }
+  };
   const [allPages, setAllPages] = useState<WebsitePage[]>([]);
   const [blocks, setBlocks] = useState<WebsiteBlock[]>([]);
+
+  /**
+   * Services edited in the configuration dialog, opened over this page.
+   *
+   * The journey is a property of a service, so the only way to change it is to
+   * change the service — this is the link out of the read-only view below.
+   */
+  const { openConfiguration } = useConfigurationDialog();
+
+  /** Whether the business collects an intake form. It comes last in a journey. */
+  const [intakeEnabled, setIntakeEnabled] = useState(false);
+  /**
+   * A card can be charged right now.
+   *
+   * Starts false, like `intakeEnabled`: the journey strip draws a payment step
+   * from it, and a preview promising a card form the client cannot complete is
+   * the thing worth not showing. It appears as soon as the fetch confirms it.
+   */
+  const [processorReady, setProcessorReady] = useState(false);
+
+  /**
+   * The services this page shows, with the two facts their journeys are built
+   * from. Read off the services block — the page's own catalogue — so the
+   * journeys listed here are exactly the ones a visitor meets.
+   */
+  const journeyServices = useMemo<PublicServiceRow[]>(() => {
+    const servicesBlock = blocks.find(b => b.block_type === 'services');
+    const listed = (servicesBlock?.content?.services as (PublicServiceRow & { hidden?: boolean })[] | undefined) || [];
+    return listed.filter(service => service.hidden !== true);
+  }, [blocks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/intake/settings')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!cancelled && data?.success) setIntakeEnabled(data.settings?.is_enabled === true);
+      })
+      .catch(() => {
+        // The strip simply omits the step; not worth a message.
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // `charges_enabled` is the whole question — the same flag Stripe itself
+    // enforces when a charge is created.
+    fetch('/api/payments/stripe-connect')
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!cancelled) setProcessorReady(data?.data?.charges_enabled === true);
+      })
+      .catch(() => {
+        // Left false. The strip omits the payment step, which is the safe
+        // reading when we could not find out.
+      });
+    return () => { cancelled = true; };
+  }, []);
   const [templates, setTemplates] = useState<WebsiteTemplate[]>([]);
+
+  /**
+   * The template this business wears.
+   *
+   * Read from the business, not from whichever page happens to be open: it is
+   * what the landing pages, the smart links, the invoice PDF and every
+   * transactional email are drawn from, none of which require a website. Keyed
+   * off the open page, nothing was ever marked as current for a business
+   * without one — exactly the business that needs to see its own look.
+   */
+  const [currentTemplateId, setCurrentTemplateId] = useState<string | null>(null);
+
+  /** Honour the system setting rather than animating at everyone. */
+  const prefersReducedMotion = useReducedMotion();
+  /**
+   * The template matched to this business, from /api/website/templates.
+   *
+   * The wizard pre-selected `templates[0]` — first in the array — which is how
+   * a parenting school ended up on an academic-tutoring theme. This is the
+   * matched one, and it is only a pre-selection: the person can still choose.
+   */
+  const [recommendedTemplateId, setRecommendedTemplateId] = useState<string | undefined>(undefined);
   const [businessProfile, setBusinessProfile] = useState<BusinessProfile | null>(null);
   /**
    * Whether to offer building a website at all.
@@ -806,7 +972,6 @@ export default function WebsiteManagementPage() {
   // Client Journey state (for main website)
   // New steps: 'scheduling' (date/time), 'client_info' (name/email/phone)
   // Legacy 'booking' = scheduling + client_info combined
-  type FlowStepKey = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
   const [clientFlow, setClientFlow] = useState<FlowStepKey[]>(['scheduling', 'client_info', 'confirmation']);
   const [servicesOnly, setServicesOnly] = useState(false);
   const [savingJourney, setSavingJourney] = useState(false);
@@ -920,7 +1085,7 @@ export default function WebsiteManagementPage() {
 
       let profile: BusinessProfile | null = null;
       if (profileData.success && profileData.profile) {
-        profile = profileData.profile;
+        profile = profileData.profile as BusinessProfile;
         setBusinessProfile(profile);
         // Auto-generate subdomain from company name if not already set
         if (profile.company_name) {
@@ -932,9 +1097,19 @@ export default function WebsiteManagementPage() {
         }
       }
 
-      // Fetch pages, templates, and scheduling services (filtered by vertical if profile exists)
-      const templatesUrl = profile?.vertical
-        ? `/api/website/templates?vertical=${encodeURIComponent(profile.vertical)}`
+      // Fetch pages, templates, and scheduling services.
+      //
+      // The sub-vertical and description go too: the vertical alone only
+      // narrows a gallery, and it is the sub-vertical that tells a parenting
+      // school apart from an academic tutor — both of which arrive here as
+      // `tutor`. The API answers with a `recommendedTemplateId` and the list
+      // ordered to match.
+      const templateParams = new URLSearchParams();
+      if (profile?.vertical) templateParams.set('vertical', profile.vertical);
+      if (profile?.sub_vertical) templateParams.set('sub_vertical', profile.sub_vertical);
+      if (profile?.description) templateParams.set('description', String(profile.description).slice(0, 600));
+      const templatesUrl = templateParams.toString()
+        ? `/api/website/templates?${templateParams.toString()}`
         : '/api/website/templates';
 
       const [pagesResponse, templatesResponse, servicesResponse] = await Promise.all([
@@ -960,8 +1135,19 @@ export default function WebsiteManagementPage() {
         setAllPages(pagesData.pages);
 
         // Get the homepage (first page)
-        const homepage = pagesData.pages.find((p: WebsitePage) => p.page_type === 'homepage') || pagesData.pages[0];
+        // The homepage, or nothing. The `|| pages[0]` fallback that used to be
+        // here handed the role of "the website" to whatever page happened to be
+        // first — a landing page, on any account without a site. That is why
+        // the header opened already wearing a landing page's title, and why the
+        // Overview tab could show one where the website belongs.
+        const homepage = pagesData.pages.find((p: WebsitePage) => p.page_type === 'homepage') || null;
         setPage(homepage);
+
+        // Everything below reads the website's own fields, so it only runs when
+        // there is one. Without a site the page shows its create-a-website
+        // invitation with the lead generation list beneath, which is what an
+        // account reaching clients by link alone actually has.
+        if (homepage) {
         // Use existing subdomain if set, otherwise use the generated one from profile
         if (homepage.subdomain) {
           setSubdomain(homepage.subdomain);
@@ -1009,6 +1195,8 @@ export default function WebsiteManagementPage() {
           }
         }
 
+        }
+
         // Fetch website analytics
         try {
           const analyticsResponse = await fetch('/api/website/analytics');
@@ -1046,6 +1234,36 @@ export default function WebsiteManagementPage() {
 
       }
 
+      // What look the business is wearing — asked for regardless of pages, like
+      // the smart links below. Inside the `pages.length > 0` guard this never
+      // ran for a business with no website, which is the one case where nothing
+      // else on the page can show which template it is on.
+      try {
+        const templateResponse = await fetch('/api/business-os/business-template');
+        const templateData = await templateResponse.json();
+        if (templateData.success) setCurrentTemplateId(templateData.templateId ?? null);
+      } catch (err) {
+        logger.warn({ err }, 'Could not read the business template');
+      }
+
+      /*
+       * The address the business publishes under.
+       *
+       * `subdomain` was seeded from the company name and then only ever
+       * overwritten by the HOMEPAGE's — so an address chosen while publishing a
+       * landing page never appeared in the website's Settings screen, which
+       * went on suggesting a name the business was not actually using.
+       */
+      try {
+        const addressResponse = await fetch('/api/business-os/business-subdomain');
+        const addressData = await addressResponse.json();
+        if (addressData.success && addressData.subdomain) {
+          setSubdomain(addressData.subdomain);
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Could not read the business web address');
+      }
+
       // Fetch smart links (always, regardless of pages) - include inactive for filtering
       try {
         const smartLinksResponse = await fetch('/api/smart-links?active=false');
@@ -1059,6 +1277,7 @@ export default function WebsiteManagementPage() {
 
       if (templatesData.success) {
         setTemplates(templatesData.templates || []);
+        setRecommendedTemplateId(templatesData.recommendedTemplateId);
       }
 
       // Check if we should show setup wizard
@@ -1189,37 +1408,19 @@ export default function WebsiteManagementPage() {
       }
       const target = ensured.page;
 
-      if (ensured.created) {
-        // A brand-new site gets its copy written the same way the onboarding
-        // build writes it — from the business's own name, description and
-        // services, in the owner's language. Without this the wizard was the
-        // one door onto the platform that handed a business a page of
-        // template sentences about somebody else.
-        //
-        // No apply-template here: generation installs the blocks and applies
-        // the chosen template's theme itself, so applying it first would only
-        // build a set of blocks to be deleted.
-        setGenerating(true);
-        try {
-          const generated = await fetch('/api/website/generate-from-profile', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userId: businessProfile?.user_id,
-              pageId: target.id,
-              templateId: result.templateId,
-            }),
-          });
-          const generatedData = await generated.json();
-          if (!generatedData.success) {
-            // The page exists and carries the template's standard blocks, so
-            // the site is still usable — it just says less than it should.
-            logger.error({ error: generatedData.error }, 'Website content generation failed; keeping template content');
-          }
-        } finally {
-          setGenerating(false);
-        }
-      } else if (result.templateId) {
+      /*
+       * No generation here — it happens in `handleBeforePreview`.
+       *
+       * This branch used to hold it, guarded by `ensured.created`, and it never
+       * ran once: `handleBeforePreview` creates the page on step 2 and calls
+       * `setPage`, so by the time Publish is pressed `ensureWizardPage` returns
+       * at its first line with `created: false`. The site was written by nobody
+       * and kept the static English scaffold.
+       *
+       * Generating on publish would also be the wrong moment — the person would
+       * approve one preview and get a different site.
+       */
+      if (result.templateId) {
         // Step 1: Apply template (recreates blocks with standard structure)
         await fetch(`/api/website/pages/${target.id}/apply-template`, {
           method: 'POST',
@@ -1367,8 +1568,58 @@ export default function WebsiteManagementPage() {
       if (!ensured) return;
       const target = ensured.page;
 
-      // Step 1: Apply template if changed
-      if (data.templateId && data.templateId !== target.template_id) {
+      /*
+       * Step 1: write the site, or just re-theme it.
+       *
+       * This is where generation belongs, and it was not happening anywhere.
+       * `handleWizardComplete` had an AI branch, but it was unreachable: THIS
+       * function creates the page and calls `setPage`, so by the time Publish
+       * runs `ensureWizardPage` returns `created: false` and the branch is
+       * skipped. Every site therefore kept the static English scaffold that
+       * page creation installs — "Your Business", "Another Client",
+       * contact@yourbusiness.com — and the only way out was a path nobody could
+       * reach. Generating here also means the step-3 preview shows the real
+       * site rather than boilerplate that changes after publishing.
+       *
+       * Generation REPLACES every block on the page, so it is gated on
+       * `content_generated_at`: a page that has never been written is safe to
+       * write, and one that has may hold edits nobody authorised us to discard.
+       */
+      const neverGenerated = !target.content_generated_at;
+
+      if (neverGenerated) {
+        setGenerating(true);
+        setGenerationNotice(null);
+        try {
+          const generated = await fetch('/api/website/generate-from-profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: businessProfile?.user_id,
+              pageId: target.id,
+              templateId: data.templateId,
+            }),
+          });
+          const generatedData = await generated.json();
+
+          if (!generatedData.success) {
+            // Said out loud rather than logged and swallowed, which is how a
+            // failed generation used to look exactly like a finished site.
+            logger.error({ error: generatedData.error, pageId: target.id }, 'Website generation failed');
+            setGenerationNotice({ kind: 'error', message: generatedData.error || labels.generation_failed });
+          } else if (generatedData.warning) {
+            logger.warn({ warning: generatedData.warning, pageId: target.id }, 'Website generated with warnings');
+            setGenerationNotice({ kind: 'warning', message: labels.generation_degraded });
+          }
+        } catch (error) {
+          logger.error({ err: error, pageId: target.id }, 'Website generation request failed');
+          setGenerationNotice({ kind: 'error', message: labels.generation_failed });
+        } finally {
+          setGenerating(false);
+        }
+      } else if (data.templateId && data.templateId !== target.template_id) {
+        // Theme only. `apply-template` preserves content by contract, which is
+        // what makes it the right call for a page that already has some.
         await fetch(`/api/website/pages/${target.id}/apply-template`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1461,21 +1712,20 @@ export default function WebsiteManagementPage() {
       // Find or create process block
       const processBlock = blocks.find(b => b.block_type === 'process');
 
-      // Ensure confirmation is always at the end
-      const flowToSave = clientFlow.includes('confirmation')
-        ? clientFlow
-        : [...clientFlow.filter(s => s !== 'confirmation'), 'confirmation'];
-
-      // When services_only is true, still save the flow so it can be restored
-      // We keep the existing flow if switching to services_only, or use current flow
-      const existingFlow = processBlock?.content?.client_flow as FlowStepKey[] | undefined;
-      const flowToStore = servicesOnly && existingFlow && existingFlow.length > 0
-        ? existingFlow  // Preserve existing flow when switching to services_only
-        : flowToSave;
-
+      /*
+       * No `client_flow` is written any more.
+       *
+       * This screen used to author one — a single set of steps for the whole
+       * page — and every surface now resolves the journey per service instead,
+       * so anything saved here was overridden the moment it was read. Writing
+       * it kept a stale second answer alive in the block, which is what made
+       * the editor and the site disagree.
+       *
+       * Whatever is already stored is left untouched by the spread below: it is
+       * still the fallback for a page whose services carry no journey facts.
+       */
       const contentToSave = {
         ...(processBlock?.content || {}),
-        client_flow: flowToStore,
         services_only: servicesOnly,
         // Always save title/subtitle - empty string means use default translation
         title: processTitle,
@@ -1741,9 +1991,16 @@ export default function WebsiteManagementPage() {
     if (!deletingPage) return;
 
     try {
-      // If page has activity, archive (deactivate). If no activity, permanently delete.
-      const mode = deletingPage.hasActivity ? 'archive' : 'permanent';
-      const response = await fetch(`/api/website/pages/${deletingPage.id}?mode=${mode}`, {
+      /*
+       * Delete means delete, as it does for a smart link.
+       *
+       * A page with any traffic was quietly ARCHIVED instead — it left the list
+       * and stayed in the database forever, and the button that did it still
+       * said "delete". Taking a page out of circulation is now its own action,
+       * Unpublish, on the same row; there is no longer a reason for delete to
+       * mean something else on the pages that happen to have visitors.
+       */
+      const response = await fetch(`/api/website/pages/${deletingPage.id}?mode=permanent`, {
         method: 'DELETE'
       });
       const data = await response.json();
@@ -1794,6 +2051,123 @@ export default function WebsiteManagementPage() {
       setViewMode('sections');
     } else {
       setViewMode('overview');
+    }
+  };
+
+
+  /*
+   * Publishing a landing page, and taking it back down.
+   *
+   * These lived only on the website card, behind `page_type !== 'landing'`, so
+   * a landing page had no way to go live at all once its own overview panel was
+   * removed — it sat in the list as a permanent draft. They belong on its row,
+   * beside Edit and Delete, the way a smart link's activate and deactivate do.
+   *
+   * Publishing asks for the address first. The slug is generated from the
+   * service name and is the one part of the public URL the business chooses, so
+   * the moment it becomes public is the moment worth showing it — and the last
+   * moment changing it costs nothing.
+   */
+  const [publishLanding, setPublishLanding] = useState<WebsitePage | null>(null);
+  const [publishSlugDraft, setPublishSlugDraft] = useState('');
+  /**
+   * The address prefix, editable when the business has not settled on one.
+   *
+   * A landing page inherits the subdomain from the website, and a business with
+   * no website has none to inherit — so publishing was refused for want of a
+   * setting that only exists in the website's own settings screen. Here it can
+   * be typed, prefilled from the company name.
+   */
+  const [publishSubdomainDraft, setPublishSubdomainDraft] = useState('');
+  const [publishLandingBusy, setPublishLandingBusy] = useState(false);
+  const [publishLandingError, setPublishLandingError] = useState<string | null>(null);
+
+  const handlePublishLandingConfirm = async () => {
+    if (!publishLanding) return;
+
+    const slug = publishSlugDraft.trim().replace(/^\/+|\/+$/g, '');
+    if (!slug) return;
+
+    setPublishLandingBusy(true);
+    setPublishLandingError(null);
+    try {
+      const wantedSubdomain = publishSubdomainDraft.trim();
+      if (!publishLanding.subdomain && !wantedSubdomain) {
+        setPublishLandingError(labels.publish_landing_needs_address);
+        return;
+      }
+
+      // The address first: publishing a page at the wrong URL and correcting it
+      // afterwards means the wrong one was live, however briefly.
+      if (!publishLanding.subdomain && wantedSubdomain) {
+        const addressed = await fetch(`/api/website/pages/${publishLanding.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subdomain: wantedSubdomain })
+        });
+        const addressedData = await addressed.json().catch(() => ({}));
+        if (!addressed.ok) {
+          setPublishLandingError(addressedData?.error || labels.publish_landing_failed);
+          return;
+        }
+      }
+
+      if (slug !== publishLanding.slug) {
+        const renamed = await fetch(`/api/website/pages/${publishLanding.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug })
+        });
+        const renamedData = await renamed.json().catch(() => ({}));
+        if (!renamed.ok) {
+          setPublishLandingError(renamedData?.error || labels.publish_landing_failed);
+          return;
+        }
+      }
+
+      const response = await fetch(`/api/website/pages/${publishLanding.id}/publish`, {
+        method: 'POST'
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        // The publish route explains itself — no address, nothing on the page,
+        // a journey step that cannot run — so show what it said.
+        setPublishLandingError(data?.error || labels.publish_landing_failed);
+        return;
+      }
+
+      setAllPages(prev => prev.map(item =>
+        item.id === publishLanding.id
+          ? { ...item, slug, subdomain: item.subdomain || wantedSubdomain, status: 'live', published: true }
+          : item
+      ));
+      setPublishLanding(null);
+    } catch (error) {
+      logger.error({ err: error, pageId: publishLanding.id }, 'Failed to publish landing page');
+      setPublishLandingError(labels.publish_landing_failed);
+    } finally {
+      setPublishLandingBusy(false);
+    }
+  };
+
+  const handleUnpublishLanding = async (landingPage: WebsitePage) => {
+    setPublishLandingBusy(true);
+    try {
+      const response = await fetch(`/api/website/pages/${landingPage.id}/publish`, {
+        method: 'DELETE'
+      });
+      if (response.ok) {
+        setAllPages(prev => prev.map(item =>
+          item.id === landingPage.id ? { ...item, status: 'draft', published: false } : item
+        ));
+      } else {
+        setGenerationNotice({ kind: 'error', message: labels.publish_landing_failed });
+      }
+    } catch (error) {
+      logger.error({ err: error, pageId: landingPage.id }, 'Failed to unpublish landing page');
+      setGenerationNotice({ kind: 'error', message: labels.publish_landing_failed });
+    } finally {
+      setPublishLandingBusy(false);
     }
   };
 
@@ -1863,15 +2237,32 @@ export default function WebsiteManagementPage() {
     }
   };
 
+  /**
+   * Turn one section of the current page on or off.
+   *
+   * The switch flips immediately and the write follows. When the write fails
+   * the switch flips BACK — and that is the whole of what the user used to see:
+   * a switch that moved and then undid itself, with the reason going only to
+   * `logger.error`, which is the browser console. An expired session, a page
+   * deleted in another tab, anything at all — identical silent snap-back. The
+   * failure now says so on the page.
+   */
   const handleToggleBlock = async (blockId: string, enabled: boolean) => {
     if (!page?.id) {
       logger.error({ blockId }, 'Cannot toggle block: page ID is missing');
+      setGenerationNotice({ kind: 'error', message: labels.toggle_section_failed });
       return;
     }
 
-    // Optimistic update
-    const previousBlocks = blocks;
-    setBlocks(blocks.map(b => b.id === blockId ? { ...b, enabled } : b));
+    // Optimistic update. Functional, because `blocks` in this closure is the
+    // render's snapshot: flipping two switches before the first request lands
+    // used to write the second onto stale state and lose the first.
+    setBlocks(prev => prev.map(b => (b.id === blockId ? { ...b, enabled } : b)));
+
+    // Undo just this block rather than restoring a whole captured array, which
+    // would also roll back any edit made while the request was in flight.
+    const revert = () =>
+      setBlocks(prev => prev.map(b => (b.id === blockId ? { ...b, enabled: !enabled } : b)));
 
     try {
       const response = await fetch(`/api/website/pages/${page.id}/blocks/${blockId}`, {
@@ -1881,14 +2272,21 @@ export default function WebsiteManagementPage() {
       });
 
       if (!response.ok) {
-        // Revert on failure
-        setBlocks(previousBlocks);
-        logger.error({ blockId, status: response.status }, 'Failed to toggle block: API error');
+        revert();
+        const body = await response.json().catch(() => ({}));
+        logger.error(
+          { blockId, pageId: page.id, status: response.status, error: body?.error },
+          'Failed to toggle block: API error'
+        );
+        setGenerationNotice({ kind: 'error', message: labels.toggle_section_failed });
+        return;
       }
+
+      setGenerationNotice(null);
     } catch (error) {
-      // Revert on error
-      setBlocks(previousBlocks);
-      logger.error({ err: error }, 'Failed to toggle block');
+      revert();
+      logger.error({ err: error, blockId, pageId: page.id }, 'Failed to toggle block');
+      setGenerationNotice({ kind: 'error', message: labels.toggle_section_failed });
     }
   };
 
@@ -2591,8 +2989,87 @@ export default function WebsiteManagementPage() {
     }
   };
 
+  /**
+   * Unselect the current template — back to no choice made.
+   *
+   * Clicking the selected one was inert. But a template is a decision, and a
+   * business that has made the wrong one should be able to take it back rather
+   * than be forced to pick a different wrong one. Both profile columns are
+   * cleared; pages keep the theme they were built with, because clearing a
+   * choice is not the same as undoing what was made from it.
+   */
+  /**
+   * Re-read which template the business wears.
+   *
+   * Creating a landing page or a website can ESTABLISH the template — the first
+   * surface wins — so the Templates tab has to be told, or it goes on showing
+   * nothing selected until the next full page load.
+   */
+  const refreshBusinessTemplate = async () => {
+    try {
+      const response = await fetch('/api/business-os/business-template');
+      const data = await response.json();
+      if (data.success) setCurrentTemplateId(data.templateId ?? null);
+    } catch (err) {
+      logger.warn({ err }, 'Could not re-read the business template');
+    }
+  };
+
+  const handleClearTemplate = async () => {
+    try {
+      setApplyingTemplate(true);
+      const response = await fetch('/api/business-os/business-template', { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        // The server refuses while pages are built from it; say which it is.
+        setGenerationNotice({
+          kind: 'error',
+          message: data?.reason === 'in_use' ? labels.template_in_use : labels.template_change_failed,
+        });
+        return;
+      }
+      setCurrentTemplateId(null);
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to clear the business template');
+      setGenerationNotice({ kind: 'error', message: labels.template_change_failed });
+    } finally {
+      setApplyingTemplate(false);
+    }
+  };
+
   const handleApplyTemplate = async (templateId: string) => {
-    if (!page) return;
+    /*
+     * Without a website, this returned here and the Templates tab did nothing
+     * at all — no page, no request, no message. But a template is the
+     * BUSINESS's look: it dresses the landing pages, the smart links, the
+     * invoice PDF and every transactional email, none of which need a website
+     * to exist. A business reaching clients by link had no way to choose one.
+     *
+     * With no page there is nothing to apply a template TO, so this records the
+     * choice on the business instead, and the next surface it creates is built
+     * from it.
+     */
+    if (!page) {
+      try {
+        setApplyingTemplate(true);
+        const response = await fetch('/api/business-os/business-template', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template_id: templateId })
+        });
+        if (!response.ok) {
+          setGenerationNotice({ kind: 'error', message: labels.template_change_failed });
+          return;
+        }
+        await fetchData();
+      } catch (error) {
+        logger.error({ err: error, templateId }, 'Failed to set the business template');
+        setGenerationNotice({ kind: 'error', message: labels.template_change_failed });
+      } finally {
+        setApplyingTemplate(false);
+      }
+      return;
+    }
 
     try {
       setApplyingTemplate(true);
@@ -2609,6 +3086,8 @@ export default function WebsiteManagementPage() {
 
       if (data.success && data.page) {
         setPage(data.page);
+        // The route applies this business-wide, so the tab's mark follows it.
+        setCurrentTemplateId(templateId);
         // Fetch updated blocks (with content from central store - content persists!)
         const blocksResponse = await fetch(`/api/website/pages/${page.id}/blocks-with-content`);
         const blocksData = await blocksResponse.json();
@@ -2635,7 +3114,9 @@ export default function WebsiteManagementPage() {
 
   const getPreviewUrl = () => {
     if (page?.id) {
-      return `/business-os/website/preview/${page.id}`;
+      // `lang` so the preview's own chrome (loading, errors) speaks the
+      // platform's language rather than the browser's.
+      return `/website-preview/${page.id}?lang=${language}`;
     }
     return null;
   };
@@ -2774,6 +3255,19 @@ export default function WebsiteManagementPage() {
               key={`smart-${link.id}`}
               className={`p-4 bg-[var(--v2-bg)] rounded-lg border ${!link.is_active ? 'border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-900/10' : 'border-[var(--v2-border)]'}`}
             >
+              {/* Why this link will not switch on. Named against the link
+                  itself, because the gap is in the journey THIS link sells —
+                  a service asking for a time with no hours set, or for a card
+                  with no processor connected. */}
+              {smartLinkNotice?.id === link.id && (
+                <p
+                  className="mb-3 px-3 py-2 text-xs bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  role="status"
+                >
+                  {smartLinkNotice.message}
+                </p>
+              )}
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-4">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
@@ -2816,10 +3310,21 @@ export default function WebsiteManagementPage() {
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ is_active: true })
                           });
+                          const data = await response.json().catch(() => ({}));
                           if (response.ok) {
+                            setSmartLinkNotice(null);
                             setSmartLinks(prev => prev.map(l =>
                               l.id === link.id ? { ...l, is_active: true } : l
                             ));
+                          } else {
+                            // A refusal is the owner's to act on — no working
+                            // hours, no card processor — so it is shown against
+                            // the link rather than logged and swallowed.
+                            logger.info({ linkId: link.id, reason: data.reason }, 'Smart link activation refused');
+                            setSmartLinkNotice({
+                              id: link.id,
+                              message: data.error || (language === 'he' ? 'לא ניתן להפעיל את הקישור.' : language === 'es' ? 'No se pudo activar el enlace.' : 'This link could not be activated.'),
+                            });
                           }
                         } catch (err) {
                           logger.error({ err }, 'Failed to activate smart link');
@@ -2839,6 +3344,50 @@ export default function WebsiteManagementPage() {
                     </button>
                   ) : (
                     <>
+                      {/*
+                        Deactivate — the counterpart to Activate, which had none.
+
+                        The only way to switch a link off used to be the Delete
+                        button, which was a soft delete: it set `is_active:
+                        false` and the row reappeared as "Inactive". One control
+                        meant two things and the honest one was missing. Delete
+                        now removes the link; this is how you take one offline
+                        and keep its history — and it is what a link CREATED
+                        inactive, because its journey cannot run yet, is waiting
+                        on.
+                      */}
+                      <button
+                        onClick={async () => {
+                          setTogglingSmartLinkStatus(link.id);
+                          try {
+                            const response = await fetch(`/api/smart-links/${link.id}`, {
+                              method: 'PUT',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ is_active: false })
+                            });
+                            if (response.ok) {
+                              setSmartLinkNotice(null);
+                              setSmartLinks(prev => prev.map(l =>
+                                l.id === link.id ? { ...l, is_active: false } : l
+                              ));
+                            }
+                          } catch (err) {
+                            logger.error({ err }, 'Failed to deactivate smart link');
+                          } finally {
+                            setTogglingSmartLinkStatus(null);
+                          }
+                        }}
+                        disabled={togglingSmartLinkStatus === link.id}
+                        className="px-2 py-1 text-xs font-medium text-[var(--v2-text-muted)] hover:text-amber-600 hover:bg-amber-500/10 rounded transition-colors disabled:opacity-50"
+                        title={language === 'he' ? 'השבתה' : language === 'es' ? 'Desactivar' : 'Deactivate'}
+                      >
+                        {togglingSmartLinkStatus === link.id ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          language === 'he' ? 'השבתה' : language === 'es' ? 'Desactivar' : 'Deactivate'
+                        )}
+                      </button>
+
                       {/* Edit button - for booking links (full journey) or booking destination type */}
                       {(link.metadata?.journeyType === 'full' || link.destination_type === 'booking') && (
                         <button
@@ -2965,15 +3514,41 @@ export default function WebsiteManagementPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
+                {/* Sized and weighted like the smart-link row's actions below —
+                    the two lists sit in one card and had two different button
+                    scales, so a landing page's Edit read as the heavier thing. */}
                 <button
                   onClick={() => handleSelectPage(p)}
-                  className="px-3 py-1.5 text-sm font-medium text-[var(--v2-text-primary)] border border-[var(--v2-border)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-all"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  className="px-2 py-1 text-xs font-medium text-[var(--v2-text-muted)] hover:text-[#4F6EF7] hover:bg-[#4F6EF7]/10 rounded transition-colors"
                 >
                   {labels.edit_page}
                 </button>
+                {/* Live or not — the landing page's version of a smart link's
+                    activate and deactivate. */}
+                {p.status === 'live' ? (
+                  <button
+                    onClick={() => handleUnpublishLanding(p)}
+                    disabled={publishLandingBusy}
+                    className="px-2 py-1 text-xs font-medium text-[var(--v2-text-muted)] hover:text-amber-600 hover:bg-amber-500/10 rounded transition-colors disabled:opacity-50"
+                  >
+                    {labels.unpublish_landing}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setPublishLanding(p);
+                      setPublishSlugDraft(p.slug || '');
+                      setPublishSubdomainDraft(p.subdomain || subdomain || '');
+                      setPublishLandingError(null);
+                    }}
+                    disabled={publishLandingBusy}
+                    className="px-2 py-1 text-xs font-medium text-green-600 bg-green-100 hover:bg-green-200 dark:bg-green-900/30 dark:hover:bg-green-900/50 rounded transition-colors disabled:opacity-50"
+                  >
+                    {labels.publish_landing}
+                  </button>
+                )}
                 <a
-                  href={`/business-os/website/preview/${p.id}`}
+                  href={`/website-preview/${p.id}?lang=${language}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
@@ -3041,6 +3616,29 @@ export default function WebsiteManagementPage() {
       {/* Main Content with max-width like CRM dashboard */}
       <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
 
+        {/*
+          Anything the last action needs to say — a generation that fell back to
+          placeholder copy, a landing page that could not be created, a smart
+          link that refused to switch on.
+          Rendered for EVERY view rather than only inside the wizard: it was
+          gated on `viewMode === 'wizard'`, so a message raised after the wizard
+          closed had nowhere to appear and the action looked as if it had simply
+          done nothing.
+        */}
+        {generationNotice && (
+          <div
+            className={`px-4 py-3 text-sm border ${
+              generationNotice.kind === 'error'
+                ? 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+            role="status"
+          >
+            {generationNotice.message}
+          </div>
+        )}
+
         {/* Page Header with blue theme (Website capability color) - matching CRM pattern */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3 sm:gap-4 min-w-0">
@@ -3071,26 +3669,12 @@ export default function WebsiteManagementPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
-            {/* Back to Main Website - only when editing a landing page */}
-            {page && page.page_type === 'landing' && viewMode !== 'wizard' && (
-              <button
-                onClick={() => {
-                  const homepage = allPages.find(p => p.page_type === 'homepage');
-                  if (homepage) {
-                    handleSelectPage(homepage);
-                  } else {
-                    setPage(null);
-                    setBlocks([]);
-                  }
-                  setViewMode('overview');
-                }}
-                className="flex items-center gap-2 px-3 sm:px-4 py-2 text-[var(--v2-text-secondary)] text-xs sm:text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <Globe className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                <span className="hidden sm:inline">{language === 'he' ? 'לאתר הראשי' : language === 'es' ? 'Sitio Principal' : 'Main Website'}</span>
-              </button>
-            )}
+            {/*
+              No "main website" button here. The Overview tab in the row below
+              releases the landing page and returns to the website, so this was
+              a second control doing one job — and one that appeared in the page
+              header only while a landing page happened to be open.
+            */}
 
             {/* The tabs that are not the website's.
                 They were all hidden without an AgentsPilot page, which took
@@ -3126,19 +3710,55 @@ export default function WebsiteManagementPage() {
                     { id: 'templates', icon: LayoutTemplate, title: labels.tab_templates, needsPage: true },
                     { id: 'settings', icon: Settings, title: labels.tab_settings, needsPage: true }
                   ].map((tab) => (
-                    <button
+                    <motion.button
                       key={tab.id}
+                      /*
+                        A slow breath on Templates while no template is chosen.
+                        Everything generated afterwards is built from it, so a
+                        business that has not picked one should be drawn to it —
+                        but this sits in a header the person reads past all day,
+                        so it fades rather than flashes: two and a half seconds,
+                        eased, and never below half opacity. Off entirely for
+                        anyone who asked their system for less motion.
+                      */
+                      animate={
+                        !currentTemplateId && tab.id === 'templates' && !prefersReducedMotion
+                          ? { opacity: [1, 0.5, 1] }
+                          : { opacity: 1 }
+                      }
+                      transition={
+                        !currentTemplateId && tab.id === 'templates' && !prefersReducedMotion
+                          ? { duration: 2.5, repeat: Infinity, ease: 'easeInOut' }
+                          : { duration: 0 }
+                      }
                       className={`p-1.5 sm:p-2 transition-all border ${
                         viewMode === tab.id
                           ? 'text-[#4F6EF7] border-[#4F6EF7] bg-[#4F6EF7]/10'
-                          : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                          : !currentTemplateId && tab.id === 'templates'
+                            ? 'text-[#4F6EF7] border-[#4F6EF7]/40 bg-[#4F6EF7]/5'
+                            : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
                       }`}
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      onClick={() => setViewMode(tab.id as ViewMode)}
+                      onClick={() => {
+                        // These tabs are the website's. Leaving a landing page
+                        // open behind them stranded the header on its title
+                        // with no landing page in sight — the Overview tab in
+                        // particular, which shows the website's card.
+                        if (page?.page_type === 'landing') {
+                          const homepage = allPages.find(p => p.page_type === 'homepage');
+                          if (homepage) {
+                            handleSelectPage(homepage);
+                          } else {
+                            setPage(null);
+                            setBlocks([]);
+                          }
+                        }
+                        setViewMode(tab.id as ViewMode);
+                      }}
                       title={tab.title}
                     >
                       <tab.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
               </>
@@ -3224,172 +3844,6 @@ export default function WebsiteManagementPage() {
             {/* Overview Tab */}
             {viewMode === 'overview' && page && (
               <div className="space-y-6">
-                {/* Landing Page Overview - shown when editing a landing page */}
-                {page.page_type === 'landing' && (
-                  <div
-                    className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 p-6"
-                    style={{ borderRadius: 'var(--v2-radius-card)' }}
-                  >
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-purple-100 dark:bg-purple-800/50">
-                          <Megaphone className="w-5 h-5 text-purple-600 dark:text-purple-400" />
-                        </div>
-                        <div>
-                          <h3 className="text-lg font-semibold text-purple-900 dark:text-purple-100">
-                            {page.title}
-                          </h3>
-                          <p className="text-sm text-purple-600 dark:text-purple-300 font-mono">
-                            /{page.slug}
-                          </p>
-                        </div>
-                      </div>
-                      <span
-                        className={`px-3 py-1 text-xs font-medium rounded-full ${
-                          page.status === 'live'
-                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                            : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                        }`}
-                      >
-                        {page.status === 'live' ? labels.status_live : labels.status_draft}
-                      </span>
-                    </div>
-
-                    {/* URL Display for Landing Page */}
-                    {page.subdomain && page.slug && (
-                      <div className="flex items-center gap-3 p-3 bg-white/50 dark:bg-slate-800/50 rounded-lg mb-4">
-                        <Globe className="w-5 h-5 text-purple-400" />
-                        <span className="flex-1 text-purple-700 dark:text-purple-300 text-sm font-mono" dir="ltr">
-                          {page.subdomain}.agentpilot.io/{page.slug}
-                        </span>
-                        <button
-                          onClick={copyLink}
-                          className="p-2 hover:bg-purple-100 dark:hover:bg-purple-800/50 rounded transition-colors"
-                        >
-                          {linkCopied ? (
-                            <Check className="w-4 h-4 text-green-500" />
-                          ) : (
-                            <Copy className="w-4 h-4 text-purple-400" />
-                          )}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Landing Page Analytics */}
-                    <div
-                      className="bg-white/50 dark:bg-slate-800/50 border border-purple-200/50 dark:border-purple-700/50 p-4 mb-4"
-                      style={{ borderRadius: 'var(--v2-radius-card)' }}
-                    >
-                      <h4 className="text-sm font-medium text-purple-700 dark:text-purple-300 uppercase tracking-wider mb-3">
-                        {labels.page_views}
-                      </h4>
-                      <div className="grid grid-cols-4 gap-3">
-                        {/* Today */}
-                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
-                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_today ?? 0}</p>
-                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_today}</p>
-                        </div>
-                        {/* 7 Days */}
-                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
-                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_7d ?? 0}</p>
-                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_7d}</p>
-                        </div>
-                        {/* 30 Days */}
-                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
-                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.visitors_30d ?? 0}</p>
-                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.visitors_30d}</p>
-                        </div>
-                        {/* Total Views */}
-                        <div className="text-center p-2 bg-purple-100/50 dark:bg-purple-900/30 rounded-lg">
-                          <p className="text-xl font-bold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.total_views ?? 0}</p>
-                          <p className="text-xs text-purple-600 dark:text-purple-400">{labels.total_views}</p>
-                        </div>
-                      </div>
-                      {/* Unique visitors summary */}
-                      <div className="mt-3 pt-3 border-t border-purple-200/50 dark:border-purple-700/50">
-                        <div className="flex justify-between items-center">
-                          <span className="text-sm text-purple-600 dark:text-purple-400">{labels.unique_visitors}</span>
-                          <span className="text-lg font-semibold text-purple-900 dark:text-purple-100">{landingPagesAnalytics[page.id]?.unique_visitors ?? 0}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Landing Page Actions */}
-                    <div className="flex flex-wrap items-center gap-3">
-                      {/* Edit Sections */}
-                      <button
-                        onClick={() => setViewMode('sections')}
-                        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-all ${
-                          viewMode === 'sections'
-                            ? 'text-purple-700 bg-purple-100 dark:bg-purple-800/50 border-purple-400'
-                            : 'text-purple-600 bg-white/50 dark:bg-slate-800/50 border-purple-200/50 dark:border-purple-700/50 hover:bg-purple-100 dark:hover:bg-purple-800/30'
-                        } border`}
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <Layout className="h-4 w-4" />
-                        {labels.tab_sections}
-                      </button>
-
-                      {/* Preview */}
-                      <a
-                        href={`/business-os/website/preview/${page.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-3 py-2 text-purple-600 text-sm font-medium bg-white/50 dark:bg-slate-800/50 border border-purple-200/50 dark:border-purple-700/50 hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <Eye className="h-4 w-4" />
-                        {labels.preview}
-                      </a>
-
-                      {/* View Site Button - only when live */}
-                      {page.status === 'live' && page.subdomain && page.slug && (
-                        <a
-                          href={`https://${page.subdomain}.agentpilot.io/${page.slug}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 px-3 py-2 text-purple-600 text-sm font-medium bg-white/50 dark:bg-slate-800/50 border border-purple-200/50 dark:border-purple-700/50 hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-all"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                          {labels.view_site}
-                        </a>
-                      )}
-
-                      {/* Publish/Unpublish Button */}
-                      {page.status === 'live' ? (
-                        <button
-                          onClick={handleUnpublish}
-                          disabled={publishing}
-                          className="flex items-center gap-2 px-4 py-2 text-amber-600 text-sm font-medium border border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:border-amber-700 dark:hover:bg-amber-900/30 transition-all disabled:opacity-50"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : labels.unpublish}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={handlePublish}
-                          disabled={publishing || !page.subdomain}
-                          className="flex items-center gap-2 px-4 py-2 text-purple-600 text-sm font-medium border border-purple-400 bg-purple-100 hover:bg-purple-200 dark:bg-purple-800/30 dark:border-purple-600 dark:hover:bg-purple-800/50 transition-all disabled:opacity-50"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          {publishing ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                              {labels.publishing}
-                            </>
-                          ) : (
-                            <>
-                              <Rocket className="h-4 w-4" />
-                              {labels.publish}
-                            </>
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-
                 {/* Main Website Overview - shown when NOT editing a landing page */}
                 {page.page_type !== 'landing' && (
                   <>
@@ -3530,7 +3984,7 @@ export default function WebsiteManagementPage() {
                       {/* Preview Button - only when NOT live (draft) */}
                       {page.status !== 'live' && (
                         <a
-                          href={`/business-os/website/preview/${page.id}`}
+                          href={`/website-preview/${page.id}?lang=${language}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center gap-2 px-3 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
@@ -3571,6 +4025,27 @@ export default function WebsiteManagementPage() {
                           )}
                         </button>
                       )}
+
+                      {/*
+                        Delete, on the card that is the website.
+
+                        Pushed to the far end and given no fill, so it reads as
+                        the last resort in a row whose other buttons are things
+                        you do routinely. It was at the foot of the Settings tab
+                        — the convention the account page uses for its danger
+                        zone — but the website is a thing on a card here, and
+                        the actions that act on it belong with it.
+                      */}
+                      <button
+                        onClick={() => setDeleteWebsiteOpen(true)}
+                        disabled={publishing || deletingWebsite}
+                        className="flex items-center gap-2 px-3 py-2 ms-auto text-sm font-medium text-[var(--v2-text-muted)] hover:text-red-600 hover:bg-red-500/10 transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={labels.delete_website_body}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        {labels.delete_website_action}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -3659,7 +4134,7 @@ export default function WebsiteManagementPage() {
                           const processBlock = blocks.find(b => b.block_type === 'process');
                           const savedFlow = processBlock?.content?.client_flow as FlowStepKey[] | undefined;
                           if (savedFlow && savedFlow.length > 0) {
-                            const flowWithConfirmation = savedFlow.includes('confirmation')
+                            const flowWithConfirmation: FlowStepKey[] = savedFlow.includes('confirmation')
                               ? savedFlow
                               : [...savedFlow.filter(s => s !== 'confirmation'), 'confirmation'];
                             setClientFlow(flowWithConfirmation);
@@ -3681,109 +4156,59 @@ export default function WebsiteManagementPage() {
                   </label>
                 </div>
 
-                {/* Journey Steps */}
+                {/*
+                  What the journey IS, not a place to define one.
+
+                  This was a step picker — tick scheduling, payment, intake for
+                  the whole site. That is not how the journey works any more: it
+                  belongs to each service, decided by whether the service is
+                  booked against a time and how its money arrives, and every
+                  surface already resolves it that way. A page-level editor here
+                  could only disagree with the services, and did.
+
+                  So the steps are shown per service, read-only, from the same
+                  resolver the public site uses. Editing them means editing the
+                  service, which is a link away.
+                */}
                 {!servicesOnly && (
                   <div className="space-y-3">
-                    {/* Available steps to add */}
-                    {(['scheduling', 'client_info', 'payment', 'intake'] as const).filter(step => !clientFlow.includes(step)).length > 0 && (
-                      <div className="mb-4">
-                        <p className="text-xs text-[var(--v2-text-muted)] mb-2">{labels.journey_add_step}:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {(['scheduling', 'client_info', 'payment', 'intake'] as const)
-                            .filter(step => !clientFlow.includes(step))
-                            .map(step => {
-                              const stepInfo = {
-                                scheduling: { icon: Calendar, label: labels.journey_step_scheduling, color: 'blue' },
-                                client_info: { icon: User, label: labels.journey_step_client_info, color: 'indigo' },
-                                payment: { icon: CreditCard, label: labels.journey_step_payment, color: 'green' },
-                                intake: { icon: FileText, label: labels.journey_step_intake, color: 'purple' }
-                              }[step];
-                              const Icon = stepInfo.icon;
-                              return (
-                                <button
-                                  key={step}
-                                  onClick={() => toggleJourneyStep(step)}
-                                  className="flex items-center gap-2 px-3 py-1.5 border-2 border-dashed border-[var(--v2-border)] rounded-full text-[var(--v2-text-secondary)] hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-colors"
-                                >
-                                  <Icon className="w-4 h-4" />
-                                  {stepInfo.label}
-                                  <Plus className="w-3 h-3" />
-                                </button>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Current flow steps */}
-                    {clientFlow.map((step, index) => {
-                      const stepInfo = {
-                        scheduling: { icon: Calendar, label: labels.journey_step_scheduling, desc: labels.journey_step_scheduling_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
-                        client_info: { icon: User, label: labels.journey_step_client_info, desc: labels.journey_step_client_info_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-indigo-500/40', circle: 'bg-indigo-500' },
-                        booking: { icon: Calendar, label: labels.journey_step_booking, desc: labels.journey_step_booking_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
-                        payment: { icon: CreditCard, label: labels.journey_step_payment, desc: labels.journey_step_payment_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-green-500/40', circle: 'bg-green-500' },
-                        intake: { icon: FileText, label: labels.journey_step_intake, desc: labels.journey_step_intake_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-purple-500/40', circle: 'bg-purple-500' },
-                        confirmation: { icon: Check, label: labels.journey_step_confirmation, desc: labels.journey_step_confirmation_desc, bg: 'bg-[var(--v2-surface)]', border: 'border-[var(--v2-border)]', circle: 'bg-gray-400' }
-                      }[step];
-                      if (!stepInfo) return null; // Skip unknown steps
-                      const Icon = stepInfo.icon;
-                      const isConfirmation = step === 'confirmation';
-
-                      return (
+                    {journeyServices.length === 0 ? (
+                      <p className="text-sm text-[var(--v2-text-muted)] py-4">
+                        {labels.journey_no_services}
+                      </p>
+                    ) : (
+                      journeyServices.map((service: PublicServiceRow) => (
                         <div
-                          key={step}
-                          className={`flex items-center gap-3 p-4 rounded-xl ${stepInfo.bg} border ${stepInfo.border}`}
+                          key={service.id}
+                          className="p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]"
+                          style={{ borderRadius: 'var(--v2-radius-card)' }}
                         >
-                          <div className={`w-10 h-10 rounded-full ${stepInfo.circle} text-white flex items-center justify-center font-bold`}>
-                            {index + 1}
-                          </div>
-                          <div className="flex-1">
-                            <div className="font-medium text-[var(--v2-text-primary)]">{stepInfo.label}</div>
-                            <div className="text-sm text-[var(--v2-text-secondary)]">{stepInfo.desc}</div>
-                          </div>
-                          {isConfirmation ? (
-                            <span className="text-xs text-[var(--v2-text-muted)] italic">{labels.journey_always_included}</span>
-                          ) : (
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => moveJourneyStep(step, 'up')}
-                                disabled={index === 0}
-                                className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[var(--v2-text-muted)] disabled:opacity-30"
-                              >
-                                <ChevronUp className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => moveJourneyStep(step, 'down')}
-                                disabled={index >= clientFlow.length - 2}
-                                className="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-[var(--v2-text-muted)] disabled:opacity-30"
-                              >
-                                <ChevronDown className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => toggleJourneyStep(step)}
-                                className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-400 hover:text-red-500"
-                              >
-                                <X className="w-4 h-4" />
-                              </button>
-                            </div>
-                          )}
+                          <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                            {service.name}
+                          </p>
+                          <ClientJourneyStrip
+                            compact
+                            intakeEnabled={intakeEnabled}
+                            // The website preview must show the journey a real
+                            // client would walk, which drops the payment step
+                            // when no card can be charged.
+                            processorReady={processorReady}
+                            service={{
+                              scheduled: service.is_scheduled !== false,
+                              collection: service.collection ?? null,
+                              price: service.priceRaw ?? null,
+                            }}
+                          />
                         </div>
-                      );
-                    })}
-
-                    {/* Add confirmation if not in list */}
-                    {!clientFlow.includes('confirmation') && clientFlow.length > 0 && (
-                      <div className="flex items-center gap-3 p-4 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-600">
-                        <div className="w-10 h-10 rounded-full bg-gray-400 text-white flex items-center justify-center font-bold">
-                          {clientFlow.length + 1}
-                        </div>
-                        <div className="flex-1">
-                          <div className="font-medium text-[var(--v2-text-primary)]">{labels.journey_step_confirmation}</div>
-                          <div className="text-sm text-[var(--v2-text-secondary)]">{labels.journey_step_confirmation_desc}</div>
-                        </div>
-                        <span className="text-xs text-[var(--v2-text-muted)] italic">{labels.journey_always_included}</span>
-                      </div>
+                      ))
                     )}
+                    <button
+                      type="button"
+                      onClick={() => openConfiguration('services')}
+                      className="text-xs font-medium text-[#4F6EF7] hover:underline"
+                    >
+                      {labels.journey_edit_in_services}
+                    </button>
                   </div>
                 )}
 
@@ -3823,7 +4248,7 @@ export default function WebsiteManagementPage() {
                     {/* Preview Button for Landing Pages - "View Landing Page" */}
                     {page?.page_type === 'landing' && (
                       <a
-                        href={`/business-os/website/preview/${page.id}`}
+                        href={`/website-preview/${page.id}?lang=${language}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all"
@@ -3833,27 +4258,7 @@ export default function WebsiteManagementPage() {
                         {language === 'he' ? 'צפה בדף הנחיתה' : language === 'es' ? 'Ver Página' : 'View Landing Page'}
                       </a>
                     )}
-                    {/* Back to Main Website Button for Landing Pages */}
-                    {page?.page_type === 'landing' && (
-                      <button
-                        onClick={() => {
-                          // Find and load homepage so user can edit main website
-                          const homepage = allPages.find(p => p.page_type === 'homepage');
-                          if (homepage) {
-                            handleSelectPage(homepage);
-                          } else {
-                            setPage(null);
-                            setBlocks([]);
-                          }
-                          setViewMode('overview');
-                        }}
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface-elevated)] hover:bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <ArrowLeft className="w-4 h-4" />
-                        {language === 'he' ? 'חזרה לאתר הראשי' : language === 'es' ? 'Volver al Sitio Principal' : 'Back to Main Website'}
-                      </button>
-                    )}
+                    {/* The way back is the Overview tab in the header row. */}
                     {/* Main Website specific buttons */}
                     {page?.page_type !== 'landing' && syncResult && (
                       <span className={`text-sm ${syncResult.count > 0 ? 'text-green-500' : 'text-[var(--v2-text-muted)]'}`}>
@@ -3912,148 +4317,20 @@ export default function WebsiteManagementPage() {
                   </div>
                 </div>
 
-                {/* Landing Page Client Journey Editor - show for all landing pages */}
-                {page?.page_type === 'landing' && (
-                  <div className="mb-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h4 className="font-semibold text-purple-900 dark:text-purple-100">
-                          {language === 'he' ? 'מסע הלקוח' : language === 'es' ? 'Recorrido del Cliente' : 'Client Journey'}
-                        </h4>
-                        <p className="text-sm text-purple-600 dark:text-purple-300">
-                          {language === 'he' ? 'הגדר את תהליך ההזמנה עבור דף הנחיתה הזה' : language === 'es' ? 'Configura el flujo de reservas para esta página' : 'Configure the booking flow for this landing page'}
-                        </p>
-                      </div>
-                      <button
-                        onClick={handleSaveLandingPageJourney}
-                        disabled={savingLandingPageJourney}
-                        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white text-sm font-medium hover:bg-purple-700 transition-all disabled:opacity-50"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        {savingLandingPageJourney ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Save className="h-4 w-4" />
-                        )}
-                        {savingLandingPageJourney
-                          ? (language === 'he' ? 'שומר...' : language === 'es' ? 'Guardando...' : 'Saving...')
-                          : (language === 'he' ? 'שמור מסע' : language === 'es' ? 'Guardar Recorrido' : 'Save Journey')
-                        }
-                      </button>
-                    </div>
+                {/*
+                  Removed: the landing page's client journey editor.
 
-                    {/* Available steps to add - all steps are fully configurable */}
-                    {(['scheduling', 'client_info', 'payment', 'intake', 'confirmation'] as const).filter(step => !landingPageClientFlow.includes(step)).length > 0 && (
-                      <div className="mb-4">
-                        <p className="text-xs text-purple-600 dark:text-purple-400 mb-2">
-                          {language === 'he' ? 'הוסף שלב:' : language === 'es' ? 'Agregar paso:' : 'Add step:'}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {(['scheduling', 'client_info', 'payment', 'intake', 'confirmation'] as const)
-                            .filter(step => !landingPageClientFlow.includes(step))
-                            .map(step => {
-                              const stepInfo = {
-                                scheduling: { icon: Calendar, label: labels.journey_step_scheduling },
-                                client_info: { icon: User, label: labels.journey_step_client_info },
-                                payment: { icon: CreditCard, label: labels.journey_step_payment },
-                                intake: { icon: FileText, label: labels.journey_step_intake },
-                                confirmation: { icon: Check, label: labels.journey_step_confirmation }
-                              }[step];
-                              const Icon = stepInfo.icon;
-                              return (
-                                <button
-                                  key={step}
-                                  onClick={() => toggleLandingPageStep(step)}
-                                  className="flex items-center gap-2 px-3 py-1.5 border-2 border-dashed border-purple-300 dark:border-purple-600 rounded-full text-purple-600 dark:text-purple-300 hover:border-purple-500 hover:bg-purple-100 dark:hover:bg-purple-800/30 transition-colors"
-                                >
-                                  <Icon className="w-4 h-4" />
-                                  {stepInfo.label}
-                                  <Plus className="w-3 h-3" />
-                                </button>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Current flow steps with drag-and-drop */}
-                    <DndContext
-                      sensors={sensors}
-                      collisionDetection={closestCenter}
-                      modifiers={[restrictToVerticalAxis]}
-                      onDragEnd={handleLandingPageJourneyDragEnd}
-                    >
-                      <SortableContext items={landingPageClientFlow} strategy={verticalListSortingStrategy}>
-                        <div className="space-y-2">
-                          {landingPageClientFlow.map((step, index) => {
-                            const stepInfo = {
-                              scheduling: { icon: Calendar, label: labels.journey_step_scheduling, desc: labels.journey_step_scheduling_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
-                              client_info: { icon: User, label: labels.journey_step_client_info, desc: labels.journey_step_client_info_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-indigo-500/40', circle: 'bg-indigo-500' },
-                              booking: { icon: Calendar, label: labels.journey_step_booking, desc: labels.journey_step_booking_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-[#4F6EF7]/40', circle: 'bg-[#4F6EF7]' },
-                              payment: { icon: CreditCard, label: labels.journey_step_payment, desc: labels.journey_step_payment_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-green-500/40', circle: 'bg-green-500' },
-                              intake: { icon: FileText, label: labels.journey_step_intake, desc: labels.journey_step_intake_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-purple-500/40', circle: 'bg-purple-500' },
-                              confirmation: { icon: Check, label: labels.journey_step_confirmation, desc: labels.journey_step_confirmation_desc, bg: 'bg-white dark:bg-slate-800', border: 'border-emerald-500/40', circle: 'bg-emerald-500' }
-                            }[step];
-                            if (!stepInfo) return null; // Skip unknown steps
-                            const Icon = stepInfo.icon;
-                            // Can only remove if there's more than 1 step
-                            const canRemove = landingPageClientFlow.length > 1;
-
-                            return (
-                              <SortableLandingPageJourneyStep
-                                key={step}
-                                id={step}
-                                disabled={false}
-                              >
-                                <div
-                                  className={`flex items-center gap-3 p-3 rounded-lg ${stepInfo.bg} border ${stepInfo.border}`}
-                                >
-                                  <div className={`w-8 h-8 rounded-full ${stepInfo.circle} text-white flex items-center justify-center font-bold text-sm`}>
-                                    {index + 1}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                      <Icon className="w-4 h-4 text-[var(--v2-text-secondary)]" />
-                                      <span className="font-medium text-sm text-[var(--v2-text-primary)]">{stepInfo.label}</span>
-                                    </div>
-                                    <p className="text-xs text-[var(--v2-text-muted)] truncate">{stepInfo.desc}</p>
-                                  </div>
-                                  {/* Move and remove buttons - all steps are fully configurable */}
-                                  <div className="flex items-center gap-1">
-                                    <button
-                                      onClick={() => moveLandingPageStep(step, 'up')}
-                                      disabled={index === 0}
-                                      className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] disabled:opacity-30 disabled:cursor-not-allowed"
-                                      title={language === 'he' ? 'הזז למעלה' : language === 'es' ? 'Mover arriba' : 'Move up'}
-                                    >
-                                      <ChevronUp className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => moveLandingPageStep(step, 'down')}
-                                      disabled={index >= landingPageClientFlow.length - 1}
-                                      className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] disabled:opacity-30 disabled:cursor-not-allowed"
-                                      title={language === 'he' ? 'הזז למטה' : language === 'es' ? 'Mover abajo' : 'Move down'}
-                                    >
-                                      <ChevronDown className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => toggleLandingPageStep(step)}
-                                      disabled={!canRemove}
-                                      className="p-1 text-red-400 hover:text-red-500 disabled:opacity-30 disabled:cursor-not-allowed"
-                                      title={language === 'he' ? 'הסר שלב' : language === 'es' ? 'Eliminar paso' : 'Remove step'}
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                </div>
-                              </SortableLandingPageJourneyStep>
-                            );
-                          })}
-                        </div>
-                      </SortableContext>
-                    </DndContext>
-                  </div>
-                )}
+                  It offered a per-page journey — drag to reorder, add or remove
+                  steps, then "save client journey" — but a journey is not a
+                  property of a page. It belongs to the service: whether the
+                  client picks a time (`is_scheduled`) and how the money arrives
+                  (`collection`), which is why one landing page selling two
+                  services has two journeys and no single strip can describe it.
+                  The same editor was already removed from the website's
+                  sections view and from the landing page wizard's step 3; this
+                  was the last copy, and it survived only because the bug that
+                  cleared `page` also stopped it rendering.
+                */}
 
                 <DndContext
                   sensors={sensors}
@@ -4078,8 +4355,13 @@ export default function WebsiteManagementPage() {
                           return (
                             <SortableBlockItem key={block.id} id={block.id}>
                               <div
+                                // `!== false`, matching the switch below. Read as
+                                // plain truthiness, a block whose `enabled` came
+                                // back null drew the dimmed, switched-off row
+                                // while its switch showed ON — so the first click
+                                // turned it off and nothing on screen changed.
                                 className={`rounded-lg border transition-all ${
-                                  block.enabled
+                                  block.enabled !== false
                                     ? 'bg-[var(--v2-bg)] border-[var(--v2-border)]'
                                     : 'bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-800 opacity-60'
                                 }`}
@@ -5348,97 +5630,121 @@ export default function WebsiteManagementPage() {
                                         className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                       />
                                     </div>
-                                    <div>
-                                      <div className="flex items-center justify-between mb-2">
-                                        <label className="text-sm font-medium text-[var(--v2-text-secondary)]">
-                                          {language === 'he' ? 'חבילות מחירים' : language === 'es' ? 'Planes de Precios' : 'Pricing Plans'}
-                                        </label>
+                    {/*
+                      Prices come from the service, so they are shown, not typed.
+
+                      Every plan here carries a `serviceId`, and
+                      `blocks-with-content` rewrites its price, currency,
+                      duration and journey from `scheduling_services` on every
+                      read — so a price edited in this panel survived only until
+                      the next page load. It was an input that looked like it
+                      worked and silently did not. Same card as the website's
+                      services section, and the one way to change a price is the
+                      one that lasts: the service itself.
+                    */}
+                                    <div className="space-y-3">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <Package className="w-4 h-4 text-[#4F6EF7]" />
+                                          <span className="text-sm font-medium text-[var(--v2-text-primary)]">
+                                            {language === 'he' ? 'חבילות מחירים' : language === 'es' ? 'Planes de Precios' : 'Pricing Plans'}
+                                          </span>
+                                          <span className="text-xs px-2 py-0.5 bg-[#4F6EF7]/10 text-[#4F6EF7] rounded-full">
+                                            {(editingBlockContent.plans as Array<unknown>)?.length || 0}
+                                          </span>
+                                        </div>
+                                        {/* No "refresh" here: `handleRefreshServices` writes the
+                                            `services` field, which a pricing block does not have. */}
                                         <button
-                                          type="button"
-                                          onClick={() => {
-                                            const plans = (editingBlockContent.plans as Array<{ name: string; price: string; features: string[]; highlighted?: boolean }>) || [];
-                                            updateBlockField('plans', [...plans, { name: '', price: '', features: [], highlighted: false }]);
-                                          }}
-                                          className="text-xs px-2 py-1 text-[#4F6EF7] hover:bg-[#4F6EF7]/10 rounded-md transition-colors"
+                                          onClick={() => setIsConfigOpen(true)}
+                                          className="flex items-center gap-1 text-xs text-[#4F6EF7] hover:text-[#3D5BD9]"
                                         >
-                                          + {language === 'he' ? 'הוסף חבילה' : language === 'es' ? 'Agregar Plan' : 'Add Plan'}
+                                          <Link2 className="w-3 h-3" />
+                                          {labels.edit_services}
                                         </button>
                                       </div>
-                                      <div className="space-y-4">
-                                        {((editingBlockContent.plans as Array<{ name: string; price: string; features: string[]; highlighted?: boolean }>) || []).map((plan, idx) => (
-                                          <div key={idx} className={`p-4 border rounded-lg space-y-3 ${plan.highlighted ? 'bg-[#4F6EF7]/5 border-[#4F6EF7]' : 'bg-[var(--v2-bg)] border-[var(--v2-border)]'}`}>
-                                            <div className="flex items-center justify-between">
-                                              <div className="flex items-center gap-3 flex-1">
-                                                <input
-                                                  type="text"
-                                                  value={plan.name}
-                                                  onChange={(e) => {
-                                                    const plans = [...(editingBlockContent.plans as Array<{ name: string; price: string; features: string[]; highlighted?: boolean }>)];
-                                                    plans[idx] = { ...plans[idx], name: e.target.value };
-                                                    updateBlockField('plans', plans);
-                                                  }}
-                                                  placeholder={language === 'he' ? 'שם חבילה...' : language === 'es' ? 'Nombre del plan...' : 'Plan name...'}
-                                                  className="flex-1 px-2 py-1 bg-transparent border-b border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[#4F6EF7] font-medium"
-                                                />
-                                                <input
-                                                  type="text"
-                                                  value={plan.price}
-                                                  onChange={(e) => {
-                                                    const plans = [...(editingBlockContent.plans as Array<{ name: string; price: string; features: string[]; highlighted?: boolean }>)];
-                                                    plans[idx] = { ...plans[idx], price: e.target.value };
-                                                    updateBlockField('plans', plans);
-                                                  }}
-                                                  placeholder="$99/mo"
-                                                  className="w-24 px-2 py-1 bg-transparent border-b border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:border-[#4F6EF7] text-right font-bold"
-                                                />
-                                              </div>
-                                              <div className="flex items-center gap-2 ml-3">
-                                                <button
-                                                  type="button"
-                                                  onClick={() => {
-                                                    const plans = [...(editingBlockContent.plans as Array<{ name: string; price: string; features: string[]; highlighted?: boolean }>)];
-                                                    plans[idx] = { ...plans[idx], highlighted: !plans[idx].highlighted };
-                                                    updateBlockField('plans', plans);
-                                                  }}
-                                                  className={`p-1 rounded ${plan.highlighted ? 'text-[#4F6EF7]' : 'text-[var(--v2-text-muted)]'}`}
-                                                  title={language === 'he' ? 'הדגש חבילה זו' : language === 'es' ? 'Destacar plan' : 'Highlight plan'}
-                                                >
-                                                  <Star className="w-4 h-4" fill={plan.highlighted ? 'currentColor' : 'none'} />
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  onClick={() => {
-                                                    const plans = [...(editingBlockContent.plans as Array<{ name: string; price: string; features: string[]; highlighted?: boolean }>)];
-                                                    plans.splice(idx, 1);
-                                                    updateBlockField('plans', plans);
-                                                  }}
-                                                  className="p-1 text-red-400 hover:text-red-500 hover:bg-red-500/10 rounded"
-                                                >
-                                                  <Trash2 className="w-3 h-3" />
-                                                </button>
+
+                                      {((editingBlockContent.plans as Array<{ name: string; price: string; description?: string; highlighted?: boolean; duration?: string; durationMinutes?: number }>) || []).length > 0 ? (
+                                        <div className="grid gap-3">
+                                          {((editingBlockContent.plans as Array<{ name: string; price: string; description?: string; highlighted?: boolean; duration?: string; durationMinutes?: number }>) || []).map((plan, idx) => (
+                                            <div
+                                              key={idx}
+                                              className={`p-4 bg-gradient-to-r from-[var(--v2-surface)] to-transparent border rounded-xl transition-colors ${
+                                                plan.highlighted
+                                                  ? 'border-[#4F6EF7]'
+                                                  : 'border-[var(--v2-border)] hover:border-[#4F6EF7]/30'
+                                              }`}
+                                            >
+                                              <div className="flex items-start gap-3">
+                                                <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-[#4F6EF7]/10">
+                                                  <DollarSign className="w-5 h-5 text-[#4F6EF7]" />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <h4 className="font-medium truncate text-[var(--v2-text-primary)]">
+                                                      {plan.name}
+                                                    </h4>
+                                                    <div className="flex items-center gap-2">
+                                                      {plan.price && (
+                                                        <span className="text-sm font-semibold text-green-600 dark:text-green-400 whitespace-nowrap">
+                                                          {plan.price}
+                                                        </span>
+                                                      )}
+                                                      {/* Presentation, not service data — this one stays editable. */}
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          const plans = [...((editingBlockContent.plans as Array<{ name: string; price: string; highlighted?: boolean }>) || [])];
+                                                          plans[idx] = { ...plans[idx], highlighted: !plans[idx].highlighted };
+                                                          updateBlockField('plans', plans);
+                                                        }}
+                                                        className={`p-1.5 rounded-lg transition-all ${
+                                                          plan.highlighted
+                                                            ? 'bg-[#4F6EF7]/10 text-[#4F6EF7] hover:bg-[#4F6EF7]/20'
+                                                            : 'bg-gray-100 dark:bg-gray-700/50 text-gray-400 dark:text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                                        }`}
+                                                        title={language === 'he' ? 'הדגש חבילה זו' : language === 'es' ? 'Destacar plan' : 'Highlight plan'}
+                                                      >
+                                                        <Star className="w-4 h-4" fill={plan.highlighted ? 'currentColor' : 'none'} />
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                  {/* The service's own description, injected live — not bullets written about it. */}
+                                                  {plan.description && (
+                                                    <p className="text-xs text-[var(--v2-text-secondary)] mt-1 line-clamp-2">
+                                                      {plan.description}
+                                                    </p>
+                                                  )}
+                                                  {(plan.durationMinutes || plan.duration) && (
+                                                    <div className="flex items-center gap-1 mt-2">
+                                                      <Calendar className="w-3 h-3 text-[var(--v2-text-secondary)]" />
+                                                      <span className="text-xs text-[var(--v2-text-secondary)]">
+                                                        {plan.durationMinutes
+                                                          ? `${plan.durationMinutes} ${language === 'he' ? 'דקות' : language === 'es' ? 'minutos' : 'minutes'}`
+                                                          : plan.duration}
+                                                      </span>
+                                                    </div>
+                                                  )}
+                                                </div>
                                               </div>
                                             </div>
-                                            <div>
-                                              <div className="flex items-center justify-between mb-1">
-                                                <span className="text-xs text-[var(--v2-text-muted)]">
-                                                  {language === 'he' ? 'תכונות (אחת בכל שורה)' : language === 'es' ? 'Características (una por línea)' : 'Features (one per line)'}
-                                                </span>
-                                              </div>
-                                              <textarea
-                                                value={(plan.features || []).join('\n')}
-                                                onChange={(e) => {
-                                                  const plans = [...(editingBlockContent.plans as Array<{ name: string; price: string; features: string[]; highlighted?: boolean }>)];
-                                                  plans[idx] = { ...plans[idx], features: e.target.value.split('\n').filter(f => f.trim()) };
-                                                  updateBlockField('plans', plans);
-                                                }}
-                                                placeholder={language === 'he' ? 'תכונה 1\nתכונה 2\nתכונה 3' : language === 'es' ? 'Característica 1\nCaracterística 2' : 'Feature 1\nFeature 2\nFeature 3'}
-                                                rows={3}
-                                                className="w-full px-2 py-1 bg-transparent border border-[var(--v2-border)] rounded text-[var(--v2-text-primary)] focus:outline-none focus:border-[#4F6EF7] text-sm resize-none"
-                                              />
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div className="p-6 bg-[var(--v2-surface)] border border-dashed border-[var(--v2-border)] rounded-xl text-center">
+                                          <Package className="w-8 h-8 text-[var(--v2-text-secondary)] mx-auto mb-2 opacity-50" />
+                                          <p className="text-sm text-[var(--v2-text-secondary)]">
+                                            {labels.no_services_hint}
+                                          </p>
+                                          <button
+                                            onClick={() => setIsConfigOpen(true)}
+                                            className="inline-flex items-center gap-1 text-sm text-[#4F6EF7] hover:text-[#3D5BD9] mt-2"
+                                          >
+                                            <Plus className="w-4 h-4" />
+                                            {language === 'he' ? 'הוסף שירותים' : language === 'es' ? 'Agregar servicios' : 'Add services'}
+                                          </button>
+                                        </div>
+                                      )}
                                     </div>
                                   </>
                                 )}
@@ -6511,13 +6817,46 @@ export default function WebsiteManagementPage() {
             {/* Settings Tab */}
             {viewMode === 'settings' && !page && (
               <div
-                className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 text-center"
+                className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
                 style={{ borderRadius: 'var(--v2-radius-card)' }}
               >
-                <Globe className="w-8 h-8 mx-auto mb-3 text-[var(--v2-text-muted)] opacity-50" />
-                <p className="text-sm text-[var(--v2-text-secondary)]">
-                  {labels.settings_needs_page}
-                </p>
+                {/*
+                  The address is the business's, not the website's.
+                  
+                  This said the settings "belong to a website — create one from
+                  Templates and they will appear here", which stopped being true
+                  the moment a landing page could be published: that page goes
+                  live under an address, and the business had nowhere to see it.
+                  A business with no website still has an address, and this is
+                  where it is shown.
+                */}
+                {subdomain ? (
+                  <>
+                    <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+                      {labels.settings_address_label}
+                    </label>
+                    <div
+                      className="flex items-center gap-3 p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      dir="ltr"
+                    >
+                      <Globe className="w-5 h-5 text-[var(--v2-text-muted)] flex-shrink-0" />
+                      <span className="flex-1 text-sm font-mono text-[var(--v2-text-secondary)]">
+                        {subdomain}.agentspilot.com
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--v2-text-muted)] mt-2">
+                      {labels.settings_address_hint}
+                    </p>
+                  </>
+                ) : (
+                  <div className="text-center">
+                    <Globe className="w-8 h-8 mx-auto mb-3 text-[var(--v2-text-muted)] opacity-50" />
+                    <p className="text-sm text-[var(--v2-text-secondary)]">
+                      {labels.settings_needs_page}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
@@ -6692,13 +7031,13 @@ export default function WebsiteManagementPage() {
                 </div>
 
                 {/* Current template indicator */}
-                {page?.template_id && (
+                {currentTemplateId && (
                   <div className="mb-6 p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]">
                     <p className="text-xs text-[var(--v2-text-muted)] uppercase tracking-wider mb-1">
                       {labels.current_template}
                     </p>
                     <p className="font-medium text-[var(--v2-text-primary)]">
-                      {getTranslatedTemplateName(templates.find(t => t.id === page?.template_id)?.name || page?.template_id || '', language)}
+                      {getTranslatedTemplateName(templates.find(t => t.id === currentTemplateId)?.name || currentTemplateId || '', language)}
                     </p>
                   </div>
                 )}
@@ -6708,7 +7047,12 @@ export default function WebsiteManagementPage() {
                   {templates.map((template) => {
                     // No page yet means no current template — picking one here
                     // is what creates the site.
-                    const isCurrentTemplate = !!page && template.id === page.template_id;
+                    // The BUSINESS's template, not the open page's. Keyed off
+                    // `page.template_id` nothing was ever marked for a business
+                    // without a website — which is exactly the business that
+                    // needs to see which look its landing pages and invoices
+                    // are wearing.
+                    const isCurrentTemplate = template.id === currentTemplateId;
                     const primaryColor = getTemplatePrimaryColor(template);
                     const secondaryColor = getTemplateSecondaryColor(template);
                     const accentColor = template.theme?.accent_color || secondaryColor;
@@ -6716,15 +7060,32 @@ export default function WebsiteManagementPage() {
                     return (
                       <motion.div
                         key={template.id}
-                        whileHover={{ scale: isCurrentTemplate ? 1 : 1.03 }}
-                        whileTap={{ scale: isCurrentTemplate ? 1 : 0.97 }}
+                        whileHover={{ scale: 1.03 }}
+                        whileTap={{ scale: 0.97 }}
                         className={`group bg-[var(--v2-bg)] border text-start transition-all overflow-hidden cursor-pointer ${
                           isCurrentTemplate
                             ? 'border-[#4F6EF7] ring-2 ring-[#4F6EF7]/20'
                             : 'border-[var(--v2-border)] hover:border-[#4F6EF7]'
                         }`}
                         style={{ borderRadius: 'var(--v2-radius-card)' }}
-                        onClick={() => !isCurrentTemplate && !applyingTemplate && handleApplyTemplate(template.id)}
+                        onClick={() => {
+                          if (applyingTemplate) return;
+                          // The selected card unselects — but only while nothing
+                          // has been built from it. A website or landing page is
+                          // generated FROM the template, so clearing the choice
+                          // underneath one leaves a live surface wearing a look
+                          // the business can no longer name or change.
+                          if (isCurrentTemplate) {
+                            if (allPages.length === 0) handleClearTemplate();
+                            return;
+                          }
+                          handleApplyTemplate(template.id);
+                        }}
+                        title={
+                          isCurrentTemplate
+                            ? (allPages.length === 0 ? labels.template_unselect : labels.template_in_use)
+                            : undefined
+                        }
                       >
                         {/* Color Preview Bar */}
                         <div className="h-16 relative overflow-hidden">
@@ -6803,6 +7164,7 @@ export default function WebsiteManagementPage() {
               <WebsiteSetupWizard
                 templates={templates}
                 currentTemplateId={page?.template_id ?? undefined}
+                recommendedTemplateId={recommendedTemplateId}
                 currentLogoUrl={businessProfile?.logo_url as string | undefined}
                 currentClientFlow={clientFlow.length > 0 ? clientFlow : undefined}
                 currentHiddenServiceNames={
@@ -7026,16 +7388,37 @@ export default function WebsiteManagementPage() {
       {/* Customer Acquisition Wizard (Smart Links + Landing Pages) */}
       {showLandingPageWizard && (
         <LandingPageWizard
-          existingTheme={page?.theme ? {
-            colors: {
-              primary: page.theme.colors?.primary || '#4F6EF7',
-              secondary: page.theme.colors?.secondary || '#6366F1'
-            },
-            fonts: {
-              heading: page.theme.fonts?.heading || 'Inter',
-              body: page.theme.fonts?.body || 'Inter'
-            }
-          } : null}
+          templates={templates}
+          {...(() => {
+            /*
+             * The BUSINESS's look, not the open page's.
+             *
+             * This read `page.theme`, so with no website open there was no
+             * existing theme to offer and the wizard made the business pick a
+             * style of its own — a second look, on an account that already had
+             * one in `business_profiles.theme`, which is what the invoices and
+             * emails already wear. The page theme stays as the fallback for
+             * accounts whose look predates that column.
+             */
+            // Cast because `BusinessProfile` is `Database[...]['Row']` and
+            // `types/database.ts` does not exist in this repo, so the generated
+            // row type knows none of its columns. The column is real — it is
+            // what `lib/email/branding.ts` reads for every invoice and receipt.
+            const businessLook = (businessProfile as unknown as { theme?: { colors?: Record<string, string>; fonts?: Record<string, string> } } | null)?.theme;
+            const look = businessLook || page?.theme;
+            return {
+              existingTheme: look ? {
+                colors: {
+                  primary: look.colors?.primary || '#4F6EF7',
+                  secondary: look.colors?.secondary || '#6366F1'
+                },
+                fonts: {
+                  heading: look.fonts?.heading || 'Inter',
+                  body: look.fonts?.body || 'Inter'
+                }
+              } : null
+            };
+          })()}
           subdomain={page?.subdomain || ''}
           businessInfo={{
             companyName: businessProfile?.company_name,
@@ -7078,6 +7461,9 @@ export default function WebsiteManagementPage() {
                   serviceName: result.serviceName,
                   slug: result.slug,
                   theme: result.theme,
+                  // What the page was built from. Without it a landing page
+                  // could give the business a look but never a template.
+                  templateId: result.templateId,
                   shouldPublish: result.shouldPublish,
                   clientFlow: result.clientFlow,
                   generatedContent: result.generatedContent,
@@ -7093,23 +7479,45 @@ export default function WebsiteManagementPage() {
               logger.info({ success: data.success, error: data.error, landingPageId: data.landingPage?.id }, 'Landing page API response');
 
               if (data.success) {
-                // Refresh pages list
+                /*
+                 * Back to the list, not into the page.
+                 *
+                 * This pushed `?pageId=<new id>`, which opens the new landing
+                 * page in the editor — so finishing the wizard dropped the
+                 * person straight into editing the thing they had just
+                 * finished describing, with no sight of where it went. Whether
+                 * they saved a draft or published, the answer to "what did I
+                 * just make?" is the list they made it from.
+                 *
+                 * Refreshing `allPages` is all it takes: the list below renders
+                 * `allPages.filter(page_type === 'landing')`, and the wizard was
+                 * opened from beside it.
+                 */
                 const pagesResponse = await fetch('/api/website/pages');
                 const pagesData = await pagesResponse.json();
                 if (pagesData.success) {
                   setAllPages(pagesData.pages || []);
                 }
-                // Navigate to the new landing page
-                if (data.landingPage?.id) {
-                  router.push(`/business-os/website?pageId=${data.landingPage.id}`);
-                }
+
+                // This page may have just established the business template.
+                await refreshBusinessTemplate();
               } else {
                 logger.error({ error: data.error }, 'Failed to create landing page - API returned error');
-                // Show error to user
-                alert(data.error || 'Failed to create landing page. Please try again.');
+                // Shown in the page rather than in a browser alert(), which
+                // cannot be styled, cannot be translated, and blocks the tab.
+                setGenerationNotice({
+                  kind: 'error',
+                  message: data.error || labels.landing_page_failed,
+                });
               }
             } catch (error) {
+              // The wizard has already closed by now, so a failure that only
+              // reaches the console is indistinguishable from success: the
+              // dialog disappears and the list is unchanged. Anything that
+              // stops the request — a dropped connection, a restarting dev
+              // server — has to say so on the page.
               logger.error({ err: error }, 'Failed to create landing page');
+              setGenerationNotice({ kind: 'error', message: labels.landing_page_failed });
             } finally {
               setCreatingPage(false);
             }
@@ -7122,7 +7530,130 @@ export default function WebsiteManagementPage() {
         />
       )}
 
+      {/* Deleting the whole website.
+          Its own dialog rather than the page one above: this removes the copy
+          as well, and it can take a live site offline — neither of which the
+          landing-page wording says. */}
+      <Dialog open={deleteWebsiteOpen} onOpenChange={setDeleteWebsiteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-red-500" />
+              {labels.delete_website_confirm_title}
+            </DialogTitle>
+            <DialogDescription className="text-[var(--v2-text-secondary)]">
+              {labels.delete_website_confirm_body}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Only for a site somebody can currently reach. */}
+          {page?.published && (
+            <p
+              className="px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {labels.delete_website_confirm_live}
+            </p>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              onClick={() => setDeleteWebsiteOpen(false)}
+              disabled={deletingWebsite}
+              className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors disabled:opacity-50"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {labels.cancel}
+            </button>
+            <button
+              onClick={handleDeleteWebsite}
+              disabled={deletingWebsite}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors disabled:opacity-50"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {deletingWebsite && <Loader2 className="w-4 h-4 animate-spin" />}
+              {labels.delete_website_confirm_action}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete Page Confirmation Dialog */}
+      <Dialog open={!!publishLanding} onOpenChange={(open) => { if (!open) setPublishLanding(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Rocket className="w-5 h-5 text-[#4F6EF7]" />
+              {labels.publish_landing_title}
+            </DialogTitle>
+            <DialogDescription className="text-[var(--v2-text-secondary)]">
+              {labels.publish_landing_url_hint}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div>
+            <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
+              {labels.publish_landing_url}
+            </label>
+            <div
+              className="flex items-center gap-1 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] focus-within:ring-2 focus-within:ring-[#4F6EF7]"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              dir="ltr"
+            >
+              {/* The prefix is editable while the business has no address of
+                  its own; once a website has set one, every page shares it and
+                  it is shown rather than asked for again. */}
+              {publishLanding?.subdomain ? (
+                <span className="text-sm text-[var(--v2-text-muted)] font-mono whitespace-nowrap">
+                  {publishLanding.subdomain}.
+                </span>
+              ) : (
+                <input
+                  type="text"
+                  value={publishSubdomainDraft}
+                  onChange={(e) => setPublishSubdomainDraft(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+                  placeholder="yoursite"
+                  className="w-28 min-w-0 bg-transparent text-sm font-mono text-[var(--v2-text-primary)] border-b border-[var(--v2-border)] focus:outline-none focus:border-[#4F6EF7]"
+                />
+              )}
+              <span className="text-sm text-[var(--v2-text-muted)] font-mono whitespace-nowrap">
+                {publishLanding?.subdomain ? 'agentspilot.com/' : '.agentspilot.com/'}
+              </span>
+              <input
+                type="text"
+                autoFocus
+                value={publishSlugDraft}
+                onChange={(e) => setPublishSlugDraft(e.target.value)}
+                placeholder="my-page"
+                className="flex-1 min-w-0 bg-transparent text-sm font-mono text-[var(--v2-text-primary)] focus:outline-none"
+              />
+            </div>
+            {publishLandingError && (
+              <p className="text-xs text-red-500 mt-2">{publishLandingError}</p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              onClick={() => setPublishLanding(null)}
+              className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-border)] transition-colors"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {labels.cancel}
+            </button>
+            <button
+              onClick={handlePublishLandingConfirm}
+              disabled={publishLandingBusy || !publishSlugDraft.trim()}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] disabled:opacity-50 transition-colors"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {publishLandingBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}
+              {labels.publish_landing}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -7149,7 +7680,7 @@ export default function WebsiteManagementPage() {
               className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
-              {deletingPage?.hasActivity ? labels.delete_deactivate : labels.delete_confirm}
+              {labels.delete_confirm}
             </button>
           </DialogFooter>
         </DialogContent>
@@ -7202,11 +7733,16 @@ export default function WebsiteManagementPage() {
               {language === 'he' ? 'מחיקת קישור חכם' : language === 'es' ? 'Eliminar Smart Link' : 'Delete Smart Link'}
             </DialogTitle>
             <DialogDescription className="text-[var(--v2-text-secondary)]">
+              {/* Says what is actually lost. The delete is permanent and takes
+                  the link's click history and attributed revenue with it — the
+                  copy said "cannot be undone" back when it only deactivated,
+                  which was both untrue and understated. Deactivating instead
+                  keeps everything. */}
               {language === 'he'
-                ? `האם אתה בטוח שברצונך למחוק את "${deletingSmartLink?.name}"? פעולה זו לא ניתנת לביטול.`
+                ? `למחוק את "${deletingSmartLink?.name}" לצמיתות? הקישור יפסיק לעבוד, והקליקים וההכנסות שנרשמו לו יימחקו איתו. כדי רק להשבית אותו ולשמור את הנתונים — השתמשו ב"השבתה".`
                 : language === 'es'
-                ? `¿Estás seguro de que quieres eliminar "${deletingSmartLink?.name}"? Esta acción no se puede deshacer.`
-                : `Are you sure you want to delete "${deletingSmartLink?.name}"? This action cannot be undone.`}
+                ? `¿Eliminar "${deletingSmartLink?.name}" definitivamente? El enlace dejará de funcionar y sus clics e ingresos atribuidos se eliminarán con él. Para solo apagarlo y conservar los datos, usa "Desactivar".`
+                : `Delete "${deletingSmartLink?.name}" permanently? The link stops working, and its clicks and attributed revenue are deleted with it. To just switch it off and keep the data, use Deactivate.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">
@@ -7225,10 +7761,11 @@ export default function WebsiteManagementPage() {
                 try {
                   const response = await fetch(`/api/smart-links/${deletingSmartLink.id}`, { method: 'DELETE' });
                   if (response.ok) {
-                    // Mark as inactive instead of removing (soft delete)
-                    setSmartLinks(prev => prev.map(l =>
-                      l.id === deletingSmartLink.id ? { ...l, is_active: false } : l
-                    ));
+                    // Gone, so it leaves the list. It used to be marked
+                    // inactive here, which is what Deactivate is for — the row
+                    // stayed on screen and the person had just pressed Delete.
+                    setSmartLinks(prev => prev.filter(l => l.id !== deletingSmartLink.id));
+                    setSmartLinkNotice(null);
                     setDeleteSmartLinkDialogOpen(false);
                     setDeletingSmartLink(null);
                   }

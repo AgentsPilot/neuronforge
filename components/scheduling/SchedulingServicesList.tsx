@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { serviceShapeValues, collectionToPersist } from '@/lib/business-os/serviceEditValues';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Clock, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
@@ -35,10 +36,20 @@ interface SchedulingServicesListProps {
    * knows, and a list does not need a network call to draw a row.
    */
   intakeEnabled?: boolean;
+  /**
+   * A card can actually be charged right now.
+   *
+   * Passed in for the same reason as `intakeEnabled` — the dialog that owns
+   * this list already knows. Defaults to false rather than true: the journey
+   * strip draws a payment step from this, and showing the owner a step their
+   * clients cannot complete is the failure worth avoiding. An owner who HAS
+   * connected Stripe sees it appear as soon as the caller says so.
+   */
+  processorReady?: boolean;
 }
 
 
-export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false }: SchedulingServicesListProps) {
+export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false, processorReady = false }: SchedulingServicesListProps) {
   const { t, formatCurrency, currencyCode } = useLanguage();
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [recentlyEditedId, setRecentlyEditedId] = useState<string | null>(null); // Track recently edited service for highlight animation
@@ -156,6 +167,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
   // Description mini-dialog state
   const [descriptionDialogId, setDescriptionDialogId] = useState<string | null>(null);
+  /** Set when the dialog was opened by a publish that could not go ahead. */
+  const [descriptionRequiredFor, setDescriptionRequiredFor] = useState<string | null>(null);
   const [descriptionValue, setDescriptionValue] = useState('');
   const [savingDescription, setSavingDescription] = useState(false);
   const descriptionDialogRef = useRef<HTMLDivElement>(null);
@@ -206,6 +219,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
       if (descriptionDialogRef.current && !descriptionDialogRef.current.contains(target)) {
         setDescriptionDialogId(null);
+    setDescriptionRequiredFor(null);
+        setDescriptionRequiredFor(null);
       }
       if (paymentDialogRef.current && !paymentDialogRef.current.contains(target)) {
         setPaymentDialogId(null);
@@ -289,10 +304,8 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           buffer: serviceToEdit.buffer_minutes?.toString() || '0',
           price: serviceToEdit.price?.toString() || '0',
           currency: serviceToEdit.currency || 'ILS',
-          is_scheduled: true,
-          collection: 'invoice' as ServiceCollection,
-          // An account whose services predate these columns reads as it always
-          // did: everything an appointment, nothing assumed to need a processor.
+          // The same rule as `startRowEdit`, from the same tested helper.
+          ...serviceShapeValues(serviceToEdit),
           payment_type: serviceToEdit.payment_type || 'full',
           installment_count: serviceToEdit.installment_count || 1,
           installment_frequency: serviceToEdit.installment_frequency || 'monthly',
@@ -323,6 +336,23 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const handlePublish = async (serviceId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (publishingId) return;
+
+    // A published service is one a client can be shown, and the website writes
+    // its section from this description. Publishing without one puts a
+    // paragraph the model guessed from the service's name in front of clients,
+    // so the description is asked for here rather than repaired afterwards.
+    //
+    // At publish rather than at save: the onboarding chat creates drafts fast
+    // and on purpose, and stopping to write copy there is exactly the friction
+    // that flow exists to avoid.
+    const service = services.find(item => item.id === serviceId);
+    const description = (optimisticUpdates[serviceId]?.description ?? service?.description ?? '').trim();
+    if (!description) {
+      setDescriptionValue(service?.description || '');
+      setDescriptionDialogId(serviceId);
+      setDescriptionRequiredFor(serviceId);
+      return;
+    }
 
     setPublishingId(serviceId);
     try {
@@ -757,8 +787,12 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       buffer: service.buffer_minutes?.toString() || '0',
       price: service.price?.toString() || '0',
       currency: getValidCurrency(service.currency),
-      is_scheduled: true,
-      collection: 'invoice' as ServiceCollection,
+      // READ THE SERVICE. These two were hardcoded, and `saveRowEdit` writes
+      // them back — so editing a name, a duration or a price on a card-collected
+      // service silently converted it to invoiced, and turned a product back
+      // into an appointment. The rule lives in `serviceEditValues` so it can be
+      // tested; a fallback and an override look identical in an object literal.
+      ...serviceShapeValues(service),
       payment_type: service.payment_type || 'full',
       installment_count: service.installment_count || 1,
       installment_frequency: service.installment_frequency || 'monthly',
@@ -798,7 +832,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       // happens to a client.
       duration_minutes: editRowValues.duration.trim() !== '' ? (parseInt(editRowValues.duration) || null) : null,
       is_scheduled: editRowValues.is_scheduled,
-      collection: priced ? editRowValues.collection : null,
+      collection: collectionToPersist(editRowValues.collection, priced ? 1 : 0),
       buffer_minutes: parseInt(editRowValues.buffer) || 0,
       price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
       currency: editRowValues.currency,
@@ -1356,6 +1390,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               saving={journeySavingId === service.id}
               onChange={(patch) => saveJourneyPatch(service, patch)}
               intakeEnabled={intakeEnabled}
+              // Without this the strip assumed a processor and drew a payment
+              // step the client could never complete.
+              processorReady={processorReady}
               service={{
                 scheduled: effectiveService.is_scheduled !== false,
                 collection: (effectiveService.collection as ServiceCollection | null) ?? null,
@@ -1753,12 +1790,20 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                 >
                   <FileText className="h-5 w-5" style={{ color: CONFIG_COLOR }} />
                 </div>
-                <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                  {t('scheduling.modal.description')}
-                </h3>
+                <div>
+                  <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                    {t('scheduling.modal.description')}
+                  </h3>
+                  {/* A dialog that opens by itself has to say why it did. */}
+                  {descriptionRequiredFor === descriptionDialogId && (
+                    <p className="text-xs text-[#C2410C] mt-0.5">
+                      {t('scheduling.description.requiredToPublish')}
+                    </p>
+                  )}
+                </div>
               </div>
               <button
-                onClick={() => setDescriptionDialogId(null)}
+                onClick={() => { setDescriptionDialogId(null); setDescriptionRequiredFor(null); }}
                 className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
@@ -1778,7 +1823,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
             <div className="flex justify-end gap-3 mt-4">
               <button
-                onClick={() => setDescriptionDialogId(null)}
+                onClick={() => { setDescriptionDialogId(null); setDescriptionRequiredFor(null); }}
                 className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >

@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -112,8 +113,12 @@ export async function GET(request: NextRequest) {
       : services;
 
     // Format services for response
-    const connectResult = await stripeConnectRepository.findByUserId(ownerId);
-    const processorReady = connectResult.data?.charges_enabled === true;
+    // One definition of "can this business be paid", shared with the refund
+    // path and the owner-facing checks. Reading `charges_enabled` inline here
+    // was correct but was one of several copies, and the copies disagreed —
+    // this one also let a placeholder/mock account id read as ready.
+    const capability = await resolvePaymentCollectionCapability(supabaseServer, ownerId);
+    const processorReady = capability.canCollect;
 
     const formattedServices: Service[] = (filteredServices || []).map(s => ({
       id: s.id,

@@ -2,6 +2,7 @@
 // Invoice email template with payment link
 
 import type { Locale } from '@/lib/i18n/config';
+import type { InvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
 import {
   wrapInBrandedTemplate,
   emailButton,
@@ -25,7 +26,14 @@ export interface InvoiceEmailData {
   currency: string;
   dueDate: Date;
   lineItems: InvoiceLineItem[];
-  paymentUrl: string;
+  /**
+   * How this client can actually pay.
+   *
+   * Replaces a bare `paymentUrl` that was always set and always rendered as a
+   * card button — including for businesses collected entirely by transfer,
+   * whose bank details reached the client only if they opened the PDF.
+   */
+  paymentOptions: InvoicePaymentOptions;
   serviceName?: string;
   appointmentDate?: Date;
   timezone?: string;
@@ -77,6 +85,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   const totalLabel = t.total[locale];
   const payNowLabel = t.payNow[locale];
   const securePaymentLabel = t.securePayment[locale];
+  const options = data.paymentOptions;
   const questionsText = t.questions[locale](data.branding.businessName);
   const serviceLabel = t.service[locale];
 
@@ -189,11 +198,14 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
       </tr>
     </table>
 
-    <!-- Pay Now Button -->
+    <!-- How to pay. Card, bank, instructions - whichever this business
+         actually offers, resolved once in invoicePaymentOptions so the
+         email, the PDF and the public page cannot disagree again. -->
+    ${options.card && options.cardUrl ? `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
         <td style="text-align: center;">
-          ${emailButton(payNowLabel, data.paymentUrl, {
+          ${emailButton(payNowLabel, options.cardUrl, {
             backgroundColor: data.branding.primaryColor,
             fullWidth: true
           })}
@@ -202,7 +214,49 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
           </p>
         </td>
       </tr>
-    </table>
+    </table>` : ''}
+
+    ${options.bank ? `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f7f7f7; border-radius: 8px;">
+      <tr>
+        <td style="padding: 16px 20px;">
+          <p style="margin: 0 0 10px; font-size: 14px; font-weight: 600; color: #333333;">
+            ${t.bankTransferTitle[locale]}
+          </p>
+          ${options.bankName ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankName[locale]}: <strong>${options.bankName}</strong></p>` : ''}
+          ${options.bankAccount ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankAccount[locale]}: <strong>${options.bankAccount}</strong></p>` : ''}
+          ${options.bankRouting ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankRouting[locale]}: <strong>${options.bankRouting}</strong></p>` : ''}
+          <p style="margin: 10px 0 0; font-size: 12px; color: #888888;">
+            ${t.includeInvoiceNumber[locale](data.invoiceNumber)}
+          </p>
+        </td>
+      </tr>
+    </table>` : ''}
+
+    ${options.instructions ? `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f7f7f7; border-radius: 8px;">
+      <tr>
+        <td style="padding: 16px 20px;">
+          <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600; color: #333333;">
+            ${t.paymentInstructionsTitle[locale]}
+          </p>
+          <p style="margin: 0; font-size: 13px; color: #555555; line-height: 1.6; white-space: pre-line;">${options.instructions}</p>
+        </td>
+      </tr>
+    </table>` : ''}
+
+    ${options.none ? `
+    <!-- Nothing configured. Saying so beats a bill with a blank space where the
+         payment method should be. -->
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
+      <tr>
+        <td style="padding: 16px 20px; background-color: #f7f7f7; border-radius: 8px;">
+          <p style="margin: 0; font-size: 13px; color: #555555;">
+            ${t.contactForPayment[locale](data.branding.businessName)}
+          </p>
+        </td>
+      </tr>
+    </table>` : ''}
 
     <!-- Final Note -->
     <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">

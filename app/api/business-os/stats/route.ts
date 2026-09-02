@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
@@ -134,6 +135,8 @@ interface CapabilityStats {
     online_services_count: number;
     /** Priced services billed afterwards — decides whether bank details are needed. */
     invoiced_services_count: number;
+    /** Names of active services with no description — the website cannot describe them. */
+    services_without_description: string[];
     open_days_count: number;
     stripe_connected: boolean;
     calendar_synced: boolean;
@@ -455,7 +458,11 @@ export async function GET(request: NextRequest) {
       // no processor at all and must never be asked for one.
       supabaseServer
         .from('scheduling_services')
-        .select('is_scheduled, collection, price')
+        // `service_name` and `description` ride along on the query that was
+        // already being made: the website's copy for a service is written from
+        // its description, so a service without one gets a paragraph the model
+        // guessed from its name.
+        .select('service_name, description, is_scheduled, collection, price')
         .eq('user_id', user.id)
         .eq('status', 'active'),
       // Stripe connection check - stripe_connect_accounts table
@@ -979,7 +986,12 @@ export async function GET(request: NextRequest) {
     const hasPaidServices = (paidServicesCount || 0) > 0;
 
     // Three answers, all read from the services rather than asked.
-    const shapes = (serviceShapes || []) as Array<{ is_scheduled?: boolean | null; collection?: string | null; price?: number | null }>;
+    const shapes = (serviceShapes || []) as Array<{ service_name?: string | null; description?: string | null; is_scheduled?: boolean | null; collection?: string | null; price?: number | null }>;
+    /** Services the website has nothing to say about. */
+    const servicesWithoutDescription = shapes
+      .filter(x => !x.description || x.description.trim().length === 0)
+      .map(x => x.service_name || '')
+      .filter(Boolean);
     const scheduledServicesCount = shapes.filter(x => x.is_scheduled !== false).length;
     const onlineServicesCount = shapes.filter(x => x.collection === 'online' && (x.price || 0) > 0).length;
     const invoicedServicesCount = shapes.filter(x => x.collection === 'invoice' && (x.price || 0) > 0).length;
@@ -1000,14 +1012,22 @@ export async function GET(request: NextRequest) {
     const { data: stripeConnectAccount } = stripeConnectResult;
     const { data: stripePluginConnection } = stripePluginResult;
 
-    const hasStripeConnectAccount = !!(stripeConnectAccount?.stripe_account_id && stripeConnectAccount?.onboarding_completed);
-    // For plugin_connections (OAuth), check if:
-    // 1. Status is active AND
-    // 2. There's an access_token (OAuth connected) OR profile_data has stripe_account_id
-    const hasStripePluginConnection = !!(stripePluginConnection?.status === 'active' &&
-      (stripePluginConnection?.access_token || stripePluginConnection?.profile_data?.stripe_account_id));
-
-    const stripeConnected = hasStripeConnectAccount || hasStripePluginConnection;
+    /**
+     * Can this business be paid?
+     *
+     * One definition, shared with the charge paths, the refund path and the
+     * public booking endpoints. There were three, and they disagreed: this one
+     * read `onboarding_completed` — which is stored as `charges_enabled AND
+     * payouts_enabled`, so it also refused a business whose money was merely
+     * held pending verification — while the setup checklist used
+     * `charges_enabled OR onboarding_completed`, which marked payments complete
+     * for an account that could not charge at all.
+     *
+     * `charges_enabled` is Stripe's own answer to the only question being
+     * asked, and it is the flag Stripe enforces when a charge is created.
+     */
+    const stripeCapability = await resolvePaymentCollectionCapability(supabaseServer, user.id);
+    const stripeConnected = stripeCapability.canCollect;
     // Calendar sync status from business profile
     const calendarSynced = !!(businessProfile as any)?.calendar_sync_enabled;
     const calendarProvider = (businessProfile as any)?.calendar_sync_provider || null;
@@ -1256,6 +1276,7 @@ export async function GET(request: NextRequest) {
         scheduled_services_count: scheduledServicesCount,
         online_services_count: onlineServicesCount,
         invoiced_services_count: invoicedServicesCount,
+        services_without_description: servicesWithoutDescription,
         open_days_count: openDaysCount,
         stripe_connected: stripeConnected,
         calendar_synced: calendarSynced,

@@ -39,6 +39,28 @@ export function stripeIntervalFor(frequency: PlanFrequency): StripeInterval {
   return INTERVALS[frequency];
 }
 
+/**
+ * How long a schedule phase lasts, expressed the way this Stripe API version
+ * wants it.
+ *
+ * `iterations` — "charge this price N times" — is gone from the SDK's phase
+ * params (19.2.1 / 2025-10-29.clover); a phase is now bounded by a `duration`.
+ * The two say the same thing but in different units, and the conversion is the
+ * place to get it wrong: a BIWEEKLY plan of 3 periods is six weeks, not three,
+ * because each period is already two weeks long.
+ *
+ * Multiplying by the interval count is what carries that. Forgetting it would
+ * end a biweekly plan halfway through and a quarterly one after a third of its
+ * periods — the client short-charged, the business short-paid, silently.
+ */
+export function phaseDurationFor(
+  frequency: PlanFrequency,
+  periods: number
+): { interval: StripeInterval['interval']; interval_count: number } {
+  const { interval, interval_count } = INTERVALS[frequency];
+  return { interval, interval_count: interval_count * periods };
+}
+
 /** Days between periods, for projecting due dates locally. */
 const DAYS_BETWEEN: Record<PlanFrequency, number> = {
   weekly: 7,

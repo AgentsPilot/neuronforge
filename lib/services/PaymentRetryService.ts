@@ -12,6 +12,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { describeChargeAccount, resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { emitPaymentEvent, PaymentProcessorType } from '@/lib/services/PaymentEventService';
 import { paymentProcessorService } from '@/lib/services/PaymentProcessorService';
@@ -370,6 +371,20 @@ export class PaymentRetryService {
             currency: invoice.currency,
             paymentMethod: 'card',
             processorType: invoice.processor_type || 'stripe',
+            /**
+             * WHERE the charge was made, without which it cannot be refunded.
+             *
+             * Omitted, `account_resolution` defaults to `'unknown'` and
+             * `resolveRefundAccount` refuses with ACCOUNT_UNRESOLVED rather
+             * than guess a balance — so every successful automatic retry
+             * produced money that could never be returned.
+             *
+             * The retry charges the business's own connected account, which is
+             * the account this resolves.
+             */
+            accountContext: describeChargeAccount(
+              (await resolvePaymentCollectionCapability(supabaseServer, userId)).accountId
+            ),
             description: `Paid via automatic retry (attempt ${invoice.retry_count + 1})`,
             metadata: { source: 'payment_retry', retry_attempt: invoice.retry_count + 1 }
           });

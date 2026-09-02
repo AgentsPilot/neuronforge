@@ -7,7 +7,8 @@
  * months later.
  */
 
-import { dueDatesFor, planPhases, planSchedule, stripeIntervalFor } from '../planSchedule';
+import {
+  phaseDurationFor, dueDatesFor, planPhases, planSchedule, stripeIntervalFor } from '../planSchedule';
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
@@ -180,5 +181,31 @@ describe('planPhases — what Stripe is actually given', () => {
 
   it('refuses a plan with no periods', () => {
     expect(() => planPhases(100, 'USD', 0)).toThrow();
+  });
+});
+
+/**
+ * `iterations` is gone from the phase params in this Stripe API version, and a
+ * phase is bounded by a duration instead. The conversion is where a plan can
+ * quietly end early.
+ */
+describe('phaseDurationFor', () => {
+  it('is the number of periods for a plain monthly plan', () => {
+    expect(phaseDurationFor('monthly', 3)).toEqual({ interval: 'month', interval_count: 3 });
+  });
+
+  it('MULTIPLIES by the interval count for biweekly', () => {
+    // Three biweekly periods is six weeks. Reading it as three would end the
+    // plan halfway through — the client short-charged and the business
+    // short-paid, with nothing to show it happened.
+    expect(phaseDurationFor('biweekly', 3)).toEqual({ interval: 'week', interval_count: 6 });
+  });
+
+  it('MULTIPLIES for quarterly too', () => {
+    expect(phaseDurationFor('quarterly', 4)).toEqual({ interval: 'month', interval_count: 12 });
+  });
+
+  it('handles weekly', () => {
+    expect(phaseDurationFor('weekly', 8)).toEqual({ interval: 'week', interval_count: 8 });
   });
 });

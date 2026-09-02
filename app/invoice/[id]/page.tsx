@@ -7,6 +7,8 @@
  */
 
 import { Metadata } from 'next';
+import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CheckCircle, Clock, CreditCard, Building2, AlertCircle } from 'lucide-react';
@@ -194,6 +196,27 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
   const businessName = profile?.invoice_company_name || profile?.company_name || 'Business';
   const isPaid = invoice.status === 'paid' || status === 'paid' || paymentStatus === 'success';
   const isManualPayment = paymentStatus === 'manual';
+
+  /**
+   * What this client can actually do, resolved the same way the email and the
+   * PDF resolve it.
+   *
+   * The card button used to render on `!isManualPayment` alone — a query string
+   * — with no regard for whether the business has a processor. On a business
+   * that collects by transfer the only route to the bank details was to click
+   * that button, be bounced through `/pay`, and land back here with
+   * `?payment=manual`. Nothing ever linked to that directly, so it was the only
+   * way in, and it went via a dead end.
+   */
+  const capability = await resolvePaymentCollectionCapability(supabaseServer, invoice.user_id);
+
+  const paymentOptions = resolveInvoicePaymentOptions({
+    // The query string still forces the manual view, so an explicit
+    // "pay another way" link keeps working.
+    canCollectOnline: capability.canCollect && !isManualPayment,
+    cardUrl: `/api/public/invoice/${invoice.id}/pay`,
+    profile,
+  });
   const isCancelled = paymentStatus === 'cancelled';
   const isOverdue = invoice.status === 'overdue';
 
@@ -395,37 +418,40 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
               </h3>
 
               <div className="space-y-3">
-                {/* Online Payment */}
-                {!isManualPayment && (
+                {/* Online Payment — only when a card can actually be taken. */}
+                {paymentOptions.card && paymentOptions.cardUrl && (
                   <a
-                    href={`/api/public/invoice/${invoice.id}/pay`}
+                    href={paymentOptions.cardUrl}
                     className="block w-full text-center px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
                   >
                     {t('payOnline')}
                   </a>
                 )}
 
-                {/* Bank Transfer */}
-                {(profile?.invoice_bank_name || profile?.invoice_bank_account) && (
+                {/* Bank Transfer — on ANY bank field. This required a name or
+                    an account, while the PDF required a name or instructions,
+                    so a business with only an account number was described
+                    differently by the two. */}
+                {paymentOptions.bank && (
                   <div className="p-4 bg-white border border-slate-200 rounded-lg">
                     <h4 className="font-semibold text-slate-900 mb-3">{t('bankTransfer')}</h4>
                     <div className="space-y-2 text-sm">
-                      {profile.invoice_bank_name && (
+                      {paymentOptions.bankName && (
                         <div className="flex justify-between">
                           <span className="text-slate-500">{t('bank')}</span>
-                          <span className="font-medium text-slate-900">{profile.invoice_bank_name}</span>
+                          <span className="font-medium text-slate-900">{paymentOptions.bankName}</span>
                         </div>
                       )}
-                      {profile.invoice_bank_account && (
+                      {paymentOptions.bankAccount && (
                         <div className="flex justify-between">
                           <span className="text-slate-500">{t('account')}</span>
-                          <span className="font-medium text-slate-900 font-mono">{profile.invoice_bank_account}</span>
+                          <span className="font-medium text-slate-900 font-mono">{paymentOptions.bankAccount}</span>
                         </div>
                       )}
-                      {profile.invoice_bank_routing && (
+                      {paymentOptions.bankRouting && (
                         <div className="flex justify-between">
                           <span className="text-slate-500">{t('routingBranch')}</span>
-                          <span className="font-medium text-slate-900">{profile.invoice_bank_routing}</span>
+                          <span className="font-medium text-slate-900">{paymentOptions.bankRouting}</span>
                         </div>
                       )}
                     </div>
@@ -436,15 +462,19 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
                 )}
 
                 {/* Payment Instructions */}
-                {profile?.invoice_payment_instructions && (
+                {paymentOptions.instructions && (
                   <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
                     <h4 className="font-semibold text-amber-800 mb-2">{t('paymentInstructions')}</h4>
-                    <p className="text-sm text-amber-700">{profile.invoice_payment_instructions}</p>
+                    <p className="text-sm text-amber-700">{paymentOptions.instructions}</p>
                   </div>
                 )}
 
-                {/* Contact for Payment */}
-                {isManualPayment && !profile?.invoice_bank_name && !profile?.invoice_payment_instructions && (
+                {/* Contact for Payment — whenever there is genuinely no way to
+                    pay, not only after a bounce through `?payment=manual`. A
+                    client holding a bill with a blank space where the method
+                    should be needs telling, however they arrived. It also
+                    checked only two of the four fields. */}
+                {paymentOptions.none && (
                   <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-center">
                     <p className="text-sm text-blue-700">
                       {t('contactForPayment', { businessName })}

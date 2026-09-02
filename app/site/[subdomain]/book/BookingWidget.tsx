@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react';
 import { Calendar, Clock, User, Mail, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown } from 'lucide-react';
 import PhoneInput from 'react-phone-number-input';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { journeySteps } from '@/lib/business-os/clientJourney';
 import type { CountryCode } from 'libphonenumber-js/core';
 import { isValidPhoneNumber } from 'react-phone-number-input';
@@ -22,6 +23,8 @@ interface Service {
   description: string | null;
   duration_minutes: number | null;
   price: number | null;
+  /** How this service may be paid over time, when the business offers one. */
+  paymentPlan?: ServicePaymentPlan;
   currency: string;
   /** Does a client pick a time for this? False for a product. */
   is_scheduled?: boolean | null;
@@ -130,7 +133,12 @@ const translations = {
     min: 'min',
     free: 'Free',
     on_request: 'Price on request',
-    secure_payment_stripe: 'Secure payment powered by Stripe'
+    secure_payment_stripe: 'Secure payment powered by Stripe',
+    payment_plan: 'Payment plan',
+    plan_split: '{count} payments of {amount}, {frequency}',
+    plan_total: 'Total',
+    due_today: 'Due today',
+    frequency: { weekly: 'weekly', biweekly: 'every 2 weeks', monthly: 'monthly', quarterly: 'quarterly' }
   },
   es: {
     choose_service: 'Elige un Servicio',
@@ -168,7 +176,12 @@ const translations = {
     min: 'min',
     free: 'Gratis',
     on_request: 'Precio a convenir',
-    secure_payment_stripe: 'Pago seguro con Stripe'
+    secure_payment_stripe: 'Pago seguro con Stripe',
+    payment_plan: 'Plan de pago',
+    plan_split: '{count} pagos de {amount}, {frequency}',
+    plan_total: 'Total',
+    due_today: 'A pagar hoy',
+    frequency: { weekly: 'semanal', biweekly: 'cada 2 semanas', monthly: 'mensual', quarterly: 'trimestral' }
   },
   he: {
     choose_service: 'בחר שירות',
@@ -206,7 +219,12 @@ const translations = {
     min: 'דק\'',
     free: 'חינם',
     on_request: 'לפי הצעת מחיר',
-    secure_payment_stripe: 'תשלום מאובטח באמצעות Stripe'
+    secure_payment_stripe: 'תשלום מאובטח באמצעות Stripe',
+    payment_plan: 'תוכנית תשלומים',
+    plan_split: '{count} תשלומים של {amount}, {frequency}',
+    plan_total: 'סה״כ',
+    due_today: 'לתשלום היום',
+    frequency: { weekly: 'שבועי', biweekly: 'כל שבועיים', monthly: 'חודשי', quarterly: 'רבעוני' }
   }
 };
 
@@ -235,6 +253,17 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   };
   const [step, setStep] = useState<Step>('service');
   const [selectedService, setSelectedService] = useState<Service | null>(null);
+
+  /*
+   * The plan behind this payment, when the split is real.
+   *
+   * An `installmentCount` of 1 is a single payment wearing a plan's name —
+   * describing it as "1 payment of X" tells the client nothing the price does
+   * not already say.
+   */
+  const activePlan = selectedService?.paymentPlan && selectedService.paymentPlan.installmentCount > 1
+    ? selectedService.paymentPlan
+    : undefined;
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [slots, setSlots] = useState<TimeSlot[]>([]);
@@ -452,8 +481,14 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     setSubmitting(true);
     setError(null);
 
-    // Determine if payment is required
-    const requiresPayment = selectedService.price !== null && selectedService.price > 0;
+    // The journey already decided this. It used to be re-derived here from
+    // price alone, which is a different question and gave a different answer:
+    // `activeSteps` comes from `journeySteps`, which also weighs how the service
+    // is collected and whether a card can actually be charged. Deriving it twice
+    // meant an invoiced service was walked to a card form, and a service whose
+    // processor was not ready reached a checkout that 503s — after the booking
+    // already existed as pending.
+    const requiresPayment = activeSteps.includes('payment');
     console.log('📋 Booking submission:', {
       service: selectedService.name,
       price: selectedService.price,
@@ -1186,7 +1221,15 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           </p>
         </div>
 
-        {/* Payment Amount Card */}
+        {/*
+          Payment Amount Card — what is being agreed to, not only what it costs.
+
+          Where the business offers a payment plan the client is agreeing to a
+          number of payments on a schedule, and none of that appeared here: the
+          card showed the full total and the card form then charged the first
+          instalment. The split is the part a person needs before they type a
+          card number.
+        */}
         <div className="bg-white border border-gray-200 rounded-xl p-6">
           <div className="flex justify-between items-center mb-4">
             <span className="text-gray-600">{t.service}</span>
@@ -1196,10 +1239,35 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
             <span className="text-gray-600">{t.duration}</span>
             <span className="font-medium text-gray-900">{selectedService?.duration_minutes} {t.min}</span>
           </div>
+
+          {activePlan && (
+            <>
+              <div className="flex justify-between items-center mb-4 gap-3">
+                <span className="text-gray-600">{t.payment_plan}</span>
+                <span className="font-medium text-gray-900 text-end">
+                  {t.plan_split
+                    .replace('{count}', String(activePlan.installmentCount))
+                    .replace('{amount}', formatPrice(activePlan.installmentAmount, activePlan.currency))
+                    .replace('{frequency}', t.frequency[activePlan.frequency])}
+                </span>
+              </div>
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-gray-600">{t.plan_total}</span>
+                <span className="font-medium text-gray-900">
+                  {formatPrice(activePlan.totalAmount, activePlan.currency)}
+                </span>
+              </div>
+            </>
+          )}
+
           <div className="border-t border-gray-100 pt-4 flex justify-between items-center">
-            <span className="font-semibold text-gray-900">{t.total}</span>
+            <span className="font-semibold text-gray-900">
+              {activePlan ? t.due_today : t.total}
+            </span>
             <span className="text-xl font-bold" style={{ color: primaryColor }}>
-              {formatPrice(selectedService?.price || 0, selectedService?.currency || 'USD')}
+              {activePlan
+                ? formatPrice(activePlan.installmentAmount, activePlan.currency)
+                : formatPrice(selectedService?.price || 0, selectedService?.currency || 'USD')}
             </span>
           </div>
         </div>

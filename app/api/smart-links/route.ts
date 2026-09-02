@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
+import { journeyGapsForSmartLink, describeJourneyGaps } from '@/lib/business-os/journeyReadiness';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { z } from 'zod';
 
@@ -118,10 +119,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    /*
+     * Created switched OFF when the journey behind it cannot run.
+     *
+     * A smart link goes live the moment it exists — there is no publish step —
+     * so a link made before the working hours or the card processor are in
+     * place would start handing clients a journey that dead-ends. Refusing to
+     * create it would be worse: the business loses the link it just built for a
+     * gap it can close in a minute. So it is made, and made inactive, and the
+     * response says why.
+     */
+    const gaps = await journeyGapsForSmartLink(user.id, {
+      destination_type: validated.destination_type ?? null,
+      destination_url: destinationUrl,
+    });
+
     const result = await smartLinkRepository.create(user.id, {
       name: validated.name,
       destination_url: destinationUrl,
       destination_type: validated.destination_type,
+      is_active: gaps.length === 0,
       source: validated.source,
       medium: validated.medium,
       campaign: validated.campaign,
@@ -145,7 +162,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       link: result.data,
-      shortUrl
+      shortUrl,
+      // Said plainly. A link created switched off with no explanation looks
+      // like a bug, and the business would simply toggle it on — which the
+      // activation gate would then refuse, with no more explanation than this.
+      ...(gaps.length > 0
+        ? { inactive: true, reason: gaps[0].kind, warning: describeJourneyGaps(gaps) }
+        : {}),
     }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
