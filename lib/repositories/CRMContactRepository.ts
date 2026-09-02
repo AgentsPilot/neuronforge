@@ -22,6 +22,7 @@ export interface CRMContact {
   tags: string[];
   custom_fields: Record<string, any>;
   source: string | null; // 'website_form', 'manual', 'import', 'booking', 'campaign'
+  notes: string | null;
   created_at: string;
   updated_at: string;
   // Aggregated fields (optional, populated by list queries)
@@ -39,6 +40,10 @@ export interface CRMContactInsert {
   tags?: string[];
   custom_fields?: Record<string, any>;
   source?: string | null;
+  // Lead attribution (UTM params, referrer, session) captured at first touch.
+  // Backed by crm_contacts.source_metadata JSONB (20260824_add_conversion_layer.sql).
+  source_metadata?: Record<string, unknown> | null;
+  notes?: string | null;
 }
 
 export interface CRMContactUpdate {
@@ -49,6 +54,7 @@ export interface CRMContactUpdate {
   stage?: string;
   tags?: string[];
   custom_fields?: Record<string, any>;
+  notes?: string | null;
 }
 
 export interface CRMContactRepositoryResult<T> {
@@ -460,6 +466,51 @@ export class CRMContactRepository {
     tag: string
   ): Promise<CRMContactRepositoryResult<CRMContact[]>> {
     return this.list(userId, { tags: [tag], orderBy: 'updated_at', orderDirection: 'desc' });
+  }
+
+  /**
+   * Lightweight scalar list for chat / name-resolution paths.
+   *
+   * Selects only scalar contact fields (no booking/task count subqueries) so it stays cheap,
+   * user-scoped. Supports an id-set, stage, and name/email search filter (same `or(ilike …)`
+   * shape as the legacy inline queries) plus an optional limit (omit `limit` to return all).
+   * Behavior-preserving replacement for the inline `crm_contacts` selects that previously
+   * lived in ChatCommandExecutor (fuzzy matching, contact-by-ids, stage/search, name lookup).
+   */
+  async listBasic(
+    userId: string,
+    options: { ids?: string[]; stage?: string; search?: string; limit?: number } = {}
+  ): Promise<CRMContactRepositoryResult<Pick<CRMContact, 'id' | 'first_name' | 'last_name' | 'email' | 'phone' | 'stage'>[]>> {
+    try {
+      let query = this.supabase
+        .from('crm_contacts')
+        .select('id, first_name, last_name, email, phone, stage')
+        .eq('user_id', userId);
+
+      if (options.ids) {
+        query = query.in('id', options.ids);
+      }
+      if (options.stage) {
+        query = query.eq('stage', options.stage);
+      }
+      if (options.search) {
+        query = query.or(
+          `first_name.ilike.%${options.search}%,last_name.ilike.%${options.search}%,email.ilike.%${options.search}%`
+        );
+      }
+      if (options.limit !== undefined) {
+        query = query.limit(options.limit);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, options }, 'Failed to list CRM contacts (basic)');
+      return { data: null, error: error as Error };
+    }
   }
 }
 

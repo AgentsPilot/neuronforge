@@ -1,0 +1,86 @@
+{
+  "plugin": {
+    "name": "intake",
+    "displayName": "Intake",
+    "version": "1.0.0",
+    "description": "Internal Intake: the client-intake form configuration for the current Business OS account — a global read-only catalog of intake form templates plus this account's single intake settings row (which template is active and when it is collected). Configuration only — it does not submit or store client responses.",
+    "context": "Use to inspect and configure the account's client-intake form. list_intake_templates / get_intake_template read the global, seed-managed template catalog (users select a template, they do not author one). get_intake_settings / update_intake_settings read and change this account's single settings row: which template is active (template_id), whether intake is enabled, and whether it is collected during booking / sent after booking. Backed by the internal Business OS data store (no external account required). It does NOT capture, store, or read client form responses — the booking-response flow belongs to Scheduling.",
+    "category": "productivity",
+    "isSystem": true,
+    "visibility": "business_os",
+    "provider_family": "internal-bos",
+    "access_strategy": { "type": "db_active" },
+    "auth_config": {
+      "auth_type": "internal",
+      "client_id": "internal",
+      "client_secret": "internal",
+      "redirect_uri": "",
+      "auth_url": "",
+      "token_url": "",
+      "refresh_url": "",
+      "profile_url": "",
+      "required_scopes": []
+    }
+  },
+  "actions": {
+    "list_intake_templates": {
+      "description": "List the intake form templates available to this account. Templates are matched to the account's business vertical (resolved automatically from the business profile), merged with the generic ('other') set. The catalog is global and read-only — users select a template, they do not author one.",
+      "usage_context": "When the user wants to see which intake form templates they can choose from. The vertical is resolved automatically from the account's business profile — it is never supplied by the caller.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "list",
+      "output_entity": "record",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_guidance": { "success_description": "Intake templates listed", "common_errors": { "access_denied": "No Business OS profile for this account.", "invalid_request": "Could not list intake templates." } }
+    },
+    "get_intake_template": {
+      "description": "Fetch a single intake form template by id, with all of its fields and multilingual labels. Reads the global template catalog.",
+      "usage_context": "When you need the full definition of one intake template (its fields and labels).",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "description": "Template id." } } },
+      "output_guidance": { "success_description": "Intake template retrieved", "common_errors": { "not_found": "No intake template with that id." } }
+    },
+    "get_intake_settings": {
+      "description": "Get this account's intake settings (which template is active, whether intake is enabled, and whether it is collected during booking / sent after booking), including the linked template details. Returns disabled defaults when no settings row exists yet.",
+      "usage_context": "When the user wants to see their current intake configuration. A fresh account with no settings row returns the disabled defaults.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "get",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": { "type": "object", "required": [], "properties": {} },
+      "output_guidance": { "success_description": "Intake settings retrieved", "common_errors": { "invalid_request": "Could not fetch intake settings." } }
+    },
+    "update_intake_settings": {
+      "description": "Update this account's intake settings: select the active template, enable/disable intake, and control when it is collected. Only the four settings fields are applied. If a template_id is supplied it is validated against the global catalog first.",
+      "usage_context": "When the user wants to change their intake configuration — e.g. pick a template, turn intake on/off, or change collect-during-booking / send-after-booking.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "update",
+      "output_entity": "record",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "template_id": { "type": "string", "description": "Id of the intake template to activate (validated against the global catalog). Pass null to clear." },
+          "is_enabled": { "type": "boolean", "description": "Whether intake collection is enabled." },
+          "collect_during_booking": { "type": "boolean", "description": "Whether the intake form is collected during the booking flow." },
+          "send_after_booking": { "type": "boolean", "description": "Whether the intake form is sent to the client after booking." }
+        }
+      },
+      "output_guidance": { "success_description": "Intake settings updated", "common_errors": { "not_found": "No intake template with that id.", "invalid_request": "Could not update intake settings." } }
+    }
+  }
+}

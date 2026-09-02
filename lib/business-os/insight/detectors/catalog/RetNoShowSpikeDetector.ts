@@ -67,12 +67,14 @@ export class RetNoShowSpikeDetector extends BaseDetector {
       return null;
     }
 
-    // Get baseline for no-show rate
+    // Get baseline for no-show rate.
+    // no_show_rate is stored at weekly/monthly granularity; 'weekly' is the finest
+    // supported period and matches this detector's weekly impact framing.
     const baseline = await this.baselineCalculator.computeBaseline(
       userId,
       'retention.no_show_rate',
-      this.getBaselineLookbackDays(),
-      this.definition.minSamples
+      'weekly',
+      this.getBaselineLookbackDays()
     );
 
     // Not enough data
@@ -101,7 +103,16 @@ export class RetNoShowSpikeDetector extends BaseDetector {
 
     // Calculate delta and severity
     const delta = currentValue - baseline.mean;
-    const percentChange = this.baselineCalculator.getPercentChange(currentValue, baseline.mean);
+    // getPercentChange returns { percentChange: number | null, baseline }; coalesce the
+    // null case (insignificant/zero baseline) to 0 since DetectionResult.percentChange is number.
+    const { percentChange: computedPercentChange } = await this.baselineCalculator.getPercentChange(
+      userId,
+      'retention.no_show_rate',
+      'weekly',
+      currentValue,
+      this.getBaselineLookbackDays()
+    );
+    const percentChange = computedPercentChange ?? 0;
     const severity = this.definition.severityFn(delta, baseline.mean);
 
     // Get recent no-shows for context

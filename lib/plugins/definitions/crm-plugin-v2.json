@@ -1,0 +1,480 @@
+{
+  "plugin": {
+    "name": "crm",
+    "displayName": "CRM",
+    "version": "1.0.0",
+    "description": "Internal CRM: contacts, tasks, activities, and pipeline stages for the current Business OS account.",
+    "context": "Use to manage the user's own CRM records — create/find/update contacts, move pipeline stage, add and complete tasks, log activities, and read pipeline stages. Backed by the internal Business OS data store (no external account or connection required).",
+    "category": "crm",
+    "isSystem": true,
+    "visibility": "business_os",
+    "provider_family": "internal-bos",
+    "access_strategy": { "type": "db_active" },
+    "auth_config": {
+      "auth_type": "internal",
+      "client_id": "internal",
+      "client_secret": "internal",
+      "redirect_uri": "",
+      "auth_url": "",
+      "token_url": "",
+      "refresh_url": "",
+      "profile_url": "",
+      "required_scopes": []
+    }
+  },
+  "actions": {
+    "create_contact": {
+      "description": "Create a new CRM contact for the current account.",
+      "usage_context": "When the user wants to add a new person/lead/client to their CRM. A contact-created activity is logged automatically by the system — do not also call log_activity for that.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "contact",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": ["id", "first_name", "last_name", "email", "phone", "stage", "tags", "source", "created_at"],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "first_name": { "type": "string", "description": "Contact first name." },
+          "last_name": { "type": "string", "description": "Contact last name." },
+          "email": { "type": "string", "description": "Contact email address." },
+          "phone": { "type": "string", "description": "Contact phone number." },
+          "stage": { "type": "string", "description": "Pipeline stage key (defaults to 'lead' when omitted)." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags." },
+          "custom_fields": { "type": "object", "description": "Arbitrary custom key/value fields." },
+          "source": { "type": "string", "description": "Where the contact came from (e.g. 'manual', 'website_form', 'import', 'booking', 'campaign')." }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "first_name": { "type": "string" },
+          "last_name": { "type": "string" },
+          "email": { "type": "string" },
+          "phone": { "type": "string" },
+          "stage": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "source": { "type": "string" },
+          "created_at": { "type": "string" }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contact created",
+        "common_errors": {
+          "duplicate": "A contact with this email may already exist. Use list_contacts to find it, then update_contact.",
+          "invalid_request": "Contact could not be created. Check the provided fields."
+        }
+      }
+    },
+    "get_contact": {
+      "description": "Fetch a single CRM contact by id.",
+      "usage_context": "When the user references a specific contact by id and you need its full record.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "get",
+      "input_entity": "contact",
+      "output_entity": "contact",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": ["id", "first_name", "last_name", "email", "phone", "stage", "tags", "source", "created_at"],
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Contact id." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contact retrieved",
+        "common_errors": { "not_found": "No contact with that id exists for this account." }
+      }
+    },
+    "list_contacts": {
+      "description": "List/search/filter CRM contacts.",
+      "usage_context": "When the user wants to see or search their contacts, optionally filtered by stage, tags, or a text search.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "contact",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "first_name", "last_name", "email", "phone", "stage", "tags"],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "stage": { "type": "string", "description": "Filter by pipeline stage key." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter to contacts having any of these tags." },
+          "search": { "type": "string", "description": "Text search across name, email, and phone." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows to return." },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." },
+          "order_by": { "type": "string", "enum": ["created_at", "updated_at", "first_name", "last_name"], "default": "created_at", "description": "Sort field." },
+          "order_direction": { "type": "string", "enum": ["asc", "desc"], "default": "desc", "description": "Sort direction." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contacts listed",
+        "common_errors": { "invalid_request": "Could not list contacts. Check the filter parameters." }
+      }
+    },
+    "count_contacts": {
+      "description": "Count CRM contacts, optionally filtered.",
+      "usage_context": "When the user wants a total number of contacts, optionally by stage/tags/search, without listing them.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "aggregate",
+      "input_entity": null,
+      "output_entity": "contact",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "stage": { "type": "string", "description": "Filter by pipeline stage key." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags." },
+          "search": { "type": "string", "description": "Text search across name, email, and phone." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contacts counted",
+        "common_errors": { "invalid_request": "Could not count contacts." }
+      }
+    },
+    "update_contact": {
+      "description": "Update fields on an existing CRM contact.",
+      "usage_context": "When the user wants to edit a contact's details. Does not log an activity. To change only the pipeline stage, prefer move_stage.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "update",
+      "input_entity": "contact",
+      "output_entity": "contact",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Contact id." },
+          "first_name": { "type": "string", "description": "Updated first name." },
+          "last_name": { "type": "string", "description": "Updated last name." },
+          "email": { "type": "string", "description": "Updated email." },
+          "phone": { "type": "string", "description": "Updated phone." },
+          "stage": { "type": "string", "description": "Updated pipeline stage key." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Replacement tags array." },
+          "custom_fields": { "type": "object", "description": "Replacement custom fields." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contact updated",
+        "common_errors": { "not_found": "No contact with that id exists for this account." }
+      }
+    },
+    "move_stage": {
+      "description": "Move a contact to a different pipeline stage.",
+      "usage_context": "When the user wants to advance/change a contact's pipeline stage. Does not log an activity.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "update",
+      "input_entity": "contact",
+      "output_entity": "contact",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id", "stage"],
+        "properties": {
+          "id": { "type": "string", "description": "Contact id." },
+          "stage": { "type": "string", "description": "Target pipeline stage key." },
+          "validate_stage": { "type": "boolean", "default": false, "description": "When true, reject a stage that is not a configured pipeline stage. Off by default to preserve backward-compatible behavior." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contact stage updated",
+        "common_errors": {
+          "not_found": "No contact with that id exists for this account.",
+          "invalid_stage": "The target stage is not a configured pipeline stage."
+        }
+      }
+    },
+    "delete_contact": {
+      "description": "Delete a CRM contact (permanent).",
+      "usage_context": "When the user explicitly wants to remove a contact. This is a hard delete and may cascade to related records via database rules.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "delete",
+      "input_entity": "contact",
+      "output_entity": "contact",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Contact id to delete." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Contact deleted",
+        "common_errors": { "not_found": "No contact with that id exists for this account." }
+      }
+    },
+    "add_task": {
+      "description": "Create a CRM task / follow-up, optionally linked to a contact.",
+      "usage_context": "When the user wants to add a to-do or follow-up. Link it to a contact via contact_id when relevant.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "create",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": ["id", "title", "priority", "status", "due_date", "contact_id"],
+      "parameters": {
+        "type": "object",
+        "required": ["title"],
+        "properties": {
+          "title": { "type": "string", "description": "Task title." },
+          "description": { "type": "string", "description": "Task details." },
+          "contact_id": { "type": "string", "description": "Optional contact this task relates to." },
+          "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "default": "medium", "description": "Task priority." },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"], "default": "pending", "description": "Initial status." },
+          "due_date": { "type": "string", "description": "Due date (ISO 8601)." },
+          "reminder_at": { "type": "string", "description": "Reminder time (ISO 8601)." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Freeform tags." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Task created",
+        "common_errors": { "invalid_request": "Task could not be created. Check the provided fields." }
+      }
+    },
+    "get_task": {
+      "description": "Fetch a single CRM task by id.",
+      "usage_context": "When the user references a specific task by id.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "get",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Task id." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Task retrieved",
+        "common_errors": { "not_found": "No task with that id exists for this account." }
+      }
+    },
+    "list_tasks": {
+      "description": "List/filter CRM tasks.",
+      "usage_context": "When the user wants to see their tasks, optionally filtered by contact, status, priority, or due window.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "contact_id": { "type": "string", "description": "Filter to a contact's tasks." },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"], "description": "Filter by a single status." },
+          "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "description": "Filter by priority." },
+          "due_before": { "type": "string", "description": "Only tasks due on/before this ISO date." },
+          "due_after": { "type": "string", "description": "Only tasks due on/after this ISO date." },
+          "include_completed": { "type": "boolean", "default": false, "description": "Include completed/cancelled tasks." },
+          "search": { "type": "string", "description": "Text search across title and description." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." },
+          "offset": { "type": "integer", "minimum": 0, "default": 0, "description": "Pagination offset." },
+          "order_by": { "type": "string", "enum": ["due_date", "created_at", "priority"], "default": "due_date", "description": "Sort field." },
+          "order_direction": { "type": "string", "enum": ["asc", "desc"], "default": "asc", "description": "Sort direction." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Tasks listed",
+        "common_errors": { "invalid_request": "Could not list tasks. Check the filter parameters." }
+      }
+    },
+    "count_tasks": {
+      "description": "Count CRM tasks grouped by status.",
+      "usage_context": "When the user wants task totals (pending/in_progress/completed/cancelled), optionally for one contact.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "aggregate",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {
+          "contact_id": { "type": "string", "description": "Optional contact to scope the counts to." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Tasks counted",
+        "common_errors": { "invalid_request": "Could not count tasks." }
+      }
+    },
+    "update_task": {
+      "description": "Update fields on an existing CRM task.",
+      "usage_context": "When the user wants to edit a task's details, priority, status, or due date.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Task id." },
+          "title": { "type": "string", "description": "Updated title." },
+          "description": { "type": "string", "description": "Updated description." },
+          "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "description": "Updated priority." },
+          "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"], "description": "Updated status." },
+          "due_date": { "type": "string", "description": "Updated due date (ISO 8601)." },
+          "reminder_at": { "type": "string", "description": "Updated reminder (ISO 8601)." },
+          "contact_id": { "type": "string", "description": "Re-link to a different contact." },
+          "tags": { "type": "array", "items": { "type": "string" }, "description": "Replacement tags." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Task updated",
+        "common_errors": { "not_found": "No task with that id exists for this account." }
+      }
+    },
+    "complete_task": {
+      "description": "Mark a CRM task as completed.",
+      "usage_context": "When the user says a task/follow-up is done.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "update",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Task id to complete." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Task completed",
+        "common_errors": { "not_found": "No task with that id exists for this account." }
+      }
+    },
+    "delete_task": {
+      "description": "Delete a CRM task (permanent).",
+      "usage_context": "When the user explicitly wants to remove a task.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "delete",
+      "input_entity": "record",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "description": "Task id to delete." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Task deleted",
+        "common_errors": { "not_found": "No task with that id exists for this account." }
+      }
+    },
+    "log_activity": {
+      "description": "Log a timeline activity against a contact.",
+      "usage_context": "When the user wants to record a note, call, meeting, or other interaction on a contact's timeline. This is the only operation that writes an activity; contact/booking/payment/email activities are logged automatically by the system.",
+      "idempotent": false,
+      "domain": "crm",
+      "capability": "create",
+      "input_entity": "contact",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "parameters": {
+        "type": "object",
+        "required": ["contact_id", "activity_type", "title"],
+        "properties": {
+          "contact_id": { "type": "string", "description": "Contact this activity belongs to." },
+          "activity_type": { "type": "string", "description": "Activity type (e.g. 'note', 'call', 'meeting')." },
+          "title": { "type": "string", "description": "Short activity title." },
+          "description": { "type": "string", "description": "Activity details." },
+          "source_capability": { "type": "string", "description": "Originating capability (defaults to 'manual')." },
+          "source_entity_id": { "type": "string", "description": "Optional id of a related entity." },
+          "activity_date": { "type": "string", "description": "When the activity occurred (ISO 8601); defaults to now." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Activity logged",
+        "common_errors": { "not_found": "No contact with that id exists for this account." }
+      }
+    },
+    "list_activities": {
+      "description": "List timeline activities for a contact (most recent first).",
+      "usage_context": "When the user wants to see a contact's interaction history.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "list",
+      "input_entity": "contact",
+      "output_entity": "record",
+      "input_cardinality": "single",
+      "output_cardinality": "collection",
+      "parameters": {
+        "type": "object",
+        "required": ["contact_id"],
+        "properties": {
+          "contact_id": { "type": "string", "description": "Contact whose activities to list." },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Max rows." }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Activities listed",
+        "common_errors": { "invalid_request": "Could not list activities." }
+      }
+    },
+    "list_pipeline_stages": {
+      "description": "List the account's configured pipeline stages (ordered by position).",
+      "usage_context": "When you need the set of valid pipeline stage keys/labels, e.g. before moving a contact's stage or rendering a pipeline.",
+      "idempotent": true,
+      "domain": "crm",
+      "capability": "list",
+      "input_entity": null,
+      "output_entity": "record",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": ["id", "stage_key", "stage_label", "position", "color"],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_guidance": {
+        "success_description": "Pipeline stages listed",
+        "common_errors": { "invalid_request": "Could not list pipeline stages." }
+      }
+    }
+  }
+}

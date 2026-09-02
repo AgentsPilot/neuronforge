@@ -11,6 +11,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { PaymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { BusinessEventService } from '../events/BusinessEventService';
 import { BusinessEventCategory, BusinessEventType } from '../events/types';
 import {
@@ -399,18 +400,23 @@ export class MetricsComputeService {
     // This is a placeholder - actual implementation depends on the metric
 
     if (metricKey === 'cashflow.ar_overdue_usd') {
-      // Query payment_invoices for overdue amount
-      const { data, error } = await this.supabase
-        .from('payment_invoices')
-        .select('total_amount')
-        .eq('user_id', userId)
-        .eq('status', 'overdue');
+      // Overdue AR total via the repository. Reuses getOverdueInvoices with an
+      // overdue-only status filter. A far-future `asOfDate` neutralizes the method's
+      // default `.lt('due_date', now)` so the metric sums ALL `status='overdue'` rows
+      // (strict parity with the prior bare `status='overdue'` select — SA §9.2 advisory),
+      // not just those past a 'now' due-date threshold. Sums the real `amount` column
+      // in-service (fixes the phantom `total_amount` read).
+      const invoiceRepo = new PaymentInvoiceRepository(this.supabase);
+      const { data, error } = await invoiceRepo.getOverdueInvoices(userId, {
+        statuses: ['overdue'],
+        asOfDate: '9999-12-31T23:59:59.999Z',
+      });
 
       if (error || !data) {
         return { value: 0, unit, sampleSize: 0 };
       }
 
-      const total = data.reduce((sum, inv) => sum + Number(inv.total_amount), 0);
+      const total = data.reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
       return { value: total, unit, sampleSize: data.length };
     }
 

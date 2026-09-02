@@ -1,10 +1,14 @@
 # Requirement: Merge `feature/business-os-reports-and-readiness` into `main`
 
-> **Last Updated**: 2026-09-01
+> **Last Updated**: 2026-09-02
 
 **Created by:** BA
 **Date:** 2026-09-01
-**Status:** Draft — blocked on one architecture decision (see [The Blocking Architecture Decision](#the-blocking-architecture-decision))
+**Status:** ✅ **Merge resolved and verified — not yet committed.** All 14 conflicts closed, all 9 checklist steps done, 18 logged decisions. `git merge --abort` is still available. The architecture question is **deferred by decision, not blocking** (see [D9](#decision-log)).
+
+**Outstanding:** Offir's branch defects ([F1](#finding-f1---dropped-client_-columns-still-read-by-branch-code), [F3](#finding-f3---has_website-is-a-phantom-column-read-by-branch-only-code)) · open decisions (Q2/Q3/Q4, [Q9](#open-questions-for-offir), [C3](#non-blocking-cleanups)) · operator check (Q6) · the three merge gates.
+
+**Per-file ledger for review with Offir:** https://claude.ai/code/artifact/4e3b4ee7-0d9f-4708-ae7b-a0dde4adf2d8
 
 ## Overview
 
@@ -25,18 +29,24 @@ This document is the **living record for the entire merge effort**. It captures 
    - [Area B — Business OS Plugin Architecture](#area-b--business-os-plugin-architecture)
    - [Area C — Public Website / Business OS Routes](#area-c--public-website--business-os-routes)
    - [Area D — Business OS Lib & Repositories](#area-d--business-os-lib--repositories)
-4. [The Blocking Architecture Decision](#the-blocking-architecture-decision)
+4. [The Architecture Decision (Deferred)](#the-architecture-decision-deferred--resolved-by-union-see-d9)
 5. [High-Risk Areas With NO Conflict Markers](#high-risk-areas-with-no-conflict-markers)
-6. [Verified Safe — No Action Needed](#verified-safe--no-action-needed)
-7. [Non-Blocking Cleanups](#non-blocking-cleanups)
-8. [Merge Strategy](#merge-strategy)
-9. [Ordered Execution Checklist](#ordered-execution-checklist)
-10. [Acceptance Criteria](#acceptance-criteria)
-11. [Process & Governance Note](#process--governance-note)
-12. [Decision Log](#decision-log)
-13. [Open Questions for Offir](#open-questions-for-offir)
-14. [Out of Scope](#out-of-scope)
-15. [Change History](#change-history)
+6. [Finding F5 - Pre-existing TS Baseline](#finding-f5---pre-existing-typescript-error-baseline-on-the-branch)
+7. [Finding F4 - Merge-Induced Type Defects](#finding-f4---merge-induced-typeruntime-defects-in-silently-auto-merged-files)
+8. [Finding F3 - `has_website` Phantom Column](#finding-f3---has_website-is-a-phantom-column-read-by-branch-only-code)
+9. [Finding F2 - `tools` Exists Post-Merge](#finding-f2---tools-does-exist-post-merge-mains-premise-is-inverted)
+10. [Finding F1 - Dropped `client_*` Columns](#finding-f1---dropped-client_-columns-still-read-by-branch-code)
+11. [Verified Safe — No Action Needed](#verified-safe--no-action-needed)
+12. [Non-Blocking Cleanups](#non-blocking-cleanups)
+13. [Merge Strategy](#merge-strategy)
+14. [Ordered Execution Checklist](#ordered-execution-checklist)
+15. [Incoming Work — Offir's commit `54184fdb`](#incoming-work--offirs-commit-54184fdb-fetched-2026-09-02)
+15. [Acceptance Criteria](#acceptance-criteria)
+16. [Process & Governance Note](#process--governance-note)
+17. [Decision Log](#decision-log)
+18. [Open Questions for Offir](#open-questions-for-offir)
+19. [Out of Scope](#out-of-scope)
+20. [Change History](#change-history)
 
 ---
 
@@ -138,7 +148,7 @@ Difficulty key: 🟢 easy · 🟡 medium · 🔴 hard
 
 ---
 
-## The Blocking Architecture Decision
+## The Architecture Decision (DEFERRED — resolved by union, see D9)
 
 > ⚠️ **This decision blocks everything downstream of it.** It is an **SA/TL call**, not a merge-mechanics call.
 
@@ -172,7 +182,7 @@ Both are **tenant-safe**. Both authors wrote a code comment asserting theirs is 
 
 | # | Failure | Detail |
 |---|---------|--------|
-| 1 | 🔴 **V6 grounding gets two truths** | The generator would see ~138 actions in which `create_contact` and `create_contacts` both exist and do the same thing. CLAUDE.md's design principle states the **plugin schema is the source of truth** — a union ships two. |
+| 1 | ~~🔴 **V6 grounding gets two truths**~~ ❌ **RETRACTED 2026-09-01** | The original claim: the generator would see ~138 actions in which `create_contact` and `create_contacts` both exist. **This is false.** It assumed both surfaces are visible to the generator. They are not - main's five carry `visibility: "business_os"` and `getConnectedPlugins()` defaults `includeBusinessOs: false`, so the generator only ever sees the branch's 67 actions. No ambiguity exists, and this was the strongest argument against a union. See [D9](#decision-log). |
 | 2 | 🔴 **Trigger discipline** | Main's `CRMPluginExecutor` carries an explicit guardrail: do **not** log a `contact_created` activity, because trigger **T8** already does; same for **T2/T3/T4** on bookings and payments. **OPEN:** does BizQL's `MutateExecutor` account for those triggers? If not, the same write through the other door **double-logs**. |
 | 3 | 🟡 **Visibility asymmetry** | Post-merge the five are hidden from discovery by default and the monolith is not — so in practice the generator sees the branch's surface and ignores main's, **silently, without anyone having decided that**. |
 
@@ -216,6 +226,167 @@ This is precisely why it cannot be settled by "keep the bigger one".
 
 ---
 
+## Finding F1 - Dropped `client_*` columns still read by branch code
+
+🔴 **Surfaced during Step 2 review. This is a PRE-EXISTING DEFECT ON THE BRANCH, not caused by the merge.** It is recorded here because the merge review found it and it must not ship.
+
+Branch migration `supabase/migrations/20260810_remove_client_fields_and_total_amount.sql` (added by branch commit `3390050`; **not on main, not at the merge base**) drops four columns from `scheduling_bookings`:
+
+```sql
+DROP COLUMN IF EXISTS client_first_name,
+DROP COLUMN IF EXISTS client_last_name,
+DROP COLUMN IF EXISTS client_email,
+DROP COLUMN IF EXISTS client_phone;
+```
+
+The booking routes were migrated correctly (they now JOIN `crm_contacts`; **zero** `client_*` references remain under `app/api/website/booking/`). But other **branch-only** code still selects the dropped columns:
+
+| File | Line | Query |
+|------|------|-------|
+| `lib/business-os/insight/detectors/catalog/CrmEngagementDecayDetector.ts` | ~121 | `.from('scheduling_bookings').select('client_email, start_time')` |
+| `lib/business-os/insight/detectors/catalog/OpsLastMinuteCancelsDetector.ts` | ~72 | `.select('id, start_time, updated_at, payment_amount, client_email, cancellation_reason')` |
+| `lib/business-os/insight/detectors/catalog/PricingIntroOfferStuckDetector.ts` | ~90 | `.select('id, client_email, service_id, payment_amount, created_at, status')` |
+| `lib/business-os/insight/detectors/catalog/RetCancellationSpikeDetector.ts` | ~63 | `.select('id, client_email, service_id, cancellation_reason, updated_at')` |
+| `lib/business-os/insight/detectors/catalog/RetRepeatBookingLowDetector.ts` | ~72 | `.select('client_email, id, start_time, payment_amount')` |
+| `lib/business-os/insight/detectors/catalog/WebMobileIssuesDetector.ts` | ~130 | `.select('id, metadata, client_email')` |
+| `lib/business-os/insight/detectors/catalog/WebPageUnderperformDetector.ts` | ~115 | `.select('source_url, client_email')` |
+| `lib/repositories/SchedulingRepository.ts` | ~793 | reads `booking.client_first_name` / `client_last_name` for search filtering - **needs confirming**, it may read a normalized in-memory shape rather than a DB column |
+
+All seven detectors are branch-only (absent from both `main` and the merge base `fc4ae9d`), so the branch drops columns its own code still queries. PostgREST returns an error for an unknown column in `select`, so each of these detectors fails at runtime once the migration is applied.
+
+**Exactly the failure class main's `36ab5da` fixed** (phantom columns in the intake route) - which is why it is called out rather than left to QA.
+
+**Owner:** Offir. **Not a merge-resolution item** - do not attempt to fix it inside a conflict resolution. Tracked as [Q7](#open-questions-for-offir).
+
+---
+
+## Finding F2 - `tools` DOES exist post-merge; main's premise is inverted
+
+🔴 **Changes the planned resolution for [Step 5](#ordered-execution-checklist) (`app/api/onboarding/build/route.ts`). Discovered during Step 3.**
+
+The RM's analysis (and the original framing of this document) recorded that the branch "reintroduces a known 500" by writing `tools` to `business_profiles`, because main's `eb57f3f` removed that write - the column does not exist and PostgREST returns PGRST204, failing the whole upsert.
+
+**That is true on `main`. It is false in the merged tree.** Branch migration `supabase/migrations/20260812_add_onboarding_intelligence_columns.sql` (branch commit `3390050`; **absent from `main` and from the merge base**) creates it:
+
+```sql
+ALTER TABLE business_profiles
+  ADD COLUMN IF NOT EXISTS pain_points TEXT[] DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS goals TEXT[] DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS tools TEXT[] DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS payment_mode TEXT DEFAULT 'none',
+  ADD COLUMN IF NOT EXISTS online_presence_mode TEXT DEFAULT 'none',
+  ADD COLUMN IF NOT EXISTS needs_stripe_connect BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS extracted_data JSONB DEFAULT '{}';
+```
+
+So main's removal of the `tools` write was a **correct fix for main's schema** and becomes a **regression** if carried into the merged tree unchanged: the branch's onboarding feature legitimately writes a column that will exist.
+
+**Revised rule for Step 5.** The [Governing Merge Rule](#governing-merge-rule) ("main's side is the default") still holds for *structure* - repository routing, error handling, logging. It does **not** hold for *which columns exist*: the branch's migrations are strictly newer than main's knowledge of the schema. Resolve `onboarding/build/route.ts` **column-by-column against the merged migration set**, not by side-picking.
+
+**Precondition:** this depends on the branch migration actually being applied. It is unapplied in production today (branch-only), which ties into the migration-ordering question ([Q6](#open-questions-for-offir)) and [Finding F1](#finding-f1---dropped-client_-columns-still-read-by-branch-code) - both concern branch migrations whose application state drives whether code is correct.
+
+> **Generalised lesson:** wherever main "removed a phantom column," re-check whether a branch migration adds it. `36ab5da` (the intake route, [Step 5](#ordered-execution-checklist)) is the other instance and must get the same column-by-column treatment rather than a straight take-main.
+
+---
+
+### D9 verification evidence
+
+Checked against the merged tree after resolution:
+
+| Check | Result |
+|-------|--------|
+| Definition files loaded | 29, all present on disk |
+| Executor registry entries | 29, **no duplicate keys** |
+| Definitions with no executor | none |
+| Executors with no definition | none |
+| `business-os` | `visibility` unset -> discoverable; `isSystem: true`; no `access_strategy` (declares `auth_config`, so main's stricter `validateDefinition` accepts it) |
+| `crm` / `scheduling` / `payments` / `intake` / `website` | `visibility: "business_os"` -> hidden; `access_strategy: db_active`; `isSystem: true` |
+| Main's hardening retained | `isPluginDiscoverable` import, `includeBusinessOs` threading, and the `auth_config \|\| access_strategy` + `db_active => isSystem` validation all survive |
+| `npx tsc --noEmit` | **0 non-marker errors** project-wide |
+| UI collision | neither surface appears in `lib/plugins/pluginList.tsx` - no connect-card |
+
+**What the union does NOT settle:** `ChatCommandExecutor`'s `payment.record` hunk (Step 5) is the one place the two paths genuinely contend - same file, same flow. It must still take main's `PaymentsPluginExecutor.record_manual_payment` route. **Q2** (does BizQL's `MutateExecutor` respect triggers T2/T3/T4/T8?) also remains open on its own merits: it concerns the branch's path with or without the union, and is not a merge blocker.
+
+---
+
+## Finding F3 - `has_website` is a phantom column read by branch-only code
+
+🔴 **Pre-existing defect on the branch, not merge-induced.** Surfaced by the Step 5 column audit of `onboarding/build`.
+
+`lib/services/CapabilityConditionEvaluator.ts:377` (branch-only - absent from `main` and from the merge base) reads:
+
+```typescript
+const { data: profile, error } = await supabaseServer
+  .from('business_profiles')
+  .select('vertical, clients_per_week, tools, pain_points, goals, has_website')
+  .eq('user_id', userId)
+  .single();
+```
+
+`vertical`, `clients_per_week`, `tools`, `pain_points` and `goals` all exist. **`has_website` does not** - zero migrations across the whole repo mention it (`grep -rn has_website supabase/migrations/` returns nothing). PostgREST rejects an unknown column in `select`, so `getUserProfile()` throws and capability-condition evaluation fails.
+
+It is read in exactly one place. Elsewhere `has_website` is only ever an **in-memory** field (`activationProfile` in `onboarding/build`, the `UserProfile` interfaces in `CapabilityActivationService` / `OnboardingConfigurationService`) - those are fine and must not be 'fixed'.
+
+**Likely intent:** derive it from `online_presence_mode` (`'full_website' | 'website_only'`), which is exactly what `onboarding/build` does when building `activationProfile`. **Owner:** Offir. Tracked as [Q8](#open-questions-for-offir).
+
+---
+
+## Finding F4 - merge-induced type/runtime defects in silently auto-merged files
+
+🔴 **Merge-induced, not pre-existing. These are the [Step 6](#ordered-execution-checklist) files, and they would ship broken.**
+
+With all 14 conflicts resolved, `npx tsc --noEmit` surfaces a consistent failure shape: **one side's code meeting the other side's types or schema.** Git merged both cleanly because they touch different lines.
+
+| # | Site | Defect | Whose code / whose type |
+|---|------|--------|--------------------------|
+| 1 | `lib/business-os/chat/CapabilityEngine.ts:22` | `new CRMPipelineStagesRepository()` - constructor expects 1 argument | ⚠️ **PRE-EXISTING on the branch, NOT merge-induced** (corrected 2026-09-02). The branch's *own* `CRMPipelineStagesRepository` also declares `constructor(supabaseClient: SupabaseClient)`. Same family as F1/F3 - **owner: Offir**. |
+| 2 | `lib/business-os/chat/CapabilityEngine.ts:179` | `pipelineStagesRepo.findByUser()` does not exist | ⚠️ **PRE-EXISTING on the branch, NOT merge-induced** (corrected 2026-09-02). **Neither** side's repository has `findByUser` - both expose `list(userId)`. The branch's chat `createContact` path has been calling a non-existent method. Same family as F1/F3 - **owner: Offir**. |
+| 3 | `lib/business-os/chat/CapabilityEngine.ts:411` | `service.duration_minutes` possibly `null` | **main** code (`duration_minutes: number`), **branch's** type (`number \| null`) + `20260901_service_shape.sql` dropping the NOT NULL |
+| 4 | `lib/business-os/chat/CapabilityEngine.ts:435` | writes `client_first_name` - not in `SchedulingBookingInsert` | **main** code, **branch's** dropped columns (see [F1](#finding-f1---dropped-client_-columns-still-read-by-branch-code)) |
+| 5 | `lib/business-os/chat/CapabilityEngine.ts:530` | invoice insert shape not assignable to `CreatePaymentInvoiceInput` | **main** code, **branch's** type |
+| 6 | `lib/server/payments-plugin-executor.ts:349` | object missing 10 properties of `PaymentInvoiceInsert` (a local `Omit<PaymentInvoice, ...>` alias) | **main** code, **branch's** widened `PaymentInvoice` (branch added `booking_id`, `refund_status`, `refunded_amount`, `refunded_at` and 6 more) |
+| 7 | `lib/server/scheduling-plugin-executor.ts:295` | writes `client_first_name` - not in `SchedulingBookingInsert` | **main** code, **branch's** dropped columns |
+
+**Corrected attribution (2026-09-02):** of the seven, **five are merge-induced** (#3, #4, #5, #6, #7) and **two (#1, #2) are pre-existing branch defects** that this pass happened to surface. The first attribution here wrongly called #1/#2 merge-induced on the basis that they appear as added lines in the diff against `main`; they came from the branch, where they were already broken against the branch's own repository.
+
+**Severity.** #1 and #2 fail at runtime immediately (the branch's `createContact` path in the chat engine) - and did so before the merge. #4 and #7 fail at runtime once the branch's `20260810` migration is applied - PostgREST rejects the unknown column. They are the write-side twin of [F1](#finding-f1---dropped-client_-columns-still-read-by-branch-code), which covers the read side.
+
+**Why the build does not catch this:** `next.config.js` ignores TypeScript errors (CLAUDE.md, Common Gotchas). Nothing else checks these column names - which is precisely why main's `36ab5da` added the intake guard tests.
+
+**These are merge-resolution work**, unlike F1/F2/F3 which are branch defects. They belong to Step 6.
+
+---
+
+## Finding F5 - pre-existing TypeScript error baseline on the branch
+
+🟡 **Context, not a blocker.** `npx tsc --noEmit` on the merged tree reports **4,760 errors across 600 files**. Attributed by comparing each file against the branch tip `ea35c79`:
+
+| Bucket | Errors |
+|--------|--------|
+| Files byte-identical to `ea35c79` (pre-existing on the branch) | **4,413** |
+| Test files added by main (fail under the app `tsconfig`, **pass under jest** - 53/53) | ~340 |
+| **Merge-changed production files** | **7** (all of them [F4](#finding-f4---merge-induced-typeruntime-defects-in-silently-auto-merged-files)) |
+
+The branch carries a large pre-existing error baseline (Stripe API version literals, `EntityType` unions, `CRMContact` fields on the invoice PDF route). `lib/audit/types.ts` is **0 lines changed** from the branch and `StripeConnectAccount` is byte-identical, confirming those are the branch's own. Not merge work - but worth knowing that `tsc` is not currently a usable gate on this branch, so **the guard tests are the real safety net.**
+
+---
+
+### Step 6 verification evidence
+
+| Check | Result |
+|-------|--------|
+| Merge-induced `tsc` errors in non-test files | **0** (was 7; the 2 remaining are F4 #1/#2, pre-existing branch defects) |
+| Duplicate-method sweep across **568** merge-changed TS files | 1 real hit - `PaymentInvoiceRepository.count`, fixed under D12. (`ProviderFactory.getProvider` is an interface member, false positive.) |
+| `payments/blocks/execute/route.ts` | Both rewrites coexist coherently - `RefundService` (branch) for refunds, `paymentReminderRepository` (main) for reminders |
+| `SchedulingRepository.ts:793` | **Benign** - `normalizedData` synthesises `client_first_name` from the joined `contact`, so the search filter reads an in-memory shape, not a dropped column. Closes the "needs confirming" note in F4 |
+| `PaymentProcessorService.processRefund` | **0** callers outside the service - the branch's `RefundService` fully replaced them |
+| `CRMPipelineStagesRepository.ts` | No duplicates; main's version intact |
+| Final `client_*`-vs-`scheduling_bookings` sweep | Only F1's 7 detectors remain (Offir's). `app/api/payments/money/route.ts` verified clean - its `client_name`/`client_email` are `payment_invoices` columns, which exist |
+| Full `npx jest` | **2,956 passed / 128 failed.** All 20 failing suites are byte-identical to branch tip `ea35c79`, **and so are their subjects** (e.g. `featureFlags.ts`: 0 lines changed). **Zero merge-changed suites fail.** V6 / pilot / orchestration only - unrelated to Business OS |
+| Business OS + guard suites | **All green** - 53/53 guard tests, 16/16 scheduling executor, plus crm / intake / website / payments executors |
+
+---
+
 ## Verified Safe — No Action Needed
 
 | Check | Result |
@@ -235,9 +406,10 @@ Record these as **follow-ups, not blockers**.
 
 | # | Item | Detail |
 |---|------|--------|
-| C1 | 🟡 `console.log` in `middleware.ts` | The branch adds `console.log` calls, violating CLAUDE.md **mandatory rule 3** (Pino structured logging). Convert to `createLogger` during the merge. |
+| C1 | ✅ **DONE (D18)** - `middleware.ts` converted to Pino | **Attribution corrected:** this was recorded as the branch adding `console.log`s. `main` carried **11** of the 12 and the branch added **1** (the `/onboarding-chat` bypass line) - a shared pre-existing gap, not Offir's. |
 | C2 | 🟡 Migration filename-convention split | Main's 4 new migrations use **dashes** (`2026-08-14_payment_reminders_claim.sql`); all **44** branch migrations use the **compact** form (`20260812_...`). Under lexical sort, `'-'` (0x2D) sorts before `'0'` (0x30), so **every** `2026-08-14_*` migration sorts **before every** `2026MMDD_*` one — including branch migrations dated earlier. **Confirm whether the runner cares** before applying the merged migration set. |
 
+| **C3** | 🟡 **Two capability-authorization implementations.** main routes capability checks through `lib/business-os/chat/CapabilityEngine.ts` (repository-backed); the branch added an independent `INTENT_CAPABILITY_MAP` + `verifyCapabilityAccess()` inside `ChatCommandExecutor.ts` that queries `user_capabilities` directly via `supabaseServer` - a **mandatory repository-rule violation** (CLAUDE.md rule 1). Both were kept by the merge (D11) so the branch's feature keeps working; a flagged comment marks the site. Collapsing them into one is a deliberate change, not merge work. **Owner: Offir + SA.** |
 ---
 
 ## Merge Strategy
@@ -259,14 +431,18 @@ Update the **Status** column in the same edit that adds the corresponding [Decis
 
 | Step | Work | Files | Difficulty | Status |
 |------|------|-------|-----------|--------|
-| **1** | **Deps & config** — `package.json`: take main + drop `axios`/`bidi-js`. Then **delete** `package-lock.json` and run `npm install`. `vercel.json`: union all 3 crons. *Gets to a buildable tree fastest.* | `package.json`, `package-lock.json`, `vercel.json` | 🟢 | ⬜ Not started |
-| **2** | **Trivial tier** — the 3 booking-route comment-only conflicts, `PaymentRepository` constructor, `WebsiteAnalyticsRepository` logging. **All take-main.** | `booking/confirm`, `booking/create`, `booking/finalize`, `PaymentRepository.ts`, `WebsiteAnalyticsRepository.ts` | 🟢 | ⬜ Not started |
-| **3** | **BusinessProfileRepository** — union the type blocks, **then extend** main's `BusinessProfile` interface with the branch's new columns so TS goes quiet. | `lib/repositories/BusinessProfileRepository.ts` | 🟡 | ⬜ Not started |
-| **4** | 🔴 **BLOCKING architecture decision (TL/SA): one Business OS plugin or five?** Resolve `plugin-manager-v2.ts` **AND** hand-audit the auto-merged `plugin-executer-v2.ts` **together**. **Nothing downstream is safe to finalize before this call.** | `lib/server/plugin-manager-v2.ts`, `lib/server/plugin-executer-v2.ts` | 🔴 | ⬜ Not started |
-| **5** | **The three 🔴 logic files** — one at a time, with `git show 36ab5da` / `eb57f3f` / `b0c3b28` open alongside. | `website/forms/intake/route.ts`, `onboarding/build/route.ts`, `ChatCommandExecutor.ts` | 🔴 | ⬜ Not started |
-| **6** | **Re-read the silently auto-merged rewrites** end to end. | `payments/blocks/execute/route.ts`, `SchedulingRepository.ts`, `CapabilityEngine.ts`, `PaymentProcessorService.ts`, `CRMPipelineStagesRepository.ts` | 🔴 | ⬜ Not started |
-| **7** | **Gate on main's guard tests**, then `npm run build`, then confirm the migration-ordering question (C2). | See test list below | 🟡 | ⬜ Not started |
-| **8** | **Non-blocking cleanups** — C1 (`middleware.ts` → Pino). | `middleware.ts` | 🟢 | ⬜ Not started |
+| **0** | **Open the merge** - cut `merge/business-os-reports-into-main` from the feature branch, commit this document, run `git merge origin/main`. Resolve nothing. | - | 🟢 | ✅ Done - 2026-09-01, 14 conflicts as predicted |
+| **1** | **Deps & config** — `package.json`: take main + drop `axios`/`bidi-js`. Then **delete** `package-lock.json` and run `npm install`. `vercel.json`: union all 3 crons. *Gets to a buildable tree fastest.* | `package.json`, `package-lock.json`, `vercel.json` | 🟢 | ✅ Done - 2026-09-01 |
+| **2** | **Trivial tier** — the 3 booking-route comment-only conflicts, `PaymentRepository` constructor, `WebsiteAnalyticsRepository` logging. **All take-main.** | `booking/confirm`, `booking/create`, `booking/finalize`, `PaymentRepository.ts`, `WebsiteAnalyticsRepository.ts` | 🟢 | ✅ Done - 2026-09-01 |
+| **3** | **BusinessProfileRepository** — union the type blocks, **then extend** main's `BusinessProfile` interface with the branch's new columns so TS goes quiet. | `lib/repositories/BusinessProfileRepository.ts` | 🟡 | ✅ Done - 2026-09-01 |
+| **4** | 🟡 **Business OS plugin shape - DEFERRED, not decided.** Both surfaces unioned and kept side by side; interim comments at both registration sites. The *decision* (one shape or five) is still owed - see [D9](#decision-log) and Q2-Q4. | `lib/server/plugin-manager-v2.ts`, `lib/server/plugin-executer-v2.ts` | 🟡 | ✅ Unblocked - 2026-09-01 (decision deferred) |
+| **5** | **The three 🔴 logic files** — one at a time, with `git show 36ab5da` / `eb57f3f` / `b0c3b28` open alongside. | `website/forms/intake/route.ts`, `onboarding/build/route.ts`, `ChatCommandExecutor.ts` | 🔴 | ✅ Done - 2026-09-02 (D10, D11, D12, D13). **All 14 conflicts resolved.** |
+| **6** | **Re-read the silently auto-merged rewrites** end to end. | `payments/blocks/execute/route.ts`, `SchedulingRepository.ts`, `CapabilityEngine.ts`, `PaymentProcessorService.ts`, `CRMPipelineStagesRepository.ts` | 🔴 | ✅ Done - 2026-09-02 (D14). 5 merge-induced defects fixed + 1 tsc could not see; 4 auto-merged files re-read clean |
+| **7** | **Gate on main's guard tests**, then `npm run build`, then confirm the migration-ordering question (C2). | See test list below | 🟡 | ✅ Done - 2026-09-02 (D17). Build exit 0; all guard suites green |
+| **8** | **Non-blocking cleanups** — C1 (`middleware.ts` → Pino). | `middleware.ts` | 🟢 | ✅ Done - 2026-09-02 (D18) |
+| **9** | **Commit the merge resolution** on `merge/business-os-reports-into-main`. **Prerequisite for Step 10** — git refuses a second merge while `MERGE_HEAD` exists. Reversible: `git reset --hard HEAD~1`, or delete the branch. | — | 🟢 | ⬜ Not started |
+| **10** | **Merge Offir's new commit `54184fdb`** ("service-driven client journey, AI website content, readiness rework", 116 files, +10,035/−2,739) into the integration branch and resolve whatever conflicts it raises. | see the incoming-work table below | 🟡 | ⬜ Not started |
+| **11** | **Re-verify after Step 10** — `npm run build`, the four guard suites, the Business OS suites, and a fresh merge-induced-`tsc`-error sweep. Confirm no regression against the Step 7 baseline. | — | 🟡 | ⬜ Not started |
 
 ### Step 7 — required guard tests
 
@@ -279,25 +455,64 @@ Update the **Status** column in the same edit that adds the corresponding [Decis
 
 ---
 
+## Incoming Work — Offir's commit `54184fdb` (fetched 2026-09-02)
+
+Pushed to `origin/feature/business-os-reports-and-readiness` **after** this merge was resolved. Not yet merged.
+
+| Fact | Value |
+|------|-------|
+| Commit | `54184fdb` — *feat(business-os): service-driven client journey, AI website content, readiness rework* |
+| Scale | **116 files, +10,035 / −2,739** |
+| New areas | `lib/website-builder/` (`selectTemplate`, `mergeCentralContent`, `templateLabels`) with its own tests; `WebsiteGenerationService` / `WebsitePublishService` rework |
+| New migrations | `20260902_website_content_empty_defaults`, `20260902_website_pages_content_generated_at`, `20260903_business_template`, `20260904_business_subdomain`, plus a change to `20260722_add_currency_to_scheduling_services` |
+
+**Overlap with work already resolved here** — measured against the branch tip `ea35c79` this merge was built from:
+
+| File | Change in `54184fdb` | Why it matters |
+|------|----------------------|----------------|
+| `app/api/website/booking/create/route.ts` | +88 / −4 | Resolved under D7 (comment-only). His new work lands on top |
+| `app/api/website/booking/finalize/route.ts` | +54 / −7 | Resolved under D7 |
+| `app/api/website/booking/confirm/route.ts` | +22 / −12 | Resolved under D7 |
+| `app/api/website/forms/intake/route.ts` | +18 / −10 | **Resolved under D13** — the most carefully rebuilt file in the merge. Re-check that main's repository routing and the `linkIntakeContact` call survive |
+| `lib/repositories/BusinessProfileRepository.ts` | +15 / −3 | **Resolved under D8** — check whether his 15 added lines need more columns in the extended row interface |
+| `app/api/onboarding/build/route.ts` | +10 / −0 | Resolved under D10 (branch side taken) |
+| `middleware.ts` | +35 / −2 | **Converted to Pino under D18.** A near-certain conflict, and any `console.*` he adds must be converted again (CLAUDE.md rule 3) |
+
+A read-only `git merge-tree origin/main <his new tip>` reports **the same 14 conflicting files** as before — he has not introduced conflicts in new areas. The 7 files above are where his new work meets decisions already taken.
+
+**Sequencing constraint:** git refuses to start a second merge while `MERGE_HEAD` exists, so Step 9 (commit) must precede Step 10 (merge his commit). Committing is on the local integration branch only — nothing is pushed, and it is reversible with `git reset --hard HEAD~1`.
+
+---
+
 ## Acceptance Criteria
 
-- [ ] ⬜ Merge is performed as `main` → feature branch (no rebase, no force-push to `origin`).
-- [ ] ⬜ All 14 content conflicts resolved, each with a [Decision Log](#decision-log) row.
-- [ ] ⬜ No file that `main` touched after 2026-08-04 has been reverted to the branch's older side without an explicit, logged decision.
-- [ ] ⬜ **Exactly one** Business OS plugin shape ships — not both (Step 4 decision applied to `plugin-manager-v2.ts` *and* `plugin-executer-v2.ts`).
-- [ ] ⬜ `payment.record` in `ChatCommandExecutor` routes through `PaymentsPluginExecutor.record_manual_payment`; no direct `payment_transactions` insert survives.
-- [ ] ⬜ Intake route writes go through repositories; no phantom columns; contact-lookup error remains fatal; `linkIntakeContact` is actually called.
-- [ ] ⬜ `onboarding/build` upsert does **not** write `tools` and does not drop `services`.
-- [ ] ⬜ Only **one** capability-authorization implementation survives (no duplicate `verifyCapabilityAccess()` alongside `CapabilityEngine`).
-- [ ] ⬜ `WebsiteAnalyticsRepository` logging keeps main's M4 narrowing (counts/ids only).
-- [ ] ⬜ All five silently-auto-merged files in Step 6 have been read end to end by a reviewer.
-- [ ] ⬜ All four guard tests pass.
-- [ ] ⬜ `npm run build` succeeds.
-- [ ] ⬜ Migration-ordering question (C2) answered before the merged migration set is applied.
-- [ ] ⬜ `axios` and `bidi-js` are absent from `package.json`; lock regenerated via `npm install`.
-- [ ] ⬜ Vercel cron-count limit confirmed to accommodate 3 crons.
-- [ ] ⬜ All four [Open Questions for Offir](#open-questions-for-offir) have recorded answers.
-- [ ] ⬜ Merge gates satisfied: **SA approved**, **QA passed**, **user approved**.
+Reconciled against the [Decision Log](#decision-log) on 2026-09-02. Three of the original criteria were
+**superseded by decisions taken during the merge** and are marked as such rather than silently edited — they
+describe the plan as written on day one, not a failure to meet it.
+
+- [x] ✅ Merge performed as `main` → feature branch, on an integration branch; no rebase, no force-push to `origin` (D1, D2).
+- [x] ✅ All 14 content conflicts resolved, each with a Decision Log row (D4–D14).
+- [x] ✅ No file `main` touched after 2026-08-04 reverted to the branch's older side without an explicit logged decision.
+- [ ] ⚠️ **SUPERSEDED by [D9](#decision-log)** — *original: "exactly one Business OS plugin shape ships, not both."* **Both ship, deliberately.** The two surfaces have distinct consumers and do not contend; forcing a shape mid-merge would have been an architecture decision made under merge pressure. Tracked as Q2/Q3/Q4.
+- [x] ✅ `payment.record` routes through `PaymentsPluginExecutor.record_manual_payment`; **no direct `payment_transactions` insert survives** in `ChatCommandExecutor` (verified by grep) (D11).
+- [x] ✅ Intake route writes go through repositories; no phantom columns; contact-lookup error fatal; `linkIntakeContact` called (D13).
+- [ ] ⚠️ **SUPERSEDED by [F2](#finding-f2---tools-does-exist-post-merge-mains-premise-is-inverted) / [D10](#decision-log)** — *original: "`onboarding/build` does not write `tools`."* **It does write `tools`, and that is correct.** Main removed the write because the column does not exist *on main*; branch migration `20260812_add_onboarding_intelligence_columns.sql` creates it. All 16 columns the route writes were verified against the merged migration set. `services` is omitted by the branch's own documented product decision.
+- [ ] ⚠️ **SUPERSEDED by [D11](#decision-log) / [C3](#non-blocking-cleanups)** — *original: "only one capability-authorization implementation survives."* **Both survive.** Collapsing `verifyCapabilityAccess()` into `CapabilityEngine` is a deliberate refactor, not merge work; the site is flagged in code and tracked as C3 (owner: Offir + SA).
+- [x] ✅ `WebsiteAnalyticsRepository` logging keeps main's M4 narrowing (counts/ids only) (D7).
+- [x] ✅ All silently-auto-merged Step 6 files read end to end; 568 merge-changed TS files swept for the duplicate-method pattern (D14).
+- [x] ✅ All four guard tests pass — 93/93 across guard + executor suites; 625/625 Business OS (D17).
+- [x] ✅ `npm run build` succeeds — exit 0, 280/280 static pages (D17).
+- [ ] ⬜ Migration-ordering question (**Q6 / C2**) answered before the merged migration set is applied. **Still open** — operator check.
+- [x] ✅ `axios` and `bidi-js` absent from `package.json`; lock regenerated via `npm install` (D4, D5).
+- [x] ✅ Vercel cron budget confirmed — 11 crons, plan is Pro (limit 40); **Q5 answered** (D6).
+- [ ] ⬜ All Open Questions for Offir answered. **Q1 and Q5 answered; Q2, Q3, Q4, Q6, Q7, Q8, Q9 still open.**
+- [ ] ⬜ Merge gates satisfied: **SA approved**, **QA passed**, **user approved**. **None satisfied.**
+
+**Additional criteria added during the merge** (not in the original list):
+
+- [x] ✅ Zero TypeScript errors introduced by the merge in non-test files (7 found, 7 fixed — [F4](#finding-f4---merge-induced-typeruntime-defects-in-silently-auto-merged-files)).
+- [x] ✅ Zero merge-changed test suites failing (128 failures in the full run are all pre-existing on the branch — [F5](#finding-f5---pre-existing-typescript-error-baseline-on-the-branch)).
+- [x] ✅ `middleware.ts` converted to Pino, Edge-compatibility verified by build (D18, C1).
 
 ---
 
@@ -315,7 +530,24 @@ Every resolution gets a row here.
 
 | # | Date | Step / Conflict | Decision | Decided by | Rationale |
 |---|------|-----------------|----------|------------|-----------|
-| D1 | 2026-09-01 | Merge direction | Merge `main` INTO the feature branch; do **not** rebase | RM (proposed), **pending user confirmation** | 2×560-file commits replayed over 65 commits of main loses context and rewrites a published branch |
+| D1 | 2026-09-01 | Merge direction | Merge `main` INTO the feature branch; do **not** rebase | RM (proposed) -> **user-approved 2026-09-01** | 2×560-file commits replayed over 65 commits of main loses context and rewrites a published branch |
+| D2 | 2026-09-01 | Where the merge is performed | Merge onto a **dedicated integration branch** `merge/business-os-reports-into-main` (cut from `feature/...` @ `ea35c79`), **not** onto Offir's branch | User-approved | Leaves Offir's published branch untouched so he can keep working; restart/abandon costs nothing; the eventual PR shows the full resolution as one reviewable diff. Cost accepted: if Offir pushes during the merge, re-merge his branch at the end. |
+| D3 | 2026-09-01 | This document's home | Commit the requirement MD to the integration branch as its first commit (`23b7379`), before the merge | User-approved | Version-controls the decision record so it travels with the work instead of living only on one machine. |
+| D4 | 2026-09-01 | `package.json` | **Took main's side** - dropped `axios` and `bidi-js` as direct deps; kept the branch's 8 PDF/Stripe/QR additions (all auto-merged) | User-approved | Re-verified against the merged tree, not taken on trust: **0** direct imports of either (`grep` over app/lib/components/hooks/scripts/types). The only `bidi` hit is a CSS `dir="ltr"` comment. `bidi-js` still resolves **transitively** via `@react-pdf/textkit -> bidi-js ^1.0.2`, so the branch's RTL PDF work is unaffected by dropping the direct entry. |
+| D5 | 2026-09-01 | `package-lock.json` | **Deleted and regenerated** with `npm install` - not hand-merged | User-approved | 23 hunks of two independent regenerations; hand-merging a lockfile produces a tree that resolves differently from either side. Result: lockfileVersion 3, 67 root deps, all 8 branch additions present, `axios` absent, exit 0. |
+| D6 | 2026-09-01 | `vercel.json` | **Union of all 3 crons** - `channel-metrics-sync` (branch) + `payment-reminders` + `payment-retry` (main, PR #27) | User-approved | Non-overlapping paths and schedules. Total now **11 crons**; all 3 merged routes verified to exist on disk. Resolves **Q5**: the project already ran 8 crons pre-merge, far past Hobby's limit of 2, so it is on Pro (limit 40) - 11 is within budget. Confirm with Offir but not a blocker. |
+| D7 | 2026-09-01 | Trivial tier (5 files) | **Took main on all five.** 3 booking routes (comment-only), `PaymentRepository` constructor, `WebsiteAnalyticsRepository` logging | User-approved | Booking-route conflicts were comment-only and main's text is strictly more informative (names trigger T2 + workplan section). `PaymentRepository`: main's typed `SupabaseClient` DI constructor - verified the type is imported (L1) and all **three** classes in the file (`PaymentTransactionRepository`, `PaymentInvoiceRepository`, `StripeConnectRepository`) are now consistently typed. `WebsiteAnalyticsRepository`: main's version logs counts/ids only; the branch's logged the whole `result` object, so taking the branch side would have reverted the M4 PII/log-hygiene control. **Auto-merged content around the markers was reviewed, not just cleared** - the branch's real work (userCode + attribution in `create`, `crm_contacts` JOIN + Stripe Connect context in `finalize`, pipeline-stage resolution + `duration_minutes` null-guard in `confirm`) landed coherently. |
+| D8 | 2026-09-01 | `BusinessProfileRepository.ts` | **Unioned** both type blocks (branch's `InvoiceAddress`/`InvoiceSettings` + main's `CalendarSyncProvider`/`SchedulingAvailability`/`BusinessProfile`/`Insert`/`Update`), then **extended main's row interface with 22 branch columns** | User-approved | Column set derived by parsing every `ALTER TABLE business_profiles` block across all migrations (38 ADD COLUMNs) and diffing against main's interface - not guessed. All 22 come from branch-only migrations. Nullability follows each migration: `show_logo_on_smart_links` is `NOT NULL DEFAULT true` so non-nullable; `theme` is nullable JSONB typed structurally (no `BusinessTheme` type exists in the repo yet). Verified nothing constructs a `BusinessProfile` object literal, so promoting the fields to required is safe. **`npx tsc --noEmit`: zero type errors** - the only remaining diagnostics project-wide are TS1185 markers in the 5 unresolved files. |
+| D9 | 2026-09-01 | **Business OS plugin shape** | **Union both surfaces; defer the decision.** Load all 29 definitions (main's 5 granular + the branch's `business-os` + 3 analytics) and register all 29 executors. Keep `visibility: "business_os"` on the five; **do NOT** add it to `business-os`. Interim comments added at both registration sites pointing here. | User-approved after joint review | **Q1 answered: parallel build, genuine mix-up - neither side saw the other.** Code review showed the two surfaces are not competing for one consumer: the five are hidden from discovery and reached only by explicit key from `ChatCommandExecutor`; `business-os` is discoverable and reached only via `getConnectedPlugins()` in `lib/agentkit/convertPlugins.ts` by the agent-generation pipeline. `'business-os'` appears nowhere else in the tree. **This retracts the earlier "V6 grounding gets two truths" objection** - the generator never sees the five, so there is no ambiguity. Union is therefore backward-compatible: each path keeps its own consumer, unchanged. |
+| D10 | 2026-09-02 | `app/api/onboarding/build/route.ts` | **Took the branch's side**, plus a provenance comment on the `tools` write | User-approved | **Not a side-pick on merit - main's side is not runnable here.** The branch rewrote this route (+624/-27); `profile` is a *request field* and values are derived from `configuration ?? profile`. Main's version reads `profile.*` directly, which would ignore the new `configuration` format entirely, and `profile` is optional in the merged schema so `profile.vertical` could throw. Main's only contribution to this hunk was removing the `tools` write, which **F2** shows is no longer applicable. Per F2's rule, **every column the route writes was verified against the merged migration set: all 16 exist.** The branch's deliberate omission of `services` is a documented product decision (it duplicated `scheduling_services` and was left empty), not a schema issue - kept. A comment now records why `tools` is written, so it is not removed a third time. `tsc`: 0 non-marker errors. |
+| D11 | 2026-09-02 | `lib/business-os/ChatCommandExecutor.ts` | **Hunk 1 (constants): unioned** - main's `CRM_/SCHEDULING_/PAYMENTS_PLUGIN_KEY` + the branch's `INTENT_CAPABILITY_MAP` and `verifyCapabilityAccess()`. **Hunk 2 (`payment.record`): took main** - `PaymentsPluginExecutor.record_manual_payment`. | User-approved | Hunk 1 is purely additive and both are live: `verifyCapabilityAccess` is called at L1093, main's keys at L2101/3093/3347/3592. Hunk 2 was not a judgement call - **the code immediately after the conflict already reads `paymentResult.success`, which only main's side defines**, so the branch's `{ error }` binding would not compile; `PluginExecuterV2` is already imported and used at three other sites in the file. Rationale nuance recorded for accuracy: main's comment says the old rogue insert 'omitted `paid_at`', but this branch revision *does* set it - the reasons main's side still wins are trigger ownership (T3/T4 own the CRM activity and invoice->paid side effects) and the mandatory repository rule, not `paid_at`. Verified `from('payment_transactions')` no longer appears in the file. `tsc`: 0 non-marker errors. |
+| D12 | 2026-09-02 | `app/api/website/scheduling/availability/route.ts` | **Took main** (`schedulingServiceRepository.findById`), plus a null-duration guard | User-approved | `select('*')` supplies the `status` field the branch had added to its raw select, so nothing is lost. Routing through the typed repository surfaced that `duration_minutes` is genuinely nullable (branch migration `20260901_service_shape.sql` drops the NOT NULL so a service can exist without a bookable span). Guarded to return an empty slot list rather than coercing to 0, which would make slot generation meaningless. |
+| D13 | 2026-09-02 | `app/api/website/forms/intake/route.ts` | **Main's structure + the branch's attribution feature re-expressed through it.** All 4 table accesses go through repositories; `source_metadata` added to `CRMContactInsert`. **Stage behaviour: main's kept, branch's stage lookup removed.** | User-approved | Hunk 1 unioned (attribution kept, main's `websitePageRepository.findBySubdomainAny` kept); hunks 2 and 4 took main; hunk 3 took main's `crmContactRepository.create` with `source_metadata` re-applied - the column exists (`20260824_add_conversion_layer.sql`) but main's `CRMContactInsert` did not carry it, so the type was extended rather than bypassing the repository. The branch's `crm_pipeline_stages` lookup was **removed, not left computed-but-unused**: it is an extra query on a public unauthenticated endpoint and it broke main's guard tests (unmocked there precisely because main never makes it). **All 15 intake guard tests pass; 53/53 across all four guard suites.** The stage question itself is deferred - see [Q9](#open-questions-for-offir). |
+| D14 | 2026-09-02 | **Step 6 - the 5 merge-induced F4 defects** | Fixed all five, plus one `tsc` could not see. Two of main's `create_booking` guard-test assertions **updated** to the post-drop contract. | User-approved | **F4 #4/#7 (`client_*` writes):** `scheduling_bookings` no longer has those columns, and `SchedulingBookingInsert` now requires `contact_id`. `CapabilityEngine.createBooking` already had a contact, so the four fields were simply dropped. `scheduling-plugin-executor.buildBookingInsert` had none, so it now **resolves the contact** (find-by-email, else create) exactly as `app/api/website/booking/create` does - the plugin's declared contract (`client_first_name` + `client_email` required) is unchanged. **F4 #3:** null-duration guard in `CapabilityEngine.createBooking` (nullable since `20260901_service_shape.sql`; multiplying null gives an Invalid Date written without complaint). **F4 #5/#6:** the 7 nullable/DB-defaulted invoice columns the branch added (`refund_status`, `refunded_amount`, `refunded_at`, `client_name`, `client_email`, `booking_id`, `service_id`) moved into the optional half of `CreatePaymentInvoiceInput`, and `payments-plugin-executor`'s hand-rolled `Omit<PaymentInvoice, ...>` alias repointed at that published type instead of re-deriving one. **Bonus - invisible to `tsc`:** `scheduling-plugin-executor` line ~210 read `b.client_first_name` off booking rows to label availability conflicts, rendering the literal string `"undefined"`; `unwrap()` returns `any` so the compiler never saw it. Now reports `contact_id`. |
+| D15 | 2026-09-02 | Main's `create_booking` guard tests | **Updated** two assertions; added 2 cases | User-approved (implied by D14 - flagged for review) | Main asserted `client_email` reaches the booking row and that create_booking makes **no CRM call at all**. Both encoded the pre-drop world, where trigger T1 created the contact from the booking's `client_*` columns. The branch's own `20260810_update_booking_contact_trigger.sql` states the new contract - *"Contacts are ALWAYS created BEFORE booking... contact_id is ALWAYS set"* - and its legacy fallback reads the very columns `20260810_remove_client_fields_and_total_amount.sql` deletes, so it is dead. The guardrail's real intent is preserved and still asserted: **no service writes, no CRM activity emission** (T2 owns that). Added cases for create-when-absent and explicit-`contact_id`. **Distinguish from [Q9](#open-questions-for-offir):** that test locks a *choice* and was left alone; this one locked a *removed capability*. |
+| D16 | 2026-09-02 | **F4 #1/#2** - `CapabilityEngine.createContact` | **Fixed** despite being a pre-existing branch defect rather than merge work | User-approved on request | The chat `createContact` path called `pipelineStagesRepo.findByUser(this.userId)` on a locally built `new CRMPipelineStagesRepository()`. Neither is valid on **either** parent: the repository has never exposed `findByUser`, and its constructor requires a `SupabaseClient`. The module already publishes the configured singleton `crmPipelineStagesRepository`, and `list(userId)` orders by `position` ascending - so `[0]` is the first stage, exactly the intent of the original code. main's `crm-plugin-executor` already uses that same pair. Intent preserved, no behaviour invented. |
+| D17 | 2026-09-02 | **Step 7 - build gate** | `npm run build` **exit 0** | User-approved | `✓ Compiled successfully`, `✓ Generating static pages (280/280)`. The `DYNAMIC_SERVER_USAGE` entries in the log are Next.js probing API routes that read `cookies`/`headers` during static generation and falling back to dynamic rendering - expected, present on both parents, and emitted by the app's own logger rather than the build. The Stripe `ConnectJS won't load when rendering code in the server` notice is Stripe's own documented SSR message. **Guard + executor suites: 93/93 across 6 suites. Business OS: 625/625 across 29 suites.** |
+| D18 | 2026-09-02 | **Step 8 / C1** - `middleware.ts` logging | All **11** `console.*` call sites converted to structured Pino, plus one log-hygiene fix | User-approved | **Edge-runtime risk checked rather than assumed:** middleware runs on the Edge runtime and `lib/logger.ts` imports `pino` directly, so the conversion was made and then built - `✓ Compiled successfully`, **0** "not supported in the Edge Runtime" warnings, exit 0. Cost: the middleware bundle grows 64.4 kB -> 67.3 kB (+2.9 kB for Pino's browser build) on a path that runs for every request. **Log hygiene:** the old line 147 logged the entire `business_profiles` row; it now logs only the decision inputs (`hasProfile`, `onboardingCompleted`, `profileError`) - the same M4 rule applied under D7 to `WebsiteAnalyticsRepository`. See C1 for the corrected attribution. |
 
 > **How to use this table:** every subsequent conflict resolution, architecture call, or deviation from the [Governing Merge Rule](#governing-merge-rule) is appended as a new row (`D2`, `D3`, …). In the **same edit**, update the matching row's **Status** in the [Ordered Execution Checklist](#ordered-execution-checklist) (⬜ Not started → 🟡 In progress → ✅ Done). A resolution without a Decision Log row is not considered resolved.
 
@@ -327,7 +559,7 @@ These must be answered before Step 4 can be decided. Fill the **Answer** column 
 
 | # | Question | Raised by | Status | Answer |
 |---|----------|-----------|--------|--------|
-| Q1 | Was the parallel build of the Business OS plugin surface known, or did the two of you not see each other's work? | BA / RM | ⬜ Open | *(blank)* |
+| Q1 | Was the parallel build of the Business OS plugin surface known, or did the two of you not see each other's work? | BA / RM | ✅ Answered | **Parallel build - a genuine mix-up; neither saw the other's work.** Confirmed in code: both surfaces were added after the 2026-08-04 merge base, and the branch deletes nothing of main's (+7 / +8 lines only). Resolved by union - see [D9](#decision-log). |
 | Q2 | Does BizQL's `MutateExecutor` account for triggers **T2 / T3 / T4 / T8**, or does BizQL assume it owns the side effects? (If not, the same write through the other door double-logs.) | BA / RM | ⬜ Open | *(blank)* |
 | Q3 | Is the generated-from-catalog approach **load-bearing elsewhere** (the BOS chat, BizQL), or is the plugin surface a **thin cap** that could be re-pointed at main's five? **This is the decider for Step 4.** | BA / RM | ⬜ Open | *(blank)* |
 | Q4 | Should Business OS actions be **hidden** from general plugin discovery (main's position, `visibility: "business_os"`) or **offered like any other plugin** (the branch's position)? | BA / RM | ⬜ Open | *(blank)* |
@@ -336,8 +568,11 @@ Additional open checks not directed at Offir:
 
 | # | Question | Owner | Status | Answer |
 |---|----------|-------|--------|--------|
-| Q5 | Does the hosting plan's cron limit accommodate 3 crons (`payment-reminders`, `payment-retry`, `channel-metrics-sync`)? | Merge operator | ⬜ Open | *(blank)* |
+| Q5 | Does the hosting plan's cron limit accommodate 3 crons (`payment-reminders`, `payment-retry`, `channel-metrics-sync`)? | Merge operator | ✅ Answered | **Yes - within budget.** 8 crons existed pre-merge (> Hobby's 2), so the project is on Pro (limit 40). Post-merge total is 11. Verify plan tier with Offir. |
 | Q6 | Does the migration runner depend on lexical filename ordering (see [C2](#non-blocking-cleanups))? | Merge operator | ⬜ Open | *(blank)* |
+| Q7 | 🔴 **[F1]** Branch migration `20260810_remove_client_fields_and_total_amount.sql` drops `client_*` from `scheduling_bookings`, but 7 branch-only insight detectors still `select` those columns. Was this migration applied and the detectors missed? See [Finding F1](#finding-f1---dropped-client_-columns-still-read-by-branch-code). | Offir | ⬜ Open | *(blank)* |
+| Q8 | 🔴 **[F3]** `CapabilityConditionEvaluator.ts:377` selects `has_website` from `business_profiles`, but no migration creates that column - capability-condition evaluation throws. Should it be derived from `online_presence_mode` instead? See [Finding F3](#finding-f3---has_website-is-a-phantom-column-read-by-branch-only-code). | Offir | ⬜ Open | *(blank)* |
+| Q9 | 🟡 **Product decision:** should completing an intake form advance the contact's CRM pipeline stage? The branch did (computing a per-tenant stage from `crm_pipeline_stages`); main does not (new contacts are `'lead'`, existing contacts' stage untouched) and its guard tests lock that. Main's behaviour is in place; restoring the branch's needs those two test expectations changed. | Barak + Offir | ⬜ Open | *(blank)* |
 
 ---
 
@@ -354,4 +589,18 @@ Additional open checks not directed at Offir:
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-01 | Step 0 complete | Merge opened on integration branch `merge/business-os-reports-into-main` (doc committed as `23b7379`, then `git merge origin/main`). **14 conflicts - exactly the predicted set**, no unpredicted files; auto-merged portion staged 156 files / +25,990 / -2,001. Decision Log D1 confirmed, D2-D3 added. |
+| 2026-09-01 | Step 1 complete | Deps & config resolved (D4-D6): `package.json` took main, `package-lock.json` regenerated via `npm install` (exit 0), `vercel.json` unioned to 11 crons. **11 of 14 conflicts remain.** Q5 answered. |
+| 2026-09-01 | Step 2 complete | Trivial tier resolved (D7): 3 booking routes + `PaymentRepository` + `WebsiteAnalyticsRepository`, all take-main; auto-merged content reviewed for coherence. **6 of 14 conflicts remain.** Added **Finding F1** (branch drops `client_*` from `scheduling_bookings` while 7 branch-only detectors still select them) and **Q7**. |
+| 2026-09-01 | Step 3 complete | `BusinessProfileRepository` resolved (D8): type blocks unioned, 22 branch columns added to the row and Insert shapes, migration-derived. `tsc --noEmit` clean apart from markers in the 5 remaining files. **5 of 14 conflicts remain.** Added **Finding F2** - the `tools` column IS created by a branch migration, inverting main's premise and changing the Step 5 plan. |
+| 2026-09-01 | Step 4 unblocked | **Q1 answered** (parallel build, mix-up). Plugin surfaces **unioned and the shape decision deferred** (D9): 29 definitions / 29 executors, no collisions, main's visibility + `db_active` hardening retained, interim comments at both sites. Retracted the earlier "two truths" objection. `tsc` clean. **4 of 14 conflicts remain.** |
+| 2026-09-02 | Step 5 (1 of 3) | `onboarding/build/route.ts` resolved (D10) - branch side taken, all 16 written columns verified against the merged migration set, `tools` provenance documented. **3 of 14 conflicts remain.** Added **Finding F3** (`has_website` phantom column) and **Q8**. |
+| 2026-09-02 | Step 5 (2 of 3) | `ChatCommandExecutor.ts` resolved (D11) - constants unioned, `payment.record` routed through `PaymentsPluginExecutor`, rogue `payment_transactions` insert gone. Added cleanup **C3** (duplicate capability authorization). **2 of 14 conflicts remain.** |
+| 2026-09-02 | **All 14 conflicts resolved** | `availability` (D12) and `forms/intake` (D13) closed. **53/53 guard tests pass.** Added **F4** (7 merge-induced defects where one side's code meets the other's types/schema - Step 6 work), **F5** (4,413-error pre-existing TS baseline on the branch; `tsc` is not a usable gate, guard tests are), and **Q9** (intake stage product decision). |
+| 2026-09-02 | F4 attribution corrected | Re-checked each of the seven against both parents. **#1 and #2 are pre-existing branch defects, not merge-induced** - the branch's own `CRMPipelineStagesRepository` has the same constructor signature and no `findByUser`. Five (#3-#7) are genuinely merge-induced. |
+| 2026-09-02 | **Step 6 complete** | All 5 merge-induced F4 defects fixed (D14), plus one `tsc` could not see (`unwrap()` returns `any`). Main's `create_booking` guard tests updated to the post-drop contract (D15). 4 auto-merged files re-read - all clean. **Zero merge-changed test suites fail**; the 128 failures are the branch's pre-existing V6/pilot baseline. Remaining `tsc` errors in merge-changed non-test files: **0**. |
+| 2026-09-02 | **Steps 6-7 complete** | F4 #1/#2 also fixed at the user's request (D16) - `crmPipelineStagesRepository.list()` replaces the non-existent `findByUser` and the argument-less constructor. `npm run build` **exit 0**, 280/280 static pages (D17). Guard + executor suites 93/93; Business OS 625/625. **Merge-changed `tsc` errors in non-test files: 0.** Only Step 8 (C1) remains before the gates. |
+| 2026-09-02 | **Step 8 complete - all 9 checklist steps done** | `middleware.ts` converted to Pino (D18); Edge compatibility verified by build (0 Edge warnings, +2.9 kB). C1's attribution corrected - 11 of 12 `console.*` calls were main's. **The merge is fully resolved and verified but NOT yet committed.** Everything remaining is owed by others: Offir's branch defects (F1, F3), the deferred decisions (Q2/Q3/Q4, Q9, C3), the operator check (Q6), and the three gates. |
+| 2026-09-02 | **Document reconciled** | Header status, ToC numbering and Acceptance Criteria brought in line with the Decision Log. **Three original criteria were found to assert the opposite of what was decided** (one plugin shape, no `tools` write, one capability-auth implementation) — marked SUPERSEDED with the decision that changed each, rather than edited away. 3 criteria remain genuinely open (Q6, open questions, gates). Added the per-file ledger link. |
+| 2026-09-02 | **New work arrived on the branch** | Offir pushed `54184fdb` (116 files, +10,035/−2,739) after this merge was resolved. Added **Steps 9–11** (commit → merge his commit → re-verify) and an [Incoming Work](#incoming-work--offirs-commit-54184fdb-fetched-2026-09-02) section listing the **7 files where his new work lands on decisions already taken**. `merge-tree` confirms he introduces **no conflicts in new areas** — the conflict set against `main` is the same 14 files. |
 | 2026-09-01 | Document created | Initial gap analysis from RM: 14 content conflicts across 4 areas, 5 silently-auto-merging high-risk files, 6 verified-safe checks, 2 non-blocking cleanups. Records the blocking Business OS plugin-shape decision (**corrected framing: parallel invention, not a revert**), the merge-into-branch strategy, an 8-step ordered checklist, the Decision Log seeded with D1, and 6 open questions (Q1–Q4 for Offir). |

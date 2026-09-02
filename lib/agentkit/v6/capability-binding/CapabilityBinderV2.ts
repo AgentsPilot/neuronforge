@@ -21,6 +21,7 @@ import type {
 } from '../semantic-plan/types/intent-schema-types'
 import type { PluginManagerV2 } from '@/lib/server/plugin-manager-v2'
 import type { ActionDefinition, PluginDefinition } from '@/lib/types/plugin-types'
+import { isPluginDiscoverable } from '@/lib/plugins/plugin-visibility'
 import type { WorkflowDataSchema } from '../logical-ir/schemas/workflow-data-schema'
 import { createLogger } from '@/lib/logger'
 import { SubsetRefResolver, type SubsetResolutionResult } from './SubsetRefResolver'
@@ -99,8 +100,17 @@ export class CapabilityBinderV2 {
   /**
    * Bind all steps in the Intent Contract to actual plugin actions
    */
-  async bind(intent: IntentContract, userId: string): Promise<BoundIntentContract> {
+  async bind(
+    intent: IntentContract,
+    userId: string,
+    options: { allowedBusinessOsKeys?: string[] } = {}
+  ): Promise<BoundIntentContract> {
     logger.info('[CapabilityBinderV2] Starting capability binding...')
+
+    // Discovery-scoped: `business_os` plugins (e.g. internal CRM) are NOT added to the
+    // binding candidate set unless their key is explicitly requested for this plan. Keeps
+    // them from being auto-bound to generic capabilities. See docs/PLUGIN_VISIBILITY_SCOPING.md.
+    const allowedBusinessOsKeys = new Set(options.allowedBusinessOsKeys ?? [])
 
     // Phase 0: Resolve subset references (aggregate subset auto-promotion)
     const subsetResolution = this.subsetResolver.resolve(intent)
@@ -124,6 +134,7 @@ export class CapabilityBinderV2 {
     const allPlugins = this.pluginManager.getAvailablePlugins()
     const systemPlugins = Object.entries(allPlugins)
       .filter(([_, plugin]) => plugin.plugin.isSystem === true)
+      .filter(([key, plugin]) => isPluginDiscoverable(plugin, allowedBusinessOsKeys.has(key)))
       .filter(([key, _]) => !connectedPlugins[key]) // Don't duplicate
 
     // Merge system plugins into connectedPlugins

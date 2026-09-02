@@ -1,8 +1,9 @@
 // app/api/plugins/user-status/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getCachedUser } from '@/lib/cachedAuth';
+import { z } from 'zod';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
+import { resolveActingUserIdentity } from '@/lib/server/route-identity';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'API', service: 'PluginUserStatus' });
@@ -56,34 +57,45 @@ class ResponseCache {
 // Export cache instance for use in other routes (connect/disconnect)
 export const pluginStatusCache = new ResponseCache();
 
-// GET /api/plugins/user-status?userId={userId} (optional)
-// Returns user's plugin connection status (connected vs available)
-// Auth: Cookie-based (primary) or userId query param (backward compatibility)
+const QuerySchema = z.object({
+  // Optional act-as target; identity still comes from the session.
+  userId: z.string().optional(),
+});
+
+// GET /api/plugins/user-status
+// Returns the acting user's plugin connection status (connected vs available).
+//
+// IDENTITY: resolved from the SESSION. A `?userId=` query param is not an identity
+// claim — it is an act-as request, honoured only for platform admins and audited. The
+// previous "fall back to the userId query param for backward compatibility" branch made
+// this endpoint an unauthenticated disclosure of any user's connected plugins, and is
+// gone. See docs/workplans/BUSINESS_OS_PLUGIN_ROUTE_IDENTITY_HARDENING_WORKPLAN.md.
 export async function GET(request: NextRequest) {
   try {
-    // Try cookie-based authentication first (preferred method)
-    // Using cached auth to avoid repeated Supabase calls
-    let userId: string | null = null;
-    let authMethod = 'query-param'; // for logging
-
-    const user = await getCachedUser();
-
-    if (user) {
-      // Cookie auth successful (from cache or fresh validation)
-      userId = user.id;
-      authMethod = 'cookie';
-    } else {
-      // Fall back to query parameter for backward compatibility
-      const { searchParams } = new URL(request.url);
-      userId = searchParams.get('userId');
-
-      if (!userId) {
-        return NextResponse.json({
-          success: false,
-          error: 'Authentication required. Please log in or provide userId parameter.'
-        }, { status: 401 });
-      }
+    const { searchParams } = new URL(request.url);
+    const parsed = QuerySchema.safeParse({
+      userId: searchParams.get('userId') ?? undefined,
+    });
+    if (!parsed.success) {
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid request',
+        details: process.env.NODE_ENV === 'development' ? parsed.error.flatten() : undefined,
+      }, { status: 400 });
     }
+
+    const identity = await resolveActingUserIdentity({
+      requestedUserId: parsed.data.userId,
+      route: 'GET /api/plugins/user-status',
+      request,
+    });
+    if (!identity.ok) {
+      return NextResponse.json(
+        { success: false, error: identity.error },
+        { status: identity.status }
+      );
+    }
+    const userId = identity.userId;
 
     // Check cache first before doing any expensive operations
     const cacheKey = `plugin-status-${userId}`;
@@ -94,12 +106,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(cachedResponse, {
         headers: {
           'X-Cache': 'HIT',
-          'Cache-Control': 'public, max-age=30, stale-while-revalidate=60'
+          // User-specific data varying only by cookie: a shared/CDN cache must never
+          // store it. The in-process pluginStatusCache above still absorbs the cost.
+          'Cache-Control': 'private, no-store',
+          'Vary': 'Cookie'
         }
       });
     }
 
-    logger.debug({ userId, authMethod }, 'Getting plugin status');
+    logger.debug({ userId, actingAs: identity.actingAs }, 'Getting plugin status');
 
     // Get plugin manager instance
     let pluginManager;
@@ -186,7 +201,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(responseData, {
       headers: {
         'X-Cache': 'MISS',
-        'Cache-Control': 'public, max-age=30, stale-while-revalidate=60'
+        'Cache-Control': 'private, no-store',
+        'Vary': 'Cookie'
       }
     });
 
@@ -201,7 +217,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: false,
       error: 'Failed to get user plugin status',
-      message: error.message,
+      // Internal error text must not reach the client in production.
+      message: process.env.NODE_ENV === 'development' ? error.message : undefined,
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }, { status: 500 });
   }

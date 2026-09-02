@@ -442,11 +442,27 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
 
   // === HELPER METHODS ===
 
+  /**
+   * Graph request variant that attaches a `Prefer` header (e.g.
+   * `outlook.timezone="UTC"` so calendarView returns start/end times in UTC).
+   * Thin wrapper over makeGraphRequest to keep a single request implementation.
+   */
+  private async makeGraphRequestWithPrefer(
+    connection: any,
+    endpoint: string,
+    method: string = 'GET',
+    body: any,
+    prefer: string
+  ): Promise<any> {
+    return this.makeGraphRequest(connection, endpoint, method, body, prefer);
+  }
+
   private async makeGraphRequest(
     connection: any,
     endpoint: string,
     method: string = 'GET',
-    body?: any
+    body?: any,
+    prefer?: string
   ): Promise<any> {
     const url = endpoint.startsWith('http') ? endpoint : `${this.graphBaseUrl}${endpoint}`;
 
@@ -455,7 +471,8 @@ export class OutlookPluginExecutor extends BasePluginExecutor {
       headers: {
         'Authorization': `Bearer ${connection.access_token}`,
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        ...(prefer && { 'Prefer': prefer })
       },
       ...(body && { body: JSON.stringify(body) })
     };

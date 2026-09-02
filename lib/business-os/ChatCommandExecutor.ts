@@ -11,13 +11,37 @@ import {
 } from './DraftManagerTypes';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import { schedulingServiceRepository, schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
+import type { CRMTaskListOptions } from '@/lib/repositories/CRMTaskRepository';
+import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 
 const logger = createLogger({ module: 'ChatCommandExecutor' });
 
+// R8: single plugin-name literal for the internal CRM plugin path. Centralized so future
+// callers don't scatter the string; replace with the capability resolver when CRM goes
+// platform-wide. TODO(R7): route via capability resolver instead of a hardcoded key.
+const CRM_PLUGIN_KEY = 'crm';
+// R8/P4: internal Scheduling plugin key. TODO(R7): route via capability resolver.
+const SCHEDULING_PLUGIN_KEY = 'scheduling';
+// Payments P4: internal Payments plugin key. TODO(R7): route via capability resolver.
+const PAYMENTS_PLUGIN_KEY = 'payments';
+
+// ---------------------------------------------------------------------------
+// FOLLOW-UP (merge, 2026-09-02): this is a SECOND capability-authorization
+// implementation. main routes capability checks through
+// lib/business-os/chat/CapabilityEngine.ts (repository-backed); the function
+// below queries `user_capabilities` directly via supabaseServer, which also
+// violates the mandatory repository rule in CLAUDE.md.
+//
+// Kept as-is by the merge so the branch's feature keeps working. Collapsing the
+// two is a deliberate change, not merge work - see D11 / C3 in
+// docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md.
+// ---------------------------------------------------------------------------
 // Map intent types to required capabilities (DATABASE-DRIVEN AUTHORIZATION)
-const INTENT_CAPABILITY_MAP: Record<string, string> = {
+// `null` marks an intent that needs no capability (navigation, unknown).
+const INTENT_CAPABILITY_MAP: Record<string, string | null> = {
   // Scheduling capability
   'service.create': 'scheduling',
   'service.update': 'scheduling',
@@ -1200,7 +1224,6 @@ async function executeServiceCreate(
         duration_minutes: durationMinutes,
         price: isFree ? 0 : price,
         currency: currency,
-        is_free: isFree,
         status: 'active',
         buffer_minutes: entities.buffer_minutes || 15,
         source: 'ai_generated',
@@ -1904,7 +1927,13 @@ async function executeBookingCreate(
 
     // Step 2: Find contact by name using multilingual matching
     // Fetch contacts from DB if not in context
-    let contactsForMatching = (context.existingContacts || []).map(c => ({
+    let contactsForMatching: Array<{
+      id: string;
+      name: string;
+      first_name?: string;
+      last_name?: string;
+      email?: string;
+    }> = (context.existingContacts || []).map(c => ({
       id: c.id,
       name: c.name,
       first_name: c.name.split(' ')[0],
@@ -1913,10 +1942,7 @@ async function executeBookingCreate(
     }));
 
     if (contactsForMatching.length === 0 && contactName) {
-      const { data: dbContacts } = await supabaseServer
-        .from('crm_contacts')
-        .select('id, first_name, last_name, email, phone')
-        .eq('user_id', context.userId);
+      const { data: dbContacts } = await crmContactRepository.listBasic(context.userId);
 
       if (dbContacts) {
         contactsForMatching = dbContacts.map(c => ({
@@ -2053,14 +2079,11 @@ async function executeBookingCreate(
       const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60 * 1000);
 
       // Check for time slot conflicts
-      const { data: overlappingBookings } = await supabaseServer
-        .from('scheduling_bookings')
-        .select('id, client_first_name, start_time')
-        .eq('user_id', context.userId)
-        .in('status', ['confirmed', 'completed'])
-        .lt('start_time', endDateTime.toISOString())
-        .gt('end_time', startDateTime.toISOString())
-        .limit(1);
+      const { data: overlappingBookings } = await schedulingBookingRepository.checkOverlap(
+        context.userId,
+        startDateTime.toISOString(),
+        endDateTime.toISOString()
+      );
 
       if (overlappingBookings && overlappingBookings.length > 0) {
         return {
@@ -2076,35 +2099,32 @@ async function executeBookingCreate(
 
       // If confirmed, create the booking
       if (entities._confirmed) {
-        // Get full contact details from DB
-        const { data: fullContact } = await supabaseServer
-          .from('crm_contacts')
-          .select('id, first_name, last_name, email, phone')
-          .eq('id', contact.id)
-          .single();
+        // Get full contact details from DB (user-scoped via the repository)
+        const { data: fullContact } = await crmContactRepository.findById(contact.id, context.userId);
 
         const contactData = fullContact || contact;
 
-        const { data: booking, error } = await supabaseServer
-          .from('scheduling_bookings')
-          .insert({
-            user_id: context.userId,
-            service_id: selectedService.id,
-            contact_id: contact.id,
-            client_first_name: contactData.first_name || contactName?.split(' ')[0] || '',
-            client_last_name: contactData.last_name || contactName?.split(' ').slice(1).join(' ') || null,
-            client_email: contactData.email || '',
-            client_phone: ('phone' in contactData ? contactData.phone : null) || null,
-            start_time: startDateTime.toISOString(),
-            end_time: endDateTime.toISOString(),
-            timezone: 'UTC',
-            status: 'confirmed',
-            booking_source: 'chat',
-          })
-          .select()
-          .single();
+        // P4: route the booking create through the internal Scheduling plugin — proves the
+        // plugin path end-to-end (db_active → SchedulingPluginExecutor → repo) and the T1/T2
+        // trigger guardrail. user_id is derived server-side from the resolved connection.
+        const pluginExecuter = await PluginExecuterV2.getInstance();
+        const bookingResult = await pluginExecuter.execute(context.userId, SCHEDULING_PLUGIN_KEY, 'create_booking', {
+          service_id: selectedService.id,
+          contact_id: contact.id,
+          client_first_name: contactData.first_name || contactName?.split(' ')[0] || '',
+          client_last_name: contactData.last_name || contactName?.split(' ').slice(1).join(' ') || null,
+          client_email: contactData.email || '',
+          client_phone: ('phone' in contactData ? contactData.phone : null) || null,
+          start_time: startDateTime.toISOString(),
+          end_time: endDateTime.toISOString(),
+          timezone: 'UTC',
+          status: 'confirmed',
+          booking_source: 'chat',
+        });
 
-        if (error) throw error;
+        if (!bookingResult.success) {
+          throw new Error(bookingResult.message || bookingResult.error || 'Failed to create booking');
+        }
 
         const dateDisplay = formatDateForDisplay(parsedDate, lang);
         const timeDisplay = formatTimeForDisplay(time, lang);
@@ -2188,60 +2208,39 @@ async function executeBookingQuery(
     const contactName = entities.contact_name;
     const status = entities.status?.toLowerCase();
 
-    let query = supabaseServer
-      .from('scheduling_bookings')
-      .select(`
-        id, client_first_name, client_last_name, start_time, end_time, status,
-        scheduling_services(service_name)
-      `)
-      .eq('user_id', context.userId);
-
-    // Apply status filter
-    if (status) {
-      query = query.eq('status', status);
-    } else {
-      query = query.in('status', ['confirmed', 'completed']);
-    }
-
-    // Apply date filters based on period
+    // Compute the date window for the requested period, then list via the repository.
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
 
+    let startDate: string | undefined;
+    let endDate: string | undefined;
     if (period === 'today') {
-      query = query
-        .gte('start_time', startOfToday.toISOString())
-        .lt('start_time', endOfToday.toISOString());
+      startDate = startOfToday.toISOString();
+      endDate = endOfToday.toISOString();
     } else if (period === 'tomorrow') {
       const startOfTomorrow = endOfToday;
-      const endOfTomorrow = new Date(startOfTomorrow.getTime() + 24 * 60 * 60 * 1000);
-      query = query
-        .gte('start_time', startOfTomorrow.toISOString())
-        .lt('start_time', endOfTomorrow.toISOString());
+      startDate = startOfTomorrow.toISOString();
+      endDate = new Date(startOfTomorrow.getTime() + 24 * 60 * 60 * 1000).toISOString();
     } else if (period === 'this_week') {
-      const endOfWeek = new Date(startOfToday.getTime() + 7 * 24 * 60 * 60 * 1000);
-      query = query
-        .gte('start_time', startOfToday.toISOString())
-        .lt('start_time', endOfWeek.toISOString());
+      startDate = startOfToday.toISOString();
+      endDate = new Date(startOfToday.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
     } else if (period === 'next_week') {
       const startOfNextWeek = new Date(startOfToday.getTime() + 7 * 24 * 60 * 60 * 1000);
-      const endOfNextWeek = new Date(startOfNextWeek.getTime() + 7 * 24 * 60 * 60 * 1000);
-      query = query
-        .gte('start_time', startOfNextWeek.toISOString())
-        .lt('start_time', endOfNextWeek.toISOString());
+      startDate = startOfNextWeek.toISOString();
+      endDate = new Date(startOfNextWeek.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
     } else {
-      // Default: upcoming bookings from now
-      query = query.gte('start_time', now.toISOString());
+      // Default: upcoming bookings from now (no end bound)
+      startDate = now.toISOString();
     }
 
-    // Filter by contact name if provided
-    if (contactName) {
-      query = query.or(`client_first_name.ilike.%${contactName}%,client_last_name.ilike.%${contactName}%`);
-    }
-
-    const { data: bookings } = await query
-      .order('start_time', { ascending: true })
-      .limit(10);
+    const { data: bookings } = await schedulingBookingRepository.list(context.userId, {
+      status: status || ['confirmed', 'completed'],
+      startDate,
+      endDate,
+      search: contactName,
+      limit: 10,
+    });
 
     if (!bookings || bookings.length === 0) {
       const responseKey = period === 'today' ? 'booking.query.noneToday' : 'booking.query.none';
@@ -2252,9 +2251,9 @@ async function executeBookingQuery(
       };
     }
 
-    // Format bookings for response
+    // Format bookings for response. (The repository aliases the service join as `service`.)
     const formattedBookings = bookings.map(b => {
-      const serviceData = b.scheduling_services;
+      const serviceData = (b as { service?: unknown }).service;
       const service = Array.isArray(serviceData) ? serviceData[0] : serviceData;
       return {
         id: b.id,
@@ -2338,17 +2337,11 @@ async function executeBookingCancel(
   try {
     // If we have a specific booking ID, cancel it directly
     if (bookingId) {
-      const { data: booking, error } = await supabaseServer
-        .from('scheduling_bookings')
-        .update({ status: 'cancelled' })
-        .eq('id', bookingId)
-        .eq('user_id', context.userId)
-        .select('client_first_name, client_last_name')
-        .single();
+      const { data: booking, error } = await schedulingBookingRepository.cancel(bookingId, context.userId);
 
       if (error) throw error;
 
-      const clientName = `${booking.client_first_name || ''} ${booking.client_last_name || ''}`.trim();
+      const clientName = `${booking?.client_first_name || ''} ${booking?.client_last_name || ''}`.trim();
       return {
         success: true,
         response: t('booking.cancelled', lang, { client: clientName }),
@@ -2356,27 +2349,18 @@ async function executeBookingCancel(
       };
     }
 
-    // Try to find bookings matching the criteria
-    let query = supabaseServer
-      .from('scheduling_bookings')
-      .select('id, client_first_name, client_last_name, start_time, end_time')
-      .eq('user_id', context.userId)
-      .eq('status', 'confirmed');
-
-    if (contactName) {
-      query = query.or(`client_first_name.ilike.%${contactName}%,client_last_name.ilike.%${contactName}%`);
-    }
-
-    if (date) {
-      const parsedDate = parseRelativeDate(date);
-      const startOfDay = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate());
-      const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
-      query = query
-        .gte('start_time', startOfDay.toISOString())
-        .lt('start_time', endOfDay.toISOString());
-    }
-
-    const { data: bookings } = await query.limit(5);
+    // Try to find bookings matching the criteria (via the repository)
+    const parsedCancelDate = date ? parseRelativeDate(date) : null;
+    const cancelDayStart = parsedCancelDate
+      ? new Date(parsedCancelDate.getFullYear(), parsedCancelDate.getMonth(), parsedCancelDate.getDate())
+      : null;
+    const { data: bookings } = await schedulingBookingRepository.list(context.userId, {
+      status: 'confirmed',
+      search: contactName,
+      startDate: cancelDayStart ? cancelDayStart.toISOString() : undefined,
+      endDate: cancelDayStart ? new Date(cancelDayStart.getTime() + 24 * 60 * 60 * 1000).toISOString() : undefined,
+      limit: 5,
+    });
 
     if (!bookings || bookings.length === 0) {
       return {
@@ -2480,13 +2464,12 @@ async function getAvailableTimeSlots(
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 
-    const { data: existingBookings } = await supabaseServer
-      .from('scheduling_bookings')
-      .select('start_time, end_time')
-      .eq('user_id', userId)
-      .in('status', ['confirmed', 'completed'])
-      .gte('start_time', startOfDay.toISOString())
-      .lte('start_time', endOfDay.toISOString());
+    const { data: existingBookings } = await schedulingBookingRepository.list(userId, {
+      status: ['confirmed', 'completed'],
+      startDate: startOfDay.toISOString(),
+      endDate: endOfDay.toISOString(),
+      limit: 500, // a single day won't exceed this; preserves the original no-limit read
+    });
 
     // Generate time slots (every 30 minutes)
     const slots: string[] = [];
@@ -2647,9 +2630,10 @@ async function executeContactAdd(
         last_name: lastName || undefined,
         email: entities.email,
         phone: entities.phone || undefined,
-        company: entities.company || undefined,
         stage: entities.stage || 'lead',
         notes: entities.notes || undefined,
+        // `company` is not a first-class crm_contacts column — store it in the JSONB custom_fields bag.
+        custom_fields: entities.company ? { company: entities.company } : undefined,
       });
 
       if (error) {
@@ -2902,15 +2886,9 @@ async function executeContactQuery(
 
     // Query for contacts with overdue tasks
     if (entities.has_overdue_tasks || entities.has_due_tasks) {
-      // Fetch overdue tasks first
-      const { data: tasks } = await supabaseServer
-        .from('crm_tasks')
-        .select('contact_id')
-        .eq('user_id', context.userId)
-        .lt('due_date', new Date().toISOString())
-        .in('status', ['pending', 'in_progress']);
-
-      const contactIds = Array.from(new Set(tasks?.map(t => t.contact_id).filter(Boolean) || []));
+      // Fetch contact ids with overdue, still-open tasks (deduped by the repository)
+      const { data: overdueContactIds } = await crmTaskRepository.getOverdueContactIds(context.userId);
+      const contactIds = overdueContactIds || [];
 
       if (contactIds.length === 0) {
         return {
@@ -2921,12 +2899,17 @@ async function executeContactQuery(
       }
 
       // Fetch contacts with overdue tasks
-      const { data: contacts } = await supabaseServer
-        .from('crm_contacts')
-        .select('id, first_name, last_name, email, stage')
-        .eq('user_id', context.userId)
-        .in('id', contactIds)
-        .limit(10);
+      const { data: contactsBasic } = await crmContactRepository.listBasic(context.userId, {
+        ids: contactIds,
+        limit: 10,
+      });
+      const contacts = (contactsBasic || []).map((c) => ({
+        id: c.id,
+        first_name: c.first_name ?? undefined,
+        last_name: c.last_name ?? undefined,
+        email: c.email ?? undefined,
+        stage: c.stage,
+      }));
 
       if (!contacts || contacts.length === 0) {
         return {
@@ -2949,19 +2932,18 @@ async function executeContactQuery(
     }
 
     // Regular contact query
-    let query = supabaseServer
-      .from('crm_contacts')
-      .select('id, first_name, last_name, email, stage')
-      .eq('user_id', context.userId);
-
-    if (filters.stage) {
-      query = query.eq('stage', filters.stage);
-    }
-    if (filters.search) {
-      query = query.or(`first_name.ilike.%${filters.search}%,last_name.ilike.%${filters.search}%,email.ilike.%${filters.search}%`);
-    }
-
-    const { data: contacts } = await query.limit(entities.limit || 10);
+    const { data: contactsBasic } = await crmContactRepository.listBasic(context.userId, {
+      stage: filters.stage,
+      search: filters.search,
+      limit: entities.limit || 10,
+    });
+    const contacts = (contactsBasic || []).map((c) => ({
+      id: c.id,
+      first_name: c.first_name ?? undefined,
+      last_name: c.last_name ?? undefined,
+      email: c.email ?? undefined,
+      stage: c.stage,
+    }));
 
     if (!contacts || contacts.length === 0) {
       const responseMsg = filters.search
@@ -3112,19 +3094,23 @@ async function executeTaskCreate(
         }
       }
 
-      // Create the task
-      const { error } = await supabaseServer
-        .from('crm_tasks')
-        .insert({
-          user_id: context.userId,
-          title: entities.description,
-          contact_id: contactId,
-          due_date: dueDate,
-          status: 'pending',
-          priority: entities.priority || 'medium',
-        });
+      // Create the task via the internal CRM plugin (R8: proves the internal plugin path
+      // end-to-end from a live caller — db_active access check → CRMPluginExecutor →
+      // crmTaskRepository. user_id is derived server-side from the resolved connection, so it
+      // is NOT passed here). Other CRM sites in this file still call repositories directly;
+      // migration is additive/gradual.
+      const pluginExecuter = await PluginExecuterV2.getInstance();
+      const taskResult = await pluginExecuter.execute(context.userId, CRM_PLUGIN_KEY, 'add_task', {
+        title: entities.description,
+        contact_id: contactId,
+        due_date: dueDate,
+        status: 'pending',
+        priority: entities.priority || 'medium',
+      });
 
-      if (error) throw error;
+      if (!taskResult.success) {
+        throw new Error(taskResult.message || taskResult.error || 'Failed to create task');
+      }
 
       // Build success message parts
       const locale = lang === 'he' ? 'he-IL' : lang === 'es' ? 'es-ES' : 'en-US';
@@ -3213,46 +3199,46 @@ async function executeTaskQuery(
     const status = entities.status?.toLowerCase();
     const duePeriod = entities.due_period?.toLowerCase();
 
-    let query = supabaseServer
-      .from('crm_tasks')
-      .select(`
-        id, title, due_date, status, priority, contact_id,
-        crm_contacts(first_name, last_name)
-      `)
-      .eq('user_id', context.userId);
+    // Build repository list options, preserving the original per-status/date filter shape.
+    const listOptions: CRMTaskListOptions = {
+      orderBy: 'due_date',
+      orderDirection: 'asc',
+      limit: entities.limit || 10,
+    };
 
     // Handle different query types
     if (status === 'overdue') {
-      query = query
-        .lt('due_date', new Date().toISOString())
-        .in('status', ['pending', 'in_progress']);
+      listOptions.status = ['pending', 'in_progress'];
+      listOptions.due_before = new Date().toISOString();
     } else if (status === 'completed') {
-      query = query.eq('status', 'completed');
+      listOptions.status = 'completed';
     } else if (status === 'pending' || status === 'upcoming') {
-      query = query.in('status', ['pending', 'in_progress']);
+      listOptions.status = ['pending', 'in_progress'];
 
       // Add date filter for upcoming
       if (duePeriod === 'today') {
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         tomorrow.setHours(0, 0, 0, 0);
-        query = query.lt('due_date', tomorrow.toISOString());
+        listOptions.due_before = tomorrow.toISOString();
       } else if (duePeriod === 'this_week') {
         const nextWeek = new Date();
         nextWeek.setDate(nextWeek.getDate() + 7);
-        query = query.lt('due_date', nextWeek.toISOString());
+        listOptions.due_before = nextWeek.toISOString();
       }
+    } else {
+      // No status specified → original query applied no status filter (all statuses).
+      // include_completed:true lifts the repository's default pending/in_progress restriction.
+      listOptions.include_completed = true;
     }
 
     // Filter by contact name if provided
     if (entities.contact_name) {
       // Would need to join and filter by contact name
-      // For now, skip this filter
+      // For now, skip this filter (unchanged from prior behavior)
     }
 
-    const { data: tasks } = await query
-      .order('due_date', { ascending: true })
-      .limit(entities.limit || 10);
+    const { data: tasks } = await crmTaskRepository.list(context.userId, listOptions);
 
     if (!tasks || tasks.length === 0) {
       if (status === 'overdue') {
@@ -3270,12 +3256,12 @@ async function executeTaskQuery(
     }
 
     // Format tasks for response
-    const formattedTasks = tasks.map(task => ({
+    const formattedTasks = (tasks || []).map(task => ({
       id: task.id,
       title: task.title,
-      due_date: task.due_date,
+      due_date: task.due_date ?? undefined,
       status: task.status,
-      contact_id: task.contact_id,
+      contact_id: task.contact_id ?? undefined,
     }));
 
     const responseKey = status === 'overdue'
@@ -3336,18 +3322,16 @@ async function executeInvoiceCreate(
 
       // If not found in cache, try direct DB lookup
       if (!contact) {
-        const { data: contacts } = await supabaseServer
-          .from('crm_contacts')
-          .select('id, first_name, last_name, email')
-          .eq('user_id', context.userId)
-          .or(`first_name.ilike.%${entities.contact_name}%,last_name.ilike.%${entities.contact_name}%,email.ilike.%${entities.contact_name}%`)
-          .limit(1);
+        const { data: contacts } = await crmContactRepository.listBasic(context.userId, {
+          search: entities.contact_name,
+          limit: 1,
+        });
 
         if (contacts && contacts.length > 0) {
           contact = {
             id: contacts[0].id,
-            name: `${contacts[0].first_name || ''} ${contacts[0].last_name || ''}`.trim() || contacts[0].email,
-            email: contacts[0].email,
+            name: `${contacts[0].first_name || ''} ${contacts[0].last_name || ''}`.trim() || contacts[0].email || '',
+            email: contacts[0].email ?? undefined,
           };
         }
       }
@@ -3363,44 +3347,27 @@ async function executeInvoiceCreate(
 
       const currency = entities.currency || 'USD';
 
-      // Get next invoice number
-      const { data: lastInvoice } = await supabaseServer
-        .from('payment_invoices')
-        .select('invoice_number')
-        .eq('user_id', context.userId)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      const lastNumber = lastInvoice?.[0]?.invoice_number
-        ? parseInt(lastInvoice[0].invoice_number.replace(/\D/g, ''), 10)
-        : 0;
-      const invoiceNumber = `INV-${String(lastNumber + 1).padStart(5, '0')}`;
-
-      // Create the invoice
       const dueDate = new Date();
       dueDate.setDate(dueDate.getDate() + 30); // 30 days from now
 
-      const { data: invoice, error } = await supabaseServer
-        .from('payment_invoices')
-        .insert({
-          user_id: context.userId,
-          contact_id: contact.id,
-          invoice_number: invoiceNumber,
-          amount: entities.amount,
-          currency: currency,
-          status: 'draft',
-          due_date: dueDate.toISOString(),
-          line_items: [{
-            description: entities.description || 'Services',
-            quantity: 1,
-            unit_price: entities.amount,
-            total: entities.amount,
-          }],
-        })
-        .select()
-        .single();
+      // P4: route invoice creation through the internal Payments plugin (db_active →
+      // PaymentsPluginExecutor → repo). The plugin generates the invoice_number internally
+      // (getNextInvoiceNumber) and builds the single line item from amount + description.
+      const pluginExecuter = await PluginExecuterV2.getInstance();
+      const invoiceResult = await pluginExecuter.execute(context.userId, PAYMENTS_PLUGIN_KEY, 'create_invoice', {
+        contact_id: contact.id,
+        amount: entities.amount,
+        currency,
+        description: entities.description || 'Services',
+        due_date: dueDate.toISOString(),
+      });
 
-      if (error) throw error;
+      if (!invoiceResult.success) {
+        throw new Error(invoiceResult.message || invoiceResult.error || 'Failed to create invoice');
+      }
+
+      const invoice = invoiceResult.data as { id: string; invoice_number: string };
+      const invoiceNumber = invoice.invoice_number;
 
       const symbol = currencySymbols[currency] || currency;
 
@@ -3601,12 +3568,10 @@ async function executePaymentRecord(
 
   try {
     // Find contact by name
-    const { data: contacts } = await supabaseServer
-      .from('crm_contacts')
-      .select('id, first_name, last_name, email')
-      .eq('user_id', context.userId)
-      .or(`first_name.ilike.%${contactName}%,last_name.ilike.%${contactName}%,email.ilike.%${contactName}%`)
-      .limit(1);
+    const { data: contacts } = await crmContactRepository.listBasic(context.userId, {
+      search: contactName,
+      limit: 1,
+    });
 
     if (!contacts || contacts.length === 0) {
       return {
@@ -3620,22 +3585,22 @@ async function executePaymentRecord(
     const currency = entities.currency || 'USD';
     const method = entities.method || 'other';
 
-    // Record the payment
-    const { error } = await supabaseServer
-      .from('payment_transactions')
-      .insert({
-        user_id: context.userId,
-        contact_id: contact.id,
-        amount: amount,
-        currency: currency,
-        status: 'succeeded',
-        payment_method: method,
-        processor_type: 'manual', // Chat command payments are manual
-        invoice_id: entities.invoice_id || null,
-        paid_at: new Date().toISOString(),
-      });
+    // P4: route payment recording through the internal Payments plugin (db_active →
+    // PaymentsPluginExecutor → repo). record_manual_payment is the canonical revenue-bearing
+    // path: it sets paid_at (the old rogue insert omitted it) and the T3/T4 triggers own the
+    // CRM activity + invoice→paid side-effects.
+    const pluginExecuter = await PluginExecuterV2.getInstance();
+    const paymentResult = await pluginExecuter.execute(context.userId, PAYMENTS_PLUGIN_KEY, 'record_manual_payment', {
+      amount,
+      currency,
+      payment_method: method,
+      contact_id: contact.id,
+      invoice_id: entities.invoice_id || undefined,
+    });
 
-    if (error) throw error;
+    if (!paymentResult.success) {
+      throw new Error(paymentResult.message || paymentResult.error || 'Failed to record payment');
+    }
 
     // Currency symbol map
     const currencySymbols: Record<string, string> = {

@@ -4,6 +4,8 @@ import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabaseClient'
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
+import { clientLogger } from '@/lib/logger/client'
+import { requestDeduplicator } from '@/lib/utils/request-deduplication'
 
 type AuthContextType = {
   user: User | null
@@ -32,13 +34,30 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
   // Fetch user plugins from the V2 API
   const fetchUserPlugins = async (currentUser: User) => {
     try {
-      console.log('UserProvider: Fetching plugins for user', currentUser.id)
+      clientLogger.debug({ userId: currentUser.id }, 'Fetching plugins for user')
       const apiClient = getPluginAPIClient()
 
-      // Pass userId explicitly to avoid race condition with cookie-based auth
-      // Cookie auth may not be ready immediately after session is established
-      const status = await apiClient.getUserPluginStatus(currentUser.id)
-      console.log('UserProvider: Plugin status response =', status)
+      // Pass userId explicitly so the request is unambiguous. Identity is derived from
+      // the session server-side; passing your OWN id is a self-target and always allowed
+      // (see lib/server/route-identity.ts).
+      //
+      // The session cookie may not be readable yet immediately after sign-in. That used
+      // to be masked by the route's caller-supplied-userId fallback, which has been
+      // removed as a security fix — so a first call landing inside that window now gets
+      // a clean 401. Retry once rather than rendering "no plugins connected".
+      let status
+      try {
+        status = await apiClient.getUserPluginStatus(currentUser.id)
+      } catch (firstError) {
+        clientLogger.warn({ err: firstError }, 'Plugin status failed — retrying once (post-login cookie race)')
+        // The client wraps this call in requestDeduplicator, which caches the REJECTED
+        // promise until settle + TTL. Without clearing the key first, the retry replays
+        // the same rejection instead of issuing a new request.
+        requestDeduplicator.clear(`plugin-status-${currentUser.id}`)
+        await new Promise(resolve => setTimeout(resolve, 750))
+        status = await apiClient.getUserPluginStatus(currentUser.id)
+      }
+      clientLogger.debug({ connectedCount: status?.connected?.length ?? 0 }, 'Plugin status response received')
 
       // Transform array format to object format for backward compatibility
       // connected: [{ key: "google-mail", ... }] -> { "google-mail": { ... } }
@@ -89,12 +108,12 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
         })
       }
 
-      console.log('UserProvider: Setting connectedPlugins =', connectedPluginsMap)
-      console.log('UserProvider: Plugin count =', Object.keys(connectedPluginsMap).length)
+      clientLogger.debug({ pluginKeys: Object.keys(connectedPluginsMap) }, 'Setting connected plugins')
+      clientLogger.debug({ count: Object.keys(connectedPluginsMap).length }, 'Connected plugin count')
       setConnectedPlugins(connectedPluginsMap)
 
     } catch (error) {
-      console.error('Error fetching user plugins:', error)
+      clientLogger.error({ err: error }, 'Error fetching user plugins')
       // Set empty object on error rather than leaving as null
       setConnectedPlugins({})
     }
@@ -113,7 +132,7 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
         const { data, error } = await supabase.auth.getSession()
 
         if (error) {
-          console.error('Error getting session:', error)
+          clientLogger.error({ err: error }, 'Error getting session')
           setSession(null)
           setUser(null)
           setConnectedPlugins({})
@@ -133,7 +152,7 @@ export const UserProvider = ({ children }: { children: React.ReactNode }) => {
           }
         }
       } catch (error) {
-        console.error('Session error:', error)
+        clientLogger.error({ err: error }, 'Session error')
         setConnectedPlugins({})
       } finally {
         setLoading(false)

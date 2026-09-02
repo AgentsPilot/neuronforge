@@ -7,6 +7,9 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createLogger } from '@/lib/logger'
+
+const logger = createLogger({ module: 'Middleware' })
 
 // List of reserved subdomains that should NOT be treated as user websites
 const RESERVED_SUBDOMAINS = [
@@ -28,7 +31,7 @@ export async function middleware(request: NextRequest) {
 
   // EXPLICIT BYPASS: Never process onboarding-chat through middleware
   if (pathname === '/onboarding-chat' || pathname.startsWith('/onboarding-chat/')) {
-    console.log('🚀 [MIDDLEWARE] BYPASSING all checks for /onboarding-chat')
+    logger.debug({ pathname }, 'Bypassing all checks for onboarding-chat')
     return NextResponse.next()
   }
 
@@ -79,7 +82,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/blog') ||
     pathname.startsWith('/contact') ||
     pathname.startsWith('/use-cases') ||
-    pathname.startsWith('/test-plugins-v2')
+    pathname.startsWith('/test-plugins-v2') ||
+    pathname.startsWith('/test-business-os')
 
   // IMPORTANT: /v2, /admin, and / are NOT in the skip list
   // They need to check onboarding status
@@ -93,7 +97,7 @@ export async function middleware(request: NextRequest) {
     // Extract access token from cookies
     const cookies = request.headers.get('cookie') || ''
 
-    console.log('🔍 [MIDDLEWARE] Checking onboarding for path:', pathname)
+    logger.debug({ pathname }, 'Checking onboarding status')
 
     // Supabase auth cookies are chunked into multiple parts (.0, .1, .2, etc)
     // We need to find all chunks and combine them
@@ -112,7 +116,7 @@ export async function middleware(request: NextRequest) {
       chunkIndex++
     }
 
-    console.log('🔍 [MIDDLEWARE] Found', chunks.length, 'cookie chunks')
+    logger.debug({ pathname, chunkCount: chunks.length }, 'Collected auth cookie chunks')
 
     if (chunks.length > 0) {
       // Combine all chunks and decode
@@ -121,7 +125,7 @@ export async function middleware(request: NextRequest) {
       const tokenData = JSON.parse(decoded)
       const accessToken = tokenData.access_token
 
-      console.log('🔍 [MIDDLEWARE] Access token extracted:', !!accessToken)
+      logger.debug({ pathname, hasAccessToken: !!accessToken }, 'Extracted access token')
 
       if (accessToken) {
         // Create Supabase client with service role for DB queries
@@ -133,7 +137,7 @@ export async function middleware(request: NextRequest) {
         // Verify the token and get user
         const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken)
 
-        console.log('🔍 [MIDDLEWARE] User found:', !!user, 'Auth error:', !!authError)
+        logger.debug({ pathname, hasUser: !!user, hasAuthError: !!authError }, 'Resolved user from token')
 
         if (!authError && user) {
           // Check business_profiles table for onboarding status
@@ -143,26 +147,34 @@ export async function middleware(request: NextRequest) {
             .eq('user_id', user.id)
             .single()
 
-          console.log('🔍 [MIDDLEWARE] Profile:', profile, 'Error:', profileError?.message)
-          console.log('🔍 [MIDDLEWARE] Onboarding completed:', profile?.onboarding_completed)
+          // Log the decision inputs only -- never the profile row itself (log hygiene, cf. M4).
+          logger.debug(
+            {
+              pathname,
+              hasProfile: !!profile,
+              onboardingCompleted: profile?.onboarding_completed ?? null,
+              profileError: profileError?.message
+            },
+            'Read onboarding status'
+          )
 
           // If no profile or onboarding not completed → the onboarding chat.
           // IMPORTANT: We ONLY check business_profiles table, NOT user_metadata
           // This ensures all users go through onboarding, even if they completed
           // an older version of it.
           if (profileError || !profile || !profile.onboarding_completed) {
-            console.log('✅ [MIDDLEWARE] REDIRECTING TO /onboarding-chat')
+            logger.info({ pathname }, 'Redirecting to onboarding chat')
             const url = request.nextUrl.clone()
             url.pathname = '/onboarding-chat'
             return NextResponse.redirect(url)
           } else {
-            console.log('⏭️  [MIDDLEWARE] Onboarding completed, skipping redirect')
+            logger.debug({ pathname }, 'Onboarding complete, no redirect')
           }
         }
       }
     }
   } catch (error) {
-    console.error('❌ [MIDDLEWARE] Onboarding check error:', error)
+    logger.error({ err: error, pathname }, 'Onboarding check failed (continuing without redirect)')
     // On error, continue (don't block access)
   }
 
@@ -195,7 +207,7 @@ export async function middleware(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Middleware: Error fetching UI version:', error)
+      logger.error({ err: error, pathname }, 'Failed to fetch UI version')
       return NextResponse.next()
     }
 
@@ -216,7 +228,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
   } catch (error) {
-    console.error('Middleware: Error:', error)
+    logger.error({ err: error, pathname }, 'UI version routing failed')
     return NextResponse.next()
   }
 

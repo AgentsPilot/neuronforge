@@ -34,7 +34,10 @@ const config = {
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       tsconfig: {
-        jsx: 'react',
+        // Automatic JSX runtime (React 17+) — matches Next.js 14 app config so
+        // component/RTL tests don't require `import React` in scope. Backward
+        // compatible with test files that still import React explicitly.
+        jsx: 'react-jsx',
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,
       }

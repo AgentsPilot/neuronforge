@@ -45,7 +45,30 @@ Test plugin connectivity, authentication, and action execution for integrated th
 - LinkedIn
 - Airtable
 
-#### 1.2 Action Testing
+#### 1.1a Plugins-tab sub-modes: Form Tester vs Classic
+
+The Plugins tab has two sub-modes (toggle at the top):
+
+- **Form Tester (default)** — a schema-driven, no-code tester (see 1.2a).
+- **Classic (raw JSON)** — the original raw-JSON `Action Testing` flow documented in 1.2.
+
+#### 1.2a Form Tester (schema-driven)
+
+A guided tester that generates an input form directly from each action's declared JSON Schema — no hand-written JSON required. v1 covers the **Google Suite** plugins (Drive, Sheets, Docs, Gmail, Calendar), built schema-generically (no per-plugin hardcoding).
+
+- **Connection-completeness gate (sole access gate)**: the tester is enabled only once the active userId has all five Google Suite plugins connected; it shows per-plugin connection state and prompts to connect any missing ones. Empty userId → a "userId required" state (no execution).
+- **Schema-derived form**: text / number / boolean / enum dropdowns / scalar-array controls; nested objects, arrays-of-objects and 2-D matrices render as a scoped JSON sub-editor (seeded from schema `default` → `PARAMETER_TEMPLATES` → an empty schema-derived scaffold). `x-dynamic-options` fields render as labeled free-text (live pickers deferred).
+- **Required-field validation** blocks Run until all required parameters are provided (keyed off `required_params`).
+- **Advanced (raw JSON) toggle** beside the generated form for power users.
+- **Destructive-action confirm gate**: genuinely destructive actions (delete/clear/revoke — identified by a presence-check confirmation rule, not a hardcoded list) require an explicit confirm click before running; near-universal threshold confirms are surfaced as non-blocking advisories.
+- **Current-result display** (success payload / error) plus a persistent **Side Console** (see 1.2b).
+- **Per-execution audit**: each Run posts a non-blocking audit entry (`PLUGIN_TESTER_EXECUTE`) via the isolated `POST /api/plugins/test-audit` endpoint.
+
+#### 1.2b Side Console (persistent request/response inspector)
+
+A session-scoped panel beside the form that logs every plugin API call as a running, newest-first history (one entry per Run: plugin, action, assembled request, normalized response, outcome, duration). Entries are expandable, copyable, and clearable, bounded to the most-recent 50, and credential-shaped data is defensively redacted before render/copy (Level-1 carries no secret by construction).
+
+#### 1.2 Action Testing (Classic sub-mode)
 - **Select Plugin**: Dropdown to choose from available plugins
 - **Select Action**: Dropdown showing all actions available for selected plugin
 - **Parameters Editor**: JSON textarea with parameter templates pre-populated
@@ -71,7 +94,9 @@ The system includes pre-configured JSON templates for common actions across all 
 **API Endpoints Used:**
 - `GET /api/plugins/available` - List all available plugins
 - `GET /api/plugins/user-status` - Get user's plugin connection status (includes `active_expired` array)
+- `GET /api/plugins/action-schema` - **(Form Tester)** Read-only, unauthenticated, metadata-only per-action schema block (parameters, required/optional params, rules, capability, idempotent, output_schema)
 - `POST /api/plugins/execute` - Execute a plugin action
+- `POST /api/plugins/test-audit` - **(Form Tester)** Isolated non-blocking per-execution audit entry
 - `POST /api/plugins/disconnect` - Disconnect a plugin
 - `POST /api/plugins/refresh-token` - Refresh expired OAuth token for a plugin
 

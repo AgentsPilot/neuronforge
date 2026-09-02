@@ -13,6 +13,16 @@ export function encryptCredentials(data: { username: string; password: string })
   return encrypted
 }
 
+/**
+ * Counterpart to encryptCredentials.
+ *
+ * NOTE (2026-08-19): this has **no production consumer**. Its only caller was the
+ * `GET /api/plugin-connections?plugin_key=…&user_id=…` branch, which returned decrypted
+ * credentials to an unauthenticated caller and was deleted during the plugin-route
+ * identity hardening. Kept because stored credentials are useless without a decrypt
+ * path — a future server-side consumer (a plugin executor reading its own connection)
+ * will need it. It must never again be wired to an HTTP response body.
+ */
 export function decryptCredentials(encrypted: string) {
   const decipher = crypto.createDecipheriv(algorithm, key, iv)
   let decrypted = decipher.update(encrypted, 'hex', 'utf8')
