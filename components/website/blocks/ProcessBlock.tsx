@@ -6,7 +6,7 @@ import {
   Send, CheckCircle, ArrowRight, Sparkles, type LucideIcon
 } from 'lucide-react';
 import type { BlockRendererProps, ProcessStep, JourneyServiceFacts } from './types';
-import { journeySteps } from '@/lib/business-os/clientJourney';
+import { journeySteps, type BookingStep } from '@/lib/business-os/clientJourney';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
 // Client flow step types
@@ -151,14 +151,46 @@ function flowFromServices(services: JourneyServiceFacts[] | undefined): ClientFl
     )
   );
 
-  const shared = journeys[0].filter(step => journeys.every(journey => journey.includes(step)));
+  /*
+   * EVERY step any service has, not only the ones they all share.
+   *
+   * This took the intersection, to avoid a page promising "secure payment"
+   * above a catalogue half of which is invoiced. But the intersection collapses
+   * fast: one appointment and one product share only "your details" and
+   * "confirmation", so a business with a normal mixed catalogue got a
+   * two-step "how it works" that described none of its services.
+   *
+   * The union is what this section is for — it explains the process, and a
+   * client reading it wants to know that picking a time and paying are part of
+   * how this business works. Which of them applies to a given service is
+   * answered next to that service, on its own card, by the same resolver.
+   *
+   * Ordered by CANONICAL_ORDER rather than by whichever service came first, so
+   * the steps read in the sequence a client meets them.
+   */
+  const present = new Set(journeys.flat());
 
-  const mapped = shared
+  const mapped = CANONICAL_ORDER
+    .filter(step => present.has(step))
     .map(step => STEP_TO_FLOW_KEY[step])
     .filter((key): key is ClientFlowStepKey => Boolean(key));
 
   return mapped.length > 0 ? mapped : null;
 }
+
+/**
+ * The order a client meets the steps in — the same sequence `journeySteps`
+ * builds, kept here so the union above is sorted by the journey rather than by
+ * the order services happen to be listed in.
+ */
+const CANONICAL_ORDER: BookingStep[] = [
+  'service',
+  'datetime',
+  'details',
+  'payment',
+  'intake',
+  'confirmation',
+];
 
 /** The resolver's step names, in the words this section renders. */
 const STEP_TO_FLOW_KEY: Record<string, ClientFlowStepKey | undefined> = {

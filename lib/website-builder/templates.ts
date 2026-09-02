@@ -55,7 +55,9 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
         { label: 'Process', anchor: '#process' },
         { label: 'Contact', anchor: '#contact' }
       ],
-      cta_button: { text: 'Book Now', link: '#booking' },
+      // `#services`, not `#booking`: this scaffold no longer installs a booking
+      // section, and the booking now starts from each service's own button.
+      cta_button: { text: 'Book Now', link: '#services' },
       style: 'blur'
     }),
 
@@ -90,11 +92,13 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
       { title: 'Step 3', description: 'Define your third step' }
     ]),
 
-    // 6. Testimonials - Social proof
-    TestimonialsBlock.carousel([
-      { quote: 'Amazing experience! Highly recommended.', author: 'Client Name', role: 'Client' },
-      { quote: 'Professional and caring service.', author: 'Another Client', role: 'Client' }
-    ]),
+    // 6. Testimonials - Social proof, empty until the business has some.
+    //
+    // This shipped two invented reviews — "Amazing experience!" from "Client
+    // Name" and "Another Client" — straight onto the site of a business that had
+    // never had a client. They are what the reported live site is showing.
+    // The section stays so it can be filled; the quotes go.
+    TestimonialsBlock.carousel([]),
 
     // 7. FAQ - Common questions
     FAQBlock.accordion([
@@ -102,11 +106,15 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
       { question: 'How do I get started?', answer: 'Simply book a consultation to get started.' }
     ]),
 
-    // 8. Booking Widget - Schedule appointments (connects to Scheduling)
-    BookingWidgetBlock.embedded({
-      title: 'Book an Appointment',
-      services: []
-    }),
+    // Booking is NOT a default section.
+    //
+    // A page-level calendar cannot express what the services now decide for
+    // themselves: one service is booked against a time and another is a
+    // download, and an inline widget offers the same appointment for both. The
+    // services section already gives each service its own button, resolved from
+    // that service's journey. Anyone who wants a standalone calendar can add
+    // the section; it is no longer installed on every site that happens to sell
+    // one bookable thing.
 
     // 9. Contact Form - Get in touch
     ContactFormBlock.standard({
@@ -484,7 +492,7 @@ export const CoachTemplates: WebsiteTemplate[] = [
     description: 'Bold, energetic design with amber and red tones',
     vertical: 'coach',
     template_type: 'homepage',
-    keywords: ['transformation', 'motivation', 'energy', 'change', 'breakthrough'],
+    keywords: ['transformation', 'motivation', 'energy', 'change', 'breakthrough', 'workshop', 'course', 'school', 'program'],
     theme: {
       primary_color: '#F59E0B',
       secondary_color: '#DC2626',
@@ -618,7 +626,7 @@ export const CoachTemplates: WebsiteTemplate[] = [
     description: 'Serene design with emerald and cyan tones',
     vertical: 'coach',
     template_type: 'homepage',
-    keywords: ['wellness', 'mindfulness', 'meditation', 'holistic', 'balance', 'stress'],
+    keywords: ['wellness', 'mindfulness', 'meditation', 'holistic', 'balance', 'stress', 'parenting', 'parents', 'family', 'relationships'],
     theme: {
       primary_color: '#059669',
       secondary_color: '#06B6D4',
@@ -2289,7 +2297,9 @@ export const BeautyTemplates: WebsiteTemplate[] = [
       font_heading: 'Playfair Display',
       font_body: 'Lato',
       font_family: 'Playfair Display, serif',
-      brand_voice: 'luxurious'
+      // Was 'luxurious', which is not in the BrandVoice union — so a
+      // brand-voice match silently never selected this template.
+      brand_voice: 'elegant'
     },
     blocks: [
       HeaderBlock.standard({
@@ -2357,7 +2367,8 @@ export const BeautyTemplates: WebsiteTemplate[] = [
       font_heading: 'Montserrat',
       font_body: 'Open Sans',
       font_family: 'Montserrat, sans-serif',
-      brand_voice: 'modern'
+      // Was 'modern', likewise outside the union.
+      brand_voice: 'bold'
     },
     blocks: [
       HeaderBlock.standard({

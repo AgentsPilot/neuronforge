@@ -16,6 +16,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import Stripe from 'stripe';
+import { isInstallmentPlan } from '@/lib/payments/PaymentPlanService';
 import {
   locatePaymentIntentAccount,
   resolveUserConnectAccounts,
@@ -167,13 +168,37 @@ export async function POST(request: NextRequest) {
     // Get service details for payment transaction record
     const { data: serviceDetails } = await supabaseServer
       .from('scheduling_services')
-      .select('price, currency')
+      .select('price, currency, payment_type, installment_count')
       .eq('id', booking.service_id)
       .single();
 
+    /*
+     * A payment plan's money is NOT recorded here.
+     *
+     * This route writes `amount: serviceDetails.price` — the whole service
+     * price. For a plan that is the wrong number by design: the client paid one
+     * period, and Stripe will collect the rest over the coming months. Writing
+     * the full total here recorded ₪1,000 of revenue for a ₪333 charge, and
+     * then `recordPlanPeriodPaid` recorded the real ₪333 from `invoice.paid` on
+     * top of it — the same payment banked twice, once at triple its value.
+     *
+     * The webhook is the correct authority for every period, including the
+     * first: it is the only one that sees periods 2..n at all, and it takes the
+     * amount from the invoice Stripe actually charged rather than from a price
+     * that describes the agreement instead of the payment.
+     */
+    const isPlanBooking = isInstallmentPlan(serviceDetails ?? {});
+
+    if (isPlanBooking) {
+      requestLogger.info(
+        { bookingId: booking.id, serviceId: booking.service_id },
+        'Payment plan booking — leaving every period to the webhook to record'
+      );
+    }
+
     // Create payment transaction record if we have a payment_intent_id
     let paymentTransactionId: string | null = null;
-    if (data.payment_intent_id && serviceDetails?.price) {
+    if (data.payment_intent_id && serviceDetails?.price && !isPlanBooking) {
       // Which Stripe account this charge lives on — asked of Stripe, not taken
       // from the browser.
       //
@@ -214,8 +239,16 @@ export async function POST(request: NextRequest) {
           user_id: ownerId,
           contact_id: contactId,
           service_id: booking.service_id, // Proper column for revenue tracking (added in migration 20260809)
-          // Note: booking_id will be added as proper column in future migration
-          // For now, keep in metadata for backward compatibility
+          // THE COLUMN, not metadata.
+          //
+          // It has existed since 20260810_add_booking_id_to_payment_transactions,
+          // and the comment saying it was coming "in a future migration" outlived
+          // the migration. Both readers query the column: `findSettledForBooking`
+          // and `resolveRefundTarget`. So every website booking payment was
+          // unrefundable — "no settled payment is recorded against this" — and
+          // the paid-booking delete guard could not see it either, so a paid
+          // booking deleted cleanly and orphaned its money.
+          booking_id: booking.id,
           stripe_payment_intent_id: data.payment_intent_id,
           amount: serviceDetails.price,  // SINGLE source of truth for payment amount
           currency: serviceDetails.currency || 'USD',
@@ -224,8 +257,9 @@ export async function POST(request: NextRequest) {
           processor_type: 'stripe', // Required for refunds to work correctly
           description: `Booking: ${service?.service_name || 'Service'}`,
           metadata: {
-            booking_id: booking.id,  // Will be moved to proper column in future migration
-            // Removed service_id from metadata - it's now in proper column above
+            // Kept alongside the column, not instead of it: rows written before
+            // this fix carry it only here, and reconciliation reads both.
+            booking_id: booking.id,
             source: 'website_booking'
           },
           paid_at: data.payment_status === 'paid' ? new Date().toISOString() : null
@@ -234,7 +268,20 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (paymentError) {
-        requestLogger.warn({ err: paymentError }, 'Failed to create payment transaction (non-blocking)');
+        // NOT non-blocking. The booking was about to be marked paid regardless,
+        // which is the exact inversion `invoiceSettlement` was rewritten to
+        // avoid: money recorded nowhere, a booking claiming it arrived, and
+        // nothing refundable. Stripe has the money either way — failing here
+        // means the webhook settles it instead, which is the correct authority.
+        requestLogger.error(
+          { err: paymentError, bookingId: booking.id, paymentIntentId: data.payment_intent_id },
+          'Could not record the payment; leaving the booking for the webhook to settle'
+        );
+
+        return NextResponse.json(
+          { success: false, error: 'Could not record this payment. It will be confirmed shortly.' },
+          { status: 500 }
+        );
       } else {
         paymentTransactionId = paymentTransaction?.id || null;
         requestLogger.info({ paymentTransactionId, paymentIntentId: data.payment_intent_id }, 'Payment transaction created');

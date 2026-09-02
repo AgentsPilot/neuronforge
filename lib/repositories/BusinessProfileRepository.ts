@@ -858,7 +858,7 @@ export class BusinessProfileRepository {
   }>> {
     try {
       // Note: Only selecting columns that exist in the schema
-      // currency, primary_color, customer_journey are not in the DB yet - using defaults
+      // currency and customer_journey are not in the DB yet - using defaults
       const { data, error } = await this.supabase
         .from('business_profiles')
         .select(`
@@ -869,7 +869,8 @@ export class BusinessProfileRepository {
           show_logo_on_smart_links,
           vertical,
           language,
-          collection_method
+          collection_method,
+          theme
         `)
         .eq('user_code', userCode)
         .single();
@@ -890,7 +891,18 @@ export class BusinessProfileRepository {
         vertical: data.vertical,
         language: data.language,
         currency: null, // Not in DB yet - API will default to 'USD'
-        primaryColor: null, // Not in DB yet - API will default to '#4F6EF7'
+        /*
+         * The business's own colour, from the template it chose.
+         *
+         * This was hardcoded `null` — "not in DB yet" — so every smart link's
+         * contact and booking page rendered in the platform's default blue no
+         * matter what template the business was on. The column it was waiting
+         * for does exist: `theme`, the same one the invoice PDF and every
+         * transactional email already read. A business that has chosen nothing
+         * still falls through to the default, as before.
+         */
+        primaryColor:
+          ((data as { theme?: { colors?: { primary?: string } } | null }).theme?.colors?.primary) ?? null,
         customerJourney: null, // Not in DB yet - API will default to standard journey
         collectionMethod: data.collection_method ?? null
       };

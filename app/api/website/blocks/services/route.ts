@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { SchedulingServiceRepository, type SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
@@ -66,9 +67,14 @@ interface BlockService {
   is_scheduled: boolean;
   /** How the money arrives, or null where the service is free. */
   collection: 'online' | 'invoice' | null;
+  /** How this service may be paid over time, when the business offers one. */
+  paymentPlan?: ServicePaymentPlan;
 }
 
-function transformServiceForBlock(service: SchedulingService): BlockService {
+function transformServiceForBlock(
+  service: SchedulingService,
+  plansByService: Record<string, ServicePaymentPlan> = {}
+): BlockService {
   // Ensure currency is always a valid 3-char code
   const currency = service.currency && service.currency.length === 3 ? service.currency : 'USD';
   return {
@@ -84,7 +90,10 @@ function transformServiceForBlock(service: SchedulingService): BlockService {
     isActive: service.is_active,
     // Carried so the public page can describe each service's own journey.
     is_scheduled: service.is_scheduled !== false,
-    collection: service.collection ?? null
+    collection: service.collection ?? null,
+    // Carried for the same reason: the payment step describes what the client
+    // is agreeing to, and that includes the split when there is one.
+    paymentPlan: plansByService[service.id]
   };
 }
 
@@ -173,7 +182,8 @@ export async function GET(request: NextRequest) {
     }
 
     services = services.slice(0, limit);
-    const blockServices = services.map(transformServiceForBlock);
+    const plansByService = await loadServicePaymentPlans(userId);
+    const blockServices = services.map(service => transformServiceForBlock(service, plansByService));
 
     requestLogger.info({ userId, serviceCount: blockServices.length, hiddenCount: hiddenServiceNames.size }, 'Fetched services for block');
 

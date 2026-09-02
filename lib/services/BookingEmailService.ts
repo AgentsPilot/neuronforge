@@ -82,16 +82,28 @@ async function getUserLocale(userId: string): Promise<Locale> {
       .single();
 
     if (error) {
-      logger.debug({ userId, err: error }, 'No user_preferences found, using default locale');
-      return defaultLocale;
+      logger.debug({ userId, err: error }, 'No user_preferences found, falling back to the business language');
+      return getBusinessLocale(userId);
     }
 
     if (data?.preferred_language && isValidLocale(data.preferred_language)) {
       logger.debug({ userId, locale: data.preferred_language }, 'Using user preferred language');
       return data.preferred_language as Locale;
     }
-    logger.debug({ userId, preferredLanguage: data?.preferred_language }, 'Invalid or missing preferred_language, using default');
-    return defaultLocale;
+
+    /*
+     * Fall through to the business profile rather than straight to the default.
+     *
+     * These two columns disagree in practice — `user_preferences` said `he`
+     * while `profiles.language` said `en` — and a missing row used to mean
+     * English regardless of what the business had configured.
+     *
+     * One order of precedence, used by every email. When the two sources
+     * disagreed AND different emails read different sources, one booking sent
+     * the confirmation in Hebrew and the intake request in English.
+     */
+    logger.debug({ userId, preferredLanguage: data?.preferred_language }, 'No usable preferred_language, falling back to the business language');
+    return getBusinessLocale(userId);
   } catch (err) {
     logger.warn({ userId, err }, 'Error fetching user locale');
     return defaultLocale;
@@ -332,12 +344,9 @@ export class BookingEmailService {
         }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
       }
 
-      // Send invoice email if service has a price and not skipped
-      if (!options?.skipInvoice && service.price && service.price > 0 && booking.payment_status === 'pending') {
-        // Fire invoice email (non-blocking)
-        this.sendInvoiceForBooking(bookingId, userId)
-          .catch(err => requestLogger.warn({ err }, 'Invoice email failed (non-blocking)'));
-      }
+      // No invoice email fired from here. It sent a fabricated invoice number
+      // and a dead payment link; a booking's real invoice is raised and sent by
+      // BookingLifecycleService, which writes an actual row first.
 
       return { sent: result.sent, error: result.error };
     } catch (error) {
@@ -345,134 +354,21 @@ export class BookingEmailService {
       return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
-
   /**
-   * Send invoice email for a booking
-   * Called from: booking confirmation (auto), manual invoice creation
+   * REMOVED: sendInvoiceForBooking.
+   *
+   * It emailed a client an invoice that did not exist. The number was
+   * fabricated at send time — `INV-${date}-${bookingId.slice(0,4)}` — matching
+   * no `payment_invoices` row, so a client who quoted it got a blank look. And
+   * its "Pay Now" button pointed at `/pay/{bookingId}`, a route this app has
+   * never had: a 404 for every client who clicked it, on the public booking
+   * path, whatever the business's Stripe state.
+   *
+   * `BookingLifecycleService.createBookingInvoice` is the one producer of
+   * booking invoices, and it writes a real row with a real number from
+   * `getNextInvoiceNumber`. A second, parallel, fictional invoice pipeline was
+   * not a thing to repair.
    */
-  static async sendInvoiceForBooking(
-    bookingId: string,
-    userId: string
-  ): Promise<EmailResult> {
-    const requestLogger = logger.child({ bookingId, userId, action: 'sendInvoiceForBooking' });
-
-    try {
-      // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
-
-      // Fetch booking
-      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
-      if (bookingResult.error || !bookingResult.data) {
-        requestLogger.error({ err: bookingResult.error }, 'Booking not found');
-        return { sent: false, error: 'Booking not found' };
-      }
-      const booking = bookingResult.data;
-
-      // Fetch service
-      const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
-      if (serviceResult.error || !serviceResult.data) {
-        requestLogger.error({ err: serviceResult.error }, 'Service not found');
-        return { sent: false, error: 'Service not found' };
-      }
-      const service = serviceResult.data;
-
-      // Skip if no price
-      if (!service.price || service.price <= 0) {
-        requestLogger.info('Service has no price, skipping invoice email');
-        return { sent: false, error: 'Service has no price' };
-      }
-
-      // Fetch business profile for branding
-      const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
-
-      // Generate invoice number (simple format: INV-YYYYMMDD-XXXX)
-      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const shortId = bookingId.slice(0, 4).toUpperCase();
-      const invoiceNumber = `INV-${dateStr}-${shortId}`;
-
-      // Build payment URL (Stripe checkout) - placeholder for now
-      // TODO: Create actual Stripe checkout session
-      const paymentUrl = `${APP_URL}/pay/${bookingId}`;
-
-      // Parse appointment date
-      const appointmentDate = new Date(booking.start_time);
-
-      // Due date is typically before the appointment
-      const dueDate = new Date(appointmentDate);
-      dueDate.setDate(dueDate.getDate() - 1); // Due 1 day before
-
-      // Build client name
-      const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
-
-      // Build line items
-      const lineItems = [{
-        description: service.service_name,
-        quantity: 1,
-        unitPrice: service.price,
-        amount: service.price
-      }];
-
-      // Generate email
-      const { subject, html } = generateInvoiceEmail({
-        clientName,
-        invoiceNumber,
-        amount: service.price,
-        currency: service.currency,
-        dueDate,
-        lineItems,
-        paymentUrl,
-        serviceName: service.service_name,
-        appointmentDate,
-        timezone: booking.timezone,
-        branding,
-        locale
-      });
-
-      // Send email
-      const result = await sendEmail({
-        to: [booking.client_email],
-        subject,
-        html,
-        ownerUserId: userId
-      });
-
-      if (result.sent) {
-        requestLogger.info({ provider: result.provider, invoiceNumber }, 'Invoice email sent');
-      } else {
-        requestLogger.warn({ error: result.error }, 'Failed to send invoice email');
-      }
-
-      // Log email to email_sends table (non-blocking)
-      logEmailSend({
-        userId,
-        contactId: booking.contact_id,
-        toEmail: booking.client_email,
-        subject,
-        bodyHtml: html,
-        result
-      }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
-
-      // Log CRM activity for invoice sent (non-blocking, HIPAA compliance)
-      if (result.sent && booking.contact_id) {
-        crmActivityRepository.create({
-          user_id: userId,
-          contact_id: booking.contact_id,
-          activity_type: 'invoice_sent',
-          title: `Invoice Sent: ${invoiceNumber}`,
-          description: `Invoice for ${service.service_name} - ${service.currency} ${service.price}`,
-          auto_logged: true,
-          source_capability: 'payments',
-          source_entity_id: bookingId
-        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
-      }
-
-      return { sent: result.sent, error: result.error };
-    } catch (error) {
-      requestLogger.error({ err: error }, 'Error sending invoice email');
-      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  }
 
   /**
    * Send payment receipt

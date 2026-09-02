@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { createLogger } from '@/lib/logger';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -42,23 +43,22 @@ export async function GET(request: NextRequest) {
     // 1. Get userId from query params (either directly or via subdomain lookup)
     const { searchParams } = new URL(request.url);
     const subdomain = searchParams.get('subdomain');
+    // A smart link identifies its business by short code. Without this the
+    // shared booking flow could not fetch an intake form on that surface, which
+    // is one reason smart links had no intake step at all.
+    const userCode = searchParams.get('user_code');
     let userId = searchParams.get('userId');
 
-    // If subdomain is provided, look up the website owner
-    if (subdomain && !userId) {
-      const { data: websitePage, error: pageError } = await supabaseServer
-        .from('website_pages')
-        .select('user_id')
-        .eq('subdomain', subdomain)
-        .single();
+    if ((subdomain || userCode) && !userId) {
+      const owner = await resolvePublicOwner({ subdomain, userCode });
 
-      if (pageError || !websitePage) {
+      if (!owner) {
         return NextResponse.json(
           { success: false, error: 'Website not found' },
           { status: 404 }
         );
       }
-      userId = websitePage.user_id;
+      userId = owner.userId;
     }
 
     if (!userId) {
@@ -107,16 +107,21 @@ export async function GET(request: NextRequest) {
               template: null
             });
           }
-          if (content.client_flow && Array.isArray(content.client_flow)) {
-            if (!content.client_flow.includes('intake')) {
-              requestLogger.info({ subdomain, clientFlow: content.client_flow }, 'Intake not in client flow');
-              return NextResponse.json({
-                success: true,
-                hasIntake: false,
-                template: null
-              });
-            }
-          }
+          /*
+           * No `client_flow` gate here.
+           *
+           * Intake is a BUSINESS setting — one form, switched on or off — and
+           * `client_flow` is a page-level snapshot taken when the page was
+           * written. Gating on it meant a business that turned intake on
+           * afterwards never saw it: the stored flow still said no, and nothing
+           * anywhere explained why the form it had just configured was absent.
+           *
+           * Step 3 below already asks the only question that matters — does
+           * this business have an enabled template — and returns nothing when
+           * it does not. The `services_only` check above stays, because that IS
+           * a page-level choice: it says this page only lists services and
+           * takes no bookings at all.
+           */
         }
       }
     }

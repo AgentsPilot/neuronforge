@@ -12,6 +12,16 @@ import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPageGenerateAPI' });
 
+/*
+ * This route calls gpt-4o and waits for a full page of copy.
+ *
+ * Without `maxDuration` a Vercel function is killed at the platform default
+ * while the browser is still waiting, and the wizard's spinner — which only
+ * stops in the fetch's `finally` — spins until the tab is closed. Peer routes
+ * that call a model already set this; this one never did.
+ */
+export const maxDuration = 60;
+
 const GenerateContentSchema = z.object({
   serviceId: z.string().uuid(),
   serviceName: z.string().min(1),
@@ -341,9 +351,7 @@ OUTPUT FORMAT (JSON)
     "plans": [
       {
         "name": "${data.serviceName}",
-        "price": "${data.servicePrice || 0}",
-        "description": "Brief value statement about the offering",
-        "features": ["Specific inclusion 1", "Specific inclusion 2", "Specific inclusion 3", "Specific inclusion 4"]
+        "price": "${data.servicePrice || 0}"
       }
     ]
   },
@@ -411,9 +419,7 @@ function getDefaultContent(data: { serviceName?: string; serviceDescription?: st
       plans: [
         {
           name: serviceName,
-          price: data.servicePrice?.toString() || 'Contact us',
-          description: durationText,
-          features: ['Full program access', 'Personalized attention', 'Support materials', 'Follow-up assistance']
+          price: data.servicePrice?.toString() || 'Contact us'
         }
       ]
     },

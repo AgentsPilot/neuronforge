@@ -26,7 +26,9 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
+import { resolveBusinessSubdomain, claimBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
 import { websiteBlockEnrichmentService } from '@/lib/services/WebsiteBlockEnrichmentService';
+import { journeyGaps, describeJourneyGaps } from '@/lib/business-os/journeyReadiness';
 
 const logger = createLogger({ service: 'WebsitePublishService' });
 const auditTrail = AuditTrailService.getInstance();
@@ -46,7 +48,14 @@ type ContextLogger = {
 export class PageNotPublishableError extends Error {
   constructor(
     message: string,
-    readonly reason: 'no_subdomain' | 'no_sections' | 'not_found'
+    readonly reason:
+      | 'no_subdomain'
+      | 'no_sections'
+      | 'not_found'
+      /** A service asks clients to pick a time and no working hours are set. */
+      | 'no_working_hours'
+      /** A service is paid by card and no processor is connected. */
+      | 'no_processor'
   ) {
     super(message);
     this.name = 'PageNotPublishableError';
@@ -84,7 +93,37 @@ export async function publishPage(
     };
   }
 
-  if (!pageResult.data.subdomain) {
+  /*
+   * A page with no address of its own takes the business's.
+   *
+   * The subdomain belongs to the business — every surface publishes under the
+   * same one — but it was only ever stored per page and only ever read off the
+   * homepage. So a landing page created by a business with no website was born
+   * with `subdomain: null` and this refused it, naming a setting that lives in
+   * the website's own settings screen. A business reaching clients by link
+   * alone could never publish a landing page at all.
+   *
+   * Resolved and PERSISTED, so the page carries its address from here on and
+   * every URL built from the row is right.
+   */
+  // Named `address` rather than `subdomain`: the published row is re-read
+  // further down and that result already owns the name.
+  let address = pageResult.data.subdomain;
+
+  if (!address) {
+    address = await resolveBusinessSubdomain(userId);
+
+    if (address) {
+      const adopted = await pageRepo.update(pageId, userId, { subdomain: address });
+      if (adopted.error) {
+        log.warn({ err: adopted.error, pageId }, 'Could not store the resolved subdomain');
+      } else {
+        log.info({ pageId, subdomain: address }, 'Page adopted the business web address');
+      }
+    }
+  }
+
+  if (!address) {
     return {
       data: null,
       error: new PageNotPublishableError(
@@ -107,6 +146,43 @@ export async function publishPage(
     };
   }
 
+  /*
+   * Can the journeys this page sells actually be walked?
+   *
+   * A service can carry a booking step with no working hours behind it, or a
+   * card step with no processor connected. Both were advice until now — the
+   * readiness chain drew the step dashed, the journey strip named what it was
+   * waiting for, and publishing went ahead regardless. The first person to find
+   * out was a client, halfway through.
+   *
+   * Asked of the SERVICES this page offers rather than of the business, so a
+   * page selling one invoiced programme is never asked for Stripe.
+   */
+  const servicesForJourney = (blocksResult.data || [])
+    .filter(block => block.block_type === 'services')
+    .flatMap(block => {
+      const listed = (block.content as { services?: Array<Record<string, unknown>> })?.services;
+      return Array.isArray(listed) ? listed : [];
+    })
+    .filter(service => service.hidden !== true)
+    .map(service => ({
+      name: (service.name as string) || null,
+      is_scheduled: service.is_scheduled as boolean | null | undefined,
+      collection: service.collection as 'online' | 'invoice' | null | undefined,
+      price: (service.priceRaw ?? service.price) as number | null | undefined,
+    }));
+
+  const gaps = await journeyGaps(userId, servicesForJourney);
+  if (gaps.length > 0) {
+    return {
+      data: null,
+      error: new PageNotPublishableError(
+        describeJourneyGaps(gaps),
+        gaps[0].kind === 'hours' ? 'no_working_hours' : 'no_processor'
+      ),
+    };
+  }
+
   // Refresh the sections against the business's current details, so a site that
   // has been sitting in draft does not go live quoting last month's services.
   // Best effort: publishing slightly stale content beats not publishing.
@@ -121,7 +197,11 @@ export async function publishPage(
         position: b.position,
       })),
       language,
-      false
+      false,
+      undefined,
+      // A landing page is about one service; enrichment must not refill its
+      // sections from the whole catalogue.
+      pageResult.data.page_type === 'landing'
     );
 
     for (let i = 0; i < blocksResult.data.length; i++) {
@@ -142,6 +222,17 @@ export async function publishPage(
   }
 
   const subdomain = result.data.subdomain;
+
+  /*
+   * The first surface published under an address makes it the business's.
+   *
+   * Without this the address chosen while publishing a landing page lived only
+   * on that page, and a website created afterwards would mint a different one —
+   * leaving the business split across two addresses with no way to see it. Does
+   * nothing once a claim exists.
+   */
+  await claimBusinessSubdomain(userId, subdomain);
+
   const url = subdomain ? `https://${subdomain}.agentpilot.io` : null;
 
   auditTrail

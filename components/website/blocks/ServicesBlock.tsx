@@ -194,7 +194,12 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
       description: service.description || null,
       duration_minutes: service.durationMinutes || 60,
       price: service.priceRaw ?? null,
-      currency: service.currency || 'USD'
+      currency: service.currency || 'USD',
+      // Carried through so the modal resolves this service's own journey. The
+      // card above already prints it from these two fields; without them the
+      // modal walked a different one.
+      is_scheduled: service.is_scheduled,
+      collection: service.collection
     };
   };
 

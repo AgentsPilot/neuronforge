@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { Check, Sparkles, ArrowRight, Calendar } from 'lucide-react';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import type { BlockRendererProps, PricingPlan, SelectedServiceData } from './types';
 
 interface ExtendedPricingPlan extends PricingPlan {
@@ -11,6 +12,11 @@ interface ExtendedPricingPlan extends PricingPlan {
   serviceId?: string;
   serviceName?: string;
   durationMinutes?: number;
+  /** The two facts this service's journey is built from, injected live. */
+  is_scheduled?: boolean | null;
+  collection?: 'online' | 'invoice' | null;
+  /** How this service may be paid over time, injected live alongside them. */
+  paymentPlan?: ServicePaymentPlan;
 }
 
 interface PricingContent {
@@ -69,6 +75,31 @@ const formatPrice = (price: string | number | undefined, currency?: string, loca
   }
 
   return `${symbol}${formatted}`;
+};
+
+/**
+ * A service's duration, in the reader's language.
+ *
+ * Local rather than shared: `ProcessFlowSection` has its own, keyed off a
+ * `LABELS` table this file does not carry, and `ServicesBlock`'s takes a whole
+ * service. Worth unifying, but not behind a copy this small.
+ */
+const formatDuration = (minutes: number | undefined, locale?: string): string | null => {
+  if (!minutes || minutes <= 0) return null;
+
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+
+  const unit = {
+    he: { min: 'דקות', hour: 'שעה', hours: 'שעות' },
+    es: { min: 'minutos', hour: 'hora', hours: 'horas' },
+    en: { min: 'minutes', hour: 'hour', hours: 'hours' }
+  }[locale === 'he' ? 'he' : locale === 'es' ? 'es' : 'en'];
+
+  if (hours === 0) return `${mins} ${unit.min}`;
+
+  const hourPart = `${hours} ${hours === 1 ? unit.hour : unit.hours}`;
+  return mins > 0 ? `${hourPart} ${mins} ${unit.min}` : hourPart;
 };
 
 export function PricingBlock({ content, styles, theme, isRTL, className, locale = 'en', bookingUrl, isPreview, onOpenBooking }: BlockRendererProps) {
@@ -150,7 +181,14 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
       description: plan.description || null,
       duration_minutes: plan.durationMinutes || defaultDurationMinutes || 60,
       price: priceNum,
-      currency: plan.currency || 'USD'
+      currency: plan.currency || 'USD',
+      // A landing page sells one service, and its journey is that service's.
+      // Injected live alongside price and duration, so a service whose journey
+      // changed after the page was written is not stuck on the old one.
+      is_scheduled: plan.is_scheduled,
+      collection: plan.collection,
+      // Same reasoning: the payment step needs the split, not just the price.
+      paymentPlan: plan.paymentPlan
     };
   };
 
@@ -323,29 +361,31 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                     )}
                   </div>
 
-                  {/* Features list */}
-                  {plan.features && plan.features.length > 0 && (
-                    <ul className="mt-8 space-y-4">
-                      {plan.features.map((feature, fIndex) => (
-                        <li key={fIndex} className="flex items-start gap-3">
-                          <div
-                            className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
-                            style={{ backgroundColor: `${primaryColor}15` }}
-                          >
-                            <Check
-                              className="w-4 h-4"
-                              style={{ color: primaryColor }}
-                            />
-                          </div>
-                          <span
-                            className="text-gray-600 dark:text-gray-300"
-                            style={{ fontFamily: 'var(--website-font-body)' }}
-                          >
-                            {feature}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
+                  {/*
+                    The duration, where the invented bullet list used to be.
+
+                    Plans carried four model-written "inclusions" that described
+                    the service in words the service had not said — and one of
+                    them was only ever the duration restated. This is that one
+                    fact, taken from the service instead of written about it.
+                    The plan's own description, also the service's, is above the
+                    price.
+                  */}
+                  {(plan.durationMinutes || defaultDurationMinutes) && (
+                    <div className="mt-8 flex items-center gap-3">
+                      <div
+                        className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: `${primaryColor}15` }}
+                      >
+                        <Check className="w-4 h-4" style={{ color: primaryColor }} />
+                      </div>
+                      <span
+                        className="text-gray-600 dark:text-gray-300"
+                        style={{ fontFamily: 'var(--website-font-body)' }}
+                      >
+                        {formatDuration(plan.durationMinutes || defaultDurationMinutes, locale)}
+                      </span>
+                    </div>
                   )}
 
                   {/* CTA Button with gradient - uses booking modal if available */}
@@ -516,8 +556,13 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                 </tr>
               </thead>
               <tbody>
-                {/* Get unique features across all plans */}
-                {Array.from(new Set(plans.flatMap(p => p.features))).map((feature, fIndex) => (
+                {/* Get unique features across all plans.
+                    `?? []` and the optional call below: plans no longer carry a
+                    `features` array — it held model-invented bullets and was
+                    dropped — and this comparison table read it unguarded, so a
+                    plan without one crashed the table on `flatMap`/`includes`.
+                    With none present the table simply has no comparison rows. */}
+                {Array.from(new Set(plans.flatMap(p => p.features ?? []))).map((feature, fIndex) => (
                   <tr
                     key={fIndex}
                     className="border-b border-gray-100 dark:border-gray-700/50"
@@ -528,7 +573,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                         key={pIndex}
                         className={`p-4 text-center ${plan.popular ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
                       >
-                        {plan.features.includes(feature) ? (
+                        {plan.features?.includes(feature) ? (
                           <Check className="w-5 h-5 mx-auto" style={{ color: primaryColor }} />
                         ) : (
                           <span className="text-gray-300 dark:text-gray-600">—</span>

@@ -17,71 +17,16 @@ import {
 } from 'lucide-react';
 import { MediaUploader } from '@/components/website/MediaUploader';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { ServiceDescriptionField } from '@/components/business-os/ServiceDescriptionField';
+// One copy of these, shared with the website page and the landing page wizard.
+import { getTranslatedTemplateName, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+import type { FlowStepKey } from '@/lib/business-os/clientJourney';
 
-// Template name translations
-const TEMPLATE_NAMES: Record<string, { en: string; es: string; he: string }> = {
-  // Therapist
-  'Warm & Welcoming': { en: 'Warm & Welcoming', es: 'Cálido y Acogedor', he: 'חם ומזמין' },
-  'Professional & Clinical': { en: 'Professional & Clinical', es: 'Profesional y Clínico', he: 'מקצועי וקליני' },
-  'Modern & Minimal': { en: 'Modern & Minimal', es: 'Moderno y Minimalista', he: 'מודרני ומינימליסטי' },
-  'Specialized (Trauma-Focused)': { en: 'Specialized (Trauma-Focused)', es: 'Especializado (Trauma)', he: 'מתמחה (טראומה)' },
-  'Trauma-Focused': { en: 'Trauma-Focused', es: 'Enfocado en Trauma', he: 'התמחות בטראומה' },
-  // Coach
-  'Inspiring Transformation': { en: 'Inspiring Transformation', es: 'Transformación Inspiradora', he: 'טרנספורמציה מעוררת השראה' },
-  'Professional Executive': { en: 'Professional Executive', es: 'Ejecutivo Profesional', he: 'מנהל מקצועי' },
-  'Wellness & Mindfulness': { en: 'Wellness & Mindfulness', es: 'Bienestar y Mindfulness', he: 'בריאות ומיינדפולנס' },
-  'Career Transition': { en: 'Career Transition', es: 'Transición de Carrera', he: 'מעבר קריירה' },
-  // Consultant
-  'Professional Services': { en: 'Professional Services', es: 'Servicios Profesionales', he: 'שירותים מקצועיים' },
-  'Technology Advisory': { en: 'Technology Advisory', es: 'Asesoría Tecnológica', he: 'ייעוץ טכנולוגי' },
-  'Marketing Consultant': { en: 'Marketing Consultant', es: 'Consultor de Marketing', he: 'יועץ שיווק' },
-  'Financial Advisory': { en: 'Financial Advisory', es: 'Asesoría Financiera', he: 'ייעוץ פיננסי' },
-  // Lawyer
-  'Professional Law Firm': { en: 'Professional Law Firm', es: 'Firma de Abogados', he: 'משרד עורכי דין' },
-  'Personal Injury Specialist': { en: 'Personal Injury Specialist', es: 'Especialista en Lesiones', he: 'מומחה נזקי גוף' },
-  'Family Law Practice': { en: 'Family Law Practice', es: 'Derecho de Familia', he: 'דיני משפחה' },
-  'Criminal Defense': { en: 'Criminal Defense', es: 'Defensa Penal', he: 'סנגוריה פלילית' },
-  // Photographer
-  'Minimal Portfolio': { en: 'Minimal Portfolio', es: 'Portafolio Minimalista', he: 'תיק עבודות מינימליסטי' },
-  'Wedding Photography': { en: 'Wedding Photography', es: 'Fotografía de Bodas', he: 'צילום חתונות' },
-  'Commercial Photography': { en: 'Commercial Photography', es: 'Fotografía Comercial', he: 'צילום מסחרי' },
-  'Portrait Photography': { en: 'Portrait Photography', es: 'Fotografía de Retratos', he: 'צילום פורטרטים' },
-  // Real Estate
-  'Luxury Real Estate': { en: 'Luxury Real Estate', es: 'Bienes Raíces de Lujo', he: 'נדל"ן יוקרתי' },
-  'Family Homes Specialist': { en: 'Family Homes Specialist', es: 'Especialista en Hogares', he: 'מומחה בתי משפחה' },
-  'Commercial Real Estate': { en: 'Commercial Real Estate', es: 'Bienes Raíces Comerciales', he: 'נדל"ן מסחרי' },
-  'First-Time Buyer Expert': { en: 'First-Time Buyer Expert', es: 'Experto en Primeros Compradores', he: 'מומחה רוכשים ראשונים' },
-  // Personal Trainer
-  'Gym Fitness Pro': { en: 'Gym Fitness Pro', es: 'Profesional del Fitness', he: 'מאמן כושר מקצועי' },
-  'Wellness Coach': { en: 'Wellness Coach', es: 'Coach de Bienestar', he: 'מאמן בריאות' },
-  'Sports Performance': { en: 'Sports Performance', es: 'Rendimiento Deportivo', he: 'ביצועי ספורט' },
-  // Tutor
-  'Academic Tutor': { en: 'Academic Tutor', es: 'Tutor Académico', he: 'מורה פרטי' },
-  'Test Prep Expert': { en: 'Test Prep Expert', es: 'Experto en Preparación', he: 'מומחה הכנה למבחנים' },
-  'Language Tutor': { en: 'Language Tutor', es: 'Tutor de Idiomas', he: 'מורה לשפות' }
-};
 
-// Helper function to get translated template name
-const getTranslatedTemplateName = (name: string, lang: 'en' | 'es' | 'he'): string => {
-  return TEMPLATE_NAMES[name]?.[lang] || name;
-};
 
-// Brand voice translations
-const BRAND_VOICE_TRANSLATIONS: Record<string, { en: string; es: string; he: string }> = {
-  'warm': { en: 'Warm', es: 'Cálido', he: 'חם ומזמין' },
-  'professional': { en: 'Professional', es: 'Profesional', he: 'מקצועי וקליני' },
-  'minimal': { en: 'Minimal', es: 'Minimalista', he: 'מודרני ומינימליסטי' },
-  'bold': { en: 'Bold', es: 'Audaz', he: 'נועז' },
-  'elegant': { en: 'Elegant', es: 'Elegante', he: 'אלגנטי' },
-  'creative': { en: 'Creative', es: 'Creativo', he: 'יצירתי' },
-};
 
-// Helper function to get translated brand voice
-const getTranslatedBrandVoice = (voice: string, lang: 'en' | 'es' | 'he'): string => {
-  return BRAND_VOICE_TRANSLATIONS[voice]?.[lang] || voice;
-};
 
 // Types
 interface WebsiteTemplate {
@@ -94,6 +39,13 @@ interface WebsiteTemplate {
   theme: {
     primary_color?: string;
     secondary_color?: string;
+    // Both are read by the template grid below — the accent swatch (:640) and
+    // the brand-voice caption (:690) — but were absent here, so TypeScript
+    // reported reads of fields this shape says do not exist. `WebsiteTemplate`
+    // is declared three times (here, the website page, and the real one in
+    // `lib/website-builder/templates.ts`) and this copy had drifted furthest.
+    accent_color?: string;
+    brand_voice?: string;
     colors?: {
       primary: string;
       secondary: string;
@@ -112,7 +64,7 @@ interface SchedulingService {
   icon?: string;
 }
 
-type FlowStepKey = 'booking' | 'payment' | 'intake' | 'confirmation';
+
 
 interface FlowStep {
   key: FlowStepKey;
@@ -126,6 +78,15 @@ interface FlowStep {
 interface WebsiteSetupWizardProps {
   templates: WebsiteTemplate[];
   currentTemplateId?: string;
+  /**
+   * The template matched to this business by `/api/website/templates`.
+   *
+   * Used only when the page has no template yet. Onboarding never wrote
+   * `template_id`, so `currentTemplateId` was always undefined on a first run
+   * and this component fell back to `templates[0]` — first in the array, which
+   * is how a parenting school was pre-selected into academic tutoring.
+   */
+  recommendedTemplateId?: string;
   currentLogoUrl?: string;
   currentClientFlow?: FlowStepKey[];
   currentHiddenServiceNames?: string[];
@@ -196,6 +157,7 @@ const LABELS = {
     continue: 'Continue',
     publish_website: 'Publish Website',
     save_draft: 'Save as draft',
+    address_required: 'Choose a web address first — it is how clients reach your site.',
     // Step 1
     step1_title: "Let's Set Up Your Website",
     step1_subtitle: 'Choose a template and optionally upload your logo',
@@ -219,6 +181,7 @@ const LABELS = {
     step3_title: 'Your Services',
     step3_subtitle: 'Toggle services to show or hide on your website',
     manage_services: 'Manage Services',
+    template_recommended: 'Recommended',
     service_draft: 'Not published yet',
     no_services: 'No services found',
     no_services_desc: 'Add services in the Scheduling section to display them on your website.',
@@ -240,6 +203,7 @@ const LABELS = {
     continue: 'Continuar',
     publish_website: 'Publicar Sitio',
     save_draft: 'Guardar borrador',
+    address_required: 'Elige primero una dirección web — es como te encuentran tus clientes.',
     step1_title: 'Configuremos Tu Sitio Web',
     step1_subtitle: 'Elige una plantilla y opcionalmente sube tu logo',
     choose_template: 'Elegir Plantilla',
@@ -260,6 +224,7 @@ const LABELS = {
     step3_title: 'Tus Servicios',
     step3_subtitle: 'Activa o desactiva servicios para mostrar en tu sitio',
     manage_services: 'Gestionar Servicios',
+    template_recommended: 'Recomendado',
     service_draft: 'Aún sin publicar',
     no_services: 'No hay servicios',
     no_services_desc: 'Agrega servicios en Programación para mostrarlos en tu sitio.',
@@ -280,6 +245,7 @@ const LABELS = {
     continue: 'המשך',
     publish_website: 'פרסם אתר',
     save_draft: 'שמור כטיוטה',
+    address_required: 'בחרו קודם כתובת לאתר — זו הדרך שבה לקוחות מגיעים אליו.',
     step1_title: 'בואו נגדיר את האתר שלך',
     step1_subtitle: 'בחר תבנית והעלה לוגו אם תרצה',
     choose_template: 'בחר תבנית',
@@ -300,6 +266,7 @@ const LABELS = {
     step3_title: 'השירותים שלך',
     step3_subtitle: 'הפעל או כבה שירותים להצגה באתר',
     manage_services: 'נהל שירותים',
+    template_recommended: 'מומלץ',
     service_draft: 'עדיין לא פורסם',
     no_services: 'לא נמצאו שירותים',
     no_services_desc: 'הוסף שירותים בניהול התורים כדי להציג אותם באתר.',
@@ -317,6 +284,7 @@ const LABELS = {
 export function WebsiteSetupWizard({
   templates,
   currentTemplateId,
+  recommendedTemplateId,
   currentLogoUrl,
   currentClientFlow = ['booking', 'confirmation'],
   currentHiddenServiceNames = [],
@@ -345,7 +313,20 @@ export function WebsiteSetupWizard({
   const totalSteps = 3;
 
   // Step 1: Branding & Template
-  const [selectedTemplateId, setSelectedTemplateId] = useState(currentTemplateId || templates[0]?.id || '');
+  // What the page already uses, else what was matched to this business, and
+  // only then first-in-array — which is a guess, not a choice.
+  const [selectedTemplateId, setSelectedTemplateId] = useState(
+    currentTemplateId || recommendedTemplateId || templates[0]?.id || ''
+  );
+
+  // The list and the recommendation arrive from a fetch, and the initialiser
+  // above only runs once. Without this, a wizard mounted before that response
+  // lands keeps an empty selection and the person has to pick blind.
+  useEffect(() => {
+    if (selectedTemplateId) return;
+    const seed = currentTemplateId || recommendedTemplateId || templates[0]?.id;
+    if (seed) setSelectedTemplateId(seed);
+  }, [selectedTemplateId, currentTemplateId, recommendedTemplateId, templates]);
   const [logoUrl, setLogoUrl] = useState(currentLogoUrl || '');
   // Whether this site's header wears the logo. The image lives on the business
   // profile; this only records the choice for this website.
@@ -393,15 +374,27 @@ export function WebsiteSetupWizard({
     return () => { cancelled = true; };
   }, []);
 
+  // Built by pushing into a typed array rather than spreading conditionals into
+  // a literal: a `cond ? ['scheduling'] : []` arm infers `string[]` whatever the
+  // variable is annotated as, which is what the `as FlowStepKey` casts here were
+  // silencing. Each `push` is checked against the union instead.
   const clientFlow: FlowStepKey[] = useMemo(() => {
     if (services.length === 0) return ['confirmation'];
-    return [
-      ...(services.some(s => (s as { is_scheduled?: boolean }).is_scheduled !== false) ? ['scheduling' as FlowStepKey] : []),
-      'client_info' as FlowStepKey,
-      ...(services.some(s => (s as { collection?: string; price?: number | null }).collection === 'online' && ((s as { price?: number | null }).price || 0) > 0) ? ['payment' as FlowStepKey] : []),
-      ...(intakeEnabled ? ['intake' as FlowStepKey] : []),
-      'confirmation' as FlowStepKey,
-    ];
+
+    const steps: FlowStepKey[] = [];
+    if (services.some(s => (s as { is_scheduled?: boolean }).is_scheduled !== false)) {
+      steps.push('scheduling');
+    }
+    steps.push('client_info');
+    if (services.some(s =>
+      (s as { collection?: string }).collection === 'online' &&
+      ((s as { price?: number | null }).price || 0) > 0
+    )) {
+      steps.push('payment');
+    }
+    if (intakeEnabled) steps.push('intake');
+    steps.push('confirmation');
+    return steps;
   }, [services, intakeEnabled]);
 
   // Step 3: Services
@@ -519,7 +512,24 @@ export function WebsiteSetupWizard({
   };
 
   // Navigation
+  /*
+   * The services that will appear on the site but have nothing written about
+   * them.
+   *
+   * Every generated section about a service is written from its description, so
+   * a service that is ON the site with none produces copy about a name. Hidden
+   * services do not matter here — they are not on the site — so this only ever
+   * asks about the ones the business chose to show.
+   */
+  const servicesNeedingDescription = services.filter(
+    service => !hiddenServiceIds.has(service.id) && !service.description?.trim()
+  );
+
   const goNext = async () => {
+    // The services step cannot be left with a service on the site that has
+    // nothing written about it — the next step generates from those words.
+    if (currentStep === 2 && servicesNeedingDescription.length > 0) return;
+
     if (currentStep < totalSteps) {
       // Before the final step, save current state for an accurate preview
       if (currentStep === 2 && onBeforePreview) {
@@ -548,6 +558,11 @@ export function WebsiteSetupWizard({
 
   // Complete wizard
   const handleComplete = (shouldPublish: boolean) => {
+    // Guarded here too: the buttons above are disabled, but a handler that
+    // trusts its own UI is one refactor away from letting an addressless site
+    // through.
+    if (!subdomain.trim()) return;
+
     if (shouldPublish) {
       setPublishing(true);
     }
@@ -582,8 +597,12 @@ export function WebsiteSetupWizard({
           </div>
         ) : (
         <div className="grid grid-cols-2 gap-2">
+          {/* The API now returns these ordered best-first for this business, so
+              the four shown are the four best rather than the first four in a
+              hardcoded array. */}
           {templates.slice(0, 4).map((template) => {
             const isSelected = selectedTemplateId === template.id;
+            const isRecommended = template.id === recommendedTemplateId;
             const primaryColor = getTemplatePrimaryColor(template);
             const secondaryColor = getTemplateSecondaryColor(template);
             const accentColor = template.theme?.accent_color || secondaryColor;
@@ -599,6 +618,16 @@ export function WebsiteSetupWizard({
                 }`}
                 style={{ borderRadius: 'var(--v2-radius-card)' }}
               >
+                {/* Say that it was matched, rather than silently pre-ticking it.
+                    A pre-selection nobody questions is the choice, so it should
+                    admit it is one. */}
+                {isRecommended && (
+                  <span
+                    className="absolute top-1.5 end-1.5 z-10 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-[#4F6EF7] text-white"
+                  >
+                    {labels.template_recommended}
+                  </span>
+                )}
                 {/* Color Preview Bar - Shows the template's color palette */}
                 <div className="h-16 relative overflow-hidden">
                   {/* Background gradient using template colors */}
@@ -785,6 +814,20 @@ export function WebsiteSetupWizard({
                           {service.description}
                         </p>
                       )}
+                      {/* On the site, but nothing written about it. The next
+                          step generates this service's copy from these words,
+                          so the wizard asks for them before it gets there. */}
+                      {!isHidden && !service.description?.trim() && (
+                        <ServiceDescriptionField
+                          service={service}
+                          language={language as 'en' | 'es' | 'he'}
+                          onSaved={(serviceId, description) => {
+                            setServices(prev => prev.map(item =>
+                              item.id === serviceId ? { ...item, description } : item
+                            ));
+                          }}
+                        />
+                      )}
                       {!isHidden && (
                         <>
                           {service.duration_minutes ? (
@@ -853,13 +896,15 @@ export function WebsiteSetupWizard({
   const renderStep4 = () => (
     <>
       <div className="space-y-3">
-        {/* Success Message - Compact */}
+        {/* Success mark only.
+            The title and subtitle are the wizard's step header, which
+            `wizardContent` prints above every step — repeating them here showed
+            "האתר שלך מוכן! / כך הלקוחות שלך יראו אותו" twice, one under the
+            other. The tick is this step's own, so it stays. */}
         <div className="text-center">
-          <div className="w-10 h-10 mx-auto mb-2 rounded-full bg-green-100 flex items-center justify-center">
+          <div className="w-10 h-10 mx-auto rounded-full bg-green-100 flex items-center justify-center">
             <Check className="w-5 h-5 text-green-600" />
           </div>
-          <h3 className="text-lg font-bold text-[var(--v2-text-primary)]">{labels.step4_title}</h3>
-          <p className="text-sm text-[var(--v2-text-secondary)]">{labels.step4_subtitle}</p>
         </div>
 
         {/* Live Preview with iframe */}
@@ -909,7 +954,7 @@ export function WebsiteSetupWizard({
             {/* Open in new tab */}
             {pageId && (
               <a
-                href={`/business-os/website/preview/${pageId}?lang=${language}`}
+                href={`/website-preview/${pageId}?lang=${language}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
@@ -943,7 +988,7 @@ export function WebsiteSetupWizard({
                 )}
                 <iframe
                   key={previewKey}
-                  src={`/business-os/website/preview/${pageId}?embedded=true&lang=${language}`}
+                  src={`/website-preview/${pageId}?embedded=true&lang=${language}`}
                   className="w-full h-full border-0"
                   onLoad={() => setPreviewLoading(false)}
                   title="Website Preview"
@@ -978,18 +1023,34 @@ export function WebsiteSetupWizard({
           </div>
         </div>
 
+        {/*
+          Neither action works without an address.
+
+          The field starts empty and both buttons used to accept that. A draft
+          saved without one is a site with no way to reach it — and publishing
+          it fails at the server anyway (`no_subdomain`), which is a worse place
+          to learn than the field itself. So both are held until it is filled,
+          and the reason is stated rather than left to a disabled button.
+        */}
+        {!subdomain.trim() && (
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            {labels.address_required}
+          </p>
+        )}
+
         {/* Actions */}
         <div className="flex gap-3">
           <button
             onClick={() => handleComplete(false)}
-            className="flex-1 px-4 py-2 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] font-medium hover:bg-[var(--v2-surface-hover)] transition-all flex items-center justify-center"
+            disabled={!subdomain.trim()}
+            className="flex-1 px-4 py-2 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] font-medium hover:bg-[var(--v2-surface-hover)] transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >
             {labels.save_draft}
           </button>
           <button
             onClick={() => handleComplete(true)}
-            disabled={publishing}
+            disabled={publishing || !subdomain.trim()}
             className="flex-1 px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] flex items-center justify-center gap-1.5 disabled:opacity-50 transition-all"
             style={{ borderRadius: 'var(--v2-radius-button)' }}
           >
@@ -1053,7 +1114,7 @@ export function WebsiteSetupWizard({
               }}
             >
               <iframe
-                src={`/business-os/website/preview/${pageId}?embedded=true&lang=${language}`}
+                src={`/website-preview/${pageId}?embedded=true&lang=${language}`}
                 className="w-full h-full border-0"
                 title="Full Website Preview"
               />
@@ -1142,30 +1203,41 @@ export function WebsiteSetupWizard({
         className="bg-[var(--v2-surface)] border border-[var(--v2-border)] px-4 py-3 mt-4"
         style={{ borderRadius: 'var(--v2-radius-card)' }}
       >
-        <div className="flex items-center justify-between">
-          <button
-            onClick={goBack}
-            disabled={currentStep === 1}
-            className={`flex items-center gap-1 text-sm font-medium ${
-              currentStep === 1
-                ? 'text-[var(--v2-text-muted)] cursor-not-allowed'
-                : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
-            }`}
-          >
-            <ChevronLeft className="w-4 h-4" />
-            {labels.back}
-          </button>
-          {currentStep < 4 && (
+        {/*
+          Nothing to navigate on the last step.
+
+          The guard was a hardcoded `currentStep < 4` while `totalSteps` is 3,
+          so on the final step Continue rendered anyway — next to the Save as
+          draft and Publish buttons that step already provides. Four buttons,
+          two of which did nothing the person wanted: Continue could not
+          advance, and Back offered to undo a site that had just been written.
+          The final step's choice is publish or keep it as a draft.
+        */}
+        {currentStep < totalSteps && (
+          <div className="flex items-center justify-between">
+            <button
+              onClick={goBack}
+              disabled={currentStep === 1}
+              className={`flex items-center gap-1 text-sm font-medium ${
+                currentStep === 1
+                  ? 'text-[var(--v2-text-muted)] cursor-not-allowed'
+                  : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+              }`}
+            >
+              <ChevronLeft className="w-4 h-4" />
+              {labels.back}
+            </button>
             <button
               onClick={goNext}
-              className="px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] transition-all flex items-center gap-1"
+              disabled={currentStep === 2 && servicesNeedingDescription.length > 0}
+              className="px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#3B5AE5] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
               {labels.continue}
               <ChevronRight className="w-4 h-4" />
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </>
   );
@@ -1308,7 +1380,8 @@ export function WebsiteSetupWizard({
               </button>
               <button
                 onClick={goNext}
-                className="px-6 py-2.5 bg-[#4F6EF7] text-white font-semibold hover:bg-[#3B5AE5] transition-all flex items-center gap-2"
+                disabled={currentStep === 2 && servicesNeedingDescription.length > 0}
+                className="px-6 py-2.5 bg-[#4F6EF7] text-white font-semibold hover:bg-[#3B5AE5] disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-2"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
               >
                 {labels.continue}

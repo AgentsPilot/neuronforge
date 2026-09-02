@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, ChevronRight } from 'lucide-react';
+import { resolveBookingAction } from './bookingAction';
 import type { BlockRendererProps } from './types';
 
 export interface HeaderMenuItem {
@@ -46,7 +47,7 @@ const LABELS = {
   },
 };
 
-export function HeaderBlock({ content, styles, theme, isRTL, className, locale = 'en' }: BlockRendererProps) {
+export function HeaderBlock({ content, styles, theme, isRTL, className, locale = 'en' , isPreview, onOpenBooking, bookingUrl }: BlockRendererProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
 
@@ -59,6 +60,15 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
     style = 'solid',
     layout = 'standard'
   } = content as HeaderContent;
+
+  // Where this page's "book" button leads: the modal in preview, the booking
+  // URL when published, and the stored anchor only if neither exists.
+  const headerBooking = resolveBookingAction({
+    isPreview,
+    onOpenBooking,
+    bookingUrl,
+    fallbackHref: cta_button?.link || '#services',
+  });
 
   const labels = LABELS[locale as keyof typeof LABELS] || LABELS.en;
   const primaryColor = theme?.colors?.primary || '#4F46E5';
@@ -200,11 +210,19 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
             <div className={`hidden md:flex items-center ${layout === 'centered' ? `absolute ${isRTL ? 'left-4 sm:left-6 lg:left-8' : 'right-4 sm:right-6 lg:right-8'}` : ''}`}>
               {cta_button && (
                 <a
-                  href={cta_button.link}
+                  href={headerBooking.kind === 'link' ? headerBooking.href : cta_button.link}
                   onClick={(e) => {
-                    if (cta_button.link.startsWith('#')) {
+                    // Start the booking rather than scroll toward it. This was
+                    // an anchor to `#booking`, a section the page no longer
+                    // installs, so the button did nothing at all.
+                    if (headerBooking.kind === 'open') {
                       e.preventDefault();
-                      handleNavClick(cta_button.link);
+                      headerBooking.onClick();
+                      return;
+                    }
+                    if (headerBooking.href.startsWith('#')) {
+                      e.preventDefault();
+                      handleNavClick(headerBooking.href);
                     }
                   }}
                   className="px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-200 hover:opacity-90 hover:shadow-lg"
@@ -316,11 +334,20 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                     className="mt-6 pt-6 border-t border-gray-200 dark:border-slate-800"
                   >
                     <a
-                      href={cta_button.link}
+                      href={headerBooking.kind === 'link' ? headerBooking.href : cta_button.link}
                       onClick={(e) => {
-                        if (cta_button.link.startsWith('#')) {
+                        // The mobile menu's copy of the same button. It kept the
+                        // dead `#booking` anchor after the desktop one was
+                        // fixed, which is exactly the drift a shared resolver
+                        // exists to prevent.
+                        if (headerBooking.kind === 'open') {
                           e.preventDefault();
-                          handleNavClick(cta_button.link);
+                          headerBooking.onClick();
+                          return;
+                        }
+                        if (headerBooking.href.startsWith('#')) {
+                          e.preventDefault();
+                          handleNavClick(headerBooking.href);
                         }
                       }}
                       className="block w-full px-4 py-3 rounded-lg text-center text-base font-semibold text-white transition-all duration-200 hover:opacity-90"

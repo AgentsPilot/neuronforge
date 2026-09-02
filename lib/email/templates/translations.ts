@@ -645,6 +645,44 @@ export const emailTranslations = {
       es: 'Pago seguro procesado por Stripe',
       he: 'תשלום מאובטח באמצעות Stripe'
     },
+    // How to pay when it is not by card. The email carried none of this, so a
+    // business collected by transfer sent a bill whose only visible option was
+    // the one that did not apply to it.
+    bankTransferTitle: {
+      en: 'Pay by bank transfer',
+      es: 'Pagar por transferencia bancaria',
+      he: 'תשלום בהעברה בנקאית'
+    },
+    bankName: {
+      en: 'Bank',
+      es: 'Banco',
+      he: 'בנק'
+    },
+    bankAccount: {
+      en: 'Account',
+      es: 'Cuenta',
+      he: 'חשבון'
+    },
+    bankRouting: {
+      en: 'Branch / routing',
+      es: 'Sucursal / ruta',
+      he: 'סניף'
+    },
+    includeInvoiceNumber: {
+      en: (invoiceNumber: string) => `Please quote ${invoiceNumber} with your transfer.`,
+      es: (invoiceNumber: string) => `Por favor indica ${invoiceNumber} en tu transferencia.`,
+      he: (invoiceNumber: string) => `נא לציין ${invoiceNumber} בהעברה.`
+    },
+    paymentInstructionsTitle: {
+      en: 'How to pay',
+      es: 'Cómo pagar',
+      he: 'איך לשלם'
+    },
+    contactForPayment: {
+      en: (businessName: string) => `Please contact ${businessName} to arrange payment.`,
+      es: (businessName: string) => `Ponte en contacto con ${businessName} para organizar el pago.`,
+      he: (businessName: string) => `נא ליצור קשר עם ${businessName} לתיאום התשלום.`
+    },
     questions: {
       en: (businessName: string) =>
         `If you have any questions about this invoice, please reply to this email or contact ${businessName} directly.`,

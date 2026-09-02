@@ -27,6 +27,8 @@
  */
 
 import type { NextRequest } from 'next/server';
+import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import {
@@ -344,7 +346,29 @@ async function sendByEmail(
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.app';
-    const paymentUrl = `${baseUrl}/api/public/invoice/${invoice.id}/pay`;
+
+    /**
+     * What this client can actually do about the bill.
+     *
+     * The pay URL used to be built unconditionally and rendered as the email's
+     * only option — so a business collected by bank transfer sent a bill whose
+     * one visible action was a card button that dead-ended, and whose bank
+     * details were reachable only by opening the PDF.
+     *
+     * The hosted Stripe invoice takes precedence when one exists: it is the
+     * page the client was already sent to, and it settles itself. Otherwise the
+     * platform's own pay route, which is only worth offering if a card can
+     * actually be charged.
+     */
+    const capability = await resolvePaymentCollectionCapability(supabaseServer, userId);
+
+    const paymentOptions = resolveInvoicePaymentOptions({
+      canCollectOnline: capability.canCollect,
+      cardUrl:
+        invoice.stripe_hosted_invoice_url ||
+        `${baseUrl}/api/public/invoice/${invoice.id}/pay`,
+      profile: settings,
+    });
     const businessName =
       settings.company_name || settings.invoice_company_name || 'Business';
 
@@ -360,7 +384,7 @@ async function sendByEmail(
       currency: invoice.currency,
       dueDate: invoice.due_date ? new Date(invoice.due_date) : defaultDueDate(),
       lineItems,
-      paymentUrl,
+      paymentOptions,
       branding: { ...branding, businessName, logoUrl: settings.logo_url || undefined },
       locale,
     });

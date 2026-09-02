@@ -88,7 +88,7 @@ const TAB_CLASS =
 /**
  * Which tab owns this path.
  *
- * Longest match wins, so `/business-os/website/preview/x` highlights Online
+ * Longest match wins, so `/business-os/website/design/x` highlights Online
  * presence rather than My Day — a plain `startsWith` against `/business-os`
  * would match everything, since it is the prefix of every other route.
  */

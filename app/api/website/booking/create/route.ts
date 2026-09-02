@@ -13,6 +13,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { shouldTakePayment } from '@/lib/business-os/clientJourney';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -144,7 +146,10 @@ export async function POST(request: NextRequest) {
     // Fetch the service
     const { data: service, error: serviceError } = await supabaseServer
       .from('scheduling_services')
-      .select('id, service_name, duration_minutes, price, currency, is_active')
+      // `collection` is what decides whether money is taken here at all. The
+      // select omitted it, so the decision below could not consult it even in
+      // principle and fell back to price.
+      .select('id, service_name, duration_minutes, price, currency, is_active, collection')
       .eq('id', data.service_id)
       .eq('user_id', ownerId)
       .single();
@@ -203,8 +208,25 @@ export async function POST(request: NextRequest) {
     const clientFirstName = nameParts[0] || data.name;
     const clientLastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
 
-    // Determine if payment is required
-    const requiresPayment = service.price !== null && service.price > 0;
+    /**
+     * Whether this booking takes money here, decided the same way the client's
+     * journey was drawn.
+     *
+     * This was `price > 0`, which is a different question. A service billed
+     * afterwards has a price and takes no card; a service set to collect by card
+     * takes none either when the business has no processor. Both were treated as
+     * "requires payment", which set the booking `pending`, suppressed the
+     * confirmation email, and told the client to go and pay — with nothing on the
+     * other side. The invoice never went out either, because the email that
+     * carries it is the one that was suppressed.
+     */
+    const capability = await resolvePaymentCollectionCapability(supabaseServer, ownerId);
+
+    const requiresPayment = shouldTakePayment({
+      price: service.price,
+      collection: service.collection,
+      processorReady: capability.canCollect,
+    });
 
     // Get user's pipeline stages to determine appropriate stages
     const { data: pipelineStages } = await supabaseServer
@@ -313,11 +335,71 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    /*
+     * Reuse the booking this client already has waiting, rather than adding
+     * another.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * This route inserted unconditionally, so it produced one booking per
+     * CALL rather than one per purchase. Two ways that bites, and one
+     * checkout hit both:
+     *
+     *   1. A double submit. Two rows landed 68ms apart — the browser mounting
+     *      the step twice, which is exactly what React does in development
+     *      and what a double-click does anywhere. Only the second was ever
+     *      paid; the first sat `pending` forever.
+     *   2. Coming back. A client who reaches payment, abandons, and returns
+     *      ten minutes later got a second booking for the same seat.
+     *
+     * The contact was already deduped by email a few lines up. The booking
+     * was not, so one purchase left three rows on the owner's contact card,
+     * two of them dead — and no way to tell which was real.
+     *
+     * Only an UNPAID booking is reusable. A paid one is a completed sale, and
+     * a client buying the same service again deserves a second booking; that
+     * is the case this must not collapse. `start_time` is matched too, so
+     * booking two different slots of the same service stays two bookings —
+     * `is` for the null of a non-scheduled product, `eq` otherwise, because
+     * `eq(null)` matches nothing in PostgREST and would silently defeat this.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    let reusable: { id: string; start_time: string | null; end_time: string | null } | null = null;
+
+    if (contactId) {
+      let pendingQuery = supabaseServer
+        .from('scheduling_bookings')
+        .select('id, start_time, end_time')
+        .eq('user_id', ownerId)
+        .eq('service_id', data.service_id)
+        .eq('contact_id', contactId)
+        .eq('status', 'pending')
+        .eq('payment_status', 'pending');
+
+      pendingQuery = startTime
+        ? pendingQuery.eq('start_time', startTime.toISOString())
+        : pendingQuery.is('start_time', null);
+
+      const { data: existingPending } = await pendingQuery
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingPending) {
+        reusable = existingPending;
+        requestLogger.info(
+          { bookingId: existingPending.id, contactId, serviceId: data.service_id },
+          'Reusing the unpaid booking this client already had'
+        );
+      }
+    }
+
     // Create the booking
     // Note: client data is now stored only in crm_contacts (via contact_id)
     // For paid services: status is 'pending' until payment is confirmed
     // For non-scheduled bookings (courses, products): start_time and end_time are null
-    const { data: booking, error: bookingError } = await supabaseServer
+    const insertResult = reusable
+      ? { data: reusable, error: null }
+      : await supabaseServer
       .from('scheduling_bookings')
       .insert({
         user_id: ownerId,
@@ -333,6 +415,8 @@ export async function POST(request: NextRequest) {
       })
       .select('id, start_time, end_time')
       .single();
+
+    const { data: booking, error: bookingError } = insertResult;
 
     if (bookingError || !booking) {
       requestLogger.error({ err: bookingError }, 'Failed to create booking');

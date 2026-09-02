@@ -7,9 +7,7 @@ import { StoryBeat, SummaryData } from '@/components/business-os/MyDaySection';
 import { LiveDashboard, SetupItem, FunnelStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
-import { CapabilityCard, WebsiteStats, PeopleStats, ReportsStats, ConfigStats } from '@/components/business-os/CapabilityCard';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
-import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { CHANNELS_CARD_ID } from '@/components/business-os/insight/ChannelsOverviewCard';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
@@ -35,13 +33,6 @@ function getGreetingFromTime(): 'morning' | 'afternoon' | 'evening' {
   if (hour < 12) return 'morning';
   if (hour < 17) return 'afternoon';
   return 'evening';
-}
-
-interface DashboardStats {
-  website: WebsiteStats;
-  people: PeopleStats;
-  reports: ReportsStats;
-  config: ConfigStats;
 }
 
 function BusinessOSContent() {
@@ -84,18 +75,6 @@ function BusinessOSContent() {
   // Insight card collapsed state
   const [isInsightCollapsed, setIsInsightCollapsed] = useState(false);
 
-  // Capability cards visibility (hidden by default)
-  const [showCapabilityCards, setShowCapabilityCards] = useState(false);
-
-  // Active capabilities - determines which cards to show. Shared with the tab
-  // bar, which gates on the same answer; the layout fetches it once rather than
-  // this page and the bar each asking for it.
-  //
-  // Cards keep their original failure behaviour: `capabilities` is empty when
-  // the request fails, so a card whose capability cannot be confirmed stays
-  // hidden. The tab bar deliberately does the opposite — see CapabilitiesProvider.
-  const { capabilities: activeCapabilities } = useCapabilities();
-
 
   // My Day data - use time-based greeting as initial state
   const [myDay, setMyDay] = useState<MyDayData>(() => ({
@@ -105,40 +84,6 @@ function BusinessOSContent() {
     storyBeats: []
   }));
 
-  // Capability stats
-  const [stats, setStats] = useState<DashboardStats>({
-    website: {
-      url: 'your-site.agentspilot.site',
-      visitorsToday: 0,
-      bookingStarts: 0,
-      status: 'draft'
-    },
-    people: {
-      totalContacts: 0,
-      newThisWeek: 0,
-      becameClients: 0,
-      wentQuiet: 0,
-      pipeline: []
-    },
-    reports: {
-      weeklyRevenue: 0,
-      weeklyBars: [0, 0, 0, 0, 0, 0],
-      changePercent: 0,
-      previousWeek: 0,
-      outstanding: 0
-    },
-    config: {
-      servicesCount: 0,
-      servicesActive: false,
-      hoursSet: false,
-      openDaysCount: 0,
-      paymentsConnected: false,
-      paymentsProvider: null, // Will be set from API if connected
-      automationsCount: 0,
-      calendarSynced: false,
-      calendarProvider: null
-    }
-  });
 
   // LiveDashboard data state
   const [setupItems, setSetupItems] = useState<SetupItem[]>([]);
@@ -149,6 +94,15 @@ function BusinessOSContent() {
    */
   const [setupShape, setSetupShape] = useState<BusinessShape>(UNKNOWN_SHAPE);
   const [funnelStats, setFunnelStats] = useState<FunnelStats | undefined>(undefined);
+  /**
+   * Whether a client can reach this business at all, and by what.
+   *
+   * `is_reachable` is a live page OR an active smart link — a smart link is the
+   * publication for a business that needs no website, so neither is hardcoded
+   * as THE way to be live. The dashboard used to infer this from the website
+   * setup item and got it wrong for exactly those businesses.
+   */
+  const [reach, setReach] = useState<{ isReachable: boolean; livePages: boolean; smartLinks: boolean } | undefined>(undefined);
   const [milestoneData, setMilestoneData] = useState<MilestoneData | undefined>(undefined);
   const [channelPerformance, setChannelPerformance] = useState<ChannelPerformance | undefined>(undefined);
 
@@ -156,13 +110,18 @@ function BusinessOSContent() {
   const [publishingWebsite, setPublishingWebsite] = useState(false);
 
 
-  useEffect(() => {
-    if (user) {
-      fetchDashboardData();
-    }
-  }, [user]);
-
-  const fetchDashboardData = async () => {
+  /**
+   * Bound to the language, because it writes translated text into state.
+   *
+   * The setup items are built here — titles, descriptions and the "still
+   * needs" line all resolved through `t` at fetch time rather than at render.
+   * As a plain function it was captured by callbacks with empty dependency
+   * lists, which froze the version from the first render — and on the first
+   * render the language context has not resolved the user's language yet, so
+   * that version speaks English. Closing a dialog re-ran the frozen copy and
+   * two rows of a Hebrew card turned English.
+   */
+  const fetchDashboardData = useCallback(async () => {
     try {
       // Fetch My Day data, stats, and pipeline stages in parallel
       // Use cache: 'no-store' to ensure fresh data on each load
@@ -214,53 +173,7 @@ function BusinessOSContent() {
       if (statsResponse.ok) {
         const statsData = await statsResponse.json();
         if (statsData.success && statsData.stats) {
-          // Transform stats data into capability card format
           const s = statsData.stats;
-
-          setStats({
-            website: {
-              url: s.website?.url || 'your-site.agentspilot.site',
-              visitorsToday: s.website?.visitors_30d || 0,
-              bookingStarts: s.website?.bookings_30d || 0,
-              status: s.website?.has_live_pages ? 'live' : 'draft',
-              wantsWebsite: s.website?.wants_website || false,
-              hasLivePages: s.website?.has_live_pages || false
-            },
-            people: {
-              totalContacts: s.crm?.total_contacts || 0,
-              newThisWeek: s.crm?.new_this_week || 0,
-              becameClients: s.crm?.became_clients_this_week || 0,
-              wentQuiet: s.crm?.went_quiet || 0,
-              pipeline: s.crm?.pipeline_stages || []
-            },
-            reports: (() => {
-              // The card is labelled "booked this week", so it shows what clients
-              // ordered — priced from the service, whether or not payment cleared.
-              // Money actually collected lives on the reports page instead.
-              const bookedThisWeek = s.scheduling?.booked_value_this_week || 0;
-              const bookedLastWeek = s.scheduling?.booked_value_last_week || 0;
-              return {
-                weeklyRevenue: bookedThisWeek,
-                weeklyBars: generateWeeklyBars(bookedThisWeek, bookedLastWeek),
-                changePercent: calculateChangePercent(bookedThisWeek, bookedLastWeek),
-                previousWeek: bookedLastWeek,
-                // Unpaid invoices of any age — same figure the reports page shows as "Owed".
-                outstanding: s.payments?.pending_invoices_amount || 0
-              };
-            })(),
-            config: {
-              servicesCount: s.scheduling?.active_services_count || 0,
-              servicesActive: (s.scheduling?.active_services_count || 0) > 0,
-              hoursSet: (s.scheduling?.open_days_count || 0) > 0,
-              openDaysCount: s.scheduling?.open_days_count || 0,
-              paymentsConnected: s.scheduling?.stripe_connected || false,
-              paymentsProvider: s.scheduling?.stripe_connected ? 'Stripe' : null, // Only show provider if connected
-              automationsCount: s.automation_engine?.workflows_count || 0,
-              calendarSynced: s.scheduling?.calendar_synced || false,
-              calendarProvider: s.scheduling?.calendar_provider || null
-            }
-          });
-
           // What the chat decided, before deciding what to ask for.
           setSetupShape(
             shapeFromProfile({
@@ -339,6 +252,31 @@ function BusinessOSContent() {
               description: '',
               completed: true,
               action: 'add_services'
+            });
+          }
+
+          // Service descriptions — recommended, never blocking.
+          //
+          // A business with no descriptions can still take a client end to end,
+          // so this must not stand between them and trading. It is here because
+          // the website's copy for a service is written from its description:
+          // without one, the model writes a paragraph guessed from the name.
+          //
+          // Deliberately absent from the onboarding chat, where speed wins.
+          const undescribed = s.scheduling?.services_without_description || [];
+          if ((s.scheduling?.active_services_count || 0) > 0) {
+            computedSetupItems.push({
+              id: 'service_descriptions',
+              title: undescribed.length === 0
+                ? t('setup.descriptions.done')
+                : t('setup.descriptions.todo'),
+              description: undescribed.length === 0 ? '' : t('setup.descriptions.why'),
+              completed: undescribed.length === 0,
+              action: 'add_services',
+              required: false,
+              // Named, so the card says which services are still silent rather
+              // than only that something is.
+              missing: undescribed.length > 0 ? undescribed : undefined,
             });
           }
 
@@ -529,6 +467,12 @@ function BusinessOSContent() {
           // stats period (a month by default), and the contact total is
           // all-time because a pipeline is a snapshot of where people are now,
           // not a flow through a window.
+          setReach({
+            isReachable: !!s.website?.is_reachable,
+            livePages: !!s.website?.has_live_pages,
+            smartLinks: !!s.website?.has_smart_links,
+          });
+
           setFunnelStats({
             // Everyone who arrived at anything this business owns, not just the
             // main website: landing pages and booking/form pages reached
@@ -595,29 +539,13 @@ function BusinessOSContent() {
       // Error handled silently - dashboard shows default state
       setLoading(false);
     }
-  };
+  }, [language]);
 
-  // Generate weekly bars for chart based on this week and last week revenue
-  function generateWeeklyBars(thisWeek: number, lastWeek: number): number[] {
-    if (thisWeek === 0 && lastWeek === 0) return [0, 0, 0, 0, 0, 0];
-    // Show a simple progression: last week average in first 3 bars, this week average in last 3 bars
-    const lastWeekAvg = lastWeek / 3;
-    const thisWeekAvg = thisWeek / 3;
-    return [
-      Math.floor(lastWeekAvg * 0.8),
-      Math.floor(lastWeekAvg),
-      Math.floor(lastWeekAvg * 1.1),
-      Math.floor(thisWeekAvg * 0.9),
-      Math.floor(thisWeekAvg),
-      Math.floor(thisWeekAvg * 1.1)
-    ];
-  }
-
-  // Calculate percentage change between this week and last week
-  function calculateChangePercent(thisWeek: number, lastWeek: number): number {
-    if (lastWeek === 0) return thisWeek > 0 ? 100 : 0;
-    return Math.round(((thisWeek - lastWeek) / lastWeek) * 100);
-  }
+  useEffect(() => {
+    if (user) {
+      fetchDashboardData();
+    }
+  }, [user, fetchDashboardData]);
 
   // Handle chat actions (open dialogs, etc.)
   const handleChatAction = useCallback(async (action: DialogAction) => {
@@ -1032,7 +960,7 @@ function BusinessOSContent() {
     setConfigAvailabilityDays(undefined); // Reset availability days
     // Refresh dashboard stats
     fetchDashboardData();
-  }, []);
+  }, [fetchDashboardData]);
 
   // Handle config dialog close with unpublished changes - notify chat
   const handleCloseWithUnpublished = useCallback((serviceName: string) => {
@@ -1076,7 +1004,7 @@ function BusinessOSContent() {
     setContactPrefill(undefined);
     // Refresh dashboard stats
     fetchDashboardData();
-  }, []);
+  }, [fetchDashboardData]);
 
   // Handle website publish from dashboard
   const handlePublishWebsite = useCallback(async () => {
@@ -1121,28 +1049,6 @@ function BusinessOSContent() {
     }
   }, [draftPageId, publishingWebsite, language]);
 
-  const handleCapabilityClick = (type: 'website' | 'people' | 'reports' | 'config') => {
-    switch (type) {
-      case 'website':
-        router.push('/business-os/website');
-        break;
-      case 'people':
-        router.push('/business-os/crm');
-        break;
-      case 'reports':
-        router.push('/business-os/reports');
-        break;
-      case 'config':
-        // Open config dialog with all tabs visible (from capability card)
-        setConfigInitialTab('services');
-        setConfigVisibleTabs(undefined); // Show all tabs
-        setConfigServiceToEdit(undefined);
-        setConfigServicePrefill(undefined);
-        setIsConfigOpen(true);
-        break;
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[var(--v2-bg)]">
@@ -1176,6 +1082,8 @@ function BusinessOSContent() {
             setupShape={setupShape}
             channelPerformance={channelPerformance}
             onChannelsChanged={fetchDashboardData}
+            isReachable={reach?.isReachable}
+            reachSurfaces={reach && { livePages: reach.livePages, smartLinks: reach.smartLinks }}
             funnelStats={funnelStats}
             pipelineStages={pipelineStages}
             milestoneData={milestoneData}
@@ -1244,16 +1152,11 @@ function BusinessOSContent() {
           />
         </div>
 
-        {/* Row 3: Chat Panel + Capability Cards (hidden by default) */}
-        <div
-          className="mt-5 grid dashboard-main-grid"
-          style={{
-            gridTemplateColumns: showCapabilityCards ? '390px 1fr' : '1fr',
-            gap: '20px',
-            alignItems: 'start'
-          }}
-        >
-          {/* Left: Chat Command Panel */}
+        {/* Row 3: Chat Panel.
+            Was a two-column grid whose second column held the four capability
+            cards. With those gone the grid has one child, so the panel is the
+            row. */}
+        <div className="mt-5">
           <ChatCommandPanel
             ref={chatPanelRef}
             onAction={handleChatAction}
@@ -1262,77 +1165,6 @@ function BusinessOSContent() {
             onCancelUpdate={pendingServiceUpdate ? cancelServiceUpdate : undefined}
             expanded={isMyDayCollapsed}
           />
-
-          {/* Right: 4 Capability Cards (2x2 grid) - hidden by default */}
-          {showCapabilityCards && (
-            <div
-              className="grid transition-all duration-300 capability-cards-grid"
-              style={{
-                gridTemplateColumns: '1fr 1fr',
-                gridTemplateRows: '1fr 1fr',
-                gap: '20px',
-                height: isMyDayCollapsed ? '640px' : '460px'
-              }}
-            >
-              {/* Website Card - only show if capability active */}
-              {activeCapabilities.has('website') && (
-                <CapabilityCard
-                  type="website"
-                  stats={stats.website}
-                  onClick={() => handleCapabilityClick('website')}
-                />
-              )}
-
-              {/* CRM Card - only show if capability active */}
-              {activeCapabilities.has('crm') && (
-                <CapabilityCard
-                  type="people"
-                  stats={stats.people}
-                  onClick={() => handleCapabilityClick('people')}
-                />
-              )}
-
-              {/* Reports Card - only show if capability active */}
-              {activeCapabilities.has('reports') && (
-                <CapabilityCard
-                  type="reports"
-                  stats={stats.reports}
-                  onClick={() => handleCapabilityClick('reports')}
-                />
-              )}
-
-              {/* Config Card - always show (manages capabilities) */}
-              <CapabilityCard
-                type="config"
-                stats={stats.config}
-                onClick={() => handleCapabilityClick('config')}
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Show/Hide Capability Cards Button */}
-        <div className="flex justify-center mt-4">
-          <button
-            onClick={() => setShowCapabilityCards(!showCapabilityCards)}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-full transition-all hover:border-orange-300"
-          >
-            {showCapabilityCards ? (
-              <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="18 15 12 9 6 15"></polyline>
-                </svg>
-                {t('dashboard.hideCards') || 'Hide cards'}
-              </>
-            ) : (
-              <>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-                {t('dashboard.showCards') || 'Show quick access cards'}
-              </>
-            )}
-          </button>
         </div>
 
       </div>
@@ -1450,27 +1282,11 @@ function BusinessOSContent() {
 
         /* Responsive adjustments - mobile-first */
 
-        /* Tablet and below - stack chat and cards vertically */
-        @media (max-width: 1024px) {
-          .dashboard-main-grid {
-            grid-template-columns: 1fr !important;
-            gap: 16px !important;
-          }
-
-          .capability-cards-grid {
-            height: auto !important;
-            grid-template-rows: auto auto !important;
-          }
-        }
-
-        /* Mobile - single column capability cards */
-        @media (max-width: 640px) {
-          .capability-cards-grid {
-            grid-template-columns: 1fr !important;
-            grid-template-rows: auto !important;
-            gap: 12px !important;
-          }
-        }
+        /* The .dashboard-main-grid and .capability-cards-grid rules that were
+           here have gone with the four capability cards: the first sized the
+           two-column row that held them beside the chat panel, the other two
+           reflowed the 2x2 card grid. Neither element exists any more.
+           (No backticks in this block — it is inside a template literal.) */
 
         /* Small mobile - reduce padding */
         @media (max-width: 480px) {

@@ -26,21 +26,9 @@ interface PageProps {
 
 // Flow steps type - matches LandingPageWizard
 type ClientFlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
-
-// Parse flow query param into array of steps
-function parseFlowParam(flow: string | undefined): ClientFlowStep[] | null {
-  if (!flow) return null;
-
-  const validSteps = ['scheduling', 'client_info', 'booking', 'payment', 'intake', 'confirmation'];
-  const steps = flow.split(',').filter(s => validSteps.includes(s)) as ClientFlowStep[];
-
-  // Ensure confirmation is always at the end
-  if (steps.length > 0 && !steps.includes('confirmation')) {
-    steps.push('confirmation');
-  }
-
-  return steps.length > 0 ? steps : null;
-}
+// The `?flow=` parameter is gone with the widget that read it. The journey now
+// comes from the service the client picks, resolved by `journeySteps` inside the
+// shared booking modal — a hand-editable URL was never the right place for it.
 
 interface BusinessData {
   success: boolean;
@@ -157,7 +145,6 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
   const businessData = await getBusinessData(userCode);
 
   // Parse custom flow from query param
-  const customFlow = parseFlowParam(flowParam);
 
   if (!businessData?.success) {
     notFound();
@@ -245,7 +232,6 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
             primaryColor={primaryColor}
             locale={language}
             initialServiceId={initialServiceId}
-            clientFlow={customFlow}
             // Two separate reasons a booking may not ask for payment: the
             // business does not collect that way, or it does and Stripe is not
             // connected yet. Either one drops the step — a payment screen with

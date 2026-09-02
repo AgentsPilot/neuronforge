@@ -98,11 +98,31 @@ export interface ContactDocument {
   download_url?: string;
 }
 
+/**
+ * How a service is sold, as the booking card has to say it.
+ *
+ * A single amount could not tell these apart, so every booking read as one
+ * number and an installment sale showed the whole agreement as though it had
+ * been collected — ₪1,000 next to a client who had paid ₪333.
+ */
+export interface SessionPaymentPlan {
+  installmentCount: number;
+  /** One period — what is taken now, not the agreement. */
+  installmentAmount: number;
+  totalAmount: number;
+  frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
+  /** From the plan's local mirror once it exists; undefined before then. */
+  periodsPaid?: number;
+}
+
 export interface SessionPayment {
   id?: string;
+  /** `amount` is what is due for THIS payment; for a plan that is one period. */
   amount: number;
   currency: string;
   status: 'paid' | 'pending' | 'failed' | 'free' | 'refunded';
+  /** How the service is sold. Absent means an ordinary single payment. */
+  plan?: SessionPaymentPlan;
   paidAt?: string;
   refundedAt?: string;  // When the refund was processed
   paymentMethod?: string;  // 'card', 'cash', 'bank_transfer', etc.

@@ -12,6 +12,7 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { adoptBusinessTemplate, adoptBusinessTheme } from '@/lib/business-os/businessTemplate';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
@@ -19,9 +20,51 @@ import { getWebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockReposi
 import { getTemplateById, templateToPageTheme } from '@/lib/website-builder/templates';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
+import { z } from 'zod';
 import { v4 as uuid } from 'uuid';
 
 const logger = createLogger({ service: 'WebsiteGenerationService' });
+
+/**
+ * What the model must actually return before `buildBlocks` may touch it.
+ *
+ * `buildBlocks` dereferences `content.hero.headline` and
+ * `content.about.paragraphs.join(...)`. A response missing either threw a
+ * TypeError from inside `buildBlocks`, which the OUTER catch swallowed — so a
+ * malformed answer failed the entire generation and never reached
+ * `getFallbackContent`, the very thing written to handle it.
+ *
+ * Only the fields that get dereferenced are required. Everything else is
+ * defaulted or optional, because a thin answer is worth keeping and a missing
+ * headline is not.
+ */
+const WebsiteContentSchema = z.object({
+  title: z.string().min(1),
+  metaDescription: z.string().min(1),
+  keywords: z.array(z.string()).default([]),
+  hero: z.object({
+    headline: z.string().min(1),
+    subheadline: z.string().default(''),
+  }),
+  about: z.object({
+    paragraphs: z.array(z.string()).min(1),
+  }),
+  serviceDescriptions: z.record(z.unknown()).default({}),
+  processSteps: z.array(z.unknown()).default([]),
+  testimonials: z.array(z.unknown()).default([]),
+  faq: z.array(z.unknown()).default([]),
+}).passthrough();
+
+/** Where a generation's copy came from, so callers can stop guessing. */
+export type ContentSource = 'llm' | 'fallback';
+
+interface GeneratedContent {
+  content: WebsiteContent;
+  source: ContentSource;
+  /** Why the fallback was used, when it was. */
+  reason?: string;
+}
 
 interface WebsiteContent {
   title: string;
@@ -117,6 +160,17 @@ export class WebsiteGenerationService {
     homepageId?: string;
     blocksCreated?: number;
     error?: string;
+    /**
+     * Whether the copy came from the model or from the static fallback.
+     *
+     * Reported because it used to be invisible: an LLM failure returned canned
+     * English and the whole call still answered `success: true`, so the caller
+     * showed a finished site and the business was never told its site had not
+     * actually been written for it.
+     */
+    contentSource?: ContentSource;
+    /** Something the caller should say out loud. Success, but degraded. */
+    warning?: string;
   }> {
     try {
       logger.info({ userId, ...options }, 'Starting website generation');
@@ -144,7 +198,20 @@ export class WebsiteGenerationService {
       // 2. Generate website content using LLM
       logger.info({ userId, vertical: profile.vertical, language: profile.language }, 'Generating website content with LLM');
 
-      const websiteContent = await this.callLLM(profile, services);
+      /*
+       * Does this business have testimonials it actually collected?
+       *
+       * Read once here and threaded through both the prompt and the block plan,
+       * so the copy we ask for and the sections we build agree. `{}` or a
+       * missing row means no — the central store now holds only authored copy.
+       */
+      const existingContent = await new WebsiteContentRepository(supabaseServer).findByUserId(userId);
+      const hasRealTestimonials =
+        Array.isArray((existingContent.data?.testimonials as { items?: unknown[] } | undefined)?.items) &&
+        ((existingContent.data?.testimonials as { items?: unknown[] }).items?.length ?? 0) > 0;
+
+      const generated = await this.callLLM(profile, services, hasRealTestimonials);
+      const websiteContent = generated.content;
 
       // 3. Use user_code as subdomain (or generate one if missing)
       let subdomain = profile.user_code;
@@ -195,9 +262,23 @@ export class WebsiteGenerationService {
       // and the booking links all went out in platform colours.
       const pageTheme = chosenTemplate ? templateToPageTheme(chosenTemplate) : generatedTheme;
 
-      // Asserted because `PageTheme` is an interface with no index signature,
-      // and updateBranding stores branding as free-form JSON.
-      await businessProfileRepository.updateBranding(userId, { theme: pageTheme as unknown as Record<string, unknown> });
+      /*
+       * Adopt, do not override.
+       *
+       * This wrote the theme unconditionally, so a business that had already
+       * published a landing page — and therefore already had a look — had it
+       * silently replaced the moment a website was generated. The first surface
+       * a business publishes establishes its template; everything made after
+       * takes that one.
+       *
+       * Asserted because `PageTheme` is an interface with no index signature,
+       * and updateBranding stores branding as free-form JSON.
+       */
+      if (chosenTemplate) {
+        await adoptBusinessTemplate(userId, chosenTemplate.id);
+      } else {
+        await adoptBusinessTheme(userId, pageTheme as unknown as Record<string, unknown>);
+      }
 
       // What the copy says about the page, whichever way we get there.
       const pageFacts = {
@@ -207,6 +288,19 @@ export class WebsiteGenerationService {
         subdomain,
         website_language: (profile.language || 'en') as 'en' | 'es' | 'he',
         theme: pageTheme,
+        /*
+         * The template, and the fact that this page has been written.
+         *
+         * Neither was recorded. `template_id` stayed null forever, so the wizard
+         * had nothing to pre-select and fell back to whichever template happened
+         * to be first in the array — that is how a parenting school ended up on
+         * an academic-tutoring theme. And with no record of a previous
+         * generation there was no way to tell a page that has never been written
+         * from one whose copy somebody has since edited, which is exactly the
+         * distinction that decides whether regenerating is safe.
+         */
+        template_id: chosenTemplate?.id ?? null,
+        content_generated_at: new Date().toISOString(),
       };
 
       const homepageResult = options.pageId
@@ -231,7 +325,7 @@ export class WebsiteGenerationService {
       //
       // The same plan the prompt was written from, so the copy that came back
       // has somewhere to go and nothing is built that was never asked for.
-      const sections = this.planSections(services);
+      const sections = this.planSections(services, hasRealTestimonials);
 
       const blocks = this.buildBlocks(
         homepage.id,
@@ -271,17 +365,44 @@ export class WebsiteGenerationService {
         }
       }
 
-      logger.info({ userId, homepageId: homepage.id, blocksCreated }, 'Website generation completed');
+      logger.info(
+        { userId, homepageId: homepage.id, blocksCreated, planned: blocks.length, contentSource: generated.source },
+        'Website generation completed'
+      );
+
+      // Every block insert failed, and the page's previous blocks were already
+      // deleted above. That is an empty page, which is data loss rather than a
+      // degraded result, so it must not report success.
+      if (blocksCreated === 0 && blocks.length > 0) {
+        return {
+          success: false,
+          homepageId: homepage.id,
+          blocksCreated: 0,
+          contentSource: generated.source,
+          error: 'No sections could be saved',
+        };
+      }
 
       // 6. Update profile completeness to 75% (website now complete)
       await businessProfileRepository.update(userId, {
         profile_completeness: 75,
       });
 
+      // Succeeded, but say so honestly when it is not the full thing.
+      const warnings: string[] = [];
+      if (generated.source === 'fallback') {
+        warnings.push(`content_fallback${generated.reason ? `: ${generated.reason}` : ''}`);
+      }
+      if (blocksCreated < blocks.length) {
+        warnings.push(`partial_blocks: ${blocksCreated}/${blocks.length}`);
+      }
+
       return {
         success: true,
         homepageId: homepage.id,
         blocksCreated,
+        contentSource: generated.source,
+        warning: warnings.length > 0 ? warnings.join(' · ') : undefined,
       };
 
     } catch (error) {
@@ -296,8 +417,12 @@ export class WebsiteGenerationService {
   /**
    * Call LLM to generate website content
    */
-  private async callLLM(profile: any, services: any[]): Promise<WebsiteContent> {
-    const sections = this.planSections(services);
+  private async callLLM(
+    profile: any,
+    services: any[],
+    hasRealTestimonials = false
+  ): Promise<GeneratedContent> {
+    const sections = this.planSections(services, hasRealTestimonials);
     const prompt = this.buildPrompt(profile, services, sections);
     const language = profile.language || 'en';
 
@@ -321,15 +446,32 @@ export class WebsiteGenerationService {
         temperature: 0.7,
       });
 
-      const content = JSON.parse(response.content);
-      logger.debug({ userId: profile.user_id, language }, 'LLM website content generated');
+      const parsed = WebsiteContentSchema.safeParse(JSON.parse(response.content));
 
-      return content as WebsiteContent;
+      if (!parsed.success) {
+        // A shape we cannot build from. Falling back here is the whole reason
+        // `getFallbackContent` exists; letting it through meant the TypeError
+        // surfaced later, from inside `buildBlocks`, where the outer catch read
+        // it as "generation failed" and the business got nothing at all.
+        const issues = parsed.error.issues.map(i => `${i.path.join('.')}: ${i.message}`);
+        logger.error({ userId: profile.user_id, language, issues }, 'LLM returned an unusable shape');
+        return {
+          content: this.getFallbackContent(profile, services),
+          source: 'fallback',
+          reason: `invalid_shape: ${issues.slice(0, 3).join('; ')}`,
+        };
+      }
+
+      logger.debug({ userId: profile.user_id, language }, 'LLM website content generated');
+      return { content: parsed.data as unknown as WebsiteContent, source: 'llm' };
 
     } catch (error) {
-      logger.error({ err: error }, 'LLM call failed');
-      // Return fallback content
-      return this.getFallbackContent(profile, services);
+      logger.error({ err: error, userId: profile.user_id }, 'LLM call failed');
+      return {
+        content: this.getFallbackContent(profile, services),
+        source: 'fallback',
+        reason: error instanceof Error ? error.message : 'llm_call_failed',
+      };
     }
   }
 
@@ -348,7 +490,7 @@ export class WebsiteGenerationService {
    * paying for copy nobody would ever read and a client could meet a "Book
    * Your Session" heading over a catalogue of downloads.
    */
-  private planSections(services: any[]): {
+  private planSections(services: any[], hasRealTestimonials = false): {
     services: boolean;
     process: boolean;
     booking: boolean;
@@ -358,16 +500,39 @@ export class WebsiteGenerationService {
     cta: boolean;
   } {
     const hasServices = services.length > 0;
-    const anyScheduled = services.some(s => s.is_scheduled !== false);
 
     return {
       services: hasServices,
       // A process block describes how someone gets what they came for; with
       // nothing to sell there is no process to describe.
       process: hasServices,
-      // Only where something is actually booked against a time.
-      booking: hasServices && anyScheduled,
-      testimonials: true,
+      /*
+       * Not a default section.
+       *
+       * This added a page-level booking widget whenever any service was
+       * scheduled — but a single inline calendar cannot express what the
+       * services now decide individually: one is booked against a time, another
+       * is a download, and the widget offered the same appointment for both.
+       * The services section already gives each service its own button,
+       * resolved from that service's own journey.
+       *
+       * Kept in the plan shape rather than deleted, so a caller that genuinely
+       * wants a standalone calendar can still ask for one and `buildBlocks`
+       * knows what to do with it.
+       */
+      booking: false,
+      /*
+       * Only where the business actually has reviews.
+       *
+       * This was `true` for everyone, and the fallback shipped invented quotes
+       * — "Amazing experience! Highly recommended." — Sarah M. — onto the public
+       * site of a real business that had never had a client. That is a claim its
+       * owner did not make and cannot stand behind, published under their name.
+       *
+       * A business with no reviews now gets no section. The Sections tab's "Add
+       * Section" is how they add one once they have something true to put in it.
+       */
+      testimonials: hasRealTestimonials,
       faq: true,
       contact: true,
       cta: true,
@@ -718,6 +883,7 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
       ctaContact: { en: 'Contact Us', he: 'צרו קשר', es: 'Contáctanos' },
       ctaSchedule: { en: 'Schedule Now', he: 'קבעו עכשיו', es: 'Agendar Ahora' },
       ctaGetInTouch: { en: 'Get in Touch', he: 'צרו קשר', es: 'Contáctanos' },
+      ctaLearnMore: { en: 'Learn More', he: 'קראו עוד', es: 'Saber Más' },
       contact: { en: 'Contact', he: 'יצירת קשר', es: 'Contacto' },
       testimonials: { en: 'What Clients Say', he: 'מה הלקוחות אומרים', es: 'Lo que Dicen los Clientes' },
       faq: { en: 'Frequently Asked Questions', he: 'שאלות נפוצות', es: 'Preguntas Frecuentes' },
@@ -767,8 +933,18 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
             { label: menu('process'), anchor: '#process' },
             { label: menu('contact'), anchor: '#contact' },
           ],
+          /*
+           * Booking starts at the services list, not at a booking section.
+           *
+           * These pointed at `#booking`, which was a page-level widget this
+           * page no longer installs — so every "book" button on a generated
+           * site scrolled to nothing. `#services` is where the booking now
+           * lives: each service carries its own button, opening the journey
+           * that service actually has. A CTA that says "book" must land
+           * somewhere a booking can start.
+           */
           cta_button: services.length > 0
-            ? { text: button(content.buttons?.headerCta, menu('bookNow')), link: '#booking' }
+            ? { text: button(content.buttons?.headerCta, menu('bookNow')), link: '#services' }
             : null,
           style: 'blur',
         },
@@ -782,8 +958,19 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
         content: {
           headline: content.hero.headline,
           subheadline: content.hero.subheadline,
-          cta_text: button(content.buttons?.heroCta, services.length > 0 ? t('ctaBooking') : t('ctaContact')),
-          cta_link: services.length > 0 ? '#booking' : '#contact',
+          /*
+           * The hero introduces the business, so its button reads on.
+           *
+           * It used to say "book a session" and anchor at `#booking` — a
+           * section this page no longer installs — so the loudest button on the
+           * site scrolled nowhere. Booking has two homes of its own: the header
+           * button, present on every screen, and the closing call to action
+           * after the reader knows what is on offer. Asking someone to book in
+           * the first sentence, before the services are read, is the wrong
+           * moment anyway.
+           */
+          cta_text: button(content.buttons?.heroCta, t('ctaLearnMore')),
+          cta_link: '#about',
         },
       },
 
@@ -809,9 +996,16 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
           services: services.map(s => {
             const serviceData = content.serviceDescriptions[s.service_name];
             // Handle both old format (string) and new format (object with description and icon)
-            const description = typeof serviceData === 'string'
+            const written = typeof serviceData === 'string'
               ? serviceData
               : serviceData?.description || '';
+            // The owner's own words win.
+            //
+            // They know what they sell and the model is guessing from a name.
+            // The AI copy is the fallback for a service nobody has described
+            // yet — which is also why the description is now asked for after
+            // onboarding: it is the source text for this section, not decoration.
+            const description = s.description?.trim() || written;
             const icon = typeof serviceData === 'object'
               ? serviceData?.icon
               : this.getDefaultIconForService(s.service_name);
@@ -923,8 +1117,15 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
           // twice.
           title: content.cta?.title || content.hero.headline,
           description: content.cta?.description || t('cta'),
-          cta_text: content.cta?.buttonText || (plan.booking ? t('ctaSchedule') : t('ctaGetInTouch')),
-          cta_link: plan.booking ? '#booking' : '#contact',
+          // Text and destination decided together. They had drifted apart: the
+          // label said "get in touch" while the link went to the services.
+          cta_text: content.cta?.buttonText
+            || (plan.booking || services.length > 0 ? t('ctaSchedule') : t('ctaGetInTouch')),
+          // `plan.booking` is false by default now, so this read '#contact' for
+          // every site — under a button that says "book". Point it at the
+          // services when there are any, and only fall back to contact for a
+          // page with nothing to sell.
+          cta_link: plan.booking ? '#booking' : (services.length > 0 ? '#services' : '#contact'),
         },
       },
 
@@ -1048,21 +1249,6 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
     const steps = processStepTitles[language] || processStepTitles.en;
 
     // Localized testimonials
-    const testimonialTemplates: Record<string, Array<{ quote: string; author: string; role: string }>> = {
-      en: [
-        { quote: 'Amazing experience! Highly recommended.', author: 'Sarah M.', role: 'Client' },
-        { quote: 'Professional and caring service. Will definitely return.', author: 'David R.', role: 'Client' },
-      ],
-      he: [
-        { quote: 'חוויה מדהימה! ממליצה בחום.', author: 'שרה מ.', role: 'לקוחה' },
-        { quote: 'שירות מקצועי ואכפתי. בהחלט אחזור.', author: 'דוד ר.', role: 'לקוח' },
-      ],
-      es: [
-        { quote: '¡Experiencia increíble! Muy recomendado.', author: 'María S.', role: 'Cliente' },
-        { quote: 'Servicio profesional y atento. Definitivamente volveré.', author: 'Carlos R.', role: 'Cliente' },
-      ],
-    };
-
     // Localized FAQ
     const faqTemplates: Record<string, Array<{ question: string; answer: string }>> = {
       en: [
@@ -1115,7 +1301,10 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
           icon: 'check',
         },
       ],
-      testimonials: testimonialTemplates[language] || testimonialTemplates.en,
+      // No invented reviews. A business with none gets no section at all
+      // (see planSections); shipping "Sarah M." under its name is a claim its
+      // owner never made.
+      testimonials: [],
       faq: faqTemplates[language] || faqTemplates.en,
       theme: themeColors,
     };

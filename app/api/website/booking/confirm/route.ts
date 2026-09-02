@@ -234,7 +234,24 @@ export async function POST(request: NextRequest) {
         start_time: startTime.toISOString(),
         end_time: endTime.toISOString(),
         status: 'confirmed',
-        payment_status: service.price && service.price > 0 ? 'paid' : 'paid',
+        /**
+         * Only free bookings are born paid.
+         *
+         * This read `price > 0 ? 'paid' : 'paid'` — a ternary with one answer —
+         * and wrote NO `payment_transactions` row at all. So a priced booking
+         * claimed the money had arrived while the platform held no record of it:
+         * invisible to revenue, unrefundable, and impossible to reconcile.
+         *
+         * The route is unauthenticated and accepts `is_preview` to simulate a
+         * payment, so this also stopped anyone who knew a subdomain and a
+         * service id from minting confirmed, paid bookings.
+         *
+         * A priced booking now waits for the money to be recorded — by the
+         * webhook, which is the only authority on whether Stripe actually took
+         * it. Nothing in the app calls this route today; the widgets use
+         * `/finalize`.
+         */
+        payment_status: (service.price ?? 0) > 0 ? 'pending' : 'paid',
         notes: data.notes || null,
         booking_source: 'website',
         timezone: data.timezone
@@ -254,17 +271,10 @@ export async function POST(request: NextRequest) {
     BookingEmailService.sendBookingConfirmation(booking.id, ownerId, { skipInvoice: true })
       .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
 
-    // Send payment receipt if service has a price (non-blocking)
-    if (service.price && service.price > 0) {
-      BookingEmailService.sendPaymentReceipt(ownerId, {
-        customerEmail: data.email,
-        customerName: data.name,
-        amount: service.price,
-        currency: service.currency,
-        bookingId: booking.id,
-        paymentMethod: data.payment_intent_id ? 'Card' : undefined
-      }).catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Payment receipt email failed'));
-    }
+    // No payment receipt here. A receipt asserts that money arrived, and this
+    // route no longer claims that for a priced booking — it records nothing, so
+    // it has nothing to receipt. The webhook sends one when the payment is
+    // actually recorded against the booking.
 
     requestLogger.info(
       { bookingId: booking.id, contactId, subdomain: data.subdomain, serviceId: data.service_id, isPreview: data.is_preview },

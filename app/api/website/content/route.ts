@@ -36,8 +36,10 @@ export async function GET(request: NextRequest) {
 
     const contentRepo = new WebsiteContentRepository(supabaseServer);
 
-    // Get or create content for user
-    const result = await contentRepo.getOrCreate(user.id);
+    // Read only — `null` means nothing has been authored yet, which is a
+    // legitimate answer and the one the editor should act on. Creating a row to
+    // answer a GET is what seeded the English defaults.
+    const result = await contentRepo.findByUserId(user.id);
 
     if (result.error) {
       throw result.error;

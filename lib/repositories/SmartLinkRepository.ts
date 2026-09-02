@@ -60,6 +60,13 @@ export interface SmartLinkCreate {
   name?: string;
   destination_url: string;
   destination_type?: SmartLink['destination_type'];
+  /**
+   * Whether the link is live on creation. Defaults to true — the column's own
+   * default — because a link is normally made to be used immediately. Passed as
+   * false when the journey behind it cannot run yet, so it is created switched
+   * off rather than created broken.
+   */
+  is_active?: boolean;
   source?: string;
   medium?: string;
   campaign?: string;
@@ -147,7 +154,8 @@ export class SmartLinkRepository {
           medium: input.medium || null,
           campaign: input.campaign || null,
           content: input.content || null,
-          metadata: input.metadata || {}
+          metadata: input.metadata || {},
+          ...(input.is_active === undefined ? {} : { is_active: input.is_active })
         })
         .select()
         .single();
@@ -309,15 +317,29 @@ export class SmartLinkRepository {
    */
   async delete(linkId: string, userId: string): Promise<SmartLinkRepositoryResult<void>> {
     try {
+      /*
+       * A real delete, not a deactivation.
+       *
+       * This used to set `is_active: false`, which spent the one flag the
+       * product needs for switching a link on and off: "Delete" and
+       * "Deactivate" became the same action under two names, and nothing could
+       * actually remove a link. Activate/Deactivate now own `is_active`, and
+       * this owns removal.
+       *
+       * `smart_link_clicks.smart_link_id` is ON DELETE CASCADE, so this also
+       * removes that link's click history and the revenue attributed to it.
+       * That is the point of a delete and it is not recoverable — the caller
+       * must confirm before reaching here.
+       */
       const { error } = await this.supabase
         .from('smart_links')
-        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .delete()
         .eq('id', linkId)
         .eq('user_id', userId);
 
       if (error) throw error;
 
-      logger.info({ linkId, userId }, 'Smart link deleted (soft)');
+      logger.info({ linkId, userId }, 'Smart link deleted');
       return { data: null, error: null };
     } catch (error) {
       logger.error({ err: error, linkId, userId }, 'Failed to delete smart link');

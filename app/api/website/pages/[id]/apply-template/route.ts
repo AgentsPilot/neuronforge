@@ -17,6 +17,7 @@ import { WebsitePageRepository, PageTheme } from '@/lib/repositories/WebsitePage
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
 import { getTemplateById, templateToPageTheme, getStandardHomepageBlocks, WebsiteTemplate } from '@/lib/website-builder/templates';
 import { BuildingBlock } from '@/lib/website-builder/building-blocks';
+import { setBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { translateBlockContent } from '@/lib/i18n/website-block-translations';
 import type { Locale } from '@/lib/i18n/config';
 import { z } from 'zod';
@@ -152,13 +153,29 @@ export async function POST(
       }
     }
 
+    /*
+     * A template is the BUSINESS's, not this page's.
+     *
+     * Applying one used to restyle the page it was invoked on and nothing else,
+     * which is why changing the template appeared to do nothing: the landing
+     * pages kept their old colours, so did the smart links, and the invoice PDF
+     * and every transactional email went on reading a `business_profiles.theme`
+     * that had not moved. This records the choice on the business and repaints
+     * every page it owns.
+     *
+     * Content is untouched, exactly as above — a template decides styling, and
+     * a business changing its colours must not lose its words.
+     */
+    const propagation = await setBusinessTemplate(user.id, validated.template_id);
+
     // Fetch updated page
     const updatedPage = await pageRepo.findById(pageId, user.id);
 
     requestLogger.info({
       pageId,
       templateApplied: validated.template_id,
-      userId: user.id
+      userId: user.id,
+      propagatedPages: propagation.propagatedPages
     }, 'Successfully applied template to page');
 
     return NextResponse.json({

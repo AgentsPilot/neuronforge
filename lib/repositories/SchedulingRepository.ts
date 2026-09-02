@@ -713,7 +713,7 @@ export class SchedulingBookingRepository {
         .select(`
           *,
           contact:crm_contacts(first_name, last_name, email, phone),
-          service:scheduling_services(service_name, price, currency),
+          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at)
         `)
         .eq('user_id', userId);

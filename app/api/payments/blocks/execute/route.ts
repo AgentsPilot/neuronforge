@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
@@ -136,29 +137,73 @@ async function executeRecordManualPayment(
 ): Promise<{ result: unknown; events: PaymentEventType[] }> {
   const { invoice_id, booking_id, installment_id, contact_id, amount, currency, method, notes, received_at } = params;
 
-  // Record the manual payment
-  const result = await paymentTransactionRepository.recordManualPayment(userId, {
-    contactId: contact_id as string | undefined,
-    invoiceId: invoice_id as string | undefined,
-    amount: amount as number,
-    currency: currency as string,
-    paymentMethod: method as 'cash' | 'bank_transfer' | 'check' | 'other',
-    notes: notes as string | undefined,
-    receivedAt: received_at as string | undefined
-  });
+  /**
+   * Against an invoice, this goes through the one settle path.
+   *
+   * It used to record the payment and then call `markAsPaid` separately, which
+   * skipped that path's idempotency check — and the automation kernel RETRIES
+   * blocks, so a retried block inserted a second succeeded payment against one
+   * invoice and doubled the recorded revenue. It also left
+   * `account_resolution` unset, making the payment permanently unrefundable,
+   * while the mark-paid route on the same table records `'recorded'`.
+   */
+  let recorded: { id: string; amount: number; currency: string; payment_method: string };
 
-  if (result.error) {
-    throw result.error;
-  }
-
-  // If invoice provided, mark as paid
   if (invoice_id) {
-    await paymentInvoiceRepository.markAsPaid(invoice_id as string, userId, {
+    const settled = await settleInvoicePaid(supabaseServer, {
+      invoiceId: invoice_id as string,
+      userId,
+      contactId: contact_id as string | undefined,
+      amount: amount as number,
+      currency: currency as string,
       paymentMethod: method as string,
       processorType: 'manual',
+      // Manual money never touched Stripe, and saying so explicitly is what
+      // stops the refund path treating it as unrecorded.
+      accountContext: {
+        stripe_connect_account_id: null,
+        charge_account_kind: 'platform',
+        account_resolution: 'recorded',
+      },
+      paidAt: received_at as string | undefined,
+      metadata: { source: 'record_manual_payment_block', notes: (notes as string) ?? null },
+    });
+
+    if (!settled.transactionId) {
+      // Only possible if the settle path could neither find nor write a payment.
+      throw new Error('Manual payment against this invoice was not recorded');
+    }
+
+    recorded = {
+      id: settled.transactionId,
+      amount: amount as number,
+      currency: currency as string,
+      payment_method: method as string,
+    };
+  } else {
+    // No invoice to settle — money recorded on its own.
+    const manual = await paymentTransactionRepository.recordManualPayment(userId, {
+      contactId: contact_id as string | undefined,
+      invoiceId: undefined,
+      amount: amount as number,
+      currency: currency as string,
+      paymentMethod: method as 'cash' | 'bank_transfer' | 'check' | 'other',
       notes: notes as string | undefined,
       receivedAt: received_at as string | undefined
     });
+
+    if (manual.error || !manual.data) {
+      throw manual.error ?? new Error('Manual payment was not recorded');
+    }
+
+    recorded = {
+      id: manual.data.id,
+      amount: manual.data.amount,
+      currency: manual.data.currency,
+      // The column is nullable on the row type; the block always supplies one,
+      // and falling back keeps the emitted event honest if it ever did not.
+      payment_method: manual.data.payment_method ?? (method as string),
+    };
   }
 
   // If installment provided, mark as paid
@@ -166,7 +211,7 @@ async function executeRecordManualPayment(
     await paymentPlanRepository.markInstallmentPaid(installment_id as string, userId, {
       paymentMethod: method as string,
       processorType: 'manual',
-      transactionId: result.data!.id
+      transactionId: recorded.id
     });
   }
 
@@ -174,7 +219,7 @@ async function executeRecordManualPayment(
   await emitPaymentEvent(userId, {
     eventType: 'payment.manual_recorded',
     entityType: 'transaction',
-    entityId: result.data!.id,
+    entityId: recorded.id,
     contactId: contact_id as string | undefined,
     processorType: 'manual',
     metadata: {
@@ -189,10 +234,10 @@ async function executeRecordManualPayment(
 
   return {
     result: {
-      transactionId: result.data!.id,
-      amount: result.data!.amount,
-      currency: result.data!.currency,
-      method: result.data!.payment_method
+      transactionId: recorded.id,
+      amount: recorded.amount,
+      currency: recorded.currency,
+      method: recorded.payment_method
     },
     events: ['payment.manual_recorded']
   };

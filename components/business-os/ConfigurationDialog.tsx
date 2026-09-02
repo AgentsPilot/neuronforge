@@ -575,6 +575,10 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
               ) : (
                 <SchedulingServicesList
                   intakeEnabled={intakeEnabled}
+                  // This dialog already resolves it for its own Payments tab,
+                  // so the services list does not need a second network call to
+                  // draw a journey that matches reality.
+                  processorReady={stripeConnected}
                   services={services}
                   onServicePublished={silentRefreshServices}
                   onServicePublishedWithId={handleServicePublishedWithId}

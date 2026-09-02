@@ -24,8 +24,34 @@
 
 import type { CollectionMethod } from '@/lib/business-os/setup/setupGraph';
 
-/** The steps a public booking journey can contain, in the order they run. */
-export type BookingFlowStep = 'scheduling' | 'client_info' | 'payment' | 'confirmation';
+/**
+ * The steps a client journey can contain, in the order they run.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE UNION, PREVIOUSLY THREE.
+ *
+ * This was `BookingFlowStep` and nothing imported it, while the two files that
+ * actually pass journeys to each other each declared their own `FlowStepKey`:
+ *
+ *   website editor  scheduling · client_info · booking · payment · intake · confirmation
+ *   setup wizard                              booking · payment · intake · confirmation
+ *   here (unused)   scheduling · client_info ·           payment ·          confirmation
+ *
+ * The wizard's was missing `scheduling` and `client_info`, so it wrote
+ * `'scheduling' as FlowStepKey` — a cast asserting membership of a union that
+ * did not contain it. TypeScript then refused to pass a flow from the editor to
+ * the wizard at all: "two different types with this name exist, but they are
+ * unrelated". Neither file could see the other's union, so neither could see it
+ * was wrong.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export type FlowStepKey =
+  | 'scheduling'
+  | 'client_info'
+  | 'booking'
+  | 'payment'
+  | 'intake'
+  | 'confirmation';
 
 /**
  * Either vocabulary: a business's collection method, or a service's own.

@@ -15,13 +15,14 @@
  * The flow is configured via the `flow` prop which determines which steps are shown.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Calendar, Clock, CreditCard, FileText, Check, ArrowLeft, ArrowRight,
   Loader2, User, Mail, Phone, ChevronLeft, ChevronRight, Shield, Lock,
   ClipboardList
 } from 'lucide-react';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import type { BlockRendererProps, FlowStep, FormField } from './types';
 import { flowHasScheduling, flowHasClientInfo } from './types';
 import { IntakeFormStep, type IntakeTemplate } from './IntakeFormStep';
@@ -31,7 +32,7 @@ import { StripePaymentForm } from './StripePaymentForm';
 // TYPES
 // ============================================================================
 
-interface Service {
+export interface Service {
   id: string;
   name: string;
   description: string | null;
@@ -39,9 +40,17 @@ interface Service {
   price: number | null;
   currency: string;
   icon?: string;
+  /**
+   * How this service may be paid over time.
+   *
+   * Absent for most services, and the steps then show a single price as they
+   * always have. Present, it is what the client is agreeing to — so the summary
+   * has to say the split, not just the total.
+   */
+  paymentPlan?: ServicePaymentPlan;
 }
 
-interface TimeSlot {
+export interface TimeSlot {
   start: string;
   end: string;
   available: boolean;
@@ -62,13 +71,24 @@ interface ProcessFlowContent {
     duration_minutes: number;
     price: number | null;
     currency: string;
+    /** How this service may be paid over time, when the business offers one. */
+    paymentPlan?: ServicePaymentPlan;
   };
 }
 
 type CurrentStep = 'services' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
 
+/** The controls for the step on screen, for a host that draws its own footer. */
+export interface ProcessFlowFooterActions {
+  onBack?: () => void;
+  backLabel: string;
+  primary?: { label: string; onClick: () => void; disabled?: boolean; busy?: boolean };
+  /** Shown in place of the label while the primary action runs. */
+  busyLabel: string;
+}
+
 // Localized labels
-const LABELS = {
+export const LABELS = {
   en: {
     chooseService: 'Choose a Service',
     selectDate: 'Select a Date',
@@ -113,7 +133,27 @@ const LABELS = {
     hour: 'hour',
     days: 'days',
     day: 'day',
-    free: 'Free'
+    free: 'Free',
+    dueToday: 'Due today',
+    paidToday: 'Paid today',
+    paymentPlan: 'Payment plan',
+    planTotal: 'Total',
+    planThen: 'Then',
+    planThenValue: '{count} × {amount}, {frequency}',
+    frequency: { weekly: 'weekly', biweekly: 'every 2 weeks', monthly: 'monthly', quarterly: 'quarterly' },
+    namePlaceholder: 'Your full name',
+    emailPlaceholder: 'you@example.com',
+    phonePlaceholder: 'Your phone number',
+    errRequiredFields: 'Please fill in all required fields',
+    errSelectDateTime: 'Please select a date and time',
+    errLoadTimes: 'Failed to load available times',
+    errCreateBooking: 'Failed to create booking. Please try again.',
+    errSubmit: 'Failed to submit. Please try again.',
+    errMissingIntake: 'Missing intake template or booking',
+    errPaymentInit: 'Failed to initialize payment',
+    errPaymentInitRetry: 'Failed to initialize payment. Please try again.',
+    errFieldRequired: 'Please fill in this field',
+    errEmailInvalid: 'Please enter a valid email address'
   },
   es: {
     chooseService: 'Elige un Servicio',
@@ -159,7 +199,27 @@ const LABELS = {
     hour: 'hora',
     days: 'días',
     day: 'día',
-    free: 'Gratis'
+    free: 'Gratis',
+    dueToday: 'A pagar hoy',
+    paidToday: 'Pagado hoy',
+    paymentPlan: 'Plan de pago',
+    planTotal: 'Total',
+    planThen: 'Después',
+    planThenValue: '{count} × {amount}, {frequency}',
+    frequency: { weekly: 'semanal', biweekly: 'cada 2 semanas', monthly: 'mensual', quarterly: 'trimestral' },
+    namePlaceholder: 'Tu nombre completo',
+    emailPlaceholder: 'tu@ejemplo.com',
+    phonePlaceholder: 'Tu número de teléfono',
+    errRequiredFields: 'Completa todos los campos obligatorios',
+    errSelectDateTime: 'Selecciona una fecha y una hora',
+    errLoadTimes: 'No pudimos cargar los horarios disponibles',
+    errCreateBooking: 'No pudimos crear la reserva. Inténtalo de nuevo.',
+    errSubmit: 'No pudimos enviar. Inténtalo de nuevo.',
+    errMissingIntake: 'Falta el formulario o la reserva',
+    errPaymentInit: 'No pudimos iniciar el pago',
+    errPaymentInitRetry: 'No pudimos iniciar el pago. Inténtalo de nuevo.',
+    errFieldRequired: 'Completa este campo',
+    errEmailInvalid: 'Introduce un correo electrónico válido'
   },
   he: {
     chooseService: 'בחר שירות',
@@ -205,7 +265,27 @@ const LABELS = {
     hour: 'שעה',
     days: 'ימים',
     day: 'יום',
-    free: 'חינם'
+    free: 'חינם',
+    dueToday: 'לתשלום היום',
+    paidToday: 'שולם היום',
+    paymentPlan: 'תוכנית תשלומים',
+    planTotal: 'סה״כ',
+    planThen: 'לאחר מכן',
+    planThenValue: '{count} × {amount}, {frequency}',
+    frequency: { weekly: 'שבועי', biweekly: 'כל שבועיים', monthly: 'חודשי', quarterly: 'רבעוני' },
+    namePlaceholder: 'השם המלא שלכם',
+    emailPlaceholder: 'you@example.com',
+    phonePlaceholder: 'מספר הטלפון שלכם',
+    errRequiredFields: 'נא למלא את כל שדות החובה',
+    errSelectDateTime: 'נא לבחור תאריך ושעה',
+    errLoadTimes: 'לא הצלחנו לטעון את השעות הפנויות',
+    errCreateBooking: 'לא הצלחנו ליצור את ההזמנה. נסו שוב.',
+    errSubmit: 'לא הצלחנו לשלוח. נסו שוב.',
+    errMissingIntake: 'חסר טופס או הזמנה',
+    errPaymentInit: 'לא הצלחנו להתחיל את התשלום',
+    errPaymentInitRetry: 'לא הצלחנו להתחיל את התשלום. נסו שוב.',
+    errFieldRequired: 'נא למלא שדה זה',
+    errEmailInvalid: 'נא להזין כתובת אימייל תקינה'
   }
 };
 
@@ -333,7 +413,7 @@ interface ServicesStepProps {
   theme?: BlockRendererProps['theme'];
 }
 
-function ServicesStep({ services, loading, primaryColor, onSelect, isRTL, labels, theme }: ServicesStepProps) {
+export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL, labels, theme }: ServicesStepProps) {
   const formatPrice = (price: number | null, currency: string) => {
     if (price === null) return labels.free;
     const symbols: Record<string, string> = { USD: '$', EUR: '€', ILS: '₪', GBP: '£' };
@@ -369,7 +449,7 @@ function ServicesStep({ services, loading, primaryColor, onSelect, isRTL, labels
         <button
           key={service.id}
           onClick={() => onSelect(service)}
-          className="w-full p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-gray-700 rounded-xl text-left hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm transition-all group"
+          className="w-full p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-gray-700 rounded-xl text-start hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm transition-all group"
           style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
         >
           <div className="flex items-start justify-between gap-4">
@@ -395,7 +475,7 @@ function ServicesStep({ services, loading, primaryColor, onSelect, isRTL, labels
                 </span>
               </div>
             </div>
-            <div className="text-right flex-shrink-0">
+            <div className="text-end flex-shrink-0">
               <span className="font-semibold" style={{ color: primaryColor }}>
                 {formatPrice(service.price, service.currency)}
               </span>
@@ -434,7 +514,7 @@ interface DateTimeStepProps {
   locale?: string;
 }
 
-function DateTimeStep({
+export function DateTimeStep({
   service,
   selectedDate,
   selectedSlot,
@@ -572,7 +652,8 @@ interface DetailsStepProps {
   onEmailChange: (value: string) => void;
   onPhoneChange: (value: string) => void;
   onNotesChange: (value: string) => void;
-  onBack: () => void;
+  /** Undefined when there is no earlier step to return to. */
+  onBack?: () => void;
   onSubmit: () => void;
   submitting: boolean;
   error: string | null;
@@ -586,7 +667,7 @@ interface DetailsStepProps {
   hasScheduling?: boolean;
 }
 
-function DetailsStep({
+export function DetailsStep({
   service,
   slot,
   name,
@@ -629,16 +710,14 @@ function DetailsStep({
     onSubmit();
   };
 
+  /** Only a real split counts — one instalment is just the price. */
+  const detailsPlan = service.paymentPlan && service.paymentPlan.installmentCount > 1
+    ? service.paymentPlan
+    : undefined;
+
   return (
     <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm"
-      >
-        {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-        {hasScheduling ? labels.backToDateTime : labels.backToServices}
-      </button>
+      {/* Back and continue are in the pinned footer, shared by every step. */}
 
       {/* Service/Booking summary */}
       <div
@@ -666,13 +745,72 @@ function DetailsStep({
               )}
             </div>
           </div>
-          {/* Show price if service has one */}
-          {service.price !== null && service.price > 0 && (
-            <div className="text-lg font-bold" style={{ color: primaryColor }}>
-              {formatAmount(service.price, service.currency, locale, labels.free)}
-            </div>
-          )}
         </div>
+
+        {/*
+          What is being agreed to, read top to bottom.
+
+          A large accent figure opposite a service name that runs to two lines
+          made the eye cross the card, and where the business offers a payment
+          plan one number was not the story at all: the client is agreeing to a
+          schedule. Every value here is short and sits on its own row, so
+          nothing wraps and the labels line up in either direction.
+        */}
+        {service.price !== null && service.price > 0 && (
+          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-slate-600">
+            {detailsPlan ? (
+              <>
+                {/* The instalments at a glance. Filled segment = today. */}
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-1" aria-hidden="true">
+                    {Array.from({ length: Math.min(detailsPlan.installmentCount, 6) }).map((_, i) => (
+                      <span
+                        key={i}
+                        className="block h-1.5 w-5 rounded-full"
+                        style={{ backgroundColor: i === 0 ? primaryColor : `${primaryColor}25` }}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                    {labels.paymentPlan}
+                  </span>
+                </div>
+
+                {/* Today, given the weight — the only figure charged now. */}
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.dueToday}</span>
+                  <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
+                    {formatAmount(detailsPlan.installmentAmount, detailsPlan.currency, locale, labels.free)}
+                  </span>
+                </div>
+
+                <div className="flex items-baseline justify-between gap-3 mt-1.5">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planThen}</span>
+                  <span className="text-sm text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                    {labels.planThenValue
+                      .replace('{count}', String(detailsPlan.installmentCount - 1))
+                      .replace('{amount}', formatAmount(detailsPlan.installmentAmount, detailsPlan.currency, locale, labels.free))
+                      .replace('{frequency}', labels.frequency[detailsPlan.frequency])}
+                  </span>
+                </div>
+
+                <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t border-gray-200/70 dark:border-slate-600/70">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+                  <span className="text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                    {formatAmount(detailsPlan.totalAmount, detailsPlan.currency, locale, labels.free)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+                <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
+                  {formatAmount(service.price, service.currency, locale, labels.free)}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Contact Form */}
@@ -688,11 +826,19 @@ function DetailsStep({
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
               required
+              onInvalid={(e) => {
+                const field = e.currentTarget;
+                field.setCustomValidity(
+                  field.validity.typeMismatch ? labels.errEmailInvalid : labels.errFieldRequired
+                );
+              }}
+              onInput={(e) => e.currentTarget.setCustomValidity('')}
               className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors`}
               style={{ borderRadius: theme?.borderRadius || '0.5rem', borderColor: undefined }}
               onFocus={(e) => e.target.style.borderColor = primaryColor}
               onBlur={(e) => e.target.style.borderColor = ''}
-              placeholder="John Smith"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            placeholder={labels.namePlaceholder}
             />
           </div>
         </div>
@@ -708,18 +854,26 @@ function DetailsStep({
               value={email}
               onChange={(e) => onEmailChange(e.target.value)}
               required
+              onInvalid={(e) => {
+                const field = e.currentTarget;
+                field.setCustomValidity(
+                  field.validity.typeMismatch ? labels.errEmailInvalid : labels.errFieldRequired
+                );
+              }}
+              onInput={(e) => e.currentTarget.setCustomValidity('')}
               className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors`}
               style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
               onFocus={(e) => e.target.style.borderColor = primaryColor}
               onBlur={(e) => e.target.style.borderColor = ''}
-              placeholder="john@example.com"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            placeholder={labels.emailPlaceholder}
             />
           </div>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            {labels.phone}
+            {labels.phone} *
           </label>
           <div className="relative">
             <Phone className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none`} />
@@ -727,11 +881,20 @@ function DetailsStep({
               type="tel"
               value={phone}
               onChange={(e) => onPhoneChange(e.target.value)}
+              required
+              onInvalid={(e) => {
+                const field = e.currentTarget;
+                field.setCustomValidity(
+                  field.validity.typeMismatch ? labels.errEmailInvalid : labels.errFieldRequired
+                );
+              }}
+              onInput={(e) => e.currentTarget.setCustomValidity('')}
               className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors`}
               style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
               onFocus={(e) => e.target.style.borderColor = primaryColor}
               onBlur={(e) => e.target.style.borderColor = ''}
-              placeholder="+1 (555) 123-4567"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            placeholder={labels.phonePlaceholder}
             />
           </div>
         </div>
@@ -748,30 +911,16 @@ function DetailsStep({
             style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
             onFocus={(e) => e.target.style.borderColor = primaryColor}
             onBlur={(e) => e.target.style.borderColor = ''}
+            dir={isRTL ? 'rtl' : 'ltr'}
             placeholder={labels.notesPlaceholder}
           />
         </div>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
-        <button
-          type="submit"
-          disabled={submitting || !name || !email}
-          className="w-full flex items-center justify-center gap-2 px-4 py-3 text-white font-medium rounded-lg transition-all hover:opacity-90 disabled:opacity-50"
-          style={{ backgroundColor: primaryColor, borderRadius: theme?.borderRadius || '0.5rem' }}
-        >
-          {submitting ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" />
-              {labels.processing}
-            </>
-          ) : (
-            <>
-              {nextStepLabel}
-              {isRTL ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
-            </>
-          )}
-        </button>
+        {/* Submitted from the pinned footer's button, which calls the same
+            handler. Kept as a form so Enter still submits. */}
+        <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
       </form>
     </div>
   );
@@ -794,6 +943,8 @@ interface PaymentStepProps {
   theme?: BlockRendererProps['theme'];
   locale?: string;
   subdomain?: string;
+  /** A smart link's identifier, where there is no subdomain. */
+  userCode?: string;
   customerName: string;
   customerEmail: string;
   isPreview?: boolean;
@@ -805,9 +956,30 @@ if (typeof window !== 'undefined' && !(window as unknown as Record<string, unkno
   (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache = {};
 }
 
-// Track in-flight payment intent requests to prevent duplicate API calls
+/**
+ * The in-flight PaymentIntent request per booking — the PROMISE, not a flag.
+ *
+ * This was a `Set<string>` of booking ids, and a second mount that found its id
+ * in the set simply returned. Combined with the effect's `cancelled` flag that
+ * lost the answer entirely under React's development double-mount:
+ *
+ *   run #1   adds the id, starts the fetch
+ *   cleanup  sets run #1's `cancelled = true`
+ *   run #2   sees the id already in the set and returns, setting nothing
+ *   response belongs to run #1, which is cancelled — so it is discarded
+ *
+ * Nobody called `setPaymentReady(true)`, so the step sat on its spinner forever
+ * while Stripe had a perfectly good PaymentIntent waiting, and every retry made
+ * another one. Holding the promise lets the second mount await the first
+ * mount's request rather than abandon it: still one API call per booking, but
+ * whichever mount is alive at the end receives the result.
+ */
+type PaymentIntentInfo = { clientSecret: string; publishableKey: string; connectedAccountId?: string };
+/** `info: null` = the server answered, but this booking needs no payment form. */
+type PaymentIntentOutcome = { info: PaymentIntentInfo | null; error?: string };
+
 if (typeof window !== 'undefined' && !(window as unknown as Record<string, unknown>).__paymentIntentRequests) {
-  (window as unknown as Record<string, Set<string>>).__paymentIntentRequests = new Set();
+  (window as unknown as Record<string, Map<string, Promise<PaymentIntentOutcome>>>).__paymentIntentRequests = new Map();
 }
 
 function getPaymentIntentCache(): Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }> {
@@ -815,12 +987,12 @@ function getPaymentIntentCache(): Record<string, { clientSecret: string; publish
   return (window as unknown as Record<string, Record<string, { clientSecret: string; publishableKey: string; connectedAccountId?: string }>>).__paymentIntentsCache || {};
 }
 
-function getInFlightRequests(): Set<string> {
-  if (typeof window === 'undefined') return new Set();
-  return (window as unknown as Record<string, Set<string>>).__paymentIntentRequests || new Set();
+function getInFlightRequests(): Map<string, Promise<PaymentIntentOutcome>> {
+  if (typeof window === 'undefined') return new Map();
+  return (window as unknown as Record<string, Map<string, Promise<PaymentIntentOutcome>>>).__paymentIntentRequests || new Map();
 }
 
-function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, submitting: parentSubmitting, error: parentError, isRTL, labels, theme, locale = 'en', subdomain, customerName, customerEmail, isPreview }: PaymentStepProps) {
+function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, submitting: parentSubmitting, error: parentError, isRTL, labels, theme, locale = 'en', subdomain, userCode, customerName, customerEmail, isPreview }: PaymentStepProps) {
   const [processing, setProcessing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [paymentReady, setPaymentReady] = useState(false);
@@ -836,6 +1008,11 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
     }
     return null;
   });
+
+  /** Only a real split counts — one instalment is just the price. */
+  const plan = service.paymentPlan && service.paymentPlan.installmentCount > 1
+    ? service.paymentPlan
+    : undefined;
 
   // Use parent error if provided, otherwise local error
   const displayError = parentError || localError;
@@ -870,17 +1047,100 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
       return;
     }
 
-    // Check if a request is already in-flight for this booking
+    /*
+     * One request per booking, and whoever is still mounted gets the answer.
+     *
+     * The second mount used to return here on finding the booking in flight,
+     * and the first mount's response was then dropped by its own `cancelled`
+     * flag — so the PaymentIntent existed on Stripe and nothing on screen ever
+     * moved. Awaiting the shared promise keeps the deduplication and delivers
+     * the result to the mount that survives.
+     */
     const inFlightRequests = getInFlightRequests();
-    if (inFlightRequests.has(bookingId)) {
-      // Request already in progress, skip duplicate
-      return;
-    }
-
     let cancelled = false;
 
+    const requestPaymentIntent = (): Promise<PaymentIntentOutcome> => {
+      const existing = inFlightRequests.get(bookingId);
+      if (existing) return existing;
+
+      const request = (async (): Promise<PaymentIntentOutcome> => {
+        try {
+          // In preview mode, don't pass subdomain - use authenticated user instead
+          const response = await fetch('/api/website/payment-intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              subdomain: isPreview ? '' : (subdomain || ''),
+          userCode: isPreview ? undefined : (userCode || undefined),
+              booking_id: bookingId,
+              service_id: service.id,
+              /*
+                CHARGE WHAT THE CLIENT WAS SHOWN.
+
+                This sent `service.price` — the full amount — while the summary
+                above it said "due today" beside a single instalment. A client
+                agreeing to 3 × $333.33 was charged $1,000 in one go. The figure
+                billed and the figure promised have to be the same number, and
+                that number is the first instalment when a plan applies.
+              */
+              amount: plan ? plan.installmentAmount : service.price,
+              currency: plan ? plan.currency : service.currency,
+              customer_email: customerEmail,
+              description: plan
+                ? `${service.name} — ${plan.installmentCount > 1 ? `1/${plan.installmentCount}` : ''}`.trim()
+                : service.name,
+              metadata: {
+                customer_name: customerName,
+                // So the charge can be reconciled to the agreement it belongs to.
+                ...(plan
+                  ? {
+                      payment_plan_id: plan.id,
+                      installment_number: '1',
+                      installment_count: String(plan.installmentCount),
+                      plan_total_amount: String(plan.totalAmount),
+                    }
+                  : {}),
+              }
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.success && data.clientSecret && data.publishableKey) {
+            const paymentInfo: PaymentIntentInfo = {
+              clientSecret: data.clientSecret,
+              publishableKey: data.publishableKey,
+              connectedAccountId: data.connectedAccountId
+            };
+
+            // Cached before anyone awaits, so a mount arriving after this
+            // resolves never re-asks.
+            getPaymentIntentCache()[bookingId] = paymentInfo;
+            return { info: paymentInfo };
+          }
+
+          if (
+            data.error?.includes('Payment processing is not set up') ||
+            data.error?.includes('Payment processing is not configured')
+          ) {
+            // Stripe not configured — the step falls back to its skip button.
+            return { info: null };
+          }
+
+          return { info: null, error: data.error || labels.errPaymentInit };
+        } catch {
+          return { info: null, error: labels.errPaymentInitRetry };
+        } finally {
+          inFlightRequests.delete(bookingId);
+        }
+      })();
+
+      inFlightRequests.set(bookingId, request);
+      return request;
+    };
+
     const initializePayment = async () => {
-      // Double-check cache before API call (race condition protection)
+      // The cache may have been filled between render and effect.
       const cachedBeforeCall = getPaymentIntentCache()[bookingId];
       if (cachedBeforeCall) {
         setPaymentData(cachedBeforeCall);
@@ -888,67 +1148,21 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         return;
       }
 
-      // Double-check in-flight requests
-      if (inFlightRequests.has(bookingId)) {
-        return;
+      setProcessing(true);
+      const outcome = await requestPaymentIntent();
+
+      // This mount is gone; the result is in the cache for whoever replaced it.
+      if (cancelled) return;
+
+      if (outcome.info) {
+        setPaymentData(outcome.info);
+        setPaymentReady(true);
+      } else if (outcome.error) {
+        setLocalError(outcome.error);
+      } else {
+        setPaymentReady(true);
       }
-
-      // Mark request as in-flight
-      inFlightRequests.add(bookingId);
-
-      try {
-        setProcessing(true);
-        // In preview mode, don't pass subdomain - use authenticated user instead
-        const response = await fetch('/api/website/payment-intent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subdomain: isPreview ? '' : (subdomain || ''),
-            booking_id: bookingId,
-            service_id: service.id,
-            amount: service.price,
-            currency: service.currency,
-            customer_email: customerEmail,
-            description: service.name,
-            metadata: {
-              customer_name: customerName
-            }
-          })
-        });
-
-        if (cancelled) return;
-
-        const data = await response.json();
-
-        if (data.success && data.clientSecret && data.publishableKey) {
-          const paymentInfo = {
-            clientSecret: data.clientSecret,
-            publishableKey: data.publishableKey,
-            connectedAccountId: data.connectedAccountId
-          };
-
-          // Store in window cache to survive HMR and re-renders
-          getPaymentIntentCache()[bookingId] = paymentInfo;
-
-          setPaymentData(paymentInfo);
-          setPaymentReady(true);
-        } else if (data.error?.includes('Payment processing is not set up') || data.error?.includes('Payment processing is not configured')) {
-          // Stripe not configured - allow skip for testing
-          setPaymentReady(true);
-        } else {
-          setLocalError(data.error || 'Failed to initialize payment');
-        }
-      } catch {
-        if (!cancelled) {
-          setLocalError('Failed to initialize payment. Please try again.');
-        }
-      } finally {
-        // Remove from in-flight tracking
-        inFlightRequests.delete(bookingId);
-        if (!cancelled) {
-          setProcessing(false);
-        }
-      }
+      setProcessing(false);
     };
 
     initializePayment();
@@ -969,6 +1183,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain: isPreview ? '' : (subdomain || ''),
+          userCode: isPreview ? undefined : (userCode || undefined),
           booking_id: bookingId,
           payment_intent_id: paymentIntentId,
           payment_status: 'paid'
@@ -1000,6 +1215,36 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
     // For free services or when Stripe is not configured
     setProcessing(true);
     try {
+      /*
+       * This path has to finalize for itself.
+       *
+       * It used to reach `booking/finalize` through `onComplete`, which is also
+       * what the paid path calls after finalizing — so the paid path finalized
+       * twice and sent every email twice. `onComplete` now only advances the
+       * flow, which leaves this branch, where no payment ever happens, as the
+       * one that has to confirm the booking.
+       *
+       * No `payment_intent_id`: there was no charge. `finalize` skips the
+       * payment record and simply confirms the booking.
+       */
+      const response = await fetch('/api/website/booking/finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subdomain: isPreview ? '' : (subdomain || ''),
+          userCode: isPreview ? undefined : (userCode || undefined),
+          booking_id: bookingId
+        })
+      });
+
+      const result = await response.json();
+      if (!result.success) {
+        console.error('Booking finalization failed:', result.error);
+      }
+
+      await onComplete();
+    } catch (err) {
+      console.error('Failed to finalize booking:', err);
       await onComplete();
     } finally {
       setProcessing(false);
@@ -1008,14 +1253,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
 
   return (
     <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm"
-      >
-        {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-        {labels.back}
-      </button>
+      {/* Back lives in the frozen footer now, one row shared by every step. */}
 
       <div className="text-center py-4">
         <div
@@ -1033,19 +1271,68 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
         <p className="text-gray-600 dark:text-gray-300">{labels.securePayment}</p>
       </div>
 
-      {/* Payment summary */}
+      {/* Payment summary — the same shape the details step shows, so the terms
+          do not change wording between the step that agrees to them and the
+          step that charges for them. */}
       <div
         className="p-4 bg-gray-50 dark:bg-slate-700 rounded-xl"
         style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
       >
-        <div className="flex items-center justify-between">
-          <div>
-            <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
-            <p className="text-sm text-gray-500 dark:text-gray-400">{formatDuration(service.duration_minutes, labels)}</p>
-          </div>
-          <div className="text-xl font-bold" style={{ color: primaryColor }}>
-            {formatAmount(service.price, service.currency, locale, labels.free)}
-          </div>
+        <div>
+          <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
+          <p className="text-sm text-gray-500 dark:text-gray-400">{formatDuration(service.duration_minutes, labels)}</p>
+        </div>
+
+        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-slate-600">
+          {plan ? (
+            <>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="flex items-center gap-1" aria-hidden="true">
+                  {Array.from({ length: Math.min(plan.installmentCount, 6) }).map((_, i) => (
+                    <span
+                      key={i}
+                      className="block h-1.5 w-5 rounded-full"
+                      style={{ backgroundColor: i === 0 ? primaryColor : `${primaryColor}25` }}
+                    />
+                  ))}
+                </div>
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {labels.paymentPlan}
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.dueToday}</span>
+                <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
+                  {formatAmount(plan.installmentAmount, plan.currency, locale, labels.free)}
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between gap-3 mt-1.5">
+                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planThen}</span>
+                <span className="text-sm text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                  {labels.planThenValue
+                    .replace('{count}', String(plan.installmentCount - 1))
+                    .replace('{amount}', formatAmount(plan.installmentAmount, plan.currency, locale, labels.free))
+                    .replace('{frequency}', labels.frequency[plan.frequency])}
+                </span>
+              </div>
+
+              <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t border-gray-200/70 dark:border-slate-600/70">
+                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+                <span className="text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                  {formatAmount(plan.totalAmount, plan.currency, locale, labels.free)}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+              <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
+                {formatAmount(service.price, service.currency, locale, labels.free)}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1062,8 +1349,12 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
           publishableKey={paymentData.publishableKey}
           clientSecret={paymentData.clientSecret}
           connectedAccountId={paymentData.connectedAccountId}
-          amount={service.price || 0}
-          currency={service.currency}
+          // What the button says has to be what the card is charged. This read
+          // `service.price` — the whole agreement — under a summary that had
+          // just promised "due today: ₪333", so the client was asked to confirm
+          // ₪1,000 for a payment of ₪333.
+          amount={plan ? plan.installmentAmount : (service.price || 0)}
+          currency={plan ? plan.currency : service.currency}
           onSuccess={handlePaymentSuccess}
           onError={handlePaymentError}
           primaryColor={primaryColor}
@@ -1156,14 +1447,7 @@ function IntakeStep({
 
   return (
     <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm"
-      >
-        {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-        {labels.back}
-      </button>
+      {/* Back lives in the frozen footer now, one row shared by every step. */}
 
       <div className="text-center py-2">
         <div
@@ -1263,9 +1547,16 @@ interface ConfirmationStepProps {
   labels: typeof LABELS.en;
   theme?: BlockRendererProps['theme'];
   locale?: string;
+  /** False when the flow began on one service — there is no list to go back to. */
+  showBookAnother?: boolean;
 }
 
-function ConfirmationStep({ service, slot, clientEmail, primaryColor, onReset, isRTL, labels, theme, locale = 'en' }: ConfirmationStepProps) {
+export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onReset, isRTL, labels, theme, locale = 'en', showBookAnother = true }: ConfirmationStepProps) {
+  /** Only a real split counts — one instalment is just the price. */
+  const confirmedPlan = service.paymentPlan && service.paymentPlan.installmentCount > 1
+    ? service.paymentPlan
+    : undefined;
+
   const formatFullDate = (isoString: string) => {
     const date = new Date(isoString);
     return date.toLocaleDateString(locale, {
@@ -1311,43 +1602,108 @@ function ConfirmationStep({ service, slot, clientEmail, primaryColor, onReset, i
           {labels.confirmationEmailSent} <strong>{clientEmail}</strong>
         </p>
 
+        {/*
+          The same card the details and payment steps use.
+
+          This one was its own design — narrower, centred, `text-left` hardcoded
+          so every row read from the wrong side in Hebrew — and it dropped the
+          money entirely, which is the part a person most wants to see confirmed.
+          Now it is the service, then what was actually charged and what is
+          still to come, in the layout the two steps before it already used.
+        */}
         <div
-          className="bg-gray-50 dark:bg-slate-700 rounded-xl p-6 text-left max-w-sm mx-auto mb-8"
+          className="p-4 bg-gray-50 dark:bg-slate-700 rounded-xl text-start mb-8"
           style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
         >
-          <h4 className="font-semibold text-gray-900 dark:text-white mb-4">{labels.bookingDetails}</h4>
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500 dark:text-gray-400">{labels.service}</span>
-              <span className="font-medium text-gray-900 dark:text-white">{service.name}</span>
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: `${primaryColor}15` }}
+            >
+              <Calendar className="w-5 h-5" style={{ color: primaryColor }} />
             </div>
-            {/* Only show date/time if slot exists (scheduled booking) */}
-            {slot && (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-gray-500 dark:text-gray-400">{labels.date}</span>
-                  <span className="font-medium text-gray-900 dark:text-white">{formatFullDate(slot.start)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500 dark:text-gray-400">{labels.time}</span>
-                  <span className="font-medium text-gray-900 dark:text-white">{formatTime(slot.start)}</span>
-                </div>
-              </>
-            )}
-            <div className="flex justify-between">
-              <span className="text-gray-500 dark:text-gray-400">{labels.duration}</span>
-              <span className="font-medium text-gray-900 dark:text-white">{formatDuration(service.duration_minutes, labels)}</span>
+            <div className="min-w-0">
+              <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                {slot
+                  ? `${formatFullDate(slot.start)} · ${formatTime(slot.start)}`
+                  : formatDuration(service.duration_minutes, labels)}
+              </p>
             </div>
           </div>
+
+          {service.price !== null && service.price > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-slate-600">
+              {confirmedPlan ? (
+                <>
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="flex items-center gap-1" aria-hidden="true">
+                      {Array.from({ length: Math.min(confirmedPlan.installmentCount, 6) }).map((_, i) => (
+                        <span
+                          key={i}
+                          className="block h-1.5 w-5 rounded-full"
+                          style={{ backgroundColor: i === 0 ? primaryColor : `${primaryColor}25` }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                      {labels.paymentPlan}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-sm text-gray-600 dark:text-gray-300">{labels.paidToday}</span>
+                    <span className="text-sm font-semibold whitespace-nowrap" style={{ color: primaryColor }}>
+                      {formatAmount(confirmedPlan.installmentAmount, confirmedPlan.currency, locale, labels.free)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between gap-3 mt-1.5">
+                    <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planThen}</span>
+                    <span className="text-sm text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                      {labels.planThenValue
+                        .replace('{count}', String(confirmedPlan.installmentCount - 1))
+                        .replace('{amount}', formatAmount(confirmedPlan.installmentAmount, confirmedPlan.currency, locale, labels.free))
+                        .replace('{frequency}', labels.frequency[confirmedPlan.frequency])}
+                    </span>
+                  </div>
+
+                  <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t border-gray-200/70 dark:border-slate-600/70">
+                    <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+                    <span className="text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                      {formatAmount(confirmedPlan.totalAmount, confirmedPlan.currency, locale, labels.free)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+                  <span className="text-sm font-semibold whitespace-nowrap" style={{ color: primaryColor }}>
+                    {formatAmount(service.price, service.currency, locale, labels.free)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        <button
-          onClick={onReset}
-          className="px-6 py-2.5 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-all"
-          style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
-        >
-          {labels.bookAnotherService}
-        </button>
+        {/*
+          No "book another service".
+
+          A landing page sells one service and the modal opens straight onto it,
+          so there is no catalogue to return to — the button offered a journey
+          back to a screen this flow never shows. It is kept for a flow that
+          began at a service list, which is the only place it means anything.
+        */}
+        {onReset && showBookAnother && (
+          <button
+            onClick={onReset}
+            className="px-6 py-2.5 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-all"
+            style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
+          >
+            {labels.bookAnotherService}
+          </button>
+        )}
       </motion.div>
     </div>
   );
@@ -1362,9 +1718,20 @@ type CurrentStepType = 'services' | 'datetime' | 'details' | 'payment' | 'intake
 interface ProcessFlowSectionProps extends BlockRendererProps {
   /** Callback when step changes - used by BookingModal to sync sticky header */
   onStepChange?: (step: CurrentStepType, completedSteps: CurrentStepType[]) => void;
+  /**
+   * Hand the step's controls to the host instead of drawing them inline.
+   *
+   * A modal wants them frozen at its bottom edge, outside the scrolling
+   * region — the same arrangement its header already has. That cannot be done
+   * from in here: these live inside the scroll area, under a slider that clips
+   * and transforms. So when a host asks for them, it renders them; when nobody
+   * asks, the section draws them itself, which is what the in-page website
+   * flow needs.
+   */
+  onFooterActionsChange?: (actions: ProcessFlowFooterActions | null) => void;
 }
 
-export function ProcessFlowSection({ content, styles, theme, isRTL, className, locale = 'en', subdomain, isPreview, onStepChange }: ProcessFlowSectionProps) {
+export function ProcessFlowSection({ content, styles, theme, isRTL, className, locale = 'en', subdomain, userCode, isPreview, onStepChange, onFooterActionsChange }: ProcessFlowSectionProps) {
   const typedContent = content as unknown as ProcessFlowContent;
   const {
     title,
@@ -1413,7 +1780,11 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       description: initialService.description,
       duration_minutes: initialService.duration_minutes,
       price: initialService.price,
-      currency: initialService.currency
+      currency: initialService.currency,
+      // Rebuilt field by field, so anything not named here is silently lost —
+      // which is exactly what happened to the plan between the pricing card and
+      // the payment step.
+      paymentPlan: initialService.paymentPlan
     } : null
   );
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -1469,7 +1840,8 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         description: initialService.description,
         duration_minutes: initialService.duration_minutes,
         price: initialService.price,
-        currency: initialService.currency
+        currency: initialService.currency,
+        paymentPlan: initialService.paymentPlan
       });
       setSelectedDate('');
       setSelectedSlot(null);
@@ -1504,14 +1876,18 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       try {
         // In preview mode (no subdomain), use authenticated endpoint
         // In public website (with subdomain), use public endpoint
+        // Either identifier. A smart link has no subdomain, and without this
+        // the shared flow could not fetch an intake form there at all.
         const url = subdomain
           ? `/api/website/booking/intake?subdomain=${subdomain}`
+          : userCode
+          ? `/api/website/booking/intake?user_code=${userCode}`
           : `/api/intake/settings`;
 
         const response = await fetch(url);
         const data = await response.json();
 
-        if (subdomain) {
+        if (subdomain || userCode) {
           // Public endpoint response
           if (data.success && data.hasIntake && data.template) {
             setIntakeTemplate(data.template);
@@ -1535,21 +1911,26 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       }
     };
     fetchIntakeTemplate();
-  }, [subdomain, flowIncludesIntake]);
+  }, [subdomain, userCode, flowIncludesIntake]);
 
   const fetchServices = async () => {
     setLoadingServices(true);
     try {
-      const response = await fetch(`/api/website/blocks/services?active_only=true${subdomain ? `&subdomain=${subdomain}` : ''}`);
+      const response = await fetch(
+        `/api/website/blocks/services?active_only=true${subdomain ? `&subdomain=${subdomain}` : ''}${userCode ? `&user_code=${userCode}` : ''}`
+      );
       const data = await response.json();
       if (data.success && data.services) {
-        setServices(data.services.map((s: { id: string; service_name: string; description: string | null; duration_minutes: number; price: number | null; currency: string }) => ({
+        setServices(data.services.map((s: { id: string; service_name: string; description: string | null; duration_minutes: number; price: number | null; currency: string; paymentPlan?: ServicePaymentPlan }) => ({
           id: s.id,
           name: s.service_name,
           description: s.description,
           duration_minutes: s.duration_minutes,
           price: s.price,
-          currency: s.currency || 'USD'
+          currency: s.currency || 'USD',
+          // Kept, so a service picked from the list describes its terms as
+          // fully as one arrived at from a pricing card.
+          paymentPlan: s.paymentPlan
         })));
       }
     } catch {
@@ -1568,7 +1949,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       setError(null);
 
       try {
-        const url = `/api/website/scheduling/availability?service_id=${selectedService.id}&date=${selectedDate}${subdomain ? `&subdomain=${subdomain}` : ''}`;
+        const url = `/api/website/scheduling/availability?service_id=${selectedService.id}&date=${selectedDate}${subdomain ? `&subdomain=${subdomain}` : ''}${userCode ? `&user_code=${userCode}` : ''}`;
         const response = await fetch(url);
         const data = await response.json();
 
@@ -1591,14 +1972,14 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           setError(data.error || 'Failed to load available times');
         }
       } catch {
-        setError('Failed to load available times');
+        setError(labels.errLoadTimes);
       } finally {
         setLoadingSlots(false);
       }
     };
 
     fetchSlots();
-  }, [selectedService, selectedDate, subdomain]);
+  }, [selectedService, selectedDate, subdomain, userCode]);
 
   // Navigation helpers
   const goToStep = useCallback((step: CurrentStep, direction: 'forward' | 'backward' = 'forward') => {
@@ -1640,11 +2021,11 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const handleSubmitDetails = async () => {
     // For scheduled flows, require slot; for non-scheduled flows, slot is optional
     if (!selectedService || !clientName || !clientEmail) {
-      setError('Please fill in all required fields');
+      setError(labels.errRequiredFields);
       return;
     }
     if (hasScheduling && !selectedSlot) {
-      setError('Please select a date and time');
+      setError(labels.errSelectDateTime);
       return;
     }
 
@@ -1678,6 +2059,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain: isPreview ? '' : (subdomain || ''),
+          userCode: isPreview ? undefined : (userCode || undefined),
           service_id: selectedService.id,
           start_time: startTimeISO, // Optional - undefined for non-scheduled bookings
           name: clientName,
@@ -1707,41 +2089,27 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         setError(data.error || 'Failed to create booking');
       }
     } catch {
-      setError('Failed to create booking. Please try again.');
+      setError(labels.errCreateBooking);
     } finally {
       setSubmitting(false);
     }
   };
 
   const handlePaymentComplete = async () => {
-    // Payment succeeded - finalize the booking (create contact, update status)
-    setSubmitting(true);
-    setError(null);
-
-    try {
-      // In preview mode, don't pass subdomain - use authenticated user instead
-      const response = await fetch('/api/website/booking/finalize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          subdomain: isPreview ? '' : (subdomain || ''),
-          booking_id: bookingId
-        })
-      });
-
-      const data = await response.json();
-
-      if (!data.success) {
-        // Log warning but continue - payment was successful
-        console.warn('Failed to finalize booking:', data.error);
-      }
-    } catch (err) {
-      // Log warning but continue - payment was successful
-      console.warn('Error finalizing booking:', err);
-    } finally {
-      setSubmitting(false);
-    }
-
+    /*
+     * Advance the flow. Do NOT finalize — the payment step already did.
+     *
+     * This ran `booking/finalize` a SECOND time. `PaymentStep.handlePaymentSuccess`
+     * finalizes with the payment intent and then calls `onComplete()`, which is
+     * this function, so one payment produced two finalize calls — and finalize
+     * sends the confirmation, the intake request and the receipt on every call.
+     * The client got each email twice.
+     *
+     * The payment step's call is the one that matters: it carries
+     * `payment_intent_id` and `payment_status`, which this one never had, so it
+     * is the one that can actually record the payment. This is left with the
+     * job it is named for.
+     */
     markStepComplete('payment');
 
     if (hasIntake) {
@@ -1754,7 +2122,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   // Handle intake form submission using capability-based API
   const handleIntakeFormSubmit = async (responses: Record<string, any>) => {
     if (!intakeTemplate || !bookingId) {
-      setError('Missing intake template or booking');
+      setError(labels.errMissingIntake);
       return;
     }
 
@@ -1776,6 +2144,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain: isPreview ? '' : (subdomain || ''),
+          userCode: isPreview ? undefined : (userCode || undefined),
           bookingId,
           templateId: intakeTemplate.id,
           templateKey: intakeTemplate.template_key,
@@ -1792,7 +2161,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         setError(data.error || 'Failed to submit intake form');
       }
     } catch {
-      setError('Failed to submit. Please try again.');
+      setError(labels.errSubmit);
     } finally {
       setSubmitting(false);
     }
@@ -1818,6 +2187,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain: isPreview ? '' : (subdomain || ''),
+          userCode: isPreview ? undefined : (userCode || undefined),
           booking_id: bookingId,
           name: clientName,
           email: clientEmail,
@@ -1834,7 +2204,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
         setError(data.error || 'Failed to submit intake form');
       }
     } catch {
-      setError('Failed to submit. Please try again.');
+      setError(labels.errSubmit);
     } finally {
       setSubmitting(false);
     }
@@ -1881,6 +2251,58 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
 
   // When inside modal (onStepChange provided), use wider layout
   const isInModal = !!onStepChange;
+
+  /**
+   * What the pinned footer shows for the step on screen.
+   *
+   * Built here because this component already owns everything the controls
+   * need — the client's details, the submitting flag, and where each step goes
+   * back to. The steps that have no primary action (picking a service, picking
+   * a time) advance by what the client taps in the step itself, so they
+   * contribute a Back button and nothing else; the payment step keeps its own
+   * button, because that one is wired to the Stripe form's state.
+   */
+  const footerActions = useMemo<ProcessFlowFooterActions | null>(() => {
+    if (currentStep === 'confirmation') return null;
+
+    const backToServices = hasInitialService
+      ? undefined
+      : () => goToStep('services', 'backward');
+
+    if (currentStep === 'services') return null;
+
+    if (currentStep === 'datetime') {
+      return { onBack: backToServices, backLabel: labels.backToServices, busyLabel: labels.processing };
+    }
+
+    if (currentStep === 'details') {
+      return {
+        onBack: hasScheduling ? () => goToStep('datetime', 'backward') : backToServices,
+        backLabel: hasScheduling ? labels.backToDateTime : labels.backToServices,
+        busyLabel: labels.processing,
+        primary: {
+          label: getNextStepLabel(),
+          onClick: handleSubmitDetails,
+          // Phone joins name and email: a booking with no way to reach the
+          // client by phone is one the business has to chase.
+          disabled: submitting || !clientName || !clientEmail || !clientPhone,
+          busy: submitting,
+        },
+      };
+    }
+
+    if (currentStep === 'intake' || currentStep === 'payment') {
+      return { onBack: () => goToStep('details', 'backward'), backLabel: labels.back, busyLabel: labels.processing };
+    }
+
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep, hasInitialService, hasScheduling, submitting, clientName, clientEmail, clientPhone, labels]);
+
+  /* Told to the host, so a modal can freeze them at its bottom edge. */
+  useEffect(() => {
+    onFooterActionsChange?.(footerActions);
+  }, [footerActions, onFooterActionsChange]);
 
   return (
     <section
@@ -1937,10 +2359,16 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           </div>
         )}
 
-        {/* Content Card */}
+        {/* Content Card.
+
+            Fades in rather than rising: `y` leaves `transform: translateY(0)`
+            on this element even at rest, and a transformed ancestor becomes the
+            containing block for `position: sticky` — which silently defeated
+            the footer below, since it would then stick to this card instead of
+            to the modal's scroll area. */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
           className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg p-6 sm:p-8"
           style={{ borderRadius: theme?.borderRadius || '1rem' }}
@@ -1999,7 +2427,13 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     onEmailChange={setClientEmail}
                     onPhoneChange={setClientPhone}
                     onNotesChange={setClientNotes}
-                    onBack={() => goToStep(hasScheduling ? 'datetime' : 'services', 'backward')}
+                    onBack={
+                      hasScheduling
+                        ? () => goToStep('datetime', 'backward')
+                        : hasInitialService
+                          ? undefined
+                          : () => goToStep('services', 'backward')
+                    }
                     onSubmit={handleSubmitDetails}
                     submitting={submitting}
                     error={error}
@@ -2027,6 +2461,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     theme={theme}
                     locale={locale}
                     subdomain={subdomain}
+                    userCode={userCode}
                     customerName={clientName}
                     customerEmail={clientEmail}
                     isPreview={isPreview}
@@ -2083,11 +2518,64 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     labels={labels}
                     theme={theme}
                     locale={locale}
+                    showBookAnother={!hasInitialService}
                   />
                 )}
               </motion.div>
             </AnimatePresence>
           </div>
+
+          {/*
+            The step's controls, pinned to the bottom of the modal.
+
+            They used to sit at the end of each step, so on a form asking for a
+            name, an email, a phone and notes the button the client came to
+            press was below the fold. They cannot be sticky in place — the
+            slider above clips with `overflow-hidden` and its slide animation
+            keeps a transform on the moving panel — so they live out here, one
+            row shared by every step, and stick against the modal's own scroll
+            area.
+          */}
+          {footerActions && !onFooterActionsChange && (
+            <div
+              className="mt-6 pt-4 border-t border-gray-100 dark:border-slate-700"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            >
+              <div className="flex items-center gap-3">
+                {footerActions.onBack && (
+                  <button
+                    type="button"
+                    onClick={footerActions.onBack}
+                    className="flex items-center gap-2 px-4 py-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm font-medium"
+                  >
+                    {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
+                    {footerActions.backLabel}
+                  </button>
+                )}
+                {footerActions.primary && (
+                  <button
+                    type="button"
+                    onClick={footerActions.primary.onClick}
+                    disabled={footerActions.primary.disabled}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-white font-medium rounded-lg transition-all hover:opacity-90 disabled:opacity-50"
+                    style={{ backgroundColor: primaryColor, borderRadius: theme?.borderRadius || '0.5rem' }}
+                  >
+                    {footerActions.primary.busy ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        {labels.processing}
+                      </>
+                    ) : (
+                      <>
+                        {footerActions.primary.label}
+                        {isRTL ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </motion.div>
       </div>
     </section>

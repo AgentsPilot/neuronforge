@@ -10,6 +10,7 @@
  */
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import { planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ service: 'PaymentPlanRepository' });
@@ -336,37 +337,41 @@ export class PaymentPlanRepository {
         throw new Error(`Currency ${installmentCurrency} is not supported by this plan`);
       }
 
-      // Calculate amounts
       const totalAmount = customAmount || plan.total_amount;
-      const installmentAmount = totalAmount / plan.installment_count;
 
-      // Generate installment dates
-      const installments: PaymentPlanInstallmentInsert[] = [];
-      let currentDate = new Date(startDate);
+      /**
+       * The split, in minor units, from the tested schedule.
+       *
+       * This did the arithmetic in floats: `100 / 3` gave three amounts summing
+       * to 99.99, and the correction that followed produced
+       * `33.340000000000005`, which only survived because a DECIMAL(10,2)
+       * column rounded it back. For a three-decimal currency there is no such
+       * rescue, and for JPY it produced fractional yen in a column that cannot
+       * hold them.
+       *
+       * `planSchedule` works in minor units throughout, puts the remainder on
+       * the final period, and is verified across 72 frequency/count/currency
+       * combinations to collect exactly the total.
+       */
+      const schedule = planSchedule(
+        totalAmount,
+        installmentCurrency,
+        plan.installment_frequency as PlanFrequency,
+        plan.installment_count,
+        new Date(startDate)
+      );
 
-      for (let i = 1; i <= plan.installment_count; i++) {
-        installments.push({
-          user_id: userId,
-          payment_plan_id: planId,
-          booking_id: bookingId || null,
-          contact_id: contactId,
-          installment_number: i,
-          amount: Math.round(installmentAmount * 100) / 100, // Round to 2 decimal places
-          currency: installmentCurrency,
-          due_date: currentDate.toISOString().split('T')[0],
-          status: 'pending'
-        });
-
-        // Calculate next due date
-        currentDate = this.addFrequencyToDate(currentDate, plan.installment_frequency);
-      }
-
-      // Handle rounding differences on last installment
-      const totalCalculated = installments.reduce((sum, i) => sum + i.amount, 0);
-      const difference = totalAmount - totalCalculated;
-      if (difference !== 0) {
-        installments[installments.length - 1].amount += difference;
-      }
+      const installments: PaymentPlanInstallmentInsert[] = schedule.installments.map(period => ({
+        user_id: userId,
+        payment_plan_id: planId,
+        booking_id: bookingId || null,
+        contact_id: contactId,
+        installment_number: period.installmentNumber,
+        amount: period.amount,
+        currency: installmentCurrency,
+        due_date: period.dueDate.toISOString().split('T')[0],
+        status: 'pending' as const
+      }));
 
       logger.info({
         userId,

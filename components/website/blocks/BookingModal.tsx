@@ -13,9 +13,10 @@
 
 import { useEffect, useCallback, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Calendar, Clock, User, CreditCard, FileText, Check } from 'lucide-react';
-import { ProcessFlowSection } from './ProcessFlowSection';
+import { X, Calendar, Clock, User, CreditCard, FileText, Check, ArrowLeft, ArrowRight, Loader2 } from 'lucide-react';
+import { ProcessFlowSection, type ProcessFlowFooterActions } from './ProcessFlowSection';
 import type { PageTheme, FlowStep, SelectedServiceData } from './types';
+import { journeySteps } from '@/lib/business-os/clientJourney';
 import { flowHasScheduling, flowHasClientInfo } from './types';
 import type { Locale } from '@/lib/i18n/config';
 
@@ -32,8 +33,23 @@ interface BookingModalProps {
   pageId?: string;
   /** Website subdomain - required for intake and booking API calls */
   subdomain?: string;
+  /**
+   * A smart link's business identifier, where there is no subdomain.
+   *
+   * Without it this modal could not run on `/c/{userCode}/book` at all, which
+   * is why that surface had a second booking implementation of its own.
+   */
+  userCode?: string;
   /** Pre-selected service - skips service selection step */
   initialService?: SelectedServiceData | null;
+  /**
+   * Whether this business can actually take a card right now.
+   *
+   * Undefined means the caller does not know, and is read as ready — removing a
+   * payment step a business can honour is worse than leaving one it cannot,
+   * since this component only renders in the owner's own preview.
+   */
+  paymentsEnabled?: boolean;
 }
 
 // Step Indicator Component (moved from ProcessFlowSection for sticky header)
@@ -97,6 +113,17 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
   );
 }
 
+/** `journeySteps` names its steps differently from this modal's flow keys. */
+const STEP_TO_FLOW: Record<string, FlowStep | undefined> = {
+  // Choosing what to buy is the modal's own 'services' screen, not a flow step.
+  service: undefined,
+  datetime: 'scheduling',
+  details: 'client_info',
+  payment: 'payment',
+  intake: 'intake',
+  confirmation: 'confirmation',
+};
+
 export function BookingModal({
   isOpen,
   onClose,
@@ -106,11 +133,54 @@ export function BookingModal({
   clientFlow,
   pageId,
   subdomain,
-  initialService
+  userCode,
+  initialService,
+  paymentsEnabled
 }: BookingModalProps) {
-  // Default flow includes payment - this is the default booking journey
-  // Use new split steps as default - scheduling + client_info + payment for paid services
-  const effectiveFlow = clientFlow || ['scheduling', 'client_info', 'payment', 'confirmation'];
+  /*
+   * The journey belongs to the SERVICE the client just picked.
+   *
+   * This used to take a page-level `clientFlow` and, failing that, a hardcoded
+   * ['scheduling','client_info','payment','confirmation'] — one journey for a
+   * whole website, which is wrong for any business selling more than one kind
+   * of thing. A product with no date was asked to choose an appointment; an
+   * invoiced programme was asked for a card. The service CARD beside this modal
+   * was already printing the correct journey from the same two facts, so the
+   * client could read one thing and then be walked through another.
+   *
+   * `journeySteps` is the resolver every other surface already uses — the
+   * services list, the "how it works" section, and the standalone booking page
+   * a smart link opens. Using it here makes four surfaces agree instead of
+   * three agreeing and one improvising.
+   *
+   * The stored flow remains the fallback for a page whose blocks predate these
+   * facts, and for the catalogue step where no service has been chosen yet.
+   */
+  // Defaults to true: a caller that cannot answer should not silently remove a
+  // step the business may well be able to honour.
+  const processorReady = paymentsEnabled !== false;
+
+  const serviceHasJourneyFacts =
+    initialService?.is_scheduled !== undefined || initialService?.collection !== undefined;
+
+  const effectiveFlow: FlowStep[] = serviceHasJourneyFacts
+    ? (journeySteps(
+        {
+          is_scheduled: initialService?.is_scheduled,
+          collection: initialService?.collection,
+          price: initialService?.price,
+        },
+        // Whether a card can actually be charged. This was hardcoded `true`,
+        // which left the payment screen to refuse — showing the visitor an error
+        // about the business's payment setup. That is the owner's concern, never
+        // the client's, so the step is dropped instead and the booking completes
+        // unpaid. Defaults to ready when the caller does not know, so a preview
+        // still renders the full journey.
+        { processorReady }
+      )
+        .map(step => STEP_TO_FLOW[step])
+        .filter((step): step is FlowStep => Boolean(step)))
+    : (clientFlow || ['scheduling', 'client_info', 'payment', 'confirmation']);
 
   // Use helper functions to handle both legacy 'booking' and new 'scheduling'/'client_info' steps
   const hasScheduling = flowHasScheduling(effectiveFlow);
@@ -125,6 +195,17 @@ export function BookingModal({
     if (hasClientInfo) return 'details';
     return 'services';
   };
+
+  /**
+   * The step's controls, drawn by the modal rather than by the step.
+   *
+   * Frozen at the bottom edge the way the step indicator is frozen at the top:
+   * a sibling of the scrolling region, not a child of it. Inside the flow they
+   * could not be — they sit under a slider that clips with `overflow-hidden`
+   * and keeps a transform on the moving panel, either of which defeats
+   * `position: sticky`.
+   */
+  const [footerActions, setFooterActions] = useState<ProcessFlowFooterActions | null>(null);
 
   // Track current step and completed steps for the sticky header
   const [currentStep, setCurrentStep] = useState<CurrentStep>(getInitialStep());
@@ -202,6 +283,12 @@ export function BookingModal({
             className="fixed inset-4 md:inset-8 lg:inset-16 z-50 flex items-center justify-center"
           >
             <div
+              // One direction for the whole dialog rather than per fragment.
+              // The indicator and the footer each set their own, so anything
+              // between them — the close button's side, logical padding, the
+              // scroll area — was left to inherit from whatever wrapped the
+              // modal, which on a preview page is not the site's language.
+              dir={isRTL ? 'rtl' : 'ltr'}
               className="relative w-full max-w-2xl flex flex-col rounded-2xl shadow-2xl overflow-hidden"
               style={{
                 backgroundColor: theme?.colors?.background || '#ffffff',
@@ -256,10 +343,55 @@ export function BookingModal({
                   useLiveData={true}
                   pageId={pageId}
                   subdomain={subdomain}
+            userCode={userCode}
                   isPreview={true}
                   onStepChange={handleStepChange}
+                  onFooterActionsChange={setFooterActions}
                 />
               </div>
+
+              {/* Frozen footer — outside the scrolling region, like the header. */}
+              {footerActions && (
+                <div
+                  className="flex-shrink-0 border-t border-gray-100 dark:border-slate-700 px-8 py-4 md:px-12"
+                  style={{ backgroundColor: theme?.colors?.background || '#ffffff' }}
+                  dir={isRTL ? 'rtl' : 'ltr'}
+                >
+                  <div className="flex items-center gap-3">
+                    {footerActions.onBack && (
+                      <button
+                        type="button"
+                        onClick={footerActions.onBack}
+                        className="flex items-center gap-2 px-4 py-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm font-medium"
+                      >
+                        {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
+                        {footerActions.backLabel}
+                      </button>
+                    )}
+                    {footerActions.primary && (
+                      <button
+                        type="button"
+                        onClick={footerActions.primary.onClick}
+                        disabled={footerActions.primary.disabled}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-white font-medium rounded-lg transition-all hover:opacity-90 disabled:opacity-50"
+                        style={{ backgroundColor: primaryColor, borderRadius: theme?.borderRadius || '0.5rem' }}
+                      >
+                        {footerActions.primary.busy ? (
+                          <>
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            {footerActions.busyLabel}
+                          </>
+                        ) : (
+                          <>
+                            {footerActions.primary.label}
+                            {isRTL ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         </>
