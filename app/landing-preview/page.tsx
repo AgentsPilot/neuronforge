@@ -6,7 +6,7 @@
  * Used by LandingPageWizard to show actual block preview
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
@@ -46,7 +46,7 @@ interface PreviewData {
   subdomain?: string;
 }
 
-export default function LandingPreviewPage() {
+function LandingPreviewContent() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [errorKey, setErrorKey] = useState<keyof typeof LABELS['en'] | null>(null);
@@ -215,5 +215,37 @@ export default function LandingPreviewPage() {
         />
       </main>
     </div>
+  );
+}
+
+/**
+ * `useSearchParams()` opts a client component out of static rendering, and Next
+ * refuses to prerender the route unless the read sits behind a Suspense
+ * boundary -- the export step fails with `missing-suspense-with-csr-bailout`.
+ * The sibling `website-preview/[id]` does the same read without a boundary and
+ * gets away with it only because a dynamic route is never prerendered.
+ *
+ * The fallback mirrors the component's own loading state rather than showing a
+ * different shell, so the boundary is invisible in use. `defaultLocale` is
+ * correct here: the real locale comes from `?lang=`, which by definition is not
+ * readable until the boundary resolves.
+ */
+export default function LandingPreviewPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          className="min-h-screen flex items-center justify-center bg-white"
+          dir={getDirection(defaultLocale) === 'rtl' ? 'rtl' : 'ltr'}
+        >
+          <div className="text-center space-y-3">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto" />
+            <p className="text-gray-500">{LABELS[defaultLocale].loadingPreview}</p>
+          </div>
+        </div>
+      }
+    >
+      <LandingPreviewContent />
+    </Suspense>
   );
 }
