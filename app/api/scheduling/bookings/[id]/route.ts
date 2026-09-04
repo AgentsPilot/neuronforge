@@ -22,6 +22,9 @@ import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import { z } from 'zod';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
+import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'SchedulingBookingAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -196,6 +199,99 @@ export async function PUT(
       );
     }
 
+    /*
+     * What changed, on the contact's timeline.
+     *
+     * The client-facing reschedule link records the move; the owner moving the
+     * same appointment from the dashboard recorded nothing, so half the changes
+     * to a booking were invisible depending on who made them.
+     *
+     * A time change and a cancellation are different events and read as
+     * different sentences. Anything else about the booking is not worth a row.
+     */
+    if (oldBooking?.contact_id) {
+      const { data: ownerProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const ownerLocale = ownerProfile?.language || 'en';
+      const zone = result.data.timezone || oldBooking.timezone || undefined;
+
+      const movedTo = validated.start_time && validated.start_time !== oldBooking.start_time
+        ? result.data.start_time
+        : null;
+
+      /*
+       * A status move is its own event, and each one reads differently.
+       *
+       * "Completed", "no show" and "cancelled" are the three outcomes an owner
+       * audits a client on — a no-show in particular is the thing they want to
+       * see a pattern of — so each gets its own row and its own sentence rather
+       * than a generic "booking updated".
+       *
+       * Only a real transition: re-saving a booking that was already completed
+       * writes nothing.
+       */
+      const STATUS_EVENTS: Record<string, string> = {
+        cancelled: 'booking_cancelled',
+        completed: 'booking_completed',
+        no_show: 'booking_no_show',
+        confirmed: 'booking_confirmed',
+      };
+      const statusMoved =
+        validated.status &&
+        validated.status !== oldBooking.status &&
+        STATUS_EVENTS[validated.status]
+          ? validated.status
+          : null;
+
+      const when = activityMoment(oldBooking.start_time, ownerLocale, zone) || '';
+
+      if (movedTo) {
+        crmActivityRepository.create({
+          user_id: user.id,
+          contact_id: oldBooking.contact_id,
+          activity_type: 'booking_rescheduled',
+          title: activitySentence('booking_rescheduled', {
+            from: when,
+            to: activityMoment(movedTo, ownerLocale, zone) || '',
+          }, ownerLocale),
+          description: JSON.stringify({
+            kind: 'booking_rescheduled',
+            from: oldBooking.start_time,
+            to: movedTo,
+            timeZone: zone,
+          }),
+          auto_logged: true,
+          source_capability: 'scheduling',
+          source_entity_id: bookingId,
+          activity_date: movedTo,
+        }).catch(err => requestLogger.warn({ err }, 'Reschedule activity logging failed (non-blocking)'));
+      }
+
+      if (statusMoved) {
+        const kind = STATUS_EVENTS[statusMoved];
+        crmActivityRepository.create({
+          user_id: user.id,
+          contact_id: oldBooking.contact_id,
+          activity_type: kind,
+          title: activitySentence(kind, { date: when }, ownerLocale),
+          description: JSON.stringify({
+            kind,
+            from: oldBooking.start_time,
+            previousStatus: oldBooking.status,
+            reason: validated.cancellation_reason || undefined,
+            timeZone: zone,
+          }),
+          auto_logged: true,
+          source_capability: 'scheduling',
+          source_entity_id: bookingId,
+          activity_date: oldBooking.start_time || undefined,
+        }).catch(err => requestLogger.warn({ err }, 'Booking-status activity logging failed (non-blocking)'));
+      }
+    }
+
     // 5. Get contact name for audit log
     let contactName = 'Client';
     if (result.data.contact_id) {
@@ -268,8 +364,33 @@ export async function PUT(
         }
       });
 
-      BookingEmailService.sendIntakeFormRequest(bookingId, user.id)
-        .catch(err => requestLogger.warn({ err, bookingId }, 'Intake form request email failed'));
+      /*
+       * MANUAL: the owner ticked "send the intake form" on this booking.
+       *
+       * Two faults here, and together they made the toggle look like it worked
+       * while sending nothing:
+       *
+       *  1. Called without `manual`, so it consulted `send_after_booking` — the
+       *     "send it for me automatically" switch. An owner who had turned that
+       *     off, and was therefore using this toggle precisely because they send
+       *     by hand, was refused.
+       *
+       *  2. `.catch()` only catches a THROWN error. `sendIntakeFormRequest`
+       *     RETURNS `{ sent: false }` on refusal, so the failure passed through
+       *     the catch untouched and nothing was logged at all. The booking still
+       *     gained its intake step, so the journey said a form had been
+       *     requested when none had left the building.
+       */
+      BookingEmailService.sendIntakeFormRequest(bookingId, user.id, { manual: true })
+        .then(result => {
+          if (!result.sent) {
+            requestLogger.error(
+              { bookingId, reason: result.error },
+              'Intake form was requested on this booking but the email did not send'
+            );
+          }
+        })
+        .catch(err => requestLogger.error({ err, bookingId }, 'Intake form request email threw'));
     }
 
     // 10. Return success

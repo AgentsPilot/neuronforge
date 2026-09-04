@@ -2,6 +2,8 @@
 // Stripe webhook handler - processes payment events and updates database
 
 import { NextRequest, NextResponse } from 'next/server';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence } from '@/lib/business-os/activityText';
 import { createClient } from '@supabase/supabase-js';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens } from '@/lib/utils/pricingConfig';
@@ -10,6 +12,10 @@ import { resolveAccountOwner } from '@/lib/payments/stripeAccountContext';
 import { subscriptionIdFromInvoice, subscriptionMetadataFromInvoice } from '@/lib/payments/invoiceSubscription';
 import { bindPlanSubscription } from '@/lib/payments/bindPlanSubscription';
 import { fromMinorUnits } from '@/lib/payments/refundMath';
+import { resolveInvoicePaymentIntent } from '@/lib/payments/invoicePaymentIntent';
+import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentState';
+import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
+import { promoteToClientStage } from '@/lib/crm/StageTypeUtils';
 import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
@@ -892,54 +898,6 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
  * - Create payment_transaction record
  */
 /**
- * The payment intent that settled an invoice, across Stripe API versions.
- *
- * Pre-2025 the Invoice object carried `payment_intent` directly. That field was
- * removed; settlement now hangs off `invoice.payments[].payment.payment_intent`,
- * and the list is not always inlined in a webhook payload — the payload is
- * serialized at the endpoint's configured API version, which nobody here
- * controls.
- *
- * Both shapes are read, and the invoice is re-fetched with the list expanded
- * only if neither is present. That last call costs one request on a path that
- * runs once per payment, and buys the difference between a refundable payment
- * and an unrefundable one.
- */
-async function resolveInvoicePaymentIntent(
-  invoice: Stripe.Invoice,
-  connectAccountId: string
-): Promise<string | null> {
-  const asId = (value: unknown): string | null =>
-    typeof value === 'string' ? value : (value as { id?: string })?.id ?? null;
-
-  // Old shape.
-  const legacy = asId((invoice as unknown as { payment_intent?: unknown }).payment_intent);
-  if (legacy) return legacy;
-
-  // New shape, when the payload inlined it.
-  type InvoicePayments = { data?: Array<{ payment?: { payment_intent?: unknown } }> };
-  const inlined = asId(
-    (invoice as unknown as { payments?: InvoicePayments }).payments?.data?.[0]?.payment?.payment_intent
-  );
-  if (inlined) return inlined;
-
-  // New shape, not inlined — ask for it.
-  try {
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
-    const expanded = (await stripe.invoices.retrieve(
-      invoice.id as string,
-      { expand: ['payments'] } as Stripe.InvoiceRetrieveParams,
-      { stripeAccount: connectAccountId }
-    )) as unknown as { payments?: InvoicePayments };
-
-    return asId(expanded.payments?.data?.[0]?.payment?.payment_intent);
-  } catch (error) {
-    console.error('❌ [Webhook] Could not expand invoice payments:', error);
-    return null;
-  }
-}
-
-/**
  * A refund that happened at Stripe rather than here.
  *
  * Someone refunding from the Stripe dashboard is a normal thing to do, and until
@@ -984,7 +942,21 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
   }
 
   for (const stripeRefund of charge.refunds?.data ?? []) {
-    const amountMajor = stripeRefund.amount / 100;
+    const refundCurrency = (stripeRefund.currency || transaction.currency).toUpperCase();
+
+    /*
+     * `/ 100` made the ledger disagree with itself.
+     *
+     * `amount_minor` was recorded correctly straight from Stripe, while `amount`
+     * assumed two decimal places — and `amount` is the column the guard and the
+     * recompute trigger read. For a ¥5,000 refund the ledger said 50.00, so the
+     * transaction read ~1% refunded and the guard would have allowed the
+     * "remaining" 99% to be refunded again.
+     *
+     * `fromMinorUnits` was already imported in this file and used correctly for
+     * plan periods a few hundred lines below.
+     */
+    const amountMajor = fromMinorUnits(stripeRefund.amount, refundCurrency);
 
     const { error } = await supabaseAdmin.from('payment_refunds').upsert(
       {
@@ -993,7 +965,7 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
         invoice_id: transaction.invoice_id,
         amount: amountMajor,
         amount_minor: stripeRefund.amount,
-        currency: (stripeRefund.currency || transaction.currency).toUpperCase(),
+        currency: refundCurrency,
         // Stripe can report a refund as still pending for some payment methods;
         // only a succeeded one may count toward the refunded total.
         status: stripeRefund.status === 'succeeded' ? 'succeeded' : 'pending',
@@ -1017,6 +989,18 @@ async function handleChargeRefunded(charge: Stripe.Charge, connectAccountId: str
       throw new Error(`Failed to record refund ${stripeRefund.id}: ${error.message}`);
     }
   }
+
+  /*
+   * The booking behind the payment, so a refund taken in the Stripe dashboard
+   * reaches it too.
+   *
+   * `propagate_refund_to_booking` does this by trigger and is the authority —
+   * it is the only mechanism that can, since this path has no request behind
+   * it. Called explicitly as well so the behaviour is right before that
+   * migration is applied; it derives the same value from the same rows, so
+   * afterwards it changes nothing.
+   */
+  await syncBookingsForTransactions([transaction.id], transaction.user_id);
 
   console.log('✅ [Webhook] Recorded', charge.refunds?.data?.length ?? 0, 'refund(s) for', charge.id);
 }
@@ -1093,6 +1077,20 @@ async function handleConnectPaymentIntentSucceeded(
 
   const currency = intent.currency.toUpperCase();
 
+  /*
+   * What Stripe kept.
+   *
+   * Recorded at collection time because it is cheapest to know then — the
+   * charge is fresh and the account is already resolved. Null when the charge
+   * has not settled yet, which is a real state: the reconciler comes back for
+   * those rather than this guessing a rate.
+   */
+  const fee = await resolveProcessorFee({
+    stripe: new Stripe(process.env.STRIPE_SECRET_KEY!),
+    account: connectAccountId,
+    paymentIntentId: intent.id,
+  });
+
   const { error } = await supabaseAdmin.from('payment_transactions').insert({
     user_id: ownerId,
     contact_id: intent.metadata?.contact_id || null,
@@ -1110,6 +1108,7 @@ async function handleConnectPaymentIntentSucceeded(
     // metadata was money that could not be refunded or attributed to its work.
     booking_id: intent.metadata?.booking_id || null,
     service_id: intent.metadata?.service_id || null,
+    ...feeColumns(fee),
     paid_at: new Date(intent.created * 1000).toISOString(),
     description: intent.description || 'Website payment',
     refund_status: 'none',
@@ -1157,6 +1156,33 @@ async function recordPlanPeriodPaid(
     return true;
   }
 
+  /*
+   * A period is paid when MONEY ARRIVED — not when Stripe says `paid`.
+   *
+   * Cancelling a plan mid-cycle makes Stripe issue a proration CREDIT: an
+   * invoice with a negative total, `amount_paid: 0`, and status `paid`, because
+   * there is nothing to collect. `invoice.paid` fires for it like any other.
+   *
+   * Taken at face value that credit was recorded as "Payment 2 of 3" — a
+   * succeeded transaction of $0 — it marked the ₪333.33 second instalment PAID,
+   * and it advanced `periods_paid` to 2. The books then claimed ₪666.66
+   * collected from a client who had paid ₪333.33 once.
+   *
+   * Returning true, not false: this invoice DOES belong to a plan, so the
+   * ordinary invoice path must not pick it up either. It is simply not a
+   * payment.
+   */
+  const collected = invoice.amount_paid ?? 0;
+
+  if (collected <= 0) {
+    console.log(
+      'ℹ️  [Webhook] Plan invoice collected nothing (credit or zero-value); not a period payment:',
+      invoice.id,
+      'total=' + String(invoice.total)
+    );
+    return true;
+  }
+
   const { data: alreadyRecorded } = await supabaseAdmin
     .from('payment_plan_installments')
     .select('id')
@@ -1169,13 +1195,45 @@ async function recordPlanPeriodPaid(
   }
 
   const currency = (invoice.currency || plan.data.currency).toUpperCase();
-  const amount = fromMinorUnits(invoice.amount_paid ?? 0, currency);
+  const amount = fromMinorUnits(collected, currency);
   const periodsPaid = plan.data.periods_paid + 1;
+
+  /*
+   * The payment intent, so this period can be refunded.
+   *
+   * Recorded without one, every plan installment was permanently unrefundable:
+   * `RefundService` needs a payment intent or a charge to refund against, finds
+   * neither, and throws `missing_reference` — AFTER writing a ledger row that
+   * then has to be marked failed. The owner saw a 502 whose real reason is
+   * hidden in production, on a button the UI went on offering.
+   *
+   * The `invoice.paid` path below has always resolved this; the plan path was
+   * written without it. Same resolver, same warning when it comes back empty,
+   * so both read the same way in the logs.
+   */
+  const planPaymentIntent = await resolveInvoicePaymentIntent(invoice, new Stripe(process.env.STRIPE_SECRET_KEY!), connectAccountId).catch(err => {
+    console.warn('⚠️  [Webhook] Could not resolve the payment intent for a plan period:', err);
+    return null;
+  });
+
+  if (!planPaymentIntent) {
+    console.warn(
+      '⚠️  [Webhook] Plan period recorded with no payment intent — this payment will not be refundable:',
+      invoice.id
+    );
+  }
 
   // The money first, then the plan's own state — the same order settlement
   // follows everywhere else, so a failure leaves money recorded and a count
   // behind, never a count ahead of money that never arrived.
-  const { error: txError } = await supabaseAdmin.from('payment_transactions').insert({
+  // The fee on this period, from the same charge the payment intent points at.
+  const planFee = await resolveProcessorFee({
+    stripe: new Stripe(process.env.STRIPE_SECRET_KEY!),
+    account: connectAccountId,
+    paymentIntentId: planPaymentIntent,
+  });
+
+  const { data: periodTransaction, error: txError } = await supabaseAdmin.from('payment_transactions').insert({
     user_id: plan.data.user_id,
     contact_id: plan.data.contact_id,
     booking_id: plan.data.booking_id,
@@ -1185,6 +1243,8 @@ async function recordPlanPeriodPaid(
     status: 'succeeded',
     processor_type: 'stripe',
     payment_method: 'card',
+    stripe_payment_intent_id: planPaymentIntent,
+    ...feeColumns(planFee),
     paid_at: new Date().toISOString(),
     description: `Payment ${periodsPaid} of ${plan.data.installment_count}`,
     refund_status: 'none',
@@ -1202,31 +1262,82 @@ async function recordPlanPeriodPaid(
      * `payment_plan_installments.stripe_invoice_id`, which is a real column,
      * and checked above before anything is written.
      */
+    /*
+     * The numbers travel beside the description.
+     *
+     * `description` below is written in English, once, and read by every
+     * locale — so the drawer showed a Hebrew reader "Payment 1 of 3". The UI
+     * phrases it from these instead; the description stays as a stable
+     * English record for support and export.
+     */
     metadata: {
       source: 'payment_plan',
       subscription_id: subscriptionId,
       stripe_invoice_id: invoice.id,
+      installment_number: periodsPaid,
+      installment_count: plan.data.installment_count,
     },
     ...describeChargeAccount(connectAccountId),
-  });
+  })
+    .select('id')
+    .single();
 
   if (txError) {
     console.error('❌ [Webhook] Could not record a plan period:', txError);
     throw txError;
   }
 
-  // Mark the projected instalment, so "2 of 3 paid" is answerable locally.
+  /*
+   * Mark the projected instalment, so "2 of 3 paid" is answerable locally.
+   *
+   * The same six fields `PaymentPlanRepository.markInstallmentPaid` writes on
+   * the owner-driven path. This wrote three, so a period collected by Stripe
+   * had no `payment_method`, no `processor_type`, and — the one that matters —
+   * no `transaction_id`: nothing tied the period to the money that settled it,
+   * which is the link a refund has to follow to find its charge.
+   *
+   * `updated_at` is set explicitly. There is no trigger on this table, so the
+   * row that was marked paid still claimed it had not been touched since it was
+   * projected.
+   */
   await supabaseAdmin
     .from('payment_plan_installments')
     .update({
       status: 'paid',
       paid_at: new Date().toISOString(),
       stripe_invoice_id: invoice.id,
+      payment_method: 'card',
+      processor_type: 'stripe',
+      transaction_id: periodTransaction?.id ?? null,
+      next_retry_at: null,
+      updated_at: new Date().toISOString(),
     })
     .eq('subscription_id', plan.data.id)
     .eq('installment_number', periodsPaid);
 
-  await paymentPlanSubscriptionRepository.recordPeriodPaid(plan.data.id, periodsPaid);
+  /*
+   * When the next period falls due.
+   *
+   * `recordPeriodPaid` has always taken this and no caller ever passed it, so
+   * every payment wrote `next_charge_at` and `next_charge_amount` back to NULL
+   * — the row could say "1 of 3 paid" but never when the next ₪333 was coming.
+   * Read from the projection rather than asked of Stripe: the periods are
+   * already local, and a webhook should not make a network call to answer a
+   * question it can answer from its own tables.
+   */
+  const { data: nextPeriod } = await supabaseAdmin
+    .from('payment_plan_installments')
+    .select('due_date, amount')
+    .eq('subscription_id', plan.data.id)
+    .eq('status', 'pending')
+    .order('installment_number')
+    .limit(1)
+    .maybeSingle();
+
+  await paymentPlanSubscriptionRepository.recordPeriodPaid(plan.data.id, periodsPaid, {
+    chargeAt: nextPeriod?.due_date ?? null,
+    amount: nextPeriod ? Number(nextPeriod.amount) : null,
+  });
 
   if (periodsPaid >= plan.data.installment_count) {
     await paymentPlanSubscriptionRepository.close(plan.data.id, 'completed');
@@ -1454,7 +1565,7 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   // id, and Stripe needs the payment intent or the charge to refund against —
   // so each of those payments would be permanently unrefundable. Both shapes are
   // read, and the list is fetched if the webhook payload did not inline it.
-  const paymentIntentId = await resolveInvoicePaymentIntent(invoice, connectAccountId);
+  const paymentIntentId = await resolveInvoicePaymentIntent(invoice, new Stripe(process.env.STRIPE_SECRET_KEY!), connectAccountId);
 
   if (!paymentIntentId) {
     console.warn(
@@ -1468,20 +1579,37 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   // It used to be the other way round with the failure only logged, so a failed
   // insert left an invoice that looked settled with no money behind it. This
   // order means a failure leaves the invoice UNPAID — visible, and retryable.
+  const invoiceCurrency = invoice.currency.toUpperCase();
+
+  // What Stripe kept out of this invoice payment.
+  const invoiceFee = await resolveProcessorFee({
+    stripe: new Stripe(process.env.STRIPE_SECRET_KEY!),
+    account: connectAccountId,
+    paymentIntentId,
+  });
+
   const { error: txError } = await supabaseAdmin
     .from('payment_transactions')
     .insert({
       user_id: platformInvoice.user_id,
       contact_id: platformInvoice.contact_id,
       invoice_id: platformInvoice.id,
-      amount: invoice.amount_paid / 100, // Convert from cents
-      currency: invoice.currency.toUpperCase(),
+      /*
+       * `/ 100` assumed every currency has two decimal places, and this was the
+       * last place in the file still doing it. JPY has none and KWD has three,
+       * so a ¥5,000 invoice payment was recorded as ¥50 — under-reporting the
+       * money by a hundredfold and leaving the refund guard comparing two
+       * different scales.
+       */
+      amount: fromMinorUnits(invoice.amount_paid, invoiceCurrency),
+      currency: invoiceCurrency,
       status: 'succeeded',
       payment_method: 'card',
       description: `Payment for invoice ${platformInvoice.invoice_number}`,
       processor_type: 'stripe',
       stripe_payment_intent_id: paymentIntentId,
       stripe_customer_id: typeof invoice.customer === 'string' ? invoice.customer : invoice.customer?.id || null,
+      ...feeColumns(invoiceFee),
       paid_at: paidAt,
       metadata: {
         stripe_invoice_id: invoice.id,
@@ -1776,20 +1904,23 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
 
     console.log('✅ [Webhook] Invoice marked as paid:', platformInvoice.invoice_number);
 
-    // Update CRM contact stage to 'customer' if applicable
+    /*
+     * They have paid, so move them along their OWN pipeline.
+     *
+     * This wrote `stage: 'customer'` — a key that exists only in the default
+     * pipeline the onboarding service seeds. A business running its own stages
+     * (this account's are פנייה → ייעוץ ראשוני → לקוח → הושלם) had its paying
+     * clients written into a stage with no column on the board.
+     *
+     * `promoteToClientStage` reads the business's configured client stage and
+     * refuses to demote anyone already at or past it.
+     */
     if (platformInvoice.contact_id) {
-      const { error: contactError } = await supabaseAdmin
-        .from('crm_contacts')
-        .update({
-          stage: 'customer',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', platformInvoice.contact_id)
-        .neq('stage', 'customer'); // Only update if not already a customer
-
-      if (contactError) {
-        console.warn('⚠️ [Webhook] Failed to update contact stage:', contactError);
-      }
+      await promoteToClientStage(
+        supabaseAdmin,
+        platformInvoice.user_id,
+        platformInvoice.contact_id
+      );
     }
 
     // Update linked booking's payment_status if invoice has a booking_id
@@ -1895,6 +2026,50 @@ async function handleConnectInvoicePaymentFailed(invoice: Stripe.Invoice, connec
     return;
   }
 
+  /*
+   * A failed payment, on the client's timeline.
+   *
+   * Only successful receipts were recorded, so "this client's card keeps
+   * declining" was a pattern with no trail behind it — the invoice quietly
+   * turned overdue and the drawer said nothing.
+   */
+  const { data: failedInvoice } = await supabaseAdmin
+    .from('payment_invoices')
+    .select('contact_id, amount, currency')
+    .eq('id', platformInvoice.id)
+    .maybeSingle();
+
+  if (failedInvoice?.contact_id) {
+    const { data: ownerProfile } = await supabaseAdmin
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', platformInvoice.user_id)
+      .maybeSingle();
+    const ownerLocale = ownerProfile?.language || 'en';
+    const currency = failedInvoice.currency || 'USD';
+
+    crmActivityRepository.create({
+      user_id: platformInvoice.user_id,
+      contact_id: failedInvoice.contact_id,
+      activity_type: 'payment_failed',
+      title: activitySentence('payment_failed', {
+        amount: new Intl.NumberFormat(
+          ownerLocale === 'he' ? 'he-IL' : ownerLocale === 'es' ? 'es-ES' : 'en-US',
+          { style: 'currency', currency }
+        ).format(Number(failedInvoice.amount) || 0),
+      }, ownerLocale),
+      description: JSON.stringify({
+        kind: 'payment_failed',
+        amount: failedInvoice.amount,
+        currency,
+        invoiceNumber: platformInvoice.invoice_number || undefined,
+      }),
+      auto_logged: true,
+      source_capability: 'payments',
+      source_entity_id: platformInvoice.id,
+    }).catch(err => console.warn('[Webhook] Payment-failed activity logging failed (non-blocking)', err));
+  }
+
   console.log('✅ [Webhook] Connect invoice payment failed processed:', platformInvoice.invoice_number);
 }
 
@@ -1969,6 +2144,79 @@ async function handleConnectInvoiceUncollectible(invoice: Stripe.Invoice, connec
   }
 
   console.log('✅ [Webhook] Connect invoice marked uncollectible:', platformInvoice.invoice_number);
+}
+
+
+/**
+ * A client's payment plan ended at Stripe.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Two ways to get here, and they mean different things:
+ *
+ *   · the schedule reached its last period — the plan COMPLETED, normally;
+ *   · somebody cancelled it in the Stripe dashboard — the plan was STOPPED.
+ *
+ * `periods_paid` against `installment_count` is what separates them, and it
+ * matters: a completed plan is a finished sale, a cancelled one has periods that
+ * must come off the business's receivables.
+ *
+ * OWNERSHIP IS VERIFIED, and never taken from metadata. Subscriptions on a
+ * connected account are created by that business, which controls their metadata
+ * — so a `user_id` there could name any tenant. The subscription is looked up by
+ * OUR OWN recorded id, and the account that sent the event must be the one that
+ * owns the plan we found.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function handlePlanSubscriptionEnded(
+  subscription: Stripe.Subscription,
+  connectAccountId: string
+) {
+  const { data: plan } = await supabaseAdmin
+    .from('payment_plan_subscriptions')
+    .select('id, user_id, status, installment_count, periods_paid')
+    .eq('stripe_subscription_id', subscription.id)
+    .maybeSingle();
+
+  // Not a plan this platform sold. Connected accounts have subscriptions of
+  // their own and they are none of our business.
+  if (!plan) return;
+
+  if (!(await accountOwns(connectAccountId, plan.user_id))) {
+    console.error(
+      '🚫 [Webhook] Subscription ended on an account that does not own the plan it names:',
+      subscription.id
+    );
+    return;
+  }
+
+  if (plan.status === 'cancelled' || plan.status === 'completed') return;
+
+  const completed = (plan.periods_paid ?? 0) >= (plan.installment_count ?? 0);
+
+  await supabaseAdmin
+    .from('payment_plan_subscriptions')
+    .update({
+      status: completed ? 'completed' : 'cancelled',
+      [completed ? 'completed_at' : 'cancelled_at']: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', plan.id);
+
+  // Periods that will now never be charged stop counting as owed. `cancelled`
+  // is a settled status, which is what takes them out of receivables.
+  if (!completed) {
+    await supabaseAdmin
+      .from('payment_plan_installments')
+      .update({ status: 'cancelled', next_retry_at: null, updated_at: new Date().toISOString() })
+      .eq('user_id', plan.user_id)
+      .eq('subscription_id', subscription.id)
+      .eq('status', 'pending');
+  }
+
+  console.log(
+    `${completed ? '✅' : '🛑'} [Webhook] Payment plan ${completed ? 'completed' : 'cancelled'}:`,
+    subscription.id
+  );
 }
 
 /**
@@ -2224,7 +2472,17 @@ export async function POST(request: NextRequest) {
         break;
 
       case 'customer.subscription.deleted':
-        if (isConnectEvent) break;
+        if (isConnectEvent) {
+          // A CLIENT's payment plan ending — either because it reached its last
+          // period, or because someone stopped it from the Stripe dashboard.
+          // Mirrored so the plan does not read `active` while nothing is being
+          // charged, and so its remaining periods leave the books.
+          await handlePlanSubscriptionEnded(
+            event.data.object as Stripe.Subscription,
+            connectAccountId!
+          );
+          break;
+        }
         await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
         break;
 

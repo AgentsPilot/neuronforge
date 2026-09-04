@@ -12,112 +12,13 @@ import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccount
 import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CheckCircle, Clock, CreditCard, Building2, AlertCircle } from 'lucide-react';
+import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
+import { resolvePublicBranding } from '@/lib/branding/publicBranding';
+import { localeCode, publicT, toLocale } from '@/lib/i18n/public-pages';
+import { taxLineFor } from '@/lib/payments/taxLine';
 
-// Translations for the invoice page
-const translations: Record<string, Record<string, string>> = {
-  en: {
-    invoice: 'Invoice',
-    paymentReceived: 'Payment Received',
-    paymentReceivedDesc: 'Thank you! Your payment has been successfully processed.',
-    paymentCancelled: 'Payment Cancelled',
-    paymentCancelledDesc: 'Your payment was cancelled. You can try again using the payment options below.',
-    billTo: 'Bill To',
-    from: 'From',
-    invoiceNumber: 'Invoice #',
-    issueDate: 'Issue Date',
-    dueDate: 'Due Date',
-    dueOnServiceDate: 'Due on service date',
-    description: 'Description',
-    qty: 'Qty',
-    price: 'Price',
-    amount: 'Amount',
-    subtotal: 'Subtotal',
-    total: 'Total',
-    notes: 'Notes',
-    paymentOptions: 'Payment Options',
-    payOnline: 'Pay Online with Card',
-    bankTransfer: 'Bank Transfer',
-    bank: 'Bank',
-    account: 'Account',
-    routingBranch: 'Branch',
-    includeInvoiceNumber: 'Please include invoice number {invoiceNumber} in the transfer reference.',
-    paymentInstructions: 'Payment Instructions',
-    contactForPayment: 'Please contact {businessName} directly for payment options.',
-    paid: 'PAID',
-    overdue: 'OVERDUE',
-    pending: 'PENDING',
-    bookingFor: 'Booking for {name}',
-    thankYou: 'Thank you for your business!'
-  },
-  es: {
-    invoice: 'Factura',
-    paymentReceived: 'Pago Recibido',
-    paymentReceivedDesc: '¡Gracias! Tu pago ha sido procesado exitosamente.',
-    paymentCancelled: 'Pago Cancelado',
-    paymentCancelledDesc: 'Tu pago fue cancelado. Puedes intentar de nuevo.',
-    billTo: 'Facturar a',
-    from: 'De',
-    invoiceNumber: 'Factura #',
-    issueDate: 'Fecha de Emisión',
-    dueDate: 'Fecha de Vencimiento',
-    dueOnServiceDate: 'Vence en la fecha del servicio',
-    description: 'Descripción',
-    qty: 'Cant.',
-    price: 'Precio',
-    amount: 'Monto',
-    subtotal: 'Subtotal',
-    total: 'Total',
-    notes: 'Notas',
-    paymentOptions: 'Opciones de Pago',
-    payOnline: 'Pagar en Línea con Tarjeta',
-    bankTransfer: 'Transferencia Bancaria',
-    bank: 'Banco',
-    account: 'Cuenta',
-    routingBranch: 'Sucursal',
-    includeInvoiceNumber: 'Por favor incluye el número de factura {invoiceNumber} en la referencia.',
-    paymentInstructions: 'Instrucciones de Pago',
-    contactForPayment: 'Por favor contacta a {businessName} directamente.',
-    paid: 'PAGADO',
-    overdue: 'VENCIDO',
-    pending: 'PENDIENTE',
-    bookingFor: 'Reserva para {name}',
-    thankYou: '¡Gracias por su preferencia!'
-  },
-  he: {
-    invoice: 'חשבונית',
-    paymentReceived: 'התשלום התקבל',
-    paymentReceivedDesc: 'תודה! התשלום שלך עובד בהצלחה.',
-    paymentCancelled: 'התשלום בוטל',
-    paymentCancelledDesc: 'התשלום שלך בוטל. אפשר לנסות שוב.',
-    billTo: 'לכבוד',
-    from: 'מאת',
-    invoiceNumber: 'חשבונית מס׳',
-    issueDate: 'תאריך הנפקה',
-    dueDate: 'לתשלום עד',
-    dueOnServiceDate: 'לתשלום במועד השירות',
-    description: 'תיאור',
-    qty: 'כמות',
-    price: 'מחיר',
-    amount: 'סכום',
-    subtotal: 'סכום ביניים',
-    total: 'סה"כ לתשלום',
-    notes: 'הערות',
-    paymentOptions: 'אפשרויות תשלום',
-    payOnline: 'שלם בכרטיס אשראי',
-    bankTransfer: 'העברה בנקאית',
-    bank: 'בנק',
-    account: 'מספר חשבון',
-    routingBranch: 'סניף',
-    includeInvoiceNumber: 'נא לציין את מספר החשבונית {invoiceNumber} בהעברה.',
-    paymentInstructions: 'הוראות תשלום',
-    contactForPayment: 'ניתן ליצור קשר עם {businessName} לתיאום תשלום.',
-    paid: 'שולם',
-    overdue: 'באיחור',
-    pending: 'ממתין לתשלום',
-    bookingFor: 'הזמנה עבור {name}',
-    thankYou: 'תודה רבה!'
-  }
-};
+// The page's own translation table moved into `lib/i18n/public-pages`, where it
+// sits beside the date and money formatters that have to agree with it.
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -135,6 +36,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
   return {
     title: invoice ? `Invoice ${invoice.invoice_number}` : 'Invoice',
+    // An invoice names a real customer and an amount they owe. It must never
+    // reach a search index.
+    robots: { index: false, follow: false },
   };
 }
 
@@ -166,34 +70,50 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
       invoice_bank_account,
       invoice_bank_routing,
       invoice_payment_instructions,
+      invoice_footer_text,
       logo_url,
       language
     `)
     .eq('user_id', invoice.user_id)
     .single();
 
-  const locale = profile?.language || 'en';
+  /*
+   * The tax the business says is already inside the price.
+   *
+   * A SEPARATE query, deliberately, rather than three more columns on the
+   * profile select above. That select feeds the company name, the bank details
+   * and the footer, and PostgREST fails the WHOLE statement if any one column is
+   * missing — so adding optional columns to it would take this page's identity
+   * down on any database where the tax migration has not run yet. Here a failure
+   * costs exactly the tax line, which is also what an unconfigured business
+   * sees.
+   */
+  const { data: taxSettings } = await supabaseServer
+    .from('business_profiles')
+    .select('invoice_prices_include_tax, invoice_tax_rate, invoice_tax_label')
+    .eq('user_id', invoice.user_id)
+    .maybeSingle();
+
+  // Null when the business never configured tax — and then no line is drawn at
+  // all, rather than a "VAT 0.00" on every invoice from every business.
+  const taxLine = taxLineFor(invoice.amount, invoice.currency, taxSettings);
+
+  // The business's identity and look, from the one public resolver — the same
+  // one the confirmation email and the booking pages read. This page used to
+  // take only the logo and the name from the profile and then hardcode a blue
+  // pay button, so it was the one public surface wearing no brand colour at all.
+  const brand = await resolvePublicBranding({ by: 'invoiceId', invoiceId: id });
+
+  const locale = toLocale(brand?.locale ?? profile?.language);
   const isRTL = locale === 'he';
 
-  const t = (key: string, params?: Record<string, string>): string => {
-    let text = translations[locale]?.[key] || translations.en[key] || key;
-    if (params) {
-      Object.entries(params).forEach(([k, v]) => {
-        text = text.replace(`{${k}}`, v);
-      });
-    }
-    return text;
-  };
+  const t = (key: string, params?: Record<string, string>): string =>
+    publicT(locale, key, params);
 
-  const getLocaleCode = () => {
-    switch (locale) {
-      case 'he': return 'he-IL';
-      case 'es': return 'es-ES';
-      default: return 'en-US';
-    }
-  };
+  const getLocaleCode = () => localeCode(locale);
 
-  const businessName = profile?.invoice_company_name || profile?.company_name || 'Business';
+  const businessName =
+    profile?.invoice_company_name || profile?.company_name || brand?.businessName || 'Business';
   const isPaid = invoice.status === 'paid' || status === 'paid' || paymentStatus === 'success';
   const isManualPayment = paymentStatus === 'manual';
 
@@ -214,6 +134,10 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
     // The query string still forces the manual view, so an explicit
     // "pay another way" link keeps working.
     canCollectOnline: capability.canCollect && !isManualPayment,
+    // And the invoice's own answer, which is what the business ticked when it
+    // wrote the invoice. Without this the page offered a card on an invoice
+    // marked transfer-only, and the business never knew.
+    allowOnlinePayment: invoice.allow_online_payment,
     cardUrl: `/api/public/invoice/${invoice.id}/pay`,
     profile,
   });
@@ -262,158 +186,317 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
     return notes;
   };
 
+  /**
+   * Hebrew has no letter case.
+   *
+   * `uppercase tracking-wide` was applied to every column heading and field
+   * label unconditionally, which does nothing to לכבוד or תיאור except space
+   * the letters out unnaturally.
+   */
+  const labelCase: React.CSSProperties = isRTL
+    ? { textTransform: 'none', letterSpacing: 'normal' }
+    : { textTransform: 'uppercase', letterSpacing: '0.05em' };
+
+  const labelStyle: React.CSSProperties = {
+    color: 'var(--ap-text-muted)',
+    ...labelCase,
+  };
+
+  // `text-start` / `text-end` rather than an `isRTL ?` ternary on each of eight
+  // table cells: the logical property already means "whichever side the reader
+  // starts on".
+  const startAlign = 'text-start';
+  const endAlign = 'text-end';
+
   return (
-    <div className="min-h-screen bg-slate-100 py-8 px-4" dir={isRTL ? 'rtl' : 'ltr'}>
-      <div className="max-w-2xl mx-auto">
-        {/* Status Banners */}
+    <div
+      dir={isRTL ? 'rtl' : 'ltr'}
+      lang={locale}
+      className="min-h-screen px-4 py-8"
+      style={{ background: 'var(--ap-surface-2)', color: 'var(--ap-text)' }}
+    >
+      <div className="mx-auto max-w-2xl">
         {isPaid && (
-          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3">
-            <CheckCircle className="h-5 w-5 text-green-600" />
+          <div
+            className="mb-4 flex items-center gap-3 p-4"
+            style={{
+              background: '#DCFCE7',
+              border: '1px solid #BBF7D0',
+              borderRadius: 'var(--ap-radius-md)',
+            }}
+          >
+            <CheckCircle className="h-5 w-5 shrink-0" style={{ color: '#15803D' }} />
             <div>
-              <p className="font-semibold text-green-800">{t('paymentReceived')}</p>
-              <p className="text-sm text-green-700">{t('paymentReceivedDesc')}</p>
+              <p className="font-semibold" style={{ color: '#166534' }}>
+                {t('paymentReceived')}
+              </p>
+              <p className="text-sm" style={{ color: '#15803D' }}>
+                {t('paymentReceivedDesc')}
+              </p>
             </div>
           </div>
         )}
 
         {isCancelled && (
-          <div className="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
-            <AlertCircle className="h-5 w-5 text-amber-600" />
+          <div
+            className="mb-4 flex items-center gap-3 p-4"
+            style={{
+              background: '#FEF3C7',
+              border: '1px solid #FDE68A',
+              borderRadius: 'var(--ap-radius-md)',
+            }}
+          >
+            <AlertCircle className="h-5 w-5 shrink-0" style={{ color: '#B45309' }} />
             <div>
-              <p className="font-semibold text-amber-800">{t('paymentCancelled')}</p>
-              <p className="text-sm text-amber-700">{t('paymentCancelledDesc')}</p>
+              <p className="font-semibold" style={{ color: '#92400E' }}>
+                {t('paymentCancelled')}
+              </p>
+              <p className="text-sm" style={{ color: '#B45309' }}>
+                {t('paymentCancelledDesc')}
+              </p>
             </div>
           </div>
         )}
 
-        {/* Invoice Document */}
-        <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-
-          {/* Header with Logo and Invoice Info */}
-          <div className="p-6 border-b border-slate-100">
-            <div className="flex justify-between items-start">
-              {/* Business Info */}
-              <div className="flex items-center gap-3">
+        {/* The document itself. A brand-coloured rule across the top is the one
+            place the business's colour can appear without competing with the
+            status colours that have to stay semantic. */}
+        <div
+          className="overflow-hidden"
+          style={{
+            background: 'var(--ap-surface)',
+            border: '1px solid var(--ap-border)',
+            borderRadius: 'var(--ap-radius-lg)',
+            boxShadow: 'var(--ap-shadow-md)',
+            borderTop: '4px solid var(--ap-brand)',
+          }}
+        >
+          <div className="p-6" style={{ borderBottom: '1px solid var(--ap-border)' }}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
                 {profile?.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- arbitrary remote host
                   <img
                     src={profile.logo_url}
                     alt={businessName}
                     className="h-12 w-auto object-contain"
                   />
                 ) : (
-                  <div className="h-12 w-12 rounded-lg bg-slate-800 flex items-center justify-center">
-                    <Building2 className="h-6 w-6 text-white" />
+                  <div
+                    className="flex h-12 w-12 items-center justify-center"
+                    style={{ background: 'var(--ap-brand)', borderRadius: 'var(--ap-radius-md)' }}
+                  >
+                    <Building2 className="h-6 w-6" style={{ color: 'var(--ap-on-brand)' }} />
                   </div>
                 )}
-                <div>
-                  <h2 className="font-bold text-slate-900 text-lg">{businessName}</h2>
-                </div>
+                <h2
+                  className="text-lg font-bold"
+                  style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
+                >
+                  <bdi>{businessName}</bdi>
+                </h2>
               </div>
 
-              {/* Invoice Number & Status */}
-              <div className={`${isRTL ? 'text-left' : 'text-right'}`}>
-                <p className="text-sm text-slate-500">{t('invoiceNumber')}</p>
-                <p className="font-bold text-slate-900 text-xl">{invoice.invoice_number}</p>
+              <div className={endAlign}>
+                <p className="text-sm" style={{ color: 'var(--ap-text-muted)' }}>
+                  {t('invoiceNumber')}
+                </p>
+                <p className="text-xl font-bold" style={{ color: 'var(--ap-text)' }}>
+                  <bdi>{invoice.invoice_number}</bdi>
+                </p>
 
-                {/* Status Badge */}
-                <div className={`inline-flex items-center gap-1.5 mt-2 px-3 py-1 rounded text-xs font-bold uppercase tracking-wide ${
-                  isPaid
-                    ? 'bg-green-100 text-green-800'
-                    : isOverdue
-                    ? 'bg-red-100 text-red-800'
-                    : 'bg-amber-100 text-amber-800'
-                }`}>
+                <div
+                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold"
+                  style={{
+                    borderRadius: 'var(--ap-radius-sm)',
+                    ...labelCase,
+                    ...(isPaid
+                      ? { background: '#DCFCE7', color: '#166534' }
+                      : isOverdue
+                        ? { background: '#FEE2E2', color: '#991B1B' }
+                        : { background: '#FEF3C7', color: '#92400E' }),
+                  }}
+                >
                   {isPaid ? (
-                    <><CheckCircle className="h-3.5 w-3.5" />{t('paid')}</>
+                    <>
+                      <CheckCircle className="h-3.5 w-3.5" />
+                      {t('paid')}
+                    </>
                   ) : isOverdue ? (
-                    <><AlertCircle className="h-3.5 w-3.5" />{t('overdue')}</>
+                    <>
+                      <AlertCircle className="h-3.5 w-3.5" />
+                      {t('overdue')}
+                    </>
                   ) : (
-                    <><Clock className="h-3.5 w-3.5" />{t('pending')}</>
+                    <>
+                      <Clock className="h-3.5 w-3.5" />
+                      {t('pending')}
+                    </>
                   )}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Bill To & Dates */}
-          <div className="p-6 border-b border-slate-100 bg-slate-50">
-            <div className="grid grid-cols-2 gap-6">
-              {/* Bill To */}
-              <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">{t('billTo')}</p>
-                <p className="font-semibold text-slate-900">{invoice.client_name || '-'}</p>
+          <div
+            className="p-6"
+            style={{
+              background: 'var(--ap-surface-2)',
+              borderBottom: '1px solid var(--ap-border)',
+            }}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
+              <div className="min-w-0">
+                <p className="mb-1 text-xs font-semibold" style={labelStyle}>
+                  {t('billTo')}
+                </p>
+                <p className="font-semibold" style={{ color: 'var(--ap-text)' }}>
+                  <bdi>{invoice.client_name || '-'}</bdi>
+                </p>
                 {invoice.client_email && (
-                  <p className="text-sm text-slate-600">{invoice.client_email}</p>
+                  <p className="text-sm break-words" style={{ color: 'var(--ap-text-muted)' }}>
+                    <bdi>{invoice.client_email}</bdi>
+                  </p>
                 )}
               </div>
 
-              {/* Dates */}
-              <div className={`${isRTL ? 'text-left' : 'text-right'}`}>
+              {/* Literal classes, not `sm:${endAlign}`: Tailwind scans source
+                  text for class names, so an interpolated variant is never
+                  generated and the rule would silently not exist. */}
+              <div className="min-w-0 text-start sm:text-end">
                 <div className="mb-2">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{t('issueDate')}</p>
-                  <p className="text-slate-900">{formatDate(invoice.created_at)}</p>
+                  <p className="text-xs font-semibold" style={labelStyle}>
+                    {t('issueDate')}
+                  </p>
+                  <p style={{ color: 'var(--ap-text)' }}>{formatDate(invoice.created_at)}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{t('dueDate')}</p>
-                  <p className="text-slate-900 font-medium">{formatDate(invoice.due_date)}</p>
+                  <p className="text-xs font-semibold" style={labelStyle}>
+                    {t('dueDate')}
+                  </p>
+                  <p className="font-medium" style={{ color: 'var(--ap-text)' }}>
+                    {formatDate(invoice.due_date)}
+                  </p>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Line Items */}
           <div className="p-6">
             {invoice.line_items && invoice.line_items.length > 0 ? (
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b-2 border-slate-200">
-                    <th className={`pb-3 ${isRTL ? 'text-right' : 'text-left'} text-xs font-semibold text-slate-500 uppercase tracking-wide`}>{t('description')}</th>
-                    <th className="pb-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide w-16">{t('qty')}</th>
-                    <th className={`pb-3 ${isRTL ? 'text-left' : 'text-right'} text-xs font-semibold text-slate-500 uppercase tracking-wide w-24`}>{t('price')}</th>
-                    <th className={`pb-3 ${isRTL ? 'text-left' : 'text-right'} text-xs font-semibold text-slate-500 uppercase tracking-wide w-28`}>{t('amount')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {invoice.line_items.map((item: { description: string; quantity: number; unit_price: number }, idx: number) => (
-                    <tr key={idx} className="border-b border-slate-100">
-                      <td className={`py-3 ${isRTL ? 'text-right' : 'text-left'} text-slate-900`}>{item.description}</td>
-                      <td className="py-3 text-center text-slate-600">{item.quantity}</td>
-                      <td className={`py-3 ${isRTL ? 'text-left' : 'text-right'} text-slate-600`}>
-                        {formatAmount(item.unit_price, invoice.currency)}
-                      </td>
-                      <td className={`py-3 ${isRTL ? 'text-left' : 'text-right'} text-slate-900 font-medium`}>
-                        {formatAmount(item.quantity * item.unit_price, invoice.currency)}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--ap-border)' }}>
+                      <th className={`pb-3 text-xs font-semibold ${startAlign}`} style={labelStyle}>
+                        {t('description')}
+                      </th>
+                      <th className="w-16 pb-3 text-center text-xs font-semibold" style={labelStyle}>
+                        {t('qty')}
+                      </th>
+                      <th className={`w-24 pb-3 text-xs font-semibold ${endAlign}`} style={labelStyle}>
+                        {t('price')}
+                      </th>
+                      <th className={`w-28 pb-3 text-xs font-semibold ${endAlign}`} style={labelStyle}>
+                        {t('amount')}
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {invoice.line_items.map(
+                      (
+                        item: { description: string; quantity: number; unit_price: number },
+                        idx: number
+                      ) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid var(--ap-border)' }}>
+                          <td className={`py-3 ${startAlign}`} style={{ color: 'var(--ap-text)' }}>
+                            <bdi>{item.description}</bdi>
+                          </td>
+                          <td className="py-3 text-center" style={{ color: 'var(--ap-text-muted)' }}>
+                            {item.quantity}
+                          </td>
+                          <td className={`py-3 ${endAlign}`} style={{ color: 'var(--ap-text-muted)' }}>
+                            {formatAmount(item.unit_price, invoice.currency)}
+                          </td>
+                          <td
+                            className={`py-3 font-medium ${endAlign}`}
+                            style={{ color: 'var(--ap-text)' }}
+                          >
+                            {formatAmount(item.quantity * item.unit_price, invoice.currency)}
+                          </td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              <div className="py-4 text-center text-slate-500">-</div>
+              <div className="py-4 text-center" style={{ color: 'var(--ap-text-muted)' }}>
+                -
+              </div>
             )}
 
-            {/* Total */}
-            <div className={`mt-4 pt-4 border-t-2 border-slate-200 flex justify-between items-center`}>
-              <span className="text-lg font-bold text-slate-900">{t('total')}</span>
-              <span className="text-2xl font-bold text-slate-900">
+            <div
+              className="mt-4 flex items-center justify-between pt-4"
+              style={{ borderTop: `2px solid var(--ap-brand)` }}
+            >
+              <span className="text-lg font-bold" style={{ color: 'var(--ap-text)' }}>
+                {t('total')}
+              </span>
+              <span className="text-2xl font-bold" style={{ color: 'var(--ap-brand)' }}>
                 {formatAmount(invoice.amount, invoice.currency)}
               </span>
             </div>
+
+            {/* UNDER the total, because the tax is contained in it. Above, and
+                the reader adds it on — the one misreading that changes what
+                they think they owe. Same placement as the emailed invoice and
+                the PDF, all three derived from the same figures. */}
+            {taxLine && (
+              <div
+                className="mt-2 flex items-center justify-between text-sm"
+                style={{ color: 'var(--ap-text-muted)' }}
+              >
+                <span>
+                  {t('includesTax')} {taxLine.label} {taxLine.rate}%
+                </span>
+                <span>{formatAmount(taxLine.amount, invoice.currency)}</span>
+              </div>
+            )}
           </div>
 
-          {/* Notes */}
           {invoice.notes && (
             <div className="px-6 pb-6">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">{t('notes')}</p>
-              <p className="text-sm text-slate-600 bg-slate-50 rounded p-3">{translateNotes(invoice.notes)}</p>
+              <p className="mb-1 text-xs font-semibold" style={labelStyle}>
+                {t('notes')}
+              </p>
+              <p
+                className="p-3 text-sm"
+                style={{
+                  color: 'var(--ap-text-muted)',
+                  background: 'var(--ap-surface-2)',
+                  borderRadius: 'var(--ap-radius-sm)',
+                }}
+              >
+                <bdi>{translateNotes(invoice.notes)}</bdi>
+              </p>
             </div>
           )}
 
-          {/* Payment Section */}
+          {/* Paying is what this page is for, so it is the visual climax. */}
           {!isPaid && (
-            <div className="p-6 bg-slate-50 border-t border-slate-200">
-              <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-                <CreditCard className="h-5 w-5 text-slate-600" />
+            <div
+              className="p-6"
+              style={{
+                background: 'var(--ap-surface-2)',
+                borderTop: '1px solid var(--ap-border)',
+              }}
+            >
+              <h3
+                className="mb-4 flex items-center gap-2 font-semibold"
+                style={{ color: 'var(--ap-text)' }}
+              >
+                <CreditCard className="h-5 w-5" style={{ color: 'var(--ap-brand)' }} />
                 {t('paymentOptions')}
               </h3>
 
@@ -422,7 +505,12 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
                 {paymentOptions.card && paymentOptions.cardUrl && (
                   <a
                     href={paymentOptions.cardUrl}
-                    className="block w-full text-center px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+                    className="block w-full px-6 py-3.5 text-center font-semibold transition-opacity hover:opacity-90 ap-no-print"
+                    style={{
+                      background: 'var(--ap-brand)',
+                      color: 'var(--ap-on-brand)',
+                      borderRadius: 'var(--ap-radius-md)',
+                    }}
                   >
                     {t('payOnline')}
                   </a>
@@ -433,51 +521,91 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
                     so a business with only an account number was described
                     differently by the two. */}
                 {paymentOptions.bank && (
-                  <div className="p-4 bg-white border border-slate-200 rounded-lg">
-                    <h4 className="font-semibold text-slate-900 mb-3">{t('bankTransfer')}</h4>
+                  <div
+                    className="p-4"
+                    style={{
+                      background: 'var(--ap-surface)',
+                      border: '1px solid var(--ap-border)',
+                      borderRadius: 'var(--ap-radius-md)',
+                    }}
+                  >
+                    <h4 className="mb-3 font-semibold" style={{ color: 'var(--ap-text)' }}>
+                      {t('bankTransfer')}
+                    </h4>
                     <div className="space-y-2 text-sm">
                       {paymentOptions.bankName && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">{t('bank')}</span>
-                          <span className="font-medium text-slate-900">{paymentOptions.bankName}</span>
+                        <div className="flex justify-between gap-4">
+                          <span style={{ color: 'var(--ap-text-muted)' }}>{t('bank')}</span>
+                          <span className="font-medium" style={{ color: 'var(--ap-text)' }}>
+                            <bdi>{paymentOptions.bankName}</bdi>
+                          </span>
                         </div>
                       )}
                       {paymentOptions.bankAccount && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">{t('account')}</span>
-                          <span className="font-medium text-slate-900 font-mono">{paymentOptions.bankAccount}</span>
+                        <div className="flex justify-between gap-4">
+                          <span style={{ color: 'var(--ap-text-muted)' }}>{t('account')}</span>
+                          {/* An account number is a Latin digit string that must
+                              not be reordered inside a Hebrew line. */}
+                          <span
+                            dir="ltr"
+                            className="font-mono font-medium"
+                            style={{ color: 'var(--ap-text)' }}
+                          >
+                            {paymentOptions.bankAccount}
+                          </span>
                         </div>
                       )}
                       {paymentOptions.bankRouting && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-500">{t('routingBranch')}</span>
-                          <span className="font-medium text-slate-900">{paymentOptions.bankRouting}</span>
+                        <div className="flex justify-between gap-4">
+                          <span style={{ color: 'var(--ap-text-muted)' }}>{t('routingBranch')}</span>
+                          <span dir="ltr" className="font-medium" style={{ color: 'var(--ap-text)' }}>
+                            {paymentOptions.bankRouting}
+                          </span>
                         </div>
                       )}
                     </div>
-                    <p className="mt-3 text-xs text-slate-500 border-t border-slate-100 pt-3">
+                    <p
+                      className="mt-3 pt-3 text-xs"
+                      style={{ color: 'var(--ap-text-muted)', borderTop: '1px solid var(--ap-border)' }}
+                    >
                       {t('includeInvoiceNumber', { invoiceNumber: invoice.invoice_number })}
                     </p>
                   </div>
                 )}
 
-                {/* Payment Instructions */}
                 {paymentOptions.instructions && (
-                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <h4 className="font-semibold text-amber-800 mb-2">{t('paymentInstructions')}</h4>
-                    <p className="text-sm text-amber-700">{paymentOptions.instructions}</p>
+                  <div
+                    className="p-4"
+                    style={{
+                      background: '#FEF3C7',
+                      border: '1px solid #FDE68A',
+                      borderRadius: 'var(--ap-radius-md)',
+                    }}
+                  >
+                    <h4 className="mb-2 font-semibold" style={{ color: '#92400E' }}>
+                      {t('paymentInstructions')}
+                    </h4>
+                    <p className="text-sm" style={{ color: '#B45309' }}>
+                      {paymentOptions.instructions}
+                    </p>
                   </div>
                 )}
 
                 {/* Contact for Payment — whenever there is genuinely no way to
                     pay, not only after a bounce through `?payment=manual`. A
                     client holding a bill with a blank space where the method
-                    should be needs telling, however they arrived. It also
-                    checked only two of the four fields. */}
+                    should be needs telling, however they arrived. */}
                 {paymentOptions.none && (
-                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-center">
-                    <p className="text-sm text-blue-700">
-                      {t('contactForPayment', { businessName })}
+                  <div
+                    className="p-4 text-center"
+                    style={{
+                      background: 'var(--ap-brand-tint)',
+                      border: '1px solid var(--ap-brand-ring)',
+                      borderRadius: 'var(--ap-radius-md)',
+                    }}
+                  >
+                    <p className="text-sm" style={{ color: 'var(--ap-text)' }}>
+                      <bdi>{t('contactForPayment', { businessName })}</bdi>
                     </p>
                   </div>
                 )}
@@ -485,11 +613,25 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
             </div>
           )}
 
-          {/* Footer */}
-          <div className="px-6 py-4 bg-slate-800 text-center">
-            <p className="text-sm text-slate-300">{t('thankYou')}</p>
+          <div
+            className="px-6 py-4 text-center"
+            style={{ background: 'var(--ap-brand)', color: 'var(--ap-on-brand)' }}
+          >
+            <p className="text-sm">{t('thankYouBusiness')}</p>
+            {profile?.invoice_footer_text && (
+              <p className="mt-1 text-xs opacity-80">
+                <bdi>{profile.invoice_footer_text}</bdi>
+              </p>
+            )}
           </div>
         </div>
+
+        {/* How to reach the business about this bill. */}
+        {brand && (
+          <div className="mt-6">
+            <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address']} />
+          </div>
+        )}
       </div>
     </div>
   );

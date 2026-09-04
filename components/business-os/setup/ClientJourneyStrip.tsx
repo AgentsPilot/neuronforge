@@ -85,6 +85,14 @@ interface ClientJourneyStripProps {
 
 type StepKind = 'service' | 'booking' | 'details' | 'payment' | 'intake';
 
+/**
+ * A step that happens AFTER the booking is confirmed, not inside it.
+ *
+ * Only intake, today. Rendered past the end of the chain so the strip cannot
+ * imply the client does it before they are booked.
+ */
+type AfterBooking = { after?: boolean };
+
 const STEP_COLOR: Record<StepKind, string> = {
   service: '#D14E97',
   booking: '#14B8A6',
@@ -145,7 +153,7 @@ export function ClientJourneyStrip({
    * "off" one is what you press to turn on. Read-only keeps the old behaviour
    * exactly: absent means absent.
    */
-  const steps: Array<{ kind: StepKind; ready: boolean; on: boolean }> = [
+  const steps: Array<{ kind: StepKind; ready: boolean; on: boolean } & AfterBooking> = [
     { kind: 'service', ready: true, on: true },
   ];
   if (service.scheduled || editable) {
@@ -158,9 +166,19 @@ export function ClientJourneyStrip({
   if (online || (editable && priced)) {
     steps.push({ kind: 'payment', ready: processorReady, on: online });
   }
-  // After the money, because a form asked before the client has committed is a
-  // reason to leave.
-  if (intakeEnabled) steps.push({ kind: 'intake', ready: true, on: true });
+  /*
+   * Intake, shown as what follows the booking rather than a step within it.
+   *
+   * It used to sit in the chain as though the client filled it in before
+   * confirming. They do not: the form is emailed once the booking is confirmed.
+   * Drawing it as a step made the strip disagree with what a client actually
+   * walks — and with `journeySteps`, which no longer returns one.
+   *
+   * It stays in the strip because the owner should see that a form goes out;
+   * `after: true` is what tells the row to render it past the confirmation
+   * rather than before it.
+   */
+  if (intakeEnabled) steps.push({ kind: 'intake', ready: true, on: true, after: true });
 
   /** Booking and payment are decisions; the rest are consequences. */
   const canPress = (kind: StepKind) =>
@@ -225,8 +243,20 @@ export function ClientJourneyStrip({
           return (
             <span key={step.kind} style={{ display: 'contents' }}>
               {index > 0 && (
-                <span style={{ color: 'var(--v2-text-muted)', fontSize: '13px', flexShrink: 0 }}>
-                  {isRTL ? '←' : '→'}
+                /*
+                 * An arrow between steps the client walks; a different mark
+                 * before one that happens afterwards.
+                 *
+                 * Intake is emailed once the booking is confirmed, so joining it
+                 * to the chain with the same arrow would say the client fills it
+                 * in before they are booked — which is what the strip used to
+                 * imply, and what the booking flow used to do.
+                 */
+                <span
+                  style={{ color: 'var(--v2-text-muted)', fontSize: '13px', flexShrink: 0 }}
+                  title={step.after ? t('journey.after_booking') : undefined}
+                >
+                  {step.after ? '⋯' : isRTL ? '←' : '→'}
                 </span>
               )}
               {pressable ? (

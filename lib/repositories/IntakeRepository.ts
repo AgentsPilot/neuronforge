@@ -348,6 +348,128 @@ export class IntakeRepository {
    * Get the enabled template for a user (for booking flow)
    * Returns null if intake is disabled or no template is selected
    */
+  /**
+   * The template to EMAIL after a booking, if the business asked for that.
+   *
+   * The intake email used to call `getEnabledTemplateForUser`, which gates on
+   * `collect_during_booking` — the toggle for showing the form as a step INSIDE
+   * the booking flow. So the email was governed by the wrong switch, and
+   * `send_after_booking` — the toggle whose label reads "Send link after
+   * booking (via email)" — was read by nothing at all: stored, rendered,
+   * saved, and inert.
+   *
+   * A business that wanted only the email got none; one that wanted only the
+   * in-flow step got an email as well.
+   */
+  /**
+   * The template for anything the OWNER does — sending by hand, filling it in.
+   *
+   * Asks only whether the business collects intake and has a form. Not whether
+   * it emails automatically: that switch means "send it for me", and reading it
+   * here would refuse the manual send it exists to make room for.
+   */
+  async getCollectableTemplateForUser(userId: string): Promise<IntakeRepositoryResult<IntakeFormTemplate | null>> {
+    try {
+      const { data: settings, error: settingsError } = await this.supabase
+        .from('user_intake_settings')
+        .select('template_id, is_enabled')
+        .eq('user_id', userId)
+        .single();
+
+      if (settingsError) {
+        if (settingsError.code === 'PGRST116') return { data: null, error: null };
+        throw settingsError;
+      }
+
+      if (!settings.is_enabled || !settings.template_id) return { data: null, error: null };
+
+      const { data: template, error: templateError } = await this.supabase
+        .from('intake_form_templates')
+        .select('*')
+        .eq('id', settings.template_id)
+        .single();
+
+      if (templateError) {
+        if (templateError.code === 'PGRST116') return { data: null, error: null };
+        throw templateError;
+      }
+
+      return { data: template as IntakeFormTemplate, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to resolve the collectable intake template');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  async getEmailableTemplateForUser(userId: string): Promise<IntakeRepositoryResult<IntakeFormTemplate | null>> {
+    try {
+      const { data: settings, error: settingsError } = await this.supabase
+        .from('user_intake_settings')
+        .select('template_id, is_enabled, send_after_booking')
+        .eq('user_id', userId)
+        .single();
+
+      if (settingsError) {
+        // No settings row at all is "not configured", not a failure.
+        if (settingsError.code === 'PGRST116') return { data: null, error: null };
+        throw settingsError;
+      }
+
+      /*
+       * Three things, and `send_after_booking` is the one that decides whether
+       * an email goes out.
+       *
+       * This used to call the booking-flow resolver, which gates on
+       * `collect_during_booking` — the switch for showing the form as a step
+       * INSIDE the booking. So the email obeyed the wrong flag and the one
+       * labelled "email after booking" was read by nothing: stored, rendered,
+       * saved, inert.
+       *
+       * `collect_during_booking` is gone as a choice; the form is never a step
+       * in the booking flow now. What remains is whether it is emailed.
+       */
+      if (!settings.is_enabled || !settings.send_after_booking || !settings.template_id) {
+        logger.info(
+          {
+            userId,
+            isEnabled: settings.is_enabled,
+            sendAfterBooking: settings.send_after_booking,
+            hasTemplate: !!settings.template_id,
+          },
+          'Intake email not enabled for this business'
+        );
+        return { data: null, error: null };
+      }
+
+      const { data: template, error: templateError } = await this.supabase
+        .from('intake_form_templates')
+        .select('*')
+        .eq('id', settings.template_id)
+        .single();
+
+      if (templateError) {
+        if (templateError.code === 'PGRST116') return { data: null, error: null };
+        throw templateError;
+      }
+
+      return { data: template as IntakeFormTemplate, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to resolve the emailable intake template');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * DEPRECATED — the booking flow no longer collects intake.
+   *
+   * Intake is one thing now: the form is emailed after the booking. A step
+   * inside the flow put a long form between a client and the thing they came to
+   * do, and it existed only because the setting offered the choice.
+   *
+   * Kept because the owner-side booking screens still read it to decide whether
+   * to show a form they are filling in themselves, which is a different act.
+   * Nothing on a public surface should call this.
+   */
   async getEnabledTemplateForUser(userId: string): Promise<IntakeRepositoryResult<IntakeFormTemplate | null>> {
     try {
       logger.info({ userId }, 'Getting enabled intake template for user');
@@ -369,6 +491,11 @@ export class IntakeRepository {
       }
 
       // Check if intake is enabled and should be collected during booking
+      //
+      // This answers the BOOKING-FLOW question — "does the client fill this in
+      // as a step?" — and `collect_during_booking` is the right flag for it.
+      // It is NOT the right flag for the after-booking email; see
+      // `getEmailableTemplateForUser` below, which was missing entirely.
       if (!settings.is_enabled || !settings.collect_during_booking || !settings.template_id) {
         logger.debug({ userId }, 'Intake not enabled for booking flow');
         return { data: null, error: null };

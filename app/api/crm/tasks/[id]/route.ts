@@ -10,6 +10,9 @@ import { createLogger } from '@/lib/logger';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { z } from 'zod';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence } from '@/lib/business-os/activityText';
+import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'CRMTaskAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -103,6 +106,15 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     requestLogger.info({ taskId: id, userId: user.id }, 'Updating CRM task');
 
+    /*
+     * Read first, so "completed" can be told from "saved again".
+     *
+     * Without the previous status every save of an already-finished task would
+     * write another "task completed" row — the repetition that makes a timeline
+     * unreadable.
+     */
+    const before = await crmTaskRepository.findById(id, user.id);
+
     // 3. Update task
     const result = await crmTaskRepository.update(id, user.id, validated);
 
@@ -134,6 +146,35 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       },
       request
     }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+    // The moment it was finished, on the contact's timeline.
+    if (
+      result.data?.contact_id &&
+      validated.status === 'completed' &&
+      before.data?.status !== 'completed'
+    ) {
+      const { data: ownerProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const ownerLocale = ownerProfile?.language || 'en';
+
+      crmActivityRepository.create({
+        user_id: user.id,
+        contact_id: result.data.contact_id,
+        activity_type: 'task_completed',
+        title: activitySentence('task_completed', { task: result.data.title }, ownerLocale),
+        description: JSON.stringify({
+          kind: 'task_completed',
+          task: result.data.title,
+          previousStatus: before.data?.status || undefined,
+        }),
+        auto_logged: true,
+        source_capability: 'crm',
+        source_entity_id: id,
+      }).catch(err => requestLogger.warn({ err }, 'Task-completed activity logging failed (non-blocking)'));
+    }
 
     // 5. Return success
     requestLogger.info({ taskId: id, userId: user.id }, 'Task updated successfully');

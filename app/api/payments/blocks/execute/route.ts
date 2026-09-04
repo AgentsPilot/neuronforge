@@ -79,8 +79,25 @@ async function executeCollectPayment(
     invoiceId: invoice_id as string | undefined,
     bookingId: booking_id as string | undefined,
     installmentId: installment_id as string | undefined,
-    successUrl: (success_url as string) || `${process.env.NEXT_PUBLIC_APP_URL}/payments/success`,
-    cancelUrl: (cancel_url as string) || `${process.env.NEXT_PUBLIC_APP_URL}/payments/cancelled`
+    /*
+     * Back to the invoice wherever there is one.
+     *
+     * `/payments/success` and `/payments/cancelled` were referenced here and
+     * did not exist, so a customer who paid landed on a 404. Where the payment
+     * belongs to an invoice, that invoice's page is a better destination than
+     * any generic screen could be: it is branded, it already renders both
+     * outcomes inline, and it shows the customer the bill they just settled.
+     */
+    successUrl:
+      (success_url as string) ||
+      (invoice_id
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/invoice/${invoice_id}?payment=success`
+        : `${process.env.NEXT_PUBLIC_APP_URL}/payments/success`),
+    cancelUrl:
+      (cancel_url as string) ||
+      (invoice_id
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/invoice/${invoice_id}?payment=cancelled`
+        : `${process.env.NEXT_PUBLIC_APP_URL}/payments/cancelled`)
   };
 
   // If invoice_id provided, get invoice amount
@@ -290,10 +307,18 @@ async function executeRefundBlock(
     reason: reason as string | undefined,
     source: 'app',
     initiatedBy: userId,
-    // Blocks are addressed by the automation kernel, which may retry. Keying on
-    // the transaction and amount makes a retry a replay rather than a second
-    // refund.
-    clientRequestId: `block:${transaction_id}:${isFullRefund ? 'full' : params.amount}`
+    /**
+     * The kernel's execution id, not a hash of the amount.
+     *
+     * Keying on `(transaction, amount)` did make a retry replay — and also made
+     * two DIFFERENT automation runs refunding the same amount collapse into
+     * one, silently. An execution id is stable across retries of one step and
+     * distinct between steps, which is exactly the property wanted.
+     */
+    clientRequestId:
+      (params.execution_id as string | undefined) ??
+      (params.client_request_id as string | undefined) ??
+      crypto.randomUUID()
   });
 
   if (!outcome.ok) {

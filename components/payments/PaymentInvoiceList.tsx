@@ -24,6 +24,7 @@ import {
   Mail,
   CreditCard,
   RotateCcw,
+  Banknote,
 } from 'lucide-react';
 
 const logger = createLogger({ module: 'PaymentInvoiceList' });
@@ -256,6 +257,49 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
   };
 
   // Download PDF
+  /**
+   * Money that arrived outside the platform.
+   *
+   * A bank transfer, cash, a cheque — the business saw it, we did not. The
+   * endpoint has existed for a while and nothing in the UI called it, so an
+   * invoice settled by transfer could only be closed by editing its status,
+   * which set a field and created no payment: invisible to revenue, and
+   * impossible to refund because refunds read transactions.
+   *
+   * `mark-paid` records a real transaction with `processor_type: 'manual'`,
+   * which is what puts it in the reports, the ledger export and the client
+   * journey — and what lets the refund dialog offer to record a refund later.
+   */
+  const handleMarkPaid = async (invoice: PaymentInvoice) => {
+    try {
+      setActionLoading(invoice.id);
+      setListError(null);
+
+      const response = await fetch(`/api/payments/invoices/${invoice.id}/mark-paid`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // The route defaults the method to bank_transfer and the amount to the
+        // invoice's own. Anything more specific belongs in a dialog, and this
+        // is the common case by a wide margin.
+        body: JSON.stringify({}),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        setListError(result.error || t('payments.mark_paid_failed'));
+        return;
+      }
+
+      fetchInvoices();
+    } catch (error) {
+      logger.error({ err: error, invoiceId: invoice.id }, 'Failed to mark invoice paid');
+      setListError(t('payments.mark_paid_failed'));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleDownloadPDF = async (invoice: PaymentInvoice) => {
     try {
       setActionLoading(invoice.id);
@@ -432,12 +476,28 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
     return configs[status] ?? configs.draft;
   };
 
-  const getStatusBadge = (status: PaymentInvoice['status']) => {
-    const config = getStatusConfig(status);
+  /**
+   * The badge, and the one case where the status is not the whole truth.
+   *
+   * `sent` means ISSUED here — it is what `ISSUED_INVOICE_STATUSES` counts, what
+   * ages into overdue, and what the mark-paid and payment-link actions act on.
+   * An invoice created without emailing it is genuinely in that state: real,
+   * numbered, outstanding, payable. It just was not delivered by us.
+   *
+   * So the state stays `sent` and only the WORD changes. `sent_at` is stamped by
+   * InvoiceDeliveryService and by nothing else, so its absence is a reliable
+   * "we never delivered this" — and telling the business an invoice was sent
+   * when nobody sent it is the kind of small lie they act on.
+   */
+  const getStatusBadge = (invoice: PaymentInvoice) => {
+    const config = getStatusConfig(invoice.status);
+    const issuedNotSent = invoice.status === 'sent' && !invoice.sent_at;
     return (
       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${config.bg} ${config.text}`}>
         <span className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
-        {t(`payments.invoice_status.${status}`)}
+        {issuedNotSent
+          ? t('payments.invoice_status.issued')
+          : t(`payments.invoice_status.${invoice.status}`)}
       </span>
     );
   };
@@ -819,7 +879,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
 
                   {/* Status */}
                   <div className="text-center whitespace-nowrap">
-                    {getStatusBadge(invoice.status)}
+                    {getStatusBadge(invoice)}
                   </div>
 
                   {/* Actions */}
@@ -873,6 +933,21 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
                         <Mail className="w-5 h-5 text-emerald-500" />
                       </button>
                     )}
+                    {/* Only while it is owed. A paid or cancelled invoice has
+                        nothing to settle, and a draft was never issued. */}
+                    {(invoice.status === 'sent' || invoice.status === 'overdue') && (
+                      <button
+                        onClick={() => handleMarkPaid(invoice)}
+                        disabled={actionLoading === invoice.id}
+                        className="flex items-center justify-center w-9 h-9 bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] disabled:opacity-50 transition-colors"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                        title={t('payments.mark_paid')}
+                      >
+                        {actionLoading === invoice.id
+                          ? <Loader2 className="w-5 h-5 text-[#22C58B] animate-spin" />
+                          : <Banknote className="w-5 h-5 text-[#22C58B]" />}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDownloadPDF(invoice)}
                       disabled={actionLoading === invoice.id}
@@ -911,7 +986,7 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{invoice.invoice_number}</span>
-                      {getStatusBadge(invoice.status)}
+                      {getStatusBadge(invoice)}
                     </div>
                     <span className="text-sm font-bold text-[var(--v2-text-primary)]">
                       <bdi>{formatAmount(invoice.amount, invoice.currency)}</bdi>

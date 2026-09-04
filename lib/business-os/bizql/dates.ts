@@ -15,7 +15,7 @@
  * @module lib/business-os/bizql
  */
 
-import type { DateExpr } from './types';
+import { BizQLValidationError, DATE_ANCHORS, isDateAnchor, type DateExpr } from './types';
 import type { FieldType } from '@/lib/business-os/catalog';
 
 /**
@@ -77,6 +77,14 @@ export function resolveDateExpr(
   const { y, m, d } = partsInZone(now, zone);
   const today = startOfDayUtc(y, m, d, zone);
 
+  if (!isDateAnchor(expr.$date)) {
+    throw new BizQLValidationError([
+      `'${String(expr.$date)}' is not a date anchor. Use one of: ` +
+        `${DATE_ANCHORS.join(', ')} — with an offset for a window, ` +
+        `e.g. { $date: 'today', offset: { days: -7 } }.`,
+    ]);
+  }
+
   let resolved: Date;
 
   switch (expr.$date) {
@@ -119,7 +127,21 @@ export function resolveDateExpr(
       resolved = startOfDayUtc(m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1, 1, zone);
       break;
     default:
-      resolved = today;
+      /*
+       * An anchor nobody defined.
+       *
+       * This used to fall through to `today`, which is the most dangerous
+       * possible default: `created_at >= last_7_days` became `created_at >=
+       * today` and matched almost nothing, so a weekly report rendered "0 new
+       * leads" and read as a quiet week rather than as a broken filter. An
+       * empty result is indistinguishable from a real one, so it has to fail
+       * loudly instead.
+       */
+      throw new BizQLValidationError([
+        `'${String(expr.$date)}' is not a date anchor. Use one of: ` +
+          `${DATE_ANCHORS.join(', ')} — with an offset for a window, ` +
+          `e.g. { $date: 'today', offset: { days: -7 } }.`,
+      ]);
   }
 
   if (expr.offset) {

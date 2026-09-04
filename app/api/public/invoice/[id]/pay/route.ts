@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import Stripe from 'stripe';
+import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
 
 const logger = createLogger({ module: 'PublicInvoicePaymentAPI' });
 
@@ -43,8 +44,14 @@ export async function GET(
       );
     }
 
-    // 2. Check invoice status
-    if (invoice.status === 'paid') {
+    /*
+     * 2. Already settled?
+     *
+     * Refunded and partially refunded invoices are settled too — money arrived.
+     * Checking only `'paid'` let a client open a refunded invoice's link and pay
+     * it again, which is the one mistake this page must not allow.
+     */
+    if (isSettledInvoice(invoice)) {
       // Redirect to a thank you page
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.neuronforge.io';
       return NextResponse.redirect(`${baseUrl}/invoice/${invoiceId}?status=paid`);

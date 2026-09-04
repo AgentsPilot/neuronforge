@@ -3,10 +3,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { SwitchRow } from './SwitchRow';
 import { createLogger } from '@/lib/logger';
-import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import {
-  X,
+  // No X: DialogContent renders its own close control, and a second one in the
+  // header was the hand-rolled overlay's job.
   Plus,
   Trash2,
   User,
@@ -19,6 +22,7 @@ import {
   Check,
   AlertCircle,
   Search,
+  Send,
 } from 'lucide-react';
 
 const logger = createLogger({ module: 'InvoiceModal' });
@@ -70,7 +74,7 @@ const DUE_DATE_PRESETS_BASE = [
 ];
 
 export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, contactEmail }: Props) {
-  const { currencyCode, t, isRTL } = useLanguage();
+  const { currencyCode, availableCurrencies, t, isRTL } = useLanguage();
 
   // Get translated due date presets - memoized to update when language changes
   const dueDatePresets = useMemo(() => {
@@ -82,16 +86,45 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
   }, [t]);
 
   const [loading, setLoading] = useState(false);
+  // Which of the two footer actions is in flight, so the spinner appears on the
+  // button that was actually pressed rather than on both.
+  const [pendingIntent, setPendingIntent] = useState<'create' | 'send' | null>(null);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [services, setServices] = useState<Service[]>([]);
-  const [hasStripeConnect, setHasStripeConnect] = useState(false);
+  /*
+   * Three states, not two: connected, not connected, and NOT YET KNOWN.
+   *
+   * Held as a plain boolean this started `false`, so every opening of the
+   * dialog asserted "Stripe not connected" until the check came back — and on
+   * the orders page, where a dozen requests are in flight at once, that answer
+   * sat on screen long enough to be read and believed. It is the same mistake
+   * as rendering an empty list before the rows arrive, except the empty state
+   * here is a factual claim about the business's account.
+   *
+   * `null` means the question is still open, and nothing is claimed either way.
+   */
+  const [hasStripeConnect, setHasStripeConnect] = useState<boolean | null>(null);
   const [showContactDropdown, setShowContactDropdown] = useState(false);
   const [contactSearch, setContactSearch] = useState('');
   const [dueDatePreset, setDueDatePreset] = useState('net30');
   const [showDueDateDropdown, setShowDueDateDropdown] = useState(false);
   const [activeServiceDropdown, setActiveServiceDropdown] = useState<number | null>(null);
   const [serviceSearch, setServiceSearch] = useState('');
+
+  /*
+   * The currency THIS invoice is in.
+   *
+   * Seeded from the business's default, because that is what nearly every
+   * invoice will be — but it is a property of the invoice, not of the business.
+   * A client abroad is billed in their currency, and until now the dialog
+   * printed the default as a fixed label and sent it regardless.
+   *
+   * Changing it RELABELS, it does not convert: 400 stays 400. There is no rate
+   * here and inventing one would silently restate what someone is being
+   * charged, so the numbers are left exactly as typed.
+   */
+  const [invoiceCurrency, setInvoiceCurrency] = useState<CurrencyCode>(currencyCode);
 
   const [lineItems, setLineItems] = useState<LineItem[]>([
     { description: '', quantity: 1, unit_price: 0, total: 0 }
@@ -105,18 +138,30 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
     due_date: '',
     payment_terms: 'net_30',
     notes: '',
-    send_via_stripe: true, // Default to Stripe if available
+    // How it goes out, once the footer says it should. Whether it goes out at
+    // all is not stored: it is the button that was pressed.
+    send_via_stripe: true,
   });
 
   // Track when modal was last opened to prevent resetting during user interaction
   const wasOpenRef = React.useRef(false);
 
-  // Load contacts, services, and check Stripe Connect status
-  useEffect(() => {
-    loadContacts();
-    loadServices();
-    checkStripeConnect();
-  }, []);
+  /*
+   * Nothing is fetched until the dialog is actually opened.
+   *
+   * This ran on MOUNT — and the dialog is mounted with the orders page, closed,
+   * so every page load fired three requests for a form nobody had opened yet:
+   * contacts, services, and the Stripe check. They queued among the list's own
+   * requests (money, invoices, refunds, transactions) against the browser's
+   * ~6-connection limit, each paying the auth cost on the way in.
+   *
+   * So the Stripe answer genuinely did arrive "after the orders loaded" — it
+   * was behind them in the queue, for a question no one had asked yet.
+   *
+   * Moved into the open transition below: the page loads faster for not doing
+   * this work, and the check runs on a clear field, which is why it now comes
+   * back quickly rather than last.
+   */
 
   // Reset formData when modal opens with props (only on open transition)
   useEffect(() => {
@@ -139,6 +184,18 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
       // Reset line items
       setLineItems([{ description: '', quantity: 1, unit_price: 0, total: 0 }]);
       setDueDatePreset('net30');
+      setInvoiceCurrency(currencyCode);
+
+      /*
+       * Everything this form needs, asked for when it is opened.
+       *
+       * Also the correct moment for the Stripe check on its own merits: a
+       * business can connect in another tab, and an answer cached from page
+       * load would be the one deciding whether this invoice can be sent.
+       */
+      loadContacts();
+      loadServices();
+      checkStripeConnect();
     }
 
     wasOpenRef.current = isOpen;
@@ -186,19 +243,41 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
     }
   };
 
+  /*
+   * Is this business connected to Stripe?
+   *
+   * The answer decides whether the dialog offers to send the invoice at all, so
+   * getting it wrong is not cosmetic: a business whose account is live and
+   * charging is told "Stripe not connected", the send option disappears, and
+   * the invoice is written as a draft that never reaches anyone.
+   *
+   * Two things used to make a wrong answer stick:
+   *
+   *   - it ran ONCE on mount. The dialog is mounted with the page, so a check
+   *     that failed at page load stayed failed for every invoice written
+   *     afterwards, with no way to retry short of a reload.
+   *   - state was only ever set on the success path. A failed request left the
+   *     previous answer — false, on first load — in place and said nothing, so
+   *     a transient failure was indistinguishable from a real disconnection.
+   *
+   * Now it re-asks each time the dialog opens and writes the answer on every
+   * path, so an unknown is at least a fresh unknown and a failure is logged.
+   */
   const checkStripeConnect = async () => {
     try {
-      // Check if user has a Stripe Connect account configured
-      // For dev/test environments using same Stripe account, we check if stripe_account_id exists
       const response = await fetch('/api/payments/stripe-connect');
       const data = await response.json();
 
-      if (response.ok && data.success && data.data) {
-        // If stripe_account_id exists, consider Stripe as connected
-        // In production, this would also check charges_enabled from Stripe API
-        const hasStripeAccount = !!data.data.stripe_account_id;
-        setHasStripeConnect(hasStripeAccount);
+      if (!response.ok || !data.success) {
+        // Still unknown. Sending falls back to the branded email either way, so
+        // an unanswered check costs the Stripe option — never a false claim.
+        logger.warn({ status: response.status }, 'Stripe Connect status check failed');
+        return;
       }
+
+      // `data.data` is null when the business genuinely has no account — a real
+      // answer, and the one case where false is correct.
+      setHasStripeConnect(!!data.data?.stripe_account_id);
     } catch (error) {
       logger.error({ err: error }, 'Failed to check Stripe Connect status');
     }
@@ -278,15 +357,41 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
     setServiceSearch('');
   };
 
+  /*
+   * Will pressing the button send this to the client?
+   *
+   * Sending does NOT require Stripe. `sendInvoice` uses a Stripe-hosted invoice
+   * when the business is connected and asked for one, and otherwise emails the
+   * branded invoice with its PDF attached — so a business collecting by
+   * transfer can still send, which the old single "Send via Stripe" tick made
+   * look impossible.
+   *
+   * The button reads this, and so does the request, so the label cannot promise
+   * something different from what is posted.
+   */
+  const willUseStripe = formData.send_via_stripe && hasStripeConnect === true;
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currencyCode,
+      currency: invoiceCurrency,
     }).format(amount);
   };
 
+  /*
+   * Which button was pressed — and what happens when neither was.
+   *
+   * Both footer buttons submit the form, so native validation still runs on the
+   * required fields. `submitter` says which one, and a submit with NO submitter
+   * is the Enter key: that saves a draft. Sending has to be an act of pressing
+   * the send button, not something a stray keystroke in the notes box can do.
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    const send = submitter?.value === 'send';
+    setPendingIntent(send ? 'send' : 'create');
 
     // Validate client info
     if (!formData.client_name || !formData.client_email) {
@@ -319,15 +424,56 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
           // Which service this invoice is for, so the money lands on a row in
           // the reports page's revenue-by-service card.
           service_id: validItems.find(item => item.service_id)?.service_id || null,
-          currency: currencyCode,
-          status: 'draft',
-          use_stripe: formData.send_via_stripe && hasStripeConnect,
+          currency: invoiceCurrency,
+          /*
+           * Issued, whichever button was pressed.
+           *
+           * `sent` is what this codebase means by ISSUED — it is what
+           * ISSUED_INVOICE_STATUSES counts, what ages into overdue, and what the
+           * mark-paid and payment-link actions act on. An invoice written here
+           * is a real numbered document that a client owes; not emailing it
+           * does not make it provisional.
+           *
+           * `sent_at` stays null when we did not deliver it, and the list reads
+           * that to label it "Issued" rather than claiming it was sent.
+           */
+          status: 'sent',
+          send,
+          // Only meaningful when sending, and only when actually connected.
+          use_stripe: send && willUseStripe,
+          /*
+           * The toggle as an INTENT, independent of whether this press sends.
+           *
+           * Deliberately not `send && …`: an invoice created without sending
+           * would then record "transfer only" purely because it was not sent
+           * yet, and its pay page would drop the card button the writer had
+           * asked for.
+           *
+           * Only stated when we know the business could collect online at all —
+           * otherwise no choice was made and the column stays null.
+           */
+          allow_online_payment:
+            hasStripeConnect === true ? formData.send_via_stripe : undefined,
         }),
       });
 
       const result = await response.json();
 
       if (result.success) {
+        /*
+         * The invoice exists either way, so the dialog closes either way — a
+         * second attempt from here would create a duplicate. But a delivery
+         * that failed has to be said out loud: it leaves a draft sitting in the
+         * list that the business believes is with their client, which is the
+         * failure this whole path was reported for.
+         */
+        if (result.delivery && !result.delivery.sent) {
+          alert(
+            `${t('invoice.created_not_sent') || 'Invoice created, but it could not be sent'}${
+              result.delivery.error ? `: ${result.delivery.error}` : ''
+            }`
+          );
+        }
         onSave();
       } else {
         logger.error({ error: result.error }, 'Failed to create invoice');
@@ -338,49 +484,90 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
       alert('Failed to create invoice. Please try again.');
     } finally {
       setLoading(false);
+      setPendingIntent(null);
     }
   };
 
-  if (!isOpen) return null;
-
+  /*
+   * A Radix dialog, like every other money dialog on this screen.
+   *
+   * The hand-rolled `fixed inset-0 z-[100]` this replaces is the same shape
+   * that put the refund modal behind the CRM drawer: a raw overlay inside
+   * another component's stacking context loses to whatever it was opened from,
+   * and nothing about the z-index says so. Radix portals to the body and owns
+   * the focus trap, the escape key and the scroll lock.
+   */
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-0 sm:p-4"
-      dir={isRTL ? 'rtl' : 'ltr'}
-    >
-      <div className="bg-[var(--v2-surface)] sm:rounded-lg shadow-xl w-full sm:max-w-3xl h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col overflow-hidden">
-        {/* Fixed Header */}
-        <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 bg-[var(--v2-surface)]">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg" style={{ backgroundColor: `${REPORTS_COLOR}15` }}>
-                <FileText className="w-5 h-5" style={{ color: REPORTS_COLOR }} />
-              </div>
-              <div>
-                <h2 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)]">
-                  {t('invoice.create_title') || 'Create Invoice'}
-                </h2>
-                <p className="text-sm text-[var(--v2-text-secondary)]">
-                  {t('invoice.create_subtitle') || 'Send a professional invoice to your client'}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-2 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] rounded-lg transition-colors"
+    <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
+      <DialogContent
+        className="flex w-full sm:max-w-2xl h-[100vh] sm:h-auto max-h-[100vh] sm:max-h-[90vh] flex-col rounded-none sm:rounded-lg p-0 overflow-hidden"
+        dir={isRTL ? 'rtl' : 'ltr'}
+      >
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+        {/* ── Header ──────────────────────────────────────────────────────
+            Led by the total, the way the refund dialog is led by the amount
+            being returned. What this invoice comes to is the fact the writer
+            is watching; it used to sit two thirds of the way down the form,
+            below the line items, where it could not be seen while typing them.
+            The currency sits directly under it because it is what that number
+            is denominated in. */}
+        <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-5 py-5">
+          <div className="flex items-center gap-2.5">
+            <span
+              className="flex h-8 w-8 items-center justify-center"
+              style={{ backgroundColor: `${REPORTS_COLOR}15`, borderRadius: 'var(--v2-radius-button)' }}
             >
-              <X className="w-5 h-5" />
-            </button>
+              <FileText className="h-4 w-4" style={{ color: REPORTS_COLOR }} />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="text-[15px] font-semibold text-[var(--v2-text-primary)]">
+                {t('invoice.create_title') || 'Create Invoice'}
+              </DialogTitle>
+              <p className="truncate text-[12px] text-[var(--v2-text-muted)]">
+                {t('invoice.create_subtitle') || 'Send a professional invoice to your client'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 text-[28px] font-semibold leading-none tabular-nums text-[var(--v2-text-primary)]">
+            <bdi>{formatCurrency(formData.amount)}</bdi>
+          </div>
+
+          {/* Four currencies, so segments rather than another dropdown — the
+              same control the refund dialog uses for a short exclusive choice,
+              and one that shows all the options without being opened. */}
+          <div
+            className="mt-3 inline-flex gap-1 bg-[var(--v2-surface-hover)] p-1"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+            role="radiogroup"
+            aria-label={t('invoice.currency') || 'Currency'}
+          >
+            {(Object.keys(availableCurrencies) as CurrencyCode[]).map(code => (
+              <button
+                key={code}
+                type="button"
+                role="radio"
+                aria-checked={invoiceCurrency === code}
+                onClick={() => setInvoiceCurrency(code)}
+                className={`px-2.5 py-1 text-[12px] transition-colors ${
+                  invoiceCurrency === code
+                    ? 'bg-[var(--v2-bg)] font-medium text-[var(--v2-text-primary)] shadow-sm'
+                    : 'text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                }`}
+                style={{ borderRadius: 'calc(var(--v2-radius-button) - 2px)' }}
+              >
+                {availableCurrencies[code].symbol} {code}
+              </button>
+            ))}
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
           {/* Scrollable Content */}
-          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-6">
+          <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
           {/* Client Selection */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium text-[var(--v2-text-primary)] flex items-center gap-2">
-              <User className="w-4 h-4" />
+          <div className="space-y-3">
+            <h3 className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
+              <User className="w-3.5 h-3.5" />
               {t('invoice.client_info') || 'Client Information'}
             </h3>
 
@@ -506,14 +693,11 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
 
           {/* Line Items */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium text-[var(--v2-text-primary)]">
-                {t('invoice.line_items') || 'Line Items'}
-              </h3>
-              <div className="text-xs text-[var(--v2-text-muted)]">
-                {t('invoice.currency') || 'Currency'}: {currencyCode}
-              </div>
-            </div>
+            {/* The currency label that used to sit here is now the picker in
+                the header, beside the number it applies to. */}
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
+              {t('invoice.line_items') || 'Line Items'}
+            </h3>
 
             {/* Header */}
             <div className="hidden sm:grid grid-cols-12 gap-2 text-xs font-medium text-[var(--v2-text-secondary)] px-1">
@@ -655,20 +839,10 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
             </Button>
           </div>
 
-          {/* Total */}
-          <div className="flex items-center justify-between border-t border-[var(--v2-border)] pt-4">
-            <span className="text-lg font-semibold text-[var(--v2-text-primary)]">
-              {t('invoice.total') || 'Total'}
-            </span>
-            <span className="text-2xl font-bold text-[var(--v2-primary)]">
-              {formatCurrency(formData.amount)}
-            </span>
-          </div>
-
           {/* Due Date with Presets */}
           <div className="space-y-3">
-            <h3 className="text-sm font-medium text-[var(--v2-text-primary)] flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
+            <h3 className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-[var(--v2-text-muted)]">
+              <Calendar className="w-3.5 h-3.5" />
               {t('invoice.payment_details') || 'Payment Details'}
             </h3>
 
@@ -747,69 +921,137 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
             />
           </div>
 
-            {/* Stripe Option */}
-            {hasStripeConnect && (
-              <div className="p-4 bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-lg">
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.send_via_stripe}
-                    onChange={(e) => setFormData(prev => ({ ...prev, send_via_stripe: e.target.checked }))}
-                    className="mt-0.5 w-4 h-4 rounded border-[var(--v2-border)] text-[var(--v2-primary)] focus:ring-[var(--v2-primary)]"
-                  />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-purple-500" />
-                      <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                        {t('invoice.send_via_stripe') || 'Send via Stripe'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--v2-text-secondary)] mt-1">
-                      {t('invoice.stripe_description') || 'Client will receive a professional Stripe invoice with online payment options'}
-                    </p>
-                  </div>
-                </label>
+            {/* ── Delivery ────────────────────────────────────────────────
+                The same switch the refund and stop-plan dialogs use for "and
+                also do this", rather than a checkbox that looks like a
+                different kind of control for the same kind of decision.
+
+                This one decides whether the invoice is SENT. It used to be
+                collected and thrown away — the row was written as a draft
+                whichever way it was set — so the tick has to mean something
+                now that it does. */}
+            {/* WHETHER to send is decided in the footer, deliberately, because
+                a switch left on from the last invoice is exactly how something
+                reaches a client before it was ready. This is only HOW it goes
+                out once that button is pressed. */}
+            {hasStripeConnect === true && (
+              <div
+                className="border border-[var(--v2-border)] overflow-hidden"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <SwitchRow
+                  checked={formData.send_via_stripe}
+                  onChange={next => setFormData(prev => ({ ...prev, send_via_stripe: next }))}
+                  label={t('invoice.send_via_stripe') || 'Send via Stripe'}
+                  description={
+                    t('invoice.stripe_description') ||
+                    'Client will receive a professional Stripe invoice with online payment options'
+                  }
+                  icon={<CreditCard className="h-4 w-4 flex-shrink-0 text-purple-500" />}
+                  isRTL={isRTL}
+                />
               </div>
             )}
 
-            {!hasStripeConnect && (
-              <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                      {t('invoice.no_stripe_title') || 'Stripe not connected'}
-                    </p>
-                    <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-1">
-                      {t('invoice.no_stripe_description') || 'Connect Stripe to send invoices with online payment. Without Stripe, you can still create invoices and download PDFs.'}
-                    </p>
-                  </div>
+            {/* Not a dead end: without Stripe the invoice still goes out as a
+                branded email with its PDF attached. What is missing is the
+                online payment button, not the send. */}
+            {hasStripeConnect === null && (
+              <div
+                className="flex items-center gap-2.5 border border-[var(--v2-border)] px-3 py-2.5 text-[12.5px] text-[var(--v2-text-muted)]"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin" />
+                <span>{t('invoice.checking_payment_connection')}</span>
+              </div>
+            )}
+
+            {/* Only once we actually know. `!hasStripeConnect` was true while
+                the answer was still null, which is what put the warning on
+                screen before anything had been asked. */}
+            {hasStripeConnect === false && (
+              <div
+                className="flex items-start gap-3 border border-amber-500/30 bg-amber-500/10 px-3 py-2.5"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-500" />
+                <div className="min-w-0">
+                  <p className="text-[12.5px] font-medium text-[var(--v2-text-primary)]">
+                    {t('invoice.no_stripe_title') || 'Stripe not connected'}
+                  </p>
+                  <p className="mt-0.5 text-[11.5px] text-[var(--v2-text-muted)]">
+                    {t('invoice.no_stripe_description') || 'Connect Stripe to send invoices with online payment. Without Stripe, you can still create invoices and download PDFs.'}
+                  </p>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Fixed Footer */}
-          <div className="flex-shrink-0 flex items-center justify-end gap-3 px-4 sm:px-6 py-4 sm:py-6 border-t border-[var(--v2-border)] bg-[var(--v2-surface)]">
-            <Button type="button" variant="outline" onClick={onClose}>
+          {/* ── Footer ──────────────────────────────────────────────────────
+              Two actions, not one action and a switch.
+
+              Sending an invoice is irreversible in the way that matters: the
+              client has it. A toggle in the body decides that at the top of the
+              form and is still set when the button is pressed a minute later,
+              which is exactly how something goes out before it was ready. Two
+              buttons make it the last thing chosen rather than an earlier one
+              being remembered.
+
+              Both submit, so the browser still validates the required fields —
+              `submitter` is what separates them. Enter submits with no
+              submitter, and that saves a draft. */}
+          <div className="flex flex-shrink-0 items-center justify-end gap-2 border-t border-[var(--v2-border)] px-5 py-4">
+            <Button type="button" variant="outline" onClick={onClose} disabled={loading}>
               {t('invoice.cancel') || 'Cancel'}
             </Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? (
+
+            <Button
+              type="submit"
+              name="intent"
+              value="create"
+              variant="outline"
+              // An invoice for nothing is not a document worth writing.
+              disabled={loading || formData.amount <= 0}
+            >
+              {loading && pendingIntent === 'create' ? (
+                <Loader2 className="me-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileText className="me-2 h-4 w-4" />
+              )}
+              {t('invoice.create_only') || 'Create without sending'}
+            </Button>
+
+            <Button
+              type="submit"
+              name="intent"
+              value="send"
+              disabled={loading || formData.amount <= 0}
+              // The platform's action treatment — tinted, outlined, in the
+              // reports green. It is the same button that opened this dialog.
+              variant="outline"
+              className="border-[#22C58B] bg-[#22C58B]/10 text-[#22C58B] hover:bg-[#22C58B]/20 hover:text-[#22C58B] disabled:opacity-50"
+            >
+              {loading && pendingIntent === 'send' ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  {t('common.creating') || 'Creating...'}
+                  <Loader2 className="me-2 h-4 w-4 animate-spin" />
+                  {t('common.sending') || 'Sending...'}
                 </>
               ) : (
                 <>
-                  <FileText className="w-4 h-4 mr-2" />
-                  {t('invoice.create') || 'Create Invoice'}
+                  <Send className="me-2 h-4 w-4" />
+                  {t('invoice.create_and_send') || 'Create & send'}
+                  {formData.amount > 0 && (
+                    <>
+                      <span className="mx-1.5 opacity-50">·</span>
+                      <bdi className="tabular-nums">{formatCurrency(formData.amount)}</bdi>
+                    </>
+                  )}
                 </>
               )}
             </Button>
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -126,12 +126,45 @@ async function resolveModel(): Promise<string> {
  * stray token. Anything with content is kept and validated strictly, so this
  * discards noise, never meaning.
  */
-function coerceSteps(raw: unknown): { steps: Query[]; dropped: number } {
+function coerceSteps(raw: unknown): {
+  steps: Query[];
+  dropped: number;
+  /**
+   * An `answer` the model put INSIDE `steps` instead of beside it.
+   *
+   * gpt-4o-mini does this on roughly a third of Hebrew aggregate questions:
+   *
+   *   [ {id:'s1', op:'compute', entity:'transactions', agg:{...}},
+   *     {answer:{text:'יש לך סכום הכנסות של {s1.value}.', primary_step:'s1'}} ]
+   *
+   * The plan itself is perfect. Only its placement is wrong — and the element
+   * has no `entity`, so it was silently discarded here while `raw.answer`
+   * stayed undefined. The turn then rendered with NO SENTENCE, falling back to
+   * a bare "תשלומים: 2" for a question that had asked for revenue.
+   *
+   * Salvaged rather than dropped: the model wrote a correct answer and we were
+   * throwing it away over a misplacement we can see and undo.
+   */
+  salvagedAnswer?: Record<string, unknown>;
+} {
   if (!Array.isArray(raw)) return { steps: [], dropped: 0 };
+
+  let salvagedAnswer: Record<string, unknown> | undefined;
 
   const usable = raw.filter((step) => {
     const s = step as Record<string, unknown> | null;
-    return Boolean(s && typeof s === 'object' && typeof s.entity === 'string' && s.entity);
+    if (!s || typeof s !== 'object') return false;
+
+    // A step-shaped object always names an entity. Anything else that carries
+    // an `answer` is the answer spec in the wrong place.
+    if (typeof s.entity !== 'string' || !s.entity) {
+      if (!salvagedAnswer && s.answer && typeof s.answer === 'object') {
+        salvagedAnswer = s.answer as Record<string, unknown>;
+      }
+      return false;
+    }
+
+    return true;
   });
 
   return {
@@ -142,6 +175,7 @@ function coerceSteps(raw: unknown): { steps: Query[]; dropped: number } {
         : (s as unknown as FindQuery);
     }),
     dropped: raw.length - usable.length,
+    salvagedAnswer,
   };
 }
 
@@ -373,8 +407,18 @@ export class BizQLPlanner {
 
       const plan: Plan = {
         steps: coerced.steps,
-        answer: raw.answer as AnswerSpec | undefined,
+        // The model's own sentence, wherever it put it. `raw.answer` first —
+        // that is the declared place — then one recovered from inside `steps`.
+        answer: (raw.answer as AnswerSpec | undefined) ??
+          (coerced.salvagedAnswer as AnswerSpec | undefined),
       };
+
+      if (!raw.answer && coerced.salvagedAnswer) {
+        logger.info(
+          { userId: request.userId },
+          'Recovered an answer the model placed inside steps'
+        );
+      }
 
       // Canonicalise unambiguous variations (`>` -> `gt`) before judging the
       // plan, so a repair pass is spent on real problems only.

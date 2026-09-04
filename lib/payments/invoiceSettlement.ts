@@ -83,6 +83,16 @@ export interface SettleInvoiceInput {
   };
   description?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * What the processor kept, when the caller already knows it.
+   *
+   * Passed in rather than fetched here: this function is deliberately free of
+   * network calls — it is the one path three surfaces share, and it is tested
+   * against a fake database. The webhook that has a Stripe client resolves the
+   * fee and hands it over; the reconciler backfills anything settled without
+   * one.
+   */
+  fee?: { processor_fee: number; net_amount: number; fee_currency: string } | null;
 }
 
 export interface SettleInvoiceResult {
@@ -168,6 +178,9 @@ export async function settleInvoicePaid(
       refund_status: 'none',
       refunded_amount: 0,
       metadata: input.metadata ?? {},
+      // Spread, so an unknown fee leaves the columns NULL rather than writing
+      // zeros the backfill would then skip over.
+      ...(input.fee ?? {}),
       ...(input.accountContext ?? {}),
     })
     .select('id')

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Mail, Link2, HelpCircle, Music2, Briefcase, Play, Globe, FileText, BarChart3 } from 'lucide-react';
+import { Mail, Link2, HelpCircle, Music2, Briefcase, Play } from 'lucide-react';
 import { PluginIcon } from '@/components/PluginIcon';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { Channel } from '@/lib/business-os/channel-insights/channelFromReferrer';
@@ -67,13 +67,6 @@ interface ChannelSourcesSectionProps {
   /** Drop the card chrome when this sits inside a shared card. */
   embedded?: boolean;
 }
-
-const SURFACE_ICONS: Record<VisitSurface, typeof Mail> = {
-  website: Globe,
-  landing: FileText,
-  smart_links: Link2,
-  analytics: BarChart3,
-};
 
 const SURFACE_LABELS: Record<VisitSurface, Record<string, string>> = {
   website: { en: 'Website', es: 'Sitio web', he: 'אתר' },
@@ -154,29 +147,18 @@ export const CHANNEL_LABELS: Record<Channel, Record<string, string>> = {
   direct: { en: 'Direct / unknown', es: 'Directo / desconocido', he: 'ישיר / לא ידוע' },
 };
 
-/**
- * CHART colours — deliberately NOT the brand colours above.
+/*
+ * The chart palette that used to live here is gone with the ring.
  *
- * Brand colours cannot serve as a palette: three of the ten channels are blue,
- * two are grey residual buckets, and Facebook against Google measures ΔE 4.8 for
- * NORMAL vision — indistinguishable. A business whose only attributed traffic was
- * the two grey buckets got a chart drawn in two invisible greys.
+ * It existed because arcs cannot carry brand colours: three of the ten channels
+ * are blue and two are grey, so Facebook against Google measured ΔE 4.8 for
+ * NORMAL vision — two adjacent slices nobody could tell apart. Five validated
+ * hues solved that, and forced a sixth channel to fold into a grey "Other".
  *
- * These five pass every check in `dataviz/scripts/validate_palette.js` against a
- * white surface under `--pairs all` (worst pair ΔE 9.1 protan, 17.4 normal), so
- * any two slices are separable in any order. Brand identity has not gone away —
- * it lives in the legend's icon, beside the name.
- *
- * Five, and no more: beyond that the tail folds into "Other". A generated sixth
- * hue would break the guarantee this list exists to make.
+ * A labelled cell needs none of it. Identity rests on the name and the mark
+ * beside it, so the brand colour is free to be the brand colour again, and
+ * there is no five-channel ceiling to fold anything into.
  */
-const SLICE_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#4a3aa7', '#c2185b'];
-
-/** The folded tail. Grey on purpose: a residual is not an identity. */
-const OTHER_COLOR = '#9AA3B2';
-
-/** How many channels get their own slice before the rest are folded. */
-const MAX_SLICES = SLICE_COLORS.length;
 
 const COPY: Record<string, Record<string, string>> = {
   title: {
@@ -210,20 +192,6 @@ const COPY: Record<string, Record<string, string>> = {
     es: 'Según cómo llegó cada cliente',
     he: 'מבוסס על איך שהלקוחות הגיעו אליך',
   },
-  /** The folded tail, once there are more channels than the palette can separate. */
-  otherChannels: { en: 'Other', es: 'Otros', he: 'אחר' },
-  /**
-   * Heading for connected channels that produced nobody. They cannot be on the
-   * map — area is leads, and theirs is zero — but leaving them off entirely is
-   * how Meta and Google disappeared from a dashboard of someone who had just
-   * connected them. "3,400 saw you, none got in touch" is the most actionable
-   * sentence this card can say.
-   */
-  noLeadsYet: {
-    en: 'Connected, no leads yet',
-    es: 'Conectados, aún sin contactos',
-    he: 'מחוברים, עדיין בלי לידים',
-  },
   empty: {
     en: 'No leads yet in this period',
     es: 'Aún no hay contactos en este período',
@@ -253,88 +221,45 @@ const COPY: Record<string, Record<string, string>> = {
     es: 'Contados una vez. Quien usó dos aparece en ambos.',
     he: 'כל אחד נספר פעם אחת. מי שהשתמש בשניים מופיע בשניהם.',
   },
+
+  /*
+   * The finding, said in words before anything is drawn.
+   *
+   * The card held both numbers — arrivals and leads — and never put them
+   * together, so it could show 431 visitors and 1 lead without ever stating the
+   * 0.23% that is the actual news. One sentence does what the ring could not.
+   *
+   * Three forms because Hebrew and Spanish inflect the verb: "1 הפכו" is wrong,
+   * and a single template with a plural verb would be wrong on exactly the
+   * account this card is most often read on — a new one, with one lead.
+   */
+  sayNone: {
+    en: 'Of {visitors} visitors this month, nobody has got in touch yet',
+    es: 'De {visitors} visitantes este mes, nadie se ha puesto en contacto aún',
+    he: 'מתוך {visitors} מבקרים החודש, אף אחד עדיין לא יצר קשר',
+  },
+  sayOne: {
+    en: 'Of {visitors} visitors this month, 1 became a lead',
+    es: 'De {visitors} visitantes este mes, 1 se convirtió en contacto',
+    he: 'מתוך {visitors} מבקרים החודש, אחד הפך לליד',
+  },
+  sayMany: {
+    en: 'Of {visitors} visitors this month, {leads} became leads',
+    es: 'De {visitors} visitantes este mes, {leads} se convirtieron en contactos',
+    he: 'מתוך {visitors} מבקרים החודש, {leads} הפכו לידים',
+  },
+  /** When no visitor figure exists, the rate cannot be stated — so it is not. */
+  sayLeadsOnly: {
+    en: '{leads} leads in this period',
+    es: '{leads} contactos en este período',
+    he: '{leads} לידים בתקופה הזו',
+  },
+  rateTitle: {
+    en: 'Visitors who became leads',
+    es: 'Visitantes que se convirtieron en contactos',
+    he: 'אחוז המבקרים שהפכו ללידים',
+  },
 };
-
-interface Slice {
-  key: string;
-  label: string;
-  leads: number;
-  share: number;
-  /** Chart colour — from the validated palette, never the brand. */
-  color: string;
-  /** Brand colour, for the legend glyph only. */
-  brand: string;
-  logo?: string;
-  Icon?: typeof Mail;
-}
-
-const R = 15;
-const CIRCUMFERENCE = 2 * Math.PI * R;
-const STROKE = 5;
-/** Visible separation between slices, in viewBox units (~1.3px at 104px). */
-const SLICE_GAP = 1.2;
-
-/**
- * The ring.
- *
- * Round caps are what make it read as round, and they are also the trap: a round
- * cap extends the drawn arc by STROKE/2 at BOTH ends, so a slice drawn to its
- * exact share renders one whole stroke-width too long and laps its neighbour.
- * The dash is therefore shortened by a full STROKE and re-centred inside its true
- * span, which puts the visible arc exactly where the share says it should be.
- *
- * A single slice is drawn as a plain circle: with one arc there is no neighbour
- * to separate from, and the gap correction would leave a ring that reads as 97%
- * of something rather than all of it.
- */
-function Donut({ slices, total, label }: { slices: Slice[]; total: number; label: string }) {
-  let cursor = 0;
-
-  return (
-    <div className="relative shrink-0" style={{ width: 104, height: 104 }}>
-      <svg
-        viewBox="0 0 36 36"
-        className="h-full w-full"
-        style={{ transform: 'rotate(-90deg)' }}
-        role="img"
-        aria-label={`${total} ${label}`}
-      >
-        <circle cx="18" cy="18" r={R} fill="none" stroke="#EDF1F7" strokeWidth={STROKE} />
-
-        {slices.map(slice => {
-          const full = (slice.leads / Math.max(total, 1)) * CIRCUMFERENCE;
-          const solo = slices.length === 1;
-          const drawn = solo ? full : Math.max(full - SLICE_GAP - STROKE, 0.01);
-          const dashStart = solo ? cursor : cursor + (full - drawn) / 2;
-
-          cursor += full;
-
-          return (
-            <circle
-              key={slice.key}
-              cx="18"
-              cy="18"
-              r={R}
-              fill="none"
-              stroke={slice.color}
-              strokeWidth={STROKE}
-              strokeLinecap={solo ? 'butt' : 'round'}
-              strokeDasharray={`${drawn.toFixed(2)} ${(CIRCUMFERENCE - drawn).toFixed(2)}`}
-              strokeDashoffset={(-dashStart).toFixed(2)}
-            />
-          );
-        })}
-      </svg>
-
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-[20px] font-semibold leading-none text-[var(--v2-text-primary)] tabular-nums">
-          {total}
-        </span>
-        <span className="mt-0.5 text-[10px] text-[var(--v2-text-muted)]">{label}</span>
-      </div>
-    </div>
-  );
-}
 
 export function ChannelSourcesSection({
   rows,
@@ -343,85 +268,99 @@ export function ChannelSourcesSection({
   visits,
   embedded = false,
 }: ChannelSourcesSectionProps) {
-  const { language, formatCurrency, isRTL } = useLanguage();
+  const { language, isRTL } = useLanguage();
 
   const t = (key: string) => COPY[key]?.[language] || COPY[key]?.en || key;
   const channelLabel = (channel: Channel) =>
     CHANNEL_LABELS[channel]?.[language] || CHANNEL_LABELS[channel]?.en || channel;
 
   /**
-   * The slices, largest first, with the tail folded.
+   * Every channel, as one tile.
    *
-   * A channel with no leads is NOT a slice: zero has no arc, and inventing one
-   * would claim it produced somebody. Those channels appear below the ring
-   * instead, where reach is the number that matters.
+   * ───────────────────────────────────────────────────────────────────────────
+   * The ring is gone, and so is the split that surrounded it.
    *
-   * Beyond five, the remainder becomes one grey "Other". The palette guarantees
-   * five separable hues and no more; a generated sixth would quietly break the
-   * guarantee. Share is recomputed here over CHARTED leads so the arcs close the
-   * circle exactly — `leadShare` from the service is a share of all leads, which
-   * includes untracked ones and would leave a permanent gap in the ring.
+   * A ring encodes share as arc, so a channel with no leads has no arc — which
+   * forced the connected-but-silent channels into a strip of their own, with
+   * their own heading and their own divider. That is how the card came to hold
+   * three stacked sections to answer one question, and why the number 1 was
+   * printed four times on an account with a single lead: a pill, the ring's
+   * centre, the legend value, and "100%".
+   *
+   * A tile has no such requirement. A channel at zero is the same kind of thing
+   * as a channel at forty — it just has a different number — so both live in
+   * one row, the quiet ones dimmed. Three sections become one.
+   *
+   * Brand colours are safe again here, and that is a real change from the ring.
+   * The chart palette existed because three of the ten channels are blue and
+   * two are grey, and adjacent ARCS carrying those colours were not separable.
+   * A tile is a labelled box: identity rests on the name and the mark, never on
+   * the hue, so Facebook blue beside Google blue costs nothing.
+   *
+   * Nothing is folded into "Other" either. The five-hue limit was a property of
+   * the palette, not of the data.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  const slices = useMemo<Slice[]>(() => {
-    const withLeads = [...rows].filter(r => r.leads > 0).sort((a, b) => b.leads - a.leads);
-    const charted = withLeads.reduce((sum, r) => sum + r.leads, 0);
-    if (charted === 0) return [];
+  const tiles = useMemo(() => {
+    const charted = rows.reduce((sum, r) => sum + (r.leads > 0 ? r.leads : 0), 0);
+    const busiest = rows.reduce((max, r) => Math.max(max, r.leads), 0);
 
-    const pct = (leads: number) => Math.round((leads / charted) * 100);
+    return [...rows]
+      // Producing channels first and biggest first; the silent ones keep a
+      // stable order behind them rather than shuffling as reach changes.
+      .sort((a, b) => b.leads - a.leads)
+      .map(row => ({
+        key: row.channel,
+        label: channelLabel(row.channel),
+        leads: row.leads,
+        share: charted > 0 && row.leads > 0 ? Math.round((row.leads / charted) * 100) : 0,
+        // Bar length is against the busiest channel, not against the total: at
+        // 100% of one lead a full-width bar says nothing, while against the
+        // leader it says "this is the one".
+        fill: busiest > 0 ? (row.leads / busiest) * 100 : 0,
+        color: CHANNEL_COLORS[row.channel],
+        logo: CHANNEL_LOGOS[row.channel],
+        Icon: CHANNEL_ICONS[row.channel],
+        reach: row.reach,
+        awaitingData: row.awaitingData,
+        reachUnavailable: row.reachUnavailable,
+      }));
+  }, [rows, language]); // eslint-disable-line react-hooks/exhaustive-deps -- channelLabel is derived from language
 
-    const named = withLeads.slice(0, withLeads.length > MAX_SLICES ? MAX_SLICES - 1 : MAX_SLICES);
-    const rest = withLeads.slice(named.length);
-
-    const out: Slice[] = named.map((row, i) => ({
-      key: row.channel,
-      label: CHANNEL_LABELS[row.channel]?.[language] || CHANNEL_LABELS[row.channel]?.en || row.channel,
-      leads: row.leads,
-      share: pct(row.leads),
-      color: SLICE_COLORS[i],
-      brand: CHANNEL_COLORS[row.channel],
-      logo: CHANNEL_LOGOS[row.channel],
-      Icon: CHANNEL_ICONS[row.channel],
-    }));
-
-    if (rest.length > 0) {
-      const leads = rest.reduce((sum, r) => sum + r.leads, 0);
-      out.push({
-        key: 'other',
-        label: COPY.otherChannels?.[language] || COPY.otherChannels.en,
-        leads,
-        share: pct(leads),
-        color: OTHER_COLOR,
-        brand: OTHER_COLOR,
-      });
-    }
-
-    return out;
-  }, [rows, language]);
-
-  /** What the ring adds up to — charted leads, not all leads. */
-  const chartedLeads = slices.reduce((sum, s) => sum + s.leads, 0);
-
-
-  /**
-   * Connected, but nobody has come through them yet.
-   *
-   * These CANNOT go on the map: it encodes leads as area, and zero has no area —
-   * drawing them a token block would claim they produced someone. Leaving them
-   * out altogether is worse, and was a live bug: a business that had just
-   * connected Meta and Google saw neither anywhere on this card. So they get
-   * their own strip, where reach is the number that matters.
-   */
-  const silent = rows.filter(r => r.leads === 0);
-  // Switches the money column from "collected" to "billed" the moment any
-  // channel has work invoiced but unpaid.
-  const anyBilled = rows.some(r => (r.billed ?? 0) > r.revenue);
   const surfaces = visits?.bySurface ?? [];
   const surfaceLabel = (surface: VisitSurface) =>
     SURFACE_LABELS[surface]?.[language] || SURFACE_LABELS[surface]?.en || surface;
 
-  const formatCount = (value: number) => new Intl.NumberFormat(
-    language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US'
-  ).format(value);
+  const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
+
+  const formatCount = (value: number) => new Intl.NumberFormat(locale).format(value);
+
+  /** Reach runs to five figures and has a tile's width to fit in. */
+  const formatCompact = (value: number) =>
+    new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
+
+  /*
+   * The sentence, and the rate beside it.
+   *
+   * `visits.total` is arrivals; `totals.leads` is everyone who got in touch,
+   * INCLUDING the untracked ones — the conversion is a fact about the business,
+   * not about how much of it we managed to attribute. The tiles below sum to
+   * less than this number whenever some leads could not be traced, which is
+   * what the untracked note at the foot exists to say.
+   */
+  const visitorTotal = visits?.total ?? 0;
+  const conversion = visitorTotal > 0 ? (totals.leads / visitorTotal) * 100 : null;
+
+  const say = visitorTotal === 0
+    ? t('sayLeadsOnly').replace('{leads}', formatCount(totals.leads))
+    : (totals.leads === 0 ? t('sayNone') : totals.leads === 1 ? t('sayOne') : t('sayMany'))
+        .replace('{visitors}', formatCount(visitorTotal))
+        .replace('{leads}', formatCount(totals.leads));
+
+  /** Two decimals below 1%, because 0.23% and 0.00% are not the same news. */
+  const conversionText = conversion === null
+    ? null
+    : `${conversion >= 10 ? conversion.toFixed(0) : conversion.toFixed(conversion < 1 ? 2 : 1)}%`;
 
   return (
     <div
@@ -446,14 +385,6 @@ export function ChannelSourcesSection({
         >
           {t('title')}
         </span>
-        {totals.leads > 0 && (
-          <span
-            className="shrink-0 px-2 py-0.5 text-[11px] font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] tabular-nums"
-            style={{ borderRadius: '99px' }}
-          >
-            {formatCount(totals.leads)} {t('leads').toLowerCase()}
-          </span>
-        )}
       </div>
       {/* Matched to the sibling column's subtitle for the same reason as the
           heading above it. */}
@@ -485,138 +416,163 @@ export function ChannelSourcesSection({
         </div>
       ) : (
         <>
-          {/* A DONUT, and a small one.
-              Three forms preceded it. Bars answered "which is biggest" against
-              an arbitrary maximum rather than "what share"; a treemap answered
-              share correctly but needed a 172px box to do it, which made the
-              card too tall, and with two channels it read as two grey rectangles
-              rather than as a chart at all.
+          {/* The finding, in a sentence. It is the first thing on the card
+              because it is the answer — everything below is the breakdown. */}
+          <p
+            className="mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-1"
+            style={{ fontSize: '13px', lineHeight: 1.5, color: 'var(--v2-text-secondary)' }}
+          >
+            <span>{say}</span>
+            {conversionText && (
+              <span
+                title={t('rateTitle')}
+                className="shrink-0 px-2 py-0.5 text-[11px] font-semibold tabular-nums"
+                style={{
+                  borderRadius: '99px',
+                  // Amber under 2%, and this is a judgement the card is entitled
+                  // to make: a hundred visitors and one lead is a problem, and
+                  // colouring it like a success would be the card lying quietly.
+                  color: (conversion ?? 0) >= 2 ? '#0F8F60' : '#B45309',
+                  background: (conversion ?? 0) >= 2
+                    ? 'rgba(18, 166, 111, 0.10)'
+                    : 'rgba(217, 119, 6, 0.10)',
+                }}
+              >
+                {conversionText}
+              </span>
+            )}
+          </p>
 
-              A donut states share — the actual question — in about half the
-              height, and it still looks like a chart when there are only two
-              slices, which is the case this business is actually in. */}
-          <div className="flex items-center gap-4">
-            <Donut slices={slices} total={chartedLeads} label={t('leads')} />
+          {/* One cell for every channel — producing and silent alike.
+              `auto-fit` rather than a fixed count: the same grid holds two
+              channels and ten without either looking like a mistake. */}
+          <div
+            className="grid gap-1.5"
+            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(94px, 1fr))' }}
+          >
+            {tiles.map(tile => {
+              const quiet = tile.leads === 0;
 
-            {/* The legend is not decoration: it is what stops identity resting
-                on colour alone, and it carries the numbers the slices cannot. */}
-            <div className="min-w-0 flex-1 space-y-1">
-              {slices.map(slice => (
-                <div key={slice.key} className="flex items-center gap-2 text-[11.5px]">
-                  <i
-                    aria-hidden
-                    className="inline-block shrink-0"
-                    style={{ width: 8, height: 8, borderRadius: '99px', background: slice.color }}
-                  />
-                  {slice.logo ? (
-                    <PluginIcon pluginId={slice.logo} className="w-3.5 h-3.5 shrink-0" alt="" />
-                  ) : slice.Icon ? (
-                    <slice.Icon className="w-3.5 h-3.5 shrink-0" style={{ color: slice.brand }} />
-                  ) : null}
-                  <span className="min-w-0 flex-1 truncate text-[var(--v2-text-secondary)]">
-                    {slice.label}
-                  </span>
-                  <span className="shrink-0 font-medium text-[var(--v2-text-primary)] tabular-nums">
-                    {formatCount(slice.leads)}
-                  </span>
-                  <span className="w-8 shrink-0 text-end text-[var(--v2-text-muted)] tabular-nums">
-                    {slice.share}%
-                  </span>
+              return (
+                <div
+                  key={tile.key}
+                  title={
+                    !quiet
+                      ? `${tile.label} — ${formatCount(tile.leads)} ${t('leads').toLowerCase()}`
+                      : tile.reach !== null
+                        ? `${tile.label} — ${t('reach')}: ${formatCount(tile.reach)}`
+                        : tile.awaitingData
+                          ? t('awaitingTitle')
+                          : tile.reachUnavailable
+                            ? t('unavailableTitle')
+                            : tile.label
+                  }
+                  className="min-w-0 px-2.5 pb-2 pt-2"
+                  style={{
+                    borderRadius: '12px',
+                    border: '1px solid var(--v2-border)',
+                    background: quiet ? 'var(--v2-bg)' : 'var(--v2-surface)',
+                    opacity: quiet ? 0.72 : 1,
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-1.5">
+                    {tile.logo ? (
+                      <PluginIcon pluginId={tile.logo} className="w-4 h-4 shrink-0" alt="" />
+                    ) : tile.Icon ? (
+                      <tile.Icon className="w-4 h-4 shrink-0" style={{ color: tile.color }} />
+                    ) : (
+                      <span
+                        aria-hidden
+                        className="inline-block shrink-0"
+                        style={{ width: 9, height: 9, borderRadius: 3, background: tile.color }}
+                      />
+                    )}
+                    {!quiet && (
+                      <span className="text-[10px] tabular-nums text-[var(--v2-text-muted)]">
+                        {tile.share}%
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Always the lead count, never reach — one unit per column,
+                      or the cells stop being comparable. A dash where there is
+                      nothing, which is not the same claim as a zero. */}
+                  <div
+                    className="mt-1 tabular-nums"
+                    style={{
+                      fontFamily: isRTL
+                        ? '"Heebo", system-ui, sans-serif'
+                        : '"Space Grotesk", system-ui, sans-serif',
+                      fontSize: '18px',
+                      fontWeight: 700,
+                      letterSpacing: '-0.02em',
+                      lineHeight: 1.15,
+                      color: quiet ? 'var(--v2-text-muted)' : 'var(--v2-text-primary)',
+                    }}
+                  >
+                    {quiet ? '—' : formatCount(tile.leads)}
+                  </div>
+
+                  <div className="truncate text-[10.5px] leading-tight text-[var(--v2-text-muted)]">
+                    {tile.label}
+                  </div>
+
+                  {/* A bar where there are leads; where there are none, the one
+                      number that channel does have. "3.4K saw you, nobody got in
+                      touch" is the most useful sentence this card can say, and
+                      it was the whole reason the silent strip existed. */}
+                  {quiet ? (
+                    <div className="mt-1.5 truncate text-[10px] leading-tight text-[var(--v2-text-muted)]">
+                      {tile.reach !== null
+                        ? `${formatCompact(tile.reach)} ${t('reach').toLowerCase()}`
+                        : tile.awaitingData
+                          ? '⏳'
+                          : ' '}
+                    </div>
+                  ) : (
+                    <div
+                      className="mt-1.5 overflow-hidden"
+                      style={{ height: 3, borderRadius: '99px', background: 'var(--v2-border)' }}
+                    >
+                      <i
+                        aria-hidden
+                        className="block h-full"
+                        style={{
+                          width: `${tile.fill}%`,
+                          borderRadius: '99px',
+                          background: tile.color,
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
 
-          {/* Channels with no leads, which the map cannot hold.
-              Area encodes leads, so zero has no area — and the map correctly
-              refuses to invent one. But dropping these rows made Meta and Google
-              vanish from the dashboard of someone who had just connected them,
-              which is the opposite of what this card is for. They get a strip of
-              their own, carrying the one number they do have: reach. */}
-          {silent.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-[var(--v2-border)]">
-              <p className="mb-2 text-[11px] text-[var(--v2-text-muted)]">{t('noLeadsYet')}</p>
-              <div className="flex flex-wrap gap-1.5">
-                {silent.map(row => {
-                  const logo = CHANNEL_LOGOS[row.channel];
-                  const Icon = CHANNEL_ICONS[row.channel];
-                  const color = CHANNEL_COLORS[row.channel];
-
-                  return (
-                    <span
-                      key={row.channel}
-                      className="flex items-center gap-1.5 px-2 py-1 text-[11.5px] text-[var(--v2-text-secondary)] bg-[var(--v2-bg)]"
-                      style={{ borderRadius: '99px' }}
-                      title={
-                        row.reach !== null
-                          ? `${channelLabel(row.channel)} — ${t('reach')}: ${formatCount(row.reach)}`
-                          : row.awaitingData
-                            ? t('awaitingTitle')
-                            : row.reachUnavailable
-                              ? t('unavailableTitle')
-                              : channelLabel(row.channel)
-                      }
-                    >
-                      {logo ? (
-                        <PluginIcon pluginId={logo} className="w-3.5 h-3.5 shrink-0" alt="" />
-                      ) : Icon ? (
-                        <Icon className="w-3.5 h-3.5 shrink-0" style={{ color }} />
-                      ) : null}
-                      <span className="truncate">{channelLabel(row.channel)}</span>
-                      {/* Reach is the whole point of this strip, so it is printed
-                          rather than hidden on hover. An hourglass while the first
-                          sync is pending; a dash when the platform will never
-                          report it. Never a zero — that would read as "nobody saw
-                          you" when the truth is "we cannot know". */}
-                      {row.reach !== null ? (
-                        <b className="font-semibold text-[var(--v2-text-primary)] tabular-nums">
-                          {formatCount(row.reach)}
-                        </b>
-                      ) : row.awaitingData ? (
-                        <span>⏳</span>
-                      ) : (
-                        <span className="text-[var(--v2-text-muted)]">—</span>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Where those arrivals landed. A different question from the table
-              above — that one says who sent them — so it gets its own heading
-              rather than another column. Only surfaces that reported anything
-              appear: a business with no landing page should not be shown a
-              landing-page row reading 0. */}
+          {/* Where the arrivals landed, on one line under the cells.
+              It describes the visitors in the sentence above, not the leads in
+              the cells — which is why it reads as a continuation of the first
+              number rather than as a section of its own. */}
           {surfaces.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-[var(--v2-border)]">
-              <div className="mb-2 flex items-baseline justify-between gap-3">
-                <span className="text-[11px] text-[var(--v2-text-muted)]">{t('visitsTitle')}</span>
-                <span className="text-[11px] text-[var(--v2-text-muted)] tabular-nums">
-                  {formatCount(visits?.total ?? 0)} {t('visits')}
+            <div className="mt-3 pt-2.5 border-t border-[var(--v2-border)]">
+              <p className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-[var(--v2-text-muted)]">
+                <span className="font-medium text-[var(--v2-text-secondary)] tabular-nums">
+                  {formatCount(visits?.total ?? 0)}
                 </span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {surfaces.map(({ surface, visits: count }) => {
-                  const Icon = SURFACE_ICONS[surface];
-                  return (
-                    <span
-                      key={surface}
-                      className="flex items-center gap-1.5 px-2 py-1 text-[11.5px] text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)]"
-                      style={{ borderRadius: '99px' }}
-                    >
-                      {Icon && <Icon className="w-3 h-3 shrink-0 text-[var(--v2-text-muted)]" />}
-                      <span className="truncate">{surfaceLabel(surface)}</span>
-                      <b className="font-semibold text-[var(--v2-text-primary)] tabular-nums">
-                        {formatCount(count)}
-                      </b>
+                <span>{t('visits')}</span>
+                {surfaces.map(({ surface, visits: count }) => (
+                  <span key={surface} className="flex items-baseline gap-1">
+                    <span aria-hidden style={{ color: 'var(--v2-border)' }}>·</span>
+                    <span>{surfaceLabel(surface)}</span>
+                    <span className="font-medium text-[var(--v2-text-secondary)] tabular-nums">
+                      {formatCount(count)}
                     </span>
-                  );
-                })}
-              </div>
+                  </span>
+                ))}
+              </p>
               {surfaces.length > 1 && (
-                <p className="mt-2 text-[11px] text-[var(--v2-text-muted)] leading-relaxed">
+                <p className="mt-1.5 text-[10.5px] leading-relaxed text-[var(--v2-text-muted)]">
                   {t('visitsNote')}
                 </p>
               )}
@@ -626,7 +582,7 @@ export function ChannelSourcesSection({
           {/* Say plainly how much of the picture is missing, rather than
               letting the visible channels imply they account for everything. */}
           {untracked.leads > 0 && (
-            <p className="mt-4 pt-3 border-t border-[var(--v2-border)] text-[11.5px] text-[var(--v2-text-muted)] leading-relaxed">
+            <p className="mt-2.5 text-[11px] leading-relaxed text-[var(--v2-text-muted)]">
               <span className="font-medium text-[var(--v2-text-secondary)]">
                 {untracked.leads} {t('leads').toLowerCase()}
               </span>{' '}

@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { RefundModal } from '@/components/payments/RefundModal';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -245,6 +246,47 @@ export function PaymentManagementModal({
 
   const statusConfig = getStatusConfig();
   const StatusIcon = statusConfig.icon;
+
+  /**
+   * Refunding uses the shared dialog, not this one's own form.
+   *
+   * This modal carried a second refund form — its own radio buttons, its own
+   * amount field, its own submit — and the two drifted: this one capped the
+   * refund at the ORIGINAL amount, ignoring anything already returned, so it
+   * offered a full refund on money that had been partly refunded already. The
+   * over-refund guard rejected it, but only after the owner had been shown the
+   * figure and pressed the button.
+   *
+   * `RefundModal` asks the server what is actually left, sends the notify flag,
+   * and is the same dialog the money list and the payments tab open. One refund
+   * dialog, wherever a refund starts.
+   */
+  if (view === 'refund' && canRefund) {
+    return (
+      <RefundModal
+        isOpen={isOpen}
+        onClose={handleClose}
+        bookingId={booking.booking.id}
+        originalAmount={payment.amount}
+        currency={payment.currency}
+        // `SessionPayment` carries no refunded figure — only `refundedAt`. The
+        // modal asks the server for the true remaining amount anyway, which is
+        // what makes that omission safe rather than another over-offer.
+        alreadyRefunded={0}
+        contactName={contactName}
+        isRTL={isRTL}
+        // This modal is opened from a booking, so deleting it afterwards is a
+        // real option here in a way it is not on the payments tab.
+        showDeleteBookingOption
+        onSuccess={shouldDeleteBooking => {
+          onPaymentUpdated?.();
+          if (shouldDeleteBooking) onBookingDeleted?.(booking.booking.id);
+          handleClose();
+        }}
+        onError={message => setError(message)}
+      />
+    );
+  }
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, UserPlus, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList } from 'lucide-react';
+import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, UserPlus, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList, Loader2 } from 'lucide-react';
 import PhoneInput from 'react-phone-number-input';
 import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
@@ -57,6 +57,16 @@ interface SchedulingBookingModalProps {
   prefilledDateTime?: PrefilledDateTime;
   prefilledContact?: PrefilledContact; // Skip contact search when provided
   existingBookings?: SchedulingBooking[]; // For filtering out booked slots
+  /**
+   * The caller is still fetching the services.
+   *
+   * An empty list and a list that has not arrived look identical in a dropdown,
+   * and the drawer opens this dialog immediately while six requests are still
+   * in flight — so for a few seconds the picker offered nothing and gave no
+   * reason. Saying which of the two it is costs one line and removes the only
+   * thing about that wait that reads as broken.
+   */
+  servicesLoading?: boolean;
 }
 
 // Source options for new clients (use existing CRM source keys)
@@ -324,6 +334,7 @@ function getNextAvailableSlots(
 export function SchedulingBookingModal({
   booking,
   services,
+  servicesLoading = false,
   isOpen,
   onClose,
   onBookingUpdated,
@@ -447,7 +458,14 @@ export function SchedulingBookingModal({
         status: booking.status
       });
       setShowClientSearch(false); // Hide search when editing
-      // Reset send intake form toggle (default off for editing, user can enable if needed)
+      /*
+       * Off every time the modal opens, deliberately.
+       *
+       * This is a "send it now" ACTION taken on save, not a property of the
+       * booking — leaving it on would email the client again on every
+       * subsequent edit. It reads as a toggle that forgot itself, so the
+       * description beside it now says it resets.
+       */
       setSendIntakeForm(false);
     } else {
       // Get first active service for defaults
@@ -940,6 +958,21 @@ export function SchedulingBookingModal({
                   <SelectValue placeholder={t('scheduling.booking.select_service')} />
                 </SelectTrigger>
                 <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)] p-1">
+                  {/* `rtl:` variants, like every other row in this dropdown —
+                      the spinner belongs on the side the text starts from, and
+                      a left-aligned Hebrew line in a right-aligned list is the
+                      one thing that looks unfinished. */}
+                  {servicesLoading && services.length === 0 && (
+                    <div className="flex items-center gap-2 px-3 py-3 text-sm text-[var(--v2-text-muted)] rtl:flex-row-reverse rtl:text-right">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t('scheduling.booking.loading_services')}
+                    </div>
+                  )}
+                  {!servicesLoading && services.filter(s => s.status === 'active').length === 0 && (
+                    <div className="px-3 py-3 text-sm text-[var(--v2-text-muted)] rtl:text-right">
+                      {t('scheduling.booking.no_services')}
+                    </div>
+                  )}
                   {services
                     .filter(service => service.status === 'active')
                     .map(service => {

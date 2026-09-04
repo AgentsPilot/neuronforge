@@ -38,6 +38,23 @@ export interface InvoiceEmailData {
   appointmentDate?: Date;
   timezone?: string;
   branding: BrandingData;
+  /**
+   * The tax the business says is already inside the amount.
+   *
+   * Absent for the many businesses that are not registered, and then no line is
+   * drawn. Never computed here — the caller derives it from what the business
+   * typed, so the email, the PDF and the pay page cannot disagree.
+   */
+  taxLine?: { amount: number; rate: number; label: string } | null;
+  /**
+   * What this document is called — "Receipt", "Invoice", "Tax invoice".
+   *
+   * Resolved by the caller from the business's settings, so the subject line,
+   * the body and the attached PDF cannot call the same document three things.
+   * Absent falls back to the translated word "Invoice", which is what every
+   * email said before businesses could choose.
+   */
+  documentNoun?: string | null;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
 }
@@ -75,14 +92,25 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   const brandingWithLocale = { ...data.branding, locale };
 
   // Get translations for the current locale
-  const greeting = t.greeting[locale](data.branding.businessName);
+  // The word for this document, resolved once and used by the subject, the
+  // greeting and the number label — three places that used to say "Invoice"
+  // independently and would otherwise disagree with the attached PDF.
+  const noun = data.documentNoun?.trim() || null;
+  const greeting = noun
+    ? t.greetingFor[locale](noun, data.branding.businessName)
+    : t.greeting[locale](data.branding.businessName);
   const intro = t.intro[locale](data.clientName);
-  const invoiceNumberLabel = t.invoiceNumber[locale];
+  const invoiceNumberLabel = noun
+    ? (locale === 'he' ? `מספר ${noun}`
+      : locale === 'es' ? `Número de ${noun.toLowerCase()}`
+      : `${noun} number`)
+    : t.invoiceNumber[locale];
   const amountDueLabel = t.amountDue[locale];
   const dueDateLabel = t.dueDate[locale];
   const forAppointmentLabel = t.forAppointment[locale];
   const invoiceDetailsLabel = t.invoiceDetails[locale];
   const totalLabel = t.total[locale];
+  const includesTaxLabel = t.includesTax[locale];
   const payNowLabel = t.payNow[locale];
   const securePaymentLabel = t.securePayment[locale];
   const options = data.paymentOptions;
@@ -193,6 +221,18 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
                 ${formatCurrency(data.amount, data.currency)}
               </td>
             </tr>
+            ${data.taxLine ? `
+            <!-- Under the total, because it is CONTAINED in it. Above, and the
+                 reader adds it on — the one misreading that changes what they
+                 think they owe. -->
+            <tr>
+              <td style="padding: 0 0 12px; font-size: 13px; color: #6b7280;">
+                ${includesTaxLabel} ${data.taxLine.label} ${data.taxLine.rate}%
+              </td>
+              <td style="padding: 0 0 12px; text-align: right; font-size: 13px; color: #6b7280;">
+                ${formatCurrency(data.taxLine.amount, data.currency)}
+              </td>
+            </tr>` : ''}
           </table>
         </td>
       </tr>
@@ -265,7 +305,9 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   `;
 
   return {
-    subject: t.subject[locale](data.branding.businessName, data.invoiceNumber),
+    subject: noun
+      ? t.subjectFor[locale](noun, data.branding.businessName, data.invoiceNumber)
+      : t.subject[locale](data.branding.businessName, data.invoiceNumber),
     html: wrapInBrandedTemplate(content, brandingWithLocale)
   };
 }

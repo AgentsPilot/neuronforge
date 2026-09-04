@@ -9,11 +9,16 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
 import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { emailSendRepository } from '@/lib/repositories/EmailAutomationRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+// The same source `/book/manage/[token]/intake` reads, so the email asking for
+// an intake form and the page it links to cannot disagree about whether one exists.
+import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateICSContent } from '@/lib/email/templates/booking-confirmation';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
 import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-receipt';
@@ -286,6 +291,19 @@ export class BookingEmailService {
         rescheduleUrl,
         cancelUrl,
         bookingId,
+        /*
+         * Was a time booked, or is this something sold without one?
+         *
+         * The start time IS the test. `scheduling_services` has no `is_product`
+         * column — the drawer's `isProductBooking` consults one too, and that
+         * half of the expression has never been anything but undefined — so
+         * nothing else in the data distinguishes the two.
+         *
+         * Without this a client who bought a course was told "your appointment
+         * is confirmed", shown a duration in minutes, and offered a calendar
+         * invitation and a reschedule link for a meeting that does not exist.
+         */
+        hasSchedule: Boolean(booking.start_time),
         branding,
         locale
       };
@@ -306,16 +324,81 @@ export class BookingEmailService {
       // Note: ICS data is included inline in the email HTML via generateBookingConfirmationEmail
       // TODO: Attach ICS file to email for better calendar integration
 
+      /*
+       * The invoice itself, when the service bills by one.
+       *
+       * `options.invoiceId` is set only for an INVOICE sale — a direct-payment
+       * service has none, and there is nothing to attach. Until now this mail
+       * carried a pay LINK either way, so a client billed by invoice received
+       * no document to keep, and a business collecting by bank transfer sent a
+       * bill whose account details lived only in a PDF nobody attached.
+       *
+       * Built through the same builder `sendInvoice` uses, so the file on a
+       * booking confirmation and the file on a standalone invoice are the same
+       * document with the same branding.
+       */
+      const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
+
+      /*
+       * NEVER gated on `skipInvoice`.
+       *
+       * That flag means "do not send a SECOND email; the payment link rides with
+       * this confirmation" — every real booking flow passes it TOGETHER with an
+       * invoice id. Reading it as "do not attach" would suppress the attachment
+       * in exactly the cases that need it, which is what a first pass here did.
+       */
+      /*
+       * The invoice is RESOLVED here, not required from the caller.
+       *
+       * Five call sites send this email and each decides for itself what to pass
+       * — the resend route passes no id at all — so requiring `invoiceId` meant
+       * the attachment depended on which button was pressed. A booking either
+       * has an invoice or it does not; that is a fact about the booking, and it
+       * is looked up rather than remembered.
+       */
+      let invoiceIdToAttach = options?.invoiceId ?? null;
+
+      if (!invoiceIdToAttach) {
+        const found = await paymentInvoiceRepository.findByBookingId(booking.id, userId);
+
+        /*
+         * A cancelled invoice is not the bill for this appointment.
+         *
+         * A booking can carry more than one — one voided and replaced, say — and
+         * attaching the void would send the client a document asking for money
+         * nobody expects them to pay.
+         */
+        invoiceIdToAttach =
+          (found.data ?? []).find(inv => inv.status !== 'cancelled')?.id ?? null;
+      }
+
+      if (invoiceIdToAttach) {
+        const { buildInvoiceAttachment } = await import('@/lib/services/InvoiceDeliveryService');
+        const attachment = await buildInvoiceAttachment(invoiceIdToAttach, userId, locale);
+
+        /*
+         * Null when the PDF could not be rendered — and the mail still goes.
+         * A confirmation without its attachment is a worse email; a booking
+         * whose client never learns it exists is a worse outcome.
+         */
+        if (attachment) attachments.push(attachment);
+      }
+
       // Send email
       const result = await sendEmail({
         to: [booking.client_email],
         subject,
         html,
-        ownerUserId: userId
+        ownerUserId: userId,
+        attachments: attachments.length > 0 ? attachments : undefined
       });
 
       if (result.sent) {
-        requestLogger.info({ provider: result.provider, clientEmail: booking.client_email }, 'Booking confirmation sent');
+        requestLogger.info({
+          provider: result.provider,
+          clientEmail: booking.client_email,
+          invoiceAttached: attachments.length > 0
+        }, 'Booking confirmation sent');
       } else {
         requestLogger.warn({ error: result.error }, 'Failed to send booking confirmation');
       }
@@ -336,8 +419,22 @@ export class BookingEmailService {
           user_id: userId,
           contact_id: booking.contact_id,
           activity_type: 'booking_confirmation_sent',
-          title: `Booking Confirmation Sent: ${service.service_name}`,
-          description: `Confirmation email sent for booking on ${startTime.toLocaleDateString()}`,
+          /*
+           * Written in the business's language, now, because this records
+           * something that happened rather than labelling a control. The
+           * sentence was English regardless of the business; `locale` is
+           * already resolved above for the email itself.
+           *
+           * No date phrase when the booking has no time — a course or a
+           * product — which is what rendered every one of them as 12/31/1969.
+           */
+          title: activitySentence('confirmation_sent', { service: service.service_name }, locale),
+          description: JSON.stringify({
+            kind: 'booking_confirmation_sent',
+            service: service.service_name,
+            bookingDate: booking.start_time || undefined,
+            timeZone: booking.timezone || undefined,
+          }),
           auto_logged: true,
           source_capability: 'scheduling',
           source_entity_id: bookingId
@@ -407,7 +504,16 @@ export class BookingEmailService {
         const bookingResult = await schedulingBookingRepository.findById(paymentData.bookingId, userId);
         if (bookingResult.data) {
           const booking = bookingResult.data;
-          appointmentDate = new Date(booking.start_time);
+          /*
+           * A booking with no time slot has NO appointment date.
+           *
+           * `new Date(null)` is epoch zero, not an invalid date, so a course or
+           * product — which never has a `start_time` — printed a receipt line
+           * reading "Thursday, 1 January 1970 at 12:00 AM" and an appointment
+           * reminder to match. Left undefined, both are omitted, which is what
+           * the template already does when there is nothing to show.
+           */
+          appointmentDate = booking.start_time ? new Date(booking.start_time) : undefined;
           timezone = booking.timezone;
           contactId = booking.contact_id;
 
@@ -472,8 +578,29 @@ export class BookingEmailService {
           user_id: userId,
           contact_id: contactId,
           activity_type: 'payment_received',
-          title: `Payment Received: ${paymentData.currency} ${paymentData.amount}`,
-          description: serviceName ? `Payment for ${serviceName}` : `Receipt: ${receiptNumber}`,
+          /*
+           * The last activity still written in English, and the currency was
+           * printed as a bare code beside the number. `Intl` formats it the way
+           * the reader expects — ₪200.00, $200.00 — in the business's language.
+           */
+          title: activitySentence(
+            serviceName ? 'payment_received_for' : 'payment_received',
+            {
+              amount: new Intl.NumberFormat(
+                locale === 'he' ? 'he-IL' : locale === 'es' ? 'es-ES' : 'en-US',
+                { style: 'currency', currency: paymentData.currency || 'USD' }
+              ).format(Number(paymentData.amount) || 0),
+              service: serviceName || '',
+            },
+            locale
+          ),
+          description: JSON.stringify({
+            kind: 'payment_received',
+            amount: paymentData.amount,
+            currency: paymentData.currency,
+            service: serviceName || undefined,
+            receipt: receiptNumber || undefined,
+          }),
           auto_logged: true,
           source_capability: 'payments',
           source_entity_id: paymentData.bookingId || undefined
@@ -551,6 +678,9 @@ export class BookingEmailService {
         timezone: booking.timezone,
         reason: reason || booking.cancellation_reason || undefined,
         bookAgainUrl,
+        // Same test as the confirmation: a booking with no start time was never
+        // an appointment, so cancelling it is cancelling an order.
+        hasSchedule: Boolean(booking.start_time),
         branding,
         locale
       });
@@ -858,7 +988,18 @@ export class BookingEmailService {
    */
   static async sendIntakeFormRequest(
     bookingId: string,
-    userId: string
+    userId: string,
+    options?: {
+      /**
+       * The owner pressed Send on this booking.
+       *
+       * A manual send must NOT consult `send_after_booking`. That switch means
+       * "send it for me automatically", and its off state means "I will send it
+       * myself" — so reading it here refused the exact act it exists to allow,
+       * and the endpoint answered 500.
+       */
+      manual?: boolean;
+    }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendIntakeFormRequest' });
 
@@ -886,18 +1027,42 @@ export class BookingEmailService {
       const profileResult = await businessProfileRepository.findByUserId(userId);
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
-      // Check if intake form is enabled for this business
-      // This is stored in business_profile or website configuration
-      // For now, we'll check if there's an intake form block on the website
-      const { data: websitePage } = await supabaseServer
-        .from('website_pages')
-        .select('id, subdomain')
-        .eq('user_id', userId)
-        .single();
+      /*
+       * Is there an intake form to ask for?
+       *
+       * This asked whether the business had a WEBSITE — which is not the same
+       * question, and the comment it replaces admitted as much ("for now, we'll
+       * check if there's an intake form block"). So every booking triggered an
+       * intake email, and the link in it opened a page reading "no intake form
+       * required. You're all set." An email whose only content is a link to a
+       * page saying there was nothing to do.
+       *
+       * `getEnabledTemplateForUser` is the same call `/book/manage/[token]/intake`
+       * uses to decide `hasIntake`, so the email and the page it points at can no
+       * longer disagree. It returns null when intake is off, when it is not
+       * collected at booking time, or — as here — when it is switched on with no
+       * template chosen.
+       */
+      /*
+       * Two different questions, and which one applies depends on who asked.
+       *
+       * AUTOMATIC (after a booking): does the business want this sent for it?
+       * That is `send_after_booking`, and an off switch means do not send.
+       *
+       * MANUAL (the owner pressed Send): does the business have a form at all?
+       * The off switch means "I will send it myself" — which is this. Reading
+       * `send_after_booking` here refused the act it exists to permit.
+       */
+      const templateResult = options?.manual
+        ? await intakeRepository.getCollectableTemplateForUser(userId)
+        : await intakeRepository.getEmailableTemplateForUser(userId);
 
-      if (!websitePage) {
-        requestLogger.info('No website found, skipping intake form request');
-        return { sent: false, error: 'No website configured' };
+      if (!templateResult.data) {
+        requestLogger.info(
+          { manual: !!options?.manual },
+          'No intake form to send for this business, skipping'
+        );
+        return { sent: false, error: 'No intake form configured' };
       }
 
       // Generate booking management token and URLs
@@ -906,10 +1071,24 @@ export class BookingEmailService {
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
 
-      // Parse booking datetime
-      const startTime = new Date(booking.start_time);
-      const endTime = new Date(booking.end_time);
-      const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
+      /*
+       * Parse booking datetime.
+       *
+       * `new Date(null)` is epoch zero, not an invalid date, so a course or a
+       * product — neither of which has a `start_time` — dated its intake email
+       * "1 January 1970" with a duration of zero. The same trap the receipt
+       * email fell into.
+       *
+       * Falls back to when the booking was made, which is a true date about
+       * this booking rather than a fabricated one.
+       */
+      const startTime = booking.start_time
+        ? new Date(booking.start_time)
+        : new Date(booking.created_at);
+      const endTime = booking.end_time ? new Date(booking.end_time) : null;
+      const durationMinutes = endTime
+        ? Math.round((endTime.getTime() - startTime.getTime()) / 60000)
+        : 0;
 
       // Build client name
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
@@ -961,8 +1140,14 @@ export class BookingEmailService {
           user_id: userId,
           contact_id: booking.contact_id,
           activity_type: 'intake_form_sent',
-          title: `Intake Form Sent: ${service.service_name}`,
-          description: `Intake form request sent for booking on ${startTime.toLocaleDateString()}`,
+          // Same shape as the confirmation above.
+          title: activitySentence('intake_sent', { service: service.service_name }, locale),
+          description: JSON.stringify({
+            kind: 'intake_form_sent',
+            service: service.service_name,
+            bookingDate: booking.start_time || undefined,
+            timeZone: booking.timezone || undefined,
+          }),
           auto_logged: true,
           source_capability: 'scheduling',
           source_entity_id: bookingId

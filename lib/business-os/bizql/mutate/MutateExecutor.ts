@@ -135,6 +135,21 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         RepoResult<unknown>
       >,
 
+    /*
+     * The statement: open invoices and payments for one client.
+     *
+     * Returns data and sends nothing — the caller composes the wording and, if
+     * it wants, hands it to `send` afterwards. Keeping the two apart means the
+     * figures can be fetched, checked and shown without anything leaving.
+     */
+    statement: async (q, _data, ctx) => {
+      const contactId = requireTargetId(q);
+      const { buildContactStatement } = await import('@/lib/payments/contactStatement');
+
+      const statement = await buildContactStatement({ userId: ctx.userId, contactId });
+      return { data: statement as unknown as Record<string, unknown>, error: null };
+    },
+
     /**
      * Email one contact.
      *
@@ -173,7 +188,14 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       const branding = await resolveEmailBranding(ctx.userId).catch(() => undefined);
 
       const outcome = await performEmail(
-        { to: contact.email, subject: data.subject, body: data.body },
+        {
+          to: contact.email,
+          subject: data.subject,
+          body: data.body,
+          // Present only when the caller supplied files; `performEmail` refuses
+          // malformed ones rather than dropping them silently.
+          ...(data.attachments ? { attachments: data.attachments } : {}),
+        },
         branding
       );
 
@@ -462,6 +484,88 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
   },
 
   pages: {
+    /*
+     * Create a page, with its blocks.
+     *
+     * Mirrors `POST /api/website/pages`: a homepage gets the standard section
+     * set, and both paths share `convertTemplateBlockToInsert` so "what a new
+     * page contains" has one answer. A theme is applied when a template is
+     * named; without one the page inherits the business's look downstream.
+     */
+    create: async (_q, data, ctx) => {
+      const [{ WebsitePageRepository }, { WebsiteBlockRepository }, templates, { convertTemplateBlockToInsert }] =
+        await Promise.all([
+          import('@/lib/repositories/WebsitePageRepository'),
+          import('@/lib/repositories/WebsiteBlockRepository'),
+          import('@/lib/website-builder/templates'),
+          import('@/lib/website-builder/blockInsert'),
+        ]);
+
+      const title = String(data.title ?? '').trim();
+      if (!title) {
+        return { data: null, error: new Error('A page needs a title.') };
+      }
+
+      const pageType = String(data.page_type ?? 'landing');
+      const language = String(data.website_language ?? 'en');
+
+      const templateId = data.template_id ? String(data.template_id) : null;
+      const template = templateId ? templates.getTemplateById(templateId) : undefined;
+      if (templateId && !template) {
+        return { data: null, error: new Error(`No template called '${templateId}'.`) };
+      }
+
+      // The same slug rule the API uses, so a page made here and a page made
+      // there are addressable the same way.
+      const slug =
+        (data.slug ? String(data.slug) : '') ||
+        `/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+
+      const pageRepo = new WebsitePageRepository(supabaseServer);
+      const created = await pageRepo.create({
+        user_id: ctx.userId,
+        page_type: pageType,
+        slug,
+        title,
+        template_id: templateId,
+        status: 'draft',
+        theme: template ? templates.templateToPageTheme(template) : undefined,
+        website_language: language,
+      } as Parameters<typeof pageRepo.create>[0]);
+
+      if (created.error || !created.data) {
+        return { data: null, error: created.error ?? new Error('Could not create the page') };
+      }
+
+      /*
+       * A homepage without sections publishes as a blank screen, so it gets the
+       * standard set. Other page types start empty on purpose — a landing page's
+       * sections depend on what it is selling, and guessing them produces a page
+       * the owner has to dismantle.
+       */
+      if (pageType === 'homepage') {
+        const blockRepo = new WebsiteBlockRepository(supabaseServer);
+        const blocks = templates
+          .getStandardHomepageBlocks()
+          .map((block, index) =>
+            convertTemplateBlockToInsert(block, created.data!.id, index, language as never)
+          );
+
+        for (const block of blocks) {
+          const result = await blockRepo.create(block);
+          if (result.error) {
+            logger.warn(
+              { err: result.error, pageId: created.data.id },
+              'A section could not be created (page kept)'
+            );
+          }
+        }
+      }
+
+      return { data: created.data as unknown as Record<string, unknown>, error: null };
+    },
+
+
     // Through the service: publishing checks the page has an address and
     // something on it, and refreshes the sections first. A bare status flip
     // would put a blank page live at no address and report success.
@@ -679,7 +783,173 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     },
   },
 
+  plan_subscriptions: {
+    /*
+     * Stop the remaining charges on a client's plan.
+     *
+     * `cancelPlan` is the reviewed path the payments screen uses; it cancels
+     * the Stripe subscription or schedule and records the outcome.
+     *
+     * Its refund options are deliberately NOT passed through. `cancelPlan` can
+     * return everything collected so far, and folding that into "cancel" would
+     * let one sentence both stop a plan and move money out of the business.
+     * Refunding stays its own decision, with its own capability and its own
+     * confirmation.
+     */
+    cancel: async (q, data, ctx) => {
+      const planId = requireTargetId(q);
+
+      if (!process.env.STRIPE_SECRET_KEY) {
+        return { data: null, error: new Error('Payments are not configured.') };
+      }
+
+      const [{ cancelPlan }, StripeModule] = await Promise.all([
+        import('@/lib/payments/cancelPlan'),
+        import('stripe'),
+      ]);
+
+      const Stripe = StripeModule.default;
+      const result = await cancelPlan({
+        planId,
+        userId: ctx.userId,
+        stripe: new Stripe(process.env.STRIPE_SECRET_KEY),
+        reason: typeof data.reason === 'string' ? data.reason : undefined,
+      });
+
+      if (!result.ok) {
+        // `message` is the field this result carries — it holds the reason a
+        // human can act on ("This payment plan could not be found"), and
+        // reaching for `.error` would have discarded it for a generic string.
+        return {
+          data: null,
+          error: new Error(result.message ?? 'The plan could not be cancelled'),
+        };
+      }
+
+      return { data: result as unknown as Record<string, unknown>, error: null };
+    },
+  },
+
   business_profile: {
+    /*
+     * The ledger for a period, as data.
+     *
+     * Returns the summary and the row count rather than a file: this is the
+     * EXTRACTION half, and what a caller does with it — attach it to an email,
+     * quote the totals back in chat, hand it to a scheduled digest — is the
+     * caller's decision. The file is one call away via `ledgerToCsv` /
+     * `ledgerToWorkbook` on the same report.
+     *
+     * A read, so no confirmation and nothing written. The send that usually
+     * follows is a separate `contacts.send`, which keeps its own gate.
+     */
+    export_ledger: async (_q, data, ctx) => {
+      const { buildLedgerReport } = await import('@/lib/payments/ledgerService');
+      const { resolveLedgerPeriod, isLedgerPeriodId, ledgerPeriodLabel } = await import(
+        '@/lib/payments/ledgerPeriod'
+      );
+
+      /*
+       * A named period, explicit dates, or neither.
+       *
+       * Neither means the current month — the same default the export modal
+       * opens on, so "export the ledger" means the same thing in both places.
+       */
+      const named = isLedgerPeriodId(data.period) ? data.period : null;
+      const bounds = named ? resolveLedgerPeriod(named) : null;
+      const fallback = resolveLedgerPeriod('this_month')!;
+
+      const from = (data.from as string) || bounds?.from || fallback.from;
+      const to = (data.to as string) || bounds?.to || fallback.to;
+
+      // Absent means the modal's default, not "off" — a caller that says
+      // nothing about refunds wants the refunds.
+      const flag = (value: unknown, fallbackValue: boolean): boolean =>
+        value === undefined || value === null ? fallbackValue : value === true || value === 'true';
+
+      const report = await buildLedgerReport({
+        userId: ctx.userId,
+        from,
+        to,
+        options: {
+          includePayments: flag(data.include_payments, true),
+          includeRefunds: flag(data.include_refunds, true),
+          includeInvoices: flag(data.include_invoices, false),
+          includeFees: flag(data.include_fees, true),
+          includeTax: flag(data.include_tax, true),
+          includeReferences: flag(data.include_references, true),
+        },
+      });
+
+      /*
+       * What to hand back.
+       *
+       * The summary alone answers "how did last quarter go". It does NOT answer
+       * "send my accountant the ledger", which needs the actual thing — so the
+       * caller can ask for the rows, or for the rendered file, and the kernel
+       * composes from there. Both are off by default: a ledger with thousands
+       * of rows should not be inlined into every response that merely wanted a
+       * total.
+       */
+      const wantRows = data.include_rows === true || data.include_rows === 'true';
+      const wantFile = data.include_file === true || data.include_file === 'true';
+      const format = (data.format as string) === 'csv' ? 'csv' : 'xlsx';
+
+      // Enough for any real period; a bound so one call cannot return a table.
+      const ROW_CAP = 500;
+
+      let file: Record<string, unknown> | undefined;
+      if (wantFile) {
+        const { ledgerToCsv, ledgerToWorkbook, ledgerFilename } = await import(
+          '@/lib/payments/ledgerService'
+        );
+
+        /*
+         * base64, because that is what an attachment takes.
+         *
+         * `performEmail` accepts a base64 string for `content`, so the output of
+         * this capability drops straight into the attachments of a send with no
+         * conversion in between — which is the whole point of returning a file
+         * rather than a download URL nothing on the server could fetch.
+         */
+        const content =
+          format === 'csv'
+            ? Buffer.from(ledgerToCsv(report), 'utf8').toString('base64')
+            : (await ledgerToWorkbook(report)).toString('base64');
+
+        file = {
+          filename: ledgerFilename(report, format),
+          contentType:
+            format === 'csv'
+              ? 'text/csv'
+              : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          content,
+          bytes: Buffer.from(content, 'base64').length,
+        };
+      }
+
+      return {
+        data: {
+          period: ledgerPeriodLabel({ from, to }),
+          from,
+          to,
+          format,
+          rows: report.rows.length,
+          invoices: report.invoiceRows.length,
+          // Per currency, because summing two currencies invents a number.
+          summary: report.summary,
+          ...(wantRows
+            ? {
+                items: report.rows.slice(0, ROW_CAP),
+                items_truncated: report.rows.length > ROW_CAP,
+              }
+            : {}),
+          ...(file ? { file } : {}),
+        },
+        error: null,
+      };
+    },
+
     // "Change Tuesday to 9-2 only." One day replaced, the rest of the week
     // untouched — see AvailabilityService for why the map is never handed to a
     // planner to author.
@@ -768,6 +1038,33 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
   },
 
   bookings: {
+    /*
+     * Re-send the confirmation for a booking that already exists.
+     *
+     * `BookingEmailService.sendBookingConfirmation` does the work — the same
+     * path the bookings screen uses — so the email a client receives on a
+     * resend is byte-for-byte the one they were sent originally.
+     */
+    resend_confirmation: async (q, _data, ctx) => {
+      const bookingId = requireTargetId(q);
+      const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
+
+      const result = await BookingEmailService.sendBookingConfirmation(bookingId, ctx.userId, {
+        // A resend is about the appointment, not a fresh request for money.
+        skipInvoice: true,
+      });
+
+      if (!result?.success) {
+        return {
+          data: null,
+          error: new Error(result?.error || 'The confirmation could not be sent'),
+        };
+      }
+
+      return { data: { bookingId, sent: true } as Record<string, unknown>, error: null };
+    },
+
+
     // NOT the repository's `cancel`, which is only a status update.
     //
     // Cancelling from the chat used to call it directly, so the row said

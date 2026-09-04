@@ -134,7 +134,12 @@ export async function GET(request: NextRequest) {
       .from('payment_transactions')
       // The contact join the transactions list already uses, plus the fields a
       // support conversation needs: how it was paid, and its Stripe reference.
-      .select('id, amount, currency, status, description, invoice_id, booking_id, service_id, contact_id, paid_at, created_at, refunded_amount, refund_status, payment_method, refunded_at, refund_reason, stripe_payment_intent_id, stripe_charge_id, contact:crm_contacts(first_name, last_name, email)')
+      // `metadata` carries which plan period a payment is — the flag the drawer
+      // reads to label it a payment plan rather than a service, and the numbers
+      // the browser phrases in the reader's language. Left out of this list, a
+      // plan payment arrived indistinguishable from an ad-hoc one: labelled
+      // "שירות", and titled with the English sentence the webhook stored.
+      .select('id, amount, currency, status, description, metadata, invoice_id, booking_id, service_id, contact_id, paid_at, created_at, refunded_amount, refund_status, payment_method, refunded_at, refund_reason, processor_type, stripe_payment_intent_id, stripe_charge_id, contact:crm_contacts(first_name, last_name, email)')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(GROUPING_CAP);
@@ -176,7 +181,10 @@ export async function GET(request: NextRequest) {
     if (bookingIds.length > 0) {
       const { data: installments, error: installmentError } = await supabaseServer
         .from('payment_plan_installments')
-        .select('id, payment_plan_id, booking_id, installment_number, amount, due_date, status, paid_at, transaction_id')
+        // `currency` rides along so the totals card can keep an installment in
+        // its own bucket: a plan need not bill in the currency of the booking
+        // its row is grouped under.
+        .select('id, payment_plan_id, booking_id, installment_number, amount, currency, due_date, status, paid_at, transaction_id')
         .eq('user_id', user.id)
         .in('booking_id', bookingIds)
         .order('installment_number');
@@ -202,6 +210,7 @@ export async function GET(request: NextRequest) {
           id: row.id,
           installmentNumber: row.installment_number,
           amount: Number(row.amount),
+          currency: row.currency,
           dueDate: row.due_date,
           status: row.status,
           paidAt: row.paid_at,
@@ -211,6 +220,32 @@ export async function GET(request: NextRequest) {
         // Counted from the periods themselves rather than a stored figure, so
         // the "2 of 3" on screen cannot disagree with the rows beneath it.
         plan.periodsPaid = plan.periods.filter(p => p.status === 'paid').length;
+      }
+    }
+
+    /*
+     * The plans themselves, so a stopped plan does not read as running.
+     *
+     * `plansByBookingId` is built from the projected INSTALLMENTS, which carry
+     * no plan status — so every plan was labelled `active`, cancelled ones
+     * included, and there was no handle to stop one from this screen because the
+     * subscription's own id never reached the client.
+     */
+    if (bookingIds.length > 0) {
+      const { data: subscriptions } = await supabaseServer
+        .from('payment_plan_subscriptions')
+        .select('id, booking_id, status')
+        .eq('user_id', user.id)
+        .in('booking_id', bookingIds);
+
+      for (const subscription of subscriptions ?? []) {
+        const plan = subscription.booking_id
+          ? plansByBookingId[subscription.booking_id]
+          : undefined;
+        if (!plan) continue;
+
+        plan.subscriptionId = subscription.id;
+        plan.status = subscription.status ?? plan.status;
       }
     }
 

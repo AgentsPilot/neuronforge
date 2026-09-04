@@ -3,7 +3,7 @@
  *
  * Produced by: npx tsx scripts/generate-business-catalog.ts
  * Source     : jgccgkyhpwirgknnceoh.supabase.co
- * Generated  : 2026-08-30T14:03:40.075Z
+ * Generated  : 2026-09-03T17:13:51.552Z
  *
  * This is the PHYSICAL half of the Business Catalog: what columns actually exist
  * in the database. The hand-authored semantic half lives in ./catalog.ts, and
@@ -16,7 +16,7 @@
 import type { PhysicalCatalog } from './catalog.schema';
 
 export const PHYSICAL_CATALOG: PhysicalCatalog = {
-  "generatedAt": "2026-08-30T14:03:40.075Z",
+  "generatedAt": "2026-09-03T17:13:51.552Z",
   "source": "jgccgkyhpwirgknnceoh.supabase.co",
   "tables": {
     "crm_contacts": {
@@ -957,7 +957,8 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "jsonType": "string",
           "required": false,
           "hasDefault": false,
-          "isPrimaryKey": false
+          "isPrimaryKey": false,
+          "description": "The most recent succeeded refund's reason, derived by recompute_transaction_refund_state(). Do not write directly — read payment_refunds for the full history."
         },
         {
           "name": "processor_refund_id",
@@ -1026,6 +1027,873 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": true,
           "isPrimaryKey": false,
           "description": "recorded = captured at charge time; reconciled = proved against Stripe later; unknown = never recorded; ambiguous = found on more than one account or none"
+        },
+        {
+          "name": "processor_fee",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What the processor kept, from the charge's balance transaction. NULL means not yet known — never assume zero. Denominated in fee_currency, which may differ from currency."
+        },
+        {
+          "name": "net_amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What reached the business's balance: amount minus processor_fee, as Stripe reports it. NULL when the fee is not yet known."
+        },
+        {
+          "name": "fee_currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The fee's currency. Stripe charges fees in the settlement currency, which is not always the currency of the payment."
+        }
+      ]
+    },
+    "payment_refunds": {
+      "name": "payment_refunds",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "user_settings_complete",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+        },
+        {
+          "name": "transaction_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_transactions",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_transactions.id`."
+        },
+        {
+          "name": "invoice_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_invoices",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_invoices.id`."
+        },
+        {
+          "name": "amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "amount_minor",
+          "format": "bigint",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "status",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "reason",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "processor_type",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "processor_refund_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "stripe_connect_account_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "idempotency_key",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "source",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "initiated_by",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "failure_code",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "failure_message",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "metadata",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "succeeded_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "fee_returned",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "How much of the original processing fee the processor returned with this refund. Usually 0: Stripe keeps the fee on a refunded payment, which is what makes a full refund cost the business money."
+        },
+        {
+          "name": "refund_fee",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What issuing this refund cost, where the processor charges for it. NULL means not known."
+        }
+      ]
+    },
+    "payment_plans": {
+      "name": "payment_plans",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "user_settings_complete",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+        },
+        {
+          "name": "service_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_services",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_services.id`."
+        },
+        {
+          "name": "name",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "description",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "total_amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "supported_currencies",
+          "format": "text[]",
+          "jsonType": "array",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "installment_count",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "installment_amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "installment_frequency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "allowed_processors",
+          "format": "text[]",
+          "jsonType": "array",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "preferred_processor",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "is_active",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": false,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        }
+      ]
+    },
+    "payment_plan_subscriptions": {
+      "name": "payment_plan_subscriptions",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "user_settings_complete",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+        },
+        {
+          "name": "contact_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "crm_contacts",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `crm_contacts.id`."
+        },
+        {
+          "name": "booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "service_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_services",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_services.id`."
+        },
+        {
+          "name": "payment_plan_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_plans",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_plans.id`."
+        },
+        {
+          "name": "stripe_subscription_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "stripe_schedule_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "stripe_price_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "stripe_customer_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "stripe_connect_account_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "installment_count",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "installment_amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "frequency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "periods_paid",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "status",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "next_charge_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "next_charge_amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "last_failure_code",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "last_failure_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "card_brand",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "card_last4",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Display metadata mirrored from Stripe. No card number is ever stored in this system."
+        },
+        {
+          "name": "card_exp_month",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "card_exp_year",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "metadata",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "completed_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "cancelled_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        }
+      ]
+    },
+    "payment_plan_installments": {
+      "name": "payment_plan_installments",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "user_settings_complete",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+        },
+        {
+          "name": "payment_plan_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_plans",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_plans.id`."
+        },
+        {
+          "name": "booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "contact_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "crm_contacts",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `crm_contacts.id`."
+        },
+        {
+          "name": "installment_number",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "amount",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "due_date",
+          "format": "date",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "status",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "paid_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "payment_method",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "processor_type",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "transaction_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_transactions",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_transactions.id`."
+        },
+        {
+          "name": "retry_count",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": false,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "last_retry_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "next_retry_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "subscription_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_plan_subscriptions",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_plan_subscriptions.id`."
+        },
+        {
+          "name": "invoice_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_invoices",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_invoices.id`."
+        },
+        {
+          "name": "stripe_invoice_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
         }
       ]
     },
@@ -1126,7 +1994,8 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "jsonType": "string",
           "required": false,
           "hasDefault": true,
-          "isPrimaryKey": false
+          "isPrimaryKey": false,
+          "description": "pending | paid | refunded. Derived from the booking's transactions by propagate_refund_to_booking() whenever a refund lands. Application code may set it to paid or pending when money first arrives, but must not write refund state directly."
         },
         {
           "name": "payment_id",
@@ -1343,7 +2212,7 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "name": "duration_minutes",
           "format": "integer",
           "jsonType": "integer",
-          "required": true,
+          "required": false,
           "hasDefault": false,
           "isPrimaryKey": false
         },
@@ -1494,6 +2363,24 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": true,
           "isPrimaryKey": false
+        },
+        {
+          "name": "is_scheduled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Does booking this service involve picking a time? Defaults true so every existing service keeps its current behaviour. False for a product or deliverable, whose client journey has no date step — its duration, if it has one, is kept and shown regardless."
+        },
+        {
+          "name": "collection",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "How money for this service arrives: online (card at the moment of booking — requires a connected processor) | invoice (billed afterwards; transfer, Bit or cash — requires no processor). NULL where the service is free, or where nobody has said yet."
         }
       ]
     },
@@ -2081,6 +2968,60 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": true,
           "isPrimaryKey": false,
           "description": "Whether public smart-link pages display the business logo."
+        },
+        {
+          "name": "collection_method",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "How money reaches the business: card_online | invoice | in_person | mixed | none. Decides whether the setup chain asks for a card processor or for bank details. NULL means the question predates this account, and payment_mode is read across instead."
+        },
+        {
+          "name": "theme",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The business look — colours and fonts — used by the website, landing pages, smart links, transactional emails and the invoice PDF. Seeded from the template chosen during onboarding and editable on the Design tab. A website_pages.theme overrides it for that page only. NULL means the platform default."
+        },
+        {
+          "name": "template_id",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The business's chosen website template. Established by whichever public surface is created first (an onboarding website, or the first landing page) and adopted by every one created after. Changing it restyles every surface. Values are ids from lib/website-builder/templates.ts; the matching colours and fonts live in business_profiles.theme."
+        },
+        {
+          "name": "phone",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The phone number this business publishes to its own clients. Shown on the public booking, intake, contact and invoice pages, and used to derive a WhatsApp link. Stored in international format (leading +) wherever the owner provides one; a number without a country code is still shown but cannot become a WhatsApp link."
+        },
+        {
+          "name": "email",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The email address this business publishes to its own clients. Shown on the public booking, intake, contact and invoice pages. Distinct from the account login email, which belongs to the user rather than to the business."
+        },
+        {
+          "name": "address",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The address this business shows its clients — where to come. Free text, because a display address is written the way the business writes it. Distinct from invoice_address, which is the structured billing address printed on invoices and may deliberately differ."
         }
       ]
     },
@@ -2671,6 +3612,15 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": true,
           "isPrimaryKey": false,
           "description": "Language for website content generation (en, es, he)"
+        },
+        {
+          "name": "content_generated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When AI last wrote this page's content. NULL means never — the page holds the static scaffold, and generating is safe. Non-null means regenerating would replace copy the business may have edited, so it must be asked for explicitly."
         }
       ]
     },

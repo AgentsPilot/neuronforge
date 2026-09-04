@@ -1,5 +1,27 @@
 @import "tailwindcss";
 
+/*
+ * Dark mode follows the `.dark` class, not the operating system.
+ *
+ * `tailwind.config.js` has said `darkMode: 'class'` for as long as it has
+ * existed, but Tailwind v4 is configured through CSS: with `@import
+ * "tailwindcss"` and no `@config` directive, that file is never read and every
+ * `dark:` utility silently reverted to `prefers-color-scheme`.
+ *
+ * That was not a cosmetic difference. The booking flow shared with the public
+ * pages carries ~80 `dark:` utilities; the page shells around it are hardcoded
+ * light. A customer on a dark-mode phone got dark slate cards inside a light
+ * grey page — half a booking form in each theme. And on a customer-facing page
+ * the OS should not have a vote at all: the business chose a palette, and a
+ * business on a light template must look light to everyone.
+ *
+ * `V2ThemeProvider` already adds and removes `.dark` on the document element
+ * for the internal app, seeded from `prefers-color-scheme`, so restoring the
+ * class variant leaves the signed-in experience exactly as it was. Public
+ * pages never mount that provider, so `dark:` goes inert there.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -23,6 +45,73 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: "Heebo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ==========================================================================
+   PUBLIC CUSTOMER-FACING SURFACES
+
+   Pages a business's own client sees: booking management, intake, the smart
+   link pages, invoices. `data-public-surface` is stamped on <html> by the
+   segment layout before first paint; the `--ap-*` values themselves are
+   emitted per request by `components/public/PublicThemeStyle`, computed from
+   the business's chosen theme.
+
+   The fallbacks below matter: they are what renders if the style element is
+   ever missing, and they must be a coherent light theme rather than nothing.
+   ========================================================================== */
+
+html[data-public-surface] {
+  /* The website blocks (booking modal, contact form) read these names for
+     typography. Aliasing rather than renaming is deliberate — it is what lets
+     those shared components pick up the business's fonts without being edited,
+     since they are out of scope for this work. */
+  --website-primary: var(--ap-brand);
+  --website-secondary: var(--ap-brand-secondary);
+  --website-accent: var(--ap-accent);
+  --website-background: var(--ap-bg);
+  --website-surface: var(--ap-surface);
+  --website-text: var(--ap-text);
+  --website-text-secondary: var(--ap-text-muted);
+  --website-border-radius: var(--ap-radius-md);
+  --website-font-heading: var(--ap-font-heading);
+  --website-font-body: var(--ap-font-body);
+
+  /* The booking modal's phone input, styled per-page until now. */
+  --booking-primary: var(--ap-brand);
+  --booking-primary-hover: var(--ap-brand-hover);
+}
+
+/*
+ * The platform's own body rule paints `#0a0a0a` under `prefers-color-scheme:
+ * dark`. On a public page that put a black page behind a light branded card on
+ * any customer whose phone was in dark mode. The business's background wins
+ * here, whatever the device thinks.
+ */
+html[data-public-surface] body {
+  background: var(--ap-bg, #ffffff);
+  color: var(--ap-text, #111827);
+  font-family: var(--ap-font-body, "Heebo", -apple-system, BlinkMacSystemFont, sans-serif);
+}
+
+html[data-public-surface] h1,
+html[data-public-surface] h2,
+html[data-public-surface] h3,
+html[data-public-surface] h4 {
+  font-family: var(--ap-font-heading, "Heebo", -apple-system, BlinkMacSystemFont, sans-serif);
+}
+
+/* A visible focus ring in the brand's colour, on every interactive element.
+   None of the public pages had focus styling of any kind. */
+html[data-public-surface] :focus-visible {
+  outline: 2px solid var(--ap-brand, #4F46E5);
+  outline-offset: 2px;
+  border-radius: var(--ap-radius-sm, 4px);
+}
+
+@media print {
+  html[data-public-surface] .ap-no-print {
+    display: none !important;
+  }
 }
 
 /* Futuristic gradient animation */

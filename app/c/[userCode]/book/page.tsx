@@ -10,10 +10,20 @@
  */
 
 import { Metadata } from 'next';
+import type { PageTheme } from '@/components/website/blocks/types';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { notFound } from 'next/navigation';
 import { StandaloneBookingWidget } from './StandaloneBookingWidget';
 import type { CollectionMethod } from '@/lib/business-os/setup/setupGraph';
-import { isValidLocale, getDirection, type Locale } from '@/lib/i18n/config';
+import type { Locale } from '@/lib/i18n/config';
+import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
+import { PublicFooter } from '@/components/public/PublicFooter';
+import { PublicHeader } from '@/components/public/PublicHeader';
+import { resolvePublicBranding } from '@/lib/branding/publicBranding';
+import { publicT } from '@/lib/i18n/public-pages';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'StandaloneBookingPage' });
 
 interface PageProps {
   params: Promise<{ userCode: string }>;
@@ -41,6 +51,18 @@ interface BusinessData {
     duration_minutes: number;
     price: number | null;
     currency: string;
+    /** Whether booking this involves picking a time. */
+    is_scheduled?: boolean | null;
+    /** How the money arrives, or null where the service is free. */
+    collection?: 'online' | 'invoice' | null;
+    /**
+     * How this service may be paid over time.
+     *
+     * Declared here because the type was the narrowest point in the chain: the
+     * endpoint returned it and the modal renders it, but a service typed
+     * without it was passed on as a single price.
+     */
+    paymentPlan?: ServicePaymentPlan;
   }>;
   config?: {
     logoUrl?: string;
@@ -49,27 +71,20 @@ interface BusinessData {
     /** How the business collects, and whether a card can be charged today. */
     collectionMethod?: CollectionMethod | null;
     processorReady?: boolean;
+    /**
+     * The business's look — colours and fonts.
+     *
+     * A smart link has no website page, so this comes from the profile rather
+     * than from a page's theme. Without it the booking modal rendered in the
+     * platform default while the page around it wore the business's colour,
+     * which is worse than either alone.
+     */
+    theme?: PageTheme | null;
   };
 }
 
-// Translations for booking page
-const LABELS = {
-  en: {
-    bookWith: 'Book with',
-    selectService: 'Select a service to get started',
-    poweredBy: 'Powered by AgentPilot'
-  },
-  es: {
-    bookWith: 'Reservar con',
-    selectService: 'Selecciona un servicio para comenzar',
-    poweredBy: 'Desarrollado por AgentPilot'
-  },
-  he: {
-    bookWith: 'הזמנה אצל',
-    selectService: 'בחר שירות להתחלה',
-    poweredBy: 'מופעל על ידי AgentPilot'
-  }
-};
+// The page's own copy of these strings moved into `lib/i18n/public-pages`,
+// alongside the rest of what a customer reads on a public page.
 
 async function getBusinessData(userCode: string): Promise<BusinessData | null> {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -83,7 +98,7 @@ async function getBusinessData(userCode: string): Promise<BusinessData | null> {
     );
 
     if (!response.ok) {
-      console.error(`Availability API returned ${response.status} for userCode: ${userCode}`);
+      logger.error({ status: response.status, userCode }, 'Availability lookup failed');
       return null;
     }
 
@@ -102,6 +117,14 @@ async function getBusinessData(userCode: string): Promise<BusinessData | null> {
         config = {
           logoUrl: configData.config?.logoUrl,
           primaryColor: configData.config?.primaryColor,
+          // The business's full look — colours AND fonts.
+          //
+          // The API sends it and this object dropped it on the floor: the
+          // config is rebuilt field by field here, and `theme` was never one of
+          // the fields, so the page fell back to `primaryColor` and the booking
+          // modal opened in platform defaults. Everything downstream already
+          // preferred the theme; it simply never arrived.
+          theme: configData.config?.theme ?? null,
           language: configData.config?.language,
           collectionMethod: configData.config?.collectionMethod ?? null,
           processorReady: configData.config?.processorReady === true
@@ -117,7 +140,7 @@ async function getBusinessData(userCode: string): Promise<BusinessData | null> {
       config: config ?? undefined
     };
   } catch (error) {
-    console.error('Failed to fetch business data:', error);
+    logger.error({ err: error, userCode }, 'Failed to fetch business data');
     return null;
   }
 }
@@ -141,12 +164,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function StandaloneBookingPage({ params, searchParams }: PageProps) {
   const { userCode } = await params;
-  const { service: initialServiceId, services: servicesParam, flow: flowParam } = await searchParams;
-  const businessData = await getBusinessData(userCode);
+  const { service: initialServiceId, services: servicesParam } = await searchParams;
 
-  // Parse custom flow from query param
+  const [businessData, brand] = await Promise.all([
+    getBusinessData(userCode),
+    resolvePublicBranding({ by: 'userCode', userCode }),
+  ]);
 
-  if (!businessData?.success) {
+  if (!businessData?.success || !brand) {
     notFound();
   }
 
@@ -157,96 +182,86 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
     filteredServices = businessData.services.filter(s => allowedServiceIds.includes(s.id));
   }
 
-  const primaryColor = businessData.config?.primaryColor || '#4F6EF7';
-  const language = (businessData.config?.language || 'en') as Locale;
-  const isRTL = isValidLocale(language) && getDirection(language) === 'rtl';
-  const labels = LABELS[language as keyof typeof LABELS] || LABELS.en;
-
-  // Always use Heebo font (platform standard)
-  const heeboFontLink = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&subset=hebrew,latin&display=swap';
+  const language = brand.locale as Locale;
 
   return (
     <>
-      {/* Google Fonts - Heebo (platform standard) */}
-      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-      <link rel="stylesheet" href={heeboFontLink} />
-
-      {/* Global styles from theme */}
+      {/*
+        The colours, fonts and direction now come from the segment layout, which
+        resolves them once from the business's own theme. What is left here is
+        the one thing that is specific to this page: the phone field inside the
+        booking modal, which is rendered by a third-party component and can only
+        be reached with CSS. It reads the shell's tokens rather than a colour
+        inlined per page.
+      */}
       <style
         dangerouslySetInnerHTML={{
           __html: `
-            :root {
-              --booking-primary: ${primaryColor};
-              --booking-primary-hover: ${primaryColor}dd;
-            }
-            body {
-              font-family: 'Heebo', sans-serif;
-            }
-            /* Phone input styles */
             .phone-input-booking .PhoneInputInput {
               width: 100%;
-              padding: 0.5rem 1rem;
-              border: 1px solid #d1d5db;
-              border-radius: 0.5rem;
+              padding: 0.625rem 1rem;
+              border: 1px solid var(--ap-border);
+              border-radius: var(--ap-radius-md);
+              background: var(--ap-bg);
+              color: var(--ap-text);
               font-size: 1rem;
               outline: none;
               transition: all 0.2s;
             }
             .phone-input-booking .PhoneInputInput:focus {
-              border-color: ${primaryColor};
-              box-shadow: 0 0 0 2px ${primaryColor}33;
+              border-color: var(--ap-brand);
+              box-shadow: 0 0 0 2px var(--ap-brand-ring);
             }
-            .phone-input-booking .PhoneInputCountry {
-              display: none;
-            }
-          `
+            .phone-input-booking .PhoneInputCountry { display: none; }
+          `,
         }}
       />
 
-      <main className="min-h-screen bg-gray-50" dir={isRTL ? 'rtl' : 'ltr'}>
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 py-6">
-          <div className="max-w-3xl mx-auto px-4">
-            {businessData.config?.logoUrl && (
-              <img
-                src={businessData.config.logoUrl}
-                alt={businessData.businessName}
-                className="h-12 mb-4"
-              />
-            )}
-            <h1 className="text-2xl font-bold text-gray-900">
-              {labels.bookWith} {businessData.businessName}
-            </h1>
-            <p className="text-gray-600 mt-1">
-              {labels.selectService}
-            </p>
-          </div>
-        </header>
-
-        {/* Booking Content */}
-        <div className="max-w-3xl mx-auto px-4 py-8">
-          <StandaloneBookingWidget
-            userCode={userCode}
-            services={filteredServices}
-            timezone={businessData.timezone}
-            primaryColor={primaryColor}
-            locale={language}
-            initialServiceId={initialServiceId}
-            // Two separate reasons a booking may not ask for payment: the
-            // business does not collect that way, or it does and Stripe is not
-            // connected yet. Either one drops the step — a payment screen with
-            // no processor behind it is worse than no payment screen.
-            collectionMethod={businessData.config?.collectionMethod ?? null}
-            processorReady={businessData.config?.processorReady === true}
+      <main
+        dir={brand.dir}
+        lang={brand.locale}
+        className="min-h-screen px-4 py-8"
+        style={{ background: 'var(--ap-bg)', color: 'var(--ap-text)' }}
+      >
+        <div className="mx-auto max-w-3xl">
+          <PublicHeader
+            brand={brand}
+            prefix={publicT(language, 'bookWith')}
+            subtitle={publicT(language, 'selectService')}
           />
-        </div>
 
-        {/* Footer */}
-        <footer className="bg-white border-t border-gray-200 py-6 mt-auto">
-          <div className="max-w-3xl mx-auto px-4 text-center text-gray-500 text-sm">
-            {labels.poweredBy}
-          </div>
-        </footer>
+          {filteredServices.length === 0 ? (
+            <p
+              className="py-12 text-center text-sm"
+              style={{ color: 'var(--ap-text-muted)' }}
+            >
+              {publicT(language, 'noServices')}
+            </p>
+          ) : (
+            <StandaloneBookingWidget
+              userCode={userCode}
+              services={filteredServices}
+              timezone={businessData.timezone}
+              primaryColor={brand.theme.colors.primary}
+              locale={language}
+              initialServiceId={initialServiceId}
+              theme={businessData.config?.theme ?? (brand.theme as PageTheme)}
+              // Two separate reasons a booking may not ask for payment: the
+              // business does not collect that way, or it does and Stripe is not
+              // connected yet. Either one drops the step — a payment screen with
+              // no processor behind it is worse than no payment screen.
+              collectionMethod={businessData.config?.collectionMethod ?? null}
+              processorReady={businessData.config?.processorReady === true}
+            />
+          )}
+
+          {/* Hours, phone and address, for the client who would rather call
+              than book online. Renders nothing when the business has given us
+              none of it. */}
+          <BusinessInfoPanel brand={brand} variant="footer" show={['contact', 'address', 'hours']} />
+
+          <PublicFooter brand={brand} showContact={false} />
+        </div>
       </main>
     </>
   );

@@ -18,6 +18,7 @@
     "backfill:intensity": "tsx scripts/backfill-agent-intensity.ts",
     "backfill:intensity:history": "tsx scripts/backfill-intensity-from-history.ts",
     "sync:intensity:analytics": "tsx scripts/sync-intensity-from-analytics.ts",
+    "test:triggers": "./scripts/test-refund-triggers/run.sh",
     "test:plugins": "jest --config jest.config.js tests/plugins/ --verbose",
     "test:plugins:unit": "jest --config jest.config.js tests/plugins/unit-tests/ --verbose",
     "test:plugins:integration": "jest --config jest.config.js tests/plugins/integration-tests/ --verbose",

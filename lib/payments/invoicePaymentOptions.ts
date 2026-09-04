@@ -68,6 +68,19 @@ export function resolveInvoicePaymentOptions(input: {
   canCollectOnline: boolean;
   cardUrl?: string | null;
   profile?: ManualPaymentProfile | null;
+  /**
+   * This invoice's own answer, when it recorded one.
+   *
+   * `canCollectOnline` says whether the BUSINESS can take a card. This says
+   * whether THIS invoice should — the "Send via Stripe" tick, which until now
+   * was read once at send time and discarded, so the client's pay page offered
+   * a card on an invoice the business had marked transfer-only.
+   *
+   * `undefined`/`null` means no choice was recorded, and the business
+   * capability decides alone. That is how every invoice written before this
+   * behaves, including ones already sitting in inboxes.
+   */
+  allowOnlinePayment?: boolean | null;
 }): InvoicePaymentOptions {
   const profile = input.profile ?? {};
 
@@ -86,9 +99,17 @@ export function resolveInvoicePaymentOptions(input: {
   // one: an account number alone is still something a client can pay into.
   const bank = Boolean(bankName || bankAccount || bankRouting);
 
-  // A card option needs both a working processor and somewhere to send them.
-  // Either alone is a button that goes nowhere.
-  const card = Boolean(input.canCollectOnline && input.cardUrl);
+  /*
+   * A card option needs three things now: a working processor, somewhere to send
+   * them, and this invoice not having opted out.
+   *
+   * Only an explicit FALSE opts out. Null and undefined fall through, so the
+   * absence of an opinion is not read as a refusal — the difference between
+   * "collect this by transfer" and "nobody said".
+   */
+  const card = Boolean(
+    input.canCollectOnline && input.cardUrl && input.allowOnlinePayment !== false
+  );
 
   return {
     card,

@@ -73,11 +73,34 @@ export async function GET(request: NextRequest) {
     const ownerId = websitePage.user_id;
 
     // Fetch business profile for availability settings
-    const { data: businessProfile } = await supabaseServer
+    const { data: businessProfile, error: profileError } = await supabaseServer
       .from('business_profiles')
-      .select('scheduling_availability, company_name, timezone')
+      .select('scheduling_availability, company_name')
       .eq('user_id', ownerId)
       .single();
+
+    /*
+     * The business's timezone lives on `user_preferences` — that is where the
+     * settings page writes it. This route asked `business_profiles` for a
+     * `timezone` column that has never existed, and Postgres rejects an entire
+     * SELECT over one unknown column: the availability query returned nothing,
+     * so a business with a full diary showed no times at all.
+     */
+    const { data: ownerPrefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', ownerId)
+      .maybeSingle();
+
+    /*
+     * Said out loud, because this failing looks exactly like success: a profile
+     * that cannot be read yields no hours, and no hours renders as "no times
+     * available" — a business with a full diary looking closed, with nothing
+     * anywhere saying why. The error was previously discarded entirely.
+     */
+    if (profileError) {
+      requestLogger.error({ err: profileError, ownerId }, 'Could not read business profile for availability');
+    }
 
     // Check if availability has been explicitly configured
     // Asked of the windows, not of the keys: a profile whose every day is an
@@ -88,7 +111,7 @@ export async function GET(request: NextRequest) {
     const availabilitySettings = hasAvailabilityConfigured
       ? businessProfile?.scheduling_availability
       : null;
-    const timezone = businessProfile?.timezone || 'UTC';
+    const timezone = ownerPrefs?.timezone || 'UTC';
 
     // Fetch active services
     const { data: services, error: servicesError } = await supabaseServer

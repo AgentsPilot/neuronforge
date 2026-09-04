@@ -17,6 +17,9 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 import Stripe from 'stripe';
 import { isInstallmentPlan } from '@/lib/payments/PaymentPlanService';
+import { promoteToClientStage } from '@/lib/crm/StageTypeUtils';
+import { planPhases } from '@/lib/payments/planSchedule';
+import { fromMinorUnits } from '@/lib/payments/refundMath';
 import {
   locatePaymentIntentAccount,
   resolveUserConnectAccounts,
@@ -102,38 +105,6 @@ export async function POST(request: NextRequest) {
 
     const ownerId = booking.user_id;
 
-    // Get user's pipeline stages to find the "active client" stage for paid bookings
-    // Look for stages with keys like 'active_client', 'active', 'client' (in order of preference)
-    const { data: pipelineStages } = await supabaseServer
-      .from('crm_pipeline_stages')
-      .select('stage_key, position')
-      .eq('user_id', ownerId)
-      .order('position', { ascending: true });
-
-    // Find the best "active client" stage for a paid customer
-    // Priority: 'active_client' > 'active' > 'client' > highest position stage
-    let activeClientStage = 'client'; // fallback default
-    if (pipelineStages && pipelineStages.length > 0) {
-      const stageKeys = pipelineStages.map(s => s.stage_key);
-      if (stageKeys.includes('active_client')) {
-        activeClientStage = 'active_client';
-      } else if (stageKeys.includes('active')) {
-        activeClientStage = 'active';
-      } else if (stageKeys.includes('client')) {
-        activeClientStage = 'client';
-      } else {
-        // Use the stage with highest position (most progressed in pipeline)
-        // but not 'completed', 'inactive', or 'past_client'
-        const validStages = pipelineStages.filter(
-          s => !['completed', 'inactive', 'past_client'].includes(s.stage_key)
-        );
-        if (validStages.length > 0) {
-          activeClientStage = validStages[validStages.length - 1].stage_key;
-        }
-      }
-    }
-
-    requestLogger.debug({ activeClientStage, pipelineStages }, 'Determined active client stage for paid booking');
 
     // Get contact data from the JOIN
     const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
@@ -151,12 +122,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Upgrade contact stage from 'lead' to 'active_client' since payment succeeded
-    await supabaseServer
-      .from('crm_contacts')
-      .update({ stage: activeClientStage })
-      .eq('id', contactId);
-    requestLogger.info({ contactId, stage: activeClientStage }, 'Upgraded contact to active client after payment');
+    /*
+     * They have paid, so move them along their own pipeline.
+     *
+     * This used to guess the stage from its KEY — 'active_client', then
+     * 'active', then 'client', then whichever stage sits highest that is not
+     * called completed/inactive/past_client. A business whose stages are named
+     * in its own language matches none of those, and the guess fell through to
+     * "highest position", which happens to be right until a pipeline ends on
+     * something other than its client stage.
+     *
+     * `promoteToClientStage` asks the configuration instead — the stage the
+     * business marked as its client stage — and refuses to move anyone already
+     * at or past it. It is the same call the Stripe webhook and the manual
+     * mark-paid route make, so all three agree by construction rather than by
+     * three separate guesses landing on the same answer.
+     */
+    const promotion = await promoteToClientStage(supabaseServer, ownerId, contactId);
+    requestLogger.info(
+      { contactId, stage: promotion.stageKey, moved: promotion.moved },
+      'Contact stage resolved after payment'
+    );
 
     // Get service name for activity logging
     const { data: service } = await supabaseServer
@@ -331,11 +317,26 @@ export async function POST(request: NextRequest) {
     // Send payment receipt (non-blocking) - reuse serviceDetails from earlier
     if (serviceDetails?.price && serviceDetails.price > 0 && contact?.email) {
       const clientName = [contact.first_name, contact.last_name].filter(Boolean).join(' ');
+      /*
+       * The receipt states what was CHARGED, not what was agreed.
+       *
+       * This sent `serviceDetails.price` unconditionally, so a client who paid
+       * the first ₪333 of a three-part plan received a receipt for ₪1,000 —
+       * a document saying they had paid three times what left their account.
+       */
+      const currency = serviceDetails.currency || 'USD';
+      const chargedAmount = isPlanBooking
+        ? fromMinorUnits(
+            planPhases(serviceDetails.price, currency, serviceDetails.installment_count ?? 1)[0].amountMinor,
+            currency
+          )
+        : serviceDetails.price;
+
       BookingEmailService.sendPaymentReceipt(ownerId, {
         customerEmail: contact.email,
         customerName: clientName,
-        amount: serviceDetails.price,
-        currency: serviceDetails.currency,
+        amount: chargedAmount,
+        currency,
         bookingId: booking.id
       }).catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Payment receipt email failed'));
     }

@@ -257,6 +257,84 @@ describe('payment plans', () => {
     expect(items[0].plan?.periodsPaid).toBe(2);
     expect(items[0].simple).toBe(false); // a plan always expands
   });
+
+  /**
+   * The totals card used to sum entries alone, so a live plan reported nothing
+   * outstanding — the row said "$666.67 due" and the card above it said zero.
+   */
+  it('counts unpaid installments as outstanding', () => {
+    const items = buildMoneyItems({
+      bookings: [booking()],
+      // The settled first installment, exactly as it reaches the list in
+      // production: a succeeded payment carrying no invoice.
+      transactions: [transaction({ id: 'tx-i1', invoice_id: null, amount: 333.33, currency: 'USD' })],
+      plansByBookingId: {
+        'bk-1': {
+          id: 'plan-1',
+          installmentCount: 3,
+          periodsPaid: 1,
+          status: 'active',
+          periods: [
+            { id: 'p1', installmentNumber: 1, amount: 333.33, currency: 'USD', dueDate: '2026-09-02', status: 'paid', paidAt: '2026-09-02', transactionId: null },
+            { id: 'p2', installmentNumber: 2, amount: 333.33, currency: 'USD', dueDate: '2026-10-02', status: 'pending', paidAt: null, transactionId: null },
+            { id: 'p3', installmentNumber: 3, amount: 333.34, currency: 'USD', dueDate: '2026-11-02', status: 'pending', paidAt: null, transactionId: null },
+          ],
+        },
+      },
+    });
+
+    const totals = totalMoney(items);
+    expect(totals.outstanding).toBeCloseTo(666.67, 2);
+    expect(totals.byCurrency.USD.outstanding).toBeCloseTo(666.67, 2);
+    // The row and the card have to agree — that is the whole point.
+    expect(outstandingOf(items[0])).toBeCloseTo(totals.outstanding, 2);
+  });
+
+  it('expects nothing from a cancelled installment', () => {
+    const items = buildMoneyItems({
+      bookings: [booking()],
+      transactions: [transaction({ id: 'tx-c1', invoice_id: null, amount: 100, currency: 'USD' })],
+      plansByBookingId: {
+        'bk-1': {
+          id: 'plan-1',
+          installmentCount: 2,
+          periodsPaid: 1,
+          status: 'cancelled',
+          periods: [
+            { id: 'p1', installmentNumber: 1, amount: 100, currency: 'USD', dueDate: '2026-09-01', status: 'paid', paidAt: '2026-09-01', transactionId: null },
+            { id: 'p2', installmentNumber: 2, amount: 100, currency: 'USD', dueDate: '2026-10-01', status: 'cancelled', paidAt: null, transactionId: null },
+          ],
+        },
+      },
+    });
+
+    expect(totalMoney(items).outstanding).toBe(0);
+    expect(outstandingOf(items[0])).toBe(0);
+  });
+
+  it('keeps an installment in its own currency bucket', () => {
+    const items = buildMoneyItems({
+      bookings: [booking()],
+      // Paid in dollars, with a euro installment still to come.
+      transactions: [transaction({ id: 'tx-e1', invoice_id: null, amount: 10, currency: 'USD' })],
+      plansByBookingId: {
+        'bk-1': {
+          id: 'plan-1',
+          installmentCount: 1,
+          periodsPaid: 0,
+          status: 'active',
+          periods: [
+            { id: 'p1', installmentNumber: 1, amount: 50, currency: 'EUR', dueDate: '2026-10-01', status: 'overdue', paidAt: null, transactionId: null },
+          ],
+        },
+      },
+    });
+
+    const totals = totalMoney(items);
+    expect(totals.byCurrency.EUR.outstanding).toBe(50);
+    // The dollar bucket collected, and owes nothing.
+    expect(totals.byCurrency.USD.outstanding).toBe(0);
+  });
 });
 
 describe('totals never count the same money twice', () => {
@@ -434,5 +512,75 @@ describe('outstandingOf with a payment plan', () => {
     ]);
 
     expect(outstandingOf(item as never)).toBe(200);
+  });
+});
+
+describe('payment plan periods', () => {
+  const planTransaction = {
+    id: 'tx_plan_1',
+    amount: 333.33,
+    currency: 'USD',
+    status: 'succeeded',
+    // Written by the webhook, in English, once — read by every locale.
+    description: 'Payment 1 of 3',
+    created_at: '2026-09-02T00:00:00Z',
+    paid_at: '2026-09-02T00:00:00Z',
+    metadata: {
+      source: 'payment_plan',
+      installment_number: 1,
+      installment_count: 3,
+    },
+  };
+
+  it('names a period in the caller\'s language instead of the stored English', () => {
+    const items = buildMoneyItems({
+      transactions: [planTransaction as never],
+      installmentLabel: (n, c) => `תשלום ${n} מתוך ${c}`,
+    });
+
+    expect(items[0].title).toBe('תשלום 1 מתוך 3');
+  });
+
+  /**
+   * `/api/payments/money` builds these on the server, where there is no reader
+   * and no language, so it passes no formatter — and every plan payment fell
+   * back to the English sentence the webhook stored. The numbers travel instead,
+   * and the browser phrases them.
+   */
+  it('carries the period numbers for a caller with no formatter', () => {
+    const items = buildMoneyItems({ transactions: [planTransaction as never] });
+
+    expect(items[0].entries[0].planPeriod).toEqual({ number: 1, count: 3 });
+    expect(items[0].entries[0].isPlanPeriod).toBe(true);
+  });
+
+  it('carries no period numbers for an ordinary payment', () => {
+    const items = buildMoneyItems({
+      transactions: [transaction({ id: 'tx-plain', invoice_id: null, booking_id: null })],
+    });
+
+    expect(items[0].entries[0].planPeriod).toBeUndefined();
+    expect(items[0].entries[0].isPlanPeriod).toBe(false);
+  });
+
+  it('falls back to the stored description when no formatter is given', () => {
+    const items = buildMoneyItems({ transactions: [planTransaction as never] });
+    expect(items[0].title).toBe('Payment 1 of 3');
+  });
+
+  it('leaves an ordinary payment alone', () => {
+    const ordinary = {
+      ...planTransaction,
+      id: 'tx_2',
+      description: 'Consultation',
+      metadata: { source: 'website_booking' },
+    };
+
+    const items = buildMoneyItems({
+      transactions: [ordinary as never],
+      installmentLabel: () => 'SHOULD NOT APPEAR',
+    });
+
+    expect(items[0].title).toBe('Consultation');
   });
 });

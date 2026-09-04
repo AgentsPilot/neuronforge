@@ -528,6 +528,39 @@ export class SchedulingServiceRepository {
 
 // ==================== SCHEDULING BOOKING REPOSITORY ====================
 
+
+/**
+ * How much of a booking's money has gone back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A booking's payments are attached two different ways, and a booking can have
+ * both at once: a website sale writes `booking_id` on the transaction, while an
+ * invoice raised for the booking carries the link on the invoice.
+ *
+ * So both are summed — and the invoice's own `refunded_amount` is DERIVED from
+ * its transactions by trigger, which means a transaction carrying both links
+ * would be counted twice. Those are excluded by invoice id.
+ *
+ * Needed because the CRM's journey strip showed nothing for a refund: a partial
+ * refund leaves `payment_status` at `paid`, and a payment-plan booking has no
+ * invoice at all, so neither of the two things the tab was reading could see it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function refundedTotalFor(
+  invoice: { id?: string; refunded_amount?: number | string | null } | null | undefined,
+  payments: { invoice_id?: string | null; refunded_amount?: number | string | null; status?: string }[]
+): number {
+  const fromInvoice = Number(invoice?.refunded_amount ?? 0) || 0;
+
+  const fromPayments = (payments ?? [])
+    .filter(p => p.status === 'succeeded' || p.status === 'refunded')
+    // Already represented in the invoice's figure.
+    .filter(p => !invoice?.id || p.invoice_id !== invoice.id)
+    .reduce((sum, p) => sum + (Number(p.refunded_amount ?? 0) || 0), 0);
+
+  return Math.round((fromInvoice + fromPayments) * 100) / 100;
+}
+
 export class SchedulingBookingRepository {
   private supabase: SupabaseClient;
 
@@ -631,7 +664,8 @@ export class SchedulingBookingRepository {
             email,
             phone
           ),
-          invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at)
+          invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
         `)
         .eq('id', id)
         .eq('user_id', userId)
@@ -667,8 +701,18 @@ export class SchedulingBookingRepository {
           amount: invoice.amount,
           paid_at: invoice.paid_at,
           due_date: invoice.due_date,
-          sent_at: invoice.sent_at
-        } : null
+          sent_at: invoice.sent_at,
+          // Same list as `list()` above: a booking that showed its refund on one
+          // screen and not another is the bug this is fixing.
+          refunded_amount: invoice.refunded_amount ?? 0,
+          refund_status: invoice.refund_status ?? 'none',
+          refunded_at: invoice.refunded_at ?? null
+        } : null,
+        // Same derivation as `list()`: both ways money attaches to a booking.
+        refunded_total: refundedTotalFor(
+          invoice,
+          Array.isArray(data?.payments) ? data.payments : []
+        )
       } : null;
 
       return { data: normalizedData, error: null };
@@ -714,7 +758,8 @@ export class SchedulingBookingRepository {
           *,
           contact:crm_contacts(first_name, last_name, email, phone),
           service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency),
-          invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at)
+          invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
         `)
         .eq('user_id', userId);
 
@@ -756,6 +801,7 @@ export class SchedulingBookingRepository {
         const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
         // Get invoice if exists - could be array or single object depending on join
         const invoice = Array.isArray(booking.invoice) ? booking.invoice[0] : booking.invoice;
+        const payments = Array.isArray(booking.payments) ? booking.payments : [];
 
         // Determine payment status - prefer invoice status if it shows 'paid' but booking doesn't
         // This handles cases where webhook updated invoice but not booking
@@ -780,8 +826,32 @@ export class SchedulingBookingRepository {
             amount: invoice.amount,
             paid_at: invoice.paid_at,
             due_date: invoice.due_date,
-            sent_at: invoice.sent_at
-          } : null
+            sent_at: invoice.sent_at,
+            /*
+             * What has gone back.
+             *
+             * This object is rebuilt field by field rather than spread, so every
+             * column added to the query above is silently dropped here unless it
+             * is also listed — which is exactly what happened: the booking tab
+             * asked for the refund figures, got them from Postgres, and lost
+             * them one line before the response.
+             *
+             * `refund_status` rides along because a FULL refund and a partial
+             * one need different words, and the amount alone cannot tell them
+             * apart when the refund happens to equal the invoice total.
+             */
+            refunded_amount: invoice.refunded_amount ?? 0,
+            refund_status: invoice.refund_status ?? 'none',
+            refunded_at: invoice.refunded_at ?? null
+          } : null,
+          /*
+           * The booking's refunded total, across BOTH ways its money attaches.
+           *
+           * A separate field from `invoice.refunded_amount` because a payment
+           * plan has no invoice — its periods are transactions — so the invoice
+           * figure alone left every plan refund invisible on this screen.
+           */
+          refunded_total: refundedTotalFor(invoice, payments)
         };
       });
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -31,6 +32,53 @@ import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
 
 const logger = createLogger({ module: 'WebsitePage' });
+
+/**
+ * Start a request now, deal with the answer later.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Loading this page was eight network legs deep, and only two of them were real
+ * dependencies — the profile decides the templates URL, and the page list
+ * decides which page's blocks to ask for. The other five ran one after another
+ * because that is the order the lines happened to be written in: the analytics,
+ * each landing page's activity, the business template, the web address and the
+ * smart links all wait for each other while needing nothing from each other.
+ *
+ * Depth is what matters under load. Every leg is a serverless function holding
+ * a database connection, so a page that takes eight round trips holds those
+ * resources roughly eight times longer than one that takes three. With a
+ * hundred people opening it at once, that difference is the connection pool.
+ *
+ * The fix is NOT to `Promise.all` the whole tail, and that distinction matters:
+ * `setSubdomain` is called three times on purpose — from the company name, then
+ * from the homepage, then from the address endpoint — and the last write wins.
+ * Racing them would let the wrong address land in Settings, which is the exact
+ * bug the comment further down was written to fix.
+ *
+ * So: fire the request as early as its inputs allow, then `await` it and set
+ * state at the ORIGINAL line. Same order of writes, same final state, same
+ * `logger.warn` on the same failure — just without the waiting in between.
+ *
+ * Settled rather than thrown, because a promise started early and awaited late
+ * would otherwise be an unhandled rejection in the window between the two.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+function startFetch<T>(url: string): Promise<Settled<T>> {
+  return fetch(url)
+    .then(response => response.json())
+    .then(
+      (value: T) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error })
+    );
+}
+
+/** Unwrap a `startFetch` result, re-throwing so the caller's own catch sees it. */
+function settled<T>(result: Settled<T>): T {
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 // Lucide icon registry for services
 const SERVICE_ICON_REGISTRY: Record<string, LucideIcon> = {
@@ -128,6 +176,44 @@ function SortableLandingPageJourneyStep({ id, children, disabled }: { id: string
 const WEBSITE_COLOR = '#4F6EF7';
 
 type ViewMode = 'overview' | 'journey' | 'sections' | 'design' | 'settings' | 'templates' | 'wizard';
+
+/**
+ * A smart link row, as `/api/smart-links` returns it.
+ *
+ * Lifted out of the `useState` generic it used to live in so the fetch that
+ * loads these can be typed without restating the shape.
+ */
+/** The ten figures `/api/website/analytics` returns for a page. */
+interface WebsiteAnalytics {
+  total_views: number;
+  unique_visitors: number;
+  views_today: number;
+  visitors_today: number;
+  views_this_month: number;
+  visitors_this_month: number;
+  views_30d: number;
+  visitors_30d: number;
+  views_7d: number;
+  visitors_7d: number;
+}
+
+interface SmartLink {
+  id: string;
+  code: string;
+  name: string | null;
+  destination_url: string;
+  destination_type: string | null;
+  click_count: number;
+  conversion_count: number;
+  is_active: boolean;
+  created_at: string;
+  metadata?: {
+    journeyType?: 'contact-only' | 'full';
+    serviceIds?: string[];
+    flow?: string[];
+    destinationType?: 'form' | 'booking';
+  } | null;
+}
 
 interface WebsiteTemplate {
   id: string;
@@ -820,7 +906,8 @@ export default function WebsiteManagementPage() {
     fetch('/api/intake/settings')
       .then(res => (res.ok ? res.json() : null))
       .then(data => {
-        if (!cancelled && data?.success) setIntakeEnabled(data.settings?.is_enabled === true);
+        // Same question as the configuration dialog asks, from the same helper.
+        if (!cancelled && data?.success) setIntakeEnabled(intakeReachesClient(data.settings));
       })
       .catch(() => {
         // The strip simply omits the step; not worth a message.
@@ -890,23 +977,7 @@ export default function WebsiteManagementPage() {
   const [showLandingPageWizard, setShowLandingPageWizard] = useState(false);
   const [creatingPage, setCreatingPage] = useState(false);
   const [smartLinksRefreshTrigger, setSmartLinksRefreshTrigger] = useState(0);
-  const [smartLinks, setSmartLinks] = useState<Array<{
-    id: string;
-    code: string;
-    name: string | null;
-    destination_url: string;
-    destination_type: string | null;
-    click_count: number;
-    conversion_count: number;
-    is_active: boolean;
-    created_at: string;
-    metadata?: {
-      journeyType?: 'contact-only' | 'full';
-      serviceIds?: string[];
-      flow?: string[];
-      destinationType?: 'form' | 'booking';
-    } | null;
-  }>>([]);
+  const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
   const [showInactiveSmartLinks, setShowInactiveSmartLinks] = useState(false);
   const [editingSmartLink, setEditingSmartLink] = useState<{
     id: string;
@@ -1016,18 +1087,7 @@ export default function WebsiteManagementPage() {
   const [wizardChecked, setWizardChecked] = useState(false);
 
   // Analytics state (for main website)
-  const [analytics, setAnalytics] = useState<{
-    total_views: number;
-    unique_visitors: number;
-    views_today: number;
-    visitors_today: number;
-    views_this_month: number;
-    visitors_this_month: number;
-    views_30d: number;
-    visitors_30d: number;
-    views_7d: number;
-    visitors_7d: number;
-  } | null>(null);
+  const [analytics, setAnalytics] = useState<WebsiteAnalytics | null>(null);
 
   // Landing page analytics state (keyed by page ID)
   const [landingPagesAnalytics, setLandingPagesAnalytics] = useState<Record<string, {
@@ -1078,6 +1138,19 @@ export default function WebsiteManagementPage() {
   const fetchData = async () => {
     try {
       setLoading(true);
+
+      // Three calls that need nothing from anything above them, so they go out
+      // now rather than queueing behind the profile and the pages. Their
+      // results are applied further down, at the line they were applied before.
+      const templatePromise = startFetch<{ success: boolean; templateId?: string | null }>(
+        '/api/business-os/business-template'
+      );
+      const addressPromise = startFetch<{ success: boolean; subdomain?: string }>(
+        '/api/business-os/business-subdomain'
+      );
+      const smartLinksPromise = startFetch<{ success: boolean; links?: SmartLink[] }>(
+        '/api/smart-links?active=false'
+      );
 
       // First fetch profile to get vertical for template filtering
       const profileResponse = await fetch('/api/business-os/profile');
@@ -1143,6 +1216,36 @@ export default function WebsiteManagementPage() {
         const homepage = pagesData.pages.find((p: WebsitePage) => p.page_type === 'homepage') || null;
         setPage(homepage);
 
+        /*
+         * Everything this block still needs, requested at once.
+         *
+         * All three depend only on the page list that just arrived, and on
+         * nothing from each other. They used to run in sequence — blocks, then
+         * the site's analytics, then one request per landing page — so a
+         * business with four landing pages waited seven round trips here alone.
+         * Each is still awaited and applied at its original line below, so the
+         * order of every setState is unchanged.
+         */
+        const blocksPromise = homepage
+          ? startFetch<{ success: boolean; blocks?: WebsiteBlock[] }>(
+              `/api/website/pages/${homepage.id}/blocks-with-content`
+            )
+          : null;
+
+        const analyticsPromise = startFetch<{ success: boolean; analytics?: WebsiteAnalytics }>(
+          '/api/website/analytics'
+        );
+
+        const landingPages = pagesData.pages.filter((p: WebsitePage) => p.page_type === 'landing');
+        const activityPromises = landingPages.map((lp: WebsitePage) =>
+          startFetch<{ success: boolean; analytics?: unknown }>(
+            `/api/website/pages/${lp.id}/activity?full=true`
+          ).then(result => ({
+            pageId: lp.id,
+            analytics: result.ok && result.value.success ? result.value.analytics : null,
+          }))
+        );
+
         // Everything below reads the website's own fields, so it only runs when
         // there is one. Without a site the page shows its create-a-website
         // invitation with the lead generation list beneath, which is what an
@@ -1168,8 +1271,7 @@ export default function WebsiteManagementPage() {
         });
 
         // Fetch blocks for this page (with content from central store)
-        const blocksResponse = await fetch(`/api/website/pages/${homepage.id}/blocks-with-content`);
-        const blocksData = await blocksResponse.json();
+        const blocksData = settled(await blocksPromise!);
         if (blocksData.success) {
           setBlocks(blocksData.blocks || []);
           // Extract client flow from process block
@@ -1199,9 +1301,7 @@ export default function WebsiteManagementPage() {
 
         // Fetch website analytics
         try {
-          const analyticsResponse = await fetch('/api/website/analytics');
-          const analyticsData = await analyticsResponse.json();
-          console.log('[Website] Analytics response:', analyticsData);
+          const analyticsData = settled(await analyticsPromise);
           if (analyticsData.success && analyticsData.analytics) {
             setAnalytics(analyticsData.analytics);
           }
@@ -1210,19 +1310,8 @@ export default function WebsiteManagementPage() {
         }
 
         // Fetch analytics for all landing pages
-        const landingPages = pagesData.pages.filter((p: WebsitePage) => p.page_type === 'landing');
-        if (landingPages.length > 0) {
-          const analyticsPromises = landingPages.map(async (lp: WebsitePage) => {
-            try {
-              const response = await fetch(`/api/website/pages/${lp.id}/activity?full=true`);
-              const data = await response.json();
-              return { pageId: lp.id, analytics: data.success ? data.analytics : null };
-            } catch {
-              return { pageId: lp.id, analytics: null };
-            }
-          });
-
-          const results = await Promise.all(analyticsPromises);
+        if (activityPromises.length > 0) {
+          const results = await Promise.all(activityPromises);
           const analyticsMap: Record<string, typeof results[0]['analytics']> = {};
           results.forEach(r => {
             if (r.analytics) {
@@ -1239,8 +1328,7 @@ export default function WebsiteManagementPage() {
       // ran for a business with no website, which is the one case where nothing
       // else on the page can show which template it is on.
       try {
-        const templateResponse = await fetch('/api/business-os/business-template');
-        const templateData = await templateResponse.json();
+        const templateData = settled(await templatePromise);
         if (templateData.success) setCurrentTemplateId(templateData.templateId ?? null);
       } catch (err) {
         logger.warn({ err }, 'Could not read the business template');
@@ -1253,10 +1341,15 @@ export default function WebsiteManagementPage() {
        * overwritten by the HOMEPAGE's — so an address chosen while publishing a
        * landing page never appeared in the website's Settings screen, which
        * went on suggesting a name the business was not actually using.
+       *
+       * This is why the request was started early but is applied HERE, and not
+       * raced with the others: `setSubdomain` is written three times — company
+       * name, then homepage, then this — and the last write is the one the
+       * Settings screen shows. Awaiting it at its original position keeps that
+       * order exactly.
        */
       try {
-        const addressResponse = await fetch('/api/business-os/business-subdomain');
-        const addressData = await addressResponse.json();
+        const addressData = settled(await addressPromise);
         if (addressData.success && addressData.subdomain) {
           setSubdomain(addressData.subdomain);
         }
@@ -1266,8 +1359,7 @@ export default function WebsiteManagementPage() {
 
       // Fetch smart links (always, regardless of pages) - include inactive for filtering
       try {
-        const smartLinksResponse = await fetch('/api/smart-links?active=false');
-        const smartLinksData = await smartLinksResponse.json();
+        const smartLinksData = settled(await smartLinksPromise);
         if (smartLinksData.success && smartLinksData.links) {
           setSmartLinks(smartLinksData.links);
         }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { businessCollectsIntake } from '@/lib/business-os/intakeReach';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -12,6 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
+import { createLogger } from '@/lib/logger';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { toast } from 'sonner';
@@ -24,8 +26,8 @@ import { TasksSection } from './TasksSection';
 import { ActivitySection } from './ActivitySection';
 import { FilesTab } from './FilesTab';
 import { BookingsTab } from './BookingsTab';
-import { PaymentManagementModal } from './PaymentManagementModal';
 import { FormSubmissionsSection } from './FormSubmissionsSection';
+import { PaymentManagementModal } from './PaymentManagementModal';
 import { PaymentsSection } from './PaymentsSection';
 import { InvoiceModal } from '@/components/payments/InvoiceModal';
 
@@ -67,7 +69,17 @@ interface ExtendedBookingData {
 // This determines which steps to show and their status for each booking type
 function buildJourneySteps(
   data: ExtendedBookingData,
-  language: string = 'en'
+  language: string = 'en',
+  /**
+   * The business collects intake at all.
+   *
+   * Needed because the intake step used to appear only when a RESPONSE already
+   * existed — so the "Send intake form" action, which exists precisely for a
+   * booking with no response yet, could never be reached. The owner could
+   * resend a form the client had already returned, and could not send one that
+   * had never gone out.
+   */
+  collectsIntake: boolean = false
 ): BookingJourneyStep[] {
   const { booking, payment, confirmationEmail } = data;
   const steps: BookingJourneyStep[] = [];
@@ -175,11 +187,15 @@ function buildJourneySteps(
       en: 'total', es: 'total', he: 'סה״כ'
     };
 
+    /** True while a payment plan still has periods outstanding. */
+    let planIncomplete = false;
+
     let paymentDetails = formatAmount(payment.amount, payment.currency);
 
     if (payment.plan) {
       const lang = planEveryText[language] ? language : 'en';
       const periodsPaid = payment.plan.periodsPaid ?? (payment.status === 'paid' ? 1 : 0);
+      planIncomplete = periodsPaid < payment.plan.installmentCount;
 
       // "₪333.33 · 1 of 3 · monthly · ₪1,000.00 total"
       paymentDetails = [
@@ -192,6 +208,19 @@ function buildJourneySteps(
 
     if (payment.status === 'refunded') {
       paymentDetails = `${paymentDetails} (${refundedText[language] || refundedText.en})`;
+    } else if ((payment.refundedAmount ?? 0) > 0) {
+      /*
+       * A PARTIAL refund, which `status` cannot express.
+       *
+       * `status` only becomes 'refunded' when everything has gone back, so this
+       * line read a flat "$200.00" for a booking where half the money had been
+       * returned — the figure the owner is most likely to read as what they
+       * kept. The amount charged and the amount refunded are both named.
+       */
+      paymentDetails = `${paymentDetails} • ${formatAmount(
+        payment.refundedAmount ?? 0,
+        payment.currency
+      )} ${refundedText[language] || refundedText.en}`;
     } else if (isOverdue) {
       paymentDetails = `${paymentDetails} (${overdueText[language] || overdueText.en})`;
     }
@@ -199,7 +228,16 @@ function buildJourneySteps(
     steps.push({
       id: `${booking.id}-payment`,
       key: 'payment',
-      status: payment.status === 'paid' ? 'completed' :
+      /*
+       * A plan with periods still to come is NOT done.
+       *
+       * `paid` meant green, so the first ₪333 of three turned the payment step
+       * the same colour as a sale collected in full — telling the owner nothing
+       * remained when two thirds of the money had not arrived. It stays `active`
+       * (amber) until the last period is in, which is what `active` is for.
+       */
+      status: payment.status === 'paid' && planIncomplete ? 'active' :
+              payment.status === 'paid' ? 'completed' :
               payment.status === 'refunded' ? 'completed' :  // Refunded is also "completed" (transaction done)
               isOverdue ? 'failed' :  // Overdue payments show as failed (red)
               payment.status === 'pending' ? 'active' :
@@ -224,7 +262,9 @@ function buildJourneySteps(
   // Note: We check for both null and undefined because the data might come as either
   const hasIntakeData = (booking.intake_responses != null) || (booking.intake_completed_at != null);
 
-  if (hasIntakeData) {
+  // Shown when there is a response OR when the business collects intake at all
+  // — the second is what makes an unsent form reachable.
+  if (hasIntakeData || collectsIntake) {
     steps.push({
       id: `${booking.id}-intake`,
       key: 'intake',
@@ -257,7 +297,19 @@ function buildJourneySteps(
     key: isProduct ? 'fulfillment' : 'session',
     status: isCompleted ? 'completed' :
             isCancelled ? 'failed' :
-            isUpcoming ? 'pending' : 'active'
+            isUpcoming ? 'pending' : 'active',
+    /*
+     * WHEN the appointment is, so it sits under its own date.
+     *
+     * This step carried no timestamp at all, so the journey had nothing to file
+     * it under: it fell into the undated group at the end, the day it belongs to
+     * was never drawn, and the wait before it could not be measured — the gap
+     * between booking and session is exactly the thing worth seeing.
+     *
+     * A product has no slot, so it stays undated, which is correct: a
+     * fulfilment step genuinely has no date until it ships.
+     */
+    timestamp: booking.start_time || undefined
   });
 
   return steps;
@@ -503,6 +555,8 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
   );
 }
 
+const logger = createLogger({ module: 'CRMContactDrawer' });
+
 export function CRMContactDrawerV2({
   contact,
   stages,
@@ -543,6 +597,32 @@ export function CRMContactDrawerV2({
   }>>([]);
   const [intakeTemplates, setIntakeTemplates] = useState<Record<string, IntakeTemplate>>({});
 
+  /**
+   * The business collects intake — whether or not it emails it automatically.
+   *
+   * Drives whether a booking shows an intake step at all. Without it the step
+   * appeared only once a RESPONSE existed, so "Send intake form" — which is for
+   * a booking with no response — could never be reached.
+   */
+  const [collectsIntake, setCollectsIntake] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+
+    fetch('/api/intake/settings')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!cancelled) setCollectsIntake(businessCollectsIntake(data?.settings));
+      })
+      .catch(() => {
+        // Left false: a booking then shows no intake step, which is the safer
+        // of the two mistakes.
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
+
   // Loading states
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingActivities, setLoadingActivities] = useState(false);
@@ -554,13 +634,80 @@ export function CRMContactDrawerV2({
   // Modal states
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [editingBooking, setEditingBooking] = useState<SchedulingBooking | undefined>(undefined);
+  /*
+   * What actually happened to a payment plan, per booking.
+   *
+   * The journey builds its plan from the SERVICE — "sold as 3 monthly payments"
+   * — which is the agreement, not its fate. A plan that was stopped goes on
+   * reading as a live plan on its first period, because nothing in the bookings
+   * data says otherwise. The money list has this already; the timeline did not.
+   *
+   * Fetched ONLY when a plan booking is present, which is the minority of
+   * contacts. The drawer's secondary batch is six parallel requests against a
+   * six-connection budget, and making every contact pay for a case most of them
+   * do not have is how that batch got slow enough to notice.
+   */
+  const [planStates, setPlanStates] = useState<
+    Record<string, { status: string; periodsPaid: number; installmentCount: number }>
+  >({});
+
+  /**
+   * Ask what became of the plans behind these bookings.
+   *
+   * The money endpoint already assembles this — subscription status, periods
+   * paid — so this reads it rather than re-deriving from installments, which is
+   * how the two surfaces would drift.
+   *
+   * Returns early when nothing is sold on a plan, so the common contact makes
+   * no request at all.
+   */
+  const loadPlanStates = async (cards: SessionCardData[], contactId: string) => {
+    if (!cards.some(card => card.payment?.plan)) return;
+
+    try {
+      const response = await fetch(
+        `/api/payments/money?contact_id=${contactId}&limit=100`,
+        { cache: 'no-store' }
+      );
+      const data = await response.json();
+      if (!data.success) return;
+
+      const byBooking: Record<
+        string,
+        { status: string; periodsPaid: number; installmentCount: number }
+      > = {};
+
+      for (const item of data.data?.items ?? []) {
+        if (item.bookingId && item.plan) {
+          byBooking[item.bookingId] = {
+            status: item.plan.status,
+            periodsPaid: item.plan.periodsPaid ?? 0,
+            installmentCount: item.plan.installmentCount ?? 0,
+          };
+        }
+      }
+
+      setPlanStates(byBooking);
+    } catch (err) {
+      // Not fatal: the journey still shows the plan's terms, just without
+      // saying whether it is still running.
+      logger.warn({ err, contactId }, 'Could not read payment plan states');
+    }
+  };
   const [services, setServices] = useState<SchedulingService[]>([]);
+  /*
+   * Services are on their way — as distinct from there being none.
+   *
+   * The booking dialog opens before the drawer's secondary batch lands, and an
+   * empty dropdown with no explanation is the part that reads as broken.
+   * Starts TRUE because that batch is fired as the drawer mounts: from the
+   * dialog's point of view the request is already in flight.
+   */
+  const [servicesLoading, setServicesLoading] = useState(true);
   const [availability, setAvailability] = useState<Record<string, { start: string; end: string }[]> | undefined>(undefined);
   const [allBookings, setAllBookings] = useState<SchedulingBooking[]>([]);
 
   // Payment management modal state
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<SessionCardData | null>(null);
 
   // Invoice modal state
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -569,6 +716,17 @@ export function CRMContactDrawerV2({
   // Intake confirmation dialog state
   const [showIntakeConfirm, setShowIntakeConfirm] = useState(false);
   const [pendingIntakeBookingId, setPendingIntakeBookingId] = useState<string | null>(null);
+  /* Resending the booking confirmation, the same shape as intake and invoice:
+     confirm first, because this puts an email in a client's inbox. */
+  const [showConfirmationResend, setShowConfirmationResend] = useState(false);
+  const [pendingConfirmationBookingId, setPendingConfirmationBookingId] = useState<string | null>(null);
+  const [sendingConfirmation, setSendingConfirmation] = useState(false);
+  /* Cancelling emails the client and frees the slot, so it asks first.
+     Completing and marking a no-show are internal record-keeping. */
+  const [pendingCancelBookingId, setPendingCancelBookingId] = useState<string | null>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedBookingForPayment, setSelectedBookingForPayment] = useState<SessionCardData | null>(null);
+  const [cancellingBooking, setCancellingBooking] = useState(false);
   const [sendingIntake, setSendingIntake] = useState(false);
   // Invoice resend confirmation dialog state
   const [showInvoiceConfirm, setShowInvoiceConfirm] = useState(false);
@@ -699,8 +857,28 @@ export function CRMContactDrawerV2({
           }
         : undefined;
 
-      // Extract invoice data from booking if available
-      const bookingWithInvoice = booking as SchedulingBooking & { invoice?: { id: string; status: string; due_date: string | null; sent_at: string | null; paid_at: string | null } };
+      /*
+       * ⚠ THIS IS THE PRIMARY LOAD PATH.
+       *
+       * `fetchSessions` below builds the same object a second time, and the two
+       * drifted: the refund fields were added there and not here, so a booking
+       * showed its refund only after some action refreshed the drawer and never
+       * on open. Anything added to one must be added to the other — or better,
+       * both should move to one builder.
+       */
+      const bookingWithInvoice = booking as SchedulingBooking & {
+        refunded_total?: number | string | null;
+        invoice?: {
+          id: string;
+          status: string;
+          due_date: string | null;
+          sent_at: string | null;
+          paid_at: string | null;
+          amount?: number | string | null;
+          refunded_amount?: number | string | null;
+          refunded_at?: string | null;
+        };
+      };
       const invoiceData = bookingWithInvoice.invoice;
 
       const paymentData: SessionPayment | null = isFreeService ? {
@@ -716,6 +894,14 @@ export function CRMContactDrawerV2({
         status: mapPaymentStatus(booking.payment_status),
         plan: sessionPlan,
         paidAt: invoiceData?.paid_at || undefined,
+        /*
+         * The refund, across BOTH ways money attaches to a booking — the same
+         * three fields `fetchSessions` sets. Without them the journey's payment
+         * receipt has no refund to show and renders the charge alone.
+         */
+        refundedAmount: Number(bookingWithInvoice.refunded_total ?? 0) || undefined,
+        refundedAt: invoiceData?.refunded_at || undefined,
+        invoicedAmount: Number(invoiceData?.amount ?? 0) || undefined,
         // Invoice data for resend functionality and due date display
         invoiceId: invoiceData?.id,
         invoiceStatus: invoiceData?.status as SessionPayment['invoiceStatus'],
@@ -740,11 +926,15 @@ export function CRMContactDrawerV2({
               subject: confirmationEmail.subject
             } : undefined
           },
-          language
+          language,
+          collectsIntake
         )
       };
     });
     setSessions(sessionCards);
+    // Both builders, per the warning above: a plan's state must not depend on
+    // which path loaded the drawer.
+    void loadPlanStates(sessionCards, contact.id);
 
     // Extract intake responses for Files tab
     // Only include completed intakes (with actual responses), not pending ones
@@ -864,6 +1054,9 @@ export function CRMContactDrawerV2({
         if (servicesData.success) {
           setServices(servicesData.services || []);
         }
+        // Answered, whatever the answer. The dropdown can stop saying "loading"
+        // and start saying "none configured" if that is the truth.
+        setServicesLoading(false);
 
         // Process availability
         if (availabilityData.success && availabilityData.settings) {
@@ -913,14 +1106,27 @@ export function CRMContactDrawerV2({
   }, [contact, isOpen]);
 
   // Fetch sessions (bookings with payments and emails) - kept for individual refresh
-  const fetchSessions = async (contactId: string) => {
+  /**
+   * The contact's bookings, and everything the journey draws from them.
+   *
+   * `silent` for a refresh after a money action. The journey carries the
+   * payment figures — what was charged, what came back — and those are derived
+   * from the same bookings, so a refund made in the payments section leaves the
+   * journey showing the pre-refund amounts until this runs. Without `silent` it
+   * would run with skeletons over the timeline the owner is looking at.
+   *
+   * `no-store` for the same reason the payments section needed it: this hits
+   * URLs that were fetched moments ago, and a cached answer would refresh the
+   * journey to exactly what it already showed.
+   */
+  const fetchSessions = async (contactId: string, { silent = false }: { silent?: boolean } = {}) => {
     try {
-      setLoadingSessions(true);
+      if (!silent) setLoadingSessions(true);
 
       // Fetch bookings and emails in parallel
       const [bookingsResponse, emailsResponse] = await Promise.all([
-        fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`),
-        fetch(`/api/crm/contacts/${contactId}/emails?limit=100`)
+        fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`, { cache: 'no-store' }),
+        fetch(`/api/crm/contacts/${contactId}/emails?limit=100`, { cache: 'no-store' })
       ]);
 
       if (!bookingsResponse.ok) {
@@ -992,7 +1198,18 @@ export function CRMContactDrawerV2({
           const isFreeService = servicePrice === 0;
 
           // Extract invoice data from booking if available
-          const invoiceData = (booking as SchedulingBooking & { invoice?: { id: string; status: string; due_date: string | null; sent_at: string | null; paid_at: string | null } }).invoice;
+          const invoiceData = (booking as SchedulingBooking & {
+            invoice?: {
+              id: string;
+              status: string;
+              due_date: string | null;
+              sent_at: string | null;
+              paid_at: string | null;
+              amount?: number | string | null;
+              refunded_amount?: number | string | null;
+              refunded_at?: string | null;
+            };
+          }).invoice;
 
           const paymentData: SessionPayment | null = isFreeService ? {
             amount: 0,
@@ -1004,6 +1221,24 @@ export function CRMContactDrawerV2({
             currency: serviceCurrency,
             status: mapPaymentStatus(booking.payment_status),
             paidAt: invoiceData?.paid_at || undefined,
+            /*
+             * What has gone back, across BOTH ways money attaches to a booking.
+             *
+             * Not `invoice.refunded_amount`: a payment plan has no invoice — its
+             * periods are transactions — so reading the invoice alone left every
+             * plan refund invisible here. And not `payment_status`, which only
+             * moves on a FULL refund, so a partial one showed nothing at all.
+             */
+            refundedAmount:
+              Number(
+                (booking as SchedulingBooking & { refunded_total?: number | string | null })
+                  .refunded_total ?? 0
+              ) || undefined,
+            // When the money went back, so the receipt can date the line the way
+            // a statement does.
+            refundedAt: invoiceData?.refunded_at || undefined,
+            // What was billed, which is what the receipt should foot from.
+            invoicedAmount: Number(invoiceData?.amount ?? 0) || undefined,
             // Invoice data for resend functionality and due date display
             invoiceId: invoiceData?.id,
             invoiceStatus: invoiceData?.status as SessionPayment['invoiceStatus'],
@@ -1028,11 +1263,13 @@ export function CRMContactDrawerV2({
                   subject: confirmationEmail.subject
                 } : undefined
               },
-              language
+              language,
+              collectsIntake
             )
           };
         });
         setSessions(sessionCards);
+        void loadPlanStates(sessionCards, contactId);
 
         // Extract intake responses for Files tab (exclude pending intakes with no actual data)
         const intakes = sessionCards
@@ -1054,7 +1291,7 @@ export function CRMContactDrawerV2({
     } catch (error) {
       console.error('Failed to fetch sessions:', error);
     } finally {
-      setLoadingSessions(false);
+      if (!silent) setLoadingSessions(false);
     }
   };
 
@@ -1379,12 +1616,24 @@ export function CRMContactDrawerV2({
 
   // Session handlers
   const handleNewSession = () => {
-    // Open modal immediately - services will load in background if needed
+    // Open the modal immediately; the services fill in when they arrive.
     setEditingBooking(undefined);
     setShowBookingModal(true);
-    // Trigger service fetch in background if needed (non-blocking)
-    if (services.length === 0) {
-      fetchServices().catch(err => console.error('Failed to fetch services:', err));
+
+    /*
+     * Only if nothing is already on its way.
+     *
+     * The drawer asks for services in its secondary batch — six requests fired
+     * together the moment it opens. Clicking "new session" before those land
+     * used to fire a SEVENTH for the same data, competing with the one already
+     * in flight rather than replacing it. The modal now says it is loading, so
+     * the honest thing is to wait for the request that exists.
+     */
+    if (services.length === 0 && !servicesLoading) {
+      setServicesLoading(true);
+      fetchServices()
+        .catch(err => logger.error({ err }, 'Failed to fetch services'))
+        .finally(() => setServicesLoading(false));
     }
   };
 
@@ -1663,6 +1912,10 @@ export function CRMContactDrawerV2({
               {/* Bookings Section - Timeline flow with cards */}
               <BookingsTab
                 sessions={sessions}
+                /* What became of each plan — stopped, completed, still running.
+                   The journey derives the plan from the service, which is the
+                   agreement rather than its fate. */
+                planStates={planStates}
                 t={t}
                 isRTL={isRTL}
                 language={language}
@@ -1680,6 +1933,45 @@ export function CRMContactDrawerV2({
                   // Show confirmation dialog instead of sending directly
                   setPendingIntakeBookingId(bookingId);
                   setShowIntakeConfirm(true);
+                }}
+                /* Record how the appointment went, from the card header.
+                   Each outcome has its own endpoint — they are not interchangeable
+                   writes to a status column: completing may settle money, a
+                   cancellation notifies the client and frees the slot. */
+                onSetBookingStatus={async (bookingId, status) => {
+                  /*
+                   * Cancelling reaches the CLIENT — it emails them and releases
+                   * the slot — so it is confirmed rather than fired from a menu.
+                   * The other two only record what happened.
+                   */
+                  if (status === 'cancelled') {
+                    setPendingCancelBookingId(bookingId);
+                    return;
+                  }
+
+                  const path = status === 'completed' ? 'complete' : 'no-show';
+
+                  try {
+                    const response = await fetch(`/api/scheduling/bookings/${bookingId}/${path}`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({})
+                    });
+                    const data = await response.json();
+                    if (!response.ok || data.success === false) {
+                      throw new Error(data.error || 'Failed to update the booking');
+                    }
+                    toast.success(t('crm.booking.status_updated') || 'Booking updated');
+                    fetchSessions(contact.id);
+                    fetchActivities(contact.id);
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to update the booking');
+                  }
+                }}
+                onResendConfirmation={(bookingId) => {
+                  // Confirm first — the same as the other two sends.
+                  setPendingConfirmationBookingId(bookingId);
+                  setShowConfirmationResend(true);
                 }}
                 onSendInvoice={async (invoiceId, bookingId) => {
                   // Show confirmation dialog instead of sending directly
@@ -1720,6 +2012,11 @@ export function CRMContactDrawerV2({
                 language={language}
                 isOpen={openSection === 'payments'}
                 onToggle={handleSectionToggle('payments')}
+                /* A refund made in the money list changes the JOURNEY too —
+                   the payment node above shows what was charged and what came
+                   back. The section refreshes its own two lists; only the
+                   drawer can refresh the timeline, so it is told. */
+                onMoneyChanged={() => fetchSessions(contact.id, { silent: true })}
               />
 
               {/* Website Form Submissions Section */}
@@ -1894,6 +2191,7 @@ export function CRMContactDrawerV2({
 
       {/* Booking Modal */}
       <SchedulingBookingModal
+        servicesLoading={servicesLoading}
         booking={editingBooking}
         services={services}
         isOpen={showBookingModal}
@@ -1931,28 +2229,6 @@ export function CRMContactDrawerV2({
       />
 
       {/* Payment Management Modal */}
-      <PaymentManagementModal
-        isOpen={showPaymentModal}
-        onClose={() => {
-          setShowPaymentModal(false);
-          setSelectedBookingForPayment(null);
-        }}
-        booking={selectedBookingForPayment}
-        contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
-        onPaymentUpdated={() => {
-          fetchSessions(contact.id);
-          fetchActivities(contact.id);
-        }}
-        onBookingDeleted={(bookingId) => {
-          fetchSessions(contact.id);
-          fetchActivities(contact.id);
-          setShowPaymentModal(false);
-          setSelectedBookingForPayment(null);
-        }}
-        t={t}
-        isRTL={isRTL}
-        startInRefundView={true}
-      />
 
       {/* Invoice Creation Modal */}
       <InvoiceModal
@@ -2020,6 +2296,178 @@ export function CRMContactDrawerV2({
               disabled={sendingIntake}
             >
               {sendingIntake ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  {t('common.sending') || 'Sending...'}
+                </span>
+              ) : (
+                t('crm.intake.send') || 'Send'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payment Management Modal */}
+      <PaymentManagementModal
+        isOpen={showPaymentModal}
+        onClose={() => {
+          setShowPaymentModal(false);
+          setSelectedBookingForPayment(null);
+        }}
+        booking={selectedBookingForPayment}
+        contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
+        onPaymentUpdated={() => {
+          fetchSessions(contact.id);
+          fetchActivities(contact.id);
+        }}
+        onBookingDeleted={(bookingId) => {
+          fetchSessions(contact.id);
+          fetchActivities(contact.id);
+          setShowPaymentModal(false);
+          setSelectedBookingForPayment(null);
+        }}
+        t={t}
+        isRTL={isRTL}
+        startInRefundView={true}
+      />
+
+      {/* Booking Cancellation Confirmation */}
+      <Dialog
+        open={!!pendingCancelBookingId}
+        onOpenChange={open => !open && setPendingCancelBookingId(null)}
+      >
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle>{t('crm.booking.cancel_title') || 'Cancel this booking?'}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              {/* Two messages, because the promise differs.
+                  The scheduled one says the slot will be freed — true of an
+                  appointment, and nonsense for a course sold without one, where
+                  there is no meeting to cancel and no time to give back. Which
+                  booking this is decides which sentence is honest. */}
+              {(() => {
+                const pending = sessions.find(
+                  session => session.booking.id === pendingCancelBookingId
+                );
+                // No start time is the same test the rest of the drawer uses.
+                const hasSchedule = Boolean(pending?.booking.start_time);
+
+                return (hasSchedule
+                  ? t('crm.booking.cancel_message') ||
+                    '{name} will be told the appointment is cancelled and the slot will be freed.'
+                  : t('crm.booking.cancel_message_unscheduled')
+                ).replace('{name}', contact.first_name || '');
+              })()}
+            </p>
+          </div>
+          <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <Button
+              variant="outline"
+              onClick={() => setPendingCancelBookingId(null)}
+              disabled={cancellingBooking}
+            >
+              {t('common.cancel') || 'Cancel'}
+            </Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={cancellingBooking}
+              onClick={async () => {
+                if (!pendingCancelBookingId) return;
+                setCancellingBooking(true);
+                try {
+                  const response = await fetch(
+                    `/api/scheduling/bookings/${pendingCancelBookingId}/cancel`,
+                    {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({})
+                    }
+                  );
+                  const data = await response.json();
+                  if (!response.ok || data.success === false) {
+                    throw new Error(data.error || 'Failed to cancel the booking');
+                  }
+                  toast.success(t('crm.booking.status_updated') || 'Booking updated');
+                  fetchSessions(contact.id);
+                  fetchActivities(contact.id);
+                  setPendingCancelBookingId(null);
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Failed to cancel the booking');
+                } finally {
+                  setCancellingBooking(false);
+                }
+              }}
+            >
+              {cancellingBooking ? (
+                <span className="flex items-center gap-2">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                  {t('common.sending') || 'Working...'}
+                </span>
+              ) : (
+                t('crm.booking.status.cancelled') || 'Cancel booking'
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Booking Confirmation Resend Dialog */}
+      <Dialog open={showConfirmationResend} onOpenChange={setShowConfirmationResend}>
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle>
+              {t('crm.booking.resend_confirmation_title') || 'Send confirmation again'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              {(t('crm.booking.resend_confirmation_message') ||
+                'Send the appointment confirmation to {name} again? They will receive the details and a calendar invite.')
+                .replace('{name}', contact.first_name || '')}
+            </p>
+          </div>
+          <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowConfirmationResend(false);
+                setPendingConfirmationBookingId(null);
+              }}
+              disabled={sendingConfirmation}
+            >
+              {t('common.cancel') || 'Cancel'}
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={async () => {
+                if (!pendingConfirmationBookingId) return;
+                setSendingConfirmation(true);
+                try {
+                  const response = await fetch(
+                    `/api/scheduling/bookings/${pendingConfirmationBookingId}/confirmation`,
+                    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+                  );
+                  const data = await response.json();
+                  if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Failed to send the confirmation');
+                  }
+                  toast.success(t('crm.booking.confirmation_sent') || 'Confirmation sent');
+                  // The send lands on the timeline, so the drawer reflects it.
+                  fetchActivities(contact.id);
+                  setShowConfirmationResend(false);
+                  setPendingConfirmationBookingId(null);
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Failed to send the confirmation');
+                } finally {
+                  setSendingConfirmation(false);
+                }
+              }}
+              disabled={sendingConfirmation}
+            >
+              {sendingConfirmation ? (
                 <span className="flex items-center gap-2">
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                   {t('common.sending') || 'Sending...'}

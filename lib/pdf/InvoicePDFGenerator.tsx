@@ -29,6 +29,8 @@ import type { PaymentInvoice, InvoiceLineItem, InvoiceAddress } from '@/lib/repo
 import type { InvoiceSettings } from '@/lib/repositories/BusinessProfileRepository';
 import { createLogger } from '@/lib/logger';
 import { registerThemeFont } from './themeFonts';
+import { taxLineFor } from '@/lib/payments/taxLine';
+import { documentTitle } from '@/lib/payments/documentType';
 
 const logger = createLogger({ module: 'InvoicePDFGenerator' });
 
@@ -52,7 +54,6 @@ type Language = 'en' | 'es' | 'he';
  */
 const PDF_LABELS: Record<Language, Record<string, string>> = {
   en: {
-    invoice: 'INVOICE',
     invoiceNumber: 'Invoice Number',
     date: 'Date',
     dueDate: 'Due Date',
@@ -80,9 +81,13 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     status_draft: 'DRAFT',
     status_overdue: 'OVERDUE',
     status_cancelled: 'CANCELLED',
+    status_refunded: 'REFUNDED',
+    status_partially_refunded: 'PARTLY REFUNDED',
+    refunded_line: 'Refunded',
+    net_retained: 'Amount retained',
+    includes_tax: 'Includes',
   },
   es: {
-    invoice: 'FACTURA',
     invoiceNumber: 'Número de Factura',
     date: 'Fecha',
     dueDate: 'Fecha de Vencimiento',
@@ -110,9 +115,13 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     status_draft: 'BORRADOR',
     status_overdue: 'VENCIDO',
     status_cancelled: 'CANCELADO',
+    status_refunded: 'REEMBOLSADO',
+    status_partially_refunded: 'REEMBOLSADO EN PARTE',
+    refunded_line: 'Reembolsado',
+    net_retained: 'Importe retenido',
+    includes_tax: 'Incluye',
   },
   he: {
-    invoice: 'חשבונית',
     invoiceNumber: 'מספר חשבונית',
     date: 'תאריך',
     dueDate: 'תאריך לתשלום',
@@ -140,6 +149,11 @@ const PDF_LABELS: Record<Language, Record<string, string>> = {
     status_draft: 'טיוטה',
     status_overdue: 'באיחור',
     status_cancelled: 'בוטל',
+    status_refunded: 'הוחזר',
+    status_partially_refunded: 'הוחזר חלקית',
+    refunded_line: 'הוחזר',
+    net_retained: 'סכום שנותר',
+    includes_tax: 'כולל',
   },
 };
 
@@ -201,6 +215,15 @@ export interface InvoicePDFData {
   businessSettings: InvoiceSettings & {
     /** The business's logo. Owned by the profile — the invoice only wears it. */
     logo_url?: string | null;
+    /**
+     * What the business says is already inside its prices.
+     *
+     * Display only: the platform never adds tax to a price. Absent for the many
+     * businesses that are not registered, and then no tax line is drawn at all.
+     */
+    invoice_prices_include_tax?: boolean | null;
+    invoice_tax_rate?: number | string | null;
+    invoice_tax_label?: string | null;
   };
   businessName?: string;
   businessVertical?: string;
@@ -317,6 +340,13 @@ function getStatusColor(status: string): string {
     draft: '#9CA3AF',
     overdue: '#EF4444',
     cancelled: '#6B7280',
+    /*
+     * Both statuses the refund trigger writes. Missing here, a refunded invoice
+     * fell through to the grey `draft` colour while the badge printed the raw
+     * database word — an English "REFUNDED" on a Hebrew document.
+     */
+    refunded: '#F97316',
+    partially_refunded: '#F97316',
   };
   return colors[status] || colors.draft;
 }
@@ -368,6 +398,34 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
   const clientName = invoice.client_name || data.contactName || 'Client';
   const clientEmail = invoice.client_email || data.contactEmail || '';
   const statusLabel = labels[`status_${invoice.status}`] || invoice.status.toUpperCase();
+
+  /*
+   * The heading, which is not always "INVOICE".
+   *
+   * A business that takes payment on the spot is sending a receipt, and one
+   * registered for VAT may be sending a tax invoice — three documents with
+   * three different meanings, chosen by the business in its settings rather
+   * than assumed here. `documentTitle` also refuses to head an unpaid document
+   * "RECEIPT", which would tell the client money had been received.
+   */
+  const isPaid = invoice.status === 'paid'
+    || invoice.status === 'refunded'
+    || invoice.status === 'partially_refunded';
+  const headingLabel = documentTitle(businessSettings, language, isPaid);
+
+  /*
+   * Derived on the invoice by trigger from its transactions, so it is already
+   * correct here — the document only has to print it.
+   */
+  const refundedAmount =
+    Number((invoice as { refunded_amount?: number | string | null }).refunded_amount ?? 0) || 0;
+
+  /*
+   * The tax already inside the price, when the business has said there is one.
+   * Null otherwise, so a business that never configured tax gets no line —
+   * a "VAT 0.00" row would read to their client as a mistake.
+   */
+  const taxLine = taxLineFor(invoice.amount, invoice.currency, businessSettings);
   const businessAddressLines = formatAddress(businessSettings.invoice_address);
   const clientAddress = invoice.client_address || data.contactAddress;
   const clientAddressLines = formatAddress(clientAddress);
@@ -632,7 +690,7 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
             )}
           </View>
           <View style={styles.invoiceSection}>
-            <SmartText style={styles.invoiceLabel} isRTL={isRTL}>{labels.invoice}</SmartText>
+            <SmartText style={styles.invoiceLabel} isRTL={isRTL}>{headingLabel}</SmartText>
             <Text style={styles.invoiceNumber}>{invoice.invoice_number}</Text>
             <SmartText style={styles.statusBadge} isRTL={isRTL}>{statusLabel}</SmartText>
           </View>
@@ -721,6 +779,47 @@ const InvoiceDocument: React.FC<InvoiceDocumentProps> = ({ data }) => {
               <SmartText style={styles.grandTotalLabel} isRTL={isRTL}>{labels.total}</SmartText>
               <Text style={styles.grandTotalValue}>{formatCurrency(invoice.amount, invoice.currency, language)}</Text>
             </View>
+
+            {/* Under the total, because it is CONTAINED in it. Placed above and
+                the reader adds it on — which is the one misreading that changes
+                what they think they owe. */}
+            {taxLine && (
+              <View style={styles.totalRow}>
+                <SmartText style={styles.totalLabel} isRTL={isRTL}>
+                  {`${labels.includes_tax} ${taxLine.label} ${taxLine.rate}%`}
+                </SmartText>
+                <Text style={styles.totalValue}>
+                  {formatCurrency(taxLine.amount, invoice.currency, language)}
+                </Text>
+              </View>
+            )}
+
+            {/* What came back, and what the client actually paid in the end.
+
+                Without these the document still read "PAID $200.00" after $150
+                had been returned — and this file is what the client keeps and
+                what their accountant reads. An invoice that overstates what was
+                paid is worse than no document at all. */}
+            {refundedAmount > 0 && (
+              <>
+                <View style={styles.totalRow}>
+                  <SmartText style={styles.totalLabel} isRTL={isRTL}>{labels.refunded_line}</SmartText>
+                  <Text style={styles.totalValue}>
+                    {`-${formatCurrency(refundedAmount, invoice.currency, language)}`}
+                  </Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <SmartText style={styles.grandTotalLabel} isRTL={isRTL}>{labels.net_retained}</SmartText>
+                  <Text style={styles.grandTotalValue}>
+                    {formatCurrency(
+                      Math.max(0, invoice.amount - refundedAmount),
+                      invoice.currency,
+                      language
+                    )}
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
         </View>
 

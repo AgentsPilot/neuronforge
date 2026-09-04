@@ -21,10 +21,9 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
-import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { resolveBusinessTheme } from '@/lib/branding/resolveTheme';
 import type { Locale } from '@/lib/i18n/config';
 import type { BrandingData } from './templates/base-template';
 
@@ -69,27 +68,32 @@ export async function resolveEmailBranding(
   let theme: { colors?: Record<string, string>; fonts?: Record<string, string> } | null = null;
 
   try {
-    // Load only what is missing. Both lookups are independent, so they run
-    // together rather than serially in front of a user waiting on a send.
-    const [profileResult, pageResult] = await Promise.all([
-      resolvedProfile ? Promise.resolve(null) : businessProfileRepository.findByUserId(userId),
-      getWebsitePageRepository(supabaseServer).getHomepage(userId),
-    ]);
-
-    if (profileResult?.data) resolvedProfile = profileResult.data as ProfileLike;
-
-    // The business's own look first, the homepage second.
-    //
-    // Reading the homepage alone meant a business without a website — one
-    // reaching clients by booking link — sent every receipt in platform
-    // colours, with no way to change it. The page theme stays as the fallback
-    // for accounts whose look predates the profile column.
-    const profileTheme = (resolvedProfile as { theme?: unknown } | null)?.theme;
-    if (profileTheme) {
-      theme = profileTheme as { colors?: Record<string, string>; fonts?: Record<string, string> };
-    } else if (pageResult?.data?.theme) {
-      theme = pageResult.data.theme as { colors?: Record<string, string>; fonts?: Record<string, string> };
+    if (!resolvedProfile) {
+      const { data } = await businessProfileRepository.findByUserId(userId);
+      if (data) resolvedProfile = data as ProfileLike;
     }
+
+    /*
+     * The look comes from the shared resolver rather than from a lookup of this
+     * module's own.
+     *
+     * It reads the business's own theme first and falls back to a published
+     * page, which is what this module already did — except the fallback is now
+     * "any page that carries a template" rather than the homepage alone. That
+     * is the intended rule (whichever surface a business published first
+     * establishes its look), and it fixes a business whose only surface is a
+     * landing page silently sending platform-coloured receipts.
+     *
+     * `raw` is used, not the completed theme: the fields below must stay
+     * undefined when the business has chosen nothing, so that an account with
+     * no theme sends exactly the email it sent before any of this existed.
+     */
+    const resolved = await resolveBusinessTheme(
+      userId,
+      (resolvedProfile as { theme?: unknown } | null)?.theme as never,
+      (resolvedProfile as { template_id?: string | null } | null)?.template_id ?? null
+    );
+    theme = resolved.raw as { colors?: Record<string, string>; fonts?: Record<string, string> } | null;
   } catch (err) {
     // Branding is decoration. A receipt with default colours is a far better
     // outcome than a receipt that never sends, so this degrades and continues.

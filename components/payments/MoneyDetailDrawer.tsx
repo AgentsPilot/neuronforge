@@ -2,7 +2,10 @@
 
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { CollapsibleSection } from '@/components/crm/CollapsibleSection';
-import { X, FileText, CreditCard, CalendarClock, Receipt } from 'lucide-react';
+import { useState } from 'react';
+import { X, FileText, CreditCard, CalendarClock, Receipt, Ban } from 'lucide-react';
+import { CancelPlanModal } from './CancelPlanModal';
+import { RefundHistory } from './RefundHistory';
 import type { MoneyEntry, MoneyItem, MoneyStatus } from '@/lib/payments/moneyItems';
 import { MoneyEntryActions, type EntryActionHandlers } from './MoneyEntryActions';
 
@@ -58,6 +61,9 @@ interface MoneyDetailDrawerProps extends EntryActionHandlers {
   isRTL: boolean;
   formatCurrency: (amount: number, currency: string) => string;
   formatDate: (date: string) => string;
+  /** Re-read the list after a plan is stopped, so the row stops saying "active". */
+  onPlanCancelled?: () => void;
+  onActionError?: (message: string) => void;
 }
 
 /** A labelled fact. Rendered only when there is a fact — an empty row of dashes
@@ -76,10 +82,26 @@ function Fact({ label, value }: { label: string; value: string | null | undefine
   );
 }
 
+/**
+ * A plan period, phrased in the reader's language.
+ *
+ * The webhook writes `description: "Payment 1 of 3"` once, in English, and every
+ * locale reads it — so a Hebrew drawer showed an English sentence in the middle
+ * of Hebrew. The numbers arrive on `planPeriod` and the words come from `t`,
+ * which is the same string the CRM drawer already uses.
+ */
+export function planPeriodText(entry: MoneyEntry, t: (key: string) => string): string | null {
+  if (!entry.planPeriod) return null;
+  return (t('payments.installment_payment') || 'Payment {n} of {count}')
+    .replace('{n}', String(entry.planPeriod.number))
+    .replace('{count}', String(entry.planPeriod.count));
+}
+
 /** What to call one invoice or payment, in as few words as a tab can hold. */
 function entryLabel(entry: MoneyEntry, t: (key: string) => string) {
   return (
     entry.invoiceNumber ??
+    planPeriodText(entry, t) ??
     entry.serviceLabel ??
     entry.description ??
     t('payments.payment') ??
@@ -94,8 +116,12 @@ export function MoneyDetailDrawer({
   isRTL,
   formatCurrency,
   formatDate,
+  onPlanCancelled,
+  onActionError,
   ...actions
 }: MoneyDetailDrawerProps) {
+  const [cancellingPlan, setCancellingPlan] = useState(false);
+
   if (!item) return null;
 
   const MethodIcon = METHOD_ICON[item.method];
@@ -182,14 +208,25 @@ export function MoneyDetailDrawer({
           <div className="flex-1 overflow-y-auto p-6 space-y-3">
             {/* The plan's schedule in full. The row can only say "2 of 3", and
                 the schedule belongs to the booking rather than to any single
-                payment inside it. Carries no buttons: nothing can be done to a
-                schedule, only to the payments in it. */}
+                payment inside it.
+
+                It carries exactly ONE button, and only one: stopping the plan.
+                Everything else here acts on a payment — refund this period, send
+                that invoice — and lives in the payment's own card below. But
+                stopping is a thing you do to the schedule itself, and there was
+                no way to do it anywhere in the product: a client who cancelled
+                went on being charged every period. */}
             {item.plan && (
               <CollapsibleSection
                 title={t('payments.plan_schedule') || 'Payment schedule'}
                 icon={<CalendarClock className="h-4 w-4" />}
                 badge={
-                  <span className="text-xs text-[var(--v2-text-muted)]">
+                  <span className="flex items-center gap-2 text-xs text-[var(--v2-text-muted)]">
+                    {item.plan.status !== 'active' && (
+                      <span className="text-[var(--v2-text-muted)]">
+                        {t(`payments.plan.status.${item.plan.status}`)}
+                      </span>
+                    )}
                     {item.plan.periodsPaid}/{item.plan.installmentCount}{' '}
                     {t('payments.paid_lower') || 'paid'}
                   </span>
@@ -197,31 +234,82 @@ export function MoneyDetailDrawer({
                 defaultOpen
                 isRTL={isRTL}
               >
-                {item.plan.periods.map(period => (
-                  <div
-                    key={period.id}
-                    className="flex items-center gap-2 border-t border-[var(--v2-border)] py-1.5 text-[12px] first:border-t-0"
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        period.status === 'paid'
-                          ? 'bg-emerald-500'
-                          : period.status === 'overdue'
-                            ? 'bg-red-500'
-                            : 'bg-slate-300'
-                      }`}
-                    />
-                    <span className="text-[var(--v2-text-muted)]">
-                      {t('payments.period') || 'Payment'} {period.installmentNumber}
-                    </span>
-                    <bdi className="text-[var(--v2-text-muted)]">
-                      {period.dueDate ? formatDate(period.dueDate) : ''}
-                    </bdi>
-                    <span className="ms-auto tabular-nums text-[var(--v2-text-primary)]">
-                      {formatCurrency(period.amount, item.currency)}
-                    </span>
-                  </div>
-                ))}
+                {item.plan.periods.map(period => {
+                  /*
+                   * A cancelled period is money that will NEVER be taken.
+                   *
+                   * Stopping a plan leaves its future periods in the schedule,
+                   * and they rendered exactly like the ones still to come —
+                   * same dot, same amount, same weight. An owner reading it
+                   * could not tell a stopped plan from a running one, which is
+                   * the single thing this list has to make obvious.
+                   */
+                  const isCancelled = period.status === 'cancelled';
+
+                  return (
+                    <div
+                      key={period.id}
+                      className="flex items-center gap-2 border-t border-[var(--v2-border)] py-1.5 text-[12px] first:border-t-0"
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                          period.status === 'paid'
+                            ? 'bg-emerald-500'
+                            : period.status === 'overdue'
+                              ? 'bg-red-500'
+                              : isCancelled
+                                ? 'bg-[var(--v2-border)]'
+                                : 'bg-slate-300'
+                        }`}
+                      />
+                      <span
+                        className={
+                          isCancelled
+                            ? 'text-[var(--v2-text-muted)] line-through decoration-[var(--v2-text-muted)]'
+                            : 'text-[var(--v2-text-muted)]'
+                        }
+                      >
+                        {t('payments.period') || 'Payment'} {period.installmentNumber}
+                      </span>
+
+                      <bdi className="text-[var(--v2-text-muted)]">
+                        {period.dueDate ? formatDate(period.dueDate) : ''}
+                      </bdi>
+
+                      {/* Said in words as well as struck through: a strike alone
+                          can read as a discount or a correction. */}
+                      {isCancelled && (
+                        <span className="text-[11px] text-[var(--v2-text-muted)]">
+                          {t('payments.period_cancelled')}
+                        </span>
+                      )}
+
+                      <span
+                        className={`ms-auto tabular-nums ${
+                          isCancelled
+                            ? 'text-[var(--v2-text-muted)] line-through decoration-[var(--v2-text-muted)]'
+                            : 'text-[var(--v2-text-primary)]'
+                        }`}
+                      >
+                        {formatCurrency(period.amount, item.currency)}
+                      </span>
+                    </div>
+                  );
+                })}
+
+                {/* Offered only while the plan can still charge the client, and
+                    only when it is bound to Stripe — there is nothing to stop
+                    otherwise. */}
+                {item.plan.subscriptionId &&
+                  (item.plan.status === 'active' || item.plan.status === 'past_due') && (
+                    <button
+                      onClick={() => setCancellingPlan(true)}
+                      className="mt-2 flex items-center gap-1.5 text-[12px] text-red-600 hover:underline"
+                    >
+                      <Ban className="h-3.5 w-3.5" />
+                      {t('payments.plan.stop')}
+                    </button>
+                  )}
               </CollapsibleSection>
             )}
 
@@ -256,9 +344,21 @@ export function MoneyDetailDrawer({
                       value={entry.contactName === item.contactName ? null : entry.contactName}
                     />
                     <Fact label={t('payments.email') || 'Email'} value={entry.contactEmail} />
+                    {/* A plan period is not a service. Labelling "תשלום 1 מתוך 3"
+                        as "שירות" named the instalment as the thing sold. */}
                     <Fact
-                      label={t('payments.service') || 'Service'}
-                      value={entry.serviceLabel === item.title ? null : entry.serviceLabel}
+                      label={
+                        entry.isPlanPeriod
+                          ? t('payments.payment_plan') || 'Payment plan'
+                          : t('payments.service') || 'Service'
+                      }
+                      // The period's own phrasing when it has one, so the value
+                      // beside "תוכנית תשלומים" is not the English sentence the
+                      // webhook happened to store.
+                      value={
+                        planPeriodText(entry, t) ??
+                        (entry.serviceLabel === item.title ? null : entry.serviceLabel)
+                      }
                     />
                     <Fact
                       label={t('payments.due_date') || 'Due'}
@@ -285,6 +385,19 @@ export function MoneyDetailDrawer({
                     <Fact label={t('payments.reference') || 'Reference'} value={entry.processorRef} />
                   </div>
 
+                  {/* WHY the money went back, and when, and whether it actually
+                      did. The "Refunded" figure above is a total: it cannot say
+                      that this was three refunds, or that one of them failed.
+                      Only fetched for a payment that has one. */}
+                  {entry.refunded > 0 && entry.transactionIds[0] && (
+                    <RefundHistory
+                      transactionId={entry.transactionIds[0]}
+                      t={t}
+                      formatCurrency={formatCurrency}
+                      formatDate={formatDate}
+                    />
+                  )}
+
                   {/* This invoice's actions, under this invoice. Visible
                       buttons rather than a ⋯ menu: the drawer has the room, and
                       hiding them costs a click to answer a question the screen
@@ -303,6 +416,24 @@ export function MoneyDetailDrawer({
         </div>
 
       </SheetContent>
+
+      {/* Rendered inside the Sheet so it stacks above the drawer rather than
+          behind it — the same z-order the refund dialog uses. */}
+      {item.plan?.subscriptionId && (
+        <CancelPlanModal
+          isOpen={cancellingPlan}
+          onClose={() => setCancellingPlan(false)}
+          planId={item.plan.subscriptionId}
+          periodsRemaining={Math.max(0, item.plan.installmentCount - item.plan.periodsPaid)}
+          collectedAmount={item.entries.reduce(
+            (sum, entry) => sum + (entry.status === 'paid' ? entry.amount - entry.refunded : 0),
+            0
+          )}
+          currency={item.currency}
+          onSuccess={() => onPlanCancelled?.()}
+          onError={message => onActionError?.(message)}
+        />
+      )}
     </Sheet>
   );
 }

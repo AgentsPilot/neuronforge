@@ -11,6 +11,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { isPlausiblePhone, PHONE_MAX_LENGTH } from '@/lib/branding/phone';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 
 const logger = createLogger({ module: 'BusinessProfileAPI' });
@@ -34,6 +35,50 @@ const brandingSchema = z.object({
    * the renderers would then have to widen again.
    */
   theme: z.record(z.any()).nullable().optional(),
+
+  /**
+   * The number this business publishes to its own clients.
+   *
+   * Validated against the shared rule rather than a regex written here, so the
+   * number this accepts and the number the public pages can turn into a
+   * WhatsApp link cannot drift apart. An empty string clears it, which is what
+   * the settings form sends when the owner empties the field.
+   */
+  phone: z
+    .string()
+    .trim()
+    .max(PHONE_MAX_LENGTH, 'Phone number is too long')
+    .refine(isPlausiblePhone, 'That does not look like a phone number')
+    .nullable()
+    .optional(),
+
+  /**
+   * The address clients email, and the address they come to.
+   *
+   * Both accept an empty string, which is how the settings form says "cleared";
+   * `.email()` alone would reject that and leave the owner unable to remove a
+   * value they had entered.
+   *
+   * The postal address is free text on purpose. A display address is written
+   * the way the business writes it — floor numbers, building names, a landmark
+   * — and imposing a structure here would force those into fields that do not
+   * fit them. The structured one still exists as `invoice_address`, where it is
+   * needed because an invoice is a legal document.
+   */
+  email: z
+    .string()
+    .trim()
+    .max(200, 'Email address is too long')
+    .refine(v => v === '' || z.string().email().safeParse(v).success, 'That does not look like an email address')
+    .nullable()
+    .optional(),
+
+  address: z
+    .string()
+    .trim()
+    .max(300, 'Address is too long')
+    .nullable()
+    .optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -55,7 +100,7 @@ export async function GET(request: NextRequest) {
     // 2. Fetch business profile
     const { data: profile, error } = await supabaseServer
       .from('business_profiles')
-      .select('vertical, sub_vertical, language, company_size, logo_url, show_logo_on_smart_links')
+      .select('vertical, sub_vertical, language, company_size, logo_url, show_logo_on_smart_links, phone, email, address')
       .eq('user_id', user.id)
       .single();
 
@@ -77,6 +122,9 @@ export async function GET(request: NextRequest) {
       logo_url: profile?.logo_url || null,
       // Absent means opted in, matching the column default.
       show_logo_on_smart_links: profile?.show_logo_on_smart_links ?? true,
+      phone: profile?.phone || null,
+      email: profile?.email || null,
+      address: profile?.address || null,
     });
   } catch (error) {
     requestLogger.error({ err: error }, 'Business profile request failed');
@@ -88,10 +136,11 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * PUT — update the business's branding.
+ * PUT — update the business's branding and contact details.
  *
- * The one write path for the logo. Deliberately separate from invoice settings,
- * which used to own the column and blanked it on every save.
+ * The one write path for the logo and for the published phone number.
+ * Deliberately separate from invoice settings, which used to own the logo
+ * column and blanked it on every save.
  */
 export async function PUT(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -113,13 +162,31 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    requestLogger.info({ userId: user.id, fields: Object.keys(validated) }, 'Updating business branding');
+    requestLogger.info({ userId: user.id, fields: Object.keys(validated) }, 'Updating business profile');
 
-    const { error } = await businessProfileRepository.updateBranding(user.id, validated);
+    /*
+     * Branding and contact details are written through separate repository
+     * methods, so saving one cannot blank the other. The request may carry
+     * either or both.
+     */
+    const { phone, email, address, ...branding } = validated;
+    const contact = { phone, email, address };
+    const hasContact = Object.values(contact).some(value => value !== undefined);
+
+    let error: Error | null = null;
+
+    if (Object.keys(branding).length > 0) {
+      ({ error } = await businessProfileRepository.updateBranding(user.id, branding));
+    }
+
+    if (!error && hasContact) {
+      ({ error } = await businessProfileRepository.updateContactDetails(user.id, contact));
+    }
+
     if (error) {
-      requestLogger.error({ err: error, userId: user.id }, 'Failed to update business branding');
+      requestLogger.error({ err: error, userId: user.id }, 'Failed to update business profile');
       return NextResponse.json(
-        { success: false, error: 'Failed to update branding' },
+        { success: false, error: 'Failed to update business profile' },
         { status: 500 }
       );
     }
@@ -138,14 +205,14 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ success: true, data: validated });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      requestLogger.warn({ errors: error.errors }, 'Invalid branding payload');
+      requestLogger.warn({ errors: error.errors }, 'Invalid business profile payload');
       return NextResponse.json(
         { success: false, error: 'Invalid input', details: error.errors },
         { status: 400 }
       );
     }
 
-    requestLogger.error({ err: error }, 'Business branding update failed');
+    requestLogger.error({ err: error }, 'Business profile update failed');
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }

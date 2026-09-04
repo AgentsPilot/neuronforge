@@ -135,7 +135,7 @@ export async function PUT(
     auditTrail.log({
       action: 'INTAKE_RESPONSES_UPDATED',
       userId: user.id,
-      entityType: 'booking',
+      entityType: 'scheduling_booking',
       entityId: bookingId,
       changes: { responses: 'updated' },
       request
@@ -212,8 +212,18 @@ export async function POST(
       );
     }
 
-    // 4. Check if user has an intake template enabled
-    const templateResult = await intakeRepository.getEnabledTemplateForUser(user.id);
+    /*
+     * 4. Does this business collect intake?
+     *
+     * NOT "does it email automatically". This is the owner pressing Send on one
+     * booking — an explicit act, and refusing it because they had turned OFF the
+     * automatic email would be refusing the very thing that switch is for.
+     *
+     * It called `getEnabledTemplateForUser`, which gates on
+     * `collect_during_booking` — a flag nothing sets any more — so this endpoint
+     * would have refused every request.
+     */
+    const templateResult = await intakeRepository.getCollectableTemplateForUser(user.id);
     if (!templateResult.data) {
       return NextResponse.json(
         { success: false, error: 'No intake form configured. Please enable an intake form in settings first.' },
@@ -222,7 +232,10 @@ export async function POST(
     }
 
     // 5. Send intake form email
-    const emailResult = await BookingEmailService.sendIntakeFormRequest(bookingId, user.id);
+    // Manual: the owner pressed Send on this one booking.
+    const emailResult = await BookingEmailService.sendIntakeFormRequest(bookingId, user.id, {
+      manual: true,
+    });
 
     if (!emailResult.sent) {
       requestLogger.error({ err: emailResult.error, bookingId }, 'Failed to send intake form email');

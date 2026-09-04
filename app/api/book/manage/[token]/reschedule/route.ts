@@ -6,12 +6,30 @@ import { createLogger } from '@/lib/logger';
 import { verifyBookingToken, BookingEmailService } from '@/lib/services/BookingEmailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
+import { wallClockToInstant } from '@/lib/scheduling/wallClock';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
 
 const logger = createLogger({ module: 'API', service: 'BookingReschedule' });
 
+/**
+ * Accepts the slot strings this platform actually produces.
+ *
+ * `z.string().datetime()` demands a UTC `Z` suffix, and the availability API
+ * emits a naive local wall-clock time — `2026-09-09T09:00:00`, built as
+ * `${date}T${slotStartStr}:00` — because a business's hours are local hours,
+ * not instants. So every reschedule a client attempted was rejected with a 400
+ * before it reached any logic, while the ORIGINAL booking went through: the
+ * create route takes a plain `z.string()` for the same value.
+ *
+ * Validated by shape rather than left unchecked, and with an offset and a `Z`
+ * still allowed, so a caller that does send a zoned time is not broken by this.
+ */
+const LOCAL_OR_ZONED_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
+
 const rescheduleSchema = z.object({
-  newStartTime: z.string().datetime(),
-  newEndTime: z.string().datetime()
+  newStartTime: z.string().regex(LOCAL_OR_ZONED_DATETIME, 'Invalid start time'),
+  newEndTime: z.string().regex(LOCAL_OR_ZONED_DATETIME, 'Invalid end time')
 });
 
 // GET /api/book/manage/[token]/reschedule
@@ -161,6 +179,7 @@ export async function POST(
         contact_id,
         start_time,
         status,
+        timezone,
         contact:crm_contacts(email)
       `)
       .eq('id', bookingId)
@@ -206,14 +225,51 @@ export async function POST(
     }
 
     // Check for conflicts with the new time
+    /*
+     * The slot is a wall clock; the column is an instant.
+     *
+     * The picker sends `2026-09-23T13:00:00` — one in the afternoon where the
+     * business is — and `start_time` is a `timestamptz`. Postgres reads a
+     * string with no offset as UTC, so 13:00 went in as 13:00Z and came back,
+     * rendered correctly in the business's own zone, as 09:00. Four hours were
+     * lost between the button and the database, and the confirmation page, the
+     * email and the diary all repeated the wrong hour faithfully.
+     *
+     * Converted once, here, before anything reads it — including the conflict
+     * check below, which was comparing a wall clock against stored instants and
+     * so could clear a slot that was already taken.
+     */
+    const { data: ownerPrefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', booking.user_id)
+      .maybeSingle();
+
+    const timeZone = ownerPrefs?.timezone || booking.timezone || 'UTC';
+
+    // The language the business works in — what its own history is written in.
+    const { data: ownerProfile } = await supabaseServer
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', booking.user_id)
+      .maybeSingle();
+    const ownerLocale = ownerProfile?.language || 'en';
+    const newStartInstant = wallClockToInstant(validated.newStartTime, timeZone);
+    const newEndInstant = wallClockToInstant(validated.newEndTime, timeZone);
+
+    requestLogger.info(
+      { bookingId, timeZone, picked: validated.newStartTime, stored: newStartInstant },
+      'Converted picked wall clock to an instant'
+    );
+
     const { data: conflicts } = await supabaseServer
       .from('scheduling_bookings')
       .select('id')
       .eq('user_id', booking.user_id)
       .in('status', ['confirmed', 'completed'])
       .neq('id', bookingId)
-      .lt('start_time', validated.newEndTime)
-      .gt('end_time', validated.newStartTime);
+      .lt('start_time', newEndInstant)
+      .gt('end_time', newStartInstant);
 
     if (conflicts && conflicts.length > 0) {
       return NextResponse.json(
@@ -229,8 +285,8 @@ export async function POST(
     const { data: updatedBooking, error: updateError } = await supabaseServer
       .from('scheduling_bookings')
       .update({
-        start_time: validated.newStartTime,
-        end_time: validated.newEndTime,
+        start_time: newStartInstant,
+        end_time: newEndInstant,
         updated_at: new Date().toISOString()
       })
       .eq('id', bookingId)
@@ -245,7 +301,54 @@ export async function POST(
       );
     }
 
-    requestLogger.info({ bookingId, previousTime: booking.start_time, newTime: validated.newStartTime }, 'Booking rescheduled');
+    requestLogger.info({ bookingId, previousTime: booking.start_time, newTime: newStartInstant }, 'Booking rescheduled');
+
+    /*
+     * The move itself, on the contact's timeline.
+     *
+     * Only the EMAIL about a reschedule was ever recorded, so the drawer showed
+     * that a message went out and never what changed. An owner asking "has this
+     * client moved their appointment before?" had nothing to read, and no
+     * detector could count it.
+     *
+     * Both times are stored as instants and the sentence is composed at render,
+     * so it reads in the owner's language and in the business's timezone.
+     */
+    if (booking.contact_id) {
+      crmActivityRepository.create({
+        user_id: booking.user_id,
+        contact_id: booking.contact_id,
+        activity_type: 'booking_rescheduled',
+        /*
+         * Composed now, in the business's language, because this records what
+         * happened rather than labelling a control — the same as a note somebody
+         * typed. Switching the dashboard later must not re-narrate the past.
+         *
+         * The facts travel alongside the sentence so the row can still open to
+         * show the before and after.
+         */
+        title: activitySentence(
+          'booking_rescheduled',
+          {
+            from: activityMoment(booking.start_time, ownerLocale, timeZone) || '',
+            to: activityMoment(newStartInstant, ownerLocale, timeZone) || '',
+          },
+          ownerLocale
+        ),
+        description: JSON.stringify({
+          kind: 'booking_rescheduled',
+          from: booking.start_time,
+          to: newStartInstant,
+          // Recorded with the row, so the history keeps reading in the hours
+          // that were agreed even if the business later moves timezone.
+          timeZone,
+        }),
+        auto_logged: true,
+        source_capability: 'scheduling',
+        source_entity_id: bookingId,
+        activity_date: newStartInstant,
+      }).catch(err => requestLogger.warn({ err }, 'Reschedule activity logging failed (non-blocking)'));
+    }
 
     // Send rescheduled email (non-blocking)
     BookingEmailService.sendRescheduledEmail(bookingId, booking.user_id, previousDateTime)

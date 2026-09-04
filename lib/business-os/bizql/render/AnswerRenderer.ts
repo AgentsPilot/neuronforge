@@ -31,6 +31,15 @@ export interface RenderContext {
   language?: string;
   currency?: string;
   timezone?: string;
+  /**
+   * The business's own words for per-user enum values, keyed by their SOURCE
+   * (`crm_pipeline_stages.stage_key`).
+   *
+   * `contacts.stage` is backed by this business's pipeline, so its labels are
+   * data rather than schema and cannot live in the catalog. Without them the
+   * answer shows the stored key.
+   */
+  enumLabels?: Record<string, Record<string, string>>;
 }
 
 export interface RenderedRow {
@@ -113,6 +122,23 @@ function formatValue(
       // without a label falls back to a readable form of the token rather than
       // the token itself, so a status added later is never raw or blank.
       const stored = String(value);
+
+      /*
+       * The BUSINESS's own word wins over the catalog's.
+       *
+       * A per-user vocabulary is data, not schema: this tutor calls
+       * `family_enrolled` "לקוח". The catalog cannot know that, so a stage fell
+       * through to the token with its underscores removed and a Hebrew answer
+       * ended in "שלב: family enrolled" — a database key shown to someone who
+       * had already named it themselves.
+       */
+      const source = field?.enumSource;
+      if (source) {
+        const fromBusiness =
+          ctx.enumLabels?.[`${source.table}.${source.valueColumn}`]?.[stored];
+        if (fromBusiness) return fromBusiness;
+      }
+
       const labelled = field?.enumLabels?.[stored];
       if (labelled) {
         return labelled[(ctx.language as 'he' | 'es') ?? 'en'] ?? labelled.en;
@@ -363,6 +389,28 @@ function resolvePlaceholder(
 
   if (path === 'groups' && compute.groups) {
     return compute.groups.map((g) => `${g.key}: ${g.value}`).join(', ');
+  }
+
+  /*
+   * The TOP group, named — "your most profitable service is X".
+   *
+   * A grouped compute could only be rendered as the whole list ("X: 333.33,
+   * Y: 200"), so a superlative question had no way to say its answer. Asked for
+   * the most profitable service the planner produced the right query and then
+   * had nowhere to put the result, so it reached for `{s1.first.<key>}` — which
+   * is the natural shape, and was rejected.
+   *
+   * `first.key` is the label the rows were grouped under and `first.value` is
+   * that group's total. Both are read from the computed result at render time,
+   * so neither can be fabricated — the same property that makes `{sN.value}`
+   * safe. Ordering is the plan's business: the model asks for `order_by` and
+   * `limit`, and "first" means whatever it put first.
+   */
+  if (compute.groups?.length) {
+    if (path === 'first.key') return String(compute.groups[0].key);
+    if (path === 'first.value') {
+      return formatValue(compute.groups[0].value, 'money', ctx);
+    }
   }
 
   if (compute.value === null) return '0';

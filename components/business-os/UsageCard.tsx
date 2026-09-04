@@ -144,11 +144,29 @@ export function UsageCard() {
         height: '100%',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '13px', color: INK, fontWeight: 600, letterSpacing: '-0.01em' }}>
+      {/* "Usage" described every card on the dashboard equally well. Naming the
+          unit says what this one is about, and what it is not: the money the
+          business takes is counted elsewhere.
+
+          The date never shrinks: it is the shorter string and the one that
+          fixes the scale of everything below, so the title gives up the room
+          when a translation runs long. */}
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 }}>
+        <span
+          style={{
+            fontSize: '13px',
+            color: INK,
+            fontWeight: 600,
+            letterSpacing: '-0.01em',
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {t('usage.title')}
         </span>
-        <span style={{ fontSize: '11px', color: MUTED }}>{t('usage.last30days')}</span>
+        <span style={{ fontSize: '11px', color: MUTED, flexShrink: 0 }}>{t('usage.last30days')}</span>
       </div>
 
       {/* Says WHY it is empty. A blank card and a broken card look identical

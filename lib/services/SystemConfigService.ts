@@ -50,6 +50,20 @@ export class SystemConfigService {
   private static CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   /**
+   * Marks a key we have looked up and confirmed is not in the table.
+   *
+   * A key with a fallback is an OPTIONAL OVERRIDE: absence is the designed
+   * state, not a fault. Caching only successes meant every such key was
+   * re-queried on every call forever — `bizchat_daily_turns` and
+   * `bizchat_daily_tokens` cost two round-trips per chat turn to re-discover
+   * that nobody has ever overridden them, and warned about it each time.
+   *
+   * `set()` and `create()` both invalidate the key, so a miss cached here is
+   * dropped the moment a real value is written.
+   */
+  private static readonly ABSENT = Symbol('SystemConfig.absent');
+
+  /**
    * Get a configuration value by key with caching
    */
   static async get<T = any>(
@@ -59,19 +73,40 @@ export class SystemConfigService {
   ): Promise<T> {
     // Check cache first
     const cached = this.getCached(key);
+    if (cached === this.ABSENT) {
+      if (fallback !== undefined) {
+        return fallback;
+      }
+      throw new Error(`Configuration key '${key}' not found and no fallback provided`);
+    }
     if (cached !== undefined) {
       return cached as T;
     }
 
-    // Fetch from database
+    // maybeSingle, not single: `.single()` raises on zero rows, so a key that
+    // was simply never overridden was indistinguishable from a query that
+    // actually failed — both arrived as "multiple (or no) rows returned", and
+    // both were logged at warn. That noise is what hides a real outage.
     const { data, error } = await supabase
       .from('system_settings_config')
       .select('value')
       .eq('key', key)
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
-      console.warn(`[SystemConfig] Failed to fetch config '${key}':`, error?.message);
+    if (error) {
+      // A genuine read failure. Never cached — the next call must retry.
+      console.warn(`[SystemConfig] Failed to fetch config '${key}':`, error.message);
+      if (fallback !== undefined) {
+        return fallback;
+      }
+      throw new Error(`Configuration key '${key}' could not be read: ${error.message}`);
+    }
+
+    if (!data) {
+      // Absent, which for a key with a fallback is normal. Remember it so we
+      // stop asking, and say nothing louder than debug.
+      this.setCache(key, this.ABSENT);
+
       if (fallback !== undefined) {
         return fallback;
       }

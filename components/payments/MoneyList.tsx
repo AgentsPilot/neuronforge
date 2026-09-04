@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Download, Receipt, ChevronLeft, ChevronRight, Loader2, AlertTriangle, Wallet, Clock, RotateCcw } from 'lucide-react';
+import { Plus, Download, Receipt, ChevronLeft, ChevronRight, Loader2, AlertTriangle, Wallet, Clock, RotateCcw, TrendingUp } from 'lucide-react';
 import { MetricCard } from '@/components/business-os/reports/MetricCard';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
@@ -86,6 +86,15 @@ export function MoneyList({
   /** A refund the processor or the ledger refused. */
   const [refundError, setRefundError] = useState<string | null>(null);
   /**
+   * How many refunds this business has actually issued.
+   *
+   * The card's amount is derived from the sales in view; this is a count of
+   * refund EVENTS from the ledger, which is a different question and the one
+   * "Returned to clients" was standing in for. Null until it arrives, so the
+   * card never flashes a zero it does not know.
+   */
+  const [refundCount, setRefundCount] = useState<number | null>(null);
+  /**
    * Rows picked for export.
    *
    * No checkbox column: a column of empty boxes is a permanent invitation to a
@@ -97,8 +106,31 @@ export function MoneyList({
 
   const exportRef = useRef<() => void>(() => undefined);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /*
+   * Keep the open drawer pointed at the CURRENT row.
+   *
+   * `detail` is the item as it was when the row was clicked — a snapshot, not a
+   * live reference. Refreshing the list rebuilt `items` and left the drawer
+   * holding the old object, so after a refund the list behind it was right and
+   * the drawer in front of it still showed the full amount. Closing and
+   * reopening worked because that picked a fresh item, which is precisely the
+   * step nobody should have to know about.
+   *
+   * Keyed on `items` alone: re-reading `detail` here would make this loop.
+   */
+  useEffect(() => {
+    if (!detail) return;
+    const fresh = items.find(item => item.key === detail.key);
+    // Absent means it fell off the current page or out of the filter. Leaving
+    // the old data up is better than the drawer emptying under the reader.
+    if (fresh && fresh !== detail) setDetail(fresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
+
+  const load = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    // Skeletons behind an open drawer read as the page reloading. The first
+    // load still shows them; a refresh after an action just swaps the figures.
+    if (!silent) setLoading(true);
     setError(null);
 
     try {
@@ -110,7 +142,13 @@ export function MoneyList({
       });
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
 
-      const response = await fetch(`/api/payments/money?${params}`);
+      /*
+       * `no-store`. A refresh after a refund goes to the URL just fetched, so
+       * without this it is answered from cache: the request completes, state is
+       * set to what it already held, and the list insists the refund did not
+       * happen.
+       */
+      const response = await fetch(`/api/payments/money?${params}`, { cache: 'no-store' });
       const result = await response.json();
 
       if (!result.success) throw new Error(result.error || 'Failed to load');
@@ -125,13 +163,39 @@ export function MoneyList({
       setError(err instanceof Error ? err.message : 'Failed to load');
       logger.warn({ err }, 'Money list failed to load');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [page, filter, sort, searchQuery]);
 
   useEffect(() => {
     load();
   }, [load, refreshKey]);
+
+  /*
+   * The refund ledger's own count.
+   *
+   * Not derived from the rows in view: those are the SALES, and one sale can
+   * carry several refunds while a filtered page can hide others entirely.
+   * Re-read on `refreshKey` so issuing a refund updates the card.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch('/api/payments/refunds?list=1&limit=500')
+      .then(response => (response.ok ? response.json() : null))
+      .then(body => {
+        if (cancelled || !body?.success) return;
+        setRefundCount(body.data?.succeeded_count ?? 0);
+      })
+      .catch(() => {
+        // The card falls back to its old wording rather than showing a wrong
+        // count. A failed side-request must not disturb the money list.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
 
   // A new search or filter starts at the first page — staying on page 4 of a
   // result set that now has one page shows nothing.
@@ -233,7 +297,8 @@ export function MoneyList({
   const handlers = useMemo(
     () =>
       buildEntryActions({
-        refresh: load,
+        // Post-action refresh: silent, for the same reason as the refund.
+        refresh: () => load({ silent: true }),
         t,
         onRefund: (entry: MoneyEntry) => setRefundTarget(entry),
       }),
@@ -300,13 +365,26 @@ export function MoneyList({
 
           The totals cover the WHOLE filtered set, not the visible page: a
           number that changed as the reader paged would be worse than none. */}
-      <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* The whole book of business: what arrived plus what is still coming.
+
+            Refunds are NOT subtracted here, because they are already gone from
+            `collected` — the totals net each entry as `amount - refunded`. Taking
+            the refund off again would remove it twice and understate the figure
+            by exactly the amount returned. */}
+        <MetricCard
+          icon={TrendingUp}
+          iconColor={REPORTS_COLORS.ACCENT}
+          label={t('payments.total_revenue') || 'Total revenue'}
+          value={money(c => c.collected + c.outstanding)}
+          subtitle={t('payments.paid_and_pending') || 'Paid and pending, after refunds'}
+        />
         <MetricCard
           icon={Wallet}
           iconColor={REPORTS_COLORS.PRIMARY}
           label={t('payments.collected') || 'Collected'}
           value={money(c => c.collected)}
-          subtitle={`${total} ${total === 1 ? t('payments.item') || 'item' : t('payments.entries') || 'items'}`}
+          subtitle={`${total} ${total === 1 ? t('payments.item') || 'order' : t('payments.entries') || 'orders'}`}
         />
         <MetricCard
           icon={Clock}
@@ -327,9 +405,15 @@ export function MoneyList({
           label={t('payments.refunded') || 'Refunded'}
           value={money(c => c.refunded)}
           subtitle={
-            totals.refunded > 0
-              ? t('payments.returned_to_clients') || 'Returned to clients'
-              : t('payments.no_refunds') || 'No refunds'
+            totals.refunded <= 0
+              ? t('payments.no_refunds') || 'No refunds'
+              : refundCount === null
+                ? t('payments.returned_to_clients') || 'Returned to clients'
+                : `${refundCount} ${
+                    refundCount === 1
+                      ? t('payments.refund_singular')
+                      : t('payments.refund_plural')
+                  }`
           }
           onAction={totals.refunded > 0 ? () => setFilter('refunded') : undefined}
           actionLabel={t('payments.filter.refunded') || 'Refunded'}
@@ -518,6 +602,11 @@ export function MoneyList({
         isRTL={isRTL}
         formatCurrency={formatCurrency}
         formatDate={formatDate}
+        onPlanCancelled={() => {
+          setDetail(null);
+          load({ silent: true });
+        }}
+        onActionError={message => setRefundError(message)}
         {...handlers}
       />
 
@@ -533,7 +622,9 @@ export function MoneyList({
           isRTL={isRTL}
           onSuccess={() => {
             setRefundTarget(null);
-            load();
+            // Silent, and the effect above re-points the open drawer at the
+            // refreshed row so the refund shows without closing anything.
+            load({ silent: true });
           }}
           // Without this a refused refund — 409 NOTHING_REMAINING,
           // ACCOUNT_UNRESOLVED, a 502 from the processor — left the dialog open

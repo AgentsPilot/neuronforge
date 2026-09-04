@@ -33,6 +33,31 @@ const TABLES = [
   'crm_activities',
   'payment_invoices',
   'payment_transactions',
+  /*
+   * The refund ledger — one row per refund, with the amount, the reason, who
+   * asked for it and when it succeeded.
+   *
+   * `payment_transactions.refunded_amount` is a SUMMARY of this table, and it
+   * cannot answer "how much did I refund this month, and why": it is attributed
+   * to the sale's date, it collapses two refunds into one number, and it holds
+   * only the most recent reason.
+   */
+  'payment_refunds',
+  /*
+   * Payment plans: the offer, the sale, and the periods.
+   *
+   * Absent from this list, so the chat could not see instalment debt at all.
+   * "Who owes me money?" resolved against `payment_invoices` alone and answered
+   * "0 contacts" for a business with two ₪333 periods outstanding — a true
+   * statement about invoices, and the wrong answer to the question asked.
+   *
+   * `payment_plans` is the OFFER (3 monthly payments of X), `..._subscriptions`
+   * is one client's sale under it, and `..._installments` is the period-by-period
+   * schedule — which is where money owed under a plan actually lives.
+   */
+  'payment_plans',
+  'payment_plan_subscriptions',
+  'payment_plan_installments',
   'scheduling_bookings',
   'scheduling_services',
   // Backs contacts.stage — read for its values, not exposed as an entity.

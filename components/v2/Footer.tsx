@@ -9,7 +9,7 @@ import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
 import { getPricingConfig } from '@/lib/utils/pricingConfig'
 import { DarkModeToggle } from '@/components/v2/DarkModeToggle'
-import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal'
+// import { PluginRefreshModal } from '@/components/v2/PluginRefreshModal' // TODO: Component missing, using inline refresh instead
 import { getPluginAPIClient } from '@/lib/client/plugin-api-client'
 import {
   Clock,
@@ -1258,7 +1258,8 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
       </div>
 
       {/* Plugin Refresh Modal */}
-      {selectedPlugin && user && (
+      {/* TODO: PluginRefreshModal component missing - using inline refresh functionality instead */}
+      {/* {selectedPlugin && user && (
         <PluginRefreshModal
           isOpen={refreshModalOpen}
           onClose={() => {
@@ -1270,7 +1271,7 @@ export function V2Footer({ accountFrozen: accountFrozenProp }: V2FooterProps) {
           userId={user.id}
           onRefreshComplete={handleRefreshComplete}
         />
-      )}
+      )} */}
 
       {/* OAuth Reconnection Modal Popup */}
       {reconnectPrompt && (

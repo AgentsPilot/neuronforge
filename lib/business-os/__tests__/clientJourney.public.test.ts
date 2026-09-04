@@ -89,3 +89,42 @@ describe('shouldTakePayment reads the service, not the business', () => {
     expect(shouldTakePayment({ price: 0, collection: 'online', processorReady: true })).toBe(false);
   });
 });
+
+/**
+ * Intake is not part of the booking.
+ *
+ * It used to be a step, placed after the payment. The setting now says what it
+ * always meant — the client is EMAILED the form once the booking is confirmed —
+ * so the flow ends at confirmation. These lock that down, because the failure
+ * would be silent: a client walked into a form they were never meant to see
+ * mid-booking, and an owner's journey strip disagreeing with it.
+ */
+describe('intake is never a step in the booking flow', () => {
+  const service = { is_scheduled: true, collection: 'online' as const, price: 200 };
+
+  it('is absent even when the business collects intake', () => {
+    const steps = journeySteps(service, { processorReady: true, intakeEnabled: true });
+
+    expect(steps).not.toContain('intake');
+    expect(steps[steps.length - 1]).toBe('confirmation');
+  });
+
+  it('gives the same journey whether intake is on or off', () => {
+    // The whole point: turning intake on must not lengthen what the client
+    // walks through, because the form arrives afterwards by email.
+    expect(journeySteps(service, { processorReady: true, intakeEnabled: true })).toEqual(
+      journeySteps(service, { processorReady: true, intakeEnabled: false })
+    );
+  });
+
+  it('holds for a free service too', () => {
+    const free = { is_scheduled: true, collection: null, price: 0 };
+
+    expect(journeySteps(free, { intakeEnabled: true })).toEqual([
+      'service',
+      'datetime',
+      'details',
+      'confirmation',
+    ]);
+  });
+});

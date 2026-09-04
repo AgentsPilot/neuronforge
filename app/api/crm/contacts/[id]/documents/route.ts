@@ -11,6 +11,8 @@ import { contactDocumentsRepository, DocumentType } from '@/lib/repositories/Con
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence } from '@/lib/business-os/activityText';
 
 const logger = createLogger({ module: 'ContactDocumentsAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -269,6 +271,37 @@ export async function POST(
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
+
+    /*
+     * The file, on the contact's timeline.
+     *
+     * The drawer has drawn `document_uploaded` for a long time — icon, files
+     * filter, and a `{ document_type, file_name }` shape `translateDescription`
+     * already knows — but nothing ever wrote one.
+     */
+    if (result.data) {
+      const { data: ownerProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const ownerLocale = ownerProfile?.language || 'en';
+
+      crmActivityRepository.create({
+        user_id: user.id,
+        contact_id: contactId,
+        activity_type: 'document_uploaded',
+        title: activitySentence('document_uploaded', { file: validated.file_name }, ownerLocale),
+        description: JSON.stringify({
+          kind: 'document_uploaded',
+          document_type: validated.document_type || undefined,
+          file_name: validated.file_name,
+        }),
+        auto_logged: true,
+        source_capability: 'crm',
+        source_entity_id: result.data.id,
+      }).catch(err => requestLogger.warn({ err }, 'Document activity logging failed (non-blocking)'));
+    }
 
     // 9. Return success
     requestLogger.info(

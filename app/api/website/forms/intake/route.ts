@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { createLogger } from '@/lib/logger';
+import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
@@ -264,14 +265,22 @@ export async function POST(request: NextRequest) {
     }
 
     // Create activity for intake submission
+    const { data: ownerProfile } = await supabaseServer
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', ownerId)
+      .maybeSingle();
+    const ownerLocale = ownerProfile?.language || 'en';
+
     const { error: activityError } = await supabaseServer
       .from('crm_activities')
       .insert({
         user_id: ownerId,
         contact_id: contactId,
         activity_type: 'note',
-        title: `Intake Form Completed (${template})`,
-        description: `Client completed the ${template} intake form.`,
+        // The business's language, not English: this is its own history.
+        title: activitySentence('intake_completed', { template: String(template) }, ownerLocale),
+        description: null,
         activity_date: new Date().toISOString(),
         auto_logged: true,
         source_capability: 'website'

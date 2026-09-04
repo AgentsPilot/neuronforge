@@ -30,6 +30,8 @@ import type { NextRequest } from 'next/server';
 import { resolveInvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
+import { taxLineFor } from '@/lib/payments/taxLine';
+import { documentNoun } from '@/lib/payments/documentType';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import {
   paymentInvoiceRepository,
@@ -275,6 +277,66 @@ export async function sendInvoice(
 }
 
 /** Net 30, when the invoice itself does not say. */
+/**
+ * The invoice, as a PDF file ready to attach.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Extracted because TWO emails carry an invoice and only one of them attached
+ * it. `sendInvoice` built the PDF inline; the booking confirmation — which is
+ * how most clients first meet their bill — sent a pay LINK and no document at
+ * all, so a client who wanted the invoice for their records had nothing to
+ * keep, and a business billing by bank transfer sent a mail whose bank details
+ * lived only in a file that was never attached.
+ *
+ * Returns null rather than throwing: an invoice that cannot be rendered must
+ * not stop the email that carries it. Better a mail with a link and no
+ * attachment than no mail at all.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function buildInvoiceAttachment(
+  invoiceId: string,
+  userId: string,
+  locale: 'en' | 'es' | 'he' = 'en'
+): Promise<{ filename: string; content: Buffer; contentType: string } | null> {
+  try {
+    const { data: invoice } = await paymentInvoiceRepository.findById(invoiceId, userId);
+    if (!invoice) return null;
+
+    const { data: settingsRow } = await businessProfileRepository.getInvoiceSettingsWithProfile(userId);
+    const settings = settingsRow ?? ({} as Record<string, never>);
+
+    const businessName =
+      (settings as { company_name?: string; invoice_company_name?: string }).company_name ||
+      (settings as { invoice_company_name?: string }).invoice_company_name ||
+      'Business';
+
+    const branding = await resolveEmailBranding(userId, locale, settings as never);
+
+    const pdfBuffer = await generateInvoicePDFAsync({
+      invoice,
+      businessSettings: settings as never,
+      businessName,
+      businessVertical: (settings as { vertical?: string }).vertical || undefined,
+      language: locale,
+      branding: {
+        primaryColor: branding.primaryColor,
+        accentColor: branding.secondaryColor,
+        headingFont: branding.headingFont,
+        bodyFont: branding.bodyFont,
+      },
+    });
+
+    return {
+      filename: `${invoice.invoice_number}.pdf`,
+      content: pdfBuffer,
+      contentType: 'application/pdf',
+    };
+  } catch (error) {
+    logger.warn({ err: error, invoiceId }, 'Could not build the invoice attachment');
+    return null;
+  }
+}
+
 function defaultDueDate(): Date {
   return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 }
@@ -368,6 +430,9 @@ async function sendByEmail(
         invoice.stripe_hosted_invoice_url ||
         `${baseUrl}/api/public/invoice/${invoice.id}/pay`,
       profile: settings,
+      // The same answer the pay page reads. An email offering a card that the
+      // page it links to will not draw is worse than either on its own.
+      allowOnlinePayment: (invoice as { allow_online_payment?: boolean | null }).allow_online_payment,
     });
     const businessName =
       settings.company_name || settings.invoice_company_name || 'Business';
@@ -386,6 +451,20 @@ async function sendByEmail(
       lineItems,
       paymentOptions,
       branding: { ...branding, businessName, logoUrl: settings.logo_url || undefined },
+      // Derived once, from what the business typed, so the email and the
+      // attached PDF cannot state different figures.
+      taxLine: taxLineFor(invoice.amount, invoice.currency, settings),
+      /*
+       * The document's own name, resolved from the same settings the PDF reads
+       * a few lines below. Derived here rather than in the template so the
+       * subject line, the body and the attachment cannot call one document
+       * three different things.
+       *
+       * `isPaid` is false on this path by construction — this is the mail that
+       * ASKS for payment — so a business set to "receipt" still sends an
+       * invoice here, and the receipt wording appears once the money arrives.
+       */
+      documentNoun: documentNoun(settings, locale, false),
       locale,
     });
 
@@ -402,6 +481,13 @@ async function sendByEmail(
         invoice_footer_text: settings.invoice_footer_text,
         invoice_number_prefix: settings.invoice_number_prefix,
         logo_url: settings.logo_url,
+        // The same three the email reads, so the attachment cannot state a
+        // different tax from the mail carrying it.
+        invoice_prices_include_tax: settings.invoice_prices_include_tax,
+        invoice_tax_rate: settings.invoice_tax_rate,
+        invoice_tax_label: settings.invoice_tax_label,
+        // And the document's name, for the same reason.
+        invoice_document_type: settings.invoice_document_type,
       },
       businessName,
       businessVertical: settings.vertical || undefined,
@@ -415,12 +501,20 @@ async function sendByEmail(
       },
     });
 
-    // No `ownerUserId`: platform mail goes through Resend or system Gmail, not
-    // the user's own Gmail connection.
+    /*
+     * `ownerUserId` selects the SENDER, not the transport.
+     *
+     * The note that used to sit here read it as a request to send through the
+     * user's own Gmail connection, so it was withheld — and an invoice reached
+     * the client from "NeuronForge", with Reply going nowhere. It presents the
+     * business's name and routes replies to the owner; the transport is chosen
+     * exactly as before.
+     */
     const emailResult = await sendEmail({
       to: [invoice.client_email!],
       subject,
       html,
+      ownerUserId: userId,
       attachments: [
         {
           filename: `${invoice.invoice_number}.pdf`,

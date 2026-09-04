@@ -24,6 +24,7 @@ import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { runBusinessQuery } from '@/lib/business-os/bizql';
 import { executeMutate } from '@/lib/business-os/bizql/mutate/MutateExecutor';
+import { recipientSummary } from '@/lib/business-os/bizql/mutate/previewSummary';
 import { executeForEach } from '@/lib/business-os/bizql/mutate/ForEachExecutor';
 import { getConfirmationStore } from '@/lib/business-os/bizql/mutate/ConfirmationStore';
 import {
@@ -133,11 +134,11 @@ export async function POST(
         // 7 invoices can be 4 emails. Showing the row count would have the user
         // approve a number that never happens.
         previews.push(
-          `${preview.attempted} recipient${preview.attempted === 1 ? '' : 's'}` +
-            (preview.items.length
-              ? ` — ${preview.items.slice(0, 5).map((i) => i.target ?? i.id).join(', ')}` +
-                (preview.attempted > 5 ? ', …' : '')
-              : '')
+          recipientSummary(
+            preview.attempted,
+            preview.items.map((i) => i.target ?? i.id),
+            language
+          )
         );
         continue;
       }

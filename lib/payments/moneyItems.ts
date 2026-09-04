@@ -96,6 +96,16 @@ export interface MoneyTransaction {
   refund_reason?: string | null;
   stripe_payment_intent_id?: string | null;
   stripe_charge_id?: string | null;
+  /** 'stripe' | 'manual' | … — who took the money, if anyone did. */
+  processor_type?: string | null;
+  /**
+   * A plan period's own numbers, written by the webhook.
+   *
+   * The stored `description` says "Payment 1 of 3" in ENGLISH — it is written
+   * once, in the database, and read by every language. Carrying the numbers
+   * instead lets the caller phrase it in the reader's language.
+   */
+  metadata?: Record<string, unknown> | null;
   /** Joined, as the transactions list already does. */
   contact?: { first_name?: string | null; last_name?: string | null; email?: string | null } | null;
 }
@@ -112,6 +122,15 @@ export interface MoneyPeriod {
   id: string;
   installmentNumber: number;
   amount: number;
+  /**
+   * The installment's own currency.
+   *
+   * Carried because a plan is not obliged to bill in the currency of the row it
+   * is grouped under, and the totals card keeps its buckets apart. Optional
+   * only so a caller that has not been updated still type-checks; it falls back
+   * to the item's currency.
+   */
+  currency?: string;
   dueDate: string | null;
   status: string;
   paidAt: string | null;
@@ -122,7 +141,21 @@ export interface MoneyPlan {
   id: string;
   installmentCount: number;
   periodsPaid: number;
+  /**
+   * The plan's real state: `active`, `past_due`, `cancelled`, `completed`.
+   *
+   * Was hardcoded to `active` because nothing read
+   * `payment_plan_subscriptions` — so a stopped plan still showed as running.
+   */
   status: string;
+  /**
+   * The `payment_plan_subscriptions` row, when this sale was bound to Stripe.
+   *
+   * Distinct from `id`, which is the plan OFFER the sale was made under. This
+   * is the handle for stopping it — the offer cannot be cancelled, a sale can.
+   * Null for a plan projected locally and never bound.
+   */
+  subscriptionId?: string | null;
   periods: MoneyPeriod[];
 }
 
@@ -152,6 +185,26 @@ export interface MoneyEntry {
   contactEmail: string | null;
   /** What was sold — the first line item, or the payment's description. */
   serviceLabel: string | null;
+  /**
+   * True when this entry is one period of a payment plan.
+   *
+   * The detail drawer labelled `serviceLabel` "Service" for every entry, so a
+   * plan period read "שירות: תשלום 1 מתוך 3" — naming the instalment as though
+   * it were the thing being sold.
+   */
+  isPlanPeriod?: boolean;
+  /**
+   * Which period of how many, for a caller that can phrase it.
+   *
+   * `installmentLabel` lets a caller holding `t` name the period at build time,
+   * and the CRM drawer uses it — but `/api/payments/money` builds these on the
+   * server, where there is no reader and no language, so it passed nothing and
+   * every entry fell back to the English `description` the webhook stored.
+   * Carrying the raw numbers lets the payments page phrase it in the browser,
+   * from the same `payments.installment_payment` string the CRM drawer uses,
+   * instead of translating the same sentence a second time on the server.
+   */
+  planPeriod?: { number: number; count: number };
   dueDate: string | null;
   paidAt: string | null;
   paymentMethod: string | null;
@@ -160,6 +213,16 @@ export interface MoneyEntry {
   stripeHostedUrl: string | null;
   /** The payment intent or charge, for support and reconciliation. */
   processorRef: string | null;
+  /**
+   * Who took the money — 'stripe', 'manual', or unknown.
+   *
+   * Distinct from `processorRef` being null, and the distinction decides
+   * whether a refund can be offered. No reference on a Stripe payment means the
+   * platform cannot return it; no reference on MANUAL money means there was
+   * never anything to reference, and the business returns it by hand and
+   * records that here.
+   */
+  processorType: string | null;
 }
 
 /** A row in the list: a booking and everything financial about it, or lone money. */
@@ -264,10 +327,63 @@ export interface BuildMoneyItemsInput {
   plansByBookingId?: Record<string, MoneyPlan>;
   /** Heading for money with no booking. */
   standaloneLabel?: string;
+  /**
+   * How to name one period of a payment plan, in the reader's language.
+   *
+   * Supplied by the caller because translations live in the UI layer; without
+   * it the stored English description is used, which is what the drawer showed
+   * a Hebrew reader.
+   */
+  installmentLabel?: (installmentNumber: number, installmentCount: number) => string;
+}
+
+/**
+ * A plan period named in the reader's language, or null if this is not one.
+ *
+ * The webhook stores `description: "Payment 1 of 3"` — English, in the
+ * database, read by every locale. The numbers travel in metadata beside it so
+ * the phrasing can be chosen here instead of frozen at write time.
+ */
+/** Whether a transaction is one period of a payment plan. */
+function isPlanPeriod(t: MoneyTransaction): boolean {
+  return t.metadata?.source === 'payment_plan';
+}
+
+/**
+ * Which period of how many, or null if this is not a plan payment.
+ *
+ * The one place the metadata is read and validated, so the label and the raw
+ * numbers cannot disagree about whether an entry is a period.
+ */
+function planPeriodNumbers(t: MoneyTransaction): { number: number; count: number } | undefined {
+  const meta = t.metadata;
+  if (!meta || meta.source !== 'payment_plan') return undefined;
+
+  const number = Number(meta.installment_number);
+  const count = Number(meta.installment_count);
+  if (!Number.isFinite(number) || !Number.isFinite(count) || count < 1) return undefined;
+
+  return { number, count };
+}
+
+function planPeriodLabel(
+  t: MoneyTransaction,
+  installmentLabel?: (installmentNumber: number, installmentCount: number) => string
+): string | null {
+  if (!installmentLabel) return null;
+
+  const numbers = planPeriodNumbers(t);
+  if (!numbers) return null;
+
+  return installmentLabel(numbers.number, numbers.count);
 }
 
 /** Step 1: collapse invoices and their payments into entries. */
-function buildEntries(invoices: MoneyInvoice[], transactions: MoneyTransaction[]): MoneyEntry[] {
+function buildEntries(
+  invoices: MoneyInvoice[],
+  transactions: MoneyTransaction[],
+  installmentLabel?: (installmentNumber: number, installmentCount: number) => string
+): MoneyEntry[] {
   const byInvoice = new Map<string, MoneyTransaction[]>();
   const loose: MoneyTransaction[] = [];
 
@@ -314,6 +430,7 @@ function buildEntries(invoices: MoneyInvoice[], transactions: MoneyTransaction[]
       stripeHostedUrl: invoice.stripe_hosted_invoice_url ?? null,
       processorRef:
         settlement?.stripe_payment_intent_id ?? settlement?.stripe_charge_id ?? null,
+      processorType: settlement?.processor_type ?? null,
     };
   });
 
@@ -339,17 +456,20 @@ function buildEntries(invoices: MoneyInvoice[], transactions: MoneyTransaction[]
       invoiceId: null,
       invoiceNumber: null,
       transactionIds: [t.id],
-      description: t.description ?? null,
+      description: planPeriodLabel(t, installmentLabel) ?? t.description ?? null,
 
       contactName: contactName || null,
       contactEmail: t.contact?.email ?? null,
-      serviceLabel: t.description ?? null,
+      serviceLabel: planPeriodLabel(t, installmentLabel) ?? t.description ?? null,
+      isPlanPeriod: isPlanPeriod(t),
+      planPeriod: planPeriodNumbers(t),
       dueDate: null,
       paidAt: t.paid_at ?? null,
       paymentMethod: t.payment_method ?? null,
       stripeInvoiceId: null,
       stripeHostedUrl: null,
       processorRef: t.stripe_payment_intent_id ?? t.stripe_charge_id ?? null,
+      processorType: t.processor_type ?? null,
     });
   }
 
@@ -380,7 +500,7 @@ export function buildMoneyItems(input: BuildMoneyItemsInput): MoneyItem[] {
     }
   }
 
-  const entries = buildEntries(invoices, transactions);
+  const entries = buildEntries(invoices, transactions, input.installmentLabel);
   const contactOfInvoice = new Map(invoices.map(i => [i.id, i.contact_id ?? null]));
   const bookingOfTransaction = new Map(transactions.map(t => [t.id, t.booking_id ?? null]));
   const contactOfTransaction = new Map(transactions.map(t => [t.id, t.contact_id ?? null]));
@@ -512,6 +632,31 @@ const COLLECTED_STATUSES: MoneyStatus[] = ['paid', 'partially_refunded', 'refund
 const OUTSTANDING_STATUSES: MoneyStatus[] = ['awaiting_payment', 'overdue', 'failed'];
 
 /**
+ * A plan period nobody has to pay.
+ *
+ * `paid` is settled; `cancelled` was called off. The other two — `pending` and
+ * `overdue` — are money the business is still waiting for. Testing for "not
+ * paid" counted a cancelled installment as owed, which overstated the debt of
+ * every plan somebody had stopped.
+ */
+const SETTLED_PERIOD_STATUSES = ['paid', 'cancelled'];
+
+/**
+ * Unpaid plan periods, one currency at a time.
+ *
+ * The single definition of "a plan still owes this", used by both the per-row
+ * figure and the totals card. It was written twice before, and the second copy
+ * — the one in `totalMoney` — did not exist at all: the card summed entries and
+ * ignored plans entirely, so a business eleven months into a twelve-month plan
+ * saw a row reading "$666.67 due" above a card reading zero.
+ */
+function unpaidPeriods(item: MoneyItem): MoneyPeriod[] {
+  return (item.plan?.periods ?? []).filter(
+    period => !SETTLED_PERIOD_STATUSES.includes(period.status)
+  );
+}
+
+/**
  * What is still owed on one row.
  *
  * Shares its rule with `totalMoney` rather than restating it, so a row reading
@@ -535,9 +680,7 @@ export function outstandingOf(item: MoneyItem): number {
    * so an uneven split is exact: the final period carries the remainder, and
    * multiplying an average would be a different number.
    */
-  const fromPlan = (item.plan?.periods ?? [])
-    .filter(period => period.status !== 'paid')
-    .reduce((sum, period) => sum + period.amount, 0);
+  const fromPlan = unpaidPeriods(item).reduce((sum, period) => sum + period.amount, 0);
 
   return fromEntries + fromPlan;
 }
@@ -548,12 +691,11 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
   let refunded = 0;
   const byCurrency: Record<string, MoneyCurrencyTotals> = {};
 
+  const bucketFor = (currency: string) =>
+    (byCurrency[currency] ??= { collected: 0, outstanding: 0, refunded: 0 });
+
   for (const entry of items.flatMap(item => item.entries)) {
-    const bucket = (byCurrency[entry.currency] ??= {
-      collected: 0,
-      outstanding: 0,
-      refunded: 0,
-    });
+    const bucket = bucketFor(entry.currency);
 
     refunded += entry.refunded;
     bucket.refunded += entry.refunded;
@@ -564,6 +706,28 @@ export function totalMoney(items: MoneyItem[]): MoneyTotals {
     } else if (OUTSTANDING_STATUSES.includes(entry.status)) {
       outstanding += entry.amount;
       bucket.outstanding += entry.amount;
+    }
+  }
+
+  /**
+   * Plan money, counted separately because it is not an entry.
+   *
+   * An installment becomes an entry only once it is charged, so a schedule of
+   * future periods appears nowhere in the loop above. The card summed entries
+   * alone and reported zero outstanding to a business with a live plan running
+   * — while the row for that same plan, using `outstandingOf`, said what was
+   * really due. This is that same rule, applied to the totals.
+   *
+   * Iterated over items rather than a flattened list of periods so each period
+   * keeps its own currency: an installment carries one, and a plan billed in
+   * dollars must not land in the shekel bucket because the row happened to be
+   * grouped under a shekel booking.
+   */
+  for (const item of items) {
+    for (const period of unpaidPeriods(item)) {
+      const currency = period.currency || item.currency;
+      outstanding += period.amount;
+      bucketFor(currency).outstanding += period.amount;
     }
   }
 

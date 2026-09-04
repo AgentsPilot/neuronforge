@@ -1229,6 +1229,24 @@ function validateStep(
       problems.push(`${path}: agg '${step.agg.fn}' needs agg.field.`);
     }
 
+    /*
+     * Some fields are honest per row and ambiguous in a total.
+     *
+     * A payment's `amount` is what was charged — right on a row, and a trap to
+     * sum, because the total means either what was billed or what was kept and
+     * those differ by every refund. Rejected here rather than guessed, so the
+     * planner names which total it wants and the answer says what it counted.
+     */
+    const aggregated = step.agg?.field ? entity.fields[step.agg.field] : undefined;
+
+    if (step.agg?.fn && step.agg.fn !== 'count' && aggregated?.aggregateInstead?.length) {
+      problems.push(
+        `${path}: '${entity.key}.${step.agg.field}' cannot be aggregated — the total is ` +
+          `ambiguous. Use ${aggregated.aggregateInstead.map((f) => `'${f}'`).join(' or ')} ` +
+          `and say in the answer which one you counted.`
+      );
+    }
+
     // Normalisation lifts a misplaced `agg.where` when the step has none. If one
     // survives to here, the step had its OWN filter too — two different filters
     // for one query, and picking either would be a guess about which the user
@@ -1438,6 +1456,32 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
     if (fieldMatch) {
       const step = plan.steps.find((s) => (s as unknown as { id?: string }).id === stepId);
       const stepEntity = step ? CATALOG.entities[(step as { entity?: string }).entity ?? ''] : undefined;
+
+      /*
+       * A GROUPED compute does not return rows of its entity.
+       *
+       * It returns one row per group — a label and a total — so its first row
+       * has no `service_name` or `amount` to name. `{s1.first.key}` is the
+       * label the rows were grouped under and `{s1.first.value}` is that
+       * group's total, which is how a superlative question says its answer:
+       * "your most profitable service is X".
+       *
+       * Checked before the field lookup below, which would otherwise reject
+       * both against the source entity's columns and reject the only correct
+       * reference a grouped result has.
+       */
+      const grouped = (step as { op?: string; group_by?: unknown } | undefined);
+      if (grouped?.op === 'compute' && grouped.group_by) {
+        if (fieldMatch[1] === 'key' || fieldMatch[1] === 'value') continue;
+
+        problems.push(
+          `answer.text uses {${stepId}.first.${fieldMatch[1]}}, but ${stepId} groups its ` +
+            `rows — a group has only {${stepId}.first.key} (what it is) and ` +
+            `{${stepId}.first.value} (its total).`
+        );
+        continue;
+      }
+
       const field = stepEntity?.fields[fieldMatch[1]];
 
       if (!stepEntity) continue; // The step's entity is validated elsewhere.
@@ -1555,6 +1599,133 @@ function validateNotAScattergun(plan: Plan, problems: string[]): void {
   }
 }
 
+/**
+ * An email must be addressed to something that can receive email.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * "Call David urgently" has no calling capability behind it, so the planner
+ * reached for the nearest thing it had — `contacts.send`, an action labelled
+ * "send an email" — and addressed it to `{"$item":"phone"}`.
+ *
+ * The executor refused it correctly ("no email address") and reported one
+ * failure. But by then the user had already been shown "1 recipient —
+ * 2013643030" and asked to APPROVE it. Someone confirmed a send that could
+ * never have worked, and learned it had failed only afterwards.
+ *
+ * Caught here instead, where the planner can repair it: a validation problem is
+ * fed back and re-planned, so the model either addresses the email properly or
+ * picks a different action — before anyone is asked to say yes.
+ *
+ * Driven by the field's declared FORMAT, not by a list of field names, so an
+ * entity that calls its address something other than `email` works unchanged.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function validateSendAddress(plan: Plan, problems: string[]): void {
+  for (const raw of plan.steps ?? []) {
+    const step = raw as unknown as {
+      op?: string;
+      entity?: string;
+      action?: string;
+      params?: Record<string, unknown>;
+    };
+
+    if (step.action !== 'send' || !step.entity) continue;
+
+    const entity = CATALOG.entities[step.entity];
+    if (!entity) continue;
+
+    const to = step.params?.to;
+    const referenced =
+      to && typeof to === 'object' && '$item' in (to as Record<string, unknown>)
+        ? String((to as Record<string, unknown>).$item)
+        : undefined;
+
+    if (!referenced) continue;
+
+    // `format`, not `type`: an address is a string whose FORMAT says what it is.
+    // `contacts.email` is `{ type: 'string', format: 'email' }`, and there is no
+    // 'email' member of FieldType to compare against.
+    const field = entity.fields[referenced];
+    const looksLikeAddress = field?.format === 'email';
+
+    if (!looksLikeAddress) {
+      problems.push(
+        `${step.entity}.send is addressed to {"$item":"${referenced}"}, which is not ` +
+          `an email address. A send delivers email — address it to the entity's ` +
+          `email field, or choose an action that matches what was asked for.`
+      );
+    }
+  }
+}
+
+/**
+ * A literal standing in for a value the plan just computed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Asked for the most profitable service, the planner emitted:
+ *
+ *   s1: compute services max(price)
+ *   s2: find services where price = 0        ← invented
+ *   answer: "your most profitable service is {s2.first.service_name}"
+ *
+ * There is no way to reference `s1`'s result inside `s2`'s filter, so the model
+ * had to write SOME number and wrote zero. The plan is structurally perfect and
+ * every other check passes; it simply names the cheapest service as the most
+ * profitable, with complete confidence.
+ *
+ * This is the worst failure shape in the system — not an error, an answer. A
+ * wrong number is recoverable when it looks wrong; this one does not.
+ *
+ * Detected by its signature rather than by guessing intent: an earlier step
+ * aggregates a field with min/max, and a later step filters THAT SAME FIELD on
+ * the same entity against a plain literal. Nothing legitimate has that shape —
+ * if you already know the value you want, you do not need to compute it first.
+ * The fix is `order_by` + `limit`, which the grammar has and the prompt now
+ * teaches, so this is reported as a problem the planner can repair.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function validateNoFabricatedThreshold(plan: Plan, problems: string[]): void {
+  const steps = (plan.steps ?? []) as unknown as Array<Record<string, unknown>>;
+
+  /** Fields an earlier step reduced to a single number, per entity. */
+  const reduced = new Map<string, Set<string>>();
+
+  for (const step of steps) {
+    const entity = typeof step.entity === 'string' ? step.entity : '';
+    if (!entity) continue;
+
+    if (step.op === 'compute') {
+      const agg = step.agg as { fn?: string; field?: string } | undefined;
+      // Only min/max: a sum or a count is not a value any row equals.
+      if (agg?.field && (agg.fn === 'max' || agg.fn === 'min')) {
+        if (!reduced.has(entity)) reduced.set(entity, new Set());
+        reduced.get(entity)!.add(agg.field);
+      }
+      continue;
+    }
+
+    const suspect = reduced.get(entity);
+    if (!suspect?.size) continue;
+
+    for (const predicate of (step.where ?? []) as Array<Record<string, unknown>>) {
+      const field = typeof predicate.field === 'string' ? predicate.field : '';
+      if (!field || !suspect.has(field)) continue;
+
+      // A `$semantic` or any object value is not a fabricated literal.
+      const value = predicate.value;
+      if (value === null || typeof value === 'object') continue;
+
+      problems.push(
+        `${entity}.${field} is filtered against the literal ${JSON.stringify(value)} ` +
+          `after an earlier step computed its ${[...suspect].includes(field) ? 'min/max' : 'value'}. ` +
+          `A filter cannot reference another step's result, so that number is invented. ` +
+          `Ask for the top row directly instead: one "find" with ` +
+          `"order_by":{"field":"${field}","direction":"desc"} and "limit":1.`
+      );
+    }
+  }
+}
+
 export function validatePlan(plan: Plan, userMessage?: string): string[] {
   const problems: string[] = [];
 
@@ -1569,6 +1740,8 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
 
   plan.steps.forEach((step, i) => validateStep(step, i, problems, plan.answer?.text ?? ''));
   validateFanOutSources(plan, problems);
+  validateSendAddress(plan, problems);
+  validateNoFabricatedThreshold(plan, problems);
   validateNotAScattergun(plan, problems);
   validateAnswer(plan, problems, userMessage);
 

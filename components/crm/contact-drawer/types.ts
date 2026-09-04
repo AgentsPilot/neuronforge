@@ -125,6 +125,23 @@ export interface SessionPayment {
   plan?: SessionPaymentPlan;
   paidAt?: string;
   refundedAt?: string;  // When the refund was processed
+  /**
+   * How much of this payment has been returned.
+   *
+   * Distinct from `status: 'refunded'`, which only a FULL refund produces. A
+   * partial refund leaves the status at `paid`, so the bookings tab showed
+   * nothing at all — a client could be given half their money back and the
+   * booking would look untouched.
+   */
+  refundedAmount?: number;
+  /**
+   * What was actually invoiced, when there is an invoice.
+   *
+   * `amount` is the SERVICE's current price — a live figure that can be edited,
+   * zeroed or lost with the service. The receipt must not depend on it: money
+   * that changed hands is a fact about the past.
+   */
+  invoicedAmount?: number;
   paymentMethod?: string;  // 'card', 'cash', 'bank_transfer', etc.
   last4?: string;  // Last 4 digits of card
   // Invoice data for resend functionality and due date display

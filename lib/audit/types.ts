@@ -27,6 +27,13 @@ export type EntityType =
   | 'scheduling_service'
   | 'scheduling_booking'
   | 'payment_invoice'
+  // A payment and a refund are audited against the transaction, which was not
+  // in this union — so the refund route's audit entry, written at severity
+  // `critical`, did not typecheck against the service it calls.
+  | 'payment_transaction'
+  // Stopping a client's payment plan changes what they will be charged, so it
+  // is audited like money moving — and the plan is the entity it happened to.
+  | 'payment_plan_subscription'
   | 'crm_contact'
   | 'business_profile'
   | 'website_page';
