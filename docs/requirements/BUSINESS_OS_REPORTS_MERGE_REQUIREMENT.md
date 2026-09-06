@@ -1,12 +1,16 @@
 # Requirement: Merge `feature/business-os-reports-and-readiness` into `main`
 
-> **Last Updated**: 2026-09-02
+> **Last Updated**: 2026-09-06
 
 **Created by:** BA
 **Date:** 2026-09-01
-**Status:** 🟡 **Merge resolved and committed on the integration branch; one gate red, and it is not ours.** All 11 checklist steps done, **15 conflicts closed across two merges** (14 from `main`, 1 from Offir's follow-up `54184fdb`), **22 logged decisions**. Nothing pushed; `git reset --hard` back to `23b7379` still undoes everything. `tsc` **0** merge-induced errors · guard suites **93/93** · Business OS **632/632** · full jest **3,034 passed / 128 failed** (all pre-existing). **`npm run build` exits 1** — [F6](#finding-f6---landing-preview-breaks-npm-run-build-pre-existing-on-the-branch), a defect in Offir's own new page that **reproduces at his branch tip**, so it is his to fix, not a merge resolution. The architecture question remains **deferred by decision, not blocking** (see [D9](#decision-log)).
+**Status:** ✅ **MERGED TO `main`.** [PR #33](https://github.com/AgentsPilot/neuronforge/pull/33) merged 2026-09-06 as `67362681`.
 
-**Outstanding:** Offir's branch defects ([F1](#finding-f1---dropped-client_-columns-still-read-by-branch-code), [F3](#finding-f3---has_website-is-a-phantom-column-read-by-branch-only-code), **[F6](#finding-f6---landing-preview-breaks-npm-run-build-pre-existing-on-the-branch) — build-blocking**) · open decisions (Q2/Q3/Q4, [Q9](#open-questions-for-offir), [C3](#non-blocking-cleanups)) · operator check (Q6) · the three merge gates.
+**Final tally:** **18 conflicts** resolved across **three** merge rounds (14 from `main`, then 1 and 4 as Offir continued pushing) · **27 logged decisions** · 733 files, +185,501/−12,971 · 58 new migrations.
+
+**Gates at merge:** `npm run build` **exit 0** (286/286 pages) · guard + executor suites **93/93** · full jest **3,313 passed / 128 failed**, every failing suite byte-identical to Offir's tip · **0** merge-induced type errors in non-test files. SA and QA review were **deliberately deferred** by the user — the goal was to land the merge without regression, not to fix the branch's code quality; SA/QA come after Offir's outstanding items are closed.
+
+**Still open — see [Handover to Offir](#handover-to-offir):** three branch defects (F1, F3, F7), the deferred plugin-shape decision (Q2–Q4), the intake-stage product question (Q9), duplicate capability authorization (C3), and the migration-ordering check (Q6). **The 58 migrations are NOT applied by the merge** — that decision is still entirely open.
 
 **Per-file ledger for review with Offir:** https://claude.ai/code/artifact/4e3b4ee7-0d9f-4708-ae7b-a0dde4adf2d8
 
@@ -46,8 +50,9 @@ This document is the **living record for the entire merge effort**. It captures 
 16. [Process & Governance Note](#process--governance-note)
 17. [Decision Log](#decision-log)
 18. [Open Questions for Offir](#open-questions-for-offir)
-19. [Out of Scope](#out-of-scope)
-20. [Change History](#change-history)
+19. [Handover to Offir](#handover-to-offir)
+20. [Out of Scope](#out-of-scope)
+21. [Change History](#change-history)
 
 ---
 
@@ -643,6 +648,45 @@ Additional open checks not directed at Offir:
 
 ---
 
+## Handover to Offir
+
+Everything below is owed by, or needs a decision from, Offir. It is gathered here because the detail
+lives in six different sections and a conversation needs one list. Each row links to the evidence.
+
+### Defects on the branch — shipped with the merge, not caused by it
+
+| # | What | Impact | Evidence |
+|---|------|--------|----------|
+| **F1** | 7 insight detectors `select` `client_email` from `scheduling_bookings` | The branch's own `20260810_remove_client_fields_and_total_amount.sql` drops that column. PostgREST rejects an unknown column, so **each detector throws once that migration is applied** | [F1](#finding-f1---dropped-client_-columns-still-read-by-branch-code) |
+| **F3** | `CapabilityConditionEvaluator.ts:377` selects `has_website` | **No migration anywhere creates it.** `getUserProfile()` throws, so capability-condition evaluation fails. Likely meant to derive from `online_presence_mode` | [F3](#finding-f3---has_website-is-a-phantom-column-read-by-branch-only-code) |
+| **F7** | `saved-plans.test.ts` has **zero** `jest.mock` calls and makes a real Supabase request | Passes in the full `jest` run, fails in the `lib/business-os` subset, hangs alone. Destabilised by `6df79536`; the test itself is unchanged | [F7](#finding-f7---saved-planstestts-makes-a-real-network-call) |
+
+### Decisions owed
+
+| # | Question | Why it matters |
+|---|----------|----------------|
+| **Q2** | Does BizQL's `MutateExecutor` account for triggers **T2/T3/T4/T8**? | If not, writes through that path **double-log** what the triggers already own. Independent of the plugin-shape question |
+| **Q3** | Is the generated-from-catalog approach load-bearing elsewhere (the BOS chat), or is the plugin surface a thin cap? | **The decider for Q4.** If catalog+BizQL is what the chat runs on, his shape is the more maintainable one and main's five hand-written JSONs are the duplication |
+| **Q4** | One Business OS plugin or five? | Both currently ship. They do not contend — the five are hidden from discovery, `business-os` is what the generator sees — but two write paths to the same tables is a standing liability |
+| **Q9** | Should completing an intake form advance a contact's CRM pipeline stage? | His branch did; main does not, and its guard tests lock that. **Main's behaviour is what shipped**, because the tests enforced it — not because his approach was judged wrong |
+| **C3** | Two capability-authorization implementations now coexist | His `verifyCapabilityAccess()` queries `user_capabilities` via raw `supabaseServer` — a mandatory repository-rule violation — and duplicates `CapabilityEngine`. Two places to decide access is two places to be wrong |
+| **Q6** | Does the migration runner depend on lexical filename order? | **58 new migrations.** main uses `2026-08-14_`, the branch uses `20260812_`; `-` (0x2D) sorts before `0` (0x30), so **every** main migration runs before **every** branch one regardless of date |
+
+### Worth mentioning, not owed
+
+- **`@/types/database` does not exist.** `BusinessProfileRepository` imported it and never used the symbol; the import was removed during the merge (D27). Worth asking whether he intended to generate Supabase types — several comments in the codebase assume that file exists, and its absence is why column names are only ever checked by hand-written guard tests.
+- **A correction to carry, so he hears it from you rather than the diff:** main's comment at `payment.record` says the old insert "omitted `paid_at`". **His version does set it.** Main's side still won — on trigger ownership and the repository rule — but not for the reason that comment gives.
+- **His currency fix was not lost.** He rewrote `logPayment` to format with `Intl.NumberFormat` instead of a hard-coded `$`. The helper stayed deleted (zero callers, and T3 owns the row), but the fix is preserved as a note at the deletion site (D26).
+- **C1's attribution was wrong in the original plan.** It recorded the branch as adding the `console.log`s in `middleware.ts`; **11 of the 12 were main's.** He added one.
+
+### Process observations — for the two of you, not a defect
+
+- Offir pushed to the branch **twice during the merge** (116 files, then 262). Each round cost a full re-merge and re-verification. The third round only worked because the branch was frozen by agreement first.
+- The branch ran from 2026-08-04 to 2026-09-06 and accumulated ~700 changed files. **Short-lived branches cut from `main`** avoid every category of problem in this document: the parallel plugin invention (D9), main's writers meeting dropped columns (F4), and the three-round merge itself.
+- **After this merge:** his branch tip is an ancestor of `main`, so the branch is fully landed. Either delete it and cut fresh, or `git merge --ff-only origin/main` to make it exactly equal.
+
+---
+
 ## Out of Scope
 
 - Any **new** Business OS feature work.
@@ -676,4 +720,5 @@ Additional open checks not directed at Offir:
 | 2026-09-02 | **Finding F6 added** | `/landing-preview` (new in `54184fdb`) breaks the build: `useSearchParams()` with no `<Suspense>` boundary. **Attributed by building his tip in a throwaway worktree** (D22) - same error, same exit code, so the merge neither caused nor worsened it. Not fixed, per the standing rule that branch defects belong to their author. Tracked as **Q10**. This is the **first time the build gate is red**, and it must be green before the merge to `main`. |
 | 2026-09-02 | **Build gate restored to green** | [F6](#finding-f6) fixed (D23) - `landing-preview` wrapped in a Suspense boundary. **`npm run build` exit 0, 282/282 static pages**, `/landing-preview` now prerendered. Guard + executor **93/93**, Business OS **632/632**, 0 tsc errors on the page. Offir's outstanding branch defects are now **F1** and **F3** only. |
 | 2026-09-02 | **Round 3 merged** | Offir's `6df79536` (262 files, +39,870/−5,786, 10 more migrations) merged. **4 conflicts** — all predicted, all on held decisions (D24–D27). His Edge logger supersedes D18's Pino conversion. **Build exit 0, 286/286. Guard + executor 93/93. Full jest 3,313 passed / 128 failed — identical baseline, and every failing suite is byte-identical to his tip.** Added **F7** (networked test) and **Q11**. |
+| 2026-09-06 | **Merged to `main`; document closed out** | [PR #33](https://github.com/AgentsPilot/neuronforge/pull/33) merged as `67362681`. Header reconciled to the final tally (**18 conflicts, 27 decisions, 3 rounds** — it still read 15/22/2 and "nothing pushed", and still showed the build red after F6 was fixed). Added a consolidated **[Handover to Offir](#handover-to-offir)** section: the detail was spread across six sections and a conversation needs one list. Recorded that SA/QA were deliberately deferred, and that **the 58 migrations are not applied by the merge**. |
 | 2026-09-01 | Document created | Initial gap analysis from RM: 14 content conflicts across 4 areas, 5 silently-auto-merging high-risk files, 6 verified-safe checks, 2 non-blocking cleanups. Records the blocking Business OS plugin-shape decision (**corrected framing: parallel invention, not a revert**), the merge-into-branch strategy, an 8-step ordered checklist, the Decision Log seeded with D1, and 6 open questions (Q1–Q4 for Offir). |
