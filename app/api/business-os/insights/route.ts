@@ -29,6 +29,9 @@ const getInsightsSchema = z.object({
   status: z.enum(['new', 'viewed', 'snoozed', 'dismissed', 'acted', 'automated']).optional(),
   limit: z.coerce.number().min(1).max(50).optional().default(10),
   includeProjection: z.coerce.boolean().optional().default(false),
+  includeCorrelated: z.coerce.boolean().optional().default(true),
+  includeHealthSummary: z.coerce.boolean().optional().default(true),
+  includeVectorMaturity: z.coerce.boolean().optional().default(true),
 });
 
 const actionSchema = z.object({
@@ -82,19 +85,63 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Get correlated insights (unified story-driven insights)
+    let correlatedInsights: Awaited<ReturnType<typeof repository.getCorrelatedInsights>>['data'] = [];
+    if (params.includeCorrelated) {
+      const correlatedResult = await repository.getCorrelatedInsights(user.id);
+      correlatedInsights = correlatedResult.data || [];
+    }
+
+    // Get business health summary
+    let healthSummary: Awaited<ReturnType<typeof repository.getLatestHealthSummary>>['data'] = null;
+    if (params.includeHealthSummary) {
+      const healthResult = await repository.getLatestHealthSummary(user.id);
+      healthSummary = healthResult.data;
+    }
+
+    // Get vector maturity data (progressive data revelation)
+    let vectorMaturity: Awaited<ReturnType<typeof repository.getVectorMaturity>>['data'] = null;
+    if (params.includeVectorMaturity) {
+      const vectorResult = await repository.getVectorMaturity(user.id);
+      vectorMaturity = vectorResult.data;
+    }
+
+    // Returning an insight to the dashboard is the moment it reaches the user,
+    // so it counts as surfaced. Detector cooldowns key off last_surfaced_at;
+    // leaving it to the "opened it" action alone meant a detection nobody
+    // clicked was re-detected every fifteen minutes for weeks.
+    if (insights.length > 0) {
+      await repository.markManySurfaced(insights, user.id);
+    }
+
     // Also get autonomous work feed
     const workFeed = new AutonomousWorkFeed(supabaseServer);
     const myDayData = await workFeed.getMyDayData(user.id);
 
     requestLogger.info(
-      { userId: user.id, insightCount: insights.length },
+      {
+        userId: user.id,
+        insightCount: insights.length,
+        correlatedCount: correlatedInsights?.length || 0,
+        hasHealthSummary: !!healthSummary,
+        maturityLevel: vectorMaturity?.maturityLevel,
+        litVectors: vectorMaturity?.litCount,
+      },
       'Fetched insights'
     );
 
     return NextResponse.json({
       success: true,
       data: {
+        // Vector maturity (progressive data revelation - which vectors are active)
+        vectorMaturity,
+        // Correlated insights first (the "WOW" story-driven insights)
+        correlatedInsights,
+        // Health summary (executive overview)
+        healthSummary,
+        // Individual insights (non-correlated)
         insights: insightsWithProjections,
+        // Autonomous work done by the system
         autonomousWork: myDayData.completedWork,
         stats: myDayData.stats,
       },

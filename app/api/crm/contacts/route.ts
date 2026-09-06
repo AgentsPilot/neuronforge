@@ -10,6 +10,9 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { z } from 'zod';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence } from '@/lib/business-os/activityText';
+import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'CRMContactsAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -100,13 +103,50 @@ export async function POST(request: NextRequest) {
         entityType: 'crm_contact',
         entityId: result.data!.id,
         resourceName: `${result.data!.first_name || ''} ${result.data!.last_name || ''}`.trim() || result.data!.email || 'Contact',
-        metadata: {
+        details: {
           stage: result.data!.stage,
           tags: result.data!.tags
         },
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
+
+    /*
+     * The beginning of the story, on the contact's own timeline.
+     *
+     * Every edit to a contact was recorded and their arrival was not, so the
+     * earliest thing in a client's history was a change to a record that
+     * appeared from nowhere. Written in the business's language, like every
+     * other activity.
+     */
+    if (result.data) {
+      const { data: ownerProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const ownerLocale = ownerProfile?.language || 'en';
+      const source = result.data.source || null;
+
+      crmActivityRepository.create({
+        user_id: user.id,
+        contact_id: result.data.id,
+        activity_type: 'contact_created',
+        // Named only when we know where they came from — "added from unknown"
+        // is worse than saying nothing about it.
+        title: source
+          ? activitySentence('contact_created_from', { source }, ownerLocale)
+          : activitySentence('contact_created', {}, ownerLocale),
+        description: JSON.stringify({
+          kind: 'contact_created',
+          source: source || undefined,
+          stage: result.data.stage || undefined,
+        }),
+        auto_logged: true,
+        source_capability: 'crm',
+        source_entity_id: result.data.id,
+      }).catch(err => requestLogger.warn({ err }, 'Contact-created activity logging failed (non-blocking)'));
+    }
 
     // 5. Return success
     requestLogger.info({ contactId: result.data!.id, userId: user.id }, 'Contact created successfully');

@@ -157,7 +157,8 @@ export class WebsiteBlockEnrichmentService {
     templateContent: Record<string, unknown>,
     language: WebsiteLanguage = 'en',
     useAI: boolean = false,
-    userEmail?: string
+    userEmail?: string,
+    isSingleServicePage: boolean = false
   ): Promise<EnrichmentResult<Record<string, unknown>>> {
     logger.info({ userId, blockType, language, useAI }, 'Enriching block');
 
@@ -175,6 +176,12 @@ export class WebsiteBlockEnrichmentService {
           ? this.enrichHeroBlockWithAI(userId, templateContent as HeroBlockContent, language)
           : this.enrichHeroBlock(userId, templateContent as HeroBlockContent, language);
       case 'pricing':
+        // A landing page's pricing is the one service it is about. Its plans
+        // are written by the generator and kept current from `scheduling_services`
+        // on every read, so there is nothing here to fill in — only to overwrite.
+        if (isSingleServicePage) {
+          return { content: templateContent, enriched: false, source: 'template', enrichedFields: [] };
+        }
         return this.enrichPricingBlock(userId, templateContent as PricingBlockContent, language);
       case 'contact_form':
         return this.enrichContactFormBlock(userId, templateContent as ContactFormBlockContent, language, userEmail);
@@ -207,16 +214,25 @@ export class WebsiteBlockEnrichmentService {
    * @param useAI - Whether to use AI for content generation
    * @param userEmail - Optional user email address for contact info enrichment
    */
+  /**
+   * @param isSingleServicePage A landing page sells ONE service, so sections
+   *   that fill themselves from the whole catalogue must not. Publishing one
+   *   replaced its single pricing plan with every priced service the business
+   *   has and marked an unrelated one "popular" — and because those injected
+   *   plans carry no `serviceId`, their buttons fell back to a plain link
+   *   instead of opening the booking modal the real plan opens.
+   */
   async enrichBlocks(
     userId: string,
     blocks: Array<{ block_type: string; content: Record<string, unknown>; position: number }>,
     language: WebsiteLanguage = 'en',
     useAI: boolean = false,
-    userEmail?: string
+    userEmail?: string,
+    isSingleServicePage: boolean = false
   ): Promise<Array<{ block_type: string; content: Record<string, unknown>; position: number; enriched: boolean }>> {
     const enrichedBlocks = await Promise.all(
       blocks.map(async (block) => {
-        const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI, userEmail);
+        const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI, userEmail, isSingleServicePage);
         return {
           ...block,
           content: result.content,
@@ -258,7 +274,12 @@ export class WebsiteBlockEnrichmentService {
         description: service.description || '',
         icon: websiteAIContentService.getServiceIcon(service.service_name),
         price: service.price ? this.formatPrice(service.price, service.currency) : undefined,
-        duration: service.duration_minutes ? this.formatDuration(service.duration_minutes, language) : undefined
+        priceRaw: service.price ?? undefined,
+        duration: service.duration_minutes ? this.formatDuration(service.duration_minutes, language) : undefined,
+        // Carried so the public page can describe each service's own journey
+        // rather than one story for the whole site.
+        is_scheduled: service.is_scheduled !== false,
+        collection: service.collection ?? null
       }));
 
       // Localized titles

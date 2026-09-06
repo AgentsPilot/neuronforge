@@ -100,6 +100,12 @@ export function SchedulingCalendarView({
 }: SchedulingCalendarViewProps) {
   const { t, language, formatCurrency } = useLanguage();
 
+  // CRITICAL DEBUG: Check if bookings prop is actually populated
+  console.log('🔍 SchedulingCalendarView RENDER:', {
+    bookingsLength: bookings.length,
+    bookingsSample: bookings.slice(0, 3).map(b => ({ id: b.id.substring(0, 8), start: b.start_time, status: b.status }))
+  });
+
   // Israel/Hebrew uses Sunday-first weeks, most other locales use Monday-first
   const weekStartsOnSunday = language === 'he';
 
@@ -222,6 +228,60 @@ export function SchedulingCalendarView({
     ? bookings
     : bookings.filter(booking => booking.status === statusFilter);
 
+  // Debug logging
+  useEffect(() => {
+    console.log('📊 SchedulingCalendarView Debug:', {
+      totalBookings: bookings.length,
+      filteredBookings: filteredBookings.length,
+      statusFilter,
+      currentWeek: currentWeek.toISOString(),
+      currentWeekLocal: currentWeek.toLocaleString(),
+      weekDates: weekDates.map(d => ({
+        iso: d.toISOString(),
+        local: d.toLocaleString(),
+        dateString: d.toDateString()
+      })),
+      bookingsStatuses: bookings.map(b => ({
+        id: b.id.substring(0, 8),
+        status: b.status,
+        start_utc: b.start_time,
+        start_local: new Date(b.start_time).toLocaleString(),
+        client: b.client_first_name
+      }))
+    });
+
+    // Check each day
+    weekDates.forEach((date, i) => {
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(date);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      const dayBookings = filteredBookings.filter(booking => {
+        const bookingStart = new Date(booking.start_time);
+        const bookingEnd = new Date(booking.end_time);
+        const overlaps = bookingStart < dayEnd && bookingEnd > dayStart;
+
+        if (bookings.length > 0 && i === 4) {  // Thursday (day 4 in Sunday-first week)
+          console.log(`🗓️  Day ${i} (${date.toDateString()}) check:`, {
+            dayStart: dayStart.toISOString(),
+            dayEnd: dayEnd.toISOString(),
+            booking: booking.id.substring(0, 8),
+            bookingStart: bookingStart.toISOString(),
+            bookingEnd: bookingEnd.toISOString(),
+            overlaps
+          });
+        }
+
+        return overlaps;
+      });
+
+      if (dayBookings.length > 0) {
+        console.log(`✅ Day ${i} (${date.toDateString()}) has ${dayBookings.length} bookings`);
+      }
+    });
+  }, [bookings, filteredBookings, statusFilter, currentWeek, weekDates]);
+
   const getBookingsForDay = (date: Date) => {
     // Create start and end of the day in local timezone
     const dayStart = new Date(date);
@@ -229,12 +289,41 @@ export function SchedulingCalendarView({
     const dayEnd = new Date(date);
     dayEnd.setHours(23, 59, 59, 999);
 
-    return filteredBookings.filter(booking => {
+    const dayBookings = filteredBookings.filter(booking => {
+      // booking.start_time is UTC string (e.g., "2026-08-07T14:00:00+00:00")
+      // new Date() converts it to local timezone
       const bookingStart = new Date(booking.start_time);
       const bookingEnd = new Date(booking.end_time);
       // Check if booking overlaps with this day (handles timezone edge cases)
-      return bookingStart < dayEnd && bookingEnd > dayStart;
+      const overlaps = bookingStart < dayEnd && bookingEnd > dayStart;
+
+      // Log first booking to understand timezone conversion
+      if (booking === filteredBookings[0]) {
+        console.log('📅 First booking timezone check:', {
+          utcStart: booking.start_time,
+          utcEnd: booking.end_time,
+          localStart: bookingStart.toLocaleString(),
+          localEnd: bookingEnd.toLocaleString(),
+          checkingDay: date.toDateString(),
+          dayRange: `${dayStart.toLocaleString()} - ${dayEnd.toLocaleString()}`,
+          overlaps
+        });
+      }
+
+      return overlaps;
     });
+
+    if (dayBookings.length > 0) {
+      console.log('✅ Bookings for day', date.toDateString(), ':', dayBookings.map(b => ({
+        id: b.id.substring(0, 8),
+        client: b.client_first_name,
+        startUTC: b.start_time,
+        startLocal: new Date(b.start_time).toLocaleString(),
+        status: b.status
+      })));
+    }
+
+    return dayBookings;
   };
 
   const getWeekBookings = () => {
@@ -261,6 +350,7 @@ export function SchedulingCalendarView({
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
     // Always use 12-hour format with AM/PM for better readability
+    // new Date() automatically converts UTC to local timezone
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
   };
 
@@ -270,9 +360,20 @@ export function SchedulingCalendarView({
   };
 
   const getBookingPosition = (startTime: string) => {
+    // IMPORTANT: new Date() converts UTC string to local timezone automatically
     const date = new Date(startTime);
-    const hour = date.getHours();
-    const minutes = date.getMinutes();
+    const hour = date.getHours(); // This is LOCAL hour
+    const minutes = date.getMinutes(); // This is LOCAL minutes
+
+    console.log(`📍 Booking position for ${startTime}:`, {
+      utc: startTime,
+      localTime: date.toLocaleString(),
+      localHour: hour,
+      localMinutes: minutes,
+      calendarStartHour,
+      position: ((hour - calendarStartHour) * ROW_HEIGHT) + (minutes / 60 * ROW_HEIGHT)
+    });
+
     // Calendar starts at the first visible hour
     return ((hour - calendarStartHour) * ROW_HEIGHT) + (minutes / 60 * ROW_HEIGHT);
   };

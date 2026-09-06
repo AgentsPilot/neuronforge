@@ -9,7 +9,7 @@ import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 interface FAQContent {
   title?: string;
   subtitle?: string;
-  faqs: FAQItem[];
+  faqs?: FAQItem[];
   layout?: 'accordion' | 'grid' | 'simple';
 }
 
@@ -24,11 +24,13 @@ export function FAQBlock({ content, styles, theme, isRTL, className, locale = 'e
   // Support both 'faqs' (new) and 'items' (legacy) keys for backwards compatibility
   const contentWithLegacy = content as FAQContentWithLegacy;
   const {
-    title = t('frequentlyAskedQuestions'),
+    title: contentTitle,
     subtitle,
     faqs = contentWithLegacy.items || [],  // Fallback to 'items' for existing data
     layout = 'accordion'
   } = contentWithLegacy;
+  // Use AI-generated title from content first, translation as fallback only
+  const title = contentTitle || t('frequentlyAskedQuestions');
 
   const [openIndex, setOpenIndex] = useState<number | null>(0);
   const primaryColor = theme?.colors.primary || '#4F6EF7';

@@ -81,7 +81,7 @@ export function MyDaySection({
   onInsightClick,
   children,
 }: MyDaySectionProps) {
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, formatCurrency } = useLanguage();
 
   // Handle toggling the collapse state - use parent state if provided, otherwise internal
   const handleToggleCollapse = () => {
@@ -416,7 +416,7 @@ export function MyDaySection({
                       className="text-xs font-semibold px-2 py-0.5 rounded"
                       style={{ background: 'rgba(220, 38, 38, 0.1)', color: '#DC2626' }}
                     >
-                      ${impactUsd.toLocaleString()} {t('myday.insight.at_risk') || 'at risk'}
+                      {formatCurrency(impactUsd, { showFree: false })} {t('myday.insight.at_risk') || 'at risk'}
                     </span>
                   ) : (
                     <span />

@@ -4,9 +4,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { CALENDAR_PLUGIN_KEYS } from '@/lib/plugins/pluginKeys';
+import { isThemeCustomized } from '@/lib/business-os/setup/profileReadiness';
 
 const logger = createLogger({ module: 'SetupStatusAPI' });
 
@@ -40,11 +43,12 @@ export async function GET(request: NextRequest) {
 
     requestLogger.info({ userId: user.id }, 'Fetching setup status');
 
-    // 2. Fetch all setup-related data in parallel (optimized - 4 queries instead of 6)
+    // 2. Fetch all setup-related data in parallel (optimized - 5 queries)
     const [
       { data: businessProfile },
       { count: servicesCount },
       { data: pluginConnections },
+      { data: stripeConnectAccount },
       { data: websitePage },
     ] = await Promise.all([
       // Business profile - includes availability and dismissed steps
@@ -60,24 +64,30 @@ export async function GET(request: NextRequest) {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
         .eq('status', 'active'),
-      // All relevant plugin connections in one query
+      // Calendar plugin connections
       supabaseServer
         .from('plugin_connections')
         .select('plugin_key')
         .eq('user_id', user.id)
-        .in('plugin_key', ['stripe', 'google_calendar', 'outlook_calendar'])
+        .in('plugin_key', CALENDAR_PLUGIN_KEYS)
         .eq('status', 'active'),
+      // Stripe Connect account - stored in separate table
+      supabaseServer
+        .from('stripe_connect_accounts')
+        .select('id, charges_enabled, onboarding_completed')
+        .eq('user_id', user.id)
+        .maybeSingle(),
       // Website page - check if user has a published homepage
       supabaseServer
         .from('website_pages')
-        .select('id, published, subdomain')
+        .select('id, published, subdomain, theme')
         .eq('user_id', user.id)
         .eq('page_type', 'homepage')
         .maybeSingle(),
     ]);
 
-    // Debug: Log the full businessProfile to see all fields
-    requestLogger.info({ businessProfile }, 'Full business profile from DB');
+    // Debug: Log the full businessProfile and stripe account to see all fields
+    requestLogger.info({ businessProfile, stripeConnectAccount }, 'Full business profile and stripe account from DB');
 
     // 3. Determine completion status for each step
     const connectedPlugins = new Set(pluginConnections?.map(p => p.plugin_key) || []);
@@ -88,9 +98,28 @@ export async function GET(request: NextRequest) {
     const hasAvailability = !!(availability &&
       Object.values(availability).some(slots => Array.isArray(slots) && slots.length > 0));
 
-    const hasStripe = connectedPlugins.has('stripe');
-    const hasCalendar = connectedPlugins.has('google_calendar') || connectedPlugins.has('outlook_calendar');
+    // Stripe is connected if the user has a stripe_connect_account with charges enabled or onboarding completed
+    /**
+     * `||` marked the Payments step COMPLETE for an account that cannot charge:
+     * `onboarding_completed` is written as `charges_enabled AND
+     * payouts_enabled`, so a business whose charges Stripe had disabled still
+     * satisfied the second half. The checklist lied in the most damaging
+     * direction — telling an owner they were set up to take money when they
+     * were not.
+     */
+    const stripeCapability = await resolvePaymentCollectionCapability(supabaseServer, user.id);
+    const hasStripe = stripeCapability.canCollect;
+    // Against the same constant the query filters on. Written as literals here,
+    // these read 'google_calendar' and 'outlook_calendar' — neither of which is
+    // a real plugin key, so the step stayed incomplete however many calendars
+    // the user connected. The query was corrected; this check was missed.
+    const hasCalendar = CALENDAR_PLUGIN_KEYS.some(key => connectedPlugins.has(key));
     const hasWebsite = !!(websitePage?.published && websitePage?.subdomain);
+
+    // The look of the business: the same theme drives the site, the invoice PDF
+    // and every transactional email, so it is worth prompting for even before a
+    // site is published.
+    const hasTheme = isThemeCustomized(websitePage?.theme);
 
     // 4. Build steps array (order matters for display)
     // Only include steps that are NOT complete - we only show what's missing
@@ -100,6 +129,7 @@ export async function GET(request: NextRequest) {
       { id: 'payments', complete: hasStripe },
       { id: 'calendar', complete: hasCalendar },
       { id: 'website', complete: hasWebsite },
+      { id: 'design', complete: hasTheme },
     ];
 
     const completedCount = steps.filter(s => s.complete).length;

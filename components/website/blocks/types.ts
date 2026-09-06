@@ -1,3 +1,4 @@
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 /**
  * Website Block Renderer Types
  * Shared types for all block renderers with i18n/RTL support
@@ -26,7 +27,8 @@ export type BlockType =
   | 'gallery'
   | 'newsletter'
   | 'logo_cloud'
-  | 'video';
+  | 'video'
+  | 'footer';
 
 // Header menu item interface
 export interface HeaderMenuItem {
@@ -110,6 +112,17 @@ export function flowHasClientInfo(flow: FlowStep[]): boolean {
   return flow.includes('client_info') || flow.includes('scheduling') || flow.includes('booking');
 }
 
+/** What a public block needs to know to resolve a service's journey. */
+export interface JourneyServiceFacts {
+  name?: string;
+  /** Does booking this involve picking a time? */
+  is_scheduled?: boolean | null;
+  /** How the money arrives, or null where the service is free. */
+  collection?: 'online' | 'invoice' | null;
+  priceRaw?: number | null;
+  hidden?: boolean;
+}
+
 export interface BlockRendererProps {
   content: Record<string, unknown>;
   styles?: BlockStyles;
@@ -125,14 +138,32 @@ export interface BlockRendererProps {
   pageId?: string;
   /** Client flow configuration - steps that happen after clicking a service */
   clientFlow?: FlowStep[];
+  /**
+   * The services the page offers, reduced to the two facts that decide each
+   * one's journey.
+   *
+   * The page used to narrate a single stored `client_flow` — one story for the
+   * whole site — while the booking widget resolved the journey per service. A
+   * business selling an appointment paid by card and an invoiced programme had
+   * a page describing neither.
+   */
+  journeyServices?: JourneyServiceFacts[];
   /** Booking page URL */
   bookingUrl?: string;
   /** Website subdomain - used for public API calls */
   subdomain?: string;
+  /** User code - used for standalone conversion pages (alternative to subdomain) */
+  userCode?: string;
   /** Preview mode - enables in-page booking modal instead of navigation */
   isPreview?: boolean;
   /** Callback when booking modal should open (preview mode) - receives selected service */
-  onOpenBooking?: (service: SelectedServiceData) => void;
+  /**
+   * Open the booking flow.
+   *
+   * `null` means no service chosen yet — a header or hero CTA is not about any
+   * one service, so the modal opens at its catalogue step and the client picks.
+   */
+  onOpenBooking?: (service: SelectedServiceData | null) => void;
 }
 
 /** Service data passed when opening booking modal */
@@ -143,6 +174,30 @@ export interface SelectedServiceData {
   duration_minutes: number;
   price: number | null;
   currency: string;
+  /**
+   * The two facts that decide this service's journey.
+   *
+   * They were not here, so the booking modal could not know whether the thing
+   * the client had just picked needed a time or took a card — it fell back to a
+   * page-level flow and, failing that, to a hardcoded
+   * ['scheduling','client_info','payment','confirmation']. The service CARD
+   * beside it was already printing the correct journey from these same two
+   * facts, so a client could read "no booking needed · pay by card" and then be
+   * asked to choose an appointment slot.
+   *
+   * Optional because an older page's blocks do not carry them; the modal falls
+   * back to the stored flow when they are absent.
+   */
+  is_scheduled?: boolean | null;
+  collection?: 'online' | 'invoice' | null;
+  /**
+   * How this service may be paid over time.
+   *
+   * Travels with the service for the same reason the two facts above do: the
+   * payment step has to describe what the client is agreeing to, and a plan
+   * that stops at the pricing card never reaches the modal that takes the card.
+   */
+  paymentPlan?: ServicePaymentPlan;
 }
 
 // Common service type

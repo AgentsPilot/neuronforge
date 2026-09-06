@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import type { Locale } from '@/lib/i18n/config';
 import { getDirection } from '@/lib/i18n/config';
-import type { BlockType, BlockStyles, PageTheme, FlowStep, SelectedServiceData } from './types';
+import type { BlockType, BlockStyles, PageTheme, FlowStep, SelectedServiceData, JourneyServiceFacts, BlockRendererProps } from './types';
 import { normalizeClientFlow } from './types';
 
 // Block Components
@@ -38,6 +38,7 @@ import { GalleryBlock } from './GalleryBlock';
 import { NewsletterBlock } from './NewsletterBlock';
 import { LogoCloudBlock } from './LogoCloudBlock';
 import { VideoBlock } from './VideoBlock';
+import { FooterBlock } from './FooterBlock';
 import { ProcessFlowSection } from './ProcessFlowSection';
 import { BookingModal } from './BookingModal';
 
@@ -63,29 +64,18 @@ export {
   GalleryBlock,
   NewsletterBlock,
   LogoCloudBlock,
-  VideoBlock
+  VideoBlock,
+  FooterBlock
 };
 
 // Export types
 export * from './types';
 
 // Block registry
-const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<{
-  content: Record<string, unknown>;
-  styles?: BlockStyles;
-  theme?: PageTheme;
-  locale: Locale;
-  isRTL: boolean;
-  className?: string;
-  useLiveData?: boolean;
-  blockId?: string;
-  pageId?: string;
-  clientFlow?: FlowStep[];
-  bookingUrl?: string;
-  subdomain?: string;
-  isPreview?: boolean;
-  onOpenBooking?: (service: SelectedServiceData) => void;
-}>> = {
+// Typed from the one contract every block already implements, rather than a
+// transcription of it: the copy that used to live here had drifted, and a prop
+// added to `BlockRendererProps` was rejected here for not existing.
+const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<BlockRendererProps>> = {
   header: HeaderBlock,
   hero: HeroBlock,
   services: ServicesBlock,
@@ -106,7 +96,8 @@ const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<{
   gallery: GalleryBlock,
   newsletter: NewsletterBlock,
   logo_cloud: LogoCloudBlock,
-  video: VideoBlock
+  video: VideoBlock,
+  footer: FooterBlock
 };
 
 // Block display names (for UI)
@@ -131,7 +122,8 @@ export const BLOCK_DISPLAY_NAMES: Record<BlockType, { en: string; es: string; he
   gallery: { en: 'Gallery', es: 'Galería', he: 'גלריה' },
   newsletter: { en: 'Newsletter', es: 'Boletín', he: 'ניוזלטר' },
   logo_cloud: { en: 'Logo Cloud', es: 'Logos', he: 'לוגואים' },
-  video: { en: 'Video', es: 'Video', he: 'וידאו' }
+  video: { en: 'Video', es: 'Video', he: 'וידאו' },
+  footer: { en: 'Footer', es: 'Pie de Página', he: 'כותרת תחתונה' }
 };
 
 // Block icons (for UI)
@@ -156,7 +148,8 @@ export const BLOCK_ICONS: Record<BlockType, string> = {
   gallery: '🖼️',
   newsletter: '📰',
   logo_cloud: '🏢',
-  video: '🎬'
+  video: '🎬',
+  footer: '📍'
 };
 
 /**
@@ -312,12 +305,71 @@ export function WebsiteBlocks({
       || undefined;
   // Normalize the flow to expand legacy 'booking' step to ['scheduling', 'client_info']
   const clientFlow = rawClientFlow ? normalizeClientFlow(rawClientFlow) : undefined;
+  // The services this page offers, as the two facts that decide each one's
+  // journey. Read from the services block because that is where the page
+  // stores its catalogue; a page written before these were carried simply has
+  // none, and the blocks fall back to the stored client_flow.
+  const servicesBlock = sortedBlocks.find(b => b.block_type === 'services');
+  const journeyServices = ((servicesBlock?.content?.services as JourneyServiceFacts[] | undefined) || [])
+    .filter(service => !service.hidden);
+
   // Booking URL must be explicitly provided or stored in process block
   // No default fallback - if not set, booking buttons won't show (handled by ServicesBlock)
   const bookingUrl = explicitBookingUrl || (processBlock?.content?.booking_url as string | undefined);
 
-  const handleOpenBooking = (service: SelectedServiceData) => {
-    setSelectedService(service);
+  /*
+   * The one service this page is about, when it is about one.
+   *
+   * A landing page is built for a single service and its pricing block carries
+   * that service's id, name, price, duration and journey — injected live on
+   * every read. A website's pricing block carries several, and then there is no
+   * single answer.
+   *
+   * Uses the `pricingBlock` already resolved above for the client flow.
+   */
+  const pageService: SelectedServiceData | null = (() => {
+    const content = pricingBlock?.content as {
+      serviceId?: string;
+      serviceName?: string;
+      currency?: string;
+      durationMinutes?: number;
+      plans?: Array<Record<string, unknown>>;
+    } | undefined;
+
+    const plans = content?.plans || [];
+    if (plans.length !== 1) return null;
+
+    const plan = plans[0];
+    const id = (plan.serviceId as string) || content?.serviceId;
+    if (!id) return null;
+
+    return {
+      id,
+      name: (plan.serviceName as string) || content?.serviceName || (plan.name as string) || '',
+      description: (plan.description as string) ?? null,
+      duration_minutes: (plan.durationMinutes as number) || content?.durationMinutes || 60,
+      price: (plan.priceRaw as number) ?? null,
+      currency: (plan.currency as string) || content?.currency || 'USD',
+      is_scheduled: plan.is_scheduled as boolean | null | undefined,
+      collection: plan.collection as 'online' | 'invoice' | null | undefined,
+      // The split travels with the service, so a page-level CTA opens the same
+      // dialog — same terms — as the button on the pricing card.
+      paymentPlan: plan.paymentPlan as SelectedServiceData['paymentPlan'],
+    };
+  })();
+
+  /**
+   * @param service The one the client picked, or null from a page-level CTA.
+   *
+   * A header or hero button on a WEBSITE is not about any particular service,
+   * so the modal opens at its catalogue step and the client chooses there. On a
+   * landing page it is — the whole page is about one service — and opening the
+   * catalogue asked the client to pick from a list the page never mentioned,
+   * while the button beside it in the pricing card opened straight onto the
+   * service. Same button, same words, two different dialogs.
+   */
+  const handleOpenBooking = (service: SelectedServiceData | null) => {
+    setSelectedService(service ?? pageService);
     setBookingModalOpen(true);
   };
 
@@ -342,7 +394,8 @@ export function WebsiteBlocks({
       features: 'features',
       gallery: 'gallery',
       cta: 'cta',
-      stats: 'stats'
+      stats: 'stats',
+      footer: 'footer'
     };
     return anchorMap[blockType] || blockType.replace('_', '-');
   };
@@ -374,6 +427,7 @@ export function WebsiteBlocks({
               blockId={block.id}
               pageId={pageId}
               clientFlow={clientFlow}
+              journeyServices={journeyServices}
               bookingUrl={bookingUrl}
               subdomain={subdomain}
               isPreview={isPreview}

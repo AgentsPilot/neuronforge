@@ -7,10 +7,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
+import { claimBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, WebsitePageUpdate } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
+import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsitePageAPI' });
@@ -121,6 +123,18 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     requestLogger.info({ pageId: id, userId: user.id }, 'Updated website page');
 
+    /*
+     * Setting a page's address settles the business's, if it had none.
+     *
+     * This is the path the website's Settings screen saves through, and the one
+     * the landing page's publish step uses to write an address before going
+     * live. Either way the business now has an address, and everything created
+     * afterwards should inherit it rather than mint another.
+     */
+    if (validated.subdomain) {
+      await claimBusinessSubdomain(user.id, validated.subdomain);
+    }
+
     return NextResponse.json({ success: true, page: result.data });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -152,6 +166,20 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     // Check for mode parameter: 'archive' (deactivate) or 'permanent' (hard delete)
     const { searchParams } = new URL(request.url);
     const mode = searchParams.get('mode') || 'archive';
+    /*
+     * Also throw away the copy this business wrote.
+     *
+     * `website_content` is per-USER, not per-page, so deleting a page never
+     * touches it — right for a rebuild or a template swap, where the point of
+     * that table is to outlive the structure. Wrong for "delete my website",
+     * where leaving the words behind means the next site silently comes back
+     * wearing them.
+     *
+     * Explicit rather than inferred from the page type: a caller deleting one
+     * landing page must not wipe the words on the homepage, and a flag says so
+     * where a heuristic would only imply it.
+     */
+    const purgeContent = searchParams.get('purge_content') === 'true';
 
     const pageRepo = new WebsitePageRepository(supabaseServer);
 
@@ -175,7 +203,23 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       requestLogger.info({ pageId: id, userId: user.id, mode: 'archive' }, 'Archived website page');
     }
 
-    return NextResponse.json({ success: true, mode });
+    if (purgeContent) {
+      // After the page, so a failure here cannot leave a live site whose copy
+      // has been deleted out from under it.
+      const contentRepo = new WebsiteContentRepository(supabaseServer);
+      const purge = await contentRepo.deleteForUser(user.id);
+      if (purge.error) {
+        // The page is already gone; say the content survived rather than
+        // reporting a clean delete that was not one.
+        requestLogger.error({ err: purge.error, userId: user.id }, 'Page deleted but content purge failed');
+        return NextResponse.json(
+          { success: true, mode, contentPurged: false, warning: 'Website deleted, but your saved text could not be removed' }
+        );
+      }
+      requestLogger.info({ userId: user.id, pageId: id }, 'Purged website content');
+    }
+
+    return NextResponse.json({ success: true, mode, contentPurged: purgeContent });
   } catch (error) {
     requestLogger.error({ err: error, id }, 'Failed to delete page');
     return NextResponse.json(

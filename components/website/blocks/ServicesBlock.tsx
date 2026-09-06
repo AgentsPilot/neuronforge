@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { BlockRendererProps, ServiceItem, FlowStep, SelectedServiceData } from './types';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
+import { journeySteps } from '@/lib/business-os/clientJourney';
 
 // Map icon names to Lucide components
 const ICON_REGISTRY: Record<string, LucideIcon> = {
@@ -64,6 +65,10 @@ function ServiceIcon({ icon, className, primaryColor = '#4F6EF7', secondaryColor
 interface ServiceItemWithRawData extends ServiceItem {
   id?: string;
   priceRaw?: number;
+  /** Does booking this involve picking a time? */
+  is_scheduled?: boolean | null;
+  /** How the money arrives, or null where the service is free. */
+  collection?: 'online' | 'invoice' | null;
   currency?: string;
   durationMinutes?: number;
   hidden?: boolean;
@@ -78,10 +83,56 @@ interface ServicesContent {
   layout?: 'grid' | 'list' | 'cards' | 'featured';
 }
 
+
+/**
+ * What this one service asks of a client, in order.
+ *
+ * The same resolver the booking widget runs, so the card cannot promise a
+ * journey the widget will not walk — the page describing one flow while the
+ * widget ran another is the reason this exists. Steps rather than a sentence
+ * because that is what the client meets: the smart link shows exactly this
+ * row above its form.
+ */
+const JOURNEY_WORDS: Record<string, Record<string, string>> = {
+  datetime: { en: 'Pick a time', es: 'Elige un horario', he: 'בחירת מועד' },
+  details: { en: 'Your details', es: 'Tus datos', he: 'הפרטים שלך' },
+  payment: { en: 'Pay online', es: 'Paga en línea', he: 'תשלום מקוון' },
+  intake: { en: 'Short form', es: 'Formulario breve', he: 'טופס קצר' },
+  confirmation: { en: 'Confirmation', es: 'Confirmación', he: 'אישור' },
+};
+
+/** Said after the steps, because it is not something the client does here. */
+const INVOICE_TAIL: Record<string, string> = {
+  en: 'invoice to follow',
+  es: 'factura después',
+  he: 'חשבונית תישלח לאחר מכן',
+};
+
 export function ServicesBlock({ content, styles, theme, isRTL, className, clientFlow, bookingUrl, locale = 'en', isPreview, onOpenBooking }: BlockRendererProps) {
   // Translation helper
   const t = (key: string, section: 'services' | 'common' = 'services') =>
     getBlockTranslation(section, key, locale);
+
+  const journeyLabel = (service: ServiceItemWithRawData): string | null => {
+    // A card with neither fact is from a page written before services carried
+    // them. Saying nothing is better than guessing at the journey.
+    if (service.is_scheduled === undefined && service.collection === undefined) return null;
+
+    const words = journeySteps(
+      { is_scheduled: service.is_scheduled, collection: service.collection, price: service.priceRaw },
+      { processorReady: true }
+    )
+      // 'service' is choosing this card, which the client has already done.
+      .filter(step => step !== 'service')
+      .map(step => JOURNEY_WORDS[step]?.[locale] || JOURNEY_WORDS[step]?.en)
+      .filter(Boolean);
+
+    if (words.length === 0) return null;
+
+    const invoiced = (service.priceRaw || 0) > 0 && service.collection === 'invoice';
+    const line = words.join(' · ');
+    return invoiced ? `${line} · ${INVOICE_TAIL[locale] || INVOICE_TAIL.en}` : line;
+  };
 
   // Format duration with translation
   const formatDuration = (service: ServiceItemWithRawData): string | null => {
@@ -108,37 +159,18 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   // Use translated default if no title provided
   const displayTitle = title || t('ourServices');
 
-  // CTA labels based on flow - includes new 'scheduling' and 'client_info' steps
-  const ctaLabels: Record<string, Record<FlowStep, string>> = {
-    en: {
-      scheduling: 'Book Now',
-      client_info: 'Get Started',
-      booking: 'Book Now',  // legacy
-      payment: 'Buy Now',
-      intake: 'Get Started',
-      confirmation: 'Learn More'
-    },
-    es: {
-      scheduling: 'Reservar',
-      client_info: 'Comenzar',
-      booking: 'Reservar',  // legacy
-      payment: 'Comprar',
-      intake: 'Empezar',
-      confirmation: 'Más Info'
-    },
-    he: {
-      scheduling: 'הזמן עכשיו',
-      client_info: 'התחל',
-      booking: 'הזמן עכשיו',  // legacy
-      payment: 'קנה עכשיו',
-      intake: 'התחל',
-      confirmation: 'מידע נוסף'
-    }
-  };
-
-  // Determine CTA based on first step in flow
+  // Determine CTA based on first step in flow - use translation helper
   const firstStep = clientFlow?.[0] || 'scheduling';
-  const ctaText = ctaLabels[locale || 'en']?.[firstStep] || ctaLabels.en[firstStep];
+  // Map flow step to translation key
+  const flowStepToTranslationKey: Record<FlowStep, string> = {
+    scheduling: 'bookNow',
+    client_info: 'getStarted',
+    booking: 'bookNow',  // legacy
+    payment: 'buyNow',
+    intake: 'getStarted',
+    confirmation: 'learnMore'
+  };
+  const ctaText = t(flowStepToTranslationKey[firstStep], 'common');
   const hasBookingFlow = clientFlow && clientFlow.length > 0;
 
   // Services come pre-filtered (active only) from the blocks-with-content API
@@ -162,7 +194,12 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
       description: service.description || null,
       duration_minutes: service.durationMinutes || 60,
       price: service.priceRaw ?? null,
-      currency: service.currency || 'USD'
+      currency: service.currency || 'USD',
+      // Carried through so the modal resolves this service's own journey. The
+      // card above already prints it from these two fields; without them the
+      // modal walked a different one.
+      is_scheduled: service.is_scheduled,
+      collection: service.collection
     };
   };
 
@@ -434,6 +471,21 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       </span>
                     )}
                   </div>
+                )}
+
+                {/* What buying this one involves.
+                    A price and a duration described the product; they never
+                    said whether the client picks a time or pays here. Two
+                    services on the same page can differ in both, which is why
+                    this belongs on the card rather than in one section
+                    describing the whole site. */}
+                {journeyLabel(service) && (
+                  <p
+                    className="mt-4 text-xs leading-relaxed"
+                    style={{ color: isDark ? 'rgba(209, 213, 219, 0.75)' : 'rgba(75, 85, 99, 0.85)' }}
+                  >
+                    {journeyLabel(service)}
+                  </p>
                 )}
 
                 {/* CTA Button with gradient */}

@@ -36,7 +36,15 @@
       "Bash(uniq -c echo \"\" echo \"6. Final calibration status:\" grep -E \"Batch calibration|criticalIssues|calibration.*complete\" /tmp/neuronforge-calibration.log)",
       "Bash(awk:*)",
       "Bash(npm run build:*)",
-      "Bash(npx next lint:*)"
+      "Bash(npx next lint:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm pack:*)",
+      "Bash(tar:*)",
+      "Bash(npm install:*)",
+      "Bash(DOTENV_CONFIG_PATH=.env.local npx tsx:*)",
+      "Bash(npx tsx scripts/test-slot-filling-localization.ts)",
+      "Bash(git log:*)",
+      "Bash(python3 -)"
     ]
   }
 }

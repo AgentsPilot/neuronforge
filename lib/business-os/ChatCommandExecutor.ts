@@ -28,6 +28,103 @@ const SCHEDULING_PLUGIN_KEY = 'scheduling';
 // Payments P4: internal Payments plugin key. TODO(R7): route via capability resolver.
 const PAYMENTS_PLUGIN_KEY = 'payments';
 
+// ---------------------------------------------------------------------------
+// FOLLOW-UP (merge, 2026-09-02): this is a SECOND capability-authorization
+// implementation. main routes capability checks through
+// lib/business-os/chat/CapabilityEngine.ts (repository-backed); the function
+// below queries `user_capabilities` directly via supabaseServer, which also
+// violates the mandatory repository rule in CLAUDE.md.
+//
+// Kept as-is by the merge so the branch's feature keeps working. Collapsing the
+// two is a deliberate change, not merge work - see D11 / C3 in
+// docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md.
+// ---------------------------------------------------------------------------
+// Map intent types to required capabilities (DATABASE-DRIVEN AUTHORIZATION)
+// `null` marks an intent that needs no capability (navigation, unknown).
+const INTENT_CAPABILITY_MAP: Record<string, string | null> = {
+  // Scheduling capability
+  'service.create': 'scheduling',
+  'service.update': 'scheduling',
+  'service.delete': 'scheduling',
+  'availability.update': 'scheduling',
+  'availability.query': 'scheduling',
+  'booking.create': 'scheduling',
+  'booking.query': 'scheduling',
+  'booking.cancel': 'scheduling',
+  'calendar.open': 'scheduling',
+
+  // CRM capability
+  'contact.add': 'crm',
+  'contact.update': 'crm',
+  'contact.query': 'crm',
+  'contact.view': 'crm',
+  'task.create': 'crm',
+  'task.query': 'crm',
+
+  // Payments capability
+  'invoice.create': 'payments',
+  'invoice.query': 'payments',
+  'payment.record': 'payments',
+
+  // Reports capability
+  'report.query': 'reports',
+  'report.compare': 'reports',
+
+  // Navigation - always allowed
+  'navigate': null,
+  'preview.switch': null,
+  'unknown': null,
+};
+
+/**
+ * Check if user has access to the required capability for an intent
+ */
+async function verifyCapabilityAccess(
+  userId: string,
+  intentType: string
+): Promise<{ allowed: boolean; requiredCapability: string | null }> {
+  const requiredCapability = INTENT_CAPABILITY_MAP[intentType] ?? null;
+
+  // If no capability required (navigation, unknown), always allow
+  if (!requiredCapability) {
+    return { allowed: true, requiredCapability: null };
+  }
+
+  try {
+    // Check if user has this capability activated
+    const { data: userCapability } = await supabaseServer
+      .from('user_capabilities')
+      .select(`
+        is_active,
+        capabilities!inner (
+          capability_key
+        )
+      `)
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .eq('capabilities.capability_key', requiredCapability)
+      .maybeSingle();
+
+    if (userCapability) {
+      return { allowed: true, requiredCapability };
+    }
+
+    logger.info(
+      { userId, intentType, requiredCapability },
+      'User attempted to use disabled capability'
+    );
+
+    return { allowed: false, requiredCapability };
+  } catch (error) {
+    logger.error(
+      { err: error, userId, intentType, requiredCapability },
+      'Failed to verify capability access'
+    );
+    // On error, deny access for safety
+    return { allowed: false, requiredCapability };
+  }
+}
+
 // Multilingual response templates
 const RESPONSES: Record<string, Record<string, string>> = {
   // Service create
@@ -298,8 +395,10 @@ const RESPONSES: Record<string, Record<string, string>> = {
   },
   // Invoice
   'invoice.create.response': {
-    en: `To create an invoice for <b>{contact}</b> ({amount}), please use the payments page. <a href="/business-os/payments" style="color: #F97316; text-decoration: underline;">Open payments →</a>`,
-    he: `כדי ליצור חשבונית עבור <b>{contact}</b> ({amount}), השתמש בדף התשלומים. <a href="/business-os/payments" style="color: #F97316; text-decoration: underline;">פתח תשלומים ←</a>`,
+    // Names the tab the reader can actually see. There has been no "invoices
+    // tab" since the money view moved, and it is now called Orders.
+    en: `To create an invoice for <b>{contact}</b> ({amount}), please use the Orders tab. <a href="/business-os/orders" style="color: #F97316; text-decoration: underline;">Open orders →</a>`,
+    he: `כדי ליצור חשבונית עבור <b>{contact}</b> ({amount}), השתמש בלשונית ההזמנות. <a href="/business-os/orders" style="color: #F97316; text-decoration: underline;">פתח הזמנות ←</a>`,
   },
   'invoice.create.contact.default': {
     en: 'client',
@@ -340,6 +439,32 @@ const RESPONSES: Record<string, Record<string, string>> = {
   'error.general': {
     en: 'Something went wrong while processing your request. Please try again.',
     he: 'משהו השתבש בעיבוד הבקשה. אנא נסה שוב.',
+  },
+  // Capability disabled errors
+  'error.capability.disabled': {
+    en: 'This feature is not enabled for your account. You can enable it in Settings.',
+    he: 'תכונה זו לא מופעלת בחשבונך. ניתן להפעיל אותה בהגדרות.',
+    es: 'Esta función no está habilitada para tu cuenta. Puedes habilitarla en Configuración.',
+  },
+  'error.capability.scheduling': {
+    en: 'Scheduling features are not enabled for your account.',
+    he: 'תכונות תזמון אינן מופעלות בחשבונך.',
+    es: 'Las funciones de programación no están habilitadas para tu cuenta.',
+  },
+  'error.capability.crm': {
+    en: 'CRM features are not enabled for your account.',
+    he: 'תכונות CRM אינן מופעלות בחשבונך.',
+    es: 'Las funciones de CRM no están habilitadas para tu cuenta.',
+  },
+  'error.capability.payments': {
+    en: 'Payment features are not enabled for your account.',
+    he: 'תכונות תשלום אינן מופעלות בחשבונך.',
+    es: 'Las funciones de pago no están habilitadas para tu cuenta.',
+  },
+  'error.capability.reports': {
+    en: 'Reporting features are not enabled for your account.',
+    he: 'תכונות דוחות אינן מופעלות בחשבונך.',
+    es: 'Las funciones de informes no están habilitadas para tu cuenta.',
   },
   // Confirmation
   'confirm.service.delete': {
@@ -402,6 +527,11 @@ const RESPONSES: Record<string, Record<string, string>> = {
   'suggestion.openCalendar': {
     en: 'Open calendar',
     he: 'פתח יומן',
+  },
+  'suggestion.openSettings': {
+    en: 'Open settings',
+    he: 'פתח הגדרות',
+    es: 'Abrir configuración',
   },
   'suggestion.viewBookings': {
     en: 'View bookings',
@@ -959,6 +1089,17 @@ export async function executeIntent(
       success: true,
       response: generateConfirmationPrompt(intentType, entities, lang),
       suggestions: getSuggestionsLocalized(['suggestion.yesDoIt', 'suggestion.noCancel'], lang),
+    };
+  }
+
+  // Check capability authorization (DATABASE-DRIVEN)
+  const { allowed, requiredCapability } = await verifyCapabilityAccess(context.userId, intentType);
+  if (!allowed && requiredCapability) {
+    const capabilityErrorKey = `error.capability.${requiredCapability}`;
+    return {
+      success: false,
+      response: t(capabilityErrorKey, lang) || t('error.capability.disabled', lang),
+      suggestions: getSuggestionsLocalized(['suggestion.openSettings'], lang),
     };
   }
 
@@ -3404,7 +3545,7 @@ async function executeInvoiceQuery(
     return {
       success: true,
       response: t('invoice.query.none', lang),
-      route: '/business-os/payments',
+      route: '/business-os/orders',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3422,7 +3563,7 @@ async function executePaymentRecord(
     return {
       success: false,
       response: t('error.general', lang),
-      route: '/business-os/payments',
+      route: '/business-os/orders',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3486,7 +3627,7 @@ async function executePaymentRecord(
     return {
       success: false,
       response: t('error.general', lang),
-      route: '/business-os/payments',
+      route: '/business-os/orders',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3545,8 +3686,8 @@ function executeNavigate(entities: Record<string, any>, lang: string): CommandRe
     services: '/business-os',
     scheduling: '/business-os',
     calendar: '/business-os',
-    payments: '/business-os/payments',
-    invoices: '/business-os/payments',
+    payments: '/business-os/orders',
+    invoices: '/business-os/orders',
     settings: '/business-os/settings',
     config: '/business-os/settings',
     home: '/business-os',

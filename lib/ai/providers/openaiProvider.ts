@@ -153,6 +153,42 @@ export class OpenAIProvider extends BaseAIProvider {
    * @param context - Analytics tracking context
    * @returns Parsed JSON data and token usage
    */
+  /**
+   * Generate embeddings.
+   *
+   * EmbeddingService has always called `provider.createEmbedding()`, but no
+   * provider implemented it — the call threw, every caller caught it and
+   * degraded, and the failure was invisible. That silently disabled semantic
+   * search wherever it was used, including the help bot's cache.
+   *
+   * Routed through the same tracking as completions, so embedding spend shows up
+   * in analytics rather than being untracked cost.
+   */
+  async createEmbedding(
+    params: { model: string; input: string | string[] },
+    context: CallContext
+  ): Promise<OpenAI.Embeddings.CreateEmbeddingResponse> {
+    return this.callWithTracking(
+      context,
+      'openai',
+      params.model,
+      'embeddings',
+      () => this.openai.embeddings.create({ model: params.model, input: params.input }),
+      (result: OpenAI.Embeddings.CreateEmbeddingResponse) => ({
+        inputTokens: result.usage?.prompt_tokens || 0,
+        // Embeddings have no completion side; recording 0 keeps analytics honest
+        // rather than double-counting the input.
+        outputTokens: 0,
+        cost: this.calculateCost(params.model, {
+          prompt_tokens: result.usage?.prompt_tokens || 0,
+          completion_tokens: 0,
+          total_tokens: result.usage?.total_tokens || 0,
+        }),
+        responseSize: 0,
+      })
+    ) as Promise<OpenAI.Embeddings.CreateEmbeddingResponse>;
+  }
+
   async chatCompletionJson<T>(
     params: OpenAI.Chat.ChatCompletionCreateParams,
     context: CallContext

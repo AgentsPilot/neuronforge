@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { Sparkles, CreditCard, Loader2, CheckCircle2, AlertCircle, Clock, ExternalLink } from 'lucide-react';
+import { Sparkles, CreditCard, Loader2, CheckCircle2, AlertCircle, Clock, ExternalLink, Trash2 } from 'lucide-react';
 
 const logger = createLogger({ module: 'StripeConnectStatus' });
 
@@ -33,6 +33,8 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
   const [connecting, setConnecting] = useState(false);
   const [showOptionsDialog, setShowOptionsDialog] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     fetchStripeAccount();
@@ -168,6 +170,30 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
       logger.error({ err: error }, 'Failed to refresh status');
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      const response = await fetch('/api/payments/stripe-connect/delete', {
+        method: 'DELETE',
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        setAccount(null);
+        setShowDeleteConfirm(false);
+        onStatusChange?.();
+      } else {
+        logger.error({ error: result.error }, 'Failed to delete Stripe account');
+        alert(result.error || 'Failed to disconnect account. Please try again.');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to delete Stripe account');
+      alert('Something went wrong. Please try again.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -343,66 +369,115 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
 
   // Fully connected and onboarded - show success state
   return (
-    <div
-      className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4"
-      style={{ borderRadius: 'var(--v2-radius-card)' }}
-      dir={isRTL ? 'rtl' : 'ltr'}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
-            <h3 className="font-semibold text-green-900 dark:text-green-100">
-              {t('payments.stripe.connected')}
-            </h3>
-          </div>
-          {detailed ? (
-            <div className="mt-3 space-y-2 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-green-800 dark:text-green-200">{t('payments.stripe.ready_to_accept')}:</span>
-                <span className="font-medium text-green-600 dark:text-green-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-4 h-4" />
-                  {t('payments.stripe.yes')}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-green-800 dark:text-green-200">{t('payments.stripe.bank_connected')}:</span>
-                <span className={`font-medium flex items-center gap-1 ${account.payouts_enabled ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                  {account.payouts_enabled ? (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      {t('payments.stripe.yes')}
-                    </>
-                  ) : (
-                    <>
-                      <Clock className="w-4 h-4" />
-                      {t('payments.stripe.pending')}
-                    </>
-                  )}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-green-800 dark:text-green-200">{t('payments.stripe.currency')}:</span>
-                <span className="font-medium text-green-700 dark:text-green-300">{account.currency?.toUpperCase()}</span>
-              </div>
+    <>
+      <div
+        className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4"
+        style={{ borderRadius: 'var(--v2-radius-card)' }}
+        dir={isRTL ? 'rtl' : 'ltr'}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
+              <h3 className="font-semibold text-green-900 dark:text-green-100">
+                {t('payments.stripe.connected')}
+              </h3>
             </div>
-          ) : (
-            <p className="text-sm text-green-800 dark:text-green-200 mt-1">
-              {t('payments.stripe.connected_desc')}
-            </p>
+            {detailed ? (
+              <div className="mt-3 space-y-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-green-800 dark:text-green-200">{t('payments.stripe.ready_to_accept')}:</span>
+                  <span className="font-medium text-green-600 dark:text-green-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-4 h-4" />
+                    {t('payments.stripe.yes')}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-green-800 dark:text-green-200">{t('payments.stripe.bank_connected')}:</span>
+                  <span className={`font-medium flex items-center gap-1 ${account.payouts_enabled ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                    {account.payouts_enabled ? (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        {t('payments.stripe.yes')}
+                      </>
+                    ) : (
+                      <>
+                        <Clock className="w-4 h-4" />
+                        {t('payments.stripe.pending')}
+                      </>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-green-800 dark:text-green-200">{t('payments.stripe.currency')}:</span>
+                  <span className="font-medium text-green-700 dark:text-green-300">{account.currency?.toUpperCase()}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-green-800 dark:text-green-200 mt-1">
+                {t('payments.stripe.connected_desc')}
+              </p>
+            )}
+          </div>
+          {detailed && (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={handleManageAccount}
+                className="text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900/30"
+              >
+                <ExternalLink className="w-4 h-4 me-2" />
+                {t('payments.stripe.manage_button')}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowDeleteConfirm(true)}
+                className="text-red-600 dark:text-red-400 border-red-300 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/30"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </div>
           )}
         </div>
-        {detailed && (
-          <Button
-            variant="outline"
-            onClick={handleManageAccount}
-            className="text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900/30"
-          >
-            <ExternalLink className="w-4 h-4 me-2" />
-            {t('payments.stripe.manage_button')}
-          </Button>
-        )}
       </div>
-    </div>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle className="text-xl text-red-600 dark:text-red-400">
+              {t('payments.stripe.disconnect_title')}
+            </DialogTitle>
+            <DialogDescription>
+              {t('payments.stripe.disconnect_desc')}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+            <p className="text-sm text-red-800 dark:text-red-200">
+              {t('payments.stripe.disconnect_warning')}
+            </p>
+          </div>
+
+          <DialogFooter className="mt-6 gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowDeleteConfirm(false)}
+              disabled={deleting}
+            >
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteAccount}
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin me-2" /> : <Trash2 className="w-4 h-4 me-2" />}
+              {t('payments.stripe.disconnect_button')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

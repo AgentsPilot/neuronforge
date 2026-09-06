@@ -1,21 +1,23 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { CRMPipelineView } from '@/components/crm/CRMPipelineView';
 import { CRMContactList } from '@/components/crm/CRMContactList';
+import { CRMTaskList } from '@/components/crm/CRMTaskList';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
+import { CRMTaskModal } from '@/components/crm/CRMTaskModal';
 import { CRMContactDrawerV2 } from '@/components/crm/contact-drawer';
-import { Plus, Search, ArrowLeft, Users, Download, LayoutGrid, List } from 'lucide-react';
+import { Plus, Search, Users, Download, LayoutGrid, List, CheckSquare } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 
 const logger = createLogger({ module: 'CRMPage' });
 
-type ViewMode = 'pipeline' | 'contacts';
+type ViewMode = 'pipeline' | 'contacts' | 'tasks';
 
 export default function CRMPage() {
   const router = useRouter();
@@ -25,14 +27,18 @@ export default function CRMPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedContact, setSelectedContact] = useState<CRMContact | null>(null);
   const [isNewContactModalOpen, setIsNewContactModalOpen] = useState(false);
-  const [contacts, setContacts] = useState<CRMContact[]>([]);
+  const [isNewTaskModalOpen, setIsNewTaskModalOpen] = useState(false);
+  const [taskToEdit, setTaskToEdit] = useState<any>(null);
+  const [taskListKey, setTaskListKey] = useState(0); // For refreshing task list
+  const [contacts, setContacts] = useState<CRMContact[]>([]); // All contacts for pipeline view
   const [pipelineStages, setPipelineStages] = useState<CRMPipelineStage[]>([]);
   const [enabledCapabilities, setEnabledCapabilities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
   const [drawerDefaultTab, setDrawerDefaultTab] = useState<'details' | 'tasks' | undefined>(undefined);
-  const PAGE_SIZE = 50;
+  // Pagination state for contacts list view
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalContacts, setTotalContacts] = useState(0);
+  const PAGE_SIZE = 10;
 
   // Fetch pipeline stages and capabilities on mount
   useEffect(() => {
@@ -112,9 +118,8 @@ export default function CRMPage() {
 
   // Reset and fetch when search changes
   useEffect(() => {
-    setContacts([]);
-    setHasMore(true);
-    fetchContacts(0, true);
+    setCurrentPage(1);
+    fetchContacts();
   }, [searchQuery]);
 
   const fetchPipelineStages = async () => {
@@ -141,61 +146,62 @@ export default function CRMPage() {
     }
   };
 
-  const fetchContacts = async (offset: number = 0, reset: boolean = false, silent: boolean = false) => {
+  // Fetch ALL contacts (for pipeline view and total count)
+  const fetchContacts = async (silent: boolean = false) => {
     try {
       if (!silent) {
-        if (reset) {
-          setLoading(true);
-        } else {
-          setLoadingMore(true);
-        }
+        setLoading(true);
       }
 
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
-      params.set('limit', String(PAGE_SIZE));
-      params.set('offset', String(offset));
+      // No limit - fetch all contacts for pipeline view
 
       const response = await fetch(`/api/crm/contacts?${params}`);
       const data = await response.json();
 
       if (data.success) {
-        const newContacts = data.contacts || [];
-        if (reset) {
-          setContacts(newContacts);
-        } else {
-          setContacts(prev => [...prev, ...newContacts]);
-        }
-        // If we got fewer items than PAGE_SIZE, no more data
-        setHasMore(newContacts.length === PAGE_SIZE);
+        const allContacts = data.contacts || [];
+        setContacts(allContacts);
+        setTotalContacts(allContacts.length);
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch contacts');
     } finally {
       if (!silent) {
         setLoading(false);
-        setLoadingMore(false);
       }
     }
   };
 
-  const loadMore = useCallback(() => {
-    if (!loadingMore && hasMore) {
-      fetchContacts(contacts.length, false);
-    }
-  }, [loadingMore, hasMore, contacts.length]);
+  // Get paginated contacts for list view
+  const paginatedContacts = contacts.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
+  const totalPages = Math.ceil(totalContacts / PAGE_SIZE);
+
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+  };
 
   const handleContactCreated = () => {
     setIsNewContactModalOpen(false);
-    fetchContacts(0, true);
+    fetchContacts();
   };
 
   const handleContactUpdated = () => {
     setSelectedContact(null);
-    fetchContacts(0, true);
+    fetchContacts();
   };
 
   const handleContactClick = (contact: CRMContact) => {
+    setDrawerDefaultTab('details');
+    setSelectedContact(contact);
+  };
+
+  const handleContactClickFromTaskList = (contact: CRMContact) => {
+    setDrawerDefaultTab('tasks');
     setSelectedContact(contact);
   };
 
@@ -245,10 +251,9 @@ export default function CRMPage() {
 
   return (
     <div className="min-h-screen bg-[var(--v2-bg)]">
-      <BusinessOSHeader />
 
       {/* Main Content with max-width like dashboard */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+      <div className={`${PAGE_CONTAINER} py-6 sm:py-8 space-y-8`}>
 
         {/* Page Header with purple theme (CRM capability color) */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -263,21 +268,15 @@ export default function CRMPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
-            {/* Back to Dashboard */}
-            <button
-              onClick={() => router.push('/business-os')}
-              className="p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all flex-shrink-0"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('crm.back_to_dashboard')}
-            >
-              <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
-            </button>
-
             <div className="relative hidden md:block">
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
               <input
                 type="text"
-                placeholder={t('crm.search_placeholder')}
+                placeholder={
+                  viewMode === 'tasks'
+                    ? (t('crm.tasks.search_placeholder') || 'Search tasks...')
+                    : t('crm.search_placeholder')
+                }
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="ps-10 pe-4 py-2 w-48 lg:w-64 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
@@ -325,17 +324,41 @@ export default function CRMPage() {
               >
                 <List className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </button>
+              <button
+                className={`p-1.5 sm:p-2 transition-all border ${
+                  viewMode === 'tasks'
+                    ? 'text-[#8B5CF6] border-[#8B5CF6] bg-[#8B5CF6]/10'
+                    : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
+                }`}
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                onClick={() => setViewMode('tasks')}
+                title={t('crm.tab_tasks')}
+              >
+                <CheckSquare className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              </button>
             </div>
 
-            <button
-              onClick={() => setIsNewContactModalOpen(true)}
-              className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[#8B5CF6] text-xs sm:text-sm font-medium border border-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 transition-all whitespace-nowrap"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-              <span className="hidden xs:inline">{t('crm.add_contact')}</span>
-              <span className="xs:hidden">Add</span>
-            </button>
+            {viewMode === 'tasks' ? (
+              <button
+                onClick={() => setIsNewTaskModalOpen(true)}
+                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[#8B5CF6] text-xs sm:text-sm font-medium border border-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 transition-all whitespace-nowrap"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden xs:inline">{t('crm.tasks.add_task')}</span>
+                <span className="xs:hidden">{t('crm.add_short')}</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setIsNewContactModalOpen(true)}
+                className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-[#8B5CF6] text-xs sm:text-sm font-medium border border-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 transition-all whitespace-nowrap"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Plus className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden xs:inline">{t('crm.add_contact')}</span>
+                <span className="xs:hidden">{t('crm.add_short')}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -344,7 +367,11 @@ export default function CRMPage() {
           <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
           <input
             type="text"
-            placeholder={t('crm.search_placeholder')}
+            placeholder={
+              viewMode === 'tasks'
+                ? (t('crm.tasks.search_placeholder') || 'Search tasks...')
+                : t('crm.search_placeholder')
+            }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="ps-10 pe-4 py-2 w-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] transition-all"
@@ -367,17 +394,27 @@ export default function CRMPage() {
                 contacts={contacts}
                 stages={pipelineStages}
                 onContactClick={handleContactClick}
-                onContactUpdated={() => fetchContacts(0, true, true)}
+                onContactUpdated={() => fetchContacts(true)}
               />
             )}
             {viewMode === 'contacts' && (
               <CRMContactList
-                contacts={contacts}
+                contacts={paginatedContacts}
+                stages={pipelineStages}
                 onContactClick={handleContactClick}
-                onLoadMore={loadMore}
-                hasMore={hasMore}
-                loadingMore={loadingMore}
-                onContactsUpdated={() => fetchContacts(0, true)}
+                onContactsUpdated={() => fetchContacts()}
+                currentPage={currentPage}
+                totalPages={totalPages}
+                onPageChange={handlePageChange}
+              />
+            )}
+            {viewMode === 'tasks' && (
+              <CRMTaskList
+                key={taskListKey}
+                onContactClick={handleContactClickFromTaskList}
+                onTaskClick={(task) => setTaskToEdit(task)}
+                onTasksUpdated={() => setTaskListKey(prev => prev + 1)}
+                searchQuery={searchQuery}
               />
             )}
           </>
@@ -396,6 +433,8 @@ export default function CRMPage() {
             setDrawerDefaultTab(undefined); // Reset default tab when closing
           }}
           onContactUpdated={handleContactUpdated}
+          onTasksUpdated={() => setTaskListKey(prev => prev + 1)}
+          initialSection={drawerDefaultTab || 'details'}
         />
       )}
 
@@ -408,6 +447,20 @@ export default function CRMPage() {
           onContactUpdated={handleContactCreated}
         />
       )}
+
+      {/* New/Edit Task Modal */}
+      <CRMTaskModal
+        isOpen={isNewTaskModalOpen || !!taskToEdit}
+        onClose={() => {
+          setIsNewTaskModalOpen(false);
+          setTaskToEdit(null);
+        }}
+        onTaskCreated={() => {
+          setTaskListKey(prev => prev + 1); // Refresh task list
+          setTaskToEdit(null);
+        }}
+        taskToEdit={taskToEdit}
+      />
     </div>
   );
 }

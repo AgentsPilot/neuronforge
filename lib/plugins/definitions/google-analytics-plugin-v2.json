@@ -1,0 +1,235 @@
+{
+  "plugin": {
+    "name": "google-analytics",
+    "version": "1.0.0",
+    "description": "Read-only Google Analytics 4 website traffic: sessions, users, page views and where visitors came from",
+    "context": "Use to understand how a business's website is performing and which sources send it traffic. Works for any GA4-measured site, including ones not hosted by AgentPilot. This plugin is READ-ONLY: it cannot change any GA4 configuration, property or data stream.",
+    "icon": "<Search className='w-5 h-5 text-orange-500'/>",
+    "category": "marketing",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2_google",
+      "client_id": "${GOOGLE_CLIENT_ID}",
+      "client_secret": "${GOOGLE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/google-analytics",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "profile_url": "https://www.googleapis.com/oauth2/v2/userinfo",
+      "required_scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/analytics.readonly"
+      ]
+    },
+    "provider_family": "google"
+  },
+  "actions": {
+    "list_properties": {
+      "description": "List the GA4 properties this user can read, with the account each belongs to",
+      "usage_context": "Call first after connecting. Most businesses have exactly one property, in which case the caller should select it automatically rather than asking the user to pick.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "list",
+      "input_entity": "none",
+      "output_entity": "property",
+      "input_cardinality": "none",
+      "output_cardinality": "multiple",
+      "output_fields": [
+        "properties",
+        "property_count"
+      ],
+      "required_params": [],
+      "optional_params": [],
+      "must_support": [],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "properties": {
+            "type": "array",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Numeric GA4 property ID, without the 'properties/' prefix"
+                },
+                "display_name": {
+                  "type": "string",
+                  "description": "Property name as shown in GA4"
+                },
+                "account_name": {
+                  "type": "string",
+                  "description": "Owning account's display name"
+                }
+              }
+            }
+          },
+          "property_count": {
+            "type": "number",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns every GA4 property the connected Google account can read",
+        "sample_output": "{\"properties\":[{\"id\":\"401234567\",\"display_name\":\"parentingschool.co.il\",\"account_name\":\"International Parenting School\"}],\"property_count\":1,\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "Empty list when the Google account has no GA4 access, or only has Universal Analytics properties — UA was shut down and its properties are not returned here."
+      }
+    },
+    "run_report": {
+      "description": "Daily website traffic for a GA4 property, optionally broken down by traffic source",
+      "usage_context": "Use with dimension 'date' for a time series, or add 'sessionSource' to see which channels send traffic. Dimensions and metrics are restricted to a fixed set — this is not a general GA4 report builder.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": "property",
+      "output_entity": "insights",
+      "input_cardinality": "single",
+      "output_cardinality": "multiple",
+      "output_fields": [
+        "rows",
+        "property_id"
+      ],
+      "required_params": [
+        "property_id"
+      ],
+      "optional_params": [
+        "since",
+        "until",
+        "dimensions",
+        "metrics"
+      ],
+      "must_support": [
+        "date_filtering"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "property_id"
+        ],
+        "properties": {
+          "property_id": {
+            "type": "string",
+            "description": "Numeric GA4 property ID from list_properties"
+          },
+          "since": {
+            "type": "string",
+            "description": "Start date, ISO 8601 (e.g. '2026-06-01'). Defaults to 30 days ago."
+          },
+          "until": {
+            "type": "string",
+            "description": "End date, ISO 8601. Defaults to today."
+          },
+          "dimensions": {
+            "type": "array",
+            "default": [
+              "date"
+            ],
+            "description": "Breakdown dimensions. Restricted to this set deliberately — arbitrary GA4 report building is not exposed.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "date",
+                "sessionSource",
+                "sessionMedium",
+                "sessionCampaignName",
+                "landingPage",
+                "deviceCategory",
+                "country",
+                "hostName"
+              ]
+            }
+          },
+          "metrics": {
+            "type": "array",
+            "default": [
+              "sessions",
+              "activeUsers",
+              "screenPageViews"
+            ],
+            "description": "Metrics to return",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sessions",
+                "activeUsers",
+                "newUsers",
+                "screenPageViews",
+                "engagedSessions",
+                "conversions",
+                "bounceRate",
+                "averageSessionDuration"
+              ]
+            }
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "property_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "rows": {
+            "type": "array",
+            "x-guaranteed": true,
+            "description": "One entry per combination of the requested dimensions. Dimension values appear as named keys alongside the metrics.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD, present when 'date' was requested"
+                },
+                "sessionSource": {
+                  "type": "string",
+                  "description": "e.g. 'instagram.com', 'google', '(direct)'"
+                },
+                "sessionMedium": {
+                  "type": "string"
+                },
+                "sessions": {
+                  "type": "number"
+                },
+                "activeUsers": {
+                  "type": "number"
+                },
+                "screenPageViews": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "row_count": {
+            "type": "number",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns one row per dimension combination, with the requested metrics as numbers",
+        "sample_output": "{\"property_id\":\"401234567\",\"rows\":[{\"date\":\"2026-08-24\",\"sessions\":42,\"activeUsers\":38,\"screenPageViews\":96}],\"row_count\":1,\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "GA4 returns no rows rather than an error for a range with no traffic — treat an empty rows array as zero, not as failure. Very recent days may be incomplete while GA4 finishes processing. Requesting a dimension outside the allowed enum is rejected before the API is called."
+      }
+    }
+  }
+}

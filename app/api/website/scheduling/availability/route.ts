@@ -236,7 +236,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (!service.is_active) {
+    // Both flags: the Power toggle and draft/published are different questions,
+    // and a service that is either switched off or unpublished is not bookable.
+    if (!service.is_active || service.status !== 'active') {
       return NextResponse.json(
         { success: false, error: 'Service is not available' },
         { status: 400 }
@@ -326,6 +328,22 @@ export async function GET(request: NextRequest) {
     // spanning into the day are correctly treated as busy. Every synced event is a busy block.
     const { data: busySlots } = await externalCalendarEventRepository.getBusySlots(ownerId, dayStart, dayEnd);
     const externalEvents = (busySlots || []).map(slot => ({ start_time: slot.start, end_time: slot.end }));
+
+    // `duration_minutes` is genuinely nullable: 20260901_service_shape.sql drops the
+    // NOT NULL so a service can exist without being booked against a span (courses,
+    // products). A service with no duration has no time slots to offer, so answer with
+    // an empty list rather than coercing to 0 and generating meaningless slots.
+    // Surfaced by routing through schedulingServiceRepository - the previous raw query
+    // returned an untyped row, so the null was never visible to the compiler.
+    if (!service.duration_minutes) {
+      return NextResponse.json({
+        success: true,
+        date,
+        service_id,
+        slots: [],
+        message: 'Service has no duration configured'
+      });
+    }
 
     // Generate available slots
     const slots = generateTimeSlots(

@@ -65,6 +65,11 @@ const FALLBACK_PRICING = {
     // GPT-4o Series (Legacy)
     'gpt-4o': { input: 0.0025, output: 0.01 },
     'gpt-4o-mini': { input: 0.00015, output: 0.0006 },
+    // Embeddings. Priced on input only — there is no completion side, so
+    // `output` is 0 and the output-token term contributes nothing.
+    'text-embedding-3-small': { input: 0.00002, output: 0 },
+    'text-embedding-3-large': { input: 0.00013, output: 0 },
+    'text-embedding-ada-002': { input: 0.0001, output: 0 },
     // Legacy
     'gpt-4-turbo': { input: 0.01, output: 0.03 },
     'gpt-4': { input: 0.03, output: 0.06 },

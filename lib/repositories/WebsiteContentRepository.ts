@@ -239,9 +239,25 @@ export class WebsiteContentRepository {
   constructor(private supabase: SupabaseClient) {}
 
   /**
-   * Get website content for a user (creates default if not exists)
+   * The row for this user, created if absent. **Writers only.**
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * Was `getOrCreate`, and every caller was a READER.
+   *
+   * A row inserted here carries the table's column defaults, which are the
+   * English placeholders — "Get in Touch", "Services", "Book Now". The block
+   * merge treats a non-empty central value as authoritative, so the moment a
+   * reader materialised this row those placeholders started winning over the
+   * content generation had written into the blocks. A Hebrew business that had
+   * never opened the editor got an English site the first time anyone LOOKED at
+   * one, including an anonymous visitor: the public route called this with the
+   * service-role client on behalf of strangers.
+   *
+   * Readers now use `findByUserId`, which returns `null` for "no row yet" and
+   * writes nothing. Only a real save reaches this.
+   * ─────────────────────────────────────────────────────────────────────────
    */
-  async getOrCreate(userId: string): Promise<RepositoryResult<WebsiteContent>> {
+  async ensure(userId: string): Promise<RepositoryResult<WebsiteContent>> {
     try {
       // Try to find existing
       const { data: existing, error: findError } = await this.supabase
@@ -272,6 +288,34 @@ export class WebsiteContentRepository {
       return { data: null, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to get/create website content');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Throw away everything this business authored.
+   *
+   * Only for deleting a website outright. This table is per-USER, not per-page,
+   * so a page delete leaves it standing — which is right for a template swap or
+   * a rebuild, and wrong for "delete my website", where the words are the part
+   * the business would be surprised to find still there.
+   *
+   * Not recoverable, and deliberately not a soft delete: a hidden row that
+   * quietly repopulates the next site somebody builds is worse than an empty
+   * one.
+   */
+  async deleteForUser(userId: string): Promise<RepositoryResult<boolean>> {
+    try {
+      const { error } = await this.supabase
+        .from('website_content')
+        .delete()
+        .eq('user_id', userId);
+
+      if (error) throw error;
+      logger.info({ userId }, 'Deleted website content');
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to delete website content');
       return { data: null, error: error as Error };
     }
   }
@@ -315,7 +359,7 @@ export class WebsiteContentRepository {
 
       if (!current.data) {
         // Create new record if doesn't exist
-        const createResult = await this.getOrCreate(userId);
+        const createResult = await this.ensure(userId);
         if (createResult.error || !createResult.data) {
           throw createResult.error || new Error('Failed to create content');
         }
@@ -352,7 +396,7 @@ export class WebsiteContentRepository {
   ): Promise<RepositoryResult<WebsiteContent>> {
     try {
       // Ensure record exists
-      await this.getOrCreate(userId);
+      await this.ensure(userId);
 
       const { data, error } = await this.supabase
         .from('website_content')
@@ -380,7 +424,7 @@ export class WebsiteContentRepository {
   ): Promise<RepositoryResult<WebsiteContent>> {
     try {
       // Ensure record exists
-      await this.getOrCreate(userId);
+      await this.ensure(userId);
 
       const { data, error } = await this.supabase
         .from('website_content')

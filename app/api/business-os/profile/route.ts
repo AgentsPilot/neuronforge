@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'BusinessProfileAPI' });
 
@@ -32,6 +33,14 @@ export async function GET(request: NextRequest) {
         { success: false, error: 'Failed to fetch profile' },
         { status: 500 }
       );
+    }
+
+    // Generate user_code if profile exists but user_code is missing
+    if (profile && !profile.user_code) {
+      const userCodeResult = await businessProfileRepository.getUserCode(user.id);
+      if (userCodeResult.data) {
+        profile.user_code = userCodeResult.data;
+      }
     }
 
     return NextResponse.json({

@@ -40,6 +40,9 @@ export interface CRMContactInsert {
   tags?: string[];
   custom_fields?: Record<string, any>;
   source?: string | null;
+  // Lead attribution (UTM params, referrer, session) captured at first touch.
+  // Backed by crm_contacts.source_metadata JSONB (20260824_add_conversion_layer.sql).
+  source_metadata?: Record<string, unknown> | null;
   notes?: string | null;
 }
 
@@ -194,10 +197,27 @@ export class CRMContactRepository {
       }
 
       // Search by name, email, or phone
+      // Handle multi-word searches (e.g., "אופיר עומר" should match first_name="אופיר", last_name="עומר")
       if (search) {
-        query = query.or(
-          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
-        );
+        const searchTerms = search.trim().split(/\s+/);
+
+        if (searchTerms.length === 1) {
+          // Single word - search in all fields
+          query = query.or(
+            `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+          );
+        } else {
+          // Multi-word - search each word in name fields OR full string in email/phone
+          // This allows "אופיר עומר" to match contacts where first_name contains "אופיר" AND last_name contains "עומר"
+          const firstWord = searchTerms[0];
+          const lastWord = searchTerms[searchTerms.length - 1];
+
+          // Search for: (first word in first_name OR last word in last_name) OR (any word in email/phone)
+          // Also include the full search term as fallback
+          query = query.or(
+            `first_name.ilike.%${firstWord}%,last_name.ilike.%${lastWord}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+          );
+        }
       }
 
       // Ordering
@@ -250,10 +270,21 @@ export class CRMContactRepository {
         query = query.overlaps('tags', tags);
       }
 
+      // Handle multi-word searches (same logic as list method)
       if (search) {
-        query = query.or(
-          `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
-        );
+        const searchTerms = search.trim().split(/\s+/);
+
+        if (searchTerms.length === 1) {
+          query = query.or(
+            `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+          );
+        } else {
+          const firstWord = searchTerms[0];
+          const lastWord = searchTerms[searchTerms.length - 1];
+          query = query.or(
+            `first_name.ilike.%${firstWord}%,last_name.ilike.%${lastWord}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,phone.ilike.%${search}%`
+          );
+        }
       }
 
       const { count, error } = await query;

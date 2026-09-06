@@ -205,6 +205,17 @@ export const capabilities: Capability[] = [
       { name: 'invoice_id', type: 'string', description: 'Invoice this payment is for (if known)' },
     ],
   },
+  {
+    id: 'transaction.query',
+    category: 'payments',
+    description: 'User wants to see PAYMENT TRANSACTIONS (refunds, payments received, etc.) - איזה לקוח קיבל החזר, show refunds, list transactions, who got a refund',
+    entities: [
+      { name: 'status', type: 'string', description: 'Filter: succeeded, refunded, pending, failed' },
+      { name: 'contact_name', type: 'string', description: 'Filter by client name' },
+      { name: 'limit', type: 'number', description: 'Max number of results' },
+    ],
+    notes: '"Who got a refund?" / "איזה לקוח החזרנו כסף" → status: refunded. "Show refunds" → status: refunded.',
+  },
 
   // ============================================================================
   // Reports & Analytics
@@ -365,4 +376,83 @@ export function getCapabilitiesByCategory(category: Capability['category']): Cap
  */
 export function getAllIntentIds(): string[] {
   return capabilities.map(c => c.id);
+}
+
+/**
+ * Map registry categories to database capability keys
+ * Used to filter capabilities based on user's activated capabilities
+ */
+const CATEGORY_TO_CAPABILITY_KEY: Record<Capability['category'], string> = {
+  'services': 'scheduling',
+  'availability': 'scheduling',
+  'scheduling': 'scheduling',
+  'crm': 'crm',
+  'tasks': 'crm',
+  'payments': 'payments',
+  'reports': 'reports',
+  'navigation': '', // Navigation is always allowed
+};
+
+/**
+ * Get capabilities filtered by user's active capability keys
+ * Used to generate a user-specific prompt that only includes
+ * capabilities they have access to.
+ *
+ * @param activeCapabilityKeys - Set of capability_key values from user_capabilities
+ */
+export function getCapabilitiesForUser(activeCapabilityKeys: Set<string>): Capability[] {
+  return capabilities.filter(cap => {
+    const requiredKey = CATEGORY_TO_CAPABILITY_KEY[cap.category];
+    // Navigation is always allowed
+    if (!requiredKey) return true;
+    // Check if user has the required capability activated
+    return activeCapabilityKeys.has(requiredKey);
+  });
+}
+
+/**
+ * Generate a filtered capability prompt for a specific user
+ * Only includes capabilities the user has access to.
+ *
+ * @param activeCapabilityKeys - Set of capability_key values from user_capabilities
+ */
+export function generateFilteredCapabilityPrompt(activeCapabilityKeys: Set<string>): string {
+  const userCapabilities = getCapabilitiesForUser(activeCapabilityKeys);
+
+  if (userCapabilities.length === 0) {
+    return 'AVAILABLE CAPABILITIES:\n\nNo capabilities are currently enabled.\n';
+  }
+
+  let prompt = 'AVAILABLE CAPABILITIES:\n\n';
+
+  // Group by category for readability
+  const byCategory = userCapabilities.reduce((acc, cap) => {
+    if (!acc[cap.category]) acc[cap.category] = [];
+    acc[cap.category].push(cap);
+    return acc;
+  }, {} as Record<string, Capability[]>);
+
+  const categoryOrder = ['services', 'availability', 'scheduling', 'crm', 'tasks', 'payments', 'reports', 'navigation'];
+
+  for (const category of categoryOrder) {
+    const caps = byCategory[category];
+    if (!caps) continue;
+
+    for (const cap of caps) {
+      prompt += `${cap.id} - ${cap.description}\n`;
+
+      // List entities to extract
+      const entityNames = cap.entities.map(e => e.name).join(', ');
+      prompt += `  → Extract: ${entityNames}\n`;
+
+      // Add notes if present
+      if (cap.notes) {
+        prompt += `  → Note: ${cap.notes}\n`;
+      }
+
+      prompt += '\n';
+    }
+  }
+
+  return prompt;
 }

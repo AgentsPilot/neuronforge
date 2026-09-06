@@ -570,7 +570,9 @@ export class MetaAdsPluginExecutor extends BasePluginExecutor {
 
   private async makeMetaRequest(connection: any, endpoint: string, method: string = 'GET', body?: any): Promise<any> {
     const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}/${endpoint}`;
-    const accessToken = connection.accessToken;
+    // UserConnection stores this snake_case. Reading the camelCase spelling here
+    // yielded undefined, so every request went out with an undefined token.
+    const accessToken = connection.access_token;
 
     const options: any = {
       method,
@@ -590,7 +592,9 @@ export class MetaAdsPluginExecutor extends BasePluginExecutor {
       options.body = JSON.stringify(body);
     }
 
-    this.logger.debug({ url: fullUrl, method }, 'Making Meta API request');
+    // Log the bare endpoint, never fullUrl — for GET it carries the access token
+    // in the query string, which would put a 60-day credential in the logs.
+    this.logger.debug({ endpoint, method }, 'Making Meta API request');
 
     const response = await fetch(fullUrl, options);
     const data = await response.json();

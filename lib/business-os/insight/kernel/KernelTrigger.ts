@@ -294,61 +294,58 @@ export class KernelTrigger {
   }
 
   /**
-   * Execute a process (simplified inline execution)
-   * In production, this would integrate with the full kernel workflow engine
+   * Execute a process.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * NOT IMPLEMENTED — AND IT MUST FAIL RATHER THAN PRETEND.
+   *
+   * This function used to return fabricated results. `chase_overdue_invoices`
+   * reported `Sent N payment reminders`, invented a 70% success rate, and
+   * computed `valueImpact = itemsSucceeded * 400 * 0.3` — an average invoice
+   * value and a collection rate, both constants, neither measured. No email was
+   * ever sent.
+   *
+   * Those numbers did not stay here. `trigger()` writes them to
+   * `kernel_executions` and `logAction()` copies them into `kernel_action_log`,
+   * which `AutonomousWorkFeed` and `ImpactProjector` render as the money this
+   * product recovered for the user. The product was reporting invented revenue
+   * from work it had not done.
+   *
+   * This is the same bug that started the Business OS chat rewrite: chat-v3's
+   * `email.send` returned `success: true` without sending, and the chat told
+   * users it had emailed people it never emailed. The rule established then
+   * applies here: AN UNIMPLEMENTED ACTION FAILS LOUDLY. NEVER RETURN SUCCESS FOR
+   * A NO-OP. `MutateExecutor` already enforces exactly this for the two catalog
+   * actions that are declared but unwired.
+   *
+   * Throwing is safe and correct here: `trigger()` catches, marks the execution
+   * `failed`, records the reason, and — importantly — does NOT call
+   * `logAction()`, so nothing fabricated reaches the user's feed.
+   *
+   * The real actuator is BizQL: `ForEachExecutor` sends real email through
+   * `lib/notifications/emailTransport.ts`, with `allowBulk`/`maxFanout` caps,
+   * per-user daily quotas and DB-enforced idempotency. Wiring these processes to
+   * it is Increment 2 of the automations plan. Until then this refuses.
+   * ─────────────────────────────────────────────────────────────────────────
    */
   private async executeProcess(
     processId: string,
-    userId: string,
-    parameters: Record<string, unknown>,
+    _userId: string,
+    _parameters: Record<string, unknown>,
     entityIds: string[]
   ): Promise<Omit<KernelTriggerResult, 'executionId' | 'status'>> {
     const process = TRIGGERABLE_PROCESSES[processId];
 
-    // For now, return mock results
-    // In production, this would call the actual kernel process
-    switch (processId) {
-      case 'chase_overdue_invoices': {
-        // Simulate chasing invoices
-        const successRate = 0.7; // 70% success rate
-        const itemsSucceeded = Math.round(entityIds.length * successRate);
-        const avgInvoiceValue = 400;
+    logger.error(
+      { processId, entityCount: entityIds.length },
+      'Kernel process is not implemented; refusing rather than reporting fabricated work'
+    );
 
-        return {
-          summary: `Sent ${entityIds.length} payment reminders`,
-          itemsProcessed: entityIds.length,
-          itemsSucceeded,
-          itemsFailed: entityIds.length - itemsSucceeded,
-          valueImpact: itemsSucceeded * avgInvoiceValue * 0.3, // 30% collection rate
-        };
-      }
-
-      case 'send_reminder_sequence': {
-        return {
-          summary: `Sent ${entityIds.length} booking reminders`,
-          itemsProcessed: entityIds.length,
-          itemsSucceeded: entityIds.length,
-          itemsFailed: 0,
-        };
-      }
-
-      case 'send_followup_nudge': {
-        return {
-          summary: `Sent ${entityIds.length} follow-up emails`,
-          itemsProcessed: entityIds.length,
-          itemsSucceeded: entityIds.length,
-          itemsFailed: 0,
-        };
-      }
-
-      default:
-        return {
-          summary: `Executed ${process?.processName || processId}`,
-          itemsProcessed: entityIds.length,
-          itemsSucceeded: entityIds.length,
-          itemsFailed: 0,
-        };
-    }
+    throw new Error(
+      `'${process?.processName ?? processId}' is not implemented yet. ` +
+        `Nothing was sent and nothing was changed. ` +
+        `(This previously reported invented results — see the note above executeProcess.)`
+    );
   }
 
   /**

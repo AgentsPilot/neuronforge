@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, ClipboardList, Sparkles } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
@@ -8,6 +9,7 @@ import { AvailabilityEditor, DEFAULT_AVAILABILITY, parseAvailability, type Weekl
 import { IntakeSettingsPanel } from '@/components/scheduling/IntakeSettingsPanel';
 import { CalendarSyncSettings } from '@/components/scheduling/CalendarSyncSettings';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
+import { StripeEmbeddedOnboarding } from '@/components/payments/StripeEmbeddedOnboarding';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import {
@@ -36,11 +38,69 @@ interface ConfigurationDialogProps {
   onServiceCreated?: (service: { name: string; duration: number; price: number; currency: string }) => void; // Callback when service created from chat
   onCloseWithUnpublished?: (serviceName: string) => void; // Callback when user closes with unpublished changes
   onServicePublished?: (serviceName: string) => void; // Callback when any service is published from within the dialog
+  /**
+   * Any edit to an existing service, saved.
+   *
+   * Distinct from `onServicePublished`, which fires only when a draft goes
+   * live. A caller showing its own copy of the service list — the website
+   * wizard does — needs to know about a rename the moment it is saved, not
+   * when the dialog eventually closes.
+   */
+  onServiceEdited?: (serviceId: string) => void;
 }
 
-export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit, visibleTabs, servicePrefill, availabilityDaysToAdd, onServiceCreated, onCloseWithUnpublished, onServicePublished }: ConfigurationDialogProps) {
+export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit, visibleTabs, servicePrefill, availabilityDaysToAdd, onServiceCreated, onCloseWithUnpublished, onServicePublished, onServiceEdited }: ConfigurationDialogProps) {
   const { t, isRTL } = useLanguage();
   const [activeTab, setActiveTab] = useState<ConfigTab>(initialTab || 'services');
+
+  /**
+   * Whether an intake form is collected after a booking.
+   *
+   * Held here rather than in the services list, because this dialog already
+   * owns the intake tab and the list only needs it to draw a row honestly.
+   */
+  const [intakeEnabled, setIntakeEnabled] = useState(false);
+
+  /**
+   * Whether this business collects intake.
+   *
+   * Read once on open and again whenever the Intake tab saves. Without the
+   * second read, toggling intake left every service's journey strip on the
+   * Services tab showing the state from before the toggle — two tabs of one
+   * dialog disagreeing about the same setting, until it was closed and
+   * reopened.
+   */
+  const refreshIntakeEnabled = useCallback(async () => {
+    try {
+      const response = await fetch('/api/intake/settings');
+      if (!response.ok) return;
+      const data = await response.json();
+      // "Does a form reach the client", not "is a setting on". Reading
+      // `is_enabled` alone drew an intake step on every service for a business
+      // whose email toggle was off, or which had no form chosen.
+      setIntakeEnabled(intakeReachesClient(data?.settings));
+    } catch {
+      // Never fatal: without the flag the journey omits a step it cannot
+      // confirm, which is the safer of the two mistakes.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+
+    fetch('/api/intake/settings')
+      .then(response => (response.ok ? response.json() : null))
+      .then(data => {
+        if (!cancelled) setIntakeEnabled(intakeReachesClient(data?.settings));
+      })
+      .catch(() => {
+        // Never fatal: without the flag the journey omits a step it cannot
+        // confirm, which is the safer of the two mistakes.
+      });
+
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   // Services state
   const [services, setServices] = useState<SchedulingService[]>([]);
@@ -58,9 +118,20 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
 
   // Stripe state
   const [stripeConnected, setStripeConnected] = useState(false);
+  const [stripeOnboardingPending, setStripeOnboardingPending] = useState(false); // Has account but onboarding incomplete
+  const [stripeDisconnected, setStripeDisconnected] = useState(false); // Account exists but is disconnected (charges_enabled=false)
   const [stripeLoading, setStripeLoading] = useState(true);
   const [showStripeWizard, setShowStripeWizard] = useState(false);
+  const [showEmbeddedOnboarding, setShowEmbeddedOnboarding] = useState(false); // Embedded onboarding for continue flow
+  const [stripeContinueMode, setStripeContinueMode] = useState(false); // Whether wizard is in continue mode
+  const [stripeAccountData, setStripeAccountData] = useState<{
+    stripe_account_id: string;
+    stripe_email?: string | null;
+    country?: string | null;
+    business_type?: string | null;
+  } | null>(null);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Set initial tab when dialog opens
   useEffect(() => {
@@ -88,7 +159,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     if (isOpen) {
       fetchServices();
       fetchAvailability();
-      checkStripeConnection();
+      checkStripeConnection(true); // Refresh from Stripe API to get latest status
     } else {
       // Reset state when dialog closes
       setShouldAutoStartNewRow(false);
@@ -128,7 +199,8 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   // Track when a service was edited (saved as draft)
   const handleServiceEdited = useCallback((serviceId: string) => {
     setEditedServiceId(serviceId);
-  }, []);
+    onServiceEdited?.(serviceId);
+  }, [onServiceEdited]);
 
   // Track when a service was published - clear the edited state and notify parent
   const handleServicePublishedWithId = useCallback((serviceId: string) => {
@@ -206,9 +278,22 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     }
   };
 
-  const checkStripeConnection = async () => {
+  const checkStripeConnection = async (refreshFromStripe = false) => {
     try {
       setStripeLoading(true);
+
+      // If refreshFromStripe is true, first sync the latest status from Stripe API
+      if (refreshFromStripe) {
+        try {
+          await fetch('/api/payments/stripe-connect/refresh-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (err) {
+          // Continue even if refresh fails - we'll use cached data
+          logger.warn({ err }, 'Failed to refresh status from Stripe');
+        }
+      }
 
       // Check both stripe_connect_accounts AND plugin_connections
       // User might be connected via OAuth (plugin_connections) or Express account (stripe_connect_accounts)
@@ -220,46 +305,148 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       const stripeData = await stripeResponse.json();
       const pluginData = await pluginResponse.json();
 
-      // Connected if EITHER:
-      // 1. Has stripe_connect_accounts record with onboarding_completed
-      // 2. Has plugin_connections record for 'stripe' with status 'active'
-      const hasStripeAccount = stripeData.success && stripeData.data?.onboarding_completed;
+      // Check stripe_connect_accounts status
+      const hasStripeAccountData = stripeData.success && stripeData.data;
+
+      // State detection:
+      // - Connected: charges_enabled is true (can accept payments)
+      // - Disconnected: charges_enabled is explicitly false AND details_submitted is false (was soft-disconnected)
+      // - Pending: has account but onboarding not complete yet
+      const chargesEnabled = stripeData.data?.charges_enabled;
+      const detailsSubmitted = stripeData.data?.details_submitted;
+
+      // Consider connected if charges enabled OR (details submitted and not explicitly disconnected)
+      const stripeOnboardingComplete = hasStripeAccountData && chargesEnabled === true;
+      // Only disconnected if charges_enabled is false AND details not submitted (genuine disconnect, not pending)
+      const stripeAccountDisconnected = hasStripeAccountData && chargesEnabled === false && !detailsSubmitted;
+      const stripeAccountPending = hasStripeAccountData && !stripeOnboardingComplete && !stripeAccountDisconnected;
+
+      // Check plugin_connections for OAuth connection
       const hasPluginConnection = pluginData.plugins?.some((conn: any) =>
         conn.plugin_key === 'stripe' && conn.status === 'active'
       );
 
-      setStripeConnected(hasStripeAccount || hasPluginConnection);
+      // Store the account data for use in the wizard
+      if (hasStripeAccountData) {
+        setStripeAccountData({
+          stripe_account_id: stripeData.data.stripe_account_id,
+          stripe_email: stripeData.data.stripe_email,
+          country: stripeData.data.country,
+          business_type: stripeData.data.business_type,
+        });
+      } else {
+        setStripeAccountData(null);
+      }
+
+      // Set states:
+      // - Connected: onboarding complete OR has active plugin connection
+      // - Pending: has stripe_connect_accounts record but onboarding not complete (and not disconnected)
+      // - Disconnected: has account but was soft-disconnected
+      setStripeConnected(stripeOnboardingComplete || hasPluginConnection);
+      setStripeOnboardingPending(stripeAccountPending && !stripeAccountDisconnected && !hasPluginConnection);
+      setStripeDisconnected(stripeAccountDisconnected);
+
+      logger.info({
+        chargesEnabled,
+        detailsSubmitted,
+        stripeOnboardingComplete,
+        stripeAccountDisconnected,
+        stripeAccountPending
+      }, 'Stripe connection status checked');
     } catch (error) {
       logger.error({ err: error }, 'Failed to check Stripe status');
       setStripeConnected(false);
+      setStripeOnboardingPending(false);
     } finally {
       setStripeLoading(false);
     }
   };
 
-  const handleConnectStripe = () => {
-    // Only show wizard if not connected - otherwise this is "Manage" which shows current state
+  const handleConnectStripe = async () => {
+    // Simplified flow: Create minimal account and show embedded onboarding directly
     if (!stripeConnected) {
-      setShowStripeWizard(true);
+      try {
+        setStripeLoading(true);
+
+        // Create minimal account - Stripe's embedded onboarding will collect everything
+        const response = await fetch('/api/payments/stripe-connect/create-minimal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ country: 'US' }), // Default to US, can be changed in Stripe's form
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          // Account created (or exists) - show embedded onboarding
+          if (result.accountId) {
+            setStripeAccountData({
+              stripe_account_id: result.accountId,
+              stripe_email: null,
+              country: 'US',
+              business_type: 'individual',
+            });
+          }
+          setShowEmbeddedOnboarding(true);
+        } else {
+          logger.error({ error: result.error }, 'Failed to create Stripe account');
+        }
+      } catch (error) {
+        logger.error({ err: error }, 'Failed to initiate Stripe connection');
+      } finally {
+        setStripeLoading(false);
+      }
     }
+  };
+
+  const handleContinueOnboarding = async () => {
+    // For pending/disconnected accounts, just show embedded onboarding directly
+    // The account already exists, so no need to create one
+    setShowEmbeddedOnboarding(true);
+  };
+
+  const handleEmbeddedOnboardingComplete = () => {
+    setShowEmbeddedOnboarding(false);
+    setStripeOnboardingPending(false);
+    setStripeDisconnected(false);
+    setStripeConnected(true);
+    checkStripeConnection(true); // Refresh from Stripe API to get latest status
+  };
+
+  const handleEmbeddedOnboardingExit = () => {
+    setShowEmbeddedOnboarding(false);
+    checkStripeConnection(true); // Refresh from Stripe API in case partial progress was made
   };
 
   const handleDisconnectStripe = () => {
     setShowDisconnectConfirm(true);
   };
 
+  const handleDeleteStripe = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  // Disconnect: Just removes from our database, keeps Stripe account
   const confirmDisconnectStripe = async () => {
     setShowDisconnectConfirm(false);
     try {
       setStripeLoading(true);
 
-      // Delete from plugin_connections
-      const response = await fetch('/api/plugin-connections?plugin_key=stripe', {
-        method: 'DELETE'
+      // Only delete from our stripe_connect_accounts table (soft disconnect)
+      const response = await fetch('/api/payments/stripe-connect/disconnect', {
+        method: 'POST'
       });
 
-      if (response.ok) {
+      const result = await response.json();
+
+      if (result.success) {
         setStripeConnected(false);
+        setStripeOnboardingPending(false);
+        setStripeDisconnected(true);
+        // Keep stripeAccountData so we can still delete or reconnect
+        logger.info('Stripe account disconnected from app');
+      } else {
+        logger.error({ error: result.error }, 'Failed to disconnect Stripe');
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to disconnect Stripe');
@@ -268,13 +455,43 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     }
   };
 
+  // Delete: Permanently deletes from Stripe AND our database
+  const confirmDeleteStripe = async () => {
+    setShowDeleteConfirm(false);
+    try {
+      setStripeLoading(true);
+
+      // Delete from both Stripe and our database
+      const response = await fetch('/api/payments/stripe-connect/delete', {
+        method: 'DELETE'
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setStripeConnected(false);
+        setStripeOnboardingPending(false);
+        setStripeAccountData(null);
+        logger.info('Stripe account permanently deleted');
+      } else {
+        logger.error({ error: result.error }, 'Failed to delete Stripe account');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to delete Stripe account');
+    } finally {
+      setStripeLoading(false);
+    }
+  };
+
   const handleWizardComplete = () => {
     setShowStripeWizard(false);
+    setStripeContinueMode(false);
     checkStripeConnection(); // Refresh connection status
   };
 
   const handleWizardCancel = () => {
     setShowStripeWizard(false);
+    setStripeContinueMode(false);
   };
 
   if (!isOpen) return null;
@@ -382,6 +599,11 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                 </div>
               ) : (
                 <SchedulingServicesList
+                  intakeEnabled={intakeEnabled}
+                  // This dialog already resolves it for its own Payments tab,
+                  // so the services list does not need a second network call to
+                  // draw a journey that matches reality.
+                  processorReady={stripeConnected}
                   services={services}
                   onServicePublished={silentRefreshServices}
                   onServicePublishedWithId={handleServicePublishedWithId}
@@ -449,17 +671,40 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
 
             {/* Intake Tab */}
             {activeTab === 'intake' && (
-              <IntakeSettingsPanel />
+              <IntakeSettingsPanel onSaved={refreshIntakeEnabled} />
             )}
 
             {/* Payments Tab */}
             {activeTab === 'payments' && (
               <div className="space-y-6">
-                {/* Show wizard only if NOT connected and user clicked connect */}
-                {showStripeWizard && !stripeConnected ? (
+                {/* Show embedded onboarding for continue flow */}
+                {showEmbeddedOnboarding ? (
+                  <div
+                    className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-6"
+                    style={{ borderRadius: 'var(--v2-radius-card)' }}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+                        {t('payments.stripe.embedded.title') || 'Complete Payment Setup'}
+                      </h3>
+                      <button
+                        onClick={handleEmbeddedOnboardingExit}
+                        className="text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <StripeEmbeddedOnboarding
+                      onComplete={handleEmbeddedOnboardingComplete}
+                      onExit={handleEmbeddedOnboardingExit}
+                    />
+                  </div>
+                ) : showStripeWizard ? (
                   <StripeConnectWizard
                     onComplete={handleWizardComplete}
                     onCancel={handleWizardCancel}
+                    continueOnboarding={stripeContinueMode}
+                    existingAccount={stripeAccountData || undefined}
                   />
                 ) : (
                   <>
@@ -486,7 +731,11 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                           <p className="text-sm text-[var(--v2-text-muted)] mt-1">
                             {stripeConnected
                               ? (t('config.stripe.connected_desc') || 'Your Stripe account is connected. You can accept payments for your services.')
-                              : (t('config.stripe.not_connected_desc') || 'Connect your Stripe account to accept payments for bookings and services.')
+                              : stripeOnboardingPending
+                                ? (t('config.stripe.setup_incomplete_desc') || 'Your Stripe account was created but setup is incomplete. Complete the setup to start accepting payments.')
+                                : stripeDisconnected
+                                  ? (t('config.stripe.disconnected_desc') || 'Your Stripe account is disconnected. Reconnect to resume accepting payments, or delete the account to start fresh.')
+                                  : (t('config.stripe.not_connected_desc') || 'Connect your Stripe account to accept payments for bookings and services.')
                             }
                           </p>
 
@@ -498,7 +747,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                               </span>
                             </div>
                           ) : stripeConnected ? (
-                            <div className="flex items-center gap-3 mt-4">
+                            <div className="flex items-center gap-3 mt-4 flex-wrap">
                               <span
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full"
                                 style={{ backgroundColor: `${CONFIG_COLOR}20`, color: CONFIG_COLOR }}
@@ -508,13 +757,94 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                               </span>
                               <button
                                 onClick={handleDisconnectStripe}
-                                className="text-sm text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
+                                className="text-sm text-[var(--v2-text-muted)] hover:text-amber-500 transition-colors"
                               >
                                 {t('config.stripe.disconnect') || 'Disconnect'}
                               </button>
+                              <button
+                                onClick={handleDeleteStripe}
+                                className="text-sm text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
+                              >
+                                {t('config.stripe.delete_account') || 'Delete Account'}
+                              </button>
+                            </div>
+                          ) : stripeOnboardingPending ? (
+                            <div className="flex items-center gap-3 mt-4 flex-wrap">
+                              <span
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full"
+                                style={{ backgroundColor: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}
+                              >
+                                <Clock className="h-4 w-4" />
+                                {t('config.stripe.setup_incomplete') || 'Setup Incomplete'}
+                              </span>
+                              <button
+                                onClick={handleContinueOnboarding}
+                                disabled={stripeLoading}
+                                className={`inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-50 ${isRTL ? 'flex-row-reverse' : ''}`}
+                                style={{
+                                  borderRadius: 'var(--v2-radius-button)',
+                                  backgroundColor: '#3B82F6'
+                                }}
+                                dir={isRTL ? 'rtl' : 'ltr'}
+                              >
+                                {stripeLoading ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CreditCard className="h-4 w-4" />
+                                )}
+                                {t('config.stripe.continue_setup') || 'Continue Setup'}
+                              </button>
+                              <button
+                                onClick={handleDisconnectStripe}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-600 border border-amber-200 hover:bg-amber-50 dark:border-amber-800 dark:hover:bg-amber-900/20 transition-colors"
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                {t('config.stripe.disconnect') || 'Disconnect'}
+                              </button>
+                              <button
+                                onClick={handleDeleteStripe}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                {t('config.stripe.delete_account') || 'Delete Account'}
+                              </button>
+                            </div>
+                          ) : stripeDisconnected ? (
+                            <div className="flex items-center gap-3 mt-4 flex-wrap">
+                              <span
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-full"
+                                style={{ backgroundColor: 'rgba(107, 114, 128, 0.15)', color: '#6B7280' }}
+                              >
+                                <CreditCard className="h-4 w-4" />
+                                {t('config.stripe.disconnected') || 'Disconnected'}
+                              </span>
+                              <button
+                                onClick={handleContinueOnboarding}
+                                disabled={stripeLoading}
+                                className={`inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-50 ${isRTL ? 'flex-row-reverse' : ''}`}
+                                style={{
+                                  borderRadius: 'var(--v2-radius-button)',
+                                  backgroundColor: CONFIG_COLOR
+                                }}
+                                dir={isRTL ? 'rtl' : 'ltr'}
+                              >
+                                {stripeLoading ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CreditCard className="h-4 w-4" />
+                                )}
+                                {t('config.stripe.reconnect') || 'Reconnect'}
+                              </button>
+                              <button
+                                onClick={handleDeleteStripe}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                {t('config.stripe.delete_account') || 'Delete Account'}
+                              </button>
                             </div>
                           ) : (
-                            <div className="mt-4 flex" dir="ltr">
+                            <div className="mt-4 flex flex-wrap gap-3" dir="ltr">
                               <button
                                 onClick={handleConnectStripe}
                                 className={`inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white transition-all hover:opacity-90 ${isRTL ? 'flex-row-reverse' : ''}`}
@@ -527,6 +857,16 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                                 <CreditCard className="h-4 w-4" />
                                 {t('config.stripe.connect') || 'Connect Stripe'}
                               </button>
+                              {/* Show Delete if we have account data but no active state */}
+                              {stripeAccountData && (
+                                <button
+                                  onClick={handleDeleteStripe}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-500 border border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20 transition-colors"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                >
+                                  {t('config.stripe.delete_account') || 'Delete Account'}
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -566,7 +906,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
         </div>
       </div>
 
-      {/* Stripe Disconnect Confirmation Dialog */}
+      {/* Stripe Disconnect Confirmation Dialog (Soft - keeps Stripe account) */}
       {showDisconnectConfirm && (
         <>
           <div
@@ -583,16 +923,16 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
               <div className="flex items-start gap-4">
                 <div
                   className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)' }}
+                  style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)' }}
                 >
-                  <CreditCard className="w-5 h-5 text-red-500" />
+                  <CreditCard className="w-5 h-5 text-amber-500" />
                 </div>
                 <div className="flex-1">
                   <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-1">
                     {t('config.stripe.disconnect_title') || 'Disconnect Stripe?'}
                   </h3>
                   <p className="text-sm text-[var(--v2-text-muted)]">
-                    {t('config.stripe.disconnect_message') || 'You will no longer be able to accept payments until you reconnect your Stripe account.'}
+                    {t('config.stripe.disconnect_message') || 'You will no longer be able to accept payments until you reconnect. Your Stripe account will remain active and can be reconnected later.'}
                   </p>
                 </div>
               </div>
@@ -606,10 +946,61 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                 </button>
                 <button
                   onClick={confirmDisconnectStripe}
-                  className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-all"
+                  className="px-4 py-2 text-sm font-medium text-white bg-amber-500 hover:bg-amber-600 transition-all"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   {t('config.stripe.disconnect') || 'Disconnect'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Stripe Delete Confirmation Dialog (Permanent - deletes Stripe account) */}
+      {showDeleteConfirm && (
+        <>
+          <div
+            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowDeleteConfirm(false)}
+          />
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div
+              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
+              style={{ borderRadius: 'var(--v2-radius-card)' }}
+              onClick={(e) => e.stopPropagation()}
+              dir={isRTL ? 'rtl' : 'ltr'}
+            >
+              <div className="flex items-start gap-4">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)' }}
+                >
+                  <AlertTriangle className="w-5 h-5 text-red-500" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base font-semibold text-[var(--v2-text-primary)] mb-1">
+                    {t('config.stripe.delete_title') || 'Delete Stripe Account?'}
+                  </h3>
+                  <p className="text-sm text-[var(--v2-text-muted)]">
+                    {t('config.stripe.delete_message') || 'This will permanently delete your Stripe account. All payment history and settings will be lost. This action cannot be undone.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mt-6 justify-end">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {t('common.cancel') || 'Cancel'}
+                </button>
+                <button
+                  onClick={confirmDeleteStripe}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-all"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {t('config.stripe.delete_account') || 'Delete Account'}
                 </button>
               </div>
             </div>

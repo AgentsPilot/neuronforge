@@ -1,9 +1,11 @@
 'use client';
 
 import { useState } from 'react';
+import { activityFieldName } from '@/lib/business-os/activityText';
 import {
   Activity, Plus, MessageSquare, Phone, Mail, Users,
-  Calendar, CreditCard, FileText, ChevronDown, Clock, Bot, User, Eye
+  Calendar, CreditCard, FileText, ChevronDown, Clock, Bot, User, Eye,
+  Paperclip, ClipboardList, UserCog, RotateCcw
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,35 +40,75 @@ const FILTER_CATEGORIES = [
   { value: 'call', labelKey: 'crm.activity.filter.calls', icon: Phone, types: ['call'] },
   { value: 'email', labelKey: 'crm.activity.filter.emails', icon: Mail, types: ['email', 'email_sent'] },
   { value: 'meeting', labelKey: 'crm.activity.filter.meetings', icon: Users, types: ['meeting'] },
-  { value: 'booking', labelKey: 'crm.activity.filter.bookings', icon: Calendar, types: ['booking', 'booking_created', 'booking_completed', 'booking_cancelled', 'booking_confirmed'] },
-  { value: 'payment', labelKey: 'crm.activity.filter.payments', icon: CreditCard, types: ['payment', 'payment_received', 'payment_failed'] },
-  { value: 'task', labelKey: 'crm.activity.filter.tasks', icon: FileText, types: ['task', 'task_created', 'task_completed'] }
+  { value: 'booking', labelKey: 'crm.activity.filter.bookings', icon: Calendar, types: ['booking', 'booking_created', 'booking_completed', 'booking_cancelled', 'booking_confirmed', 'booking_confirmation_sent', 'booking_rescheduled', 'booking_no_show'] },
+  { value: 'payment', labelKey: 'crm.activity.filter.payments', icon: CreditCard, types: ['payment', 'payment_received', 'payment_failed', 'invoice_sent', 'refund_issued'] },
+  { value: 'task', labelKey: 'crm.activity.filter.tasks', icon: FileText, types: ['task', 'task_created', 'task_completed'] },
+  { value: 'forms', labelKey: 'crm.activity.filter.forms', icon: ClipboardList, types: ['intake_form_sent', 'intake_form_completed'] },
+  { value: 'files', labelKey: 'crm.activity.filter.files', icon: Paperclip, types: ['document_uploaded'] },
+  // The record's own history: when it was created, and every edit since.
+  // Without a category these rows were reachable only under "all" — invisible
+  // the moment any chip was pressed.
+  { value: 'changes', labelKey: 'crm.activity.filter.changes', icon: UserCog, types: ['contact_created', 'contact_updated', 'stage_changed'] }
 ];
+
 
 const ACTIVITY_ICONS: Record<string, typeof Activity> = {
   note: MessageSquare,
   call: Phone,
   email: Mail,
+  email_sent: Mail,
   meeting: Users,
   booking_created: Calendar,
   booking_completed: Calendar,
+  booking_no_show: Clock,
+  booking_rescheduled: Calendar,
+  booking_confirmed: Calendar,
   booking_cancelled: Calendar,
+  booking_confirmation_sent: Mail,
+  intake_form_sent: FileText,
+  intake_form_completed: FileText,
+  invoice_sent: CreditCard,
   payment_received: CreditCard,
+  refund_issued: RotateCcw,
   payment_failed: CreditCard,
+  task_created: ClipboardList,
+  task_completed: ClipboardList,
   document_uploaded: FileText,
   contact_created: Activity,
   contact_updated: Activity,
   stage_changed: Activity
 };
 
+/*
+ * Every type the drawer can draw must be reachable by some chip.
+ *
+ * `contact_updated` and `stage_changed` were written and then unfindable, and
+ * `document_uploaded` and `contact_created` had the same gap. Asserted in
+ * development so the next type added to `ACTIVITY_ICONS` cannot quietly become
+ * invisible behind a filter.
+ */
+if (process.env.NODE_ENV === 'development') {
+  const covered = new Set(FILTER_CATEGORIES.flatMap(category => category.types));
+  const orphaned = Object.keys(ACTIVITY_ICONS).filter(type => !covered.has(type));
+  if (orphaned.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn('[ActivitySection] activity types no filter can reach:', orphaned);
+  }
+}
+
 const ACTIVITY_COLORS: Record<string, { bg: string; border: string; text: string }> = {
   note: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-500' },
   call: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
   email: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-500' },
+  email_sent: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-500' },
   meeting: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
   booking_created: { bg: 'bg-teal-500/10', border: 'border-teal-500/30', text: 'text-teal-500' },
   booking_completed: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
   booking_cancelled: { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-500' },
+  booking_confirmation_sent: { bg: 'bg-teal-500/10', border: 'border-teal-500/30', text: 'text-teal-500' },
+  intake_form_sent: { bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', text: 'text-indigo-500' },
+  intake_form_completed: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
+  invoice_sent: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
   payment_received: { bg: 'bg-green-500/10', border: 'border-green-500/30', text: 'text-green-500' },
   payment_failed: { bg: 'bg-red-500/10', border: 'border-red-500/30', text: 'text-red-500' },
   document_uploaded: { bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', text: 'text-indigo-500' },
@@ -126,6 +168,160 @@ export function ActivitySection({
     });
   };
 
+  /**
+   * A booking time, as the business keeps it.
+   *
+   * Short on purpose — "7 Sep, 13:00" — because these read inside a sentence,
+   * not as a heading.
+   *
+   * The zone travels with the row rather than arriving as a prop: an activity
+   * records what was agreed at the time, and a business that later changes its
+   * timezone must not silently rewrite the hour of every appointment already in
+   * the history. Falls back to the viewer's zone only when a row predates this.
+   */
+  const formatActivityMoment = (value: string, timeZone?: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString(language, {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: language === 'en',
+      ...(timeZone ? { timeZone } : {}),
+    });
+  };
+
+  /**
+   * Which row is open. One at a time — a timeline with several panels open is
+   * the wall of detail this was meant to avoid.
+   */
+  const [openRow, setOpenRow] = useState<string | null>(null);
+
+  /**
+   * The few facts a row can answer for itself.
+   *
+   * Deliberately three lines at most. An email says whether it arrived and
+   * whether it was read; a change says what the value was before. Anything
+   * longer belongs on the record itself, not in a timeline.
+   */
+  const rowDetail = (activity: CRMActivity): { label: string; value: string }[] => {
+    const rows: { label: string; value: string }[] = [];
+
+    // A change: what it was, what it is now.
+    try {
+      const data = JSON.parse(activity.description || '');
+      if (data.kind === 'contact_updated' && data.changes) {
+        for (const [field, change] of Object.entries(data.changes as Record<string, { from?: unknown; to?: unknown }>)) {
+          /*
+           * The same names the sentence above the row was written from.
+           *
+           * This looked up `crm.field.*`, which exists in no language, so every
+           * label fell through to the raw column name — a Hebrew row opening to
+           * "first name: דוד → דויד". `activityFieldName` is the one place those
+           * names live, and it is a pure module, so the drawer can share it
+           * with the writers rather than keeping a second list that drifts.
+           */
+          const fieldLabel = activityFieldName(field, language);
+          const was = change?.from ?? '';
+          const now = change?.to ?? '';
+          rows.push({
+            label: fieldLabel,
+            value: `${was === '' || was === null ? t('crm.activity.detail.empty') : String(was)} → ${now === '' || now === null ? t('crm.activity.detail.empty') : String(now)}`,
+          });
+        }
+        return rows;
+      }
+
+      if (data.kind === 'booking_rescheduled' && data.from && data.to) {
+        rows.push({ label: t('crm.activity.detail.was'), value: formatActivityMoment(data.from, data.timeZone) });
+        rows.push({ label: t('crm.activity.detail.now'), value: formatActivityMoment(data.to, data.timeZone) });
+        return rows;
+      }
+
+      /*
+       * The outcome events: completed, no-show, confirmed, cancelled.
+       *
+       * All four answer the same two questions — when was the appointment, and
+       * what did it move from — so they share a shape rather than each growing
+       * its own branch.
+       */
+      if (
+        data.kind === 'booking_completed' ||
+        data.kind === 'booking_no_show' ||
+        data.kind === 'booking_confirmed'
+      ) {
+        if (data.from) {
+          rows.push({ label: t('crm.activity.detail.was'), value: formatActivityMoment(data.from, data.timeZone) });
+        }
+        if (data.previousStatus) {
+          const key = `crm.booking.status.${data.previousStatus}`;
+          rows.push({
+            label: t('crm.activity.detail.previous_status'),
+            value: t(key) !== key ? t(key) : String(data.previousStatus),
+          });
+        }
+        return rows;
+      }
+
+      if (data.kind === 'task_created' || data.kind === 'task_completed') {
+        if (data.dueDate) {
+          rows.push({ label: t('crm.activity.detail.due'), value: formatActivityMoment(data.dueDate) });
+        }
+        if (data.priority) {
+          const key = `crm.task.priority.${data.priority}`;
+          rows.push({ label: t('crm.activity.detail.priority'), value: t(key) !== key ? t(key) : String(data.priority) });
+        }
+        return rows;
+      }
+
+      if (data.kind === 'booking_created') {
+        if (data.service) rows.push({ label: t('crm.activity.detail.service'), value: String(data.service) });
+        if (data.bookingDate) {
+          rows.push({ label: t('crm.activity.detail.now'), value: formatActivityMoment(data.bookingDate, data.timeZone) });
+        }
+        return rows;
+      }
+
+      if (data.kind === 'payment_received' || data.kind === 'payment_failed' || data.kind === 'refund_issued') {
+        if (data.service) rows.push({ label: t('crm.activity.detail.service'), value: String(data.service) });
+        if (data.invoiceNumber) rows.push({ label: t('crm.activity.detail.invoice'), value: String(data.invoiceNumber) });
+        if (data.receipt) rows.push({ label: t('crm.activity.detail.receipt'), value: String(data.receipt) });
+        if (data.reason) rows.push({ label: t('crm.activity.detail.reason'), value: String(data.reason) });
+        return rows;
+      }
+
+      if (data.kind === 'booking_cancelled') {
+        if (data.from) {
+          rows.push({ label: t('crm.activity.detail.was'), value: formatActivityMoment(data.from, data.timeZone) });
+        }
+        // The reason only when somebody gave one — an empty "Reason: —" is noise.
+        if (data.reason) {
+          rows.push({ label: t('crm.activity.detail.reason'), value: String(data.reason) });
+        }
+        return rows;
+      }
+    } catch {
+      // Not a fact row; fall through to the email lookup below.
+    }
+
+    // An email: did it arrive, was it read.
+    const email = emails?.find(e => e.id === activity.source_entity_id);
+    if (email) {
+      if (email.sent_at) {
+        rows.push({ label: t('crm.activity.detail.sent'), value: formatActivityMoment(email.sent_at) });
+      }
+      rows.push({
+        label: t('crm.activity.detail.opened'),
+        value: email.opened_at
+          ? formatActivityMoment(email.opened_at)
+          : t('crm.activity.detail.not_opened'),
+      });
+    }
+
+    return rows;
+  };
+
   const getActivityIcon = (type: string) => {
     // Normalize: convert spaces to underscores for lookup
     const normalizedType = type.replace(/\s+/g, '_');
@@ -142,6 +338,9 @@ export function ActivitySection({
   const SYSTEM_ACTIVITY_TYPES = [
     'booking', 'payment', 'email', 'task',
     'booking_created', 'booking_completed', 'booking_cancelled', 'booking_confirmed',
+    'booking_confirmation_sent',
+    'intake_form_sent', 'intake_form_completed',
+    'invoice_sent',
     'payment_received', 'payment_failed',
     'document_uploaded',
     'contact_created', 'contact_updated',
@@ -149,6 +348,16 @@ export function ActivitySection({
     'task_created', 'task_completed',
     'email_sent'
   ];
+
+  /** Whether the description is structured facts rather than a sentence. */
+  const isFactRow = (activity: CRMActivity) => {
+    if (!activity.description) return false;
+    try {
+      return typeof JSON.parse(activity.description)?.kind === 'string';
+    } catch {
+      return false;
+    }
+  };
 
   const isSystemActivity = (activity: CRMActivity) => {
     // Normalize activity type: convert spaces to underscores for comparison
@@ -172,6 +381,62 @@ export function ActivitySection({
         const docTypeTranslation = t(docTypeKey);
         const docType = docTypeTranslation !== docTypeKey ? docTypeTranslation : data.document_type;
         return `${typeLabel}: ${docType} | ${fileLabel}: ${data.file_name}`;
+      }
+
+      /*
+       * A row written by the platform carries its own sentence.
+       *
+       * It was composed on the server, in the language the business was working
+       * in, at the moment it happened — an activity is a record, not a label,
+       * and switching the dashboard later must not re-narrate the past. So it is
+       * printed exactly as stored; the facts beside it exist for the drill-down.
+       */
+      if (typeof data.text === 'string' && data.text.length > 0) {
+        return data.text;
+      }
+
+      /*
+       * A description that is purely facts says nothing on its own.
+       *
+       * The sentence lives in `title` — written server-side in the business's
+       * language — and this column carries only the before/after behind it, for
+       * the drill-down. Composing a second sentence here would print the row
+       * twice, which is the duplication this set out to remove.
+       */
+      if (typeof data.kind === 'string') {
+        return null;
+      }
+
+      /*
+       * Rows written before that, which carry facts and no sentence. Composed
+       * here so they still read, rather than showing nothing.
+       */
+      // `t` here takes a key only, so the values are substituted at the call
+      // site — the same `{name}` convention the rest of the platform uses.
+      const fill = (key: string, values: Record<string, string>) => {
+        let text = t(key);
+        if (text === key) return null; // key missing: say nothing rather than print it
+        for (const [name, value] of Object.entries(values)) {
+          text = text.replace(`{${name}}`, value);
+        }
+        return text;
+      };
+
+      if (data.kind === 'booking_rescheduled' && data.from && data.to) {
+        return fill('crm.activity.desc.rescheduled', {
+          from: formatActivityMoment(data.from, data.timeZone),
+          to: formatActivityMoment(data.to, data.timeZone),
+        });
+      }
+
+      if (data.kind === 'booking_confirmation_sent' || data.kind === 'intake_form_sent') {
+        const base = data.kind === 'booking_confirmation_sent' ? 'confirmation_sent' : 'intake_sent';
+        return data.bookingDate
+          ? fill(`crm.activity.desc.${base}_dated`, {
+              service: data.service || '',
+              date: formatActivityMoment(data.bookingDate, data.timeZone),
+            })
+          : fill(`crm.activity.desc.${base}`, { service: data.service || '' });
       }
 
       // JSON format for contact_created: { source, stage }
@@ -270,12 +535,60 @@ export function ActivitySection({
       }
     }
 
+    /*
+     * Rows written before activities stored facts.
+     *
+     * These sentences are already in the database in English, so they can only
+     * be met with pattern matching. New rows carry JSON and are composed above;
+     * these two exist so the history a business already has stops reading half
+     * in English.
+     *
+     * The captured date is reformatted rather than echoed: it was written by
+     * `toLocaleDateString()` on the server, so it arrives as `9/7/2026` — and
+     * as `12/31/1969` for a booking that never had a time, which is said as
+     * nothing at all rather than repeated.
+     */
+    const legacyDated = (
+      pattern: RegExp,
+      datedKey: string,
+      plainKey: string
+    ): string | null => {
+      const match = description.match(pattern);
+      if (!match) return null;
+
+      const raw = match[1];
+      const parsed = new Date(raw);
+      const isEpoch = !Number.isNaN(parsed.getTime()) && parsed.getUTCFullYear() <= 1970;
+      const readable = Number.isNaN(parsed.getTime()) || isEpoch ? null : formatActivityMoment(raw);
+
+      const key = readable ? datedKey : plainKey;
+      const text = t(key);
+      if (text === key) return null;
+      return text.replace('{service}', '').replace('{date}', readable || '').replace(/\s+/g, ' ').trim();
+    };
+
+    const legacyConfirmation = legacyDated(
+      /^Confirmation email sent for booking on (.+)$/,
+      'crm.activity.desc.confirmation_sent_dated',
+      'crm.activity.desc.confirmation_sent'
+    );
+    if (legacyConfirmation) return legacyConfirmation;
+
+    const legacyIntake = legacyDated(
+      /^Intake form request sent for booking on (.+)$/,
+      'crm.activity.desc.intake_sent_dated',
+      'crm.activity.desc.intake_sent'
+    );
+    if (legacyIntake) return legacyIntake;
+
     // Pattern: "Scheduled for DATE"
     const scheduledMatch = description.match(/^Scheduled for (.+)$/);
     if (scheduledMatch) {
       const template = t('crm.activity.description.scheduled_for');
       if (template !== 'crm.activity.description.scheduled_for') {
-        return template.replace('{date}', scheduledMatch[1]);
+        // Reformatted, not echoed: it was stored as a raw machine date.
+        const readable = formatActivityMoment(scheduledMatch[1]) || scheduledMatch[1];
+        return template.replace('{date}', readable);
       }
       // Fallback
       const scheduledFor = t('crm.activity.desc.scheduled_for');
@@ -372,8 +685,8 @@ export function ActivitySection({
     // Pattern: "Booking: SERVICE_NAME"
     const bookingMatch = title.match(/^Booking: (.+)$/);
     if (bookingMatch) {
-      const bookingTranslated = t('crm.activity.type.booking');
-      if (bookingTranslated !== 'crm.activity.type.booking') {
+      const bookingTranslated = t('crm.activity.title.booking');
+      if (bookingTranslated !== 'crm.activity.title.booking') {
         return `${bookingTranslated}: ${bookingMatch[1]}`;
       }
     }
@@ -381,8 +694,8 @@ export function ActivitySection({
     // Pattern: "Booking Confirmed: SERVICE_NAME"
     const bookingConfirmedMatch = title.match(/^Booking Confirmed: (.+)$/);
     if (bookingConfirmedMatch) {
-      const bookingConfirmedTranslated = t('crm.activity.type.booking_confirmed');
-      if (bookingConfirmedTranslated !== 'crm.activity.type.booking_confirmed') {
+      const bookingConfirmedTranslated = t('crm.activity.title.booking_confirmed');
+      if (bookingConfirmedTranslated !== 'crm.activity.title.booking_confirmed') {
         return `${bookingConfirmedTranslated}: ${bookingConfirmedMatch[1]}`;
       }
     }
@@ -390,8 +703,8 @@ export function ActivitySection({
     // Pattern: "Payment Received: $AMOUNT"
     const paymentMatch = title.match(/^Payment Received: \$(.+)$/);
     if (paymentMatch) {
-      const paymentTranslated = t('crm.activity.type.payment_received');
-      if (paymentTranslated !== 'crm.activity.type.payment_received') {
+      const paymentTranslated = t('crm.activity.title.payment_received');
+      if (paymentTranslated !== 'crm.activity.title.payment_received') {
         return `${paymentTranslated}: $${paymentMatch[1]}`;
       }
     }
@@ -399,8 +712,8 @@ export function ActivitySection({
     // Pattern: "Email Sent: SUBJECT"
     const emailMatch = title.match(/^Email Sent: (.+)$/);
     if (emailMatch) {
-      const emailTranslated = t('crm.activity.type.email_sent');
-      if (emailTranslated !== 'crm.activity.type.email_sent') {
+      const emailTranslated = t('crm.activity.title.email_sent');
+      if (emailTranslated !== 'crm.activity.title.email_sent') {
         return `${emailTranslated}: ${emailMatch[1]}`;
       }
     }
@@ -454,11 +767,29 @@ export function ActivitySection({
     }
 
     // Fallback: format the activity type nicely
-    return translateDescription(activity.description) || activity.description || activityType.replace(/_/g, ' ');
+    // Never the raw payload: a fact row's description is JSON, and printing it
+    // put `{"kind":"contact_updated",…}` on the timeline.
+    return (
+      translateDescription(activity.description) ||
+      (isFactRow(activity) ? null : activity.description) ||
+      activityType.replace(/_/g, ' ')
+    );
   };
 
   // Get display title - always use translation for system activities
   const getDisplayTitle = (activity: CRMActivity) => {
+    /*
+     * A row written by the platform already says what it says.
+     *
+     * Its title was composed server-side in the business's language at the
+     * moment it happened, so it is printed verbatim — translating it would
+     * re-narrate history, and falling through to `getActivityLabel` printed the
+     * raw JSON facts, because that helper ends in `|| activity.description`.
+     */
+    if (activity.title && isFactRow(activity)) {
+      return activity.title;
+    }
+
     // For system/auto-logged activities, try to translate title
     if (isSystemActivity(activity)) {
       // First try to translate the stored title
@@ -470,7 +801,7 @@ export function ActivitySection({
       return getActivityLabel(activity);
     }
     // For manual user activities (note, call, meeting), use description or title
-    return activity.description || activity.title || getActivityLabel(activity);
+    return translateDescription(activity.description) || activity.title || getActivityLabel(activity);
   };
 
   return (
@@ -607,13 +938,63 @@ export function ActivitySection({
             {/* Activity timeline */}
             {(() => {
               // Filter activities based on selected filter
-              const filteredActivities = filterType
+              const byFilter = filterType
                 ? activities.filter(a => {
                     const normalizedType = a.activity_type.replace(/\s+/g, '_');
                     const category = FILTER_CATEGORIES.find(c => c.value === filterType);
                     return category ? category.types.includes(normalizedType) : true;
                   })
                 : activities;
+
+              /*
+               * One event, one row.
+               *
+               * Every outgoing message was logged twice: once by the thing that
+               * happened — `booking_confirmation_sent`, `intake_form_sent` —
+               * and again as a generic `email` row for the message about it. So
+               * a single booking produced five entries, three of them about
+               * email, and a client who rescheduled four times filled the
+               * timeline with four identical lines.
+               *
+               * The `email` copy is the one that goes: it carries a subject and
+               * "Manual email", where the system row names the actual event and
+               * links to the booking. Kept only where nothing else covers it —
+               * a genuine one-off message still has its place.
+               */
+              const systemWindowMs = 2 * 60 * 1000;
+              const systemMoments = byFilter
+                .filter(a => a.activity_type !== 'email')
+                .map(a => new Date(a.activity_date || a.created_at).getTime());
+
+              const deduped = byFilter.filter(activity => {
+                if (activity.activity_type !== 'email') return true;
+                const at = new Date(activity.activity_date || activity.created_at).getTime();
+                // Covered by the system row it was sent for.
+                return !systemMoments.some(moment => Math.abs(moment - at) < systemWindowMs);
+              });
+
+              /*
+               * The same thing said twice in a row is said once, with a count.
+               *
+               * A confirmation resent three times is one fact about this client,
+               * not three — and the repetition is what makes a timeline
+               * unreadable rather than informative.
+               */
+              const filteredActivities: (CRMActivity & { repeatCount?: number })[] = [];
+              for (const activity of deduped) {
+                const previous = filteredActivities[filteredActivities.length - 1];
+                const sameThing =
+                  previous &&
+                  previous.activity_type === activity.activity_type &&
+                  previous.title === activity.title &&
+                  previous.description === activity.description;
+
+                if (sameThing) {
+                  previous.repeatCount = (previous.repeatCount || 1) + 1;
+                  continue;
+                }
+                filteredActivities.push({ ...activity });
+              }
 
               if (isLoading) {
                 return (
@@ -688,12 +1069,58 @@ export function ActivitySection({
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-[var(--v2-text-primary)] break-words">
                               {getDisplayTitle(activity)}
+                              {/* Collapsed, not hidden: the reader is told how
+                                  many times it happened, because "sent four
+                                  times" is itself worth knowing. */}
+                              {(activity as { repeatCount?: number }).repeatCount && (
+                                <span className="ms-1.5 text-xs font-normal text-[var(--v2-text-muted)]">
+                                  ×{(activity as { repeatCount?: number }).repeatCount}
+                                </span>
+                              )}
                             </p>
-                            {activity.description && activity.title && (
-                              <p className="text-sm text-[var(--v2-text-secondary)] mt-0.5 break-words">
-                                {translateDescription(activity.description)}
-                              </p>
-                            )}
+                            {/* The second line only when it says something the
+                                first does not. The two were rendered whenever
+                                both existed, so a row whose title and
+                                description were the same sentence printed it
+                                twice and then its own type underneath. */}
+                            {(() => {
+                              const detail = translateDescription(activity.description);
+                              if (!detail || detail === getDisplayTitle(activity)) return null;
+                              return (
+                                <p className="text-sm text-[var(--v2-text-secondary)] mt-0.5 break-words">
+                                  {detail}
+                                </p>
+                              );
+                            })()}
+
+                            {/* Drill-down: only offered where there is
+                                something worth opening, so most rows carry no
+                                affordance at all. */}
+                            {(() => {
+                              const details = rowDetail(activity);
+                              if (details.length === 0) return null;
+                              const isOpen = openRow === activity.id;
+                              return (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => setOpenRow(isOpen ? null : activity.id)}
+                                    className="mt-1 text-xs text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                                  >
+                                    {isOpen ? '▾' : (isRTL ? '◂' : '▸')} {t('crm.activity.details') !== 'crm.activity.details' ? t('crm.activity.details') : ''}
+                                  </button>
+                                  {isOpen && (
+                                    <div className="mt-1.5 ps-2 border-s-2 border-[var(--v2-border)] space-y-0.5">
+                                      {details.map(row => (
+                                        <p key={row.label} className="text-xs text-[var(--v2-text-secondary)] break-words">
+                                          <span className="text-[var(--v2-text-muted)]">{row.label}:</span> {row.value}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                           <div className="flex items-center gap-1.5 flex-shrink-0">
                             {activity.auto_logged ? (

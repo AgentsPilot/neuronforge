@@ -27,11 +27,44 @@ const corePluginFiles = [
       'discord-plugin-v2.json',
       'dropbox-plugin-v2.json',
       'meta-ads-plugin-v2.json',
+      'meta-insights-plugin-v2.json',
+      'google-analytics-plugin-v2.json',
+      'google-business-profile-plugin-v2.json',
       'notion-plugin-v2.json',
       'onedrive-plugin-v2.json',
       'outlook-plugin-v2.json',
       'salesforce-plugin-v2.json',
       'stripe-plugin-v2.json',
+      // ---------------------------------------------------------------------
+      // INTERIM DUPLICATION - a decision is owed here. Two Business OS plugin
+      // surfaces are loaded on purpose, because they were built in parallel and
+      // each already has its own consumer:
+      //
+      //   business-os          one catalog-generated plugin (67 actions), backed
+      //                        by the BizQL compiler + MutateExecutor. Reached by
+      //                        DISCOVERY (no `visibility` field), so it is what
+      //                        the agent-generation pipeline grounds against
+      //                        (see lib/agentkit/convertPlugins.ts).
+      //
+      //   crm / scheduling /   five granular repository-backed internal plugins
+      //   payments / intake /  (71 actions), `visibility: "business_os"` so they
+      //   website              are HIDDEN from discovery. Reached only by explicit
+      //                        key from lib/business-os/ChatCommandExecutor.ts.
+      //
+      // They therefore do not contend: the generator never sees the five, and
+      // nothing invokes `business-os` by key. Keep it that way until the shape is
+      // decided - in particular do NOT add `visibility: "business_os"` to
+      // business-os-plugin-v2.json, which would hide it from the generator and
+      // break agent generation over the user's own records.
+      //
+      // See docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md - decision
+      // D9, open questions Q2/Q3/Q4.
+      // ---------------------------------------------------------------------
+      // The user's own business records. Generated from the Business Catalog -
+      // see scripts/generate-business-os-plugin.ts. Regenerate after any catalog
+      // change; the drift test fails if this file falls behind.
+      'business-os-plugin-v2.json',
+      // Internal repository-backed Business OS plugins (db_active access strategy).
       'crm-plugin-v2.json',
       'scheduling-plugin-v2.json',
       'payments-plugin-v2.json',

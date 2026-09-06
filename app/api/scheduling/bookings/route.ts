@@ -7,138 +7,51 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { AuditTrailService } from '@/lib/services/AuditTrailService';
-import { schedulingBookingRepository, schedulingServiceRepository, SchedulingService } from '@/lib/repositories/SchedulingRepository';
-import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
-import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
-import { paymentReminderService } from '@/lib/services/PaymentReminderService';
-import { emitPaymentEvent } from '@/lib/services/PaymentEventService';
-import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
+import {
+  createBooking,
+  BookingSlotUnavailableError
+} from '@/lib/services/BookingLifecycleService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingBookingsAPI' });
-const auditTrail = AuditTrailService.getInstance();
-
-/**
- * Helper function to create an invoice for a booking
- */
-async function createBookingInvoice(
-  userId: string,
-  bookingId: string,
-  service: SchedulingService,
-  bookingData: {
-    client_first_name: string;
-    client_last_name?: string;
-    client_email: string;
-    start_time: string;
-    contact_id?: string;
-  },
-  requestLogger: ReturnType<typeof logger.child>
-) {
-  // Generate invoice number
-  const invoiceNumberResult = await paymentInvoiceRepository.getNextInvoiceNumber(userId);
-  if (invoiceNumberResult.error) {
-    throw invoiceNumberResult.error;
-  }
-
-  // Calculate due date (service start time)
-  const dueDate = new Date(bookingData.start_time).toISOString().split('T')[0];
-
-  // Create invoice
-  const invoiceResult = await paymentInvoiceRepository.create({
-    user_id: userId,
-    contact_id: bookingData.contact_id || null,
-    invoice_number: invoiceNumberResult.data!,
-    amount: service.price!,
-    currency: service.currency,
-    status: 'sent',
-    line_items: [
-      {
-        description: service.service_name,
-        quantity: 1,
-        unit_price: service.price!,
-        total: service.price!
-      }
-    ],
-    due_date: dueDate,
-    payment_terms: 'Due on service date',
-    notes: `Booking for ${bookingData.client_first_name} ${bookingData.client_last_name || ''}`.trim(),
-    internal_notes: `Auto-generated for booking ${bookingId}`,
-    sent_at: new Date().toISOString(),
-    paid_at: null,
-    // Payment fields
-    payment_method: null,
-    payment_received_at: null,
-    payment_notes: null,
-    processor_type: null,
-    processor_checkout_id: null,
-    processor_payment_id: null,
-    processor_customer_id: null,
-    processor_payment_method_id: null,
-    retry_count: 0,
-    last_retry_at: null,
-    next_retry_at: null
-  });
-
-  if (invoiceResult.error) {
-    throw invoiceResult.error;
-  }
-
-  const invoice = invoiceResult.data!;
-
-  // Emit invoice created event
-  await emitPaymentEvent(userId, {
-    eventType: 'invoice.created',
-    entityType: 'invoice',
-    entityId: invoice.id,
-    contactId: bookingData.contact_id,
-    metadata: {
-      bookingId,
-      serviceName: service.service_name,
-      amount: service.price,
-      currency: service.currency,
-      dueDate
-    }
-  });
-
-  // Schedule payment reminders for the invoice (non-blocking)
-  if (bookingData.contact_id) {
-    paymentReminderService.scheduleInvoiceReminders(
-      userId,
-      invoice.id,
-      bookingData.contact_id,
-      dueDate
-    ).catch(err => requestLogger.warn({ err, invoiceId: invoice.id }, 'Failed to schedule invoice reminders'));
-  }
-
-  return invoice;
-}
 
 // Validation schemas
+// Contact can be provided directly OR created from client_* fields
 const createBookingSchema = z.object({
   service_id: z.string().uuid(),
-  client_first_name: z.string().min(1),
-  client_last_name: z.string().optional(),
-  client_email: z.string().email(),
-  client_phone: z.string().optional(),
   start_time: z.string().datetime(),
   end_time: z.string().datetime(),
   timezone: z.string().optional(),
   notes: z.string().optional(),
   booking_source: z.string().optional(),
-  // Payment options
+  // Contact - either provide contact_id OR client_* fields to create/find contact
   contact_id: z.string().uuid().optional(),
+  // Client fields for creating/finding contact (used if contact_id not provided)
+  client_first_name: z.string().optional(),
+  client_last_name: z.string().optional(),
+  client_email: z.string().email().optional(),
+  client_phone: z.string().optional(),
+  // Payment options
   create_invoice: z.boolean().optional().default(true),
-  payment_plan_id: z.string().uuid().optional()
-});
+  payment_plan_id: z.string().uuid().optional(),
+  // Intake form option
+  send_intake_form: z.boolean().optional().default(false)
+}).refine(
+  data => data.contact_id || (data.client_first_name && data.client_email),
+  { message: 'Either contact_id or (client_first_name + client_email) is required' }
+);
 
 const listBookingsSchema = z.object({
   service_id: z.string().uuid().optional(),
   contact_id: z.string().uuid().optional(),
   status: z.enum(['confirmed', 'cancelled', 'completed', 'no_show']).optional(),
-  start_date: z.string().datetime().optional(),
-  end_date: z.string().datetime().optional(),
-  limit: z.number().min(1).max(100).optional(),
+  // Use .refine for date validation to accept ISO strings with any valid format
+  start_date: z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' }).optional(),
+  end_date: z.string().refine(val => !isNaN(Date.parse(val)), { message: 'Invalid date format' }).optional(),
+  limit: z.number().min(1).max(500).optional(), // Increased max to 500 for calendar views
   offset: z.number().min(0).optional()
 });
 
@@ -161,78 +74,112 @@ export async function POST(request: NextRequest) {
     const validated = createBookingSchema.parse(body);
 
     requestLogger.info(
-      { userId: user.id, serviceId: validated.service_id, clientEmail: validated.client_email },
+      { userId: user.id, serviceId: validated.service_id, contactId: validated.contact_id, clientEmail: validated.client_email },
       'Creating booking'
     );
 
-    // 3. Check for double booking (existing bookings)
-    const overlapCheck = await schedulingBookingRepository.checkOverlap(
-      user.id,
-      validated.start_time,
-      validated.end_time
-    );
+    // 3. Resolve contact_id - create or find contact if not provided
+    let contactId = validated.contact_id;
+    let contactName = '';
+    let contactEmail: string | null = null;
 
-    if (overlapCheck.error) {
-      requestLogger.error({ err: overlapCheck.error, userId: user.id }, 'Failed to check booking overlap');
+    if (!contactId && validated.client_email) {
+      // Try to find existing contact by email
+      const existingContactResult = await crmContactRepository.findByEmail(
+        validated.client_email,
+        user.id
+      );
+
+      if (existingContactResult.data) {
+        contactId = existingContactResult.data.id;
+        contactName = `${existingContactResult.data.first_name || ''} ${existingContactResult.data.last_name || ''}`.trim();
+        contactEmail = existingContactResult.data.email || null;
+        requestLogger.debug({ contactId, email: validated.client_email }, 'Found existing contact');
+      } else {
+        // Create new contact - get user's first pipeline stage
+        // `list` returns them ordered by position, so [0] is the entry stage.
+        const stagesResult = await crmPipelineStagesRepository.list(user.id);
+        const firstStage = stagesResult.data?.[0]?.stage_key || 'lead';
+
+        const newContactResult = await crmContactRepository.create({
+          user_id: user.id,
+          first_name: validated.client_first_name || '',
+          last_name: validated.client_last_name || null,
+          email: validated.client_email,
+          phone: validated.client_phone || null,
+          stage: firstStage,
+          tags: [],
+          source: 'booking'
+        });
+
+        if (newContactResult.error) {
+          requestLogger.error({ err: newContactResult.error }, 'Failed to create contact for booking');
+          return NextResponse.json(
+            { success: false, error: 'Failed to create contact' },
+            { status: 500 }
+          );
+        }
+
+        contactId = newContactResult.data!.id;
+        contactName = `${validated.client_first_name || ''} ${validated.client_last_name || ''}`.trim();
+        contactEmail = validated.client_email;
+        requestLogger.info({ contactId, email: validated.client_email, stage: firstStage }, 'Created new contact for booking');
+      }
+    } else if (contactId) {
+      // Fetch contact name and email for logging/invoicing
+      const contactResult = await crmContactRepository.findById(contactId, user.id);
+      if (contactResult.data) {
+        contactName = `${contactResult.data.first_name || ''} ${contactResult.data.last_name || ''}`.trim();
+        // Use client_email from request if provided, otherwise fall back to database email
+        contactEmail = validated.client_email || contactResult.data.email || null;
+      }
+    }
+
+    if (!contactId) {
       return NextResponse.json(
-        { success: false, error: 'Failed to validate booking time' },
-        { status: 500 }
+        { success: false, error: 'Contact is required for booking' },
+        { status: 400 }
       );
     }
 
-    if (overlapCheck.data && overlapCheck.data.length > 0) {
-      const conflictingBooking = overlapCheck.data[0];
-      requestLogger.warn(
-        { userId: user.id, conflictingBookingId: conflictingBooking.id, startTime: validated.start_time },
-        'Double booking attempt detected'
-      );
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Time slot conflict',
-          message: 'This time slot overlaps with an existing booking',
-          conflicting_booking: {
-            id: conflictingBooking.id,
-            client_name: `${conflictingBooking.client_first_name} ${conflictingBooking.client_last_name || ''}`.trim(),
-            start_time: conflictingBooking.start_time,
-            end_time: conflictingBooking.end_time
-          }
-        },
-        { status: 409 }
-      );
-    }
-
-    // 3b. Check for external calendar event blocking
-    const isBlockedByExternal = await CalendarSyncService.isSlotBlockedByExternalEvent(
-      user.id,
-      validated.start_time,
-      validated.end_time
-    );
-
-    if (isBlockedByExternal) {
-      requestLogger.warn(
-        { userId: user.id, startTime: validated.start_time },
-        'Booking blocked by external calendar event'
-      );
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Time slot blocked',
-          message: 'This time slot is blocked by an event in your external calendar'
-        },
-        { status: 409 }
-      );
-    }
-
-    // 4. Create booking
-    // Destructure to exclude fields that don't exist in database
-    const { create_invoice, payment_plan_id, ...bookingData } = validated;
-    const result = await schedulingBookingRepository.create({
-      user_id: user.id,
-      ...bookingData
+    // 4. Create the booking — conflict checks, calendar, invoice, confirmation.
+    //
+    // The whole sequence lives in BookingLifecycleService so the chat creates a
+    // booking the same way this route does. Doing it here meant an appointment
+    // booked any other way skipped the overlap check, the calendar and the
+    // client's confirmation.
+    const result = await createBooking({
+      userId: user.id,
+      serviceId: validated.service_id,
+      contactId,
+      startTime: validated.start_time,
+      endTime: validated.end_time,
+      timezone: validated.timezone,
+      notes: validated.notes,
+      bookingSource: validated.booking_source,
+      createInvoice: validated.create_invoice,
+      sendIntakeForm: validated.send_intake_form,
+      contactName,
+      contactEmail,
+      request,
+      logger: requestLogger
     });
 
     if (result.error) {
+      // A taken slot is not a failure of the system — it is an answer, and the
+      // client needs the conflicting booking to choose another time.
+      if (result.error instanceof BookingSlotUnavailableError) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: result.error.reason === 'overlap' ? 'Time slot conflict' : 'Time slot blocked',
+            message: result.error.message,
+            conflicting_booking: result.error.conflictingBooking
+          },
+          { status: 409 }
+        );
+      }
+
       requestLogger.error({ err: result.error, userId: user.id }, 'Failed to create booking');
       return NextResponse.json(
         { success: false, error: 'Failed to create booking' },
@@ -240,69 +187,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 5. Audit log (non-blocking)
-    auditTrail
-      .log({
-        action: 'SCHEDULING_BOOKING_CREATED',
-        userId: user.id,
-        entityType: 'scheduling_booking',
-        entityId: result.data!.id,
-        resourceName: `Booking for ${validated.client_first_name} ${validated.client_last_name || ''}`.trim(),
-        metadata: {
-          service_id: validated.service_id,
-          start_time: validated.start_time
-        },
-        request
-      })
-      .catch(err => requestLogger.error({ err }, 'Audit failed'));
-
-    // 6. Sync to calendar and handle payments (non-blocking but awaited for response)
-    // Get the service for calendar event details and pricing
-    const serviceResult = await schedulingServiceRepository.findById(validated.service_id, user.id);
-    const service = serviceResult.data;
-    let invoiceData = null;
-
-    // 6a. Calendar sync (non-blocking)
-    if (service && result.data) {
-      CalendarSyncService.syncBookingToCalendar(result.data, service, user.id)
-        .catch(err => requestLogger.warn({ err, bookingId: result.data!.id }, 'Calendar sync failed'));
-    }
-
-    // 6b. Create invoice if service has a price and invoice creation is requested
-    if (service && service.price && service.price > 0 && create_invoice !== false) {
-      try {
-        const invoiceResult = await createBookingInvoice(
-          user.id,
-          result.data!.id,
-          service,
-          validated,
-          requestLogger
-        );
-
-        if (invoiceResult) {
-          invoiceData = invoiceResult;
-          requestLogger.info({
-            bookingId: result.data!.id,
-            invoiceId: invoiceResult.id
-          }, 'Invoice created for booking');
-        }
-      } catch (invoiceError) {
-        requestLogger.warn({ err: invoiceError, bookingId: result.data!.id }, 'Failed to create invoice for booking');
-        // Don't fail the booking if invoice creation fails
-      }
-    }
-
-    // 7. Send booking confirmation email (non-blocking)
-    // Skip invoice email since we've already created the invoice above
-    BookingEmailService.sendBookingConfirmation(result.data!.id, user.id, { skipInvoice: true })
-      .catch(err => requestLogger.warn({ err, bookingId: result.data!.id }, 'Booking confirmation email failed'));
-
-    // 8. Return success
-    requestLogger.info({ bookingId: result.data!.id, userId: user.id }, 'Booking created successfully');
+    // 5. Return success
     return NextResponse.json({
       success: true,
-      booking: result.data,
-      invoice: invoiceData
+      booking: result.data!.booking,
+      invoice: result.data!.invoice
     });
 
   } catch (error) {
@@ -381,6 +270,17 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Return success
+    requestLogger.info({
+      userId: user.id,
+      bookingsCount: result.data?.length || 0,
+      bookings: result.data?.map(b => ({
+        id: b.id.substring(0, 8),
+        start: b.start_time,
+        status: b.status,
+        contact_id: b.contact_id
+      }))
+    }, 'Returning bookings');
+
     return NextResponse.json({
       success: true,
       bookings: result.data,

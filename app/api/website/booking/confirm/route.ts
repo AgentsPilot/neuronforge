@@ -108,7 +108,10 @@ export async function POST(request: NextRequest) {
 
     // Calculate end time
     const startTime = new Date(data.start_time);
-    const endTime = new Date(startTime.getTime() + service.duration_minutes * 60 * 1000);
+    // A service that is not booked against a time has no duration, so its
+    // "appointment" is a point rather than a span. Multiplying null gives NaN,
+    // and an invalid end time is written to the row without complaint.
+    const endTime = new Date(startTime.getTime() + (service.duration_minutes || 0) * 60 * 1000);
 
     // Check for conflicts (double-check availability)
     const { data: conflicts } = await supabaseServer
@@ -130,16 +133,49 @@ export async function POST(request: NextRequest) {
     const clientFirstName = nameParts[0] || data.name;
     const clientLastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : null;
 
+    // Get user's pipeline stages to find the best "active client" stage for paid customers
+    const { data: pipelineStages } = await supabaseServer
+      .from('crm_pipeline_stages')
+      .select('stage_key, position')
+      .eq('user_id', ownerId)
+      .order('position', { ascending: true });
+
+    // Find best "active client" stage - priority: 'active_client' > 'active' > 'client' > highest non-terminal
+    let activeClientStage = 'client'; // fallback
+    if (pipelineStages && pipelineStages.length > 0) {
+      const stageKeys = pipelineStages.map(s => s.stage_key);
+      if (stageKeys.includes('active_client')) {
+        activeClientStage = 'active_client';
+      } else if (stageKeys.includes('active')) {
+        activeClientStage = 'active';
+      } else if (stageKeys.includes('client')) {
+        activeClientStage = 'client';
+      } else {
+        // Use the stage with highest position but not terminal stages
+        const validStages = pipelineStages.filter(
+          s => !['completed', 'inactive', 'past_client'].includes(s.stage_key)
+        );
+        if (validStages.length > 0) {
+          activeClientStage = validStages[validStages.length - 1].stage_key;
+        }
+      }
+    }
+
+    requestLogger.debug({ activeClientStage, pipelineStages }, 'Determined active client stage for paid booking');
+
     // Create/update CRM contact
     let contactId: string | null = null;
 
-    // Check if contact already exists by email
-    const { data: existingContact } = await supabaseServer
+    // Check if contact already exists by email (use limit 1 to handle potential duplicates)
+    const { data: existingContacts } = await supabaseServer
       .from('crm_contacts')
       .select('id, first_name, last_name, phone')
       .eq('user_id', ownerId)
       .eq('email', data.email)
-      .single();
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    const existingContact = existingContacts?.[0] || null;
 
     if (existingContact) {
       contactId = existingContact.id;
@@ -172,33 +208,50 @@ export async function POST(request: NextRequest) {
           email: data.email,
           phone: data.phone || null,
           source: 'website_booking',
-          stage: 'client' // Mark as client since they paid
+          stage: activeClientStage // Use user's active client pipeline stage
         })
         .select('id')
         .single();
 
-      if (contactError) {
-        requestLogger.warn({ err: contactError }, 'Failed to create contact (proceeding without)');
-      } else if (newContact) {
-        contactId = newContact.id;
+      if (contactError || !newContact) {
+        requestLogger.error({ err: contactError }, 'Failed to create contact - cannot proceed without contact');
+        return NextResponse.json(
+          { success: false, error: 'Failed to create contact' },
+          { status: 500 }
+        );
       }
+      contactId = newContact.id;
     }
 
     // Create the booking - already confirmed since payment succeeded
+    // Note: client data is now stored only in crm_contacts (via contact_id)
     const { data: booking, error: bookingError } = await supabaseServer
       .from('scheduling_bookings')
       .insert({
         user_id: ownerId,
         service_id: data.service_id,
-        contact_id: contactId,
-        client_first_name: clientFirstName,
-        client_last_name: clientLastName,
-        client_email: data.email,
-        client_phone: data.phone || null,
+        contact_id: contactId, // Required - client data is in crm_contacts
         start_time: startTime.toISOString(),
         end_time: endTime.toISOString(),
         status: 'confirmed',
-        payment_status: service.price && service.price > 0 ? 'paid' : 'paid',
+        /**
+         * Only free bookings are born paid.
+         *
+         * This read `price > 0 ? 'paid' : 'paid'` — a ternary with one answer —
+         * and wrote NO `payment_transactions` row at all. So a priced booking
+         * claimed the money had arrived while the platform held no record of it:
+         * invisible to revenue, unrefundable, and impossible to reconcile.
+         *
+         * The route is unauthenticated and accepts `is_preview` to simulate a
+         * payment, so this also stopped anyone who knew a subdomain and a
+         * service id from minting confirmed, paid bookings.
+         *
+         * A priced booking now waits for the money to be recorded — by the
+         * webhook, which is the only authority on whether Stripe actually took
+         * it. Nothing in the app calls this route today; the widgets use
+         * `/finalize`.
+         */
+        payment_status: (service.price ?? 0) > 0 ? 'pending' : 'paid',
         notes: data.notes || null,
         booking_source: 'website',
         timezone: data.timezone
@@ -220,17 +273,10 @@ export async function POST(request: NextRequest) {
     BookingEmailService.sendBookingConfirmation(booking.id, ownerId, { skipInvoice: true })
       .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
 
-    // Send payment receipt if service has a price (non-blocking)
-    if (service.price && service.price > 0) {
-      BookingEmailService.sendPaymentReceipt(ownerId, {
-        customerEmail: data.email,
-        customerName: data.name,
-        amount: service.price,
-        currency: service.currency,
-        bookingId: booking.id,
-        paymentMethod: data.payment_intent_id ? 'Card' : undefined
-      }).catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Payment receipt email failed'));
-    }
+    // No payment receipt here. A receipt asserts that money arrived, and this
+    // route no longer claims that for a priced booking — it records nothing, so
+    // it has nothing to receipt. The webhook sends one when the payment is
+    // actually recorded against the booking.
 
     requestLogger.info(
       { bookingId: booking.id, contactId, subdomain: data.subdomain, serviceId: data.service_id, isPreview: data.is_preview },

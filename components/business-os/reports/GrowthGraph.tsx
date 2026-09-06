@@ -8,6 +8,10 @@ interface GrowthGraphProps {
   bookings: number;
   contacts: number;
   loading?: boolean;
+  // Previous period values for trend comparison (optional)
+  previousRevenue?: number;
+  previousBookings?: number;
+  previousContacts?: number;
 }
 
 // Simple bar representation for each metric
@@ -53,7 +57,15 @@ function MetricBar({
   );
 }
 
-export function GrowthGraph({ revenue, bookings, contacts, loading }: GrowthGraphProps) {
+export function GrowthGraph({
+  revenue,
+  bookings,
+  contacts,
+  loading,
+  previousRevenue,
+  previousBookings,
+  previousContacts
+}: GrowthGraphProps) {
   const { language, formatCurrency } = useLanguage();
   const isRTL = language === 'he';
 
@@ -83,16 +95,23 @@ export function GrowthGraph({ revenue, bookings, contacts, loading }: GrowthGrap
   const getLabel = (key: string) => labels[key]?.[language] || labels[key]?.en || key;
 
   // Calculate max values for relative bar sizing
-  // Using reasonable thresholds for a small business
-  const revenueMax = Math.max(revenue, 5000); // $5k baseline
-  const bookingsMax = Math.max(bookings, 30); // 30 bookings baseline
-  const contactsMax = Math.max(contacts, 100); // 100 contacts baseline
+  // Use previous period as baseline if available, otherwise use current value with minimum
+  const revenueMax = Math.max(revenue, previousRevenue ?? revenue, 1);
+  const bookingsMax = Math.max(bookings, previousBookings ?? bookings, 1);
+  const contactsMax = Math.max(contacts, previousContacts ?? contacts, 1);
 
-  // Determine trends (in real app, would compare to previous period)
-  // For now, use simple heuristics
-  const revenueTrend: 'up' | 'down' | 'neutral' = revenue > 1000 ? 'up' : revenue > 0 ? 'neutral' : 'down';
-  const bookingsTrend: 'up' | 'down' | 'neutral' = bookings > 10 ? 'up' : bookings > 0 ? 'neutral' : 'down';
-  const contactsTrend: 'up' | 'down' | 'neutral' = contacts > 20 ? 'up' : contacts > 0 ? 'neutral' : 'down';
+  // Determine trends by comparing to previous period
+  // If no previous data, show neutral (no comparison possible)
+  const determineTrend = (current: number, previous?: number): 'up' | 'down' | 'neutral' => {
+    if (previous === undefined) return 'neutral'; // No data to compare
+    if (current > previous) return 'up';
+    if (current < previous) return 'down';
+    return 'neutral';
+  };
+
+  const revenueTrend = determineTrend(revenue, previousRevenue);
+  const bookingsTrend = determineTrend(bookings, previousBookings);
+  const contactsTrend = determineTrend(contacts, previousContacts);
 
   if (loading) {
     return (
@@ -125,7 +144,7 @@ export function GrowthGraph({ revenue, bookings, contacts, loading }: GrowthGrap
         <MetricBar
           label={getLabel('revenue')}
           value={revenue}
-          formattedValue={formatCurrency(revenue)}
+          formattedValue={formatCurrency(revenue, { showFree: false })}
           maxValue={revenueMax}
           color="#22C58B"
           trend={revenueTrend}

@@ -127,7 +127,7 @@ export const PAYMENT_BUILDING_BLOCKS: Record<string, PaymentBuildingBlock> = {
     ],
     configurable: ['refund_notification_template'],
     emits_events: ['refund.initiated', 'refund.completed', 'refund.failed'],
-    requires_processor: true,
+    requires_processor: false,  // Processor requirement is checked at execution based on transaction type
     supported_processors: ['stripe', 'paypal', 'square', 'manual']
   },
 
@@ -144,7 +144,7 @@ export const PAYMENT_BUILDING_BLOCKS: Record<string, PaymentBuildingBlock> = {
     ],
     configurable: ['refund_notification_template'],
     emits_events: ['refund.initiated', 'refund.completed', 'refund.failed'],
-    requires_processor: true,
+    requires_processor: false,  // Processor requirement is checked at execution based on transaction type
     supported_processors: ['stripe', 'paypal', 'square', 'manual']
   },
 

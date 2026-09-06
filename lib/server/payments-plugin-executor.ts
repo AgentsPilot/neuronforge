@@ -7,6 +7,7 @@ import {
   paymentInvoiceRepository,
   paymentTransactionRepository,
   type PaymentInvoice,
+  type CreatePaymentInvoiceInput,
 } from '@/lib/repositories/PaymentRepository';
 import {
   paymentPlanRepository,
@@ -22,7 +23,11 @@ import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 
 const pluginName = 'payments';
 
-type PaymentInvoiceInsert = Omit<PaymentInvoice, 'id' | 'created_at' | 'updated_at'>;
+// MERGE FIX (2026-09-02, F4): this hand-rolled alias made every column of PaymentInvoice
+// required on insert, so the feature branch's added columns (refund_*, client_*, booking_id,
+// service_id) broke this builder. The repository already publishes the correct create shape,
+// which knows which columns are DB-defaulted -- use it rather than re-deriving one here.
+type PaymentInvoiceInsert = CreatePaymentInvoiceInput;
 
 /**
  * Internal Payments plugin executor.

@@ -1,0 +1,412 @@
+{
+  "plugin": {
+    "name": "meta-insights",
+    "version": "1.0.0",
+    "description": "Read-only Facebook Page and Instagram Business insights: reach, engagement, profile views, follower counts, and post performance including boosted reach",
+    "context": "Use to understand how a business's Facebook Page and Instagram presence is performing. Provides audience reach, impressions, engagement, profile views and website clicks over time, plus per-post performance that separates organic from paid (boosted) reach. This plugin is READ-ONLY: it cannot post content, create ads, or change any setting. For advertising operations use the meta-ads plugin instead.",
+    "icon": "<Instagram className='w-5 h-5 text-pink-600'/>",
+    "category": "marketing",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2",
+      "client_id": "${META_ADS_CLIENT_ID}",
+      "client_secret": "${META_ADS_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/meta-insights",
+      "auth_url": "https://www.facebook.com/v19.0/dialog/oauth",
+      "token_url": "https://graph.facebook.com/v19.0/oauth/access_token",
+      "profile_url": "https://graph.facebook.com/v19.0/me?fields=id,name,email",
+      "_scope_note": "Only scopes the Meta app can actually grant may be listed here: one unavailable scope fails the ENTIRE OAuth dialog with 'Invalid Scopes', not just that permission. read_insights, instagram_basic and instagram_manage_insights were rejected by the app as configured — read_insights needs a Business-type app, and the instagram_* pair needs the Instagram product added. Add them back to this array once the app dashboard reports them available; get_page_insights and get_instagram_insights cannot work until then. See docs/plugins/meta-insights-plugin.md.",
+      "required_scopes": [
+        "pages_show_list",
+        "pages_read_engagement"
+      ],
+      "token_expiry_seconds": 5184000
+    },
+    "provider_family": "meta"
+  },
+  "actions": {
+    "list_pages": {
+      "description": "List the Facebook Pages this user manages, each with its linked Instagram Business account if one exists",
+      "usage_context": "Call first after connecting. Most businesses manage exactly one Page, in which case the caller should select it automatically rather than asking the user to choose.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "list",
+      "input_entity": "none",
+      "output_entity": "page",
+      "input_cardinality": "none",
+      "output_cardinality": "multiple",
+      "output_fields": [
+        "pages",
+        "page_count"
+      ],
+      "required_params": [],
+      "optional_params": [],
+      "must_support": [],
+      "parameters": {
+        "type": "object",
+        "required": [],
+        "properties": {}
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "pages": {
+            "type": "array",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Facebook Page ID"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Page display name"
+                },
+                "category": {
+                  "type": "string",
+                  "description": "Page category, e.g. 'Education'"
+                },
+                "picture_url": {
+                  "type": "string",
+                  "description": "Page profile picture, for showing in a chooser"
+                },
+                "instagram_account_id": {
+                  "type": "string",
+                  "description": "Linked Instagram Business account ID, or null when the Page has none"
+                },
+                "instagram_username": {
+                  "type": "string",
+                  "description": "Linked Instagram handle"
+                }
+              }
+            }
+          },
+          "page_count": {
+            "type": "number",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns every Page the user administers, with the linked Instagram Business account where one is connected",
+        "sample_output": "{\"pages\":[{\"id\":\"1029384756\",\"name\":\"International Parenting School\",\"category\":\"Education\",\"picture_url\":\"https://...\",\"instagram_account_id\":\"17841400000000000\",\"instagram_username\":\"parentingschool\"}],\"page_count\":1,\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "Empty list when the user administers no Pages, or when the Page role is insufficient. instagram_account_id is null unless the Instagram account is a Business or Creator account linked to the Page — personal Instagram accounts cannot be read."
+      }
+    },
+    "get_page_insights": {
+      "description": "Daily reach, impressions, engagement and profile activity for a Facebook Page over a date range",
+      "usage_context": "Use to show how a Page's visibility is trending. Returns one row per day so results can be stored and charted; do not use for a single aggregate number.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": "page",
+      "output_entity": "insights",
+      "input_cardinality": "single",
+      "output_cardinality": "multiple",
+      "output_fields": [
+        "days",
+        "page_id"
+      ],
+      "required_params": [
+        "page_id"
+      ],
+      "optional_params": [
+        "since",
+        "until",
+        "page_token"
+      ],
+      "must_support": [
+        "date_filtering"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "page_id"
+        ],
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "Facebook Page ID from list_pages"
+          },
+          "since": {
+            "type": "string",
+            "description": "Start date, ISO 8601 (e.g. '2026-06-01'). Defaults to 30 days ago. Meta serves at most 93 days per call."
+          },
+          "until": {
+            "type": "string",
+            "description": "End date, ISO 8601. Defaults to today."
+          },
+          "page_token": {
+            "type": "string",
+            "description": "Page-scoped access token. Page and Instagram insights reject the user token with error #190. Resolved automatically when omitted."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "days": {
+            "type": "array",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD"
+                },
+                "impressions": {
+                  "type": "number",
+                  "description": "Times any Page content entered a screen"
+                },
+                "reach": {
+                  "type": "number",
+                  "description": "Distinct people who saw any Page content"
+                },
+                "engagements": {
+                  "type": "number",
+                  "description": "Distinct people who clicked, reacted, commented or shared"
+                },
+                "profile_views": {
+                  "type": "number",
+                  "description": "Views of the Page profile"
+                }
+              }
+            }
+          },
+          "followers_count": {
+            "type": "number",
+            "description": "Current follower total. A snapshot at retrieval time, not a per-day value."
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns one row per day in the range, plus the Page's current follower count",
+        "sample_output": "{\"page_id\":\"1029384756\",\"days\":[{\"date\":\"2026-08-24\",\"impressions\":412,\"reach\":388,\"engagements\":21,\"profile_views\":9,\"website_clicks\":3}],\"followers_count\":1840,\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "Metrics can be absent for days before the Page had activity — treat a missing metric as zero, not as an error. Ranges longer than 93 days are rejected by Meta and must be split. Requires the read_insights permission at Advanced Access to work for Pages the app user does not administer."
+      }
+    },
+    "get_instagram_insights": {
+      "description": "Daily reach, impressions and profile activity for an Instagram Business account",
+      "usage_context": "Use alongside get_page_insights to show Instagram's contribution. Requires an Instagram Business or Creator account linked to a Facebook Page.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": "instagram_account",
+      "output_entity": "insights",
+      "input_cardinality": "single",
+      "output_cardinality": "multiple",
+      "output_fields": [
+        "days",
+        "instagram_account_id"
+      ],
+      "required_params": [
+        "instagram_account_id"
+      ],
+      "optional_params": [
+        "since",
+        "until",
+        "page_token"
+      ],
+      "must_support": [
+        "date_filtering"
+      ],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "instagram_account_id"
+        ],
+        "properties": {
+          "instagram_account_id": {
+            "type": "string",
+            "description": "Instagram Business account ID from list_pages"
+          },
+          "since": {
+            "type": "string",
+            "description": "Start date, ISO 8601. Defaults to 30 days ago. Instagram serves at most 30 days per call."
+          },
+          "until": {
+            "type": "string",
+            "description": "End date, ISO 8601. Defaults to today."
+          },
+          "page_token": {
+            "type": "string",
+            "description": "Page-scoped access token. Page and Instagram insights reject the user token with error #190. Resolved automatically when omitted."
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "instagram_account_id": {
+            "type": "string",
+            "x-guaranteed": true
+          },
+          "username": {
+            "type": "string"
+          },
+          "days": {
+            "type": "array",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "YYYY-MM-DD"
+                },
+                "impressions": {
+                  "type": "number"
+                },
+                "reach": {
+                  "type": "number"
+                },
+                "profile_views": {
+                  "type": "number"
+                },
+                "website_clicks": {
+                  "type": "number",
+                  "description": "Taps on the website link in the bio"
+                }
+              }
+            }
+          },
+          "followers_count": {
+            "type": "number",
+            "description": "Snapshot at retrieval time"
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns one row per day plus the account's current follower count",
+        "sample_output": "{\"instagram_account_id\":\"17841400000000000\",\"username\":\"parentingschool\",\"days\":[{\"date\":\"2026-08-24\",\"impressions\":1203,\"reach\":940,\"profile_views\":31,\"website_clicks\":7}],\"followers_count\":3120,\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "Fails when the account is personal rather than Business/Creator — surface that as an instruction to switch account type, not as a generic error. Instagram limits insights to 30 days per request; longer ranges must be chunked. Accounts under 100 followers may have metrics withheld for privacy."
+      }
+    },
+    "get_recent_posts": {
+      "description": "Recent Page posts with their reach, split into organic and paid (boosted)",
+      "usage_context": "Use to show which posts performed and whether a boost was involved. Paid reach appears here without any advertising permission, but the amount SPENT on a boost is not available through this endpoint.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "list",
+      "input_entity": "page",
+      "output_entity": "post",
+      "input_cardinality": "single",
+      "output_cardinality": "multiple",
+      "output_fields": [
+        "posts",
+        "post_count"
+      ],
+      "required_params": [
+        "page_id"
+      ],
+      "optional_params": [
+        "limit",
+        "since"
+      ],
+      "must_support": [],
+      "parameters": {
+        "type": "object",
+        "required": [
+          "page_id"
+        ],
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "description": "Facebook Page ID from list_pages"
+          },
+          "limit": {
+            "type": "number",
+            "default": 25,
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Maximum posts to return, newest first"
+          },
+          "since": {
+            "type": "string",
+            "description": "Only posts published on or after this ISO 8601 date"
+          }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "posts": {
+            "type": "array",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string",
+                  "description": "Post text, may be absent for image-only posts"
+                },
+                "created_time": {
+                  "type": "string"
+                },
+                "permalink_url": {
+                  "type": "string"
+                },
+                "impressions": {
+                  "type": "number"
+                },
+                "impressions_organic": {
+                  "type": "number"
+                },
+                "impressions_paid": {
+                  "type": "number",
+                  "description": "Impressions from a boost. Greater than zero means this post was promoted."
+                },
+                "engagements": {
+                  "type": "number"
+                },
+                "was_boosted": {
+                  "type": "boolean",
+                  "description": "Convenience flag: impressions_paid > 0"
+                }
+              }
+            }
+          },
+          "post_count": {
+            "type": "number",
+            "x-guaranteed": true
+          },
+          "retrieved_at": {
+            "type": "string",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns recent posts newest first, each with organic and paid impressions",
+        "sample_output": "{\"posts\":[{\"id\":\"1029384756_112233\",\"message\":\"New parenting workshop this Sunday\",\"created_time\":\"2026-08-20T10:00:00+0000\",\"permalink_url\":\"https://facebook.com/...\",\"impressions\":3100,\"impressions_organic\":420,\"impressions_paid\":2680,\"engagements\":96,\"was_boosted\":true}],\"post_count\":1,\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "Per-post insight metrics are unavailable for very recent posts until Meta has processed them; treat missing values as zero. Boost SPEND is not exposed by this endpoint at any permission level — do not attempt to derive cost or ROAS from it."
+      }
+    }
+  }
+}

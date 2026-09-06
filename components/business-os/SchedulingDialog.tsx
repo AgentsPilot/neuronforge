@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SchedulingCalendarView } from '@/components/scheduling/SchedulingCalendarView';
@@ -75,15 +75,21 @@ function isSlotBooked(
   slotEnd: Date,
   existingBookings: SchedulingBooking[]
 ): boolean {
+  // Convert local slot times to UTC ISO strings for comparison
+  const slotStartUTC = slotStart.toISOString();
+  const slotEndUTC = slotEnd.toISOString();
+
   return existingBookings.some(booking => {
     if (booking.status === 'cancelled' || booking.status === 'no_show') return false;
-    const bookingStart = new Date(booking.start_time);
-    const bookingEnd = new Date(booking.end_time);
-    return slotStart < bookingEnd && slotEnd > bookingStart;
+    // booking.start_time and booking.end_time are already UTC ISO strings
+    // Overlap check: slot_start < booking_end AND slot_end > booking_start
+    return slotStartUTC < booking.end_time && slotEndUTC > booking.start_time;
   });
 }
 
 // Generate next available slots based on availability
+// CRITICAL: Availability times are in LOCAL timezone (business hours like "09:00" = 9am local)
+// Bookings in DB are stored in UTC, so we must convert for comparison
 function getNextAvailableSlots(
   availability: WeeklyAvailability | undefined,
   serviceDurationMinutes: number,
@@ -103,9 +109,10 @@ function getNextAvailableSlots(
 
     if (daySlots.length === 0) continue;
 
+    // Create date in LOCAL timezone for this day
     const targetDate = new Date(now);
     targetDate.setDate(now.getDate() + dayOffset);
-    targetDate.setSeconds(0, 0);
+    targetDate.setHours(0, 0, 0, 0);
 
     for (const slot of daySlots) {
       if (slots.length >= maxSlots) break;
@@ -113,12 +120,14 @@ function getNextAvailableSlots(
       const [startHour, startMinute] = slot.start.split(':').map(Number);
       const [endHour, endMinute] = slot.end.split(':').map(Number);
 
+      // Create time slots in LOCAL timezone
       let currentStart = new Date(targetDate);
       currentStart.setHours(startHour, startMinute, 0, 0);
 
       const slotEnd = new Date(targetDate);
       slotEnd.setHours(endHour, endMinute, 0, 0);
 
+      // For today, skip past time slots
       if (dayOffset === 0) {
         const roundedNow = new Date(now);
         const minutes = roundedNow.getMinutes();
@@ -129,9 +138,12 @@ function getNextAvailableSlots(
         }
       }
 
+      // Generate 30-minute slots within the availability window
       while (slots.length < maxSlots) {
         const potentialEnd = new Date(currentStart.getTime() + serviceDurationMinutes * 60 * 1000);
         if (potentialEnd > slotEnd) break;
+
+        // isSlotBooked handles UTC conversion internally
         if (!isSlotBooked(currentStart, potentialEnd, existingBookings)) {
           slots.push({
             dayOffset,
@@ -172,6 +184,7 @@ export function SchedulingDialog({
     notes: ''
   });
   const [formLoading, setFormLoading] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Client search state
   const [clientSearchQuery, setClientSearchQuery] = useState('');
@@ -216,10 +229,28 @@ export function SchedulingDialog({
         availabilityResponse.json()
       ]);
 
+      // Debug logging
+      console.log('📊 SchedulingDialog fetchAllData:', {
+        servicesCount: servicesData.success ? servicesData.services?.length : 0,
+        bookingsCount: bookingsData.success ? bookingsData.bookings?.length : 0,
+        bookingsData: bookingsData.success ? bookingsData.bookings : null,
+        availabilityExists: availabilityData.success && !!availabilityData.availability
+      });
+
       if (servicesData.success) setServices(servicesData.services);
-      if (bookingsData.success) setBookings(bookingsData.bookings);
+      if (bookingsData.success) {
+        console.log('📅 Setting bookings:', bookingsData.bookings);
+        setBookings(bookingsData.bookings);
+      }
       if (availabilityData.success && availabilityData.availability) {
-        setAvailability(parseAvailability(availabilityData.availability));
+        const parsed = parseAvailability(availabilityData.availability);
+        console.log('⏰ AVAILABILITY DEBUG:', {
+          raw: availabilityData.availability,
+          parsed,
+          today: DAY_KEYS[new Date().getDay()],
+          todaySlots: parsed[DAY_KEYS[new Date().getDay()]]
+        });
+        setAvailability(parsed);
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch scheduling data');
@@ -254,6 +285,7 @@ export function SchedulingDialog({
     setClientSearchQuery('');
     setClientSearchResults([]);
     setShowClientSearch(true);
+    setFormError(null);
   };
 
   const initializeNewBookingForm = (prefillDate?: Date, prefillHour?: number) => {
@@ -390,7 +422,7 @@ export function SchedulingDialog({
     const service = services.find(s => s.id === serviceId);
     if (service) {
       const start = new Date(formData.start_time);
-      const end = new Date(start.getTime() + service.duration_minutes * 60 * 1000);
+      const end = new Date(start.getTime() + (service.duration_minutes || 0) * 60 * 1000);
       setFormData(prev => ({
         ...prev,
         service_id: serviceId,
@@ -402,8 +434,22 @@ export function SchedulingDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormLoading(true);
+    setFormError(null);
 
     try {
+      // Debug logging
+      console.log('📅 Creating booking:', {
+        startTime: formData.start_time,
+        endTime: formData.end_time,
+        startISO: new Date(formData.start_time).toISOString(),
+        endISO: new Date(formData.end_time).toISOString(),
+        currentBookings: bookings.filter(b => b.status !== 'cancelled' && b.status !== 'no_show').map(b => ({
+          start: b.start_time,
+          end: b.end_time,
+          status: b.status
+        }))
+      });
+
       const response = await fetch('/api/scheduling/bookings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -421,23 +467,79 @@ export function SchedulingDialog({
         })
       });
 
+      const data = await response.json();
+
       if (response.ok) {
         setShowBookingPanel(false);
         resetForm();
         refreshBookingsSilently();
         onBookingCreated?.();
+      } else {
+        // Handle specific error cases
+        if (response.status === 409) {
+          // Time slot conflict
+          const errorMsg = language === 'he'
+            ? 'מועד זה תפוס. אנא בחר זמן אחר.'
+            : language === 'es'
+            ? 'Este horario ya está reservado. Por favor elige otro horario.'
+            : 'This time slot is already booked. Please choose a different time.';
+          setFormError(data.message || errorMsg);
+        } else {
+          const errorMsg = language === 'he'
+            ? 'שגיאה ביצירת הפגישה. נסה שוב.'
+            : language === 'es'
+            ? 'Error al crear la reserva. Inténtalo de nuevo.'
+            : 'Failed to create booking. Please try again.';
+          setFormError(data.error || errorMsg);
+        }
+        logger.warn({ status: response.status, error: data, formData }, 'Booking creation failed');
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to create booking');
+      setFormError('An unexpected error occurred. Please try again.');
     } finally {
       setFormLoading(false);
     }
   };
 
-  // Quick pick slots
+  // Quick pick slots - recalculate whenever bookings change
   const selectedService = services.find(s => s.id === formData.service_id);
   const serviceDuration = selectedService?.duration_minutes || 60;
-  const quickSlots = getNextAvailableSlots(availability, serviceDuration, 4, bookings);
+  const quickSlots = React.useMemo(() => {
+    const slots = getNextAvailableSlots(availability, serviceDuration, 4, bookings);
+
+    // Debug timezone information
+    const now = new Date();
+    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timezoneOffset = -now.getTimezoneOffset() / 60; // Hours from UTC
+
+    console.log('🌍 TIMEZONE DEBUG:', {
+      userTimezone,
+      timezoneOffset: `UTC${timezoneOffset >= 0 ? '+' : ''}${timezoneOffset}`,
+      currentTime: {
+        iso: now.toISOString(),
+        local: now.toLocaleString(),
+        hours: now.getHours(),
+        minutes: now.getMinutes()
+      },
+      availability: Object.entries(availability).filter(([_, slots]) => slots.length > 0),
+      generatedSlots: slots.length,
+      slotsDetail: slots.map(s => ({
+        dayOffset: s.dayOffset,
+        start: {
+          iso: s.start.toISOString(),
+          local: s.start.toLocaleString(),
+          hours: s.start.getHours()
+        },
+        end: {
+          iso: s.end.toISOString(),
+          local: s.end.toLocaleString()
+        }
+      }))
+    });
+
+    return slots;
+  }, [availability, serviceDuration, bookings]);
 
   const getDayLabel = (offset: number, date: Date): string => {
     if (offset === 0) return language === 'he' ? 'היום' : 'Today';
@@ -541,6 +643,16 @@ export function SchedulingDialog({
 
                 {/* Scrollable Form Content */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-5">
+                  {/* Error Message */}
+                  {formError && (
+                    <div
+                      className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {formError}
+                    </div>
+                  )}
+
                   {/* Service Selection */}
                   <div className="space-y-2">
                     <label className="text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">

@@ -12,6 +12,7 @@ import {
   type SchedulingBookingUpdate,
 } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 
 const pluginName = 'scheduling';
 
@@ -85,7 +86,7 @@ export class SchedulingPluginExecutor extends BasePluginExecutor {
         this.requireParam(params.start_time, 'start_time');
         this.requireParam(params.end_time, 'end_time');
         return this.unwrap(
-          await schedulingBookingRepository.create(this.buildBookingInsert(userId, params))
+          await schedulingBookingRepository.create(await this.buildBookingInsert(userId, params))
         );
 
       case 'list_bookings':
@@ -203,10 +204,15 @@ export class SchedulingPluginExecutor extends BasePluginExecutor {
       return {
         available: false,
         reason: `Overlaps ${overlaps.length} existing booking(s).`,
+        // MERGE FIX (2026-09-02, F4): this read `b.client_first_name` / `b.client_last_name`,
+        // columns dropped by 20260810_remove_client_fields_and_total_amount.sql. It produced
+        // the literal string "undefined" rather than an error, and TypeScript could not catch
+        // it because `unwrap()` returns `any`. The client now lives in crm_contacts; the
+        // booking carries only `contact_id`, which is what an agent needs to look it up.
         conflicts: overlaps.map((b) => ({
           start: b.start_time,
           end: b.end_time,
-          client: `${b.client_first_name} ${b.client_last_name || ''}`.trim(),
+          contact_id: b.contact_id,
         })),
       };
     }
@@ -288,16 +294,50 @@ export class SchedulingPluginExecutor extends BasePluginExecutor {
     return update;
   }
 
-  private buildBookingInsert(userId: string, params: any): SchedulingBookingInsert {
+  /**
+   * MERGE FIX (2026-09-02, F4): `scheduling_bookings` no longer carries client_first_name /
+   * client_last_name / client_email / client_phone -- migration
+   * 20260810_remove_client_fields_and_total_amount.sql drops them and the client now lives in
+   * `crm_contacts`, reached through the required `contact_id`.
+   *
+   * The plugin's declared contract is unchanged (`client_first_name` + `client_email` remain
+   * the required inputs of create_booking), so the client is resolved to a contact here --
+   * find-by-email, else create -- exactly as the public booking routes do
+   * (app/api/website/booking/create). Writing the old columns would fail at PostgREST.
+   *
+   * An explicit `contact_id` param still wins; the lookup is skipped in that case.
+   */
+  private async buildBookingInsert(userId: string, params: any): Promise<SchedulingBookingInsert> {
+    let contactId: string | undefined = params.contact_id;
+
+    if (!contactId) {
+      const existing = await crmContactRepository.findByEmail(params.client_email, userId);
+      if (existing.data) {
+        contactId = existing.data.id;
+      } else {
+        const created = await crmContactRepository.create({
+          user_id: userId,
+          first_name: params.client_first_name,
+          last_name: params.client_last_name ?? null,
+          email: params.client_email,
+          phone: params.client_phone ?? null,
+          source: 'scheduling_plugin',
+        });
+        if (created.error || !created.data) {
+          throw new Error(`Failed to resolve contact for booking: ${created.error?.message ?? 'unknown error'}`);
+        }
+        contactId = created.data.id;
+      }
+    }
+
     const insert: SchedulingBookingInsert = {
       user_id: userId,
       service_id: params.service_id,
-      client_first_name: params.client_first_name,
-      client_email: params.client_email,
+      contact_id: contactId,
       start_time: params.start_time,
       end_time: params.end_time,
     };
-    for (const key of ['client_last_name', 'client_phone', 'contact_id', 'timezone', 'status', 'notes', 'internal_notes', 'booking_source'] as const) {
+    for (const key of ['timezone', 'status', 'notes', 'internal_notes', 'booking_source'] as const) {
       if (params[key] !== undefined) (insert as any)[key] = params[key];
     }
     return insert;

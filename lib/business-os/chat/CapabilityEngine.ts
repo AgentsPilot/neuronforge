@@ -14,9 +14,11 @@ import {
   schedulingBookingRepository
 } from '@/lib/repositories/SchedulingRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import type { EntityType } from '@/lib/audit/types';
 import { createLogger } from '@/lib/logger';
+
 
 const logger = createLogger({ service: 'CapabilityEngine' });
 const auditTrail = AuditTrailService.getInstance();
@@ -172,13 +174,25 @@ export class CapabilityEngine {
   // ============== CONTACT EXECUTORS ==============
 
   private async createContact(params: Record<string, unknown>): Promise<ExecutionResult> {
+    // Get user's first pipeline stage instead of hardcoding 'lead'.
+    //
+    // FIX (2026-09-02, F4 #1/#2 - a pre-existing branch defect, not merge-induced): this
+    // called `pipelineStagesRepo.findByUser(...)` on a locally constructed
+    // `new CRMPipelineStagesRepository()`. Neither works: the repository has never exposed
+    // `findByUser`, and its constructor requires a SupabaseClient. The module publishes a
+    // configured singleton, and `list(userId)` is the method - it orders by `position`
+    // ascending, so `[0]` is the first stage, which is what this intended.
+    // main's crm-plugin-executor already uses exactly this pair.
+    const stagesResult = await crmPipelineStagesRepository.list(this.userId);
+    const firstStage = stagesResult.data?.[0]?.stage_key || 'lead';
+
     const result = await crmContactRepository.create({
       user_id: this.userId,
       first_name: params.first_name as string,
       last_name: (params.last_name as string) || null,
       email: (params.email as string) || null,
       phone: (params.phone as string) || null,
-      stage: 'lead',
+      stage: firstStage,
       tags: [],
       source: 'chat'
     });
@@ -399,7 +413,16 @@ export class CapabilityEngine {
 
     const contact = contactResult.data;
 
-    // Calculate end time
+    // Calculate end time.
+    // MERGE FIX (2026-09-02, F4): `duration_minutes` is nullable since
+    // 20260901_service_shape.sql -- a service can exist without being booked against a span
+    // (courses, products). Multiplying null yields NaN and an Invalid Date would be written
+    // to the row without complaint, so refuse instead of coercing. Same failure main guarded
+    // against in app/api/website/booking/confirm.
+    if (!service.duration_minutes) {
+      return { success: false, error: 'This service has no duration set, so it cannot be booked into a time slot.' };
+    }
+
     const startTime = new Date(params.start_time as string);
     const endTime = new Date(startTime.getTime() + service.duration_minutes * 60 * 1000);
 
@@ -418,17 +441,17 @@ export class CapabilityEngine {
     }
 
     // Create booking. Repo `create` takes a SINGLE SchedulingBookingInsert (user_id inside).
-    // client_first_name/client_email are NOT NULL, so coerce the nullable contact fields.
+    //
+    // MERGE FIX (2026-09-02, F4): the client_first_name/last_name/email/phone columns were
+    // dropped from scheduling_bookings by 20260810_remove_client_fields_and_total_amount.sql.
+    // The client is carried by contact_id alone and read back through the crm_contacts join,
+    // so those four fields are no longer written (they would fail at PostgREST).
     const result = await schedulingBookingRepository.create({
       user_id: this.userId,
       service_id: params.service_id as string,
       contact_id: params.contact_id as string,
       start_time: startTime.toISOString(),
       end_time: endTime.toISOString(),
-      client_first_name: contact.first_name || '',
-      client_last_name: contact.last_name || '',
-      client_email: contact.email || '',
-      client_phone: contact.phone || '',
       status: 'confirmed'
     });
 

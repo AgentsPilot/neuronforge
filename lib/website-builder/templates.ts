@@ -14,6 +14,7 @@
  * 3. User content persists across template changes
  */
 
+import type { PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import {
   HeaderBlock,
   HeroBlock,
@@ -54,7 +55,9 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
         { label: 'Process', anchor: '#process' },
         { label: 'Contact', anchor: '#contact' }
       ],
-      cta_button: { text: 'Book Now', link: '#booking' },
+      // `#services`, not `#booking`: this scaffold no longer installs a booking
+      // section, and the booking now starts from each service's own button.
+      cta_button: { text: 'Book Now', link: '#services' },
       style: 'blur'
     }),
 
@@ -89,11 +92,13 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
       { title: 'Step 3', description: 'Define your third step' }
     ]),
 
-    // 6. Testimonials - Social proof
-    TestimonialsBlock.carousel([
-      { quote: 'Amazing experience! Highly recommended.', author: 'Client Name', role: 'Client' },
-      { quote: 'Professional and caring service.', author: 'Another Client', role: 'Client' }
-    ]),
+    // 6. Testimonials - Social proof, empty until the business has some.
+    //
+    // This shipped two invented reviews — "Amazing experience!" from "Client
+    // Name" and "Another Client" — straight onto the site of a business that had
+    // never had a client. They are what the reported live site is showing.
+    // The section stays so it can be filled; the quotes go.
+    TestimonialsBlock.carousel([]),
 
     // 7. FAQ - Common questions
     FAQBlock.accordion([
@@ -101,11 +106,15 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
       { question: 'How do I get started?', answer: 'Simply book a consultation to get started.' }
     ]),
 
-    // 8. Booking Widget - Schedule appointments (connects to Scheduling)
-    BookingWidgetBlock.embedded({
-      title: 'Book an Appointment',
-      services: []
-    }),
+    // Booking is NOT a default section.
+    //
+    // A page-level calendar cannot express what the services now decide for
+    // themselves: one service is booked against a time and another is a
+    // download, and an inline widget offers the same appointment for both. The
+    // services section already gives each service its own button, resolved from
+    // that service's journey. Anyone who wants a standalone calendar can add
+    // the section; it is no longer installed on every site that happens to sell
+    // one bookable thing.
 
     // 9. Contact Form - Get in touch
     ContactFormBlock.standard({
@@ -483,7 +492,7 @@ export const CoachTemplates: WebsiteTemplate[] = [
     description: 'Bold, energetic design with amber and red tones',
     vertical: 'coach',
     template_type: 'homepage',
-    keywords: ['transformation', 'motivation', 'energy', 'change', 'breakthrough'],
+    keywords: ['transformation', 'motivation', 'energy', 'change', 'breakthrough', 'workshop', 'course', 'school', 'program'],
     theme: {
       primary_color: '#F59E0B',
       secondary_color: '#DC2626',
@@ -617,7 +626,7 @@ export const CoachTemplates: WebsiteTemplate[] = [
     description: 'Serene design with emerald and cyan tones',
     vertical: 'coach',
     template_type: 'homepage',
-    keywords: ['wellness', 'mindfulness', 'meditation', 'holistic', 'balance', 'stress'],
+    keywords: ['wellness', 'mindfulness', 'meditation', 'holistic', 'balance', 'stress', 'parenting', 'parents', 'family', 'relationships'],
     theme: {
       primary_color: '#059669',
       secondary_color: '#06B6D4',
@@ -2269,6 +2278,220 @@ export const TutorTemplates: WebsiteTemplate[] = [
 ];
 
 // =============================================
+// BEAUTY & WELLNESS TEMPLATES (3)
+// Glamorous, portfolio-focused, service-based
+// =============================================
+
+export const BeautyTemplates: WebsiteTemplate[] = [
+  {
+    id: 'beauty_glamour_studio',
+    name: 'Glamour Studio',
+    description: 'Elegant, luxurious design with rose gold and black',
+    vertical: 'beauty',
+    template_type: 'homepage',
+    keywords: ['makeup', 'beauty', 'glamour', 'bridal', 'cosmetics', 'salon', 'styling'],
+    theme: {
+      primary_color: '#B8860B',
+      secondary_color: '#1A1A1A',
+      accent_color: '#FFF8F0',
+      font_heading: 'Playfair Display',
+      font_body: 'Lato',
+      font_family: 'Playfair Display, serif',
+      // Was 'luxurious', which is not in the BrandVoice union — so a
+      // brand-voice match silently never selected this template.
+      brand_voice: 'elegant'
+    },
+    blocks: [
+      HeaderBlock.standard({
+        logo_text: 'Glamour Studio',
+        menu_items: [
+          { label: 'Services', anchor: '#services' },
+          { label: 'Portfolio', anchor: '#gallery' },
+          { label: 'About', anchor: '#about' },
+          { label: 'Book Now', anchor: '#booking' }
+        ],
+        cta_button: { text: 'Book Now', link: '#booking' },
+        style: 'blur'
+      }),
+      HeroBlock.warm({
+        name: 'Glamour Studio',
+        tagline: 'Luxury Beauty Services for Your Special Moments',
+        cta: 'Book Your Appointment'
+      }),
+      GalleryBlock.masonry({
+        title: 'My Work',
+        images: []
+      }),
+      ServicesBlock.grid([
+        { name: 'Bridal Makeup', description: 'Look stunning on your special day', icon: 'Heart' },
+        { name: 'Special Event', description: 'Red carpet ready looks', icon: 'Sparkles' },
+        { name: 'Photoshoot Ready', description: 'Camera-perfect makeup for shoots', icon: 'Camera' },
+        { name: 'Makeup Lesson', description: 'Learn professional techniques', icon: 'BookOpen' }
+      ]),
+      ProcessBlock.numbered([
+        { title: 'Book', description: 'Choose your service and preferred time' },
+        { title: 'Consult', description: 'Quick chat about your desired look' },
+        { title: 'Transform', description: 'Relax while I create your look' },
+        { title: 'Shine', description: 'Leave feeling confident and beautiful' }
+      ]),
+      TestimonialsBlock.carousel([
+        { quote: 'Made me feel like a princess on my wedding day. Flawless makeup that lasted all night!', author: 'Sarah M.', role: 'Bride' },
+        { quote: 'Amazing artist! She knew exactly what would work for my skin tone.', author: 'Jennifer L.', role: 'Event Client' }
+      ]),
+      AboutBlock.withImage({
+        title: 'About Me',
+        content: 'With over 10 years of experience in professional makeup artistry, I specialize in creating looks that enhance your natural beauty. From bridal to editorial, every face is a canvas for perfection.'
+      }),
+      BookingWidgetBlock.embedded({
+        title: 'Book Your Session',
+        services: ['Bridal Makeup', 'Special Event', 'Photoshoot Ready']
+      }),
+      ContactFormBlock.standard({
+        title: 'Get in Touch',
+        email: 'hello@glamourstudio.com'
+      })
+    ]
+  },
+
+  {
+    id: 'beauty_modern_salon',
+    name: 'Modern Salon',
+    description: 'Clean, contemporary design with pink and white',
+    vertical: 'beauty',
+    template_type: 'homepage',
+    keywords: ['salon', 'hair', 'nails', 'spa', 'beauty', 'hairdresser', 'stylist'],
+    theme: {
+      primary_color: '#EC4899',
+      secondary_color: '#FFFFFF',
+      accent_color: '#FCE7F3',
+      font_heading: 'Montserrat',
+      font_body: 'Open Sans',
+      font_family: 'Montserrat, sans-serif',
+      // Was 'modern', likewise outside the union.
+      brand_voice: 'bold'
+    },
+    blocks: [
+      HeaderBlock.standard({
+        logo_text: 'Beauty Bar',
+        menu_items: [
+          { label: 'Services', anchor: '#services' },
+          { label: 'Prices', anchor: '#pricing' },
+          { label: 'About', anchor: '#about' },
+          { label: 'Book', anchor: '#booking' }
+        ],
+        cta_button: { text: 'Book Appointment', link: '#booking' },
+        style: 'blur'
+      }),
+      HeroBlock.warm({
+        name: 'Beauty Bar',
+        tagline: 'Your Destination for Self-Care & Style',
+        cta: 'Book Your Visit'
+      }),
+      ServicesBlock.grid([
+        { name: 'Hair Styling', description: 'Cuts, color, and styling', icon: 'Scissors' },
+        { name: 'Manicure & Pedicure', description: 'Classic to gel treatments', icon: 'Hand' },
+        { name: 'Facials', description: 'Refresh and rejuvenate your skin', icon: 'Sparkles' },
+        { name: 'Waxing', description: 'Full body waxing services', icon: 'Flower2' }
+      ]),
+      PricingBlock.simple([
+        { name: 'Express Services', price: 'From $25', features: ['Blowout', 'Express facial', 'Basic manicure'] },
+        { name: 'Signature Services', price: 'From $65', features: ['Cut & style', 'Gel manicure', 'Full facial'], popular: true },
+        { name: 'Luxe Packages', price: 'From $150', features: ['Full glam package', 'Spa day', 'Bridal prep'] }
+      ]),
+      TestimonialsBlock.carousel([
+        { quote: 'Best salon experience ever! The staff is so friendly and skilled.', author: 'Maria G.', role: 'Regular Client' },
+        { quote: 'Finally found my go-to place for nails. Love the attention to detail!', author: 'Ashley T.', role: 'Loyal Customer' }
+      ]),
+      AboutBlock.withImage({
+        title: 'Welcome to Beauty Bar',
+        content: 'A modern beauty destination where self-care meets style. Our talented team creates a relaxing atmosphere while delivering top-notch services. Walk out feeling refreshed and beautiful.'
+      }),
+      ProcessBlock.numbered([
+        { title: 'Choose Service', description: 'Browse our menu and pick what you need' },
+        { title: 'Book Online', description: 'Select your stylist and time slot' },
+        { title: 'Relax & Enjoy', description: 'Sit back and let us pamper you' }
+      ]),
+      BookingWidgetBlock.embedded({
+        title: 'Book Your Appointment',
+        services: ['Hair Styling', 'Manicure', 'Facial']
+      }),
+      ContactFormBlock.standard({
+        title: 'Questions? Contact Us',
+        email: 'hello@beautybar.com'
+      })
+    ]
+  },
+
+  {
+    id: 'beauty_natural_aesthetics',
+    name: 'Natural Aesthetics',
+    description: 'Organic, earthy design with sage and cream',
+    vertical: 'beauty',
+    template_type: 'homepage',
+    keywords: ['natural', 'organic', 'skincare', 'esthetician', 'facial', 'holistic', 'spa'],
+    theme: {
+      primary_color: '#6B8E6B',
+      secondary_color: '#F5F5DC',
+      accent_color: '#F0FFF0',
+      font_heading: 'Cormorant Garamond',
+      font_body: 'Nunito Sans',
+      font_family: 'Cormorant Garamond, serif',
+      brand_voice: 'warm'
+    },
+    blocks: [
+      HeaderBlock.standard({
+        logo_text: 'Natural Glow',
+        menu_items: [
+          { label: 'Treatments', anchor: '#services' },
+          { label: 'Philosophy', anchor: '#about' },
+          { label: 'Reviews', anchor: '#testimonials' },
+          { label: 'Book Now', anchor: '#booking' }
+        ],
+        cta_button: { text: 'Book Treatment', link: '#booking' },
+        style: 'blur'
+      }),
+      HeroBlock.warm({
+        name: 'Natural Glow',
+        tagline: 'Holistic Skincare for Radiant, Healthy Skin',
+        cta: 'Book Your Consultation'
+      }),
+      AboutBlock.withImage({
+        title: 'Clean Beauty, Real Results',
+        content: 'I believe in the power of nature to heal and transform skin. As a licensed esthetician specializing in organic and clean beauty, I create personalized treatments using only the finest natural ingredients.'
+      }),
+      ServicesBlock.grid([
+        { name: 'Organic Facial', description: 'Customized to your skin type', icon: 'Leaf' },
+        { name: 'LED Light Therapy', description: 'Rejuvenate at the cellular level', icon: 'Sun' },
+        { name: 'Chemical Peel', description: 'Reveal fresh, glowing skin', icon: 'Sparkles' },
+        { name: 'Microneedling', description: 'Stimulate natural collagen', icon: 'Flower2' }
+      ]),
+      ProcessBlock.numbered([
+        { title: 'Consultation', description: 'Free skin analysis and goal setting' },
+        { title: 'Custom Plan', description: 'Personalized treatment recommendations' },
+        { title: 'Treatment', description: 'Relaxing, results-driven session' },
+        { title: 'Aftercare', description: 'Home care guidance for lasting results' }
+      ]),
+      TestimonialsBlock.carousel([
+        { quote: 'My skin has never looked better! Love the natural approach and products.', author: 'Emily R.', role: 'Skincare Client' },
+        { quote: 'Finally found someone who understands sensitive skin. Amazing results!', author: 'Lisa K.', role: 'Monthly Member' }
+      ]),
+      PricingBlock.simple([
+        { name: 'Single Treatment', price: 'From $85', features: ['Customized facial', 'Product recommendations', 'Relaxing experience'] },
+        { name: 'Treatment Package', price: '4 for $300', features: ['Save $40', 'Consistent results', 'Priority booking'], popular: true }
+      ]),
+      BookingWidgetBlock.embedded({
+        title: 'Book Your Treatment',
+        services: ['Consultation', 'Organic Facial', 'LED Therapy']
+      }),
+      ContactFormBlock.standard({
+        title: 'Questions About Your Skin?',
+        email: 'hello@naturalglow.com'
+      })
+    ]
+  }
+];
+
+// =============================================
 // EXPORT ALL TEMPLATES
 // =============================================
 
@@ -2280,7 +2503,8 @@ export const WEBSITE_TEMPLATES: WebsiteTemplate[] = [
   ...PhotographerTemplates,
   ...RealEstateTemplates,
   ...PersonalTrainerTemplates,
-  ...TutorTemplates
+  ...TutorTemplates,
+  ...BeautyTemplates
 ];
 
 // Alias for backwards compatibility
@@ -2294,6 +2518,49 @@ export function getTemplatesByVertical(vertical: string): WebsiteTemplate[] {
 // Helper function to get template by ID
 export function getTemplateById(id: string): WebsiteTemplate | undefined {
   return WEBSITE_TEMPLATES.find(t => t.id === id);
+}
+
+/**
+ * A template's look, in the shape a page stores it.
+ *
+ * Lived as a byte-identical private copy in the page-create route and the
+ * apply-template route, and website generation was about to add a third. A
+ * template's colours are one fact; three transcriptions of it are three places
+ * for it to drift.
+ */
+export function templateToPageTheme(template: WebsiteTemplate): PageTheme {
+  // Use explicit font_heading/font_body if available, otherwise fallback to font_family
+  const headingFont = template.theme.font_heading || template.theme.font_family.split(',')[0].trim();
+  const bodyFont = template.theme.font_body || template.theme.font_family.split(',')[0].trim();
+
+  // Determine background and text colors (support dark templates)
+  const isDarkTemplate = template.theme.background_color &&
+    (template.theme.background_color.startsWith('#0') ||
+     template.theme.background_color.startsWith('#1') ||
+     template.theme.background_color === '#000000');
+
+  const backgroundColor = template.theme.background_color || '#ffffff';
+  const textColor = template.theme.text_color || (isDarkTemplate ? '#ffffff' : '#1a1a1a');
+  const textSecondary = isDarkTemplate ? '#9ca3af' : '#6b7280';
+  const surfaceColor = isDarkTemplate ? '#1f2937' : '#f9fafb';
+
+  return {
+    colors: {
+      primary: template.theme.primary_color,
+      secondary: template.theme.secondary_color,
+      accent: template.theme.accent_color || template.theme.secondary_color,
+      background: backgroundColor,
+      surface: surfaceColor,
+      text: textColor,
+      textSecondary: textSecondary
+    },
+    fonts: {
+      heading: headingFont,
+      body: bodyFont
+    },
+    spacing: 'normal',
+    borderRadius: '8px'
+  };
 }
 
 // Helper function to get all verticals

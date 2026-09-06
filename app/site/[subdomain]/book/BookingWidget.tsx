@@ -8,15 +8,28 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Calendar, Clock, User, Mail, Phone, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown } from 'lucide-react';
+import { Calendar, Clock, User, Mail, ArrowLeft, ArrowRight, Check, Loader2, ClipboardList, CreditCard, ChevronDown } from 'lucide-react';
+import PhoneInput from 'react-phone-number-input';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
+import { journeySteps } from '@/lib/business-os/clientJourney';
+import type { CountryCode } from 'libphonenumber-js/core';
+import { isValidPhoneNumber } from 'react-phone-number-input';
+import { WebsiteCountrySelect } from '@/components/website/blocks/WebsiteCountrySelect';
+import 'react-phone-number-input/style.css';
 
 interface Service {
   id: string;
   name: string;
   description: string | null;
-  duration_minutes: number;
+  duration_minutes: number | null;
   price: number | null;
+  /** How this service may be paid over time, when the business offers one. */
+  paymentPlan?: ServicePaymentPlan;
   currency: string;
+  /** Does a client pick a time for this? False for a product. */
+  is_scheduled?: boolean | null;
+  /** How the money arrives. Null while the service is free. */
+  collection?: 'online' | 'invoice' | null;
 }
 
 interface TimeSlot {
@@ -47,6 +60,9 @@ interface IntakeTemplate {
   fields: IntakeField[];
 }
 
+// Flow step types - matches the wizard
+type ClientFlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+
 interface BookingWidgetProps {
   subdomain: string;
   services: Service[];
@@ -55,9 +71,29 @@ interface BookingWidgetProps {
   locale?: 'en' | 'es' | 'he';
   /** Pre-select a service by ID (e.g., from landing page link) */
   initialServiceId?: string;
+  /** Custom client journey flow from business configuration */
+  /**
+   * Ignored, and kept only so an existing link carrying `?flow=` still renders.
+   *
+   * A link cannot describe the journey for a business selling a card-paid
+   * session and an invoiced programme — one flow had to stand for both. The
+   * service decides instead.
+   */
+  clientFlow?: ClientFlowStep[] | null;
+  /** Whether a card can actually be charged today. */
+  processorReady?: boolean;
 }
 
 type Step = 'service' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
+
+// Map ClientFlowStep to internal Step
+// The journey comes from `journeySteps` in lib/business-os/clientJourney.
+//
+// This file used to carry its own copy, which is how it drifted: it decided the
+// payment step from `price > 0` and always asked for a date, so an invoiced
+// service showed a card form here and a product asked the client to pick a
+// time — while the smart-link widget, working from the same services, did
+// neither. One resolver, one answer, both surfaces.
 
 // Simple translations for public booking widget
 const translations = {
@@ -96,7 +132,13 @@ const translations = {
     select_option: 'Select...',
     min: 'min',
     free: 'Free',
-    secure_payment_stripe: 'Secure payment powered by Stripe'
+    on_request: 'Price on request',
+    secure_payment_stripe: 'Secure payment powered by Stripe',
+    payment_plan: 'Payment plan',
+    plan_split: '{count} payments of {amount}, {frequency}',
+    plan_total: 'Total',
+    due_today: 'Due today',
+    frequency: { weekly: 'weekly', biweekly: 'every 2 weeks', monthly: 'monthly', quarterly: 'quarterly' }
   },
   es: {
     choose_service: 'Elige un Servicio',
@@ -133,7 +175,13 @@ const translations = {
     select_option: 'Seleccionar...',
     min: 'min',
     free: 'Gratis',
-    secure_payment_stripe: 'Pago seguro con Stripe'
+    on_request: 'Precio a convenir',
+    secure_payment_stripe: 'Pago seguro con Stripe',
+    payment_plan: 'Plan de pago',
+    plan_split: '{count} pagos de {amount}, {frequency}',
+    plan_total: 'Total',
+    due_today: 'A pagar hoy',
+    frequency: { weekly: 'semanal', biweekly: 'cada 2 semanas', monthly: 'mensual', quarterly: 'trimestral' }
   },
   he: {
     choose_service: 'בחר שירות',
@@ -170,11 +218,17 @@ const translations = {
     select_option: 'בחר...',
     min: 'דק\'',
     free: 'חינם',
-    secure_payment_stripe: 'תשלום מאובטח באמצעות Stripe'
+    on_request: 'לפי הצעת מחיר',
+    secure_payment_stripe: 'תשלום מאובטח באמצעות Stripe',
+    payment_plan: 'תוכנית תשלומים',
+    plan_split: '{count} תשלומים של {amount}, {frequency}',
+    plan_total: 'סה״כ',
+    due_today: 'לתשלום היום',
+    frequency: { weekly: 'שבועי', biweekly: 'כל שבועיים', monthly: 'חודשי', quarterly: 'רבעוני' }
   }
 };
 
-export function BookingWidget({ subdomain, services, timezone, primaryColor, locale = 'en', initialServiceId }: BookingWidgetProps) {
+export function BookingWidget({ subdomain, services, timezone, primaryColor, locale = 'en', initialServiceId, processorReady = false }: BookingWidgetProps) {
   // Get translations for current locale
   const t = translations[locale] || translations.en;
   const isRTL = locale === 'he';
@@ -199,6 +253,17 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   };
   const [step, setStep] = useState<Step>('service');
   const [selectedService, setSelectedService] = useState<Service | null>(null);
+
+  /*
+   * The plan behind this payment, when the split is real.
+   *
+   * An `installmentCount` of 1 is a single payment wearing a plan's name —
+   * describing it as "1 payment of X" tells the client nothing the price does
+   * not already say.
+   */
+  const activePlan = selectedService?.paymentPlan && selectedService.paymentPlan.installmentCount > 1
+    ? selectedService.paymentPlan
+    : undefined;
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [slots, setSlots] = useState<TimeSlot[]>([]);
@@ -210,6 +275,7 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [phoneCountry, setPhoneCountry] = useState<CountryCode>(locale === 'he' ? 'IL' : locale === 'es' ? 'ES' : 'US');
   const [notes, setNotes] = useState('');
 
   // Intake form state
@@ -225,6 +291,28 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   // Custom select dropdown state
   const [openSelectKey, setOpenSelectKey] = useState<string | null>(null);
 
+  /** The journey for whichever service the client has picked. */
+  const stepsFor = (service: Service | null) =>
+    journeySteps(service ?? {}, { processorReady, intakeEnabled: hasIntake });
+
+  const activeSteps = stepsFor(selectedService);
+
+  // Navigate to next step in the flow (respecting activeSteps)
+  const goToNextStep = () => {
+    const currentIndex = activeSteps.indexOf(step);
+    if (currentIndex < activeSteps.length - 1) {
+      setStep(activeSteps[currentIndex + 1]);
+    }
+  };
+
+  // Navigate to previous step in the flow (respecting activeSteps)
+  const goToPrevStep = () => {
+    const currentIndex = activeSteps.indexOf(step);
+    if (currentIndex > 0) {
+      setStep(activeSteps[currentIndex - 1]);
+    }
+  };
+
   // Generate dates for next 14 days
   const dates = Array.from({ length: 14 }, (_, i) => {
     const date = new Date();
@@ -238,10 +326,14 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
       const service = services.find(s => s.id === initialServiceId);
       if (service) {
         setSelectedService(service);
-        setStep('datetime');
+        // Determine next step based on clientFlow, not hardcoded to 'datetime'
+        const steps = stepsFor(service);
+        // Skip 'service' step and go to the next step in the flow
+        const nextStep = steps.length > 1 ? steps[1] : 'confirmation';
+        setStep(nextStep);
       }
     }
-  }, [initialServiceId, services]);
+  }, [initialServiceId, services, processorReady, hasIntake]);
 
   // Fetch intake template on mount
   useEffect(() => {
@@ -364,18 +456,24 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
 
   const handleSelectService = (service: Service) => {
     setSelectedService(service);
-    setStep('datetime');
+    // The journey follows the service, not the link.
+    const steps = stepsFor(service);
+    const nextStep = steps.length > 1 ? steps[1] : 'confirmation';
+    setStep(nextStep);
   };
 
   const handleSelectSlot = (slot: TimeSlot) => {
     setSelectedSlot(slot);
-    setStep('details');
+    // Use flow-aware navigation
+    goToNextStep();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedService || !selectedSlot || !name || !email) {
+    // Only require selectedSlot if datetime step is in the flow
+    const requiresSlot = activeSteps.includes('datetime');
+    if (!selectedService || (requiresSlot && !selectedSlot) || !name || !email) {
       setError('Please fill in all required fields');
       return;
     }
@@ -383,8 +481,14 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     setSubmitting(true);
     setError(null);
 
-    // Determine if payment is required
-    const requiresPayment = selectedService.price !== null && selectedService.price > 0;
+    // The journey already decided this. It used to be re-derived here from
+    // price alone, which is a different question and gave a different answer:
+    // `activeSteps` comes from `journeySteps`, which also weighs how the service
+    // is collected and whether a card can actually be charged. Deriving it twice
+    // meant an invoiced service was walked to a card form, and a service whose
+    // processor was not ready reached a checkout that 503s — after the booking
+    // already existed as pending.
+    const requiresPayment = activeSteps.includes('payment');
     console.log('📋 Booking submission:', {
       service: selectedService.name,
       price: selectedService.price,
@@ -400,7 +504,11 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
         body: JSON.stringify({
           subdomain,
           service_id: selectedService.id,
-          start_time: selectedSlot.start,
+          // A product has no datetime step, so there is no slot to send. The
+          // create route already reads a missing `start_time` as a booking
+          // that is not against a time — this used to throw here instead,
+          // because every journey was assumed to have picked one.
+          start_time: selectedSlot?.start,
           name,
           email,
           phone: phone || undefined,
@@ -565,7 +673,12 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   };
 
   const formatPrice = (price: number | null, currency: string) => {
-    if (price === null || price === 0) return t.free;
+    // Null and zero are different promises. Zero is free; null is "we agree the
+    // price together", which is how a consultancy or anyone quoting per project
+    // works. Collapsing them printed "Free" on a public page for work that
+    // costs money — and skipped straight past any conversation about it.
+    if (price === null) return t.on_request;
+    if (price === 0) return t.free;
     const symbols: Record<string, string> = { USD: '$', EUR: '€', ILS: '₪', GBP: '£' };
     return `${symbols[currency] || '$'}${price}`;
   };
@@ -634,7 +747,7 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     return (
       <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
         <button
-          onClick={() => setStep('service')}
+          onClick={goToPrevStep}
           className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
         >
           {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
@@ -721,14 +834,14 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     return (
       <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
         <button
-          onClick={() => setStep('datetime')}
+          onClick={goToPrevStep}
           className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
         >
           {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-          {t.back_to_datetime}
+          {activeSteps.includes('datetime') ? t.back_to_datetime : t.back_to_services}
         </button>
 
-        {/* Summary */}
+        {/* Summary - only show date/time if datetime step is in flow */}
         <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${primaryColor}15` }}>
@@ -736,9 +849,15 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
             </div>
             <div>
               <h3 className="font-medium text-gray-900">{selectedService?.name}</h3>
-              <p className="text-sm text-gray-500">
-                {selectedSlot && formatFullDate(selectedSlot.start)} · {selectedSlot && formatTime(selectedSlot.start)}
-              </p>
+              {selectedSlot ? (
+                <p className="text-sm text-gray-500">
+                  {formatFullDate(selectedSlot.start)} · {formatTime(selectedSlot.start)}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  {selectedService?.duration_minutes} {t.min}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -781,14 +900,23 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
             <label className="block text-sm font-medium text-gray-700 mb-1">
               {t.phone}
             </label>
-            <div className="relative">
-              <Phone className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400`} />
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--booking-primary)] focus:border-transparent`}
+            <div dir="ltr" className="flex gap-2">
+              <WebsiteCountrySelect
+                value={phoneCountry}
+                onChange={setPhoneCountry}
+                isRTL={isRTL}
               />
+              <div className="phone-input-booking flex-1">
+                <PhoneInput
+                  international
+                  countryCallingCodeEditable={false}
+                  country={phoneCountry}
+                  defaultCountry={phoneCountry}
+                  value={phone}
+                  onChange={(value) => setPhone(value || '')}
+                  onCountryChange={(country) => country && setPhoneCountry(country)}
+                />
+              </div>
             </div>
           </div>
 
@@ -837,11 +965,11 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     return (
       <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
         <button
-          onClick={() => setStep('details')}
+          onClick={goToPrevStep}
           className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
         >
           {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-          {t.back_to_details}
+          {activeSteps.includes('details') ? t.back_to_details : t.back_to_services}
         </button>
 
         {/* Header */}
@@ -1051,11 +1179,11 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
     return (
       <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
         <button
-          onClick={() => setStep('details')}
+          onClick={goToPrevStep}
           className="flex items-center gap-2 text-gray-600 hover:text-gray-900"
         >
           {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
-          {t.back_to_details}
+          {activeSteps.includes('details') ? t.back_to_details : t.back_to_services}
         </button>
 
         {/* Summary */}
@@ -1066,9 +1194,15 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
             </div>
             <div>
               <h3 className="font-medium text-gray-900">{selectedService?.name}</h3>
-              <p className="text-sm text-gray-500">
-                {selectedSlot && formatFullDate(selectedSlot.start)} · {selectedSlot && formatTime(selectedSlot.start)}
-              </p>
+              {selectedSlot ? (
+                <p className="text-sm text-gray-500">
+                  {formatFullDate(selectedSlot.start)} · {formatTime(selectedSlot.start)}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  {selectedService?.duration_minutes} {t.min}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -1087,7 +1221,15 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
           </p>
         </div>
 
-        {/* Payment Amount Card */}
+        {/*
+          Payment Amount Card — what is being agreed to, not only what it costs.
+
+          Where the business offers a payment plan the client is agreeing to a
+          number of payments on a schedule, and none of that appeared here: the
+          card showed the full total and the card form then charged the first
+          instalment. The split is the part a person needs before they type a
+          card number.
+        */}
         <div className="bg-white border border-gray-200 rounded-xl p-6">
           <div className="flex justify-between items-center mb-4">
             <span className="text-gray-600">{t.service}</span>
@@ -1097,10 +1239,35 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
             <span className="text-gray-600">{t.duration}</span>
             <span className="font-medium text-gray-900">{selectedService?.duration_minutes} {t.min}</span>
           </div>
+
+          {activePlan && (
+            <>
+              <div className="flex justify-between items-center mb-4 gap-3">
+                <span className="text-gray-600">{t.payment_plan}</span>
+                <span className="font-medium text-gray-900 text-end">
+                  {t.plan_split
+                    .replace('{count}', String(activePlan.installmentCount))
+                    .replace('{amount}', formatPrice(activePlan.installmentAmount, activePlan.currency))
+                    .replace('{frequency}', t.frequency[activePlan.frequency])}
+                </span>
+              </div>
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-gray-600">{t.plan_total}</span>
+                <span className="font-medium text-gray-900">
+                  {formatPrice(activePlan.totalAmount, activePlan.currency)}
+                </span>
+              </div>
+            </>
+          )}
+
           <div className="border-t border-gray-100 pt-4 flex justify-between items-center">
-            <span className="font-semibold text-gray-900">{t.total}</span>
+            <span className="font-semibold text-gray-900">
+              {activePlan ? t.due_today : t.total}
+            </span>
             <span className="text-xl font-bold" style={{ color: primaryColor }}>
-              {formatPrice(selectedService?.price || 0, selectedService?.currency || 'USD')}
+              {activePlan
+                ? formatPrice(activePlan.installmentAmount, activePlan.currency)
+                : formatPrice(selectedService?.price || 0, selectedService?.currency || 'USD')}
             </span>
           </div>
         </div>
@@ -1158,18 +1325,22 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
               <span className="text-gray-500">{t.service}</span>
               <span className="font-medium text-gray-900">{selectedService?.name}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t.date}</span>
-              <span className="font-medium text-gray-900">
-                {selectedSlot && formatFullDate(selectedSlot.start)}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">{t.time}</span>
-              <span className="font-medium text-gray-900">
-                {selectedSlot && formatTime(selectedSlot.start)}
-              </span>
-            </div>
+            {selectedSlot && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">{t.date}</span>
+                  <span className="font-medium text-gray-900">
+                    {formatFullDate(selectedSlot.start)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">{t.time}</span>
+                  <span className="font-medium text-gray-900">
+                    {formatTime(selectedSlot.start)}
+                  </span>
+                </div>
+              </>
+            )}
             <div className="flex justify-between">
               <span className="text-gray-500">{t.duration}</span>
               <span className="font-medium text-gray-900">{selectedService?.duration_minutes} {t.min}</span>

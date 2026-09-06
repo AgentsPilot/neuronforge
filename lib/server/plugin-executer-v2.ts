@@ -19,12 +19,16 @@ import { ChatGPTResearchPluginExecutor } from './chatgpt-research-plugin-executo
 import { LinkedInPluginExecutor } from './linkedin-plugin-executor';
 import { AirtablePluginExecutor } from './airtable-plugin-executor';
 import { DocumentExtractorPluginExecutor } from './document-extractor-plugin-executor';
+import { BusinessOsPluginExecutor } from './business-os-plugin-executor';
 import { NotionPluginExecutor } from './notion-plugin-executor';
 import { OutlookPluginExecutor } from './outlook-plugin-executor';
 import { OneDrivePluginExecutor } from './onedrive-plugin-executor';
 import { DiscordPluginExecutor } from './discord-plugin-executor';
 import { SalesforcePluginExecutor } from './salesforce-plugin-executor';
 import { MetaAdsPluginExecutor } from './meta-ads-plugin-executor';
+import { MetaInsightsPluginExecutor } from './meta-insights-plugin-executor';
+import { GoogleAnalyticsPluginExecutor } from './google-analytics-plugin-executor';
+import { GoogleBusinessProfilePluginExecutor } from './google-business-profile-plugin-executor';
 import { DropboxPluginExecutor } from './dropbox-plugin-executor';
 import { StripePluginExecutor } from './stripe-plugin-executor';
 import { CRMPluginExecutor } from './crm-plugin-executor';
@@ -57,12 +61,22 @@ export class PluginExecuterV2 {
     'linkedin': LinkedInPluginExecutor,
     'airtable': AirtablePluginExecutor,
     'document-extractor': DocumentExtractorPluginExecutor,
+    // INTERIM DUPLICATION - see the note on corePluginFiles in plugin-manager-v2.ts.
+    // `business-os` (BizQL-backed, discoverable) and the five internal plugins below
+    // (repository-backed, hidden from discovery) are two surfaces over the same tables,
+    // built in parallel and kept side by side on purpose. They have distinct consumers
+    // and do not contend. Decision owed - see D9 / Q2-Q4 in
+    // docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md.
+    'business-os': BusinessOsPluginExecutor,
     'notion': NotionPluginExecutor,
     'outlook': OutlookPluginExecutor,
     'onedrive': OneDrivePluginExecutor,
     'discord': DiscordPluginExecutor,
     'salesforce': SalesforcePluginExecutor,
     'meta-ads': MetaAdsPluginExecutor,
+    'meta-insights': MetaInsightsPluginExecutor,
+    'google-analytics': GoogleAnalyticsPluginExecutor,
+    'google-business-profile': GoogleBusinessProfilePluginExecutor,
     'dropbox': DropboxPluginExecutor,
     'stripe': StripePluginExecutor,
     'crm': CRMPluginExecutor, // Internal (repository-backed) plugin — db_active access strategy

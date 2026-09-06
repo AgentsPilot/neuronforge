@@ -14,6 +14,7 @@ import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { externalCalendarEventRepository } from '@/lib/repositories/ExternalCalendarEventRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { pluginConnectionRepository } from '@/lib/repositories/PluginConnectionRepository';
 import type { SchedulingBooking, SchedulingService, CalendarSyncProvider } from '@/lib/repositories/SchedulingRepository';
 import type { ExternalCalendarEventInsert, CalendarProvider } from '@/lib/repositories/ExternalCalendarEventRepository';
 
@@ -298,9 +299,30 @@ class CalendarSyncServiceImpl {
     const settingsResult = await businessProfileRepository.getCalendarSyncSettings(userId);
     const statsResult = await schedulingBookingRepository.getSyncStats(userId);
 
+    const provider = settingsResult.data?.provider ?? null;
+    const storedEnabled = settingsResult.data?.enabled ?? false;
+
+    // Sync cannot be on without the plugin it runs through. Disconnecting the
+    // calendar leaves the profile flag set — from the plugins page, the footer,
+    // or a revoked grant on Google's side — and the settings card then showed a
+    // green "synced with Google Calendar" banner over a connection that no
+    // longer exists. Reported as off; the stored flag is left for the user to
+    // change deliberately rather than written from a read.
+    let enabled = storedEnabled;
+    if (storedEnabled && provider) {
+      const { data: pluginConnected } = await pluginConnectionRepository.existsByUserAndPlugin(
+        userId,
+        PROVIDER_TO_PLUGIN[provider]
+      );
+      if (pluginConnected === false) {
+        logger.warn({ userId, provider }, 'Calendar sync is enabled but its plugin is disconnected');
+        enabled = false;
+      }
+    }
+
     return {
-      enabled: settingsResult.data?.enabled ?? false,
-      provider: settingsResult.data?.provider ?? null,
+      enabled,
+      provider,
       lastSyncedAt: settingsResult.data?.lastSyncedAt ?? null,
       stats: statsResult.data ?? { total: 0, synced: 0, failed: 0 }
     };

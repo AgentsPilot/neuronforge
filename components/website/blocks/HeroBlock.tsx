@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { ArrowRight, Sparkles, Star, Users, Award, Play } from 'lucide-react';
+import { resolveBookingAction } from './bookingAction';
 import type { BlockRendererProps } from './types';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
@@ -46,13 +47,13 @@ function generateGradient(primary: string, secondary: string, type: 'subtle' | '
   return `linear-gradient(135deg, #ffffff 0%, ${secondary}30 50%, ${primary}15 100%)`;
 }
 
-export function HeroBlock({ content, styles, theme, isRTL, className, locale = 'en' }: BlockRendererProps) {
+export function HeroBlock({ content, styles, theme, isRTL, className, locale = 'en', isPreview, onOpenBooking, bookingUrl }: BlockRendererProps) {
   const t = (key: string, section: 'hero' | 'common' = 'hero') =>
     getBlockTranslation(section, key, locale);
   const {
     headline,
     subheadline,
-    cta_text,
+    cta_text: rawCtaText,
     cta_link = '#contact',
     secondary_cta_text,
     secondary_cta_link,
@@ -64,6 +65,38 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
     gradient_text = false,
     video_url
   } = content as HeroContent;
+
+  /*
+   * The fallback label read the LINK to guess its own words —
+   * `cta_link.includes('booking')`. So the moment the hero stopped pointing at
+   * `#booking` the button silently became "Get started", and any future change
+   * of destination would rename the button again as a side effect.
+   *
+   * Generation now writes both the words and the destination together, so this
+   * is only the fallback for content that carries no label at all.
+   */
+  const cta_text = rawCtaText || t('learnMore', 'common');
+
+  /*
+   * The hero's main button starts a booking, like the header's and the pricing
+   * card's — it does not merely scroll.
+   *
+   * It was a plain anchor to `cta_link`, so on a generated landing page the
+   * "order now" button moved the page down while the identical-looking button
+   * in the pricing section opened the booking dialog. `HeaderBlock` and
+   * `CTABlock` were already converted; the hero was the one left behind, and it
+   * was not even handed `isPreview` / `onOpenBooking` / `bookingUrl` to do it
+   * with.
+   *
+   * Preview opens the dialog, a published page follows `bookingUrl`, and a page
+   * that can take no booking at all falls back to the link it always had.
+   */
+  const heroBooking = resolveBookingAction({
+    isPreview,
+    onOpenBooking,
+    bookingUrl,
+    fallbackHref: cta_link,
+  });
 
   const alignment = styles?.alignment || 'center';
   const alignmentClasses = {
@@ -279,13 +312,12 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             className="mt-8 sm:mt-10 flex flex-col sm:flex-row gap-3"
           >
             {cta_text && (
-              <a
-                href={cta_link}
-                className="group relative inline-flex items-center justify-center gap-2 px-8 py-4 text-base font-semibold text-white rounded-xl overflow-hidden transition-all duration-300"
-                style={{
-                  borderRadius: theme?.borderRadius || '0.75rem'
-                }}
-              >
+              // Same button either way — a real <button> when it opens the
+              // dialog, an anchor when it navigates. Only the element differs.
+              (() => {
+                const ctaClassName = "group relative inline-flex items-center justify-center gap-2 px-8 py-4 text-base font-semibold text-white rounded-xl overflow-hidden transition-all duration-300";
+                const ctaStyle = { borderRadius: theme?.borderRadius || '0.75rem' };
+                const ctaInner = (<>
                 {/* Button gradient background */}
                 <span
                   className="absolute inset-0 transition-opacity duration-300"
@@ -311,7 +343,18 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
                   {cta_text}
                   <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                 </span>
-              </a>
+                </>);
+
+                return heroBooking.kind === 'open' ? (
+                  <button type="button" onClick={heroBooking.onClick} className={ctaClassName} style={ctaStyle}>
+                    {ctaInner}
+                  </button>
+                ) : (
+                  <a href={heroBooking.href} className={ctaClassName} style={ctaStyle}>
+                    {ctaInner}
+                  </a>
+                );
+              })()
             )}
             {secondary_cta_text && (
               <a

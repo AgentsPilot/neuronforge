@@ -19,6 +19,16 @@ export type PaymentType = 'full' | 'installments';
 export type InstallmentFrequency = 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
 export type FirstPaymentDue = 'on_booking' | 'days_after';
 
+/**
+ * How money for one service arrives.
+ *
+ * Per service, not per business: a practice can sell an appointment paid by
+ * card and a programme billed against an invoice, and only the first of those
+ * needs a card processor connected. Null means the service is free, or that
+ * nobody has said yet.
+ */
+export type ServiceCollection = 'online' | 'invoice';
+
 export interface ServiceAISuggestions {
   reasoning: string;
   confidence: number;
@@ -30,9 +40,14 @@ export interface SchedulingService {
   user_id: string;
   service_name: string;
   description: string | null;
-  duration_minutes: number;
+  /** Null for a service not booked against a time — a product or deliverable. */
+  duration_minutes: number | null;
   price: number | null;
   currency: ServiceCurrency;
+  /** Does booking this involve picking a time? False for a product. */
+  is_scheduled: boolean;
+  /** How the money arrives. Null while the service is free. */
+  collection: ServiceCollection | null;
   buffer_minutes: number;
   max_bookings_per_day: number | null;
   advance_booking_days: number;
@@ -56,9 +71,11 @@ export interface SchedulingServiceInsert {
   user_id: string;
   service_name: string;
   description?: string | null;
-  duration_minutes: number;
+  duration_minutes?: number | null;
   price?: number | null;
   currency?: ServiceCurrency;
+  is_scheduled?: boolean;
+  collection?: ServiceCollection | null;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -79,9 +96,11 @@ export interface SchedulingServiceInsert {
 export interface SchedulingServiceUpdate {
   service_name?: string;
   description?: string | null;
-  duration_minutes?: number;
+  duration_minutes?: number | null;
   price?: number | null;
   currency?: ServiceCurrency;
+  is_scheduled?: boolean;
+  collection?: ServiceCollection | null;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -101,15 +120,19 @@ export interface SchedulingServiceUpdate {
 
 export type CalendarSyncProvider = 'google_calendar' | 'outlook';
 
+// Contact data returned from JOIN
+export interface BookingContact {
+  first_name: string | null;
+  last_name: string | null;
+  email: string;
+  phone: string | null;
+}
+
 export interface SchedulingBooking {
   id: string;
   user_id: string;
   service_id: string;
-  contact_id: string | null;
-  client_first_name: string;
-  client_last_name: string | null;
-  client_email: string;
-  client_phone: string | null;
+  contact_id: string; // Required - client data is in crm_contacts
   start_time: string;
   end_time: string;
   timezone: string;
@@ -136,20 +159,33 @@ export interface SchedulingBooking {
   intake_completed_at: string | null;
   created_at: string;
   updated_at: string;
+  // Contact data from JOIN (populated by repository when using findById/list with JOIN)
+  contact?: BookingContact;
+  // Convenience fields (derived from contact for backward compatibility)
+  client_first_name?: string | null;
+  client_last_name?: string | null;
+  client_email?: string;
+  client_phone?: string | null;
+  // Invoice data from JOIN (populated by repository when using findById/list with JOIN)
+  invoice?: {
+    id: string;
+    status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
+    amount: number;
+    paid_at: string | null;
+    due_date: string | null;
+    sent_at: string | null;
+  } | null;
 }
 
 export interface SchedulingBookingInsert {
   user_id: string;
   service_id: string;
-  contact_id?: string | null;
-  client_first_name: string;
-  client_last_name?: string | null;
-  client_email: string;
-  client_phone?: string | null;
+  contact_id: string; // Required - must create/find contact first
   start_time: string;
   end_time: string;
   timezone?: string;
   status?: 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+  payment_status?: 'pending' | 'paid' | 'refunded';
   notes?: string | null;
   internal_notes?: string | null;
   booking_source?: string;
@@ -171,6 +207,13 @@ export interface SchedulingBookingUpdate {
   calendar_sync_provider?: CalendarSyncProvider | null;
   calendar_synced_at?: string | null;
   calendar_sync_error?: string | null;
+  // Intake fields
+  intake_responses?: {
+    template_id: string;
+    template_key: string;
+    responses: Record<string, unknown>;
+  } | null;
+  intake_completed_at?: string | null;
 }
 
 export interface SchedulingRepositoryResult<T> {
@@ -349,6 +392,20 @@ export class SchedulingServiceRepository {
   /**
    * List all services for user
    */
+  /**
+   * What "bookable" means, in one place.
+   *
+   * Two independent flags have to hold: `is_active` is the Power toggle the
+   * owner flips, and `status` is draft versus published. They answer different
+   * questions, and every public surface has to ask both — filtering on one let
+   * a deactivated service disappear from the website while every smart link
+   * went on selling it.
+   *
+   * Exported as a rule rather than repeated as a pair of `.eq()` calls so the
+   * next surface cannot pick one and forget the other.
+   */
+  static readonly BOOKABLE = { is_active: true, status: 'active' as const };
+
   async listAll(
     userId: string,
     activeOnly: boolean = false
@@ -360,9 +417,7 @@ export class SchedulingServiceRepository {
         .eq('user_id', userId);
 
       if (activeOnly) {
-        // Filter by both is_active flag AND status field
-        // This ensures draft/inactive services don't show on public website
-        query = query.eq('is_active', true).eq('status', 'active');
+        query = query.match(SchedulingServiceRepository.BOOKABLE);
       }
 
       query = query.order('created_at', { ascending: false });
@@ -474,6 +529,39 @@ export class SchedulingServiceRepository {
 
 // ==================== SCHEDULING BOOKING REPOSITORY ====================
 
+
+/**
+ * How much of a booking's money has gone back.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A booking's payments are attached two different ways, and a booking can have
+ * both at once: a website sale writes `booking_id` on the transaction, while an
+ * invoice raised for the booking carries the link on the invoice.
+ *
+ * So both are summed — and the invoice's own `refunded_amount` is DERIVED from
+ * its transactions by trigger, which means a transaction carrying both links
+ * would be counted twice. Those are excluded by invoice id.
+ *
+ * Needed because the CRM's journey strip showed nothing for a refund: a partial
+ * refund leaves `payment_status` at `paid`, and a payment-plan booking has no
+ * invoice at all, so neither of the two things the tab was reading could see it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function refundedTotalFor(
+  invoice: { id?: string; refunded_amount?: number | string | null } | null | undefined,
+  payments: { invoice_id?: string | null; refunded_amount?: number | string | null; status?: string }[]
+): number {
+  const fromInvoice = Number(invoice?.refunded_amount ?? 0) || 0;
+
+  const fromPayments = (payments ?? [])
+    .filter(p => p.status === 'succeeded' || p.status === 'refunded')
+    // Already represented in the invoice's figure.
+    .filter(p => !invoice?.id || p.invoice_id !== invoice.id)
+    .reduce((sum, p) => sum + (Number(p.refunded_amount ?? 0) || 0), 0);
+
+  return Math.round((fromInvoice + fromPayments) * 100) / 100;
+}
+
 export class SchedulingBookingRepository {
   private supabase: SupabaseClient;
 
@@ -526,16 +614,23 @@ export class SchedulingBookingRepository {
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
     try {
       logger.info(
-        { userId: booking.user_id, serviceId: booking.service_id, clientEmail: booking.client_email },
+        { userId: booking.user_id, serviceId: booking.service_id, contactId: booking.contact_id },
         'Creating booking'
       );
 
       const { data, error } = await this.supabase
         .from('scheduling_bookings')
         .insert({
-          ...booking,
+          user_id: booking.user_id,
+          service_id: booking.service_id,
+          contact_id: booking.contact_id,
+          start_time: booking.start_time,
+          end_time: booking.end_time,
           timezone: booking.timezone || 'UTC',
           status: booking.status || 'confirmed',
+          payment_status: booking.payment_status || 'pending',
+          notes: booking.notes,
+          internal_notes: booking.internal_notes,
           booking_source: booking.booking_source || 'manual'
         })
         .select()
@@ -543,7 +638,7 @@ export class SchedulingBookingRepository {
 
       if (error) throw error;
 
-      logger.info({ bookingId: data.id, userId: booking.user_id }, 'Booking created');
+      logger.info({ bookingId: data.id, userId: booking.user_id, contactId: booking.contact_id }, 'Booking created');
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId: booking.user_id }, 'Failed to create booking');
@@ -552,27 +647,73 @@ export class SchedulingBookingRepository {
   }
 
   /**
-   * Find booking by ID
+   * Find booking by ID with contact data and invoice status
    */
   async findById(
     id: string,
     userId: string
   ): Promise<SchedulingRepositoryResult<SchedulingBooking>> {
     try {
+      // JOIN to crm_contacts for client data and payment_invoices for accurate payment status
       const { data, error } = await this.supabase
         .from('scheduling_bookings')
-        .select('*')
+        .select(`
+          *,
+          contact:crm_contacts(
+            first_name,
+            last_name,
+            email,
+            phone
+          ),
+          invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
+        `)
         .eq('id', id)
         .eq('user_id', userId)
         .single();
 
       if (error) throw error;
 
-      // Normalize booking - ensure status is never null
+      // Extract contact data from JOIN result
+      const contact = Array.isArray(data?.contact) ? data.contact[0] : data?.contact;
+      // Get invoice if exists
+      const invoice = Array.isArray(data?.invoice) ? data.invoice[0] : data?.invoice;
+
+      // Determine payment status - prefer invoice status if it shows 'paid' but booking doesn't
+      let paymentStatus = data?.payment_status || 'pending';
+      if (invoice?.status === 'paid' && paymentStatus !== 'paid') {
+        paymentStatus = 'paid';
+      }
+
+      // Normalize booking and add convenience fields for backward compatibility
       const normalizedData = data ? {
         ...data,
         status: data.status || 'confirmed',
-        payment_status: data.payment_status || 'pending'
+        payment_status: paymentStatus,
+        // Convenience fields for backward compatibility with code that uses client_* fields
+        client_first_name: contact?.first_name || null,
+        client_last_name: contact?.last_name || null,
+        client_email: contact?.email || '',
+        client_phone: contact?.phone || null,
+        // Include invoice data for payment timeline display
+        invoice: invoice ? {
+          id: invoice.id,
+          status: invoice.status,
+          amount: invoice.amount,
+          paid_at: invoice.paid_at,
+          due_date: invoice.due_date,
+          sent_at: invoice.sent_at,
+          // Same list as `list()` above: a booking that showed its refund on one
+          // screen and not another is the bug this is fixing.
+          refunded_amount: invoice.refunded_amount ?? 0,
+          refund_status: invoice.refund_status ?? 'none',
+          refunded_at: invoice.refunded_at ?? null
+        } : null,
+        // Same derivation as `list()`: both ways money attaches to a booking.
+        refunded_total: refundedTotalFor(
+          invoice,
+          Array.isArray(data?.payments) ? data.payments : []
+        )
       } : null;
 
       return { data: normalizedData, error: null };
@@ -583,7 +724,7 @@ export class SchedulingBookingRepository {
   }
 
   /**
-   * List bookings with date range filtering
+   * List bookings with date range filtering and contact data
    */
   async list(
     userId: string,
@@ -610,9 +751,17 @@ export class SchedulingBookingRepository {
         offset = 0
       } = options;
 
+      // JOIN to crm_contacts for client data, scheduling_services for service info,
+      // and payment_invoices for accurate payment status (in case booking.payment_status wasn't updated)
       let query = this.supabase
         .from('scheduling_bookings')
-        .select('*, service:scheduling_services(service_name, price, currency)')
+        .select(`
+          *,
+          contact:crm_contacts(first_name, last_name, email, phone),
+          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency),
+          invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
+          payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
+        `)
         .eq('user_id', userId);
 
       if (serviceId) {
@@ -635,26 +784,86 @@ export class SchedulingBookingRepository {
         query = query.lte('start_time', endDate);
       }
 
-      // Client name search - searches in client_first_name and client_last_name
-      if (search) {
-        const searchPattern = `%${search}%`;
-        query = query.or(`client_first_name.ilike.${searchPattern},client_last_name.ilike.${searchPattern}`);
-      }
+      // Client name search - search in JOINed crm_contacts table
+      // Note: For search we need to use a different approach since we can't filter on joined fields directly
+      // We'll filter in memory for now, or this could be done via an RPC function
+      // TODO: Consider adding an RPC function for efficient contact name search
 
       query = query
-        .order('start_time', { ascending: true })
+        .order('start_time', { ascending: false }) // Newest first - shows recent/upcoming bookings
         .range(offset, offset + limit - 1);
 
       const { data, error } = await query;
 
       if (error) throw error;
 
-      // Normalize bookings - ensure status is never null (default to 'confirmed')
-      const normalizedData = (data || []).map(booking => ({
-        ...booking,
-        status: booking.status || 'confirmed',
-        payment_status: booking.payment_status || 'pending'
-      }));
+      // Normalize bookings and add convenience fields
+      let normalizedData = (data || []).map(booking => {
+        const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
+        // Get invoice if exists - could be array or single object depending on join
+        const invoice = Array.isArray(booking.invoice) ? booking.invoice[0] : booking.invoice;
+        const payments = Array.isArray(booking.payments) ? booking.payments : [];
+
+        // Determine payment status - prefer invoice status if it shows 'paid' but booking doesn't
+        // This handles cases where webhook updated invoice but not booking
+        let paymentStatus = booking.payment_status || 'pending';
+        if (invoice?.status === 'paid' && paymentStatus !== 'paid') {
+          paymentStatus = 'paid';
+        }
+
+        return {
+          ...booking,
+          status: booking.status || 'confirmed',
+          payment_status: paymentStatus,
+          // Convenience fields for backward compatibility
+          client_first_name: contact?.first_name || null,
+          client_last_name: contact?.last_name || null,
+          client_email: contact?.email || '',
+          client_phone: contact?.phone || null,
+          // Include invoice data for payment timeline display
+          invoice: invoice ? {
+            id: invoice.id,
+            status: invoice.status,
+            amount: invoice.amount,
+            paid_at: invoice.paid_at,
+            due_date: invoice.due_date,
+            sent_at: invoice.sent_at,
+            /*
+             * What has gone back.
+             *
+             * This object is rebuilt field by field rather than spread, so every
+             * column added to the query above is silently dropped here unless it
+             * is also listed — which is exactly what happened: the booking tab
+             * asked for the refund figures, got them from Postgres, and lost
+             * them one line before the response.
+             *
+             * `refund_status` rides along because a FULL refund and a partial
+             * one need different words, and the amount alone cannot tell them
+             * apart when the refund happens to equal the invoice total.
+             */
+            refunded_amount: invoice.refunded_amount ?? 0,
+            refund_status: invoice.refund_status ?? 'none',
+            refunded_at: invoice.refunded_at ?? null
+          } : null,
+          /*
+           * The booking's refunded total, across BOTH ways its money attaches.
+           *
+           * A separate field from `invoice.refunded_amount` because a payment
+           * plan has no invoice — its periods are transactions — so the invoice
+           * figure alone left every plan refund invisible on this screen.
+           */
+          refunded_total: refundedTotalFor(invoice, payments)
+        };
+      });
+
+      // Client-side filtering for search (search in contact name)
+      if (search) {
+        const searchLower = search.toLowerCase();
+        normalizedData = normalizedData.filter(booking => {
+          const fullName = `${booking.client_first_name || ''} ${booking.client_last_name || ''}`.toLowerCase();
+          return fullName.includes(searchLower);
+        });
+      }
 
       return { data: normalizedData, error: null };
     } catch (error) {
@@ -699,18 +908,37 @@ export class SchedulingBookingRepository {
     try {
       logger.info({ bookingId: id, userId }, 'Updating booking');
 
+      // Update and return with contact data via JOIN
       const { data, error } = await this.supabase
         .from('scheduling_bookings')
         .update(updates)
         .eq('id', id)
         .eq('user_id', userId)
-        .select()
+        .select(`
+          *,
+          contact:crm_contacts(
+            first_name,
+            last_name,
+            email,
+            phone
+          )
+        `)
         .single();
 
       if (error) throw error;
 
+      // Extract contact data and add convenience fields
+      const contact = Array.isArray(data?.contact) ? data.contact[0] : data?.contact;
+      const normalizedData = data ? {
+        ...data,
+        client_first_name: contact?.first_name || null,
+        client_last_name: contact?.last_name || null,
+        client_email: contact?.email || '',
+        client_phone: contact?.phone || null
+      } : null;
+
       logger.info({ bookingId: id, userId }, 'Booking updated');
-      return { data, error: null };
+      return { data: normalizedData, error: null };
     } catch (error) {
       logger.error({ err: error, bookingId: id, userId }, 'Failed to update booking');
       return { data: null, error: error as Error };

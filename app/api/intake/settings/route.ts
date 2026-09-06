@@ -16,8 +16,16 @@ const logger = createLogger({ module: 'IntakeSettingsAPI' });
 const updateSettingsSchema = z.object({
   template_id: z.string().uuid().nullable().optional(),
   is_enabled: z.boolean().optional(),
-  collect_during_booking: z.boolean().optional(),
-  send_after_booking: z.boolean().optional()
+  /** Whether the client is emailed the form after booking. */
+  send_after_booking: z.boolean().optional(),
+  /**
+   * Accepted and ignored.
+   *
+   * The form is never a step inside the booking flow now — a long form between
+   * a client and the thing they came to do. Kept in the schema so an older
+   * client does not get a 400, and in the table so no data is destroyed.
+   */
+  collect_during_booking: z.boolean().optional()
 });
 
 /**
@@ -123,6 +131,35 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
+    }
+
+    /**
+     * Refuse "enabled, with no form".
+     *
+     * That state stored cleanly and did nothing: every reader — the booking
+     * flow's intake step, the intake email, the manage page — requires a
+     * template, so a business could switch intake on, see it saved, and collect
+     * nothing, with no error anywhere to explain it.
+     *
+     * Checked against what would REMAIN after the update, not against the
+     * payload, because a partial update that only flips `is_enabled` carries no
+     * template_id of its own.
+     */
+    const { data: existing } = await intakeRepository.getSettings(user.id);
+
+    const willBeEnabled = updates.is_enabled ?? existing?.is_enabled ?? false;
+    const willHaveTemplate =
+      (updates.template_id !== undefined ? updates.template_id : existing?.template_id) ?? null;
+
+    if (willBeEnabled && !willHaveTemplate) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Choose an intake form before turning this on — without one, nothing is collected.',
+          code: 'INTAKE_TEMPLATE_REQUIRED'
+        },
+        { status: 400 }
+      );
     }
 
     // 4. Upsert settings

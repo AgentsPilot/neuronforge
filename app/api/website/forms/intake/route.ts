@@ -23,24 +23,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolvePublicOwner } from '@/lib/business-os/publicOwner';
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
-import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import type { CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { activitySentence } from '@/lib/business-os/activityText';
 import { z } from 'zod';
+import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'WebsiteIntakeFormAPI' });
 
-// Instantiated directly rather than via getWebsitePageRepository(), which caches its
-// first-injected client (see the Website section of the module-plugins roadmap).
-const websitePageRepository = new WebsitePageRepository(supabaseServer);
-
 // Base intake form schema
 const IntakeFormBaseSchema = z.object({
-  subdomain: z.string().min(1, 'Subdomain is required'),
+  // Optional now: a smart link has no subdomain and identifies its business by
+  // short code instead. One of the two is still required, enforced below.
+  subdomain: z.string().optional(),
+  user_code: z.string().optional(),
   template: z.enum(['general', 'therapist', 'coach', 'consultant', 'fitness']),
   booking_id: z.string().uuid().optional(),
   name: z.string().min(1, 'Name is required').max(200),
@@ -133,21 +134,53 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
-    // Look up the website owner by subdomain (no status filter — intake must also work
-    // on draft/preview sites, matching the previous behaviour)
-    const { data: websitePage, error: pageError } = await websitePageRepository.findBySubdomainAny(
-      data.subdomain
-    );
+    // Extract attribution data from request (UTM params, referrer, etc.)
+    const attribution = buildAttributionFromRequest(request, {
+      captureChannel: 'form',
+      pageUrl: data.page_url,
+      generateSessionId: true
+    });
 
-    if (pageError || !websitePage) {
-      requestLogger.warn({ subdomain: data.subdomain }, 'Website not found');
+    // Either identifier resolves the business — the schema no longer demands a
+    // subdomain, so the requirement is enforced here where it can say which.
+    if (!data.subdomain && !data.user_code) {
+      return NextResponse.json(
+        { success: false, error: 'Either subdomain or user_code is required' },
+        { status: 400 }
+      );
+    }
+
+    const owner = await resolvePublicOwner({ subdomain: data.subdomain, userCode: data.user_code });
+
+    if (!owner) {
+      requestLogger.warn({ subdomain: data.subdomain, userCode: data.user_code }, 'Website not found');
       return NextResponse.json(
         { success: false, error: 'Website not found' },
         { status: 404 }
       );
     }
 
-    const ownerId = websitePage.user_id;
+    const ownerId = owner.userId;
+
+    // DEFERRED DECISION (merge 2026-09-02) - should completing an intake form advance
+    // the contact's CRM pipeline stage?
+    //
+    // The feature branch computed an `intakeStage` from the tenant's own
+    // `crm_pipeline_stages` ('intake' > 'qualified' > 'discovery' > second stage) and
+    // wrote it on both the create and the update path. main does not: a new contact is
+    // created as 'lead' and an existing contact's stage is never touched, because
+    // pipeline vocabulary is per-tenant and completing an intake is not a promotion
+    // event. main's guard tests lock both behaviours (route.test.ts:
+    // `expect(insert.stage).toBe('lead')` and `expect(patch).not.toHaveProperty('stage')`).
+    //
+    // main's behaviour is kept for now. The branch's stage lookup was REMOVED rather
+    // than left computed-but-unused: it is an extra query on a public unauthenticated
+    // endpoint, and it broke the guard tests (the query is unmocked there precisely
+    // because main never makes it).
+    //
+    // To restore: reinstate the crm_pipeline_stages lookup, pass the resolved stage to
+    // the create/update below, and update those two test expectations.
+    // See D13 / Q9 in docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md.
 
     // Extract template-specific fields
     const { subdomain, template, booking_id, name, email, phone, date_of_birth, emergency_contact, page_url, ...templateFields } = data;
@@ -220,6 +253,9 @@ export async function POST(request: NextRequest) {
         email,
         phone: phone || null,
         source: 'website_intake',
+        // Branch feature, re-expressed through the repository rather than a raw
+        // insert. Column exists: 20260824_add_conversion_layer.sql.
+        source_metadata: attribution as unknown as Record<string, unknown>,
         stage: 'lead',
         custom_fields: {
           intake_data: intakeData,
@@ -257,16 +293,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Create activity for intake submission.
-    // The structured payload lives on the contact's custom_fields.intake_data —
-    // crm_activities has no metadata column; booking_id is carried in source_entity_id.
-    const description = `Client completed the ${template} intake form.\nSite: ${subdomain}`;
+    //
+    // The branch's localised title is kept — the business's own history should read in the
+    // business's language — but sourced through the repositories rather than two raw
+    // `supabaseServer` calls (D13; the guard test asserts `supabaseFrom` is never called).
+    // `source_entity_id` carries booking_id: crm_activities has no metadata column, and the
+    // branch's version dropped that linkage.
+    const { data: ownerProfile } = await businessProfileRepository.findByUserId(ownerId);
+    const ownerLocale = ownerProfile?.language || 'en';
 
     const { error: activityError } = await crmActivityRepository.create({
       user_id: ownerId,
       contact_id: contactId,
       activity_type: 'note',
-      title: `Intake Form Completed (${template})`,
-      description,
+      title: activitySentence('intake_completed', { template: String(template) }, ownerLocale),
+      description: null,
       auto_logged: true,
       source_capability: 'website',
       source_entity_id: booking_id || null,

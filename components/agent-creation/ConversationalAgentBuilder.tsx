@@ -44,7 +44,7 @@ interface EnhancedConversationalAgentBuilderProps extends ConversationalAgentBui
 const InlineGuideBanner = React.memo(({ currentStep, onDismiss, isVisible }) => {
   const stepGuides = {
     'start': {
-      title: 'Welcome! Start by describing your automation',
+      title: 'Welcome to AgentsPilot! Start by describing your automation',
       message: 'Tell me what you want your agent to do in the chat below. Be as detailed as you like.',
       icon: MessageSquare,
       color: 'blue'

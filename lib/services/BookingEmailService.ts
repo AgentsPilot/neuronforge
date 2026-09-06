@@ -9,20 +9,27 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
+import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
 import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { emailSendRepository } from '@/lib/repositories/EmailAutomationRepository';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+// The same source `/book/manage/[token]/intake` reads, so the email asking for
+// an intake form and the page it links to cannot disagree about whether one exists.
+import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateICSContent } from '@/lib/email/templates/booking-confirmation';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
 import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-receipt';
+import { generateRefundConfirmationEmail } from '@/lib/email/templates/refund-confirmation';
 import { generateWelcomeEmail, generateReturningContactEmail } from '@/lib/email/templates/welcome-email';
 import { generateIntakeRequestEmail } from '@/lib/email/templates/intake-request';
-import type { BrandingData } from '@/lib/email/templates/base-template';
+import { resolveEmailBranding } from '@/lib/email/branding';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
 import { supabaseServer } from '@/lib/supabaseServer';
-import jwt from 'jsonwebtoken';
+import * as jwt from 'jsonwebtoken';
 
 const logger = createLogger({ service: 'BookingEmailService' });
 
@@ -61,26 +68,11 @@ export function verifyBookingToken(token: string): { bookingId: string; email: s
   }
 }
 
-/**
- * Build branding data from business profile
- */
-function buildBrandingData(profile: {
-  company_name?: string | null;
-  business_name?: string | null;
-  logo_url?: string | null;
-  primary_color?: string | null;
-  secondary_color?: string | null;
-  website_url?: string | null;
-}, locale?: Locale): BrandingData {
-  return {
-    businessName: profile.company_name || profile.business_name || 'Business',
-    logoUrl: profile.logo_url || undefined,
-    primaryColor: profile.primary_color || '#4F46E5',
-    secondaryColor: profile.secondary_color || '#818CF8',
-    websiteUrl: profile.website_url || undefined,
-    locale
-  };
-}
+// Branding now comes from `resolveEmailBranding` (lib/email/branding.ts), which
+// reads the user's website theme. The local builder that used to live here read
+// business_profiles.primary_color / .secondary_color / .logo_url — columns that
+// do not exist on that table — so it returned the hardcoded fallback for every
+// user, every time.
 
 /**
  * Fetch user's preferred language from user_preferences table
@@ -95,18 +87,51 @@ async function getUserLocale(userId: string): Promise<Locale> {
       .single();
 
     if (error) {
-      logger.debug({ userId, err: error }, 'No user_preferences found, using default locale');
-      return defaultLocale;
+      logger.debug({ userId, err: error }, 'No user_preferences found, falling back to the business language');
+      return getBusinessLocale(userId);
     }
 
     if (data?.preferred_language && isValidLocale(data.preferred_language)) {
       logger.debug({ userId, locale: data.preferred_language }, 'Using user preferred language');
       return data.preferred_language as Locale;
     }
-    logger.debug({ userId, preferredLanguage: data?.preferred_language }, 'Invalid or missing preferred_language, using default');
-    return defaultLocale;
+
+    /*
+     * Fall through to the business profile rather than straight to the default.
+     *
+     * These two columns disagree in practice — `user_preferences` said `he`
+     * while `profiles.language` said `en` — and a missing row used to mean
+     * English regardless of what the business had configured.
+     *
+     * One order of precedence, used by every email. When the two sources
+     * disagreed AND different emails read different sources, one booking sent
+     * the confirmation in Hebrew and the intake request in English.
+     */
+    logger.debug({ userId, preferredLanguage: data?.preferred_language }, 'No usable preferred_language, falling back to the business language');
+    return getBusinessLocale(userId);
   } catch (err) {
     logger.warn({ userId, err }, 'Error fetching user locale');
+    return defaultLocale;
+  }
+}
+
+/**
+ * Fetch business profile language
+ * Used for client-facing emails (booking confirmations, intake requests, etc.)
+ */
+async function getBusinessLocale(userId: string): Promise<Locale> {
+  try {
+    const profileResult = await businessProfileRepository.findByUserId(userId);
+    const language = profileResult.data?.language;
+
+    if (language && isValidLocale(language)) {
+      logger.debug({ userId, locale: language }, 'Using business profile language');
+      return language as Locale;
+    }
+    logger.debug({ userId, language }, 'Invalid or missing business language, using default');
+    return defaultLocale;
+  } catch (err) {
+    logger.warn({ userId, err }, 'Error fetching business locale');
     return defaultLocale;
   }
 }
@@ -172,7 +197,7 @@ export class BookingEmailService {
   static async sendBookingConfirmation(
     bookingId: string,
     userId: string,
-    options?: { skipInvoice?: boolean }
+    options?: { skipInvoice?: boolean; invoiceId?: string; stripeHostedInvoiceUrl?: string }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendBookingConfirmation' });
 
@@ -188,6 +213,12 @@ export class BookingEmailService {
       }
       const booking = bookingResult.data;
 
+      // Validate client email exists
+      if (!booking.client_email) {
+        requestLogger.error({ bookingId, contactId: booking.contact_id }, 'Booking contact has no email address');
+        return { sent: false, error: 'Client email is missing' };
+      }
+
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
       if (serviceResult.error || !serviceResult.data) {
@@ -198,12 +229,43 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, booking.client_email);
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
+
+      // Generate payment URL if invoice exists and payment is pending
+      let paymentUrl: string | undefined;
+
+      // Normalize payment_status - treat null/undefined as 'pending' for new bookings
+      const effectivePaymentStatus = booking.payment_status || 'pending';
+      const isPending = effectivePaymentStatus === 'pending';
+      const hasPrice = service.price && service.price > 0;
+      const hasInvoice = !!options?.invoiceId;
+
+      requestLogger.info({
+        invoiceId: options?.invoiceId,
+        rawPaymentStatus: booking.payment_status,
+        effectivePaymentStatus,
+        isPending,
+        servicePrice: service.price,
+        hasPrice,
+        hasInvoice,
+        stripeHostedUrl: options?.stripeHostedInvoiceUrl
+      }, 'Checking payment URL conditions');
+
+      if (hasInvoice && isPending && hasPrice) {
+        // Prefer Stripe hosted invoice URL if available (allows direct payment)
+        // Otherwise fall back to local invoice page
+        paymentUrl = options?.stripeHostedInvoiceUrl || `${APP_URL}/invoice/${options?.invoiceId}`;
+        requestLogger.info({ paymentUrl }, 'Payment URL generated for email');
+      } else {
+        requestLogger.info({
+          reason: !hasInvoice ? 'no invoice' : !isPending ? 'not pending' : !hasPrice ? 'no price' : 'unknown'
+        }, 'Payment URL NOT generated');
+      }
 
       // Parse booking datetime
       const startTime = new Date(booking.start_time);
@@ -225,40 +287,118 @@ export class BookingEmailService {
         price: service.price || undefined,
         currency: service.currency,
         paymentStatus: booking.payment_status as 'pending' | 'paid' | 'refunded' | undefined,
+        paymentUrl,
         rescheduleUrl,
         cancelUrl,
         bookingId,
+        /*
+         * Was a time booked, or is this something sold without one?
+         *
+         * The start time IS the test. `scheduling_services` has no `is_product`
+         * column — the drawer's `isProductBooking` consults one too, and that
+         * half of the expression has never been anything but undefined — so
+         * nothing else in the data distinguishes the two.
+         *
+         * Without this a client who bought a course was told "your appointment
+         * is confirmed", shown a duration in minutes, and offered a calendar
+         * invitation and a reschedule link for a meeting that does not exist.
+         */
+        hasSchedule: Boolean(booking.start_time),
         branding,
         locale
       };
 
+      // Log email data for debugging payment link issues
+      const hasPendingPayment = booking.payment_status === 'pending' && service.price && service.price > 0;
+      requestLogger.info({
+        paymentUrl,
+        paymentStatus: booking.payment_status,
+        servicePrice: service.price,
+        hasPendingPayment,
+        willShowPaymentButton: hasPendingPayment && !!paymentUrl
+      }, 'Email data for booking confirmation');
+
       // Generate email content
       const { subject, html, icsContent } = generateBookingConfirmationEmail(emailData);
 
-      // Generate ICS file for attachment
-      const icsData = generateICSContent({
-        uid: bookingId,
-        summary: `${service.service_name} with ${branding.businessName}`,
-        description: `Your appointment for ${service.service_name}`,
-        location: undefined,
-        startTime,
-        endTime,
-        organizerName: branding.businessName,
-        organizerEmail: profileResult.data?.contact_email || 'noreply@example.com',
-        attendeeName: clientName,
-        attendeeEmail: booking.client_email
-      });
+      // Note: ICS data is included inline in the email HTML via generateBookingConfirmationEmail
+      // TODO: Attach ICS file to email for better calendar integration
+
+      /*
+       * The invoice itself, when the service bills by one.
+       *
+       * `options.invoiceId` is set only for an INVOICE sale — a direct-payment
+       * service has none, and there is nothing to attach. Until now this mail
+       * carried a pay LINK either way, so a client billed by invoice received
+       * no document to keep, and a business collecting by bank transfer sent a
+       * bill whose account details lived only in a PDF nobody attached.
+       *
+       * Built through the same builder `sendInvoice` uses, so the file on a
+       * booking confirmation and the file on a standalone invoice are the same
+       * document with the same branding.
+       */
+      const attachments: { filename: string; content: Buffer; contentType: string }[] = [];
+
+      /*
+       * NEVER gated on `skipInvoice`.
+       *
+       * That flag means "do not send a SECOND email; the payment link rides with
+       * this confirmation" — every real booking flow passes it TOGETHER with an
+       * invoice id. Reading it as "do not attach" would suppress the attachment
+       * in exactly the cases that need it, which is what a first pass here did.
+       */
+      /*
+       * The invoice is RESOLVED here, not required from the caller.
+       *
+       * Five call sites send this email and each decides for itself what to pass
+       * — the resend route passes no id at all — so requiring `invoiceId` meant
+       * the attachment depended on which button was pressed. A booking either
+       * has an invoice or it does not; that is a fact about the booking, and it
+       * is looked up rather than remembered.
+       */
+      let invoiceIdToAttach = options?.invoiceId ?? null;
+
+      if (!invoiceIdToAttach) {
+        const found = await paymentInvoiceRepository.findByBookingId(booking.id, userId);
+
+        /*
+         * A cancelled invoice is not the bill for this appointment.
+         *
+         * A booking can carry more than one — one voided and replaced, say — and
+         * attaching the void would send the client a document asking for money
+         * nobody expects them to pay.
+         */
+        invoiceIdToAttach =
+          (found.data ?? []).find(inv => inv.status !== 'cancelled')?.id ?? null;
+      }
+
+      if (invoiceIdToAttach) {
+        const { buildInvoiceAttachment } = await import('@/lib/services/InvoiceDeliveryService');
+        const attachment = await buildInvoiceAttachment(invoiceIdToAttach, userId, locale);
+
+        /*
+         * Null when the PDF could not be rendered — and the mail still goes.
+         * A confirmation without its attachment is a worse email; a booking
+         * whose client never learns it exists is a worse outcome.
+         */
+        if (attachment) attachments.push(attachment);
+      }
 
       // Send email
       const result = await sendEmail({
         to: [booking.client_email],
         subject,
         html,
-        ownerUserId: userId
+        ownerUserId: userId,
+        attachments: attachments.length > 0 ? attachments : undefined
       });
 
       if (result.sent) {
-        requestLogger.info({ provider: result.provider, clientEmail: booking.client_email }, 'Booking confirmation sent');
+        requestLogger.info({
+          provider: result.provider,
+          clientEmail: booking.client_email,
+          invoiceAttached: attachments.length > 0
+        }, 'Booking confirmation sent');
       } else {
         requestLogger.warn({ error: result.error }, 'Failed to send booking confirmation');
       }
@@ -273,12 +413,37 @@ export class BookingEmailService {
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
-      // Send invoice email if service has a price and not skipped
-      if (!options?.skipInvoice && service.price && service.price > 0 && booking.payment_status === 'pending') {
-        // Fire invoice email (non-blocking)
-        this.sendInvoiceForBooking(bookingId, userId)
-          .catch(err => requestLogger.warn({ err }, 'Invoice email failed (non-blocking)'));
+      // Log CRM activity for booking confirmation (non-blocking, HIPAA compliance)
+      if (result.sent && booking.contact_id) {
+        crmActivityRepository.create({
+          user_id: userId,
+          contact_id: booking.contact_id,
+          activity_type: 'booking_confirmation_sent',
+          /*
+           * Written in the business's language, now, because this records
+           * something that happened rather than labelling a control. The
+           * sentence was English regardless of the business; `locale` is
+           * already resolved above for the email itself.
+           *
+           * No date phrase when the booking has no time — a course or a
+           * product — which is what rendered every one of them as 12/31/1969.
+           */
+          title: activitySentence('confirmation_sent', { service: service.service_name }, locale),
+          description: JSON.stringify({
+            kind: 'booking_confirmation_sent',
+            service: service.service_name,
+            bookingDate: booking.start_time || undefined,
+            timeZone: booking.timezone || undefined,
+          }),
+          auto_logged: true,
+          source_capability: 'scheduling',
+          source_entity_id: bookingId
+        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
       }
+
+      // No invoice email fired from here. It sent a fabricated invoice number
+      // and a dead payment link; a booking's real invoice is raised and sent by
+      // BookingLifecycleService, which writes an actual row first.
 
       return { sent: result.sent, error: result.error };
     } catch (error) {
@@ -286,120 +451,21 @@ export class BookingEmailService {
       return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
-
   /**
-   * Send invoice email for a booking
-   * Called from: booking confirmation (auto), manual invoice creation
+   * REMOVED: sendInvoiceForBooking.
+   *
+   * It emailed a client an invoice that did not exist. The number was
+   * fabricated at send time — `INV-${date}-${bookingId.slice(0,4)}` — matching
+   * no `payment_invoices` row, so a client who quoted it got a blank look. And
+   * its "Pay Now" button pointed at `/pay/{bookingId}`, a route this app has
+   * never had: a 404 for every client who clicked it, on the public booking
+   * path, whatever the business's Stripe state.
+   *
+   * `BookingLifecycleService.createBookingInvoice` is the one producer of
+   * booking invoices, and it writes a real row with a real number from
+   * `getNextInvoiceNumber`. A second, parallel, fictional invoice pipeline was
+   * not a thing to repair.
    */
-  static async sendInvoiceForBooking(
-    bookingId: string,
-    userId: string
-  ): Promise<EmailResult> {
-    const requestLogger = logger.child({ bookingId, userId, action: 'sendInvoiceForBooking' });
-
-    try {
-      // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
-
-      // Fetch booking
-      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
-      if (bookingResult.error || !bookingResult.data) {
-        requestLogger.error({ err: bookingResult.error }, 'Booking not found');
-        return { sent: false, error: 'Booking not found' };
-      }
-      const booking = bookingResult.data;
-
-      // Fetch service
-      const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
-      if (serviceResult.error || !serviceResult.data) {
-        requestLogger.error({ err: serviceResult.error }, 'Service not found');
-        return { sent: false, error: 'Service not found' };
-      }
-      const service = serviceResult.data;
-
-      // Skip if no price
-      if (!service.price || service.price <= 0) {
-        requestLogger.info('Service has no price, skipping invoice email');
-        return { sent: false, error: 'Service has no price' };
-      }
-
-      // Fetch business profile for branding
-      const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
-
-      // Generate invoice number (simple format: INV-YYYYMMDD-XXXX)
-      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const shortId = bookingId.slice(0, 4).toUpperCase();
-      const invoiceNumber = `INV-${dateStr}-${shortId}`;
-
-      // Build payment URL (Stripe checkout) - placeholder for now
-      // TODO: Create actual Stripe checkout session
-      const paymentUrl = `${APP_URL}/pay/${bookingId}`;
-
-      // Parse appointment date
-      const appointmentDate = new Date(booking.start_time);
-
-      // Due date is typically before the appointment
-      const dueDate = new Date(appointmentDate);
-      dueDate.setDate(dueDate.getDate() - 1); // Due 1 day before
-
-      // Build client name
-      const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
-
-      // Build line items
-      const lineItems = [{
-        description: service.service_name,
-        quantity: 1,
-        unitPrice: service.price,
-        amount: service.price
-      }];
-
-      // Generate email
-      const { subject, html } = generateInvoiceEmail({
-        clientName,
-        invoiceNumber,
-        amount: service.price,
-        currency: service.currency,
-        dueDate,
-        lineItems,
-        paymentUrl,
-        serviceName: service.service_name,
-        appointmentDate,
-        timezone: booking.timezone,
-        branding,
-        locale
-      });
-
-      // Send email
-      const result = await sendEmail({
-        to: [booking.client_email],
-        subject,
-        html,
-        ownerUserId: userId
-      });
-
-      if (result.sent) {
-        requestLogger.info({ provider: result.provider, invoiceNumber }, 'Invoice email sent');
-      } else {
-        requestLogger.warn({ error: result.error }, 'Failed to send invoice email');
-      }
-
-      // Log email to email_sends table (non-blocking)
-      logEmailSend({
-        userId,
-        contactId: booking.contact_id,
-        toEmail: booking.client_email,
-        subject,
-        bodyHtml: html,
-        result
-      }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
-
-      return { sent: result.sent, error: result.error };
-    } catch (error) {
-      requestLogger.error({ err: error }, 'Error sending invoice email');
-      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  }
 
   /**
    * Send payment receipt
@@ -425,7 +491,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get booking and service details if bookingId provided
       let serviceName: string | undefined;
@@ -438,7 +504,16 @@ export class BookingEmailService {
         const bookingResult = await schedulingBookingRepository.findById(paymentData.bookingId, userId);
         if (bookingResult.data) {
           const booking = bookingResult.data;
-          appointmentDate = new Date(booking.start_time);
+          /*
+           * A booking with no time slot has NO appointment date.
+           *
+           * `new Date(null)` is epoch zero, not an invalid date, so a course or
+           * product — which never has a `start_time` — printed a receipt line
+           * reading "Thursday, 1 January 1970 at 12:00 AM" and an appointment
+           * reminder to match. Left undefined, both are omitted, which is what
+           * the template already does when there is nothing to show.
+           */
+          appointmentDate = booking.start_time ? new Date(booking.start_time) : undefined;
           timezone = booking.timezone;
           contactId = booking.contact_id;
 
@@ -497,6 +572,41 @@ export class BookingEmailService {
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
+      // Log CRM activity for payment received (non-blocking, HIPAA compliance)
+      if (result.sent && contactId) {
+        crmActivityRepository.create({
+          user_id: userId,
+          contact_id: contactId,
+          activity_type: 'payment_received',
+          /*
+           * The last activity still written in English, and the currency was
+           * printed as a bare code beside the number. `Intl` formats it the way
+           * the reader expects — ₪200.00, $200.00 — in the business's language.
+           */
+          title: activitySentence(
+            serviceName ? 'payment_received_for' : 'payment_received',
+            {
+              amount: new Intl.NumberFormat(
+                locale === 'he' ? 'he-IL' : locale === 'es' ? 'es-ES' : 'en-US',
+                { style: 'currency', currency: paymentData.currency || 'USD' }
+              ).format(Number(paymentData.amount) || 0),
+              service: serviceName || '',
+            },
+            locale
+          ),
+          description: JSON.stringify({
+            kind: 'payment_received',
+            amount: paymentData.amount,
+            currency: paymentData.currency,
+            service: serviceName || undefined,
+            receipt: receiptNumber || undefined,
+          }),
+          auto_logged: true,
+          source_capability: 'payments',
+          source_entity_id: paymentData.bookingId || undefined
+        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
+      }
+
       return { sent: result.sent, error: result.error };
     } catch (error) {
       requestLogger.error({ err: error }, 'Error sending payment receipt');
@@ -537,7 +647,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get booking URL from website subdomain
       let bookAgainUrl: string | undefined;
@@ -568,6 +678,9 @@ export class BookingEmailService {
         timezone: booking.timezone,
         reason: reason || booking.cancellation_reason || undefined,
         bookAgainUrl,
+        // Same test as the confirmation: a booking with no start time was never
+        // an appointment, so cancelling it is cancelling an order.
+        hasSchedule: Boolean(booking.start_time),
         branding,
         locale
       });
@@ -636,7 +749,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
       const token = generateBookingToken(bookingId, booking.client_email);
@@ -721,7 +834,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get website URL for booking link
       const websiteUrl = profileResult.data?.website_url || undefined;
@@ -806,7 +919,7 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Get website URL for booking link
       const websiteUrl = profileResult.data?.website_url || undefined;
@@ -875,13 +988,24 @@ export class BookingEmailService {
    */
   static async sendIntakeFormRequest(
     bookingId: string,
-    userId: string
+    userId: string,
+    options?: {
+      /**
+       * The owner pressed Send on this booking.
+       *
+       * A manual send must NOT consult `send_after_booking`. That switch means
+       * "send it for me automatically", and its off state means "I will send it
+       * myself" — so reading it here refused the exact act it exists to allow,
+       * and the endpoint answered 500.
+       */
+      manual?: boolean;
+    }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendIntakeFormRequest' });
 
     try {
-      // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      // Fetch business profile language (client-facing emails use business language)
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -901,20 +1025,44 @@ export class BookingEmailService {
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
-      const branding = buildBrandingData(profileResult.data || {}, locale);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
-      // Check if intake form is enabled for this business
-      // This is stored in business_profile or website configuration
-      // For now, we'll check if there's an intake form block on the website
-      const { data: websitePage } = await supabaseServer
-        .from('website_pages')
-        .select('id, subdomain')
-        .eq('user_id', userId)
-        .single();
+      /*
+       * Is there an intake form to ask for?
+       *
+       * This asked whether the business had a WEBSITE — which is not the same
+       * question, and the comment it replaces admitted as much ("for now, we'll
+       * check if there's an intake form block"). So every booking triggered an
+       * intake email, and the link in it opened a page reading "no intake form
+       * required. You're all set." An email whose only content is a link to a
+       * page saying there was nothing to do.
+       *
+       * `getEnabledTemplateForUser` is the same call `/book/manage/[token]/intake`
+       * uses to decide `hasIntake`, so the email and the page it points at can no
+       * longer disagree. It returns null when intake is off, when it is not
+       * collected at booking time, or — as here — when it is switched on with no
+       * template chosen.
+       */
+      /*
+       * Two different questions, and which one applies depends on who asked.
+       *
+       * AUTOMATIC (after a booking): does the business want this sent for it?
+       * That is `send_after_booking`, and an off switch means do not send.
+       *
+       * MANUAL (the owner pressed Send): does the business have a form at all?
+       * The off switch means "I will send it myself" — which is this. Reading
+       * `send_after_booking` here refused the act it exists to permit.
+       */
+      const templateResult = options?.manual
+        ? await intakeRepository.getCollectableTemplateForUser(userId)
+        : await intakeRepository.getEmailableTemplateForUser(userId);
 
-      if (!websitePage) {
-        requestLogger.info('No website found, skipping intake form request');
-        return { sent: false, error: 'No website configured' };
+      if (!templateResult.data) {
+        requestLogger.info(
+          { manual: !!options?.manual },
+          'No intake form to send for this business, skipping'
+        );
+        return { sent: false, error: 'No intake form configured' };
       }
 
       // Generate booking management token and URLs
@@ -923,10 +1071,24 @@ export class BookingEmailService {
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
 
-      // Parse booking datetime
-      const startTime = new Date(booking.start_time);
-      const endTime = new Date(booking.end_time);
-      const durationMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
+      /*
+       * Parse booking datetime.
+       *
+       * `new Date(null)` is epoch zero, not an invalid date, so a course or a
+       * product — neither of which has a `start_time` — dated its intake email
+       * "1 January 1970" with a duration of zero. The same trap the receipt
+       * email fell into.
+       *
+       * Falls back to when the booking was made, which is a true date about
+       * this booking rather than a fabricated one.
+       */
+      const startTime = booking.start_time
+        ? new Date(booking.start_time)
+        : new Date(booking.created_at);
+      const endTime = booking.end_time ? new Date(booking.end_time) : null;
+      const durationMinutes = endTime
+        ? Math.round((endTime.getTime() - startTime.getTime()) / 60000)
+        : 0;
 
       // Build client name
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
@@ -972,9 +1134,132 @@ export class BookingEmailService {
         result
       }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
 
+      // Log CRM activity for intake form request (non-blocking, HIPAA compliance)
+      if (result.sent && booking.contact_id) {
+        crmActivityRepository.create({
+          user_id: userId,
+          contact_id: booking.contact_id,
+          activity_type: 'intake_form_sent',
+          // Same shape as the confirmation above.
+          title: activitySentence('intake_sent', { service: service.service_name }, locale),
+          description: JSON.stringify({
+            kind: 'intake_form_sent',
+            service: service.service_name,
+            bookingDate: booking.start_time || undefined,
+            timeZone: booking.timezone || undefined,
+          }),
+          auto_logged: true,
+          source_capability: 'scheduling',
+          source_entity_id: bookingId
+        }).catch(err => requestLogger.warn({ err }, 'CRM activity logging failed (non-blocking)'));
+      }
+
       return { sent: result.sent, error: result.error };
     } catch (error) {
       requestLogger.error({ err: error }, 'Error sending intake form request');
+      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Send refund confirmation email
+   * Called from: /api/scheduling/bookings/[id]/refund
+   */
+  static async sendRefundConfirmation(
+    bookingId: string,
+    userId: string,
+    refundData: {
+      refundAmount: number;
+      originalAmount: number;
+      currency: string;
+      refundType: 'full' | 'partial';
+      reason?: string;
+      isManualRefund?: boolean;
+    }
+  ): Promise<EmailResult> {
+    const requestLogger = logger.child({ bookingId, userId, action: 'sendRefundConfirmation' });
+
+    try {
+      // Fetch user's preferred language from profile
+      const locale = await getUserLocale(userId);
+
+      // Fetch booking
+      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
+      if (bookingResult.error || !bookingResult.data) {
+        requestLogger.error({ err: bookingResult.error }, 'Booking not found');
+        return { sent: false, error: 'Booking not found' };
+      }
+      const booking = bookingResult.data;
+
+      // Fetch service
+      const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
+      const service = serviceResult.data;
+
+      // Fetch business profile for branding
+      const profileResult = await businessProfileRepository.findByUserId(userId);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
+
+      // Get booking URL from website subdomain
+      let bookAgainUrl: string | undefined;
+      const { data: websitePage } = await supabaseServer
+        .from('website_pages')
+        .select('subdomain')
+        .eq('user_id', userId)
+        .eq('status', 'published')
+        .single();
+
+      if (websitePage?.subdomain) {
+        bookAgainUrl = `${APP_URL}/site/${websitePage.subdomain}/book`;
+      } else if (profileResult.data?.website_url) {
+        bookAgainUrl = profileResult.data.website_url;
+      }
+
+      // Build client name
+      const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
+
+      // Generate email
+      const { subject, html } = generateRefundConfirmationEmail({
+        clientName,
+        refundAmount: refundData.refundAmount,
+        originalAmount: refundData.originalAmount,
+        currency: refundData.currency,
+        refundType: refundData.refundType,
+        refundDate: new Date(),
+        serviceName: service?.service_name,
+        reason: refundData.reason,
+        isManualRefund: refundData.isManualRefund,
+        bookAgainUrl,
+        branding,
+        locale
+      });
+
+      // Send email
+      const result = await sendEmail({
+        to: [booking.client_email],
+        subject,
+        html,
+        ownerUserId: userId
+      });
+
+      if (result.sent) {
+        requestLogger.info({ provider: result.provider, refundAmount: refundData.refundAmount }, 'Refund confirmation email sent');
+      } else {
+        requestLogger.warn({ error: result.error }, 'Failed to send refund confirmation email');
+      }
+
+      // Log email to email_sends table (non-blocking)
+      logEmailSend({
+        userId,
+        contactId: booking.contact_id,
+        toEmail: booking.client_email,
+        subject,
+        bodyHtml: html,
+        result
+      }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+
+      return { sent: result.sent, error: result.error };
+    } catch (error) {
+      requestLogger.error({ err: error }, 'Error sending refund confirmation email');
       return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }

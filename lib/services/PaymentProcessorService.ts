@@ -430,6 +430,18 @@ export class PaymentProcessorService {
   /**
    * Process a refund
    */
+  /**
+   * @deprecated Refunds go through `lib/payments/RefundService`.
+   *
+   * This never worked. It resolves an executor from a registry that
+   * `registerProcessorExecutor` never populates, and reads a `payment_processors`
+   * table that `connectProcessor` never writes — both have zero call sites in the
+   * repo — so it threw before reaching Stripe on every invocation. The refund
+   * button in the UI pointed here for months and issued nothing.
+   *
+   * Left in place only until the remaining `payment_processors` machinery is
+   * removed; do not add callers.
+   */
   async processRefund(
     userId: string,
     request: RefundRequest,

@@ -15,8 +15,9 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
-import { getTemplateById, getStandardHomepageBlocks, WebsiteTemplate } from '@/lib/website-builder/templates';
+import { getTemplateById, templateToPageTheme, getStandardHomepageBlocks, WebsiteTemplate } from '@/lib/website-builder/templates';
 import { BuildingBlock } from '@/lib/website-builder/building-blocks';
+import { setBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { translateBlockContent } from '@/lib/i18n/website-block-translations';
 import type { Locale } from '@/lib/i18n/config';
 import { z } from 'zod';
@@ -69,43 +70,6 @@ function convertTemplateBlockToInsert(
   };
 }
 
-/**
- * Convert template theme to PageTheme format
- */
-function convertTemplateTheme(template: WebsiteTemplate): PageTheme {
-  // Use explicit font_heading/font_body if available, otherwise fallback to font_family
-  const headingFont = template.theme.font_heading || template.theme.font_family.split(',')[0].trim();
-  const bodyFont = template.theme.font_body || template.theme.font_family.split(',')[0].trim();
-
-  // Determine background and text colors (support dark templates)
-  const isDarkTemplate = template.theme.background_color &&
-    (template.theme.background_color.startsWith('#0') ||
-     template.theme.background_color.startsWith('#1') ||
-     template.theme.background_color === '#000000');
-
-  const backgroundColor = template.theme.background_color || '#ffffff';
-  const textColor = template.theme.text_color || (isDarkTemplate ? '#ffffff' : '#1a1a1a');
-  const textSecondary = isDarkTemplate ? '#9ca3af' : '#6b7280';
-  const surfaceColor = isDarkTemplate ? '#1f2937' : '#f9fafb';
-
-  return {
-    colors: {
-      primary: template.theme.primary_color,
-      secondary: template.theme.secondary_color,
-      accent: template.theme.accent_color || template.theme.secondary_color,
-      background: backgroundColor,
-      surface: surfaceColor,
-      text: textColor,
-      textSecondary: textSecondary
-    },
-    fonts: {
-      heading: headingFont,
-      body: bodyFont
-    },
-    spacing: 'normal',
-    borderRadius: '8px'
-  };
-}
 
 export async function POST(
   request: NextRequest,
@@ -163,7 +127,7 @@ export async function POST(
     // Preserve ALL existing block content and order - templates only change visual styling
     const updateResult = await pageRepo.update(pageId, user.id, {
       template_id: validated.template_id,
-      theme: convertTemplateTheme(template)
+      theme: templateToPageTheme(template)
     });
 
     if (updateResult.error) {
@@ -189,13 +153,29 @@ export async function POST(
       }
     }
 
+    /*
+     * A template is the BUSINESS's, not this page's.
+     *
+     * Applying one used to restyle the page it was invoked on and nothing else,
+     * which is why changing the template appeared to do nothing: the landing
+     * pages kept their old colours, so did the smart links, and the invoice PDF
+     * and every transactional email went on reading a `business_profiles.theme`
+     * that had not moved. This records the choice on the business and repaints
+     * every page it owns.
+     *
+     * Content is untouched, exactly as above — a template decides styling, and
+     * a business changing its colours must not lose its words.
+     */
+    const propagation = await setBusinessTemplate(user.id, validated.template_id);
+
     // Fetch updated page
     const updatedPage = await pageRepo.findById(pageId, user.id);
 
     requestLogger.info({
       pageId,
       templateApplied: validated.template_id,
-      userId: user.id
+      userId: user.id,
+      propagatedPages: propagation.propagatedPages
     }, 'Successfully applied template to page');
 
     return NextResponse.json({

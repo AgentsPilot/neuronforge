@@ -670,42 +670,54 @@ export const ProcessBlock = {
 // GALLERY BLOCK
 // =============================================
 
-export const GalleryBlock = {
-  masonry: (images: Array<{ url: string; alt: string; caption?: string }>): BuildingBlock => ({
-    block_type: 'gallery',
-    position: 14,
-    content: {
-      title: 'Gallery',
-      images: images.map(i => ({
-        url: i.url,
-        alt: i.alt,
-        caption: i.caption || ''
-      })),
-      layout: 'masonry'
-    },
-    styles: {
-      columns: 3,
-      padding: 'py-16 sm:py-24',
-      background: 'bg-white dark:bg-slate-950'
-    }
-  }),
+type GalleryImage = { url: string; alt: string; caption?: string };
+type GalleryInput = GalleryImage[] | { title?: string; images: GalleryImage[] };
 
-  grid: (images: Array<{ url: string; alt: string }>): BuildingBlock => ({
-    block_type: 'gallery',
-    position: 14,
-    content: {
-      images: images.map(i => ({
-        url: i.url,
-        alt: i.alt
-      })),
-      layout: 'grid'
-    },
-    styles: {
-      columns: 4,
-      padding: 'py-16 sm:py-24',
-      background: 'bg-gray-50 dark:bg-slate-900'
-    }
-  })
+export const GalleryBlock = {
+  masonry: (input: GalleryInput): BuildingBlock => {
+    const images = Array.isArray(input) ? input : (input.images || []);
+    const title = Array.isArray(input) ? 'Gallery' : (input.title || 'Gallery');
+    return {
+      block_type: 'gallery',
+      position: 14,
+      content: {
+        title,
+        images: images.map(i => ({
+          url: i.url,
+          alt: i.alt,
+          caption: i.caption || ''
+        })),
+        layout: 'masonry'
+      },
+      styles: {
+        columns: 3,
+        padding: 'py-16 sm:py-24',
+        background: 'bg-white dark:bg-slate-950'
+      }
+    };
+  },
+
+  grid: (input: GalleryInput): BuildingBlock => {
+    const images = Array.isArray(input) ? input : (input.images || []);
+    const title = Array.isArray(input) ? 'Gallery' : (input.title || 'Gallery');
+    return {
+      block_type: 'gallery',
+      position: 14,
+      content: {
+        title,
+        images: images.map(i => ({
+          url: i.url,
+          alt: i.alt
+        })),
+        layout: 'grid'
+      },
+      styles: {
+        columns: 4,
+        padding: 'py-16 sm:py-24',
+        background: 'bg-gray-50 dark:bg-slate-900'
+      }
+    };
+  }
 };
 
 // =============================================

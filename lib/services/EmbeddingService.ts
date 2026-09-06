@@ -31,6 +31,18 @@ interface BatchEmbeddingResult {
   model: string
 }
 
+/**
+ * The user id embedding calls are attributed to.
+ *
+ * Analytics validates user_id as a UUID and silently substitutes the system user
+ * when it is not one, so passing the literal string 'system' produced a warning
+ * on every embedding call and attributed the spend by accident rather than by
+ * intent. Read at call time, not module scope, so a late-loading env still applies.
+ */
+function systemUserId(): string {
+  return process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000'
+}
+
 export class EmbeddingService {
   private supabase: SupabaseClient
 
@@ -76,7 +88,18 @@ export class EmbeddingService {
   /**
    * Generate embedding for a single text
    */
-  async generateEmbedding(text: string): Promise<EmbeddingResult> {
+  /**
+   * @param attribution Who is paying for this embedding. Defaults to the help
+   *   bot, which was the only caller when this service was written. The Business
+   *   OS chat's plan cache also calls it, and without this every one of those
+   *   embeddings was billed to `helpbot` — understating chat cost and
+   *   overstating the help bot's. Usage data is only useful if it lands where
+   *   the cost is incurred.
+   */
+  async generateEmbedding(
+    text: string,
+    attribution?: { userId?: string; feature?: string; turnId?: string }
+  ): Promise<EmbeddingResult> {
     const normalizedText = this.normalizeText(text)
 
     // Get model from config
@@ -90,12 +113,13 @@ export class EmbeddingService {
       // Get provider from factory for centralized token tracking
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
       const context: CallContext = {
-        userId: 'system',
-        feature: 'helpbot',
+        userId: attribution?.userId ?? systemUserId(),
+        feature: attribution?.feature ?? 'helpbot',
         component: 'EmbeddingService',
         category: 'embedding_generation',
-        activity_type: 'single_embedding',
+        activity_type: 'embedding',
         activity_name: 'generate_embedding',
+        sessionId: attribution?.turnId,
       }
 
       const response = await provider.createEmbedding({
@@ -146,7 +170,7 @@ export class EmbeddingService {
       // Get provider from factory for centralized token tracking
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI)
       const context: CallContext = {
-        userId: 'system',
+        userId: systemUserId(),
         feature: 'helpbot',
         component: 'EmbeddingService',
         category: 'embedding_generation',

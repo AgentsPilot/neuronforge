@@ -533,9 +533,9 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
     icon: 'CreditCard',
     color: '#F59E0B',
     routes: {
-      main: '/business-os/payments',
-      invoices: '/business-os/payments?tab=invoices',
-      transactions: '/business-os/payments?tab=transactions',
+      main: '/business-os/orders',
+      invoices: '/business-os/orders',
+      transactions: '/business-os/orders',
     },
     entities: {
       invoices: {
@@ -644,7 +644,7 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
         name: 'transactions',
         displayName: 'transaction',
         displayNamePlural: 'transactions',
-        description: 'Payment transactions (money received)',
+        description: 'Payment transactions (money received, refunds). Use status "refunded" to find customers who received refunds.',
         primaryKey: 'id',
         searchableFields: ['description'],
         labelField: 'description',
@@ -654,14 +654,16 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
           { name: 'invoice_id', type: 'string', description: 'Related invoice' },
           { name: 'amount', type: 'number', description: 'Amount', required: true },
           { name: 'currency', type: 'string', description: 'Currency' },
-          { name: 'status', type: 'string', description: 'Status', enum: ['pending', 'succeeded', 'failed', 'refunded'] },
+          { name: 'status', type: 'string', description: 'Status. Use "refunded" to find transactions that were refunded (החזרים).', enum: ['pending', 'succeeded', 'failed', 'refunded'] },
           { name: 'description', type: 'string', description: 'Description' },
           { name: 'paid_at', type: 'date', description: 'Payment date' },
+          { name: 'refunded_amount', type: 'number', description: 'Amount refunded (if any)' },
+          { name: 'refund_reason', type: 'string', description: 'Reason for refund' },
         ],
         actions: {
           list: {
             type: 'list',
-            description: 'Get a list of transactions',
+            description: 'Get a list of transactions. Use status filter "refunded" to find refunded transactions / which customers got refunds.',
             destructive: false,
             requiresConfirmation: false,
             operation: 'query',
@@ -675,8 +677,15 @@ export const CAPABILITIES_SCHEMA: Record<string, CapabilityDefinition> = {
             operation: 'query',
             requiredFields: ['id'],
           },
+          count: {
+            type: 'count',
+            description: 'Count transactions matching filters (e.g., count refunded transactions)',
+            destructive: false,
+            requiresConfirmation: false,
+            operation: 'query',
+            optionalFields: ['status', 'contact_id'],
+          },
           // Transactions are typically read-only (created by payment processors)
-          count: undefined,
           create: undefined,
           update: undefined,
           delete: undefined,

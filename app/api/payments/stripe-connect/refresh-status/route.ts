@@ -39,13 +39,30 @@ export async function POST(request: NextRequest) {
     const account = accountResult.data;
 
     // 3. Fetch latest status from Stripe
-    const stripeService = getStripeService();
-    const status = await stripeService.getConnectAccountStatus(account.stripe_account_id);
+    let status;
+    try {
+      const stripeService = getStripeService();
+      status = await stripeService.getConnectAccountStatus(account.stripe_account_id);
+      requestLogger.info({ accountId: account.stripe_account_id, status }, 'Fetched account status from Stripe');
+    } catch (stripeError) {
+      requestLogger.error({ err: stripeError, accountId: account.stripe_account_id }, 'Failed to fetch account from Stripe');
+      // Return cached data from database instead of failing
+      return NextResponse.json({
+        success: true,
+        data: {
+          charges_enabled: account.charges_enabled || false,
+          payouts_enabled: account.payouts_enabled || false,
+          details_submitted: account.details_submitted || false,
+          onboarding_completed: account.onboarding_completed || false,
+          country: account.country || null,
+          currency: account.currency || null,
+        },
+        cached: true,
+      });
+    }
 
-    requestLogger.info({ accountId: account.stripe_account_id, status }, 'Fetched account status from Stripe');
-
-    // 4. Update database with current status
-    const updateResult = await stripeConnectRepo.update(account.id, {
+    // 4. Update database with current status (update method expects userId, not account.id)
+    const updateResult = await stripeConnectRepo.update(user.id, {
       charges_enabled: status.chargesEnabled,
       payouts_enabled: status.payoutsEnabled,
       details_submitted: status.detailsSubmitted,
@@ -73,8 +90,13 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to refresh account status');
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
-      { success: false, error: 'Failed to refresh account status' },
+      {
+        success: false,
+        error: 'Failed to refresh account status',
+        details: process.env.NODE_ENV === 'development' ? errorMessage : undefined
+      },
       { status: 500 }
     );
   }

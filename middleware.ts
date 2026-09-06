@@ -7,6 +7,15 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { createEdgeLogger } from '@/lib/logger/edge'
+
+/*
+ * Middleware runs in the Edge Runtime, where Pino cannot initialise — no
+ * stdout, no worker threads. `createEdgeLogger` emits the same record shape
+ * (level, time, module, msg) through the only sink available, so these lines
+ * are indistinguishable from the rest of the platform's logs downstream.
+ */
+const logger = createEdgeLogger({ module: 'Middleware' })
 
 // List of reserved subdomains that should NOT be treated as user websites
 const RESERVED_SUBDOMAINS = [
@@ -22,9 +31,68 @@ const RESERVED_SUBDOMAINS = [
   'preview'
 ]
 
+/**
+ * Paths that must never be rewritten under `/v2`.
+ *
+ * The V2 rewrite moves everything not on this list to `/v2{path}`. A route
+ * added outside these prefixes silently starts 404ing for every V2 account,
+ * and the failure looks nothing like its cause — which is exactly what happened
+ * when the website preview moved out of `/business-os` and began resolving to
+ * `/v2/website-preview/...`.
+ *
+ * `/website-preview` is here rather than under `/business-os` because that
+ * segment's layout paints the platform header and tab bar, and this page is
+ * rendered inside a 320px iframe where that chrome has no business appearing.
+ */
+const V2_REWRITE_EXEMPT = [
+  '/v2',
+  '/onboarding',
+  '/business-os',
+  '/invoice',
+  '/website-preview',
+  // Same reason as the line above: the landing page wizard's preview iframe.
+  // It lived under `/business-os`, so it inherited that segment's header and
+  // tabs — the whole platform chrome, rendered a second time inside a preview
+  // frame — and every load went through the onboarding check on its way there.
+  '/landing-preview',
+  // Customer-facing public surfaces. These already return early from the
+  // onboarding skip list above, so listing them here changes nothing today —
+  // it is here so that reordering the two blocks, or adding a path to one and
+  // not the other, cannot silently start redirecting a customer's booking or
+  // invoice link into `/v2/...`. That is precisely how `/book` broke.
+  '/book',
+  '/c',
+  '/go',
+  '/site',
+  '/payments/success',
+  '/payments/cancelled',
+] as const;
+
+/** Whether this path keeps its own URL under the V2 rewrite. */
+function isV2Exempt(pathname: string): boolean {
+  return V2_REWRITE_EXEMPT.some(prefix => pathname.startsWith(prefix));
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const host = request.headers.get('host') || ''
+
+  /*
+   * Every line below carries the path and a correlation id.
+   *
+   * Middleware sees every request, so its logs were the highest-volume and the
+   * least usable in the platform: a dozen emoji-prefixed strings with nothing
+   * tying one request's lines together. Following a single user through an
+   * onboarding redirect meant reading interleaved output and guessing.
+   */
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId, pathname })
+
+  // EXPLICIT BYPASS: Never process onboarding-chat through middleware
+  if (pathname === '/onboarding-chat' || pathname.startsWith('/onboarding-chat/')) {
+    requestLogger.debug('Bypassing all checks for onboarding chat')
+    return NextResponse.next()
+  }
 
   // === SUBDOMAIN ROUTING FOR PUBLIC WEBSITES ===
   // Check if this is a subdomain request (e.g., mybusiness.agentpilot.io)
@@ -58,11 +126,26 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/oauth') ||
     pathname.startsWith('/static') ||
     pathname.startsWith('/site') || // Public website routes
+    pathname.startsWith('/c/') || // Public conversion pages (standalone booking, contact, payment)
+    pathname.startsWith('/go/') || // Smart link redirects
+    // Public booking management pages (reschedule, cancel, intake).
+    // The bare `/book` fallback is matched explicitly: a `startsWith('/book/')`
+    // test alone lets `/book` fall through to the V2 rewrite below and redirect
+    // to `/v2/book`, which does not exist. A truncated link in a customer's
+    // email is exactly the case that page is supposed to catch.
+    pathname === '/book' ||
+    pathname.startsWith('/book/') ||
+    pathname.startsWith('/invoice/') || // Public invoice pages
+    // The two generic post-Stripe screens. Matched exactly, because the
+    // owner-facing `/payments` dashboard lives under the same first segment and
+    // must keep its auth and onboarding checks.
+    pathname === '/payments/success' ||
+    pathname === '/payments/cancelled' ||
     pathname.match(/\.(ico|png|jpg|jpeg|svg|gif|woff|woff2|ttf|eot|html)$/) ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/signup') ||
     pathname.startsWith('/auth') ||
-    pathname.startsWith('/onboarding') || // Both /onboarding and /onboarding-v2
+    pathname.startsWith('/onboarding') || // /onboarding-chat and its build screen
     pathname.startsWith('/about') ||
     pathname.startsWith('/features') ||
     pathname.startsWith('/pricing') ||
@@ -84,7 +167,7 @@ export async function middleware(request: NextRequest) {
     // Extract access token from cookies
     const cookies = request.headers.get('cookie') || ''
 
-    console.log('🔍 [MIDDLEWARE] Checking onboarding for path:', pathname)
+    requestLogger.debug('Checking onboarding status')
 
     // Supabase auth cookies are chunked into multiple parts (.0, .1, .2, etc)
     // We need to find all chunks and combine them
@@ -103,7 +186,7 @@ export async function middleware(request: NextRequest) {
       chunkIndex++
     }
 
-    console.log('🔍 [MIDDLEWARE] Found', chunks.length, 'cookie chunks')
+    requestLogger.debug({ chunks: chunks.length }, 'Auth cookie chunks found')
 
     if (chunks.length > 0) {
       // Combine all chunks and decode
@@ -112,7 +195,7 @@ export async function middleware(request: NextRequest) {
       const tokenData = JSON.parse(decoded)
       const accessToken = tokenData.access_token
 
-      console.log('🔍 [MIDDLEWARE] Access token extracted:', !!accessToken)
+      requestLogger.debug({ hasAccessToken: !!accessToken }, 'Access token extracted')
 
       if (accessToken) {
         // Create Supabase client with service role for DB queries
@@ -124,7 +207,7 @@ export async function middleware(request: NextRequest) {
         // Verify the token and get user
         const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken)
 
-        console.log('🔍 [MIDDLEWARE] User found:', !!user, 'Auth error:', !!authError)
+        requestLogger.debug({ hasUser: !!user, hasAuthError: !!authError }, 'Token verified')
 
         if (!authError && user) {
           // Check business_profiles table for onboarding status
@@ -134,32 +217,42 @@ export async function middleware(request: NextRequest) {
             .eq('user_id', user.id)
             .single()
 
-          console.log('🔍 [MIDDLEWARE] Profile:', profile, 'Error:', profileError?.message)
-          console.log('🔍 [MIDDLEWARE] Onboarding completed:', profile?.onboarding_completed)
+          requestLogger.debug(
+            {
+              userId: user.id,
+              hasProfile: !!profile,
+              onboardingCompleted: profile?.onboarding_completed ?? null,
+              profileError: profileError?.message,
+            },
+            'Onboarding status resolved'
+          )
 
-          // If no profile or onboarding not completed → redirect to onboarding-v2
+          // If no profile or onboarding not completed → the onboarding chat.
           // IMPORTANT: We ONLY check business_profiles table, NOT user_metadata
-          // This ensures all users go through onboarding-v2, even if they completed old onboarding
+          // This ensures all users go through onboarding, even if they completed
+          // an older version of it.
           if (profileError || !profile || !profile.onboarding_completed) {
-            console.log('✅ [MIDDLEWARE] REDIRECTING TO /onboarding-v2')
+            requestLogger.info({ userId: user.id }, 'Redirecting to onboarding')
             const url = request.nextUrl.clone()
-            url.pathname = '/onboarding-v2'
+            url.pathname = '/onboarding-chat'
             return NextResponse.redirect(url)
           } else {
-            console.log('⏭️  [MIDDLEWARE] Onboarding completed, skipping redirect')
+            requestLogger.debug({ userId: user.id }, 'Onboarding complete; continuing')
           }
         }
       }
     }
   } catch (error) {
-    console.error('❌ [MIDDLEWARE] Onboarding check error:', error)
+    requestLogger.error({ err: error }, 'Onboarding check failed; allowing the request through')
     // On error, continue (don't block access)
   }
 
   // Check for manual override via query param (for testing)
   const uiParam = request.nextUrl.searchParams.get('ui')
   if (uiParam === 'v1' || uiParam === 'v2') {
-    if (uiParam === 'v2' && !pathname.startsWith('/v2')) {
+    // Same exemptions as the database-driven rewrite below — a manual `?ui=v2`
+    // must not send a preview iframe somewhere the automatic path would not.
+    if (uiParam === 'v2' && !isV2Exempt(pathname)) {
       const url = request.nextUrl.clone()
       url.pathname = `/v2${pathname}`
       return NextResponse.redirect(url)
@@ -169,6 +262,31 @@ export async function middleware(request: NextRequest) {
       url.pathname = pathname.replace(/^\/v2/, '')
       return NextResponse.redirect(url)
     }
+  }
+
+  /*
+   * The UI version decides two redirects, and for most paths it decides nothing.
+   *
+   * Read the two conditions below. `uiVersion === 'v2'` only redirects a path
+   * that is NOT v2-exempt; `uiVersion === 'v1'` only redirects a path already
+   * under `/v2`. So for an exempt path that is not `/v2` — every `/business-os`
+   * page, every `/onboarding` page, every public `/book`, `/c`, `/go`, `/site`
+   * and `/invoice` link — both conditions are false whatever the database says,
+   * and all three exits return `NextResponse.next()`.
+   *
+   * The query still ran. A fresh service-role client and a round trip to read
+   * one global row, on every navigation, to reach a conclusion already fixed by
+   * the pathname. It is the third of three round trips the middleware makes
+   * before a page can start rendering, and for the whole Business OS it was
+   * pure cost.
+   *
+   * Skipping it is not a cache and has no staleness: the result could not have
+   * changed the response.
+   */
+  const uiVersionCanRedirect = !isV2Exempt(pathname) || pathname.startsWith('/v2')
+
+  if (!uiVersionCanRedirect) {
+    return NextResponse.next()
   }
 
   // Fetch UI version from database
@@ -185,15 +303,15 @@ export async function middleware(request: NextRequest) {
       .single()
 
     if (error) {
-      console.error('Middleware: Error fetching UI version:', error)
+      requestLogger.error({ err: error }, 'Could not read the UI version; leaving the path unchanged')
       return NextResponse.next()
     }
 
     const uiVersion = data?.value as 'v1' | 'v2'
 
     // If V2 is enabled and not already on V2 route, redirect
-    // EXCEPT for onboarding routes and business-os routes - they should stay as-is
-    if (uiVersion === 'v2' && !pathname.startsWith('/v2') && !pathname.startsWith('/onboarding') && !pathname.startsWith('/business-os')) {
+    // EXCEPT for onboarding routes, business-os routes, and public invoice pages - they should stay as-is
+    if (uiVersion === 'v2' && !isV2Exempt(pathname)) {
       const url = request.nextUrl.clone()
       url.pathname = `/v2${pathname}`
       return NextResponse.redirect(url)
@@ -206,7 +324,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
   } catch (error) {
-    console.error('Middleware: Error:', error)
+    requestLogger.error({ err: error }, 'UI version routing failed; leaving the path unchanged')
     return NextResponse.next()
   }
 

@@ -24,14 +24,14 @@ export async function GET(request: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const paymentsUrl = `${appUrl}/business-os/payments`;
+  const paymentsUrl = `${appUrl}/business-os/orders`;
 
   try {
     // 1. Authenticate
     const user = await getUser();
     if (!user) {
-      // Redirect to login, then back to payments
-      return NextResponse.redirect(`${appUrl}/login?redirect=/business-os/payments`);
+      // Redirect to login, then back to reports
+      return NextResponse.redirect(`${appUrl}/login?redirect=/business-os/orders`);
     }
 
     const searchParams = request.nextUrl.searchParams;
@@ -75,8 +75,8 @@ export async function GET(request: NextRequest) {
       const existingAccount = await stripeConnectRepo.findByUserId(user.id);
 
       if (existingAccount.data) {
-        // Update existing record
-        await stripeConnectRepo.update(existingAccount.data.id, {
+        // Update existing record (update method expects userId, not record id)
+        await stripeConnectRepo.update(user.id, {
           stripe_account_id: accountId,
           stripe_account_type: 'standard',
           charges_enabled: status.chargesEnabled,
@@ -134,8 +134,8 @@ export async function GET(request: NextRequest) {
 
       requestLogger.info({ accountId, status }, 'Fetched account status from Stripe');
 
-      // Update database with current status
-      await stripeConnectRepo.update(accountResult.data.id, {
+      // Update database with current status (update method expects userId, not record id)
+      await stripeConnectRepo.update(user.id, {
         charges_enabled: status.chargesEnabled,
         payouts_enabled: status.payoutsEnabled,
         details_submitted: status.detailsSubmitted,

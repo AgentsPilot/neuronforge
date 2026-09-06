@@ -108,18 +108,13 @@ Once all migrations are applied:
 2. **Test the flow:**
    - Log out of your account
    - Log back in
-   - You should be redirected to `/onboarding-v2` 🎉
+   - You should be redirected to `/onboarding-chat` 🎉
 
-3. **Upload a test bio:**
-   - Create a file `test-bio.txt` with:
-     ```
-     I'm a therapist in Los Angeles specializing in trauma therapy.
-     I see about 20 clients per week and use Google Calendar and Stripe.
-     My website is therapypractice.com.
-     ```
-   - Upload it in onboarding-v2
-   - See the profile preview
-   - Click "Build Everything!"
+3. **Answer the chat:**
+   - It asks five questions — your business, your services and prices, how the
+     money reaches you, how clients find you, and how you track them.
+   - The setup assembles in the panel under the conversation as you answer.
+   - Review the plan cards, then **Build My System!**
 
 ---
 

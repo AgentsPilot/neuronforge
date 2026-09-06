@@ -1,0 +1,130 @@
+{
+  "plugin": {
+    "name": "google-business-profile",
+    "version": "1.0.0",
+    "description": "Read-only Google Business Profile performance: how many people found the business on Google Search and Maps, and what they did next",
+    "context": "Use to understand a local business's visibility on Google. Reports how often the listing appeared in Search and Maps, and how many people called, requested directions, or clicked through to the website. This plugin is READ-ONLY: it cannot edit the listing, reply to reviews, or post updates.",
+    "icon": "<MapPin className='w-5 h-5 text-blue-600'/>",
+    "category": "marketing",
+    "isPopular": true,
+    "auth_config": {
+      "auth_type": "oauth2_google",
+      "client_id": "${GOOGLE_CLIENT_ID}",
+      "client_secret": "${GOOGLE_CLIENT_SECRET}",
+      "redirect_uri": "${NEXT_PUBLIC_APP_URL}/oauth/callback/google-business-profile",
+      "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+      "token_url": "https://oauth2.googleapis.com/token",
+      "refresh_url": "https://oauth2.googleapis.com/token",
+      "profile_url": "https://www.googleapis.com/oauth2/v2/userinfo",
+      "_scope_note": "business.manage is a restricted scope and requires Google API verification plus, for a public app, a security assessment. It also needs the Business Profile APIs enabled in the Google Cloud project — they are off by default and require a quota request. Until both are done, OAuth will fail.",
+      "required_scopes": [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/business.manage"
+      ]
+    },
+    "provider_family": "google"
+  },
+  "actions": {
+    "list_locations": {
+      "description": "List the business locations this user manages on Google",
+      "usage_context": "Call first after connecting. A single-site business has exactly one location, in which case the caller should select it automatically.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "list",
+      "input_entity": "none",
+      "output_entity": "location",
+      "input_cardinality": "none",
+      "output_cardinality": "multiple",
+      "output_fields": ["locations", "location_count"],
+      "required_params": [],
+      "optional_params": [],
+      "must_support": [],
+      "parameters": { "type": "object", "required": [], "properties": {} },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "locations": {
+            "type": "array",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "description": "Location ID, without the 'locations/' prefix" },
+                "title": { "type": "string", "description": "Business name on the listing" },
+                "address": { "type": "string", "description": "Formatted address, for telling similar locations apart" },
+                "account_name": { "type": "string", "description": "Owning account resource name" }
+              }
+            }
+          },
+          "location_count": { "type": "number", "x-guaranteed": true },
+          "retrieved_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns every Business Profile location the connected Google account manages",
+        "sample_output": "{\"locations\":[{\"id\":\"12345678901234567890\",\"title\":\"International Parenting School\",\"address\":\"Tel Aviv, Israel\",\"account_name\":\"accounts/111222333\"}],\"location_count\":1,\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "Empty list when the Google account manages no verified listing. An unverified listing returns no performance data even when it appears here."
+      }
+    },
+    "get_location_metrics": {
+      "description": "Daily performance for a Business Profile location: impressions on Search and Maps, calls, direction requests and website clicks",
+      "usage_context": "Use to show how a local business is being found on Google and what people do after finding it.",
+      "idempotent": true,
+      "side_effect": "read",
+      "domain": "marketing",
+      "capability": "get",
+      "input_entity": "location",
+      "output_entity": "insights",
+      "input_cardinality": "single",
+      "output_cardinality": "multiple",
+      "output_fields": ["days", "location_id"],
+      "required_params": ["location_id"],
+      "optional_params": ["since", "until"],
+      "must_support": ["date_filtering"],
+      "parameters": {
+        "type": "object",
+        "required": ["location_id"],
+        "properties": {
+          "location_id": { "type": "string", "description": "Location ID from list_locations" },
+          "since": {
+            "type": "string",
+            "description": "Start date, ISO 8601. Defaults to 30 days ago. Google retains at most 18 months and excludes the current day."
+          },
+          "until": { "type": "string", "description": "End date, ISO 8601. Defaults to yesterday." }
+        }
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "location_id": { "type": "string", "x-guaranteed": true },
+          "days": {
+            "type": "array",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": { "type": "string", "description": "YYYY-MM-DD" },
+                "impressions": {
+                  "type": "number",
+                  "description": "Times the listing was shown across Search and Maps, desktop and mobile combined"
+                },
+                "website_clicks": { "type": "number" },
+                "actions_calls": { "type": "number", "description": "Taps on the call button" },
+                "actions_directions": { "type": "number", "description": "Direction requests" }
+              }
+            }
+          },
+          "retrieved_at": { "type": "string", "x-guaranteed": true }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Returns one row per day with impressions and the actions people took",
+        "sample_output": "{\"location_id\":\"12345678901234567890\",\"days\":[{\"date\":\"2026-08-24\",\"impressions\":210,\"website_clicks\":14,\"actions_calls\":3,\"actions_directions\":6}],\"retrieved_at\":\"2026-08-26T09:00:00.000Z\"}",
+        "common_errors": "Google excludes the current day and lags by roughly 2-3 days, so recent dates may be missing — treat absent days as not-yet-reported rather than zero. A missing metric for a low-traffic day is withheld for privacy and should also be read as zero."
+      }
+    }
+  }
+}

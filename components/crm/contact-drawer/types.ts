@@ -98,14 +98,57 @@ export interface ContactDocument {
   download_url?: string;
 }
 
+/**
+ * How a service is sold, as the booking card has to say it.
+ *
+ * A single amount could not tell these apart, so every booking read as one
+ * number and an installment sale showed the whole agreement as though it had
+ * been collected — ₪1,000 next to a client who had paid ₪333.
+ */
+export interface SessionPaymentPlan {
+  installmentCount: number;
+  /** One period — what is taken now, not the agreement. */
+  installmentAmount: number;
+  totalAmount: number;
+  frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
+  /** From the plan's local mirror once it exists; undefined before then. */
+  periodsPaid?: number;
+}
+
 export interface SessionPayment {
   id?: string;
+  /** `amount` is what is due for THIS payment; for a plan that is one period. */
   amount: number;
   currency: string;
-  status: 'paid' | 'pending' | 'failed' | 'free';
+  status: 'paid' | 'pending' | 'failed' | 'free' | 'refunded';
+  /** How the service is sold. Absent means an ordinary single payment. */
+  plan?: SessionPaymentPlan;
   paidAt?: string;
+  refundedAt?: string;  // When the refund was processed
+  /**
+   * How much of this payment has been returned.
+   *
+   * Distinct from `status: 'refunded'`, which only a FULL refund produces. A
+   * partial refund leaves the status at `paid`, so the bookings tab showed
+   * nothing at all — a client could be given half their money back and the
+   * booking would look untouched.
+   */
+  refundedAmount?: number;
+  /**
+   * What was actually invoiced, when there is an invoice.
+   *
+   * `amount` is the SERVICE's current price — a live figure that can be edited,
+   * zeroed or lost with the service. The receipt must not depend on it: money
+   * that changed hands is a fact about the past.
+   */
+  invoicedAmount?: number;
   paymentMethod?: string;  // 'card', 'cash', 'bank_transfer', etc.
   last4?: string;  // Last 4 digits of card
+  // Invoice data for resend functionality and due date display
+  invoiceId?: string;
+  invoiceStatus?: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
+  invoiceDueDate?: string;
+  invoiceSentAt?: string;
 }
 
 // Email confirmation sent to client

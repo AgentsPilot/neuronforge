@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { X, Loader2, Banknote, CreditCard, Building2, HelpCircle } from 'lucide-react';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 interface ManualPaymentModalProps {
   isOpen: boolean;
@@ -42,13 +43,17 @@ export function ManualPaymentModal({
   installmentId,
   contactId,
   defaultAmount,
-  defaultCurrency = 'USD',
+  defaultCurrency,
   onSuccess,
   onError
 }: ManualPaymentModalProps) {
+  // Get user's currency from context as fallback when no defaultCurrency is provided
+  const { currencyCode } = useLanguage();
+  const effectiveCurrency = defaultCurrency || currencyCode;
+
   const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState(defaultAmount?.toString() || '');
-  const [currency, setCurrency] = useState(defaultCurrency);
+  const [currency, setCurrency] = useState(effectiveCurrency);
   const [method, setMethod] = useState<string>('cash');
   const [notes, setNotes] = useState('');
   const [receivedAt, setReceivedAt] = useState(new Date().toISOString().split('T')[0]);

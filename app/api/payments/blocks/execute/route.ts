@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
@@ -32,6 +33,7 @@ import {
   PaymentProcessorType,
   emitPaymentEvent
 } from '@/lib/services/PaymentEventService';
+import { refund } from '@/lib/payments/RefundService';
 import { paymentProcessorService } from '@/lib/services/PaymentProcessorService';
 import {
   paymentTransactionRepository,
@@ -79,8 +81,25 @@ async function executeCollectPayment(
     invoiceId: invoice_id as string | undefined,
     bookingId: booking_id as string | undefined,
     installmentId: installment_id as string | undefined,
-    successUrl: (success_url as string) || `${process.env.NEXT_PUBLIC_APP_URL}/payments/success`,
-    cancelUrl: (cancel_url as string) || `${process.env.NEXT_PUBLIC_APP_URL}/payments/cancelled`
+    /*
+     * Back to the invoice wherever there is one.
+     *
+     * `/payments/success` and `/payments/cancelled` were referenced here and
+     * did not exist, so a customer who paid landed on a 404. Where the payment
+     * belongs to an invoice, that invoice's page is a better destination than
+     * any generic screen could be: it is branded, it already renders both
+     * outcomes inline, and it shows the customer the bill they just settled.
+     */
+    successUrl:
+      (success_url as string) ||
+      (invoice_id
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/invoice/${invoice_id}?payment=success`
+        : `${process.env.NEXT_PUBLIC_APP_URL}/payments/success`),
+    cancelUrl:
+      (cancel_url as string) ||
+      (invoice_id
+        ? `${process.env.NEXT_PUBLIC_APP_URL}/invoice/${invoice_id}?payment=cancelled`
+        : `${process.env.NEXT_PUBLIC_APP_URL}/payments/cancelled`)
   };
 
   // If invoice_id provided, get invoice amount
@@ -137,29 +156,73 @@ async function executeRecordManualPayment(
 ): Promise<{ result: unknown; events: PaymentEventType[] }> {
   const { invoice_id, booking_id, installment_id, contact_id, amount, currency, method, notes, received_at } = params;
 
-  // Record the manual payment
-  const result = await paymentTransactionRepository.recordManualPayment(userId, {
-    contactId: contact_id as string | undefined,
-    invoiceId: invoice_id as string | undefined,
-    amount: amount as number,
-    currency: currency as string,
-    paymentMethod: method as 'cash' | 'bank_transfer' | 'check' | 'other',
-    notes: notes as string | undefined,
-    receivedAt: received_at as string | undefined
-  });
+  /**
+   * Against an invoice, this goes through the one settle path.
+   *
+   * It used to record the payment and then call `markAsPaid` separately, which
+   * skipped that path's idempotency check — and the automation kernel RETRIES
+   * blocks, so a retried block inserted a second succeeded payment against one
+   * invoice and doubled the recorded revenue. It also left
+   * `account_resolution` unset, making the payment permanently unrefundable,
+   * while the mark-paid route on the same table records `'recorded'`.
+   */
+  let recorded: { id: string; amount: number; currency: string; payment_method: string };
 
-  if (result.error) {
-    throw result.error;
-  }
-
-  // If invoice provided, mark as paid
   if (invoice_id) {
-    await paymentInvoiceRepository.markAsPaid(invoice_id as string, userId, {
+    const settled = await settleInvoicePaid(supabaseServer, {
+      invoiceId: invoice_id as string,
+      userId,
+      contactId: contact_id as string | undefined,
+      amount: amount as number,
+      currency: currency as string,
       paymentMethod: method as string,
       processorType: 'manual',
+      // Manual money never touched Stripe, and saying so explicitly is what
+      // stops the refund path treating it as unrecorded.
+      accountContext: {
+        stripe_connect_account_id: null,
+        charge_account_kind: 'platform',
+        account_resolution: 'recorded',
+      },
+      paidAt: received_at as string | undefined,
+      metadata: { source: 'record_manual_payment_block', notes: (notes as string) ?? null },
+    });
+
+    if (!settled.transactionId) {
+      // Only possible if the settle path could neither find nor write a payment.
+      throw new Error('Manual payment against this invoice was not recorded');
+    }
+
+    recorded = {
+      id: settled.transactionId,
+      amount: amount as number,
+      currency: currency as string,
+      payment_method: method as string,
+    };
+  } else {
+    // No invoice to settle — money recorded on its own.
+    const manual = await paymentTransactionRepository.recordManualPayment(userId, {
+      contactId: contact_id as string | undefined,
+      invoiceId: undefined,
+      amount: amount as number,
+      currency: currency as string,
+      paymentMethod: method as 'cash' | 'bank_transfer' | 'check' | 'other',
       notes: notes as string | undefined,
       receivedAt: received_at as string | undefined
     });
+
+    if (manual.error || !manual.data) {
+      throw manual.error ?? new Error('Manual payment was not recorded');
+    }
+
+    recorded = {
+      id: manual.data.id,
+      amount: manual.data.amount,
+      currency: manual.data.currency,
+      // The column is nullable on the row type; the block always supplies one,
+      // and falling back keeps the emitted event honest if it ever did not.
+      payment_method: manual.data.payment_method ?? (method as string),
+    };
   }
 
   // If installment provided, mark as paid
@@ -167,7 +230,7 @@ async function executeRecordManualPayment(
     await paymentPlanRepository.markInstallmentPaid(installment_id as string, userId, {
       paymentMethod: method as string,
       processorType: 'manual',
-      transactionId: result.data!.id
+      transactionId: recorded.id
     });
   }
 
@@ -175,7 +238,7 @@ async function executeRecordManualPayment(
   await emitPaymentEvent(userId, {
     eventType: 'payment.manual_recorded',
     entityType: 'transaction',
-    entityId: result.data!.id,
+    entityId: recorded.id,
     contactId: contact_id as string | undefined,
     processorType: 'manual',
     metadata: {
@@ -190,25 +253,35 @@ async function executeRecordManualPayment(
 
   return {
     result: {
-      transactionId: result.data!.id,
-      amount: result.data!.amount,
-      currency: result.data!.currency,
-      method: result.data!.payment_method
+      transactionId: recorded.id,
+      amount: recorded.amount,
+      currency: recorded.currency,
+      method: recorded.payment_method
     },
     events: ['payment.manual_recorded']
   };
 }
 
 /**
- * Execute refund_full block
+ * refund_full and refund_partial.
+ *
+ * Both are adapters now. The refund itself — the account, the idempotency key,
+ * the over-refund guard, the ledger row — lives in RefundService, because those
+ * invariants are all-or-nothing and duplicating them is exactly how this route
+ * and the booking route drifted apart in the first place.
+ *
+ * What this route keeps is its own concern: the payment_events stream the
+ * automation kernel listens to.
+ *
+ * The block ids are unchanged; the kernel addresses them by name.
  */
-async function executeRefundFull(
+async function executeRefundBlock(
   userId: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  isFullRefund: boolean
 ): Promise<{ result: unknown; events: PaymentEventType[] }> {
   const { transaction_id, reason, notify_contact } = params;
 
-  // Get transaction
   const txResult = await paymentTransactionRepository.findById(transaction_id as string, userId);
   if (txResult.error || !txResult.data) {
     throw new Error('Transaction not found');
@@ -217,185 +290,90 @@ async function executeRefundFull(
   const transaction = txResult.data;
   const events: PaymentEventType[] = ['refund.initiated'];
 
-  // Emit initiated event
   await emitPaymentEvent(userId, {
     eventType: 'refund.initiated',
     entityType: 'transaction',
     entityId: transaction_id as string,
     contactId: transaction.contact_id,
     processorType: transaction.processor_type as PaymentProcessorType,
-    metadata: { amount: transaction.amount, reason, isFullRefund: true }
+    metadata: { amount: params.amount ?? transaction.amount, reason, isFullRefund }
   });
 
-  // Process refund based on processor
-  if (transaction.processor_type && transaction.processor_type !== 'manual') {
-    // Use processor to refund
-    const refundResult = await paymentProcessorService.processRefund(
-      userId,
-      {
-        processorTransactionId: transaction.stripe_payment_intent_id || transaction.stripe_charge_id || '',
-        amount: transaction.amount,
-        reason: reason as string
-      },
-      transaction.processor_type as PaymentProcessorType
-    );
-
-    if (refundResult.error) {
-      await emitPaymentEvent(userId, {
-        eventType: 'refund.failed',
-        entityType: 'transaction',
-        entityId: transaction_id as string,
-        metadata: { error: refundResult.error.message }
-      });
-      throw refundResult.error;
-    }
-  }
-
-  // Update transaction with refund info
-  const result = await paymentTransactionRepository.createRefund(transaction_id as string, userId, {
-    amount: transaction.amount,
+  // A full refund passes NO amount: that means "everything still remaining".
+  // This block used to send `transaction.amount`, which after a partial refund
+  // asks for more than is left and then records a full refund regardless.
+  const outcome = await refund({
+    userId,
+    transactionId: transaction_id as string,
+    amount: isFullRefund ? undefined : (params.amount as number),
     reason: reason as string | undefined,
-    isFullRefund: true
+    source: 'app',
+    initiatedBy: userId,
+    /**
+     * The kernel's execution id, not a hash of the amount.
+     *
+     * Keying on `(transaction, amount)` did make a retry replay — and also made
+     * two DIFFERENT automation runs refunding the same amount collapse into
+     * one, silently. An execution id is stable across retries of one step and
+     * distinct between steps, which is exactly the property wanted.
+     */
+    clientRequestId:
+      (params.execution_id as string | undefined) ??
+      (params.client_request_id as string | undefined) ??
+      crypto.randomUUID()
   });
 
-  if (result.error) {
+  if (!outcome.ok) {
     await emitPaymentEvent(userId, {
       eventType: 'refund.failed',
       entityType: 'transaction',
       entityId: transaction_id as string,
-      metadata: { error: result.error.message }
+      metadata: { error: outcome.message, code: outcome.code }
     });
-    throw result.error;
+    throw new Error(outcome.message);
   }
 
-  // Emit completed event
   await emitPaymentEvent(userId, {
     eventType: 'refund.completed',
     entityType: 'transaction',
     entityId: transaction_id as string,
     contactId: transaction.contact_id,
     metadata: {
-      amount: transaction.amount,
+      amount: outcome.amount,
       reason,
-      isFullRefund: true,
+      isFullRefund,
       notifyContact: notify_contact
     }
   });
   events.push('refund.completed');
 
+  // refunded_amount is recomputed from the ledger by trigger, so it is read
+  // back rather than assumed.
+  const after = await paymentTransactionRepository.findById(transaction_id as string, userId);
+
   return {
     result: {
       transactionId: transaction_id,
-      refundedAmount: transaction.amount,
-      refundStatus: 'full'
+      refundedAmount: outcome.amount,
+      totalRefunded: after.data?.refunded_amount ?? outcome.amount,
+      refundStatus: after.data?.refund_status ?? (isFullRefund ? 'full' : 'partial')
     },
     events
   };
 }
 
-/**
- * Execute refund_partial block
- */
+async function executeRefundFull(
+  userId: string,
+  params: Record<string, unknown>
+): Promise<{ result: unknown; events: PaymentEventType[] }> {
+  return executeRefundBlock(userId, params, true);
+}
+
 async function executeRefundPartial(
   userId: string,
   params: Record<string, unknown>
 ): Promise<{ result: unknown; events: PaymentEventType[] }> {
-  const { transaction_id, amount, reason, notify_contact } = params;
-
-  // Get transaction
-  const txResult = await paymentTransactionRepository.findById(transaction_id as string, userId);
-  if (txResult.error || !txResult.data) {
-    throw new Error('Transaction not found');
-  }
-
-  const transaction = txResult.data;
-  const refundAmount = amount as number;
-
-  // Validate refund amount
-  const alreadyRefunded = transaction.refunded_amount || 0;
-  const maxRefundable = transaction.amount - alreadyRefunded;
-  if (refundAmount > maxRefundable) {
-    throw new Error(`Cannot refund ${refundAmount}. Maximum refundable: ${maxRefundable}`);
-  }
-
-  const events: PaymentEventType[] = ['refund.initiated'];
-
-  // Emit initiated event
-  await emitPaymentEvent(userId, {
-    eventType: 'refund.initiated',
-    entityType: 'transaction',
-    entityId: transaction_id as string,
-    contactId: transaction.contact_id,
-    metadata: { amount: refundAmount, reason, isFullRefund: false }
-  });
-
-  // Process refund based on processor
-  if (transaction.processor_type && transaction.processor_type !== 'manual') {
-    const refundResult = await paymentProcessorService.processRefund(
-      userId,
-      {
-        processorTransactionId: transaction.stripe_payment_intent_id || transaction.stripe_charge_id || '',
-        amount: refundAmount,
-        reason: reason as string
-      },
-      transaction.processor_type as PaymentProcessorType
-    );
-
-    if (refundResult.error) {
-      await emitPaymentEvent(userId, {
-        eventType: 'refund.failed',
-        entityType: 'transaction',
-        entityId: transaction_id as string,
-        metadata: { error: refundResult.error.message }
-      });
-      throw refundResult.error;
-    }
-  }
-
-  // Update transaction
-  const totalRefunded = alreadyRefunded + refundAmount;
-  const isNowFullyRefunded = totalRefunded >= transaction.amount;
-
-  const result = await paymentTransactionRepository.createRefund(transaction_id as string, userId, {
-    amount: totalRefunded,
-    reason: reason as string | undefined,
-    isFullRefund: isNowFullyRefunded
-  });
-
-  if (result.error) {
-    await emitPaymentEvent(userId, {
-      eventType: 'refund.failed',
-      entityType: 'transaction',
-      entityId: transaction_id as string,
-      metadata: { error: result.error.message }
-    });
-    throw result.error;
-  }
-
-  await emitPaymentEvent(userId, {
-    eventType: 'refund.completed',
-    entityType: 'transaction',
-    entityId: transaction_id as string,
-    contactId: transaction.contact_id,
-    metadata: {
-      amount: refundAmount,
-      totalRefunded,
-      reason,
-      isFullRefund: isNowFullyRefunded,
-      notifyContact: notify_contact
-    }
-  });
-  events.push('refund.completed');
-
-  return {
-    result: {
-      transactionId: transaction_id,
-      refundedAmount: refundAmount,
-      totalRefunded,
-      refundStatus: isNowFullyRefunded ? 'full' : 'partial'
-    },
-    events
-  };
+  return executeRefundBlock(userId, params, false);
 }
 
 /**

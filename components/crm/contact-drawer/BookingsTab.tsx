@@ -5,23 +5,58 @@ import {
   Calendar, Clock, CreditCard, ClipboardList, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, Plus, Edit2,
   Loader2, ShoppingBag, Package, Truck, Gift, User, MapPin,
-  Phone, AtSign, Eye, ExternalLink, Save, X,
+  Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban,
   type LucideIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CollapsibleSection } from '../CollapsibleSection';
 import type { SessionCardData, IntakeTemplate, BookingJourneyData, BookingJourneyStep } from './types';
+import { groupJourneyByDay } from '@/lib/business-os/journeyDays';
 
 interface BookingsTabProps {
   sessions: SessionCardData[];
+  /**
+   * The real state of each booking's payment plan, keyed by booking id.
+   *
+   * The plan on a session is built from the SERVICE — "sold as three monthly
+   * payments" — which says how it was sold, not what happened. A plan that was
+   * stopped went on reading as a live plan on its first period, with nothing on
+   * the timeline to say the remaining charges will never be taken.
+   *
+   * Absent for a contact with no plan, and while it is still loading; the plan
+   * terms show either way and only the state line waits.
+   */
+  planStates?: Record<string, { status: string; periodsPaid: number; installmentCount: number }>;
   t: (key: string) => string;
   isRTL: boolean;
   language: string;
-  onNewSession?: () => void;
+  onNewSession?: () => void | Promise<void>;
   onEditSession?: (bookingId: string) => void;
   onManagePayment?: (session: SessionCardData) => void;
   onIntakeSaved?: (bookingId: string) => void;
+  onSendIntake?: (bookingId: string) => Promise<void>;
+  onSendInvoice?: (invoiceId: string, bookingId: string) => Promise<void>;
+  /**
+   * Send the confirmation email again — the "reminder" action on the journey.
+   *
+   * Optional and NOT yet wired by the drawer: the button is rendered so the
+   * strip matches the agreed design, and it is inert until a handler is passed.
+   * Deliberately not pointed at `onSendInvoice`, which sends a different email
+   * entirely — a button that does the wrong thing is worse than one that waits.
+   */
+  onResendConfirmation?: (bookingId: string) => Promise<void> | void;
+  /**
+   * Record how an appointment actually went, from the card header.
+   *
+   * The edit dialog has always been able to set this; reaching it meant opening
+   * a form about times and prices to answer a question — did they turn up? —
+   * that the card itself is showing.
+   */
+  onSetBookingStatus?: (
+    bookingId: string,
+    status: 'completed' | 'no_show' | 'cancelled'
+  ) => Promise<void> | void;
   isLoading?: boolean;
   intakeTemplates?: Record<string, IntakeTemplate>;
   isOpen?: boolean;
@@ -105,6 +140,7 @@ const STEP_ICONS: Record<string, LucideIcon> = {
 
 export function BookingsTab({
   sessions,
+  planStates,
   t,
   isRTL,
   language,
@@ -112,6 +148,10 @@ export function BookingsTab({
   onEditSession,
   onManagePayment,
   onIntakeSaved,
+  onSendIntake,
+  onSendInvoice,
+  onResendConfirmation,
+  onSetBookingStatus,
   isLoading = false,
   intakeTemplates = {},
   isOpen,
@@ -125,6 +165,10 @@ export function BookingsTab({
   const [intakeSaving, setIntakeSaving] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [intakeSuccess, setIntakeSuccess] = useState(false);
+  // Intake email sending state
+  const [sendingIntakeBookingId, setSendingIntakeBookingId] = useState<string | null>(null);
+  // Invoice email sending state
+  const [sendingInvoiceBookingId, setSendingInvoiceBookingId] = useState<string | null>(null);
 
   const toggleBooking = (id: string) => {
     setExpandedBookings(prev => {
@@ -184,6 +228,14 @@ export function BookingsTab({
     });
   };
 
+  /** Just the clock: the day already has its own marker above the entries. */
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString(language, {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleString(language, {
@@ -214,13 +266,38 @@ export function BookingsTab({
     return !booking.start_time || booking.service?.is_product;
   };
 
-  // Get status info
-  const getBookingStatusLabel = (status: string) => {
+  /*
+   * The badge on a booking header.
+   *
+   * Turns on whether a time was BOOKED, not on any notion of a product —
+   * nothing in the data says "product", and the start time is the only thing
+   * that distinguishes a session from a course sold without one.
+   *
+   * `confirmed` renders as "קרובה" — *upcoming*, a word about when something
+   * will be attended. With no time booked there is nothing to attend, so the
+   * card announced a purchase as "coming soon" beside a line saying it had been
+   * bought a week ago.
+   *
+   * Only that one status differs. Completed, cancelled and awaiting-payment
+   * mean the same thing either way, and giving them separate wording would be
+   * inventing a difference to be consistent about.
+   */
+  const getBookingStatusLabel = (status: string, hasSchedule = true) => {
     const labels: Record<string, { text: string; color: string; bgColor: string }> = {
-      confirmed: { text: t('crm.booking.status.confirmed') || 'Upcoming', color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-500/10' },
+      confirmed: {
+        text: hasSchedule
+          ? t('crm.booking.status.confirmed') || 'Upcoming'
+          : t('crm.booking.status.unscheduled_confirmed'),
+        color: 'text-amber-600 dark:text-amber-400',
+        bgColor: 'bg-amber-500/10',
+      },
       completed: { text: t('crm.booking.status.completed') || 'Completed', color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-500/10' },
       cancelled: { text: t('crm.booking.status.cancelled') || 'Cancelled', color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-500/10' },
-      no_show: { text: t('crm.booking.status.no_show') || 'No Show', color: 'text-slate-600 dark:text-slate-400', bgColor: 'bg-slate-500/10' }
+      no_show: { text: t('crm.booking.status.no_show') || 'No Show', color: 'text-slate-600 dark:text-slate-400', bgColor: 'bg-slate-500/10' },
+      // `pending` was missing, so it fell through to the fallback below and
+      // rendered the raw database value — an English "pending" sitting in the
+      // middle of a Hebrew card. It is the status every unpaid booking has.
+      pending: { text: t('crm.booking.status.pending') || 'Awaiting payment', color: 'text-orange-600 dark:text-orange-400', bgColor: 'bg-orange-500/10' }
     };
     return labels[status] || { text: status, color: 'text-[var(--v2-text-muted)]', bgColor: 'bg-[var(--v2-surface)]' };
   };
@@ -277,6 +354,30 @@ export function BookingsTab({
 
   const handleIntakeFieldChange = (key: string, value: unknown) => {
     setEditingIntakeResponses(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Handle sending/resending intake form email
+  const handleSendIntake = async (bookingId: string) => {
+    if (!onSendIntake || sendingIntakeBookingId) return;
+
+    setSendingIntakeBookingId(bookingId);
+    try {
+      await onSendIntake(bookingId);
+    } finally {
+      setSendingIntakeBookingId(null);
+    }
+  };
+
+  // Handle sending/resending invoice
+  const handleSendInvoice = async (invoiceId: string, bookingId: string) => {
+    if (!onSendInvoice || sendingInvoiceBookingId) return;
+
+    setSendingInvoiceBookingId(bookingId);
+    try {
+      await onSendInvoice(invoiceId, bookingId);
+    } finally {
+      setSendingInvoiceBookingId(null);
+    }
   };
 
   // Build intake content for expanded view (supports view and edit modes)
@@ -624,86 +725,6 @@ export function BookingsTab({
   };
 
   // Render a journey section row
-  const renderJourneyRow = (
-    icon: LucideIcon,
-    title: string,
-    status: StepStatus,
-    content: React.ReactNode,
-    sectionKey: string,
-    expandable: boolean = false,
-    expandedContent?: React.ReactNode
-  ) => {
-    const Icon = icon;
-    const colors = STATUS_COLORS[status];
-    const isExpanded = expandedSections.has(sectionKey);
-
-    return (
-      <div className="relative flex gap-3">
-        {/* Vertical line connector */}
-        <div className="absolute top-6 bottom-0 w-0.5 bg-[var(--v2-border)]" style={{ [isRTL ? 'right' : 'left']: '11px' }} />
-
-        {/* Status dot */}
-        <div className={`relative z-10 flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${colors.bg} border-2 ${colors.border}`}>
-          <Icon className={`h-3 w-3 ${colors.icon}`} />
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 pb-4">
-          <div className="flex items-start justify-between">
-            <div className="flex-1">
-              <p className={`text-sm font-medium ${
-                status === 'completed' ? 'text-[var(--v2-text-primary)]' :
-                status === 'active' ? 'text-amber-600 dark:text-amber-400' :
-                status === 'failed' ? 'text-red-600 dark:text-red-400' :
-                'text-[var(--v2-text-muted)]'
-              }`}>
-                {title}
-              </p>
-              <div className="mt-1">
-                {content}
-              </div>
-            </div>
-
-          </div>
-
-          {/* Expandable button - styled as a proper button */}
-          {expandable && !isExpanded && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleSection(sectionKey);
-              }}
-              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 rounded-full transition-colors"
-            >
-              <Eye className="h-3 w-3" />
-              {t('crm.intake.view_responses') || 'View responses'}
-            </button>
-          )}
-
-          {/* Expanded content */}
-          {expandable && isExpanded && expandedContent && (
-            <div className="mt-3 p-4 bg-[var(--v2-bg)] rounded-xl border border-[var(--v2-border)] shadow-sm">
-              {expandedContent}
-              {/* Collapse button */}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleSection(sectionKey);
-                }}
-                className="mt-3 flex items-center gap-1 text-xs text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)] transition-colors"
-              >
-                <ChevronUp className="h-3 w-3" />
-                {t('common.hide') || 'Hide'}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   // Count upcoming sessions for badge
   const upcomingCount = sessions.filter(s =>
     s.booking.status === 'confirmed' && s.booking.start_time && new Date(s.booking.start_time) > new Date()
@@ -775,8 +796,9 @@ export function BookingsTab({
             {sortedSessions.map((session) => {
               const { booking, payment, journeyData } = session;
               const isExpanded = expandedBookings.has(booking.id);
-              const statusInfo = getBookingStatusLabel(booking.status);
+              // Declared first: the badge's wording depends on it.
               const isProduct = isProductBooking(booking);
+              const statusInfo = getBookingStatusLabel(booking.status, !isProduct);
               const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
               const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
               const isPendingProduct = isProduct && booking.status !== 'completed' && booking.status !== 'cancelled';
@@ -841,6 +863,7 @@ export function BookingsTab({
                       <span className={`text-xs font-medium px-2 py-0.5 rounded ${statusInfo.color} ${statusInfo.bgColor}`}>
                         {statusInfo.text}
                       </span>
+
                       {isExpanded ? (
                         <ChevronUp className="h-4 w-4 text-[var(--v2-text-muted)]" />
                       ) : (
@@ -849,76 +872,632 @@ export function BookingsTab({
                     </div>
                   </button>
 
+                  {/* ── How did it go? ──────────────────────────────────────
+                      Outside the header BUTTON, not inside it: the whole header
+                      is the expand control, and nesting buttons inside a button
+                      is invalid markup that browsers resolve unpredictably.
+
+                      Offered only while the outcome is still open — a booking
+                      already completed, cancelled or marked a no-show has its
+                      answer, and changing it belongs in the edit form where the
+                      consequences are visible.
+
+                      SHOWN WITH OR WITHOUT A SCHEDULE. This whole strip used to
+                      be withheld when no time was booked, on the grounds that
+                      there is no attendance to record — true of "did not
+                      attend", and true of nothing else. An order can be
+                      fulfilled and an order can be cancelled; withholding both
+                      left a course sale with no way to end it at all, and the
+                      only route to cancelling one was to refund it.
+
+                      So only "did not attend" is conditional. The other two mean
+                      the same thing either way. */}
+                  {onSetBookingStatus &&
+                    booking.status !== 'completed' &&
+                    booking.status !== 'cancelled' &&
+                    booking.status !== 'no_show' && (
+                      <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+                        <button
+                          type="button"
+                          onClick={() => onSetBookingStatus(booking.id, 'completed')}
+                          className="px-3 py-1 rounded-full text-[12px] font-medium border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-500/10 transition-colors"
+                        >
+                          {/* "Completed" for a session that was held; the same
+                              word serves an order that was delivered. */}
+                          {t('crm.booking.status.completed') || 'Completed'}
+                        </button>
+
+                        {/* The one that needs a time to mean anything. */}
+                        {!isProduct && (
+                          <button
+                            type="button"
+                            onClick={() => onSetBookingStatus(booking.id, 'no_show')}
+                            className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                          >
+                            {t('crm.booking.status.no_show') || 'No show'}
+                          </button>
+                        )}
+
+                        {/* Last, and the only one in red: it reaches the client. */}
+                        <button
+                          type="button"
+                          onClick={() => onSetBookingStatus(booking.id, 'cancelled')}
+                          className="px-3 py-1 rounded-full text-[12px] font-medium border border-red-600/40 text-red-600 dark:text-red-400 hover:bg-red-500/10 transition-colors"
+                        >
+                          {t('crm.booking.status.cancelled') || 'Cancel'}
+                        </button>
+                      </div>
+                    )}
+
                   {/* Expanded content - Full Journey from journeySteps */}
                   {isExpanded && (
                     <div className="px-4 pb-4 border-t border-[var(--v2-border)]">
                       <div className="pt-4">
 
-                        {/* Render journey steps dynamically */}
+                        {/* ── The journey, as a day book ──────────────────────
+                            Steps grouped under the day they happened on, with
+                            the wait between distant days drawn rather than
+                            collapsed into one more evenly spaced row. Every
+                            action the old strip offered is still here — the
+                            node is still the send/resend control, intake still
+                            expands, payment still opens the manager — with
+                            reschedule and resend added as visible buttons
+                            rather than affordances hidden on an icon. */}
                         {session.journeySteps && session.journeySteps.length > 0 ? (
-                          // Use provided journey steps
-                          session.journeySteps.map((step, index) => {
-                            const StepIcon = STEP_ICONS[step.key] || CheckCircle2;
-                            const stepTitle = step.label || t(`crm.booking.step.${step.key}`) || step.key;
-                            const isIntakeStep = step.key === 'intake';
-                            const isPaymentStep = step.key === 'payment';
-                            const isConfirmationStep = step.key === 'confirmation';
-                            const intakeExpandable = isIntakeStep && hasIntake;
-                            const paymentManageable = isPaymentStep && session.payment && session.payment.status !== 'free';
+                          groupJourneyByDay(session.journeySteps).map(group => {
+                            if (group.kind === 'wait') {
+                              return (
+                                <div
+                                  key={group.key}
+                                  className="relative py-3.5 text-[11.5px] text-[var(--v2-text-muted)]"
+                                  style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '51px' }}
+                                >
+                                  {/* The rail carries through the gap: the line is
+                                      still the journey, it just has nothing on it. */}
+                                  <span
+                                    className="absolute top-0 bottom-0 border-s-2 border-dashed border-[var(--v2-border)]"
+                                    style={{ [isRTL ? 'right' : 'left']: '11px' }}
+                                    aria-hidden="true"
+                                  />
+                                  {(t('crm.journey.wait_days') || '{count} days of waiting')
+                                    .replace('{count}', String(group.days))}
+                                </div>
+                              );
+                            }
 
-                            return renderJourneyRow(
-                              StepIcon,
-                              stepTitle,
-                              step.status,
-                              <div className="space-y-1">
-                                {step.details && (
-                                  <p className="text-sm text-[var(--v2-text-primary)]">
-                                    {step.details}
-                                  </p>
-                                )}
-                                {/* For confirmation step without details, show "Email sent" */}
-                                {isConfirmationStep && !step.details && step.status === 'completed' && (
-                                  <p className="text-sm text-[var(--v2-text-primary)]">
-                                    {t('crm.booking.email_sent')}
-                                  </p>
-                                )}
-                                {/* Show timestamp - use full date+time for confirmation step */}
-                                {step.timestamp && (
-                                  <p className="text-xs text-[var(--v2-text-muted)]">
-                                    {isConfirmationStep ? formatDateTime(step.timestamp) : formatShortDate(step.timestamp)}
-                                  </p>
-                                )}
-                                {/* Payment step - show Manage button */}
-                                {paymentManageable && onManagePayment && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onManagePayment(session);
-                                    }}
-                                    className="mt-1 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#8B5CF6] bg-[#8B5CF6]/10 hover:bg-[#8B5CF6]/20 rounded-full transition-colors"
-                                  >
-                                    <CreditCard className="h-3 w-3" />
-                                    {t('crm.payment.manage') || 'Manage'}
-                                  </button>
-                                )}
-                                {/* Special rendering for intake step with response count */}
-                                {isIntakeStep && hasIntake && (
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-600 dark:text-green-400">
-                                      <CheckCircle2 className="h-3 w-3" />
-                                      {t('crm.booking.intake_completed') || 'Completed'}
+                            return (
+                              <div key={group.key}>
+                                {/* One marker per DAY, not a date repeated on
+                                    every row. */}
+                                <div className="flex items-baseline gap-2 pt-4 pb-2">
+                                  {group.date ? (
+                                    <>
+                                      <span className="text-[16px] font-bold leading-none text-[var(--v2-text-primary)]">
+                                        {group.date.getDate()}
+                                      </span>
+                                      <span className="text-[11px] tracking-wide text-[var(--v2-text-muted)]">
+                                        {new Intl.DateTimeFormat(language, { month: 'short' }).format(group.date)}
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <span className="text-[11px] text-[var(--v2-text-muted)]">
+                                      {t('crm.journey.upcoming') || 'Upcoming'}
                                     </span>
-                                    <bdi className="text-xs text-[var(--v2-text-muted)]">
-                                      {Object.keys(booking.intake_responses?.responses || {}).length} {t('crm.intake.responses')}
-                                    </bdi>
-                                    {/* Edit button is now inside expanded content */}
-                                  </div>
-                                )}
-                              </div>,
-                              `${booking.id}-${step.key}-${index}`,
-                              intakeExpandable,
-                              intakeExpandable ? buildIntakeContent(booking, template) : undefined
+                                  )}
+                                  <span className="flex-1 h-px bg-[var(--v2-border)]" aria-hidden="true" />
+                                </div>
+
+                                {group.steps.map((step, index) => {
+                                  const StepIcon = STEP_ICONS[step.key] || CheckCircle2;
+
+                                  const stepTitle = step.label || t(`crm.booking.step.${step.key}`) || step.key;
+                                  const isIntakeStep = step.key === 'intake';
+                                  const isPaymentStep = step.key === 'payment';
+                                  const isConfirmationStep = step.key === 'confirmation';
+                                  const isScheduleStep = step.key === 'session' || step.key === 'schedule';
+                                  const intakeExpandable = isIntakeStep && hasIntake;
+                                  const sectionKey = `${booking.id}-${step.key}-${index}`;
+                                  const isSectionExpanded = expandedSections.has(sectionKey);
+
+                                  const payment = session.payment;
+                                  const refunded = payment?.refundedAmount ?? 0;
+
+                                  /*
+                                   * What was CHARGED — from the invoice first.
+                                   *
+                                   * `payment.amount` is the service's CURRENT price:
+                                   * a live figure that can be edited, zeroed, or lost
+                                   * when a service is replaced. Reading it meant the
+                                   * receipt could vanish from a booking whose money
+                                   * had not changed at all. What was invoiced is a
+                                   * fact about the past and cannot move.
+                                   */
+                                  /*
+                                   * A PLAN has collected only what its paid periods
+                                   * add up to — not the agreement's total, and not
+                                   * the service's price. The plan booking on this
+                                   * account read "charged $1,000.00" with $333.33
+                                   * actually taken, which overstates by two thirds
+                                   * on a block whose whole job is to add up.
+                                   */
+                                  const collectedOnPlan =
+                                    payment?.plan && (payment.plan.periodsPaid ?? 0) > 0
+                                      ? Math.round(
+                                          payment.plan.installmentAmount *
+                                            (payment.plan.periodsPaid ?? 0) * 100
+                                        ) / 100
+                                      : null;
+                                  /*
+                                   * `periodsPaid` comes from the plan's local mirror
+                                   * and is undefined until it exists. Multiplying by
+                                   * zero produced a charged figure of 0 — and `??`
+                                   * does not fall through a zero — so the receipt
+                                   * vanished from every plan whose mirror had not
+                                   * landed yet. Unknown falls back to the payment.
+                                   */
+
+                                  const charged =
+                                    collectedOnPlan ??
+                                    payment?.invoicedAmount ??
+                                    payment?.amount ??
+                                    0;
+
+                                  /*
+                                   * Shown whenever money exists — charged OR refunded.
+                                   *
+                                   * Gating on `charged > 0` alone let a refund with no
+                                   * price behind it disappear entirely, which is the
+                                   * one case where the figure matters most.
+                                   */
+                                  const showAccount =
+                                    isPaymentStep &&
+                                    !!payment &&
+                                    payment.status !== 'free' &&
+                                    (charged > 0 || refunded > 0);
+
+                                  const colors = STATUS_COLORS[step.status];
+
+                                  /*
+                                   * The appointment reads as three things, not one:
+                                   * the time it runs, the day and whether it has
+                                   * happened, and how long it lasts. The step only
+                                   * carries the time range, so the rest is composed
+                                   * here from the booking itself.
+                                   */
+                                  /*
+                                   * The time the appointment runs.
+                                   *
+                                   * The `session` step carries no details of its own
+                                   * — it is only a status marker — so the row showed
+                                   * a weekday and a duration and never said WHEN.
+                                   * Composed from the slot, like the schedule step
+                                   * above it does.
+                                   */
+                                  const scheduleFact =
+                                    isScheduleStep && !step.details && booking.start_time
+                                      ? booking.end_time
+                                        ? `${formatTime(booking.start_time)} – ${formatTime(booking.end_time)}`
+                                        : formatTime(booking.start_time)
+                                      : null;
+
+                                  /*
+                                   * The booking's OWN status wins over the clock.
+                                   *
+                                   * This read the start time first, so an
+                                   * appointment marked completed — or a no-show —
+                                   * still said "טרם התקיימה" until its slot came
+                                   * round, and offered to reschedule it. What the
+                                   * owner recorded outranks what the calendar
+                                   * implies; the clock is only the fallback for a
+                                   * booking still sitting at `confirmed`.
+                                   */
+                                  /*
+                                   * The booking has an outcome on record.
+                                   *
+                                   * Describes the BOOKING, not any one step: it
+                                   * gates rescheduling, resending the confirmation
+                                   * and the status buttons alike. An appointment
+                                   * that did not happen must not be re-confirmed —
+                                   * that email carries a calendar invite and would
+                                   * put a dead appointment back in the client's
+                                   * diary.
+                                   */
+                                  const settledStatus =
+                                    booking.status === 'completed' ||
+                                    booking.status === 'cancelled' ||
+                                    booking.status === 'no_show';
+
+                                  const scheduleDetail =
+                                    isScheduleStep && booking.start_time
+                                      ? [
+                                          new Intl.DateTimeFormat(language, { weekday: 'long' })
+                                            .format(new Date(booking.start_time)),
+                                          settledStatus
+                                            ? getBookingStatusLabel(booking.status, !isProduct).text
+                                            : new Date(booking.start_time) > new Date()
+                                              ? t('crm.journey.not_yet_held') || 'Not yet held'
+                                              : t('crm.journey.awaiting_outcome') || 'Awaiting an outcome'
+                                        ]
+                                          .filter(Boolean)
+                                          .join(' · ')
+                                      : null;
+
+                                  /*
+                                   * How long it runs, in the clock column — the fact
+                                   * beside it is already the time range, so repeating
+                                   * the start time there would say nothing new.
+                                   */
+                                  const scheduleDuration = (() => {
+                                    if (!isScheduleStep) return null;
+                                    // Derived from the slot rather than a stored
+                                    // figure: `duration` lives on the service, and a
+                                    // booking that was moved or extended is the
+                                    // authority on how long it actually runs.
+                                    const minutes =
+                                      (booking.start_time && booking.end_time
+                                        ? Math.round(
+                                            (new Date(booking.end_time).getTime() -
+                                              new Date(booking.start_time).getTime()) / 60000
+                                          )
+                                        : null);
+                                    return minutes && minutes > 0 ? formatDuration(minutes) : null;
+                                  })();
+
+                                  // The node keeps its send/resend behaviour.
+                                  const onNodeClick =
+                                    isIntakeStep && !hasIntake && onSendIntake && booking.status !== 'cancelled'
+                                      ? () => handleSendIntake(booking.id)
+                                      : isPaymentStep && step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled'
+                                        ? () => handleSendInvoice(step.metadata?.invoiceId as string, booking.id)
+                                        : undefined;
+
+                                  const nodeLoading =
+                                    (isIntakeStep && sendingIntakeBookingId === booking.id) ||
+                                    (isPaymentStep && sendingInvoiceBookingId === booking.id);
+
+                                  return (
+                                    <div key={sectionKey}>
+                                      <div
+                                        className="relative grid items-baseline py-3 border-t border-[var(--v2-border)] first:border-t-0"
+                                        style={{ gridTemplateColumns: '24px 74px minmax(0, 1fr)', columnGap: '11px', rowGap: '2px' }}
+                                      >
+                                        {/* The connector, behind the nodes. */}
+                                        <span
+                                          className="absolute top-0 bottom-0 w-0.5 bg-[var(--v2-border)]"
+                                          style={{ [isRTL ? 'right' : 'left']: '11px' }}
+                                          aria-hidden="true"
+                                        />
+
+                                        {/* The node. Still the control it was. */}
+                                        <button
+                                          type="button"
+                                          onClick={e => {
+                                            if (!onNodeClick) return;
+                                            e.stopPropagation();
+                                            onNodeClick();
+                                          }}
+                                          disabled={!onNodeClick || nodeLoading}
+                                          title={
+                                            isIntakeStep && !hasIntake
+                                              ? t('crm.intake.send_form') || 'Send intake form'
+                                              : isPaymentStep && step.metadata?.canResend
+                                                ? t('crm.invoice.resend') || 'Resend invoice'
+                                                : undefined
+                                          }
+                                          className={`relative z-10 justify-self-center w-[22px] h-[22px] rounded-full flex items-center justify-center border-2 ${colors.bg} ${colors.border} ${
+                                            onNodeClick && !nodeLoading
+                                              ? 'cursor-pointer hover:scale-110 transition-transform'
+                                              : 'cursor-default'
+                                          }`}
+                                          style={{ gridColumn: 1, gridRow: 1 }}
+                                        >
+                                          {nodeLoading ? (
+                                            <Loader2 className={`h-3 w-3 ${colors.icon} animate-spin`} />
+                                          ) : (
+                                            <StepIcon className={`h-3 w-3 ${colors.icon}`} />
+                                          )}
+                                        </button>
+
+                                        {/* The spine: every label starts here. */}
+                                        <span
+                                          className="text-[12px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
+                                          style={{ gridColumn: 2, gridRow: 1 }}
+                                        >
+                                          {stepTitle}
+                                        </span>
+
+                                        {/* The clock. The day is already named
+                                            above, so the row only needs the time. */}
+                                        {(scheduleDuration || step.timestamp) && (
+                                          <span
+                                            className="absolute top-3 text-[11.5px] tabular-nums text-[var(--v2-text-muted)] whitespace-nowrap"
+                                            style={{ [isRTL ? 'left' : 'right']: '0' }}
+                                          >
+                                            {scheduleDuration ?? formatTime(step.timestamp!)}
+                                          </span>
+                                        )}
+
+                                        {/* What happened. */}
+                                        {showAccount ? (
+                                          <div
+                                            className="grid items-baseline mt-0.5"
+                                            style={{
+                                              gridColumn: 3,
+                                              gridTemplateColumns: 'minmax(0, 1fr) auto',
+                                              gap: '4px 18px',
+                                              maxWidth: 'min(290px, 100% - 46px)'
+                                            }}
+                                          >
+                                            {/* An account, not a number: charged,
+                                                returned, and a ruled total. A block
+                                                that has to add up cannot hide a
+                                                partial refund behind the gross. */}
+                                            <span className="text-[12.5px] text-[var(--v2-text-muted)] break-words">
+                                              {t('crm.journey.charged') || 'Charged'}
+                                            </span>
+                                            <span className="text-[13px] tabular-nums text-[var(--v2-text-secondary)] text-end whitespace-nowrap">
+                                              {formatAmount(charged, payment!.currency)}
+                                            </span>
+
+                                            {refunded > 0 && (
+                                              <>
+                                                <span className="text-[12.5px] text-orange-600 dark:text-orange-400 break-words">
+                                                  {t('crm.journey.returned') || 'Refunded'}
+                                                  {payment!.refundedAt
+                                                    ? ` · ${formatShortDate(payment!.refundedAt)}`
+                                                    : ''}
+                                                </span>
+                                                {/* `bdi` so the minus stays ON the
+                                                    number. In an RTL row a bare
+                                                    "−$100.00" is reordered by the
+                                                    bidi algorithm and renders as
+                                                    "$100.00−", which reads like a
+                                                    typo rather than a deduction. */}
+                                                <bdi className="text-[13px] tabular-nums text-orange-600 dark:text-orange-400 text-end whitespace-nowrap">
+                                                  −{formatAmount(refunded, payment!.currency)}
+                                                </bdi>
+
+                                                <span
+                                                  className="h-px bg-[var(--v2-border)]"
+                                                  style={{ gridColumn: '1 / -1', margin: '3px 0 1px' }}
+                                                  aria-hidden="true"
+                                                />
+
+                                                <span className="text-[12.5px] font-medium text-[var(--v2-text-secondary)]">
+                                                  {t('crm.journey.kept') || 'You keep'}
+                                                </span>
+                                                <span className="text-[17px] font-medium tabular-nums text-green-600 dark:text-green-400 text-end whitespace-nowrap">
+                                                  {formatAmount(Math.max(0, charged - refunded), payment!.currency)}
+                                                </span>
+                                              </>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span
+                                            className="text-[14.5px] font-medium leading-[1.5] text-[var(--v2-text-primary)] break-words"
+                                            style={{ gridColumn: 3, gridRow: 1, paddingInlineEnd: '46px' }}
+                                          >
+                                            {step.details ||
+                                              scheduleFact ||
+                                              (isConfirmationStep && step.status === 'completed'
+                                                ? t('crm.booking.email_sent')
+                                                : '')}
+                                          </span>
+                                        )}
+
+                                        {/* Supporting detail — a plan's terms,
+                                            the answer count — under the fact. */}
+                                        {/* Only a PLAN's terms — "₪333.33 · 1 of 3 ·
+                                            monthly" — which the receipt above cannot
+                                            express. For an ordinary payment
+                                            `step.details` is the amount itself, so
+                                            this printed the figure a second time
+                                            under the block that just totalled it. */}
+                                        {showAccount && payment?.plan && step.details && (
+                                          <span
+                                            className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
+                                            style={{ gridColumn: 3 }}
+                                          >
+                                            {step.details}
+                                          </span>
+                                        )}
+
+                                        {/* A plan that is no longer running.
+                                            Only when it has actually ended: an
+                                            active plan needs no announcement,
+                                            and a line saying so on every plan
+                                            would bury the one case that
+                                            matters — remaining charges that
+                                            will never be taken, on a booking
+                                            that otherwise reads as mid-plan. */}
+                                        {(() => {
+                                          // The PAYMENT step only. Without this it
+                                          // rendered under every step in the journey —
+                                          // the product, the client details, the
+                                          // confirmation — because a plan belongs to
+                                          // the booking and every step could see it.
+                                          // A plan being stopped is a fact about the
+                                          // money, and it belongs beside the money.
+                                          const planState = planStates?.[booking.id];
+                                          if (!isPaymentStep || !payment?.plan || !planState) return null;
+                                          if (planState.status !== 'cancelled') return null;
+
+                                          return (
+                                            <span
+                                              className="flex items-center gap-1.5 text-[12.5px] leading-[1.5] text-orange-600"
+                                              style={{ gridColumn: 3 }}
+                                            >
+                                              <Ban className="h-3.5 w-3.5 shrink-0" />
+                                              <bdi>
+                                                {t('payments.plan.status.cancelled')}
+                                                {planState.installmentCount > 0 && (
+                                                  <span className="text-[var(--v2-text-muted)]">
+                                                    {' · '}
+                                                    {t('payments.plan.periods_collected')
+                                                      .replace('{paid}', String(planState.periodsPaid))
+                                                      .replace('{count}', String(planState.installmentCount))}
+                                                  </span>
+                                                )}
+                                              </bdi>
+                                            </span>
+                                          );
+                                        })()}
+
+                                        {scheduleDetail && (
+                                          <span
+                                            className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)]"
+                                            style={{ gridColumn: 3 }}
+                                          >
+                                            {scheduleDetail}
+                                          </span>
+                                        )}
+
+                                        {isIntakeStep && hasIntake && (
+                                          <span
+                                            className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)]"
+                                            style={{ gridColumn: 3 }}
+                                          >
+                                            {Object.keys(booking.intake_responses?.responses || {}).length}{' '}
+                                            {t('crm.intake.responses')}
+                                          </span>
+                                        )}
+
+                                        {/* State, then actions. A state is a quiet
+                                            tinted word; an action is a control. */}
+                                        <div className="flex flex-wrap items-center gap-1.5 mt-2" style={{ gridColumn: 3 }}>
+                                          {isIntakeStep && hasIntake && (
+                                            <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-medium bg-green-500/10 text-green-600 dark:text-green-400">
+                                              {t('crm.booking.intake_completed') || 'Completed'}
+                                            </span>
+                                          )}
+
+                                          {isPaymentStep &&
+                                            (payment?.status === 'refunded' || refunded > 0) && (
+                                              <span className="px-2.5 py-0.5 rounded-full text-[11.5px] font-medium bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                                                {payment?.status === 'refunded'
+                                                  ? t('crm.payment.status.refunded') || 'Refunded'
+                                                  : t('crm.payment.status.partially_refunded_short') || 'Partially refunded'}
+                                              </span>
+                                            )}
+
+                                          {intakeExpandable && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                toggleSection(sectionKey);
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                                            >
+                                              {isSectionExpanded
+                                                ? t('common.hide') || 'Hide'
+                                                : t('crm.intake.view_responses') || 'View responses'}
+                                            </button>
+                                          )}
+
+                                          {isPaymentStep && payment && payment.status !== 'free' && onManagePayment && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onManagePayment(session);
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[#8B5CF6] text-[#8B5CF6] hover:bg-[#8B5CF6] hover:text-white transition-colors"
+                                            >
+                                              {t('crm.payment.manage') || 'Manage payment'}
+                                            </button>
+                                          )}
+
+                                          {isPaymentStep && !!step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled' && (
+                                            <button
+                                              type="button"
+                                              disabled={sendingInvoiceBookingId === booking.id}
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                handleSendInvoice(step.metadata?.invoiceId as string, booking.id);
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors disabled:opacity-50"
+                                            >
+                                              {t('crm.invoice.resend') || 'Resend invoice'}
+                                            </button>
+                                          )}
+
+                                          {isIntakeStep && !hasIntake && onSendIntake && booking.status !== 'cancelled' && (
+                                            <button
+                                              type="button"
+                                              disabled={sendingIntakeBookingId === booking.id}
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                handleSendIntake(booking.id);
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors disabled:opacity-50"
+                                            >
+                                              {t('crm.intake.send_form') || 'Send intake form'}
+                                            </button>
+                                          )}
+
+                                          {/* Resend the confirmation — the details
+                                              and the calendar invite, to a client
+                                              who lost the email or whose address
+                                              was wrong at the time. Still guarded
+                                              on the handler: this component is used
+                                              without one elsewhere, and a button
+                                              that silently does nothing is worse
+                                              than one that shows it cannot. */}
+                                          {isConfirmationStep && step.status === 'completed' && !settledStatus && (
+                                            <button
+                                              type="button"
+                                              disabled={!onResendConfirmation}
+                                              title={onResendConfirmation ? undefined : t('crm.journey.not_wired') || 'Not connected yet'}
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onResendConfirmation?.(booking.id);
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                              {t('crm.journey.resend') || 'Send again'}
+                                            </button>
+                                          )}
+
+                                          {/* Reschedule, on the step it belongs to.
+                                              The same action as the footer's Edit —
+                                              it is just reachable from the row that
+                                              names the time. */}
+                                          {/* Only what can still be moved. A booking
+                                              already completed, cancelled or marked
+                                              a no-show is a record of what happened
+                                              — offering to reschedule it invites an
+                                              edit that contradicts the outcome. */}
+                                          {isScheduleStep && onEditSession && !isProduct && !settledStatus && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onEditSession(booking.id);
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                                            >
+                                              {t('crm.booking.reschedule') || 'Reschedule'}
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* The intake answers, unchanged. */}
+                                      {intakeExpandable && isSectionExpanded && (
+                                        <div
+                                          style={{ [isRTL ? 'paddingRight' : 'paddingLeft']: '109px' }}
+                                          className="pb-3"
+                                        >
+                                          <div className="p-4 bg-[var(--v2-bg)] rounded-xl border border-[var(--v2-border)] shadow-sm">
+                                            {buildIntakeContent(booking, template)}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             );
                           })
                         ) : (
@@ -944,8 +1523,16 @@ export function BookingsTab({
 
                       </div>
 
-                      {/* Edit button - only for services (with time slots), not for products */}
-                      {onEditSession && !isProduct && (
+                      {/* Edit — only while the booking can still change.
+                          A completed appointment, a cancellation or a no-show is a
+                          record of what happened; editing its time afterwards
+                          rewrites history and, for a completed one, contradicts the
+                          outcome the owner just recorded. */}
+                      {onEditSession &&
+                        !isProduct &&
+                        booking.status !== 'completed' &&
+                        booking.status !== 'cancelled' &&
+                        booking.status !== 'no_show' && (
                         <div className="mt-4 pt-3 border-t border-[var(--v2-border)]">
                           <Button
                             type="button"

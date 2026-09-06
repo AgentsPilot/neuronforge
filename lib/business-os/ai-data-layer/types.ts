@@ -17,7 +17,8 @@ export type EntityType =
   | 'bookings'
   | 'tasks'
   | 'invoices'
-  | 'availability';
+  | 'availability'
+  | 'transactions';
 
 export type AggregateOperation = 'count' | 'sum' | 'avg' | 'min' | 'max';
 
@@ -301,7 +302,7 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
         properties: {
           entity: {
             type: 'string',
-            enum: ['contacts', 'services', 'bookings', 'tasks', 'invoices', 'availability'],
+            enum: ['contacts', 'services', 'bookings', 'tasks', 'invoices', 'availability', 'transactions'],
             description: 'The type of entity to query'
           },
           filters: {
@@ -412,7 +413,7 @@ export const TOOL_DEFINITIONS: ChatCompletionTool[] = [
             enum: [
               '/business-os',
               '/business-os/crm',
-              '/business-os/payments',
+              '/business-os/reports',
               '/business-os/email-automation',
               '/business-os/settings'
             ],
@@ -467,7 +468,8 @@ export const SENSITIVE_FIELDS: Record<EntityType, string[]> = {
   bookings: ['payment_token', 'card_last4'],
   tasks: [],
   invoices: ['payment_intent_id', 'stripe_invoice_id'],
-  availability: []
+  availability: [],
+  transactions: ['stripe_payment_intent_id', 'stripe_charge_id', 'stripe_customer_id', 'processor_refund_id']
 };
 
 export const MAX_RESULTS_PER_QUERY = 50;

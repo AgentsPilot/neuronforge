@@ -10,12 +10,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { mergeCentralContent } from '@/lib/website-builder/mergeCentralContent';
+import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/repositories/WebsiteContentRepository';
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
-import { WebsiteAnalyticsRepository, hashIP, detectDeviceType } from '@/lib/repositories/WebsiteAnalyticsRepository';
+import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 
 const logger = createLogger({ module: 'PublicWebsiteAPI' });
 
@@ -99,16 +101,29 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const blocksResult = await blockRepo.findByPageId(pageResult.data.id, true);
     const blocks = blocksResult.data || [];
 
-    // Get central content
-    const contentResult = await contentRepo.getOrCreate(userId);
-    const centralContent = contentResult.data as WebsiteContent | null;
+    // Get central content — read only.
+    //
+    // This ran with the service-role client on behalf of anonymous visitors, so
+    // a stranger loading a public page created the business's content row and
+    // seeded it with English placeholders. A page view must not write.
+    const contentResult = await contentRepo.findByUserId(userId);
+    const centralContent = contentResult.data;
 
     // Check page type for landing page specific logic
     const isLandingPage = pageResult.data.page_type === 'landing';
 
     // Fetch live services from Scheduling capability
     // Needed for services blocks AND pricing/CTA blocks (for live pricing data)
-    let liveServices: Array<{ id: string; name: string; description: string; icon: string; price?: string; priceRaw?: number; currency?: string; duration?: string; durationMinutes?: number }> = [];
+    let liveServices: Array<{
+      id: string; name: string; description: string; icon: string;
+      price?: string; priceRaw?: number; currency?: string;
+      duration?: string; durationMinutes?: number | null;
+      /** The two facts a booking journey is built from. */
+      is_scheduled?: boolean; collection?: 'online' | 'invoice' | null;
+      /** How this service may be paid over time, when the business offers it. */
+      paymentPlan?: ServicePaymentPlan;
+      hidden?: boolean;
+    }> = [];
     const hasServicesBlock = blocks.some(b => b.block_type === 'services');
     const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
     const hasCtaBlock = blocks.some(b => b.block_type === 'cta');
@@ -117,7 +132,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (hasServicesBlock || hasPricingBlock || hasCtaBlock) {
       try {
         const schedulingRepo = new SchedulingServiceRepository(supabaseServer);
-        const servicesResult = await schedulingRepo.listAll(userId, true); // active only
+        // Both in one pass: a plan is a fact about a service, like its price.
+        const [servicesResult, plansByService] = await Promise.all([
+          schedulingRepo.listAll(userId, true), // active only
+          loadServicePaymentPlans(userId),
+        ]);
         if (servicesResult.data && servicesResult.data.length > 0) {
           liveServices = servicesResult.data.map(s => ({
             id: s.id,
@@ -129,6 +148,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             currency: s.currency,
             duration: s.duration_minutes ? `${s.duration_minutes} min` : undefined,
             durationMinutes: s.duration_minutes,
+            // The two facts the booking widget builds its journey from. Without
+            // them the website decided from the price alone and asked an
+            // invoiced client for a card.
+            is_scheduled: s.is_scheduled !== false,
+            collection: s.collection ?? null,
+            // Undefined where the business offers no plan, which is most of
+            // them — the widgets then show a single price as they always have.
+            paymentPlan: plansByService[s.id],
             hidden: false
           }));
         }
@@ -137,8 +164,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // The header's logo is the BUSINESS's logo, not the page's. The block only
+    // records whether to show one (`show_logo`); the image is injected here at
+    // read time so a site can never drift from the profile, and so changing the
+    // logo once changes it everywhere.
+    const headerShowsLogo = blocks.some(
+      b => b.block_type === 'header' && (b.content as Record<string, unknown>)?.show_logo === true
+    );
+    const businessLogoUrl = headerShowsLogo
+      ? await resolveBusinessLogo(userId)
+      : null;
+
     // Merge central content into blocks
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {
+      if (block.block_type === 'header') {
+        const headerContent = block.content as Record<string, unknown>;
+        return {
+          ...block,
+          content: {
+            ...headerContent,
+            // Absent rather than empty: HeaderBlock renders logo_text when
+            // there is no logo_url, and an empty string is not falsy enough for
+            // every consumer downstream.
+            logo_url: headerContent?.show_logo === true && businessLogoUrl ? businessLogoUrl : undefined,
+          },
+        };
+      }
+
       const sectionName = BLOCK_TO_SECTION_MAP[block.block_type];
 
       // For landing pages, inject live service data into pricing and CTA blocks
@@ -159,6 +211,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 price: matchingService.price || plan.price,
                 currency: matchingService.currency,
                 durationMinutes: matchingService.durationMinutes,
+                // The journey too, not just the money — a landing page's
+                // booking modal builds its steps from these.
+                is_scheduled: matchingService.is_scheduled,
+                collection: matchingService.collection,
+                // On the PLAN, not only on the block.
+                //
+                // It was added to the block content alone, and the pricing card
+                // reads `plan.paymentPlan` when it builds the service it hands
+                // the booking modal — so the split reached the published page
+                // and stopped one level above the thing that needed it. The
+                // editor's route had it in the right place, which is why the
+                // preview showed the plan and the public page did not.
+                paymentPlan: matchingService.paymentPlan,
                 serviceId: matchingService.id,
                 serviceName: matchingService.name
               }));
@@ -172,6 +237,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                   currency: matchingService.currency,
                   durationMinutes: matchingService.durationMinutes,
                   serviceName: matchingService.name,
+                  // Same for the CTA block a course or product is sold from.
+                  is_scheduled: matchingService.is_scheduled,
+                  collection: matchingService.collection,
+                  // The split, where the business offers one.
+                  paymentPlan: matchingService.paymentPlan,
                   allServices: liveServices
                 }
               };
@@ -243,40 +313,28 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         };
       }
 
-      // For other blocks, merge central content
+      // For other blocks, merge central content — the SAME helper the editor
+      // uses, so the site a business previews and the site its clients get
+      // cannot drift apart.
       if (centralContent && sectionName && centralContent[sectionName]) {
-        const sectionContent = centralContent[sectionName] as Record<string, unknown>;
-
-        // Only merge non-empty values from central content
-        const nonEmptyContent: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(sectionContent)) {
-          if (value === '' || value === null || value === undefined) continue;
-          if (Array.isArray(value) && value.length === 0) continue;
-          nonEmptyContent[key] = value;
-        }
-
-        // Map field names between central content and block content
-        if (sectionName === 'about' && nonEmptyContent.about_text) {
-          nonEmptyContent.content = nonEmptyContent.about_text;
-          delete nonEmptyContent.about_text;
-        }
-
         return {
           ...block,
-          content: {
-            ...block.content,
-            ...nonEmptyContent
-          }
+          content: mergeCentralContent(
+            block.content as Record<string, unknown>,
+            centralContent[sectionName] as unknown as Record<string, unknown>,
+            sectionName
+          ),
         };
       }
 
       return block;
     });
 
-    // Track page view (non-blocking)
-    trackPageView(subdomain, pageResult.data.id, userId, request).catch(err =>
-      requestLogger.warn({ err }, 'Failed to track page view')
-    );
+    // Page views are recorded by <PageViewTracker> in the browser, not here.
+    // This route is reached via an internal server-to-server fetch from
+    // app/site/[subdomain]/page.tsx, so `request` carries the headers of THAT
+    // request — tracking here recorded a null referrer, Node's user-agent and
+    // the app server's IP for every visitor.
 
     return NextResponse.json({
       success: true,
@@ -297,48 +355,5 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       { success: false, error: 'Failed to load website' },
       { status: 500 }
     );
-  }
-}
-
-// Track page view for analytics
-async function trackPageView(
-  subdomain: string,
-  pageId: string,
-  userId: string,
-  request: NextRequest
-): Promise<void> {
-  try {
-    const analyticsRepo = new WebsiteAnalyticsRepository(supabaseServer);
-
-    const userAgent = request.headers.get('user-agent') || null;
-    const referer = request.headers.get('referer') || null;
-
-    // Get IP from various headers (Vercel, Cloudflare, or direct)
-    const ip =
-      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      request.headers.get('x-real-ip') ||
-      request.headers.get('cf-connecting-ip') ||
-      'unknown';
-
-    // Hash IP for privacy
-    const ipHash = ip !== 'unknown' ? hashIP(ip) : null;
-
-    // Detect device type
-    const deviceType = detectDeviceType(userAgent);
-
-    await analyticsRepo.trackPageView({
-      page_id: pageId,
-      user_id: userId,
-      subdomain,
-      user_agent: userAgent,
-      referer,
-      ip_hash: ipHash,
-      device_type: deviceType
-    });
-
-    logger.debug({ subdomain, deviceType, hasReferer: !!referer }, 'Page view tracked');
-  } catch (error) {
-    // Don't throw - just log the error (non-blocking)
-    logger.warn({ err: error, subdomain }, 'Failed to track page view');
   }
 }

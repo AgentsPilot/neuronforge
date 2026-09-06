@@ -3,76 +3,159 @@
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 // ===========================
-// Types
+// Types (matching mockup .adv-proj)
 // ===========================
 
+export interface ProjectionColumn {
+  label: string;   // e.g. "If you do nothing"
+  value: string;   // e.g. "1 booked of 3"
+  subtext?: string; // e.g. "$180 this month"
+}
+
 interface BeforeAfterPanelProps {
-  expanded: boolean;
-  doNothingPoints: string[];
-  handlePoints: string[];
+  left: ProjectionColumn;
+  right: ProjectionColumn;
 }
 
 // ===========================
-// Component
+// Component (matching mockup .adv-proj exactly)
+// CSS Reference from mockup:
+// .adv-proj{display:flex;align-items:stretch;gap:0;margin-top:16px;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+// .pj{flex:1;padding:13px 15px;min-width:0}
+// .pj + .pj{border-left:1px solid var(--line);background:#F6FBF8}
+// .pj-lb{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+// .pj-v{font-family:var(--display);font-size:16px;font-weight:600;letter-spacing:-.02em}
+// .pj + .pj .pj-v{color:#1B9A6C}
+// .pj-s{font-size:12.5px;color:var(--muted);margin-top:3px}
 // ===========================
 
-export function BeforeAfterPanel({
-  expanded,
-  doNothingPoints,
-  handlePoints,
-}: BeforeAfterPanelProps) {
+export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
   const { t, isRTL } = useLanguage();
-
-  if (!expanded) return null;
 
   return (
     <div
-      className="mx-5 mb-4 grid grid-cols-2 gap-4 p-4 rounded-xl border border-[var(--v2-border)]"
+      className="adv-proj"
       style={{
-        background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.04) 0%, rgba(34, 197, 94, 0.04) 100%)',
         direction: isRTL ? 'rtl' : 'ltr',
+        display: 'flex',
+        alignItems: 'stretch',
+        gap: 0,
+        marginTop: '16px',
+        border: '1px solid #E7E9F1',
+        borderRadius: '14px',
+        overflow: 'hidden',
       }}
     >
-      {/* Do Nothing Column */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 mb-3">
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#EF4444' }}
-          />
-          <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
-            {t('myday.insight.do_nothing')}
-          </span>
+      {/* Left column: .pj */}
+      <div
+        className="pj"
+        style={{
+          flex: 1,
+          padding: '13px 15px',
+          minWidth: 0,
+        }}
+      >
+        {/* Label: .pj-lb */}
+        <div
+          className="pj-lb"
+          style={{
+            fontSize: '11px',
+            fontWeight: 600,
+            letterSpacing: '0.07em',
+            textTransform: 'uppercase',
+            color: '#697187',
+            marginBottom: '4px',
+            fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+          }}
+        >
+          {left.label || t('insight.projection.do_nothing') || 'If you do nothing'}
         </div>
-        <ul className="space-y-2">
-          {doNothingPoints.map((point, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-[var(--v2-text-secondary)]">
-              <span className="text-red-400 mt-0.5">•</span>
-              <span>{point}</span>
-            </li>
-          ))}
-        </ul>
+
+        {/* Value: .pj-v */}
+        <div
+          className="pj-v"
+          style={{
+            fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
+            fontSize: '16px',
+            fontWeight: 600,
+            letterSpacing: '-0.02em',
+            color: '#131A2B',
+          }}
+        >
+          {left.value}
+        </div>
+
+        {/* Subtext: .pj-s */}
+        {left.subtext && (
+          <div
+            className="pj-s"
+            style={{
+              fontSize: '12.5px',
+              color: '#697187',
+              marginTop: '3px',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            {left.subtext}
+          </div>
+        )}
       </div>
 
-      {/* Let Me Handle It Column */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 mb-3">
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{ background: '#22C55E' }}
-          />
-          <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
-            {t('myday.insight.let_me_handle')}
-          </span>
+      {/* Right column: .pj (second) - has green background and green value text */}
+      <div
+        className="pj"
+        style={{
+          flex: 1,
+          padding: '13px 15px',
+          minWidth: 0,
+          background: '#F6FBF8',
+          borderInlineStart: '1px solid #E7E9F1',
+        }}
+      >
+        {/* Label: .pj-lb */}
+        <div
+          className="pj-lb"
+          style={{
+            fontSize: '11px',
+            fontWeight: 600,
+            letterSpacing: '0.07em',
+            textTransform: 'uppercase',
+            color: '#697187',
+            marginBottom: '4px',
+            fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+          }}
+        >
+          {right.label || t('insight.projection.handle_it') || 'If I handle it'}
         </div>
-        <ul className="space-y-2">
-          {handlePoints.map((point, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-[var(--v2-text-secondary)]">
-              <span className="text-green-500 mt-0.5">•</span>
-              <span>{point}</span>
-            </li>
-          ))}
-        </ul>
+
+        {/* Value: .pj-v (green for positive outcome) */}
+        <div
+          className="pj-v"
+          style={{
+            fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
+            fontSize: '16px',
+            fontWeight: 600,
+            letterSpacing: '-0.02em',
+            color: '#1B9A6C',
+          }}
+        >
+          {right.value}
+        </div>
+
+        {/* Subtext: .pj-s */}
+        {right.subtext && (
+          <div
+            className="pj-s"
+            style={{
+              fontSize: '12.5px',
+              color: '#697187',
+              marginTop: '3px',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            {right.subtext}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -247,6 +247,8 @@ export function StripePaymentForm({
   isRTL = false,
   borderRadius = '0.5rem'
 }: StripePaymentFormProps) {
+  // Same table the inner form uses; needed here for the failure state below.
+  const labels = LABELS[locale] || LABELS.en;
   const [stripeLoaded, setStripeLoaded] = useState(false);
   const [stripeInstance, setStripeInstance] = useState<Stripe | null>(null);
 
@@ -259,10 +261,30 @@ export function StripePaymentForm({
     loadStripeInstance();
   }, [publishableKey, connectedAccountId]);
 
-  if (!stripeLoaded || !stripeInstance) {
+  // Still loading Stripe.js.
+  if (!stripeLoaded) {
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  /*
+   * Loaded, but there is no Stripe to show.
+   *
+   * `getStripe` returns null without a publishable key, and `loadStripe`
+   * resolves null when Stripe.js cannot be fetched at all — a blocked script, a
+   * failed network. Both left `stripeLoaded` true and `stripeInstance` null,
+   * and the single guard that used to be here spun on that forever: no form, no
+   * message, and the only trace a `console.error` the client never sees.
+   */
+  if (!stripeInstance) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-8 text-center">
+        <AlertCircle className="w-6 h-6 text-red-500" />
+        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{labels.paymentFailed}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">{labels.tryAgain}</p>
       </div>
     );
   }

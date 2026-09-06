@@ -4,15 +4,18 @@ import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, UserPlus, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag } from 'lucide-react';
+import { Clock, User, Mail, Phone, Calendar, FileText, CheckCircle, XCircle, AlertCircle, Search, UserPlus, X, Plus, Globe, Facebook, MessageCircle, Users as UsersIcon, Check, Trash2, CreditCard, Tag, ClipboardList, Loader2 } from 'lucide-react';
 import PhoneInput from 'react-phone-number-input';
 import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
 import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { createLogger } from '@/lib/logger';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
 import type { Country } from 'react-phone-number-input';
+
+const logger = createLogger({ module: 'SchedulingBookingModal' });
 
 interface CRMContact {
   id: string;
@@ -54,6 +57,16 @@ interface SchedulingBookingModalProps {
   prefilledDateTime?: PrefilledDateTime;
   prefilledContact?: PrefilledContact; // Skip contact search when provided
   existingBookings?: SchedulingBooking[]; // For filtering out booked slots
+  /**
+   * The caller is still fetching the services.
+   *
+   * An empty list and a list that has not arrived look identical in a dropdown,
+   * and the drawer opens this dialog immediately while six requests are still
+   * in flight — so for a few seconds the picker offered nothing and gave no
+   * reason. Saying which of the two it is costs one line and removes the only
+   * thing about that wait that reads as broken.
+   */
+  servicesLoading?: boolean;
 }
 
 // Source options for new clients (use existing CRM source keys)
@@ -321,6 +334,7 @@ function getNextAvailableSlots(
 export function SchedulingBookingModal({
   booking,
   services,
+  servicesLoading = false,
   isOpen,
   onClose,
   onBookingUpdated,
@@ -330,6 +344,10 @@ export function SchedulingBookingModal({
   existingBookings = []
 }: SchedulingBookingModalProps) {
   const { t, language } = useLanguage();
+  // Get browser timezone synchronously as initial default
+  const browserTimezone = typeof window !== 'undefined'
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : 'UTC';
   const [formData, setFormData] = useState({
     service_id: '',
     contact_id: '' as string | null,
@@ -339,12 +357,15 @@ export function SchedulingBookingModal({
     client_phone: '',
     start_time: '',
     end_time: '',
-    timezone: 'UTC',
+    timezone: browserTimezone,
     notes: '',
     status: 'confirmed' as 'confirmed' | 'cancelled' | 'completed' | 'no_show'
   });
   const [loading, setLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Why a delete didn't happen, shown inside the confirmation strip itself.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   // Client search state
   const [clientSearchQuery, setClientSearchQuery] = useState('');
@@ -360,11 +381,67 @@ export function SchedulingBookingModal({
   const [newClientNotes, setNewClientNotes] = useState('');
   const [newTagInput, setNewTagInput] = useState('');
   const [phoneCountry, setPhoneCountry] = useState<Country>('US');
+  const [sendIntakeForm, setSendIntakeForm] = useState(false);
+
+  // Intake form configuration status
+  const [intakeConfigured, setIntakeConfigured] = useState<boolean | null>(null); // null = loading
 
   // External calendar busy slots
   const [externalBusySlots, setExternalBusySlots] = useState<ExternalBusySlot[]>([]);
 
+  // Fetch user's timezone from profile (non-blocking - dialog opens immediately with browser timezone,
+  // then updates to profile timezone when available)
   useEffect(() => {
+    if (!isOpen) return; // Only fetch when modal is open
+
+    const fetchUserTimezone = async () => {
+      try {
+        const response = await fetch('/api/user/profile');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.profile?.timezone) {
+            // Update form with user's configured timezone
+            setFormData(prev => ({ ...prev, timezone: data.profile.timezone }));
+          }
+        }
+      } catch (error) {
+        // Silently fail - browser timezone is already set as fallback
+        console.error('Failed to fetch user timezone:', error);
+      }
+    };
+    fetchUserTimezone();
+  }, [isOpen]);
+
+  // Fetch intake configuration status
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const fetchIntakeSettings = async () => {
+      try {
+        const response = await fetch('/api/intake/settings');
+        if (response.ok) {
+          const data = await response.json();
+          // Intake is configured if: is_enabled AND template_id is set AND collect_during_booking is true
+          const settings = data.settings;
+          const configured = settings?.is_enabled && settings?.template_id && settings?.collect_during_booking;
+          setIntakeConfigured(!!configured);
+        } else {
+          setIntakeConfigured(false);
+        }
+      } catch (error) {
+        console.error('Failed to fetch intake settings:', error);
+        setIntakeConfigured(false);
+      }
+    };
+    fetchIntakeSettings();
+  }, [isOpen]);
+
+  useEffect(() => {
+    // Clear form errors when modal opens/closes or booking changes
+    setFormErrors({});
+    setDeleteError(null);
+    setShowDeleteConfirm(false);
+
     if (booking) {
       // Use formatDateTimeLocal to convert UTC times to local datetime-local format
       setFormData({
@@ -381,6 +458,15 @@ export function SchedulingBookingModal({
         status: booking.status
       });
       setShowClientSearch(false); // Hide search when editing
+      /*
+       * Off every time the modal opens, deliberately.
+       *
+       * This is a "send it now" ACTION taken on save, not a property of the
+       * booking — leaving it on would email the client again on every
+       * subsequent edit. It reads as a toggle that forgot itself, so the
+       * description beside it now says it resets.
+       */
+      setSendIntakeForm(false);
     } else {
       // Get first active service for defaults
       const activeServices = services.filter(s => s.status === 'active');
@@ -415,7 +501,7 @@ export function SchedulingBookingModal({
           client_phone: prefilledContact.phone || '',
           start_time: startTime,
           end_time: endTime,
-          timezone: 'UTC',
+          timezone: browserTimezone,
           notes: '',
           status: 'confirmed'
         });
@@ -437,7 +523,7 @@ export function SchedulingBookingModal({
           client_phone: '',
           start_time: startTime,
           end_time: endTime,
-          timezone: 'UTC',
+          timezone: browserTimezone,
           notes: '',
           status: 'confirmed'
         });
@@ -452,7 +538,28 @@ export function SchedulingBookingModal({
       setNewClientNotes('');
       setNewTagInput('');
     }
-  }, [booking, services, availability, prefilledDateTime, prefilledContact]);
+  }, [booking, services, availability, prefilledDateTime, prefilledContact, browserTimezone]);
+
+  // Handle late-loading services: if service_id is empty but services just loaded, set the default
+  useEffect(() => {
+    if (!booking && !formData.service_id && services.length > 0) {
+      const activeServices = services.filter(s => s.status === 'active');
+      const defaultService = activeServices[0];
+      if (defaultService) {
+        const serviceDuration = defaultService.duration_minutes || 60;
+        // Update service_id and recalculate end time based on service duration
+        setFormData(prev => {
+          const startDate = prev.start_time ? new Date(prev.start_time) : new Date();
+          const endDate = new Date(startDate.getTime() + serviceDuration * 60 * 1000);
+          return {
+            ...prev,
+            service_id: defaultService.id,
+            end_time: formatDateTimeLocal(endDate)
+          };
+        });
+      }
+    }
+  }, [booking, services, formData.service_id]);
 
   // Fetch external calendar busy slots
   useEffect(() => {
@@ -562,24 +669,91 @@ export function SchedulingBookingModal({
       setFormData(prev => ({
         ...prev,
         service_id: serviceId,
-        end_time: end.toISOString().slice(0, 16)
+        end_time: formatDateTimeLocal(end)
       }));
     } else {
       setFormData(prev => ({ ...prev, service_id: serviceId }));
     }
+    // Clear any service-related errors
+    setFormErrors(prev => ({ ...prev, service_id: '' }));
+  };
+
+  // Handle start time change - auto-update end time based on service duration
+  const handleStartTimeChange = (newStartTime: string) => {
+    if (!newStartTime) {
+      setFormData(prev => ({ ...prev, start_time: newStartTime }));
+      return;
+    }
+
+    const service = services.find(s => s.id === formData.service_id);
+    const serviceDuration = service?.duration_minutes || 60;
+
+    const startDate = new Date(newStartTime);
+    const endDate = new Date(startDate.getTime() + serviceDuration * 60 * 1000);
+
+    setFormData(prev => ({
+      ...prev,
+      start_time: newStartTime,
+      end_time: formatDateTimeLocal(endDate)
+    }));
+
+    // Clear time-related errors
+    setFormErrors(prev => ({ ...prev, start_time: '', end_time: '' }));
+  };
+
+  // Validate form and return errors
+  const validateForm = (): Record<string, string> => {
+    const errors: Record<string, string> = {};
+
+    if (!formData.service_id) {
+      errors.service_id = t('scheduling.booking.error_service_required') || 'Please select a service';
+    }
+
+    if (!formData.client_email && !formData.contact_id) {
+      errors.client_email = t('scheduling.booking.error_email_required') || 'Client email is required';
+    } else if (formData.client_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.client_email)) {
+      errors.client_email = t('scheduling.booking.error_invalid_email') || 'Please enter a valid email address';
+    }
+
+    if (!formData.client_first_name && !formData.contact_id) {
+      errors.client_first_name = t('scheduling.booking.error_name_required') || 'Client name is required';
+    }
+
+    if (!formData.start_time) {
+      errors.start_time = t('scheduling.booking.error_start_required') || 'Start time is required';
+    } else {
+      const startTime = new Date(formData.start_time);
+      const now = new Date();
+      if (!booking && startTime < now) {
+        errors.start_time = t('scheduling.booking.error_past_time') || 'Cannot book in the past';
+      }
+    }
+
+    if (!formData.end_time) {
+      errors.end_time = t('scheduling.booking.error_end_required') || 'End time is required';
+    } else if (formData.start_time) {
+      const startTime = new Date(formData.start_time);
+      const endTime = new Date(formData.end_time);
+      if (endTime <= startTime) {
+        errors.end_time = t('scheduling.booking.error_end_before_start') || 'End time must be after start time';
+      }
+    }
+
+    return errors;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Prevent booking in the past (only for new bookings or when changing time)
-    const startTime = new Date(formData.start_time);
-    const now = new Date();
-    if (!booking && startTime < now) {
-      alert(t('scheduling.booking.error_past_time'));
+    // Validate form using custom validation
+    const errors = validateForm();
+    if (Object.keys(errors).some(key => errors[key])) {
+      setFormErrors(errors);
       return;
     }
 
+    // Clear any previous errors
+    setFormErrors({});
     setLoading(true);
 
     try {
@@ -619,17 +793,29 @@ export function SchedulingBookingModal({
         };
       }
 
+      // Add intake form flag for new bookings or editing existing bookings without intake
+      if (sendIntakeForm) {
+        requestBody.send_intake_form = true;
+      }
+
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
 
+      const data = await response.json();
+
       if (response.ok) {
         onBookingUpdated();
+      } else {
+        // Handle error response - show user-friendly error message
+        const errorMessage = data.message || data.error || t('scheduling.booking.save_failed');
+        setFormErrors({ submit: errorMessage });
       }
     } catch (error) {
       console.error('Failed to save booking:', error);
+      setFormErrors({ submit: t('scheduling.booking.save_failed') });
     } finally {
       setLoading(false);
     }
@@ -659,6 +845,7 @@ export function SchedulingBookingModal({
   const handleDelete = async () => {
     if (!booking) return;
     setLoading(true);
+    setDeleteError(null);
 
     try {
       const response = await fetch(`/api/scheduling/bookings/${booking.id}`, {
@@ -667,14 +854,34 @@ export function SchedulingBookingModal({
       });
 
       if (response.ok) {
+        setShowDeleteConfirm(false);
         onBookingUpdated();
+        return;
+      }
+
+      // A paid booking is refused rather than deleted — the money is a record to
+      // refund deliberately. The confirmation strip stays open and states why,
+      // so the answer appears where the click was, not somewhere else on screen.
+      const data = await response.json().catch(() => null);
+      if (data?.code === 'BOOKING_HAS_PAID_INVOICE') {
+        setDeleteError(
+          t('scheduling.booking.delete_blocked_paid')
+            || 'This booking has already been paid for and cannot be deleted. Refund the payment first, or cancel the booking instead.'
+        );
+      } else {
+        setDeleteError(data?.error || t('scheduling.booking.delete_failed') || 'Failed to delete booking');
       }
     } catch (error) {
-      console.error('Failed to delete booking:', error);
+      logger.error({ err: error, bookingId: booking.id }, 'Failed to delete booking');
+      setDeleteError(t('scheduling.booking.delete_failed') || 'Failed to delete booking');
     } finally {
       setLoading(false);
-      setShowDeleteConfirm(false);
     }
+  };
+
+  const dismissDeleteConfirm = () => {
+    setShowDeleteConfirm(false);
+    setDeleteError(null);
   };
 
   const getClientInitials = () => {
@@ -741,12 +948,31 @@ export function SchedulingBookingModal({
                 disabled={!!booking}
               >
                 <SelectTrigger
-                  className="w-full bg-[var(--v2-bg)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20 rtl:flex-row-reverse rtl:text-right"
+                  className={`w-full bg-[var(--v2-bg)] text-[var(--v2-text-primary)] rtl:flex-row-reverse rtl:text-right ${
+                    formErrors.service_id
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
+                      : 'border-[var(--v2-border)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20'
+                  }`}
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
                   <SelectValue placeholder={t('scheduling.booking.select_service')} />
                 </SelectTrigger>
                 <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)] p-1">
+                  {/* `rtl:` variants, like every other row in this dropdown —
+                      the spinner belongs on the side the text starts from, and
+                      a left-aligned Hebrew line in a right-aligned list is the
+                      one thing that looks unfinished. */}
+                  {servicesLoading && services.length === 0 && (
+                    <div className="flex items-center gap-2 px-3 py-3 text-sm text-[var(--v2-text-muted)] rtl:flex-row-reverse rtl:text-right">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {t('scheduling.booking.loading_services')}
+                    </div>
+                  )}
+                  {!servicesLoading && services.filter(s => s.status === 'active').length === 0 && (
+                    <div className="px-3 py-3 text-sm text-[var(--v2-text-muted)] rtl:text-right">
+                      {t('scheduling.booking.no_services')}
+                    </div>
+                  )}
                   {services
                     .filter(service => service.status === 'active')
                     .map(service => {
@@ -785,6 +1011,12 @@ export function SchedulingBookingModal({
                     })}
                 </SelectContent>
               </Select>
+              {formErrors.service_id && (
+                <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3" />
+                  {formErrors.service_id}
+                </p>
+              )}
             </div>
           </div>
 
@@ -919,12 +1151,24 @@ export function SchedulingBookingModal({
                     </label>
                     <input
                       value={formData.client_first_name}
-                      onChange={(e) => setFormData(prev => ({ ...prev, client_first_name: e.target.value }))}
+                      onChange={(e) => {
+                        setFormData(prev => ({ ...prev, client_first_name: e.target.value }));
+                        setFormErrors(prev => ({ ...prev, client_first_name: '' }));
+                      }}
                       placeholder={t('scheduling.booking.first_name_placeholder')}
-                      required
-                      className="w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
+                      className={`w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 transition-all ${
+                        formErrors.client_first_name
+                          ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
+                          : 'border-[var(--v2-border)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20'
+                      }`}
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     />
+                    {formErrors.client_first_name && (
+                      <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        {formErrors.client_first_name}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
@@ -950,12 +1194,24 @@ export function SchedulingBookingModal({
                   <input
                     type="email"
                     value={formData.client_email}
-                    onChange={(e) => setFormData(prev => ({ ...prev, client_email: e.target.value }))}
+                    onChange={(e) => {
+                      setFormData(prev => ({ ...prev, client_email: e.target.value }));
+                      setFormErrors(prev => ({ ...prev, client_email: '' }));
+                    }}
                     placeholder={t('scheduling.booking.email_placeholder')}
-                    required
-                    className="w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
+                    className={`w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 transition-all ${
+                      formErrors.client_email
+                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
+                        : 'border-[var(--v2-border)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20'
+                    }`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
+                  {formErrors.client_email && (
+                    <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      {formErrors.client_email}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1207,13 +1463,22 @@ export function SchedulingBookingModal({
                 <input
                   type="datetime-local"
                   value={formData.start_time}
-                  onChange={(e) => setFormData(prev => ({ ...prev, start_time: e.target.value }))}
-                  required
+                  onChange={(e) => handleStartTimeChange(e.target.value)}
                   min={!booking ? formatDateTimeLocal(new Date()) : undefined}
                   disabled={booking && ['completed', 'cancelled'].includes(booking.status)}
-                  className="datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50"
+                  className={`datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50 ${
+                    formErrors.start_time
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
+                      : 'border-[var(--v2-border)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20'
+                  }`}
                   style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}
                 />
+                {formErrors.start_time && (
+                  <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {formErrors.start_time}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">
@@ -1222,13 +1487,25 @@ export function SchedulingBookingModal({
                 <input
                   type="datetime-local"
                   value={formData.end_time}
-                  onChange={(e) => setFormData(prev => ({ ...prev, end_time: e.target.value }))}
-                  required
+                  onChange={(e) => {
+                    setFormData(prev => ({ ...prev, end_time: e.target.value }));
+                    setFormErrors(prev => ({ ...prev, end_time: '' }));
+                  }}
                   min={formData.start_time || (!booking ? formatDateTimeLocal(new Date()) : undefined)}
                   disabled={booking && ['completed', 'cancelled'].includes(booking.status)}
-                  className="datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50"
+                  className={`datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50 ${
+                    formErrors.end_time
+                      ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
+                      : 'border-[var(--v2-border)] focus:border-[#14B8A6] focus:ring-[#14B8A6]/20'
+                  }`}
                   style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}
                 />
+                {formErrors.end_time && (
+                  <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {formErrors.end_time}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1249,37 +1526,136 @@ export function SchedulingBookingModal({
             />
           </div>
 
+          {/* Intake Form Toggle - Show for new bookings OR existing bookings without intake data */}
+          {formData.service_id && (!booking || (booking && !booking.intake_responses && !booking.intake_completed_at)) && (
+              <div
+                className={`flex items-center justify-between p-4 bg-[var(--v2-surface)] border ${
+                  intakeConfigured === false ? 'border-amber-500/50' : 'border-[var(--v2-border)]'
+                }`}
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                    intakeConfigured === false ? 'bg-amber-500/10 text-amber-500' : 'bg-[#14B8A6]/10 text-[#14B8A6]'
+                  }`}>
+                    <ClipboardList className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className={`font-medium text-sm ${
+                      intakeConfigured === false ? 'text-[var(--v2-text-muted)]' : 'text-[var(--v2-text-primary)]'
+                    }`}>
+                      {t('scheduling.booking.send_intake_form')}
+                    </p>
+                    {intakeConfigured === false ? (
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        {t('scheduling.booking.intake_not_configured')}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-[var(--v2-text-muted)]">
+                        {booking
+                          ? t('scheduling.booking.send_intake_form_edit_description')
+                          : t('scheduling.booking.send_intake_form_description')}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={sendIntakeForm}
+                  onClick={() => intakeConfigured && setSendIntakeForm(!sendIntakeForm)}
+                  disabled={!intakeConfigured}
+                  style={{
+                    position: 'relative',
+                    display: 'block',
+                    height: '24px',
+                    width: '44px',
+                    flexShrink: 0,
+                    cursor: intakeConfigured ? 'pointer' : 'not-allowed',
+                    borderRadius: '9999px',
+                    backgroundColor: !intakeConfigured ? '#9CA3AF' : (sendIntakeForm ? '#14B8A6' : '#D1D5DB'),
+                    transition: 'background-color 200ms ease-in-out',
+                    border: 'none',
+                    outline: 'none',
+                    opacity: intakeConfigured === null ? 0.5 : 1
+                  }}
+                >
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '2px',
+                      left: sendIntakeForm && intakeConfigured ? '22px' : '2px',
+                      height: '20px',
+                      width: '20px',
+                      borderRadius: '9999px',
+                      backgroundColor: 'white',
+                      boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+                      transition: 'left 200ms ease-in-out',
+                      pointerEvents: 'none'
+                    }}
+                  />
+                </button>
+              </div>
+          )}
+
           </div>
 
           {/* Sticky Footer */}
           <div className="flex-shrink-0 border-t border-[var(--v2-border)] bg-[var(--v2-surface)] px-4 sm:px-6 py-3 sm:py-4">
-            {/* Delete confirmation overlay */}
+            {/* Submit error message */}
+            {formErrors.submit && (
+              <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm rounded-lg">
+                {formErrors.submit}
+              </div>
+            )}
+            {/* Delete confirmation overlay — becomes the refusal when the
+                delete is blocked, so the answer replaces the question in place
+                instead of appearing elsewhere in the dialog. */}
             {showDeleteConfirm ? (
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-red-600 dark:text-red-400 flex-1">
-                  {t('scheduling.booking.delete_confirm_message')}
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowDeleteConfirm(false)}
-                    disabled={loading}
-                    className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {t('button.cancel')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleDelete}
-                    disabled={loading}
-                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    {loading ? t('scheduling.booking.deleting') : t('scheduling.booking.confirm_delete')}
-                  </button>
-                </div>
+                {deleteError ? (
+                  <>
+                    <p className="flex items-start gap-2 text-sm text-red-600 dark:text-red-400 flex-1">
+                      <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                      <span>{deleteError}</span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={dismissDeleteConfirm}
+                      className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {t('button.close') || t('button.cancel')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-red-600 dark:text-red-400 flex-1">
+                      {t('scheduling.booking.delete_confirm_message')}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={dismissDeleteConfirm}
+                        disabled={loading}
+                        className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        {t('button.cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDelete}
+                        disabled={loading}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 transition-all disabled:opacity-50"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        {loading ? t('scheduling.booking.deleting') : t('scheduling.booking.confirm_delete')}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
               <div className="flex items-center justify-between gap-3">
@@ -1325,7 +1701,7 @@ export function SchedulingBookingModal({
                   {booking && (
                     <button
                       type="button"
-                      onClick={() => setShowDeleteConfirm(true)}
+                      onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }}
                       disabled={loading}
                       className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-500/10 transition-all disabled:opacity-50"
                       style={{ borderRadius: 'var(--v2-radius-button)' }}

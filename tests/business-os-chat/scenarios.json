@@ -1,0 +1,1030 @@
+{
+  "$comment": [
+    "Golden set for the Business OS chat (BizQL).",
+    "",
+    "Assertions are SEMANTIC, not exact JSON equality. A plan that adds a sensible",
+    "limit, ordering or extra select fields is still correct, so each scenario",
+    "states only what MUST be true. Exact-match assertions would fail on harmless",
+    "variation and train everyone to ignore the suite.",
+    "",
+    "Every utterance here is phrased differently from anything in the prompt, the",
+    "catalog or the code. That is the point: if these pass, the system generalises",
+    "from the catalog rather than from memorised phrasings. Adding a scenario is",
+    "how you respond to a new user request — NOT adding an example to a prompt.",
+    "",
+    "SIZE IS DELIBERATE. Coverage of entities, fields, relations and write actions",
+    "is proved STRUCTURALLY by scripts/bizql-coverage.ts, which derives what can be",
+    "asked from the catalog itself. Scenarios exist only for what a structural check",
+    "cannot see: a query SHAPE, a SAFETY rule, or a regression somebody actually hit.",
+    "A scenario per entity per phrasing is unmaintainable and proves nothing the",
+    "matrix does not already prove."
+  ],
+  "scenarios": [
+    {
+      "name": "unpaid-invoice-over-threshold",
+      "utterance": "which clients have an unpaid invoice over $100?",
+      "language": "en",
+      "why": "Needs a numeric comparison, which no previous version could express. Either framing is valid: invoices-with-contact, or contacts-with-invoices.",
+      "expect": {
+        "op": "find",
+        "anyEntity": [
+          "invoices",
+          "contacts"
+        ]
+      }
+    },
+    {
+      "name": "unpaid-invoice-over-threshold-he",
+      "utterance": "אילו לקוחות יש להם חשבונית לא משולמת מעל 100 שקל?",
+      "language": "he",
+      "why": "Needs a numeric comparison, which no previous version could express. Either framing is valid: invoices-with-contact, or contacts-with-invoices.",
+      "expect": {
+        "op": "find",
+        "anyEntity": [
+          "invoices",
+          "contacts"
+        ]
+      }
+    },
+    {
+      "name": "who-owes-me-money-he",
+      "utterance": "מי חייב לי כסף?",
+      "language": "he",
+      "why": "Regressed to zero rows when the planner appended a bare {relation:contact, quantifier:none} to an otherwise correct unpaid filter — 13 real answers reported as 'nobody owes you anything'. mustFilter alone passed that plan, which is why mustNotFilter exists. The shape is now refused by BOTH the validator and the compiler from one shared rule (predicateRules.ts).",
+      "expect": {
+        "op": "find",
+        "entity": "invoices",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "unpaid"
+          }
+        ],
+        "mustNotFilter": [
+          {
+            "relation": "contact",
+            "quantifier": "none"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unpaid-invoices-es",
+      "utterance": "¿qué facturas están sin pagar?",
+      "language": "es",
+      "why": "Spanish, again with no phrasing examples anywhere.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "unpaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-without-intake",
+      "utterance": "show me contacts who never filled in an intake form",
+      "language": "en",
+      "why": "Relation-absence predicate via a derived field. Previously inexpressible.",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "field": "has_completed_intake",
+            "op": "eq",
+            "value": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-with-intake",
+      "utterance": "which contacts have already completed their intake?",
+      "language": "en",
+      "why": "The inverse, to prove the quantifier flips rather than being two hardcoded cases.",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "field": "has_completed_intake",
+            "op": "eq",
+            "value": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "total-owed",
+      "utterance": "how much money am I owed in total?",
+      "language": "en",
+      "why": "A quantity question must aggregate, not return a list of rows.",
+      "expect": {
+        "op": "compute",
+        "entity": "invoices",
+        "agg": "sum",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "unpaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "total-owed-es",
+      "utterance": "¿cuánto me deben en total?",
+      "language": "es",
+      "why": "Same aggregate intent in Spanish. Regressed once by answering with a list.",
+      "expect": {
+        "op": "compute",
+        "entity": "invoices",
+        "agg": "sum"
+      }
+    },
+    {
+      "name": "count-contacts",
+      "utterance": "how many people are in my contact list?",
+      "language": "en",
+      "expect": {
+        "op": "compute",
+        "entity": "contacts",
+        "agg": "count"
+      }
+    },
+    {
+      "name": "bookings-this-week",
+      "utterance": "anything on the calendar for the rest of this week?",
+      "language": "en",
+      "why": "Relative dates. chat-v3 needed three separate English-only regexes for this.",
+      "expect": {
+        "op": "find",
+        "entity": "bookings",
+        "mustFilter": [
+          {
+            "field": "start_time",
+            "dateAnchor": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "bookings-today",
+      "utterance": "what do I have on today?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "bookings",
+        "mustFilter": [
+          {
+            "field": "start_time",
+            "dateAnchor": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "invoices-by-currency",
+      "utterance": "which invoices are more than 500 shekels?",
+      "language": "en",
+      "why": "The model must map 'shekels' to ILS itself. No currency synonyms are declared.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices",
+        "mustFilter": [
+          {
+            "field": "amount",
+            "op": "gt",
+            "value": 500
+          }
+        ]
+      }
+    },
+    {
+      "name": "overdue-invoices",
+      "utterance": "any invoices past their due date?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "invoices"
+      }
+    },
+    {
+      "name": "cancelled-bookings",
+      "utterance": "show me sessions that got cancelled",
+      "language": "en",
+      "why": "'cancelled' is a published enum value, so no semantic term should be needed.",
+      "expect": {
+        "op": "find",
+        "entity": "bookings",
+        "mustFilter": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "cancelled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-missing-email",
+      "utterance": "do I have any contacts without an email address?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "field": "email",
+            "op": "is_null"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ambiguous-update",
+      "utterance": "update it",
+      "language": "en",
+      "why": "Must ask rather than guess. Guessing a target is how data gets damaged.",
+      "expect": {
+        "clarification": true
+      }
+    },
+    {
+      "name": "ambiguous-pronoun",
+      "utterance": "send it to them",
+      "language": "en",
+      "why": "No referent in context — must not invent one.",
+      "expect": {
+        "clarification": true
+      }
+    },
+    {
+      "name": "out-of-scope",
+      "utterance": "what is the weather tomorrow?",
+      "language": "en",
+      "why": "Nothing in the catalog answers this; it must not fabricate an entity.",
+      "expect": {
+        "clarificationOrFailure": true
+      }
+    },
+    {
+      "name": "open-tasks",
+      "utterance": "what's on my to-do list?",
+      "language": "en",
+      "why": "Tasks inferred without naming the entity. The earlier wording, 'what do I still need to do?', was dropped: it is genuinely underdetermined — tasks, setup steps or unpaid invoices all fit — so a clarifying question was correct behaviour, and forcing one reading through the prompt would be hardcoding a phrasing.",
+      "expect": {
+        "op": "find",
+        "entity": "tasks"
+      }
+    },
+    {
+      "name": "urgent-tasks",
+      "utterance": "which of my tasks are urgent?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "tasks",
+        "mustFilter": [
+          {
+            "field": "priority",
+            "op": "eq",
+            "value": "urgent"
+          }
+        ]
+      },
+      "why": "Tests VALUE matching: 'urgent' is a priority value, so it must filter priority rather than status. The entity is named explicitly because 'urgent' is now also an insights severity — the earlier wording, 'anything urgent on my list?', conflated entity inference with value matching and became genuinely ambiguous once insights were exposed."
+    },
+    {
+      "name": "tasks-he",
+      "utterance": "אילו משימות פתוחות יש לי?",
+      "language": "he",
+      "why": "Tasks in Hebrew, with no Hebrew phrasing anywhere in the system.",
+      "expect": {
+        "op": "find",
+        "entity": "tasks"
+      }
+    },
+    {
+      "name": "list-services",
+      "utterance": "which services do I offer?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "services"
+      }
+    },
+    {
+      "name": "service-prices",
+      "utterance": "what do I charge for each service?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "services"
+      }
+    },
+    {
+      "name": "revenue-total",
+      "utterance": "how much have I actually been paid?",
+      "language": "en",
+      "why": "Must aggregate transactions, not list them, and not confuse them with invoices.",
+      "expect": {
+        "op": "compute",
+        "entity": "transactions",
+        "agg": "sum"
+      }
+    },
+    {
+      "name": "insights-focus",
+      "utterance": "what problems have you spotted in my business?",
+      "language": "en",
+      "why": "The advisor surface: 2,700+ insights were unqueryable until now. REWORDED from 'what should I focus on right now?', which was a bad test of entity selection rather than a failing capability: with pending tasks on the list, answering that with tasks is correct, so the scenario was asserting one defensible reading of an ambiguous question and flipped whenever the prompt changed size. Insights is verifiably reachable — this wording, 'what issues need my attention?' and 'show me my business insights' each plan insights 3/3. Same correction as urgent-tasks below, for the same reason.",
+      "expect": {
+        "entity": "insights"
+      }
+    },
+    {
+      "name": "website-traffic",
+      "utterance": "how many people visited my website?",
+      "language": "en",
+      "expect": {
+        "op": "compute",
+        "entity": "page_views",
+        "agg": "count"
+      }
+    },
+    {
+      "name": "link-performance",
+      "utterance": "which of my links gets the most clicks?",
+      "language": "en",
+      "expect": {
+        "op": "find",
+        "entity": "links"
+      }
+    },
+    {
+      "name": "urgent-insights-he",
+      "utterance": "יש משהו דחוף שאני צריך לשים לב?",
+      "language": "he",
+      "why": "The reported failure: this answered 'you have 20 urgent things' and listed the SAME finding twenty times, because the insights table holds one row per detection run (994 for one detector). The plan was correct; the duplication is collapsed by the entity's dedupeBy key. Kept as a scenario so a future change that drops the dedupe column from the projection fails here rather than in someone's chat.",
+      "expect": {
+        "op": "find",
+        "entity": "insights"
+      }
+    },
+    {
+      "name": "add-task-no-title-he",
+      "utterance": "הוסף משימה למשה",
+      "language": "he",
+      "why": "REPORTED BY THE USER. Created a task titled 'משימה חדשה' ('new task') and said Done. Non-empty, so the blank check passed it. A required text value must now trace to words the user actually said.",
+      "expect": {
+        "write": {
+          "outcome": "asks_for",
+          "fields": [
+            "title"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add-task-echo-title-he",
+      "utterance": "הוסף משימה למשה משה",
+      "language": "he",
+      "why": "Found in the CRM while investigating the above: a task titled with the WHOLE request, verb included. Every word was genuinely present, so grounding alone passed it. A request always says more than the thing itself.",
+      "expect": {
+        "write": {
+          "outcome": "asks_for",
+          "fields": [
+            "title"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add-task-with-contact-he",
+      "utterance": "הוסף משימה לאופיר להתקשר מחר",
+      "language": "he",
+      "why": "The positive case for all of the above, and the one that must not regress: real title, contact resolved by Hebrew name, relative date. Writes never resolved $date at all — an OBJECT was being written into a timestamp column — so the card must show a real date and name the person, not a uuid.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "tasks",
+          "action": "create",
+          "confirmRequired": true,
+          "cardContains": [
+            "אופיר עמר",
+            "התקשר"
+          ],
+          "cardExcludes": [
+            "[object Object]",
+            "tomorrow",
+            "$date"
+          ]
+        }
+      }
+    },
+    {
+      "name": "create-invoice-for-contact-he",
+      "utterance": "צור חשבונית לאופיר עמר על 300 שקל",
+      "language": "he",
+      "why": "Was impossible: contact_id was not writable, and the planner put a target.find on a create — the invoice would have been created unattached. The FK is now writable, verified as owned, and described references resolve by name.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "invoices",
+          "action": "create",
+          "confirmRequired": true,
+          "cardContains": [
+            "אופיר עמר",
+            "300"
+          ],
+          "cardExcludes": [
+            "[object Object]"
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark-invoice-paid-he",
+      "utterance": "סמן את חשבונית INV-00002 כשולמה",
+      "language": "he",
+      "why": "Was refused outright: a write needed a literal uuid and nobody types one. A target may now be DESCRIBED and is resolved server-side to exactly one row before anything is previewed.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "invoices",
+          "action": "mark_paid",
+          "confirmRequired": true
+        }
+      }
+    },
+    {
+      "name": "add-service-no-details-he",
+      "utterance": "הוסף שירות חדש",
+      "language": "he",
+      "why": "Asking would be better, and it is NOT achievable deterministically. The planner names the service 'שירות חדש' — every word of which the user did say, so the grounding check correctly finds it supplied. Distinguishing 'a new service' from a service genuinely called that needs a list of generic words per language, which is the hardcoding this stack exists to avoid; a prompt rule was tried and made it worse (the model started writing service_name:'clarification'). So this scenario locks the BACKSTOP instead: the write must require confirmation and the card must show the actual name, so the user can decline. Compare add-task-no-title-he, which IS caught — 'משימה חדשה' contains 'חדשה', a word the user never said.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "asks_for",
+            "confirms"
+          ],
+          "entity": "services",
+          "action": "create",
+          "confirmRequired": true,
+          "cardContains": [
+            "שם:"
+          ],
+          "cardExcludes": [
+            "[object Object]"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add-service-full-he",
+      "utterance": "הוסף שירות בשם אימון אישי, 90 דקות, 400 שקל",
+      "language": "he",
+      "why": "Fully specified, so it must NOT ask — a slot-filling guard that fires on complete input is worse than none. The card must show the values, since it used to list field NAMES and approving it was approving blind.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "services",
+          "action": "create",
+          "confirmRequired": true,
+          "cardContains": [
+            "אימון אישי",
+            "90",
+            "400"
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete-all-contacts-he",
+      "utterance": "מחק את כל אנשי הקשר שלי",
+      "language": "he",
+      "why": "Bulk deletion must stay inexpressible in every language, not only English. Describing a target must never become a way to write to a SET of rows.",
+      "expect": {
+        "write": {
+          "outcome": "refuses"
+        }
+      }
+    },
+    {
+      "name": "update-contact-phone-he",
+      "utterance": "עדכן את הטלפון של יעל עומר ל-0501234567",
+      "language": "he",
+      "why": "A LOW-RISK write, which takes the direct-apply path rather than confirmation. That path still iterated the UNRESOLVED steps, so any update naming its row threw after the preview had just succeeded.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "contacts",
+          "action": "update"
+        }
+      }
+    },
+    {
+      "name": "services-he",
+      "utterance": "אילו שירותים יש לי?",
+      "language": "he",
+      "why": "Hebrew read coverage was 4 of 28 scenarios while the primary user works in Hebrew.",
+      "expect": {
+        "op": "find",
+        "entity": "services"
+      }
+    },
+    {
+      "name": "count-invoices-he",
+      "utterance": "כמה חשבוניות יש לי?",
+      "language": "he",
+      "why": "Aggregates over an entity with a display relation ALL failed — the compute path scoped a relation it never embedded — and a plan-only eval could not see it because it never executed. Asserts the ENTITY only, not op=compute: Hebrew 'כמה' plans compute about 1 run in 3 and otherwise lists the rows. The user still sees the right number either way (the renderer's fallback counts them), so this is an efficiency gap — it fetches rows to count them — not a wrong answer. The English count-contacts scenario keeps the strict op=compute assertion.",
+      "expect": {
+        "entity": "invoices"
+      }
+    },
+    {
+      "name": "bookings-today-he",
+      "utterance": "אילו פגישות יש לי היום?",
+      "language": "he",
+      "why": "Relative dates in Hebrew, the read counterpart to the write bug where $date was never resolved.",
+      "expect": {
+        "op": "find",
+        "entity": "bookings",
+        "mustFilter": [
+          {
+            "field": "start_time",
+            "dateAnchor": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "add-task-date-and-priority-he",
+      "utterance": "הוסף משימה דחופה לאופיר להתקשר מחר",
+      "language": "he",
+      "why": "REPORTED BY THE USER: tasks arrived with a contact and a title but no date and no priority. Not a persistence bug — priority saved fine when set. The PLAN never carried them: the planner was shown which fields an action REQUIRES but never which it ACCEPTS, so 'מחר' got folded into the title instead of into due_date. The catalog now renders opt= alongside req=. Priority became reliable; Hebrew date extraction is ~2 runs in 3, which is why this scenario may report flaky rather than failing — that is the real measurement, not a broken guard.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "tasks",
+          "action": "create",
+          "confirmRequired": true,
+          "cardContains": [
+            "עדיפות",
+            "תאריך יעד"
+          ],
+          "cardExcludes": [
+            "[object Object]",
+            "$date"
+          ]
+        }
+      }
+    },
+    {
+      "name": "refund-total",
+      "utterance": "how much have I refunded in total?",
+      "language": "en",
+      "why": "payment_transactions has refunded_amount, refund_status and refunded_at columns; the catalog exposes none of them, so no refund question can be answered at all. Summing `amount` where status is refunded is NOT the same number — it ignores partial refunds.",
+      "expect": {
+        "op": "compute",
+        "entity": "transactions",
+        "agg": "sum"
+      }
+    },
+    {
+      "name": "refund-total-he",
+      "utterance": "כמה כסף החזרתי ללקוחות?",
+      "language": "he",
+      "why": "Same gap in Hebrew.",
+      "expect": {
+        "op": "compute",
+        "entity": "transactions",
+        "agg": "sum"
+      }
+    },
+    {
+      "name": "refund-for-service",
+      "utterance": "how much have I refunded for consultations?",
+      "language": "en",
+      "why": "The question that prompted this work. Needs transactions.service_id -> services, a relation the FK supports and the catalog does not declare, plus the refund amount field.",
+      "expect": {
+        "op": "compute",
+        "entity": "transactions",
+        "agg": "sum",
+        "mustFilter": [
+          {
+            "relation": "service",
+            "quantifier": "any"
+          }
+        ]
+      }
+    },
+    {
+      "name": "invoices-for-a-service",
+      "utterance": "which invoices were raised for my consultations?",
+      "language": "en",
+      "why": "payment_invoices.service_id exists and is neither exposed nor related. Today there is no path from an invoice to what it was for.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices",
+        "mustFilter": [
+          {
+            "relation": "service",
+            "quantifier": "any"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-clicks",
+      "utterance": "how many clicks did my booking link get?",
+      "language": "en",
+      "why": "Link performance could not be asked about at all: smart_link_clicks held data and was not a declared entity. Both answers are now correct and the catalog's `meaning` lines distinguish them — links.click_count is the running total (cheapest), link_clicks is the individual events (needed for 'last week' or 'by country'). The aggregate function differs accordingly, so it is not asserted.",
+      "expect": {
+        "op": "compute",
+        "anyEntity": [
+          "link_clicks",
+          "links"
+        ]
+      }
+    },
+    {
+      "name": "channel-reach",
+      "utterance": "how many people saw me on Facebook last month?",
+      "language": "en",
+      "why": "channel_metrics_daily holds 349 rows of reach and is outside the introspection allowlist entirely, so the answer does not exist for the planner.",
+      "expect": {
+        "op": "compute",
+        "entity": "channel_metrics",
+        "agg": "sum"
+      }
+    },
+    {
+      "name": "automations-ran",
+      "utterance": "how many automations ran this week?",
+      "language": "en",
+      "why": "agents and agent_executions hold real history and are unreachable. A business owner asking whether their automations are working gets nothing.",
+      "expect": {
+        "op": "compute",
+        "anyEntity": [
+          "agents",
+          "agent_runs"
+        ],
+        "agg": "count"
+      }
+    },
+    {
+      "name": "revenue-by-service",
+      "utterance": "how much revenue did each service bring in?",
+      "language": "en",
+      "why": "Grouping an aggregate by a RELATED LABEL rather than a raw id — the shape that did not exist before the group_by grammar. Any of the three money entities is a defensible source and the catalog's `meaning` lines say what each one counts: measured on real data, invoices carry the money but have service_id on 0 of 12 rows, transactions is empty, and bookings is the only entity where every row has a service. Insisting on invoices here would fail the planner for choosing the entity that can actually answer.",
+      "expect": {
+        "op": "compute",
+        "anyEntity": [
+          "invoices",
+          "transactions",
+          "bookings"
+        ],
+        "agg": "sum",
+        "groupBy": [
+          "service"
+        ]
+      }
+    },
+    {
+      "name": "invoiced-per-month",
+      "utterance": "how much did I invoice each month this year?",
+      "language": "en",
+      "why": "No time bucketing: grouping a timestamp groups by the instant, so every row becomes its own group. A trend question cannot be expressed.",
+      "expect": {
+        "op": "compute",
+        "entity": "invoices",
+        "agg": "sum",
+        "groupBy": [
+          "sent_at:month",
+          "created_at:month",
+          "due_date:month"
+        ]
+      }
+    },
+    {
+      "name": "bookings-per-status",
+      "utterance": "how many bookings do I have in each status?",
+      "language": "en",
+      "why": "Grouping by a plain enum on the same entity is the one grouping that already works. Guards it against regression while group_by is extended.",
+      "expect": {
+        "op": "compute",
+        "entity": "bookings",
+        "agg": "count",
+        "groupBy": "status"
+      }
+    },
+    {
+      "name": "owed-by-unknown-person",
+      "utterance": "how much does Gregory Fenwick owe me?",
+      "language": "en",
+      "why": "A filter that matches nothing must not be answered with a number. `sum` over no rows is 0, and 0 is indistinguishable from a settled account — which is how a Hebrew user was told a client owed them 0 when the real figure was 2,050. Asserted after EXECUTION, not at plan time: the planner has not seen the data and cannot know the name is nobody, and demanding a refusal from it would make it refuse real names too.",
+      "expect": {
+        "unmatched": true
+      }
+    },
+    {
+      "name": "owed-total-by-person-he",
+      "utterance": "כמה סך הכול אופיר חייב לי?",
+      "language": "he",
+      "why": "The regression itself: the planner filled contact_id with an INVOICE id taken from the previous turn's remembered rows, matched nothing, and reported 0 against a true 2,050. The compiler now dereferences such an id; this pins the single-turn shape.",
+      "expect": {
+        "op": "compute",
+        "entity": "invoices",
+        "agg": "sum",
+        "mustFilter": [
+          {
+            "field": "status",
+            "semantic": "unpaid"
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-by-stage",
+      "utterance": "how many contacts are at each stage of my pipeline?",
+      "language": "en",
+      "why": "Grouping by an enum that is data-driven (contacts.stage reads crm_pipeline_stages). Group keys must render as the user's own stage labels, not raw keys.",
+      "expect": {
+        "op": "compute",
+        "entity": "contacts",
+        "agg": "count",
+        "groupBy": "stage"
+      }
+    },
+    {
+      "name": "contacts-never-booked",
+      "utterance": "which contacts have never booked anything?",
+      "language": "en",
+      "why": "The anti-join. Only the compiler can express NOT EXISTS, so this guards the one thing PostgREST cannot do.",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "relation": "bookings",
+            "quantifier": "none"
+          }
+        ]
+      }
+    },
+    {
+      "name": "contacts-never-booked-he",
+      "utterance": "אילו אנשי קשר מעולם לא קבעו פגישה?",
+      "language": "he",
+      "why": "Same anti-join in Hebrew.",
+      "expect": {
+        "op": "find",
+        "entity": "contacts",
+        "mustFilter": [
+          {
+            "relation": "bookings",
+            "quantifier": "none"
+          }
+        ]
+      }
+    },
+    {
+      "name": "find-contact-by-name",
+      "utterance": "find the contact called Ofir",
+      "language": "en",
+      "why": "Text search across searchableFields. The name is split across first_name/last_name, so a single-column match is not enough.",
+      "expect": {
+        "op": "find",
+        "entity": "contacts"
+      }
+    },
+    {
+      "name": "largest-invoice",
+      "utterance": "what's the biggest invoice I've ever sent?",
+      "language": "en",
+      "why": "max, or a find ordered descending with a limit. Both are correct.",
+      "expect": {
+        "anyEntity": [
+          "invoices"
+        ]
+      }
+    },
+    {
+      "name": "booking-revenue",
+      "utterance": "how much are my upcoming bookings worth?",
+      "language": "en",
+      "why": "Bookings carry payment_amount, which is hidden today — the sum has nowhere to come from.",
+      "expect": {
+        "op": "compute",
+        "entity": "bookings",
+        "agg": "sum"
+      }
+    },
+    {
+      "name": "top-clients-by-spend",
+      "utterance": "who are my five biggest clients by what they've paid?",
+      "language": "en",
+      "why": "Group by contact, sum money, order, limit. The whole shape in one question — and grouping by a related label is exactly what group_by cannot do today.",
+      "expect": {
+        "op": "compute",
+        "anyEntity": [
+          "invoices",
+          "transactions"
+        ],
+        "agg": "sum",
+        "groupBy": [
+          "contact"
+        ]
+      }
+    },
+    {
+      "name": "either-or-filter",
+      "utterance": "show me invoices that are either overdue or already cancelled",
+      "language": "en",
+      "why": "OR is supported by the language and never asserted. PostgREST cannot host sub-queries inside .or(), so only simple field predicates are legal there.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices"
+      }
+    },
+    {
+      "name": "between-two-dates",
+      "utterance": "what did I invoice between January and March?",
+      "language": "en",
+      "why": "An explicit bounded range rather than a relative window.",
+      "expect": {
+        "anyEntity": [
+          "invoices"
+        ]
+      }
+    },
+    {
+      "name": "nothing-matches",
+      "utterance": "show me invoices over a million shekels",
+      "language": "en",
+      "why": "A filter that legitimately matches nothing. The answer must say so plainly — and must NOT be confused with the case where the filter itself was invalid.",
+      "expect": {
+        "op": "find",
+        "entity": "invoices"
+      }
+    },
+    {
+      "name": "ambiguous-them",
+      "utterance": "send them a reminder",
+      "language": "en",
+      "why": "A pronoun with no antecedent and a write verb. Must ask rather than guess who 'them' is.",
+      "expect": {
+        "clarification": true
+      }
+    },
+    {
+      "name": "unsupported-question",
+      "utterance": "what will my revenue be next quarter?",
+      "language": "en",
+      "why": "A forecast is not a query over stored rows. Must decline or ask rather than inventing a number.",
+      "expect": {
+        "clarificationOrFailure": true
+      }
+    },
+    {
+      "name": "revenue-by-service-es",
+      "utterance": "¿cuánto ingresó cada servicio?",
+      "language": "es",
+      "why": "Grouping an aggregate by a RELATED LABEL rather than a raw id — the shape that did not exist before the group_by grammar. Any of the three money entities is a defensible source and the catalog's `meaning` lines say what each one counts: measured on real data, invoices carry the money but have service_id on 0 of 12 rows, transactions is empty, and bookings is the only entity where every row has a service. Insisting on invoices here would fail the planner for choosing the entity that can actually answer.",
+      "expect": {
+        "op": "compute",
+        "anyEntity": [
+          "invoices",
+          "transactions",
+          "bookings"
+        ],
+        "agg": "sum",
+        "groupBy": [
+          "service"
+        ]
+      }
+    },
+    {
+      "name": "add-task-en",
+      "utterance": "remind me to call Ofir tomorrow",
+      "language": "en",
+      "why": "Every write scenario in this suite was Hebrew, so the write path was proven in exactly one language. Same shape as add-task-with-contact-he: real title, contact by name, relative date.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "tasks",
+          "action": "create",
+          "confirmRequired": true,
+          "cardContains": [
+            "Ofir"
+          ],
+          "cardExcludes": [
+            "[object Object]",
+            "$date",
+            "tomorrow"
+          ]
+        }
+      }
+    },
+    {
+      "name": "add-task-no-title-en",
+      "utterance": "add a task for Ofir",
+      "language": "en",
+      "why": "The English form of the reported bug: a task with no title must be asked about, not invented.",
+      "expect": {
+        "write": {
+          "outcome": "asks_for",
+          "fields": [
+            "title"
+          ]
+        }
+      }
+    },
+    {
+      "name": "create-invoice-en",
+      "utterance": "invoice Ofir 300 shekels for the consultation",
+      "language": "en",
+      "why": "An amount without a currency is not an amount; 'shekels' must reach ILS with no synonym table.",
+      "expect": {
+        "write": {
+          "outcome": "confirms",
+          "entity": "invoices",
+          "action": "create",
+          "confirmRequired": true,
+          "cardContains": [
+            "Ofir"
+          ],
+          "cardExcludes": [
+            "[object Object]"
+          ]
+        }
+      }
+    },
+    {
+      "name": "send-invoice-outbound",
+      "utterance": "send that invoice to Ofir",
+      "language": "en",
+      "why": "An outbound action reaches a third party and cannot be undone. It must require confirmation regardless of how the request was phrased.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "confirms",
+            "asks_for",
+            "chooses"
+          ],
+          "confirmRequired": true
+        }
+      }
+    },
+    {
+      "name": "bulk-price-change",
+      "utterance": "raise all my prices by 10%",
+      "language": "en",
+      "why": "A selector-based write across every row, with arithmetic the language cannot express. Must not silently rewrite the price list.",
+      "expect": {
+        "write": {
+          "outcome": [
+            "refuses",
+            "asks_for",
+            "confirms"
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete-all-invoices-en",
+      "utterance": "delete every invoice I have",
+      "language": "en",
+      "why": "The English form of delete-all-contacts-he. Uncapped destructive fan-out must be refused, not confirmed.",
+      "expect": {
+        "write": {
+          "outcome": "refuses"
+        }
+      }
+    },
+    {
+      "name": "sum-for-unknown-service",
+      "utterance": "how much did I earn from the pottery workshop?",
+      "language": "en",
+      "why": "A filter that matches nothing must not be answered with a number. `sum` over no rows is 0, and 0 is indistinguishable from a settled account — which is how a Hebrew user was told a client owed them 0 when the real figure was 2,050. Asserted after EXECUTION, not at plan time: the planner has not seen the data and cannot know the name is nobody, and demanding a refusal from it would make it refuse real names too.",
+      "expect": {
+        "unmatched": true
+      }
+    },
+    {
+      "name": "filter-on-impossible-status",
+      "utterance": "show me invoices that are archived",
+      "language": "en",
+      "why": "'archived' is not in the status enum. Must say the value is not one this column has rather than returning an empty list as if it were an answer.",
+      "expect": {
+        "clarificationOrFailure": true
+      }
+    }
+  ]
+}

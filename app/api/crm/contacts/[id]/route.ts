@@ -10,7 +10,11 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { generateDiff } from '@/lib/audit/diff';
 import { z } from 'zod';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence, activityFieldName, activityRecord } from '@/lib/business-os/activityText';
+import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'CRMContactAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -102,7 +106,10 @@ export async function PUT(
 
     requestLogger.info({ userId: user.id, contactId: id }, 'Updating CRM contact');
 
-    // 3. Update contact
+    // 3. Update contact. The previous row is read first so the audit entry can
+    // say what the value changed FROM — passing the request payload alone
+    // records only where a field landed, which is the less useful half.
+    const before = await crmContactRepository.findById(id, user.id);
     const result = await crmContactRepository.update(id, user.id, validated);
 
     if (result.error) {
@@ -121,10 +128,71 @@ export async function PUT(
         entityType: 'crm_contact',
         entityId: id,
         resourceName: `${result.data!.first_name || ''} ${result.data!.last_name || ''}`.trim() || result.data!.email || 'Contact',
-        changes: validated,
+        // A real before/after diff where the previous row could be read; the
+        // submitted values alone when it could not.
+        // updated_at moves on every write, so it would appear in every entry
+        // and say nothing.
+        changes: (before.data
+          ? generateDiff(before.data, result.data!, { ignoreFields: ['updated_at'] })
+          : validated) ?? undefined,
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));
+
+    /*
+     * The change, on the contact's own timeline.
+     *
+     * The audit trail already recorded a before/after diff, but the audit trail
+     * is a compliance log nobody opens day to day — so an owner asking "when did
+     * this number change, and what was it?" had nowhere to look. The same diff
+     * belongs where they are already standing.
+     *
+     * Only fields a person would recognise, and only when something actually
+     * changed: a save that altered nothing writes no row, or the timeline fills
+     * with entries recording that somebody pressed Save.
+     */
+    const { data: ownerProfile } = await supabaseServer
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const ownerLocale = ownerProfile?.language || 'en';
+
+    if (before.data && result.data) {
+      const diff = generateDiff(before.data, result.data, { ignoreFields: ['updated_at'] });
+      const VISIBLE_FIELDS = ['first_name', 'last_name', 'email', 'phone', 'stage', 'source', 'company', 'notes'];
+      const shown = Object.entries(diff || {}).filter(([field]) => VISIBLE_FIELDS.includes(field));
+
+      if (shown.length > 0) {
+        const isStageMove = shown.some(([field]) => field === 'stage');
+        const fieldList = shown
+          .map(([field]) => activityFieldName(field, ownerLocale))
+          .join(', ');
+
+        crmActivityRepository.create({
+          user_id: user.id,
+          contact_id: id,
+          // `stage` moving is its own event — it is the one field that means
+          // something changed about the relationship, not about the record.
+          activity_type: isStageMove ? 'stage_changed' : 'contact_updated',
+          // Written in the business's language now; the diff rides along in
+          // `description` so the row can open to show what each value was
+          // before. The sentence lives in `title`, which is NOT NULL.
+          title: activitySentence(
+            isStageMove ? 'stage_changed' : 'contact_updated',
+            { fields: fieldList },
+            ownerLocale
+          ),
+          description: JSON.stringify({
+            kind: 'contact_updated',
+            changes: Object.fromEntries(shown),
+          }),
+          auto_logged: true,
+          source_capability: 'crm',
+          source_entity_id: id,
+        }).catch(err => requestLogger.warn({ err }, 'Contact-change activity logging failed (non-blocking)'));
+      }
+    }
 
     // 5. Return success
     requestLogger.info({ contactId: id, userId: user.id }, 'Contact updated successfully');

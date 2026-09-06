@@ -19,7 +19,12 @@ import type { Country } from 'react-phone-number-input';
 
 interface CRMContactModalProps {
   contact?: CRMContact;
-  stages: CRMPipelineStage[];
+  /**
+   * Only the key, label and colour are read, and one caller builds these from
+   * the dashboard stats rather than the stages table — so asking for a full row
+   * would be asking for fields it has no way to supply.
+   */
+  stages: Pick<CRMPipelineStage, 'stage_key' | 'stage_label' | 'color'>[];
   isOpen: boolean;
   onClose: () => void;
   onContactUpdated: () => void;

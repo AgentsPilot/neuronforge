@@ -72,6 +72,22 @@ export async function POST(request: NextRequest) {
     authUrl.searchParams.set('scope', scope);
     authUrl.searchParams.set('state', encodeURIComponent(state));
 
+    // Google hands back a refresh token only when the request asks for offline
+    // access, and only re-issues one when consent is granted again. Without
+    // both, every Google connection made here received a one-hour access token
+    // and nothing to renew it with: an hour later the plugin reported "connection
+    // not found or expired", and reconnecting silently (Google skips a consent
+    // screen it has already shown) produced another token with no refresh token.
+    // That is also why the popup appeared to flash open and shut.
+    //
+    // The browser-side handler in lib/client/oauth-handler.ts has always sent
+    // these; this route, which the Business OS channel cards use, did not.
+    const isGoogle = authConfig.auth_type === 'oauth2_google';
+    if (isGoogle) {
+      authUrl.searchParams.set('access_type', 'offline');
+      authUrl.searchParams.set('prompt', 'consent');
+    }
+
     requestLogger.info({ userId: user.id, pluginKey: plugin_key, authUrl: authUrl.toString() }, 'OAuth URL generated');
 
     return NextResponse.json({

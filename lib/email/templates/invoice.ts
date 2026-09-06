@@ -2,6 +2,7 @@
 // Invoice email template with payment link
 
 import type { Locale } from '@/lib/i18n/config';
+import type { InvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions';
 import {
   wrapInBrandedTemplate,
   emailButton,
@@ -25,11 +26,35 @@ export interface InvoiceEmailData {
   currency: string;
   dueDate: Date;
   lineItems: InvoiceLineItem[];
-  paymentUrl: string;
+  /**
+   * How this client can actually pay.
+   *
+   * Replaces a bare `paymentUrl` that was always set and always rendered as a
+   * card button — including for businesses collected entirely by transfer,
+   * whose bank details reached the client only if they opened the PDF.
+   */
+  paymentOptions: InvoicePaymentOptions;
   serviceName?: string;
   appointmentDate?: Date;
   timezone?: string;
   branding: BrandingData;
+  /**
+   * The tax the business says is already inside the amount.
+   *
+   * Absent for the many businesses that are not registered, and then no line is
+   * drawn. Never computed here — the caller derives it from what the business
+   * typed, so the email, the PDF and the pay page cannot disagree.
+   */
+  taxLine?: { amount: number; rate: number; label: string } | null;
+  /**
+   * What this document is called — "Receipt", "Invoice", "Tax invoice".
+   *
+   * Resolved by the caller from the business's settings, so the subject line,
+   * the body and the attached PDF cannot call the same document three things.
+   * Absent falls back to the translated word "Invoice", which is what every
+   * email said before businesses could choose.
+   */
+  documentNoun?: string | null;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
 }
@@ -66,6 +91,32 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...data.branding, locale };
 
+  // Get translations for the current locale
+  // The word for this document, resolved once and used by the subject, the
+  // greeting and the number label — three places that used to say "Invoice"
+  // independently and would otherwise disagree with the attached PDF.
+  const noun = data.documentNoun?.trim() || null;
+  const greeting = noun
+    ? t.greetingFor[locale](noun, data.branding.businessName)
+    : t.greeting[locale](data.branding.businessName);
+  const intro = t.intro[locale](data.clientName);
+  const invoiceNumberLabel = noun
+    ? (locale === 'he' ? `מספר ${noun}`
+      : locale === 'es' ? `Número de ${noun.toLowerCase()}`
+      : `${noun} number`)
+    : t.invoiceNumber[locale];
+  const amountDueLabel = t.amountDue[locale];
+  const dueDateLabel = t.dueDate[locale];
+  const forAppointmentLabel = t.forAppointment[locale];
+  const invoiceDetailsLabel = t.invoiceDetails[locale];
+  const totalLabel = t.total[locale];
+  const includesTaxLabel = t.includesTax[locale];
+  const payNowLabel = t.payNow[locale];
+  const securePaymentLabel = t.securePayment[locale];
+  const options = data.paymentOptions;
+  const questionsText = t.questions[locale](data.branding.businessName);
+  const serviceLabel = t.service[locale];
+
   // Build line items HTML
   const lineItemsHtml = data.lineItems.map(item => `
     <tr>
@@ -88,10 +139,10 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   const content = `
     <!-- Greeting -->
     <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
-      Invoice from ${data.branding.businessName}
+      ${greeting}
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
-      Hi ${data.clientName}, here's your invoice for upcoming services.
+      ${intro}
     </p>
 
     <!-- Invoice Header -->
@@ -102,7 +153,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
             <tr>
               <td>
                 <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #666666; text-transform: uppercase;">
-                  Invoice Number
+                  ${invoiceNumberLabel}
                 </p>
                 <p style="margin: 0; font-size: 18px; font-weight: 600; color: ${data.branding.primaryColor};">
                   ${data.invoiceNumber}
@@ -110,7 +161,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
               </td>
               <td style="text-align: right;">
                 <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #666666; text-transform: uppercase;">
-                  Amount Due
+                  ${amountDueLabel}
                 </p>
                 <p style="margin: 0; font-size: 24px; font-weight: 700; color: #1a1a1a;">
                   ${formatCurrency(data.amount, data.currency)}
@@ -130,7 +181,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
             <tr>
               <td>
                 <p style="margin: 0; font-size: 14px; color: #92400e;">
-                  <strong>📅 Due Date:</strong> ${formattedDueDate}
+                  <strong>📅 ${dueDateLabel}:</strong> ${formattedDueDate}
                 </p>
               </td>
             </tr>
@@ -145,7 +196,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
       <tr>
         <td style="padding: 16px; background-color: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
           <p style="margin: 0; font-size: 14px; color: #0369a1;">
-            <strong>📆 For appointment:</strong> ${data.serviceName || 'Service'} on ${formattedAppointmentDate}
+            <strong>📆 ${forAppointmentLabel}:</strong> ${data.serviceName || serviceLabel} on ${formattedAppointmentDate}
           </p>
         </td>
       </tr>
@@ -157,47 +208,106 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
       <tr>
         <td>
           <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
-            Invoice Details
+            ${invoiceDetailsLabel}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #fafafa; border-radius: 8px; padding: 8px 16px;">
             ${lineItemsHtml}
             <!-- Total Row -->
             <tr>
               <td style="padding: 16px 0 8px; font-size: 16px; font-weight: 600; color: #1a1a1a;">
-                Total
+                ${totalLabel}
               </td>
               <td style="padding: 16px 0 8px; text-align: right; font-size: 18px; font-weight: 700; color: ${data.branding.primaryColor};">
                 ${formatCurrency(data.amount, data.currency)}
               </td>
             </tr>
+            ${data.taxLine ? `
+            <!-- Under the total, because it is CONTAINED in it. Above, and the
+                 reader adds it on — the one misreading that changes what they
+                 think they owe. -->
+            <tr>
+              <td style="padding: 0 0 12px; font-size: 13px; color: #6b7280;">
+                ${includesTaxLabel} ${data.taxLine.label} ${data.taxLine.rate}%
+              </td>
+              <td style="padding: 0 0 12px; text-align: right; font-size: 13px; color: #6b7280;">
+                ${formatCurrency(data.taxLine.amount, data.currency)}
+              </td>
+            </tr>` : ''}
           </table>
         </td>
       </tr>
     </table>
 
-    <!-- Pay Now Button -->
+    <!-- How to pay. Card, bank, instructions - whichever this business
+         actually offers, resolved once in invoicePaymentOptions so the
+         email, the PDF and the public page cannot disagree again. -->
+    ${options.card && options.cardUrl ? `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
         <td style="text-align: center;">
-          ${emailButton('Pay Now', data.paymentUrl, {
+          ${emailButton(payNowLabel, options.cardUrl, {
             backgroundColor: data.branding.primaryColor,
             fullWidth: true
           })}
           <p style="margin: 12px 0 0; font-size: 12px; color: #888888;">
-            Secure payment powered by Stripe
+            ${securePaymentLabel}
           </p>
         </td>
       </tr>
-    </table>
+    </table>` : ''}
+
+    ${options.bank ? `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f7f7f7; border-radius: 8px;">
+      <tr>
+        <td style="padding: 16px 20px;">
+          <p style="margin: 0 0 10px; font-size: 14px; font-weight: 600; color: #333333;">
+            ${t.bankTransferTitle[locale]}
+          </p>
+          ${options.bankName ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankName[locale]}: <strong>${options.bankName}</strong></p>` : ''}
+          ${options.bankAccount ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankAccount[locale]}: <strong>${options.bankAccount}</strong></p>` : ''}
+          ${options.bankRouting ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankRouting[locale]}: <strong>${options.bankRouting}</strong></p>` : ''}
+          <p style="margin: 10px 0 0; font-size: 12px; color: #888888;">
+            ${t.includeInvoiceNumber[locale](data.invoiceNumber)}
+          </p>
+        </td>
+      </tr>
+    </table>` : ''}
+
+    ${options.instructions ? `
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f7f7f7; border-radius: 8px;">
+      <tr>
+        <td style="padding: 16px 20px;">
+          <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600; color: #333333;">
+            ${t.paymentInstructionsTitle[locale]}
+          </p>
+          <p style="margin: 0; font-size: 13px; color: #555555; line-height: 1.6; white-space: pre-line;">${options.instructions}</p>
+        </td>
+      </tr>
+    </table>` : ''}
+
+    ${options.none ? `
+    <!-- Nothing configured. Saying so beats a bill with a blank space where the
+         payment method should be. -->
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
+      <tr>
+        <td style="padding: 16px 20px; background-color: #f7f7f7; border-radius: 8px;">
+          <p style="margin: 0; font-size: 13px; color: #555555;">
+            ${t.contactForPayment[locale](data.branding.businessName)}
+          </p>
+        </td>
+      </tr>
+    </table>` : ''}
 
     <!-- Final Note -->
     <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
-      If you have any questions about this invoice, please reply to this email or contact ${data.branding.businessName} directly.
+      ${questionsText}
     </p>
   `;
 
   return {
-    subject: t.subject[locale](data.branding.businessName, data.invoiceNumber),
+    subject: noun
+      ? t.subjectFor[locale](noun, data.branding.businessName, data.invoiceNumber)
+      : t.subject[locale](data.branding.businessName, data.invoiceNumber),
     html: wrapInBrandedTemplate(content, brandingWithLocale)
   };
 }

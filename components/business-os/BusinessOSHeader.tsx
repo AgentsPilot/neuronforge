@@ -6,6 +6,8 @@ import { Moon, Sun, Globe, Check, Settings, Calendar } from 'lucide-react';
 import { V2Logo } from '@/components/v2/V2Header';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
+
 import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
 
 export function BusinessOSHeader() {
@@ -19,15 +21,38 @@ export function BusinessOSHeader() {
   const [hasScheduling, setHasScheduling] = useState(false);
   const [isSchedulingDialogOpen, setIsSchedulingDialogOpen] = useState(false);
 
-  // Fetch scheduling status on mount
+  /*
+   * Does this business have anything bookable? One boolean, one query.
+   *
+   * This asked `/api/business-os/stats` from the day the header was written,
+   * when that endpoint was 422 lines and 20 queries and already knew the
+   * answer — a fair shortcut at the time. It is now 1,723 lines and 58
+   * queries: every dashboard KPI, a ~48-query fan-out, an unbounded scan of
+   * the page-view table, and a WRITE (`markOverdueInvoices`) on a read. The
+   * header still uses one number out of all of it, to decide whether to draw a
+   * button. The requirement never grew; the bill did.
+   *
+   * The header lives in the layout, so that ran on every Business OS page —
+   * website, CRM, orders, settings — and twice on the dashboard and reports,
+   * which fetch the same endpoint themselves.
+   *
+   * `status` alone, deliberately: the count this replaces was
+   * `.eq('status', 'active')` and nothing else. The repository's `activeOnly`
+   * flag is a STRICTER test — `SchedulingServiceRepository.BOOKABLE` requires
+   * `is_active` too — so asking for it would hide the calendar button from a
+   * business whose service is published but currently toggled off. Same rows
+   * as before, same button.
+   */
   useEffect(() => {
     async function checkSchedulingStatus() {
       try {
-        const response = await fetch('/api/business-os/stats');
+        const response = await fetch('/api/scheduling/services');
         if (response.ok) {
           const data = await response.json();
-          if (data.success && data.stats?.scheduling) {
-            setHasScheduling((data.stats.scheduling.active_services_count || 0) > 0);
+          if (data.success && Array.isArray(data.services)) {
+            setHasScheduling(
+              data.services.some((service: { status?: string }) => service.status === 'active')
+            );
           }
         }
       } catch {
@@ -50,7 +75,7 @@ export function BusinessOSHeader() {
 
   return (
     <div className="sticky top-0 z-50 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4 flex items-center justify-between">
+      <div className={`${PAGE_CONTAINER} py-3 sm:py-4 flex items-center justify-between`}>
         <V2Logo />
 
         {/* Calendar + Dark Mode Toggle + Language Selector + Settings */}

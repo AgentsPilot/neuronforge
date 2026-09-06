@@ -26,6 +26,11 @@ const CONFIG_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
  *
  * @returns Configuration with pilot credit cost and token conversion rate
  */
+/**
+ * BROWSER ONLY — this module imports the browser Supabase client. A server
+ * route calling in here gets a 500. Server code should read
+ * `ais_system_config` with `supabaseServer` instead.
+ */
 async function getPilotCreditConfig(): Promise<{
   pilotCreditCostUsd: number;
   tokensPerCredit: number;

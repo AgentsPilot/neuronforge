@@ -10,15 +10,75 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import type { Detector, DetectionResult, DetectionRun } from './types';
+import { getCorrelationEngine } from '../correlation';
+import type { CorrelationSummary } from '../correlation/types';
+import { InsightRepository, type VectorKey } from '../repository/InsightRepository';
+import type { BusinessEventCategory } from '../events/types';
 
-// Import detector catalog
+// Import detector catalog - Original 6
 import { CashArOverdueDetector } from './catalog/CashArOverdueDetector';
+import { PaymentIssuesDetector } from './catalog/PaymentIssuesDetector';
 import { RetNoShowSpikeDetector } from './catalog/RetNoShowSpikeDetector';
 import { SalesStalledDetector } from './catalog/SalesStalledDetector';
 import { SalesReplySlowDetector } from './catalog/SalesReplySlowDetector';
 import { OpsUtilizationLowDetector } from './catalog/OpsUtilizationLowDetector';
 
+// Phase 1: High Impact Detectors
+import { CrmColdLeadsDetector } from './catalog/CrmColdLeadsDetector';
+import { AcqTrafficDropDetector } from './catalog/AcqTrafficDropDetector';
+import { AcqLowConversionDetector } from './catalog/AcqLowConversionDetector';
+import { RetCancellationSpikeDetector } from './catalog/RetCancellationSpikeDetector';
+
+// Phase 2: CRM/Pipeline Detectors
+import { ConvPipelineStuckDetector } from './catalog/ConvPipelineStuckDetector';
+import { ConvFollowupOverdueDetector } from './catalog/ConvFollowupOverdueDetector';
+import { ConvSourceUnderperformDetector } from './catalog/ConvSourceUnderperformDetector';
+import { CrmEngagementDecayDetector } from './catalog/CrmEngagementDecayDetector';
+
+// Phase 3: Booking/Operations Detectors
+import { RetRepeatBookingLowDetector } from './catalog/RetRepeatBookingLowDetector';
+import { OpsLastMinuteCancelsDetector } from './catalog/OpsLastMinuteCancelsDetector';
+import { OpsServicePerformanceDetector } from './catalog/OpsServicePerformanceDetector';
+import { OpsPeakUnutilizedDetector } from './catalog/OpsPeakUnutilizedDetector';
+
+// Phase 4: Website Content Detectors
+import { WebMissingCtaDetector } from './catalog/WebMissingCtaDetector';
+import { WebIncompleteContentDetector } from './catalog/WebIncompleteContentDetector';
+import { WebPageUnderperformDetector } from './catalog/WebPageUnderperformDetector';
+import { WebMobileIssuesDetector } from './catalog/WebMobileIssuesDetector';
+
+// Phase 5: Cash Flow Deep Detectors
+import { CashCardsExpiringDetector } from './catalog/CashCardsExpiringDetector';
+import { CashArAgingDetector } from './catalog/CashArAgingDetector';
+import { CashRefundPatternDetector } from './catalog/CashRefundPatternDetector';
+import { CashPayoutBlockedDetector } from './catalog/CashPayoutBlockedDetector';
+
+// Phase 6: Pricing Detectors
+import { PricingDiscountAbuseDetector } from './catalog/PricingDiscountAbuseDetector';
+import { PricingIntroOfferStuckDetector } from './catalog/PricingIntroOfferStuckDetector';
+
 const logger = createLogger({ module: 'DetectorEngine' });
+
+/**
+ * Which of the seven vectors each detector's category belongs to.
+ *
+ * A vector is `dark` until the business has enough of the thing it watches to
+ * say anything honest about it. Telling a one-day-old account its calendar is
+ * 0% filled is not advice — the calendar is empty by definition — so detectors
+ * whose vector is dark do not run at all.
+ *
+ * `wins` has no detector category: win insights are recorded from events, not
+ * detected, so nothing here maps to it.
+ */
+const CATEGORY_VECTOR: Record<BusinessEventCategory, VectorKey> = {
+  acquisition: 'conv',   // traffic — gated on visitors, like conversion
+  conversion: 'conv',
+  sales: 'leads',
+  cash_flow: 'cash',
+  retention: 'ret',
+  operations: 'ops',
+  pricing: 'price',
+};
 
 /**
  * Engine that runs all detectors
@@ -26,17 +86,59 @@ const logger = createLogger({ module: 'DetectorEngine' });
 export class DetectorEngine {
   private supabase: SupabaseClient;
   private detectors: Detector[];
+  /**
+   * How many detectors the last runForUser() actually evaluated, rather than
+   * skipped as dark. Read straight after that call — callers process users one
+   * at a time, so there is nothing to interleave with.
+   */
+  private lastEvaluatedCount = 0;
 
   constructor(supabase: SupabaseClient) {
     this.supabase = supabase;
 
-    // Initialize all MVP detectors
+    // Initialize all detectors
     this.detectors = [
+      // Original 6 detectors
       new CashArOverdueDetector(supabase),
+      new PaymentIssuesDetector(supabase),
       new RetNoShowSpikeDetector(supabase),
       new SalesStalledDetector(supabase),
       new SalesReplySlowDetector(supabase),
       new OpsUtilizationLowDetector(supabase),
+
+      // Phase 1: High Impact
+      new CrmColdLeadsDetector(supabase),
+      new AcqTrafficDropDetector(supabase),
+      new AcqLowConversionDetector(supabase),
+      new RetCancellationSpikeDetector(supabase),
+
+      // Phase 2: CRM/Pipeline
+      new ConvPipelineStuckDetector(supabase),
+      new ConvFollowupOverdueDetector(supabase),
+      new ConvSourceUnderperformDetector(supabase),
+      new CrmEngagementDecayDetector(supabase),
+
+      // Phase 3: Booking/Operations
+      new RetRepeatBookingLowDetector(supabase),
+      new OpsLastMinuteCancelsDetector(supabase),
+      new OpsServicePerformanceDetector(supabase),
+      new OpsPeakUnutilizedDetector(supabase),
+
+      // Phase 4: Website Content
+      new WebMissingCtaDetector(supabase),
+      new WebIncompleteContentDetector(supabase),
+      new WebPageUnderperformDetector(supabase),
+      new WebMobileIssuesDetector(supabase),
+
+      // Phase 5: Cash Flow Deep
+      new CashCardsExpiringDetector(supabase),
+      new CashArAgingDetector(supabase),
+      new CashRefundPatternDetector(supabase),
+      new CashPayoutBlockedDetector(supabase),
+
+      // Phase 6: Pricing
+      new PricingDiscountAbuseDetector(supabase),
+      new PricingIntroOfferStuckDetector(supabase),
     ];
   }
 
@@ -48,13 +150,51 @@ export class DetectorEngine {
   }
 
   /**
+   * Detectors actually evaluated for the user most recently passed to
+   * runForUser() — the registered count minus those skipped as dark.
+   */
+  getLastEvaluatedCount(): number {
+    return this.lastEvaluatedCount;
+  }
+
+  /**
+   * Vectors with no data behind them yet, so nothing they cover can be judged.
+   *
+   * On failure this returns an empty set — every detector runs — because a
+   * maturity lookup that breaks should not silence the whole engine.
+   */
+  private async getDarkVectors(userId: string): Promise<Set<VectorKey>> {
+    const repository = new InsightRepository(this.supabase);
+    const { data, error } = await repository.getVectorMaturity(userId);
+
+    if (error || !data) {
+      logger.warn({ err: error, userId }, 'Vector maturity unavailable; running every detector');
+      return new Set();
+    }
+
+    return new Set(data.vectors.filter(v => v.state === 'dark').map(v => v.key));
+  }
+
+  /**
    * Run all detectors for a single user
    */
   async runForUser(userId: string): Promise<DetectionResult[]> {
     const results: DetectionResult[] = [];
+    const darkVectors = await this.getDarkVectors(userId);
+    let evaluated = 0;
 
     for (const detector of this.detectors) {
+      const vector = CATEGORY_VECTOR[detector.definition.category];
+      if (vector && darkVectors.has(vector)) {
+        logger.debug(
+          { userId, detectorId: detector.definition.id, vector },
+          'Detector skipped: its vector has no data to reason from yet'
+        );
+        continue;
+      }
+
       try {
+        evaluated++;
         const result = await detector.evaluate(userId);
         if (result) {
           results.push(result);
@@ -70,6 +210,15 @@ export class DetectorEngine {
         );
       }
     }
+
+    this.lastEvaluatedCount = evaluated;
+    logger.info({
+      userId,
+      evaluated,
+      skipped: this.detectors.length - evaluated,
+      fired: results.length,
+      darkVectors: [...darkVectors]
+    }, 'Detector run complete');
 
     return results;
   }
@@ -114,7 +263,7 @@ export class DetectorEngine {
         try {
           const results = await this.runForUser(userId);
           run.usersProcessed++;
-          run.detectorsRun += this.detectors.length;
+          run.detectorsRun += this.lastEvaluatedCount;
           run.insightsGenerated += results.length;
         } catch (error) {
           logger.error({ err: error, userId, runId }, 'Failed to process user');
@@ -170,5 +319,48 @@ export class DetectorEngine {
   getDetectorDefinition(detectorId: string) {
     const detector = this.detectors.find((d) => d.definition.id === detectorId);
     return detector?.definition;
+  }
+
+  /**
+   * Run all detectors for a user AND correlate results into unified insights
+   *
+   * This is the main method for getting the full insight picture.
+   * It runs all detectors, then uses the correlation engine to connect
+   * related signals into story-driven insights.
+   */
+  async runWithCorrelation(userId: string): Promise<CorrelationSummary> {
+    // First, run all individual detectors
+    const detectionResults = await this.runForUser(userId);
+
+    // Then, correlate the results
+    const correlationEngine = getCorrelationEngine();
+    const correlationSummary = correlationEngine.correlate(detectionResults);
+
+    logger.info(
+      {
+        userId,
+        totalDetections: detectionResults.length,
+        correlatedInsights: correlationSummary.correlatedInsights.length,
+        standaloneInsights: correlationSummary.standaloneInsights.length,
+        totalImpactUsd: correlationSummary.totalImpactUsd,
+      },
+      'Detection with correlation complete'
+    );
+
+    return correlationSummary;
+  }
+
+  /**
+   * Get total detector count
+   */
+  getDetectorCount(): number {
+    return this.detectors.length;
+  }
+
+  /**
+   * Get detectors by category
+   */
+  getDetectorsByCategory(category: string): Detector[] {
+    return this.detectors.filter((d) => d.definition.category === category);
   }
 }

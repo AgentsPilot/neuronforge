@@ -115,7 +115,7 @@ function normalizeFields(fields: unknown): FormField[] {
   });
 }
 
-export function ContactFormBlock({ content, styles, theme, locale, isRTL, className, subdomain }: BlockRendererProps) {
+export function ContactFormBlock({ content, styles, theme, locale, isRTL, className, subdomain, userCode }: BlockRendererProps) {
   const {
     title,
     subtitle,
@@ -181,12 +181,13 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
     setErrors({});
 
     try {
-      // Submit to the contact form API with subdomain for CRM integration
+      // Submit to the contact form API with subdomain or userCode for CRM integration
       const response = await fetch('/api/website/forms/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subdomain,
+          userCode,
           name: formData.name,
           email: formData.email,
           phone: formData.phone,
@@ -260,33 +261,29 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
     >
       <div className="max-w-4xl mx-auto px-4 sm:px-6">
         {/* Header */}
-        {(title || subtitle) && (
-          <div className="text-center mb-8">
-            {title && (
-              <motion.h2
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: 'var(--website-font-heading)' }}
-              >
-                {title}
-              </motion.h2>
-            )}
-            {subtitle && (
-              <motion.p
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: 0.1 }}
-                className="mt-2 text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: 'var(--website-font-body)' }}
-              >
-                {subtitle}
-              </motion.p>
-            )}
-          </div>
-        )}
+        <div className="text-center mb-8">
+          <motion.h2
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white"
+            style={{ fontFamily: 'var(--website-font-heading)' }}
+          >
+            {labels.getInTouch}
+          </motion.h2>
+          {subtitle && (
+            <motion.p
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.1 }}
+              className="mt-2 text-gray-600 dark:text-gray-300"
+              style={{ fontFamily: 'var(--website-font-body)' }}
+            >
+              {subtitle}
+            </motion.p>
+          )}
+        </div>
 
         {/* Two-column layout: Contact Info + Form */}
         {/* In RTL: sidebar on right (start), form on left (end) */}

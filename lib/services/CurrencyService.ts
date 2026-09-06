@@ -408,16 +408,21 @@ export class CurrencyService {
         const { AUDIT_EVENTS } = await import('../audit/events');
 
         const auditService = AuditTrailService.getInstance();
+        // Three field names here were wrong, not one: `resourceType`,
+        // `resourceId` and `metadata` are not on AuditLogInput. `entityType` is
+        // REQUIRED and was therefore missing altogether, so every currency
+        // change was being logged malformed — the one field the audit trail
+        // needs to know what kind of thing changed.
         await auditService.log({
           userId,
           action: AUDIT_EVENTS.SETTINGS_CURRENCY_CHANGED,
-          resourceType: 'user_preference',
-          resourceId: userId,
+          entityType: 'settings',
+          entityId: userId,
           changes: {
             before: { preferred_currency: oldCurrency },
             after: { preferred_currency: currencyCode }
           },
-          metadata: {
+          details: {
             currency_symbol: rate.currency_symbol,
             currency_name: rate.currency_name
           }

@@ -14,11 +14,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { mergeCentralContent } from '@/lib/website-builder/mergeCentralContent';
+import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/repositories/WebsiteContentRepository';
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 
 const logger = createLogger({ module: 'BlocksWithContentAPI' });
 
@@ -89,8 +92,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const blockRepo = new WebsiteBlockRepository(supabaseServer);
     const contentRepo = new WebsiteContentRepository(supabaseServer);
 
+    /*
+     * The ownership check and the block read, together.
+     *
+     * `findByPageId` needs only the page id, which arrived in the URL — it was
+     * waiting on `findById` for no reason except the order the lines were
+     * written in. This endpoint sits on the critical path of the website
+     * builder and made five database round trips in series; every one of them
+     * is a serverless function holding a connection open while it waits.
+     *
+     * The 404 is still decided first, and still before anything is read out of
+     * the blocks result, so an unauthorised caller learns nothing new. The cost
+     * is one wasted block read on a request that was going to 404 anyway.
+     */
+    const [pageResult, blocksResult] = await Promise.all([
+      pageRepo.findById(pageId, user.id),
+      blockRepo.findByPageId(pageId),
+    ]);
+
     // Verify page ownership
-    const pageResult = await pageRepo.findById(pageId, user.id);
     if (pageResult.error || !pageResult.data) {
       return NextResponse.json({ success: false, error: 'Page not found' }, { status: 404 });
     }
@@ -98,36 +118,89 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const page = pageResult.data;
     const isLandingPage = page.page_type === 'landing';
 
-    // Get blocks for this page
-    const blocksResult = await blockRepo.findByPageId(pageId);
     if (blocksResult.error) {
       throw blocksResult.error;
     }
 
     const blocks = blocksResult.data || [];
 
+    /*
+     * The remaining three reads, started together.
+     *
+     * Central content, the live service list and the business logo are each
+     * decided by `blocks` and by nothing from one another, yet they ran in
+     * series — so the editor waited three round trips where it needed one. Each
+     * is still awaited and handled at its original line below, with the same
+     * fallbacks and the same log lines, so nothing about the response changes.
+     *
+     * Settled rather than raw: a promise started here and awaited further down
+     * would otherwise be an unhandled rejection in the gap between the two.
+     */
+    const hasServicesBlock = blocks.some(b => b.block_type === 'services');
+    const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
+    // The editor previews what visitors will see, so the header's logo is
+    // injected from the business profile here exactly as the public route does.
+    // The block itself only stores `show_logo`.
+    const headerShowsLogo = blocks.some(
+      b => b.block_type === 'header' && (b.content as Record<string, unknown>)?.show_logo === true
+    );
+
+    const centralContentPromise = isLandingPage ? null : contentRepo.findByUserId(user.id);
+
+    const liveServicesPromise = hasServicesBlock || hasPricingBlock
+      ? Promise.all([
+          // Both in one pass, and the same pair the public route loads — the
+          // editor and the live site must describe a service identically.
+          new SchedulingServiceRepository(supabaseServer).listAll(user.id, true), // active only
+          loadServicePaymentPlans(user.id),
+        ]).then(
+          value => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error })
+        )
+      : null;
+
+    const businessLogoPromise = headerShowsLogo ? resolveBusinessLogo(user.id) : null;
+
     // For landing pages, use block content directly (AI-generated content is stored in blocks)
     // Only fetch central content for homepage/main website pages
     let centralContent: WebsiteContent | null = null;
-    if (!isLandingPage) {
-      const contentResult = await contentRepo.getOrCreate(user.id);
+    if (centralContentPromise) {
+      // Read, never create. Materialising the row here filled it with the
+      // table's English column defaults, which then outranked the generated
+      // block content in the merge below — so simply opening the editor turned
+      // a Hebrew site English.
+      const contentResult = await centralContentPromise;
       if (contentResult.error) {
-        throw contentResult.error;
+        // Degrade to block content instead of 500ing the whole endpoint. This
+        // is the only source of the editor's section list: throwing here left
+        // the page with no sections at all and nothing saying why.
+        requestLogger.error(
+          { err: contentResult.error, userId: user.id },
+          'Central content unavailable; falling back to block content'
+        );
+      } else {
+        centralContent = contentResult.data;
       }
-      centralContent = contentResult.data as WebsiteContent;
     }
 
     // Always fetch live services from Scheduling capability for services/pricing blocks
     // This ensures only active services are shown and reflects any changes in real-time
-    let liveServices: Array<{ id: string; name: string; description: string; icon: string; price?: string; priceRaw?: number; currency?: string; duration?: string; durationMinutes?: number }> = [];
-    const hasServicesBlock = blocks.some(b => b.block_type === 'services');
-    const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
-
+    let liveServices: Array<{
+      id: string; name: string; description: string; icon: string;
+      price?: string; priceRaw?: number; currency?: string;
+      duration?: string; durationMinutes?: number | null;
+      /** The two facts every surface builds this service's journey from. */
+      is_scheduled?: boolean; collection?: 'online' | 'invoice' | null;
+      /** How this service may be paid over time, when the business offers it. */
+      paymentPlan?: ServicePaymentPlan;
+      hidden?: boolean;
+    }> = [];
     // Fetch live services if we have services block OR pricing block (for landing pages)
-    if (hasServicesBlock || hasPricingBlock) {
+    if (liveServicesPromise) {
       try {
-        const schedulingRepo = new SchedulingServiceRepository(supabaseServer);
-        const servicesResult = await schedulingRepo.listAll(user.id, true); // active only
+        const settled = await liveServicesPromise;
+        if (!settled.ok) throw settled.error;
+        const [servicesResult, plansByService] = settled.value;
         if (servicesResult.data && servicesResult.data.length > 0) {
           liveServices = servicesResult.data.map(s => ({
             id: s.id,
@@ -139,6 +212,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             currency: s.currency,
             duration: s.duration_minutes ? `${s.duration_minutes} min` : undefined,
             durationMinutes: s.duration_minutes,
+            /*
+             * The two facts that decide this service's journey.
+             *
+             * They were missing here while the PUBLIC route already carried
+             * them, so the editor and the live site computed different
+             * journeys from the same services. Worse than merely absent:
+             * `journeySteps` reads an undefined `is_scheduled` as "yes" and an
+             * undefined `collection` as "takes a card", so every service in the
+             * editor looked like a paid appointment — including a free product.
+             *
+             * This mapping replaces the stored block content wholesale, so
+             * dropping them here also discarded the facts generation had
+             * written into the block.
+             */
+            is_scheduled: s.is_scheduled !== false,
+            collection: s.collection ?? null,
+            // Undefined where the business offers no plan, which is most of
+            // them — the widgets then show a single price as they always have.
+            paymentPlan: plansByService[s.id],
             hidden: false
           }));
         }
@@ -147,8 +239,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    const businessLogoUrl = businessLogoPromise ? await businessLogoPromise : null;
+
     // Merge central content into blocks (only for homepage/main website, not landing pages)
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {
+      if (block.block_type === 'header') {
+        const headerContent = block.content as Record<string, unknown>;
+        return {
+          ...block,
+          content: {
+            ...headerContent,
+            logo_url: headerContent?.show_logo === true && businessLogoUrl ? businessLogoUrl : undefined,
+          },
+        };
+      }
+
       // For landing pages, use block content directly (AI-generated content stored in blocks)
       // BUT inject live service data for pricing blocks so prices stay current
       if (isLandingPage) {
@@ -161,17 +266,89 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           if (serviceId) {
             const matchingService = liveServices.find(s => s.id === serviceId);
             if (matchingService) {
-              // Update the pricing plan with live service data
-              const existingPlans = (blockContent.plans as Array<Record<string, unknown>>) || [];
-              const updatedPlans = existingPlans.map(plan => ({
-                ...plan,
-                priceRaw: matchingService.priceRaw,
-                price: matchingService.price || plan.price,
-                currency: matchingService.currency,
-                durationMinutes: matchingService.durationMinutes,
-                serviceId: matchingService.id,
-                serviceName: matchingService.name
-              }));
+              /*
+               * The plans that belong to THIS page.
+               *
+               * A landing page is about one service, and its plan carries that
+               * service's id from the moment it is created. Publishing used to
+               * run the pricing block through catalogue enrichment, which
+               * replaced those plans with every priced service the business has
+               * — each without a `serviceId`, so their buttons could not open
+               * the booking modal, and one of them arbitrarily marked
+               * "popular". Enrichment no longer does that, and dropping the
+               * strays here means pages published before the fix stop showing
+               * them without anyone having to edit the row.
+               *
+               * Only ever narrows to plans that match, and only when at least
+               * one does — a page whose plans predate service ids keeps them.
+               */
+              const allPlans = (blockContent.plans as Array<Record<string, unknown>>) || [];
+              const ownPlans = allPlans.filter(plan => plan.serviceId === serviceId);
+
+              /*
+               * Where the plans do not identify themselves, rebuild the one.
+               *
+               * Publishing used to run a landing page's pricing block through
+               * catalogue enrichment, which REPLACED its plans with every
+               * priced service the business has — none carrying a `serviceId`,
+               * one arbitrarily marked "popular", and every button pointing at
+               * a bare `/booking` link instead of opening the booking modal.
+               * Enrichment no longer does that, but pages published before the
+               * fix still hold the catalogue.
+               *
+               * The block knows which service it is about, and that service is
+               * loaded right here. So a landing page whose plans have lost
+               * their id gets one plan rebuilt from its own service, which is
+               * what its pricing section is supposed to be. A page whose plans
+               * DO identify themselves is left alone.
+               */
+              const rebuiltPlan = isLandingPage && ownPlans.length === 0 && allPlans.length > 0;
+              const existingPlans = ownPlans.length > 0
+                ? ownPlans
+                : rebuiltPlan
+                  ? [{
+                      name: matchingService.name,
+                      description: matchingService.description,
+                      price: matchingService.price,
+                    }]
+                  : allPlans;
+
+              if (rebuiltPlan) {
+                requestLogger.info(
+                  { pageId, replaced: allPlans.length },
+                  'Rebuilt a landing page pricing plan from its own service'
+                );
+              }
+              const updatedPlans = existingPlans.map(plan => {
+                // `features` is dropped, not carried through. The generator used
+                // to ask the model for four bullet "inclusions" per plan and it
+                // duly invented them — "an hour long", "tailored to your needs",
+                // "immediate results", "good value" — copy about a service that
+                // says nothing the service itself does not, and one bullet of
+                // which merely restated the duration. Dropping it here rather
+                // than migrating means pages generated under the old prompt stop
+                // showing them on their next read.
+                const { features: _discardedFeatures, ...rest } = plan;
+
+                return {
+                  ...rest,
+                  // The service's own words, kept current the same way its price
+                  // is. This is what replaces the invented bullets.
+                  description: matchingService.description || rest.description,
+                  priceRaw: matchingService.priceRaw,
+                  price: matchingService.price || rest.price,
+                  currency: matchingService.currency,
+                  durationMinutes: matchingService.durationMinutes,
+                  // The journey too, not just the money — a landing page's
+                  // booking modal builds its steps from these.
+                  is_scheduled: matchingService.is_scheduled,
+                  collection: matchingService.collection,
+                  // The split, where the business offers one.
+                  paymentPlan: matchingService.paymentPlan,
+                  serviceId: matchingService.id,
+                  serviceName: matchingService.name
+                };
+              });
 
               return {
                 ...block,
@@ -183,6 +360,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                   currency: matchingService.currency,
                   durationMinutes: matchingService.durationMinutes,
                   serviceName: matchingService.name,
+                  // Same for the CTA block a course or product is sold from.
+                  is_scheduled: matchingService.is_scheduled,
+                  collection: matchingService.collection,
                   // Include all services for landing pages that show service list
                   allServices: liveServices
                 }
@@ -221,8 +401,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // SERVICES: Always use live services from Scheduling capability
       // Merge with saved hidden flags from block content
       // PROCESS: Use block content directly (page-specific flow/steps)
-      // HEADER: Use block content directly (page-specific menu/logo)
-      if (block.block_type === 'process' || block.block_type === 'header') {
+      // (HEADER is handled above, where the business logo is injected.)
+      if (block.block_type === 'process') {
         // These blocks store page-specific content that should not be merged with central content
         return block;
       }
@@ -267,35 +447,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
 
       if (sectionName && centralContent && centralContent[sectionName]) {
-        // Get central content for this section
-        const sectionContent = centralContent[sectionName] as Record<string, unknown>;
-
-        // Only merge non-empty values from central content
-        // This prevents empty defaults from overwriting template content
-        const nonEmptyContent: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(sectionContent)) {
-          // Skip empty strings, empty arrays, null, undefined
-          if (value === '' || value === null || value === undefined) continue;
-          if (Array.isArray(value) && value.length === 0) continue;
-          nonEmptyContent[key] = value;
-        }
-
-        // Map field names between central content and block content
-        // Central uses about_text, block expects content
-        if (sectionName === 'about' && nonEmptyContent.about_text) {
-          nonEmptyContent.content = nonEmptyContent.about_text;
-          delete nonEmptyContent.about_text;
-        }
-
-        // Merge: block content as base, non-empty central content on top
-        const mergedContent = {
-          ...block.content,
-          ...nonEmptyContent
-        };
-
         return {
           ...block,
-          content: mergedContent
+          content: mergeCentralContent(
+            block.content as Record<string, unknown>,
+            centralContent[sectionName] as unknown as Record<string, unknown>,
+            sectionName
+          ),
         };
       }
 
@@ -303,15 +461,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return block;
     });
 
+    // Normalize blocks to ensure `enabled` is always a proper boolean (defaults to true if null/undefined)
+    const normalizedBlocks = blocksWithContent.map(block => ({
+      ...block,
+      enabled: block.enabled !== false // Treat null/undefined as true
+    }));
+
     requestLogger.info(
-      { pageId, userId: user.id, blockCount: blocksWithContent.length, isLandingPage },
+      { pageId, userId: user.id, blockCount: normalizedBlocks.length, isLandingPage },
       isLandingPage ? 'Fetched blocks for landing page (no central content merge)' : 'Fetched blocks with central content'
     );
 
     return NextResponse.json({
       success: true,
       page: pageResult.data,
-      blocks: blocksWithContent,
+      blocks: normalizedBlocks,
       centralContentId: centralContent?.id || null
     });
   } catch (error) {

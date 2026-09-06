@@ -34,6 +34,97 @@ export interface InsightWithProjection extends InsightData {
   projection?: InsightProjection;
 }
 
+// Correlated Insight - unified story-driven insights
+export interface CorrelatedInsightData {
+  id: string;
+  detector_id: string;
+  category: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  description: string;
+  story?: string;
+  correlation_pattern_id?: string;
+  total_correlated_impact_usd?: number;
+  estimated_impact_usd?: number;
+  contributing_insights?: Array<{
+    detector_id: string;
+    detector_name: string;
+    severity: string;
+    summary: string;
+    impact_usd: number;
+    insight_id?: string;
+  }>;
+  trend_direction?: 'improving' | 'stable' | 'worsening';
+  status: string;
+  paired_process_id?: string;
+}
+
+// Business Health Summary
+export interface BusinessHealthSummaryData {
+  id: string;
+  health_score: number;
+  previous_health_score?: number;
+  score_change?: number;
+  acquisition_score: number;
+  conversion_score: number;
+  sales_score: number;
+  cash_flow_score: number;
+  retention_score: number;
+  operations_score: number;
+  pricing_score: number;
+  summary_title: string;
+  summary_narrative: string;
+  highlights: Array<{ type: 'positive' | 'negative' | 'neutral'; text: string }>;
+  priorities: Array<{ rank: number; category: string; title: string; insight_id?: string }>;
+  period_start: string;
+  period_end: string;
+  // Stats fields from database
+  insight_count: number;
+  critical_count: number;
+  high_count: number;
+  total_impact_usd: number;
+}
+
+// Vector Maturity System (Progressive Data Revelation)
+export type VectorKey = 'wins' | 'conv' | 'ops' | 'cash' | 'leads' | 'ret' | 'price';
+export type VectorState = 'dark' | 'learn' | 'lit';
+export type MaturityLevel = 'cold_start' | 'early' | 'running' | 'mature';
+
+export interface VectorStatus {
+  key: VectorKey;
+  name: string;
+  state: VectorState;
+  dataPoints: number;
+  threshold: number;
+  note?: string;
+}
+
+export interface VectorMaturityData {
+  vectors: VectorStatus[];
+  maturityLevel: MaturityLevel;
+  litCount: number;
+  totalVectors: number;
+  accountAgeDays: number;
+  /**
+   * Event dates the journey timeline measures from — the account's first day,
+   * and the anchors the pricing and retention vectors already count from.
+   * Optional here because a cached response from before this shipped has none,
+   * and the timeline degrades to undated nodes rather than to wrong ones.
+   */
+  journeyAnchors?: {
+    accountCreatedAt: string | null;
+    firstBookingAt: string | null;
+    firstClientAt: string | null;
+    convCrossedAt: string | null;
+    firstAutomationAt: string | null;
+  };
+  /** English fallback. Prefer `noteKey`, which the reader's language can reach. */
+  note: string;
+  noteKey: 'vecs.note.cold' | 'vecs.note.full' | 'vecs.note.partial';
+  /** Vector keys still learning, for the partial note's list. */
+  noteLearning: string[];
+}
+
 // ===========================
 // Demo Data (for UI testing when no real insights exist)
 // ===========================
@@ -116,6 +207,9 @@ const USE_DEMO_MODE = false;
 
 interface UseInsightsResult {
   insights: InsightWithProjection[];
+  correlatedInsights: CorrelatedInsightData[];
+  healthSummary: BusinessHealthSummaryData | null;
+  vectorMaturity: VectorMaturityData | null;
   autonomousWork: AutonomousWorkEntry[];
   stats: InsightStats;
   loading: boolean;
@@ -135,6 +229,9 @@ interface UseInsightsResult {
 
 export function useInsights(): UseInsightsResult {
   const [insights, setInsights] = useState<InsightWithProjection[]>([]);
+  const [correlatedInsights, setCorrelatedInsights] = useState<CorrelatedInsightData[]>([]);
+  const [healthSummary, setHealthSummary] = useState<BusinessHealthSummaryData | null>(null);
+  const [vectorMaturity, setVectorMaturity] = useState<VectorMaturityData | null>(null);
   const [autonomousWork, setAutonomousWork] = useState<AutonomousWorkEntry[]>([]);
   const [stats, setStats] = useState<InsightStats>({
     totalActionsToday: 0,
@@ -163,15 +260,24 @@ export function useInsights(): UseInsightsResult {
       }
 
       const fetchedInsights = data.data.insights || [];
+      const fetchedCorrelated = data.data.correlatedInsights || [];
+      const fetchedHealthSummary = data.data.healthSummary || null;
+      const fetchedVectorMaturity = data.data.vectorMaturity || null;
       const fetchedWork = data.data.autonomousWork || [];
 
       // Use demo data if no real insights exist and demo mode is enabled
       if (USE_DEMO_MODE && fetchedInsights.length === 0 && fetchedWork.length === 0) {
         setInsights([DEMO_INSIGHT]);
+        setCorrelatedInsights([]);
+        setHealthSummary(null);
+        setVectorMaturity(null);
         setAutonomousWork(DEMO_WORK);
         setStats(DEMO_STATS);
       } else {
         setInsights(fetchedInsights);
+        setCorrelatedInsights(fetchedCorrelated);
+        setHealthSummary(fetchedHealthSummary);
+        setVectorMaturity(fetchedVectorMaturity);
         setAutonomousWork(fetchedWork);
         setStats(data.data.stats || {
           totalActionsToday: 0,
@@ -186,6 +292,9 @@ export function useInsights(): UseInsightsResult {
       // On error, also show demo data if enabled
       if (USE_DEMO_MODE) {
         setInsights([DEMO_INSIGHT]);
+        setCorrelatedInsights([]);
+        setHealthSummary(null);
+        setVectorMaturity(null);
         setAutonomousWork(DEMO_WORK);
         setStats(DEMO_STATS);
         setError(null); // Clear error since we're showing demo
@@ -281,6 +390,9 @@ export function useInsights(): UseInsightsResult {
 
   return {
     insights,
+    correlatedInsights,
+    healthSummary,
+    vectorMaturity,
     autonomousWork,
     stats,
     loading,

@@ -10,11 +10,12 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, WebsitePageInsert, PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
-import { getTemplateById, getStandardHomepageBlocks, WebsiteTemplate } from '@/lib/website-builder/templates';
+import { getTemplateById, templateToPageTheme, getStandardHomepageBlocks, WebsiteTemplate } from '@/lib/website-builder/templates';
 import { BuildingBlock } from '@/lib/website-builder/building-blocks';
 import { websiteBlockEnrichmentService } from '@/lib/services/WebsiteBlockEnrichmentService';
 import { translateBlockContent } from '@/lib/i18n/website-block-translations';
 import type { Locale } from '@/lib/i18n/config';
+import { convertTemplateBlockToInsert } from '@/lib/website-builder/blockInsert';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsitePagesAPI' });
@@ -41,79 +42,6 @@ const CreatePageSchema = z.object({
  * Other content is kept as template defaults until user customizes.
  * Content is translated based on the page's website_language setting.
  */
-function convertTemplateBlockToInsert(
-  block: BuildingBlock,
-  pageId: string,
-  position: number,
-  locale: Locale = 'en'
-): WebsiteBlockInsert {
-  const rawContent = block.content as Record<string, unknown>;
-
-  // Translate content based on page language
-  const content = translateBlockContent(rawContent, locale);
-
-  // For services block, strip mockup services - real services come from Scheduling
-  if (block.block_type === 'services') {
-    const { services, ...rest } = content;
-    return {
-      page_id: pageId,
-      block_type: block.block_type as WebsiteBlockInsert['block_type'],
-      content: rest as WebsiteBlockInsert['content'],
-      styles: (block.styles || {}) as WebsiteBlockInsert['styles'],
-      position,
-      enabled: true
-    };
-  }
-
-  // For other blocks, keep translated template content as defaults
-  return {
-    page_id: pageId,
-    block_type: block.block_type as WebsiteBlockInsert['block_type'],
-    content: content as WebsiteBlockInsert['content'],
-    styles: (block.styles || {}) as WebsiteBlockInsert['styles'],
-    position,
-    enabled: true
-  };
-}
-
-/**
- * Convert template theme to PageTheme format
- */
-function convertTemplateTheme(template: WebsiteTemplate): PageTheme {
-  // Use explicit font_heading/font_body if available, otherwise fallback to font_family
-  const headingFont = template.theme.font_heading || template.theme.font_family.split(',')[0].trim();
-  const bodyFont = template.theme.font_body || template.theme.font_family.split(',')[0].trim();
-
-  // Determine background and text colors (support dark templates)
-  const isDarkTemplate = template.theme.background_color &&
-    (template.theme.background_color.startsWith('#0') ||
-     template.theme.background_color.startsWith('#1') ||
-     template.theme.background_color === '#000000');
-
-  const backgroundColor = template.theme.background_color || '#ffffff';
-  const textColor = template.theme.text_color || (isDarkTemplate ? '#ffffff' : '#1a1a1a');
-  const textSecondary = isDarkTemplate ? '#9ca3af' : '#6b7280';
-  const surfaceColor = isDarkTemplate ? '#1f2937' : '#f9fafb';
-
-  return {
-    colors: {
-      primary: template.theme.primary_color,
-      secondary: template.theme.secondary_color,
-      accent: template.theme.accent_color || template.theme.secondary_color,
-      background: backgroundColor,
-      surface: surfaceColor,
-      text: textColor,
-      textSecondary: textSecondary
-    },
-    fonts: {
-      heading: headingFont,
-      body: bodyFont
-    },
-    spacing: 'normal',
-    borderRadius: '8px'
-  };
-}
-
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
@@ -184,7 +112,7 @@ export async function POST(request: NextRequest) {
       template_id: validated.template_id || null, // String ID like 'therapist_modern_minimal'
       subdomain: validated.subdomain || null,
       status: 'draft',
-      theme: template ? convertTemplateTheme(template) : undefined,
+      theme: template ? templateToPageTheme(template) : undefined,
       website_language: validated.website_language
     };
 

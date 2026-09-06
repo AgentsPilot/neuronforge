@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { PluginAuthConfig, UserConnection, ConnectionStatus } from '@/lib/types/plugin-types'
 import { createLogger } from '@/lib/logger';
 import { PluginConnectionRepository, pluginConnectionRepository } from '@/lib/repositories';
-import type { UpsertPluginConnectionInput } from '@/lib/repositories';
+import type { UpsertPluginConnectionInput } from '@/lib/repositories/types';
 import { exchangeCodeForTokens, refreshAccessToken, fetchUserProfile, calculateExpiresAt } from '@/lib/services/OAuthTokenService';
 import { AuditTrail } from '@/lib/services/AuditTrailService';
 import type { AuditLogInput } from '@/lib/audit/types';

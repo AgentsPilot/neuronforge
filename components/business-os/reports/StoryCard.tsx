@@ -12,7 +12,7 @@ export interface TrendPoint {
 }
 
 // Different trend graph types based on card context
-export type TrendType = 'revenue' | 'people' | 'calendar' | 'collection';
+export type TrendType = 'revenue' | 'people' | 'calendar' | 'collection' | 'website';
 
 // Expanded details item
 export interface ExpandedDetailItem {
@@ -69,7 +69,8 @@ const trendColors: Record<TrendType, string> = {
   revenue: '#22C58B',    // Green
   people: '#8B5CF6',     // Purple
   calendar: '#14B8A6',   // Teal
-  collection: '#F59E0B'  // Amber
+  collection: '#F59E0B', // Amber
+  website: '#3B82F6'     // Blue
 };
 
 // Detail value colors
@@ -191,17 +192,10 @@ export function StoryCard({
   const isRTL = language === 'he';
   const hasExpandedDetails = expandedDetails && expandedDetails.length > 0;
 
-  // Default trend data if not provided (simulated weekly data)
-  const defaultTrendData: TrendPoint[] = [
-    { value: Math.max(previousValue * 0.7, 1) },
-    { value: Math.max(previousValue * 0.85, 1) },
-    { value: Math.max(previousValue * 0.9, 1) },
-    { value: Math.max(previousValue, 1) },
-    { value: Math.max(currentValue * 0.95, 1) },
-    { value: Math.max(currentValue, 1) }
-  ];
-
-  const graphData = trendData && trendData.length > 0 ? trendData : defaultTrendData;
+  // Only use real trend data - don't simulate fake historical data
+  // The graph requires at least 2 data points to draw a meaningful trend line
+  const hasValidTrendData = trendData && trendData.length >= 2;
+  const graphData = hasValidTrendData ? trendData : [];
 
   const handleCardClick = () => {
     if (hasExpandedDetails) {
@@ -236,8 +230,8 @@ export function StoryCard({
         )}
       </div>
 
-      {/* Trend graph - contextual to card type */}
-      {trendType && (
+      {/* Trend graph - contextual to card type, only shown with real data */}
+      {trendType && hasValidTrendData && graphData.length >= 2 && (
         <TrendGraph
           type={trendType}
           data={graphData}

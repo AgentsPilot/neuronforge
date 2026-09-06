@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
+import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPagePreviewAPI' });
@@ -32,7 +33,7 @@ const PreviewSchema = z.object({
   generatedContent: z.record(z.unknown()).optional(),
   clientFlow: z.array(z.string()).optional(),
   language: z.enum(['en', 'es', 'he']).optional().default('en'),
-  logoUrl: z.string().optional(),
+  showLogo: z.boolean().optional(),
   companyName: z.string().optional(),
   subdomain: z.string().optional()
 });
@@ -158,6 +159,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const validated = PreviewSchema.parse(body);
 
+    // The preview must look like the published page, so the logo comes from the
+    // same place the published header will read it from.
+    const previewLogoUrl = validated.showLogo ? await resolveBusinessLogo(user.id) : null;
+
     // Get offering type from AI-generated content to determine which blocks to include
     const offeringType = (validated.generatedContent?.offering_type as string) || undefined;
     const landingPageBlocks = getBlocksForOfferingType(offeringType, validated.language);
@@ -186,9 +191,11 @@ export async function POST(request: NextRequest) {
         content.headline = validated.serviceName;
       }
 
-      // For header, set logo/company
+      // For header, set the logo flag and company name. The preview resolves
+      // the image from the profile below, the same as a published page.
       if (block.block_type === 'header') {
-        content.logo_url = validated.logoUrl;
+        content.show_logo = validated.showLogo ?? false;
+        content.logo_url = previewLogoUrl || undefined;
         content.logo_text = validated.companyName || '';
       }
 

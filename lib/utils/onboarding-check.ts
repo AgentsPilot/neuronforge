@@ -1,8 +1,8 @@
 /**
  * Onboarding Status Check Utility
  *
- * Purpose: Determine if user needs onboarding-v2 flow
- * - NEW users → onboarding-v2
+ * Purpose: Determine if user needs the onboarding chat
+ * - NEW users → /onboarding-chat
  * - Users with business_profiles.onboarding_completed = true → skip
  * - Users with old onboarding_completed metadata → skip (backward compatibility)
  */
@@ -17,7 +17,7 @@ export interface OnboardingStatus {
 }
 
 /**
- * Check if user needs to go through onboarding-v2
+ * Check if user needs to go through the onboarding chat
  */
 export async function checkOnboardingStatus(user: User): Promise<OnboardingStatus> {
   try {

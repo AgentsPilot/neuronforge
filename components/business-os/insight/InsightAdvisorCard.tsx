@@ -1,16 +1,15 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { Sparkles, X, ChevronDown, ArrowRight, Loader2, Check, Pause, Settings, Minus } from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
+import { Loader2, Check, Clock } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { BeforeAfterPanel } from './BeforeAfterPanel';
+import { BeforeAfterPanel, type ProjectionColumn } from './BeforeAfterPanel';
 import type { InsightData, InsightProjection } from './InsightDetailModal';
 
 // ===========================
 // Types
 // ===========================
 
-// Re-export for convenience
 export type { InsightData, InsightProjection };
 
 export interface AutomationConfig {
@@ -20,11 +19,13 @@ export interface AutomationConfig {
 
 export type InsightCardState = 'default' | 'running' | 'completed' | 'automate_offer' | 'automated';
 
-// Define the type for pending insights which includes a projection
+export type CardStage = 'setup' | 'win' | 'run' | 'automate';
+
 interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
   projection?: InsightProjection;
   eligible_for_automation?: boolean;
   process_parameters?: Record<string, unknown>;
+  affected_entity_type?: string;
 }
 
 interface InsightAdvisorCardProps {
@@ -32,6 +33,7 @@ interface InsightAdvisorCardProps {
   currentIndex: number;
   projection?: InsightProjection;
   automationConfig?: AutomationConfig;
+  stage?: CardStage;
   onIndexChange: (index: number) => void;
   onAction: (action: 'run' | 'snooze' | 'dismiss', insightId: string, params?: Record<string, unknown>) => Promise<void>;
   onAutomate: (insightId: string, params: Record<string, unknown>) => Promise<void>;
@@ -39,35 +41,32 @@ interface InsightAdvisorCardProps {
 }
 
 // ===========================
-// Category Styles
+// Category badge colors
 // ===========================
 
-const CATEGORY_STYLES: Record<string, { accent: string; tint: string; glow: string; labelKey: string }> = {
-  cash_flow: { accent: '#F5A623', tint: 'rgba(245,166,35,.15)', glow: 'rgba(255,178,77,.16)', labelKey: 'insight.category.cash_flow' },
-  retention: { accent: '#4F6EF7', tint: 'rgba(79,110,247,.12)', glow: 'rgba(79,110,247,.14)', labelKey: 'insight.category.retention' },
-  growth: { accent: '#F97316', tint: 'rgba(249,115,22,.12)', glow: 'rgba(249,115,22,.14)', labelKey: 'insight.category.growth' },
-  leads: { accent: '#8B5CF6', tint: 'rgba(139,92,246,.13)', glow: 'rgba(139,92,246,.14)', labelKey: 'insight.category.leads' },
-  pricing: { accent: '#D14E97', tint: 'rgba(209,78,151,.12)', glow: 'rgba(209,78,151,.13)', labelKey: 'insight.category.pricing' },
-  operations: { accent: '#0EA5E9', tint: 'rgba(14,165,233,.12)', glow: 'rgba(14,165,233,.13)', labelKey: 'insight.category.operations' },
-  sales: { accent: '#8B5CF6', tint: 'rgba(139,92,246,.13)', glow: 'rgba(139,92,246,.14)', labelKey: 'insight.category.sales' },
-  win: { accent: '#22C58B', tint: 'rgba(34,197,139,.14)', glow: 'rgba(34,197,139,.13)', labelKey: 'insight.category.win' },
+const CATEGORY_COLORS: Record<string, string> = {
+  cash_flow: '#F59E0B',
+  conversion: '#6366F1',
+  ops: '#0EA5E9',
+  retention: '#8B5CF6',
+  leads: '#EC4899',
+  pricing: '#F97316',
+  win: '#22C55E',
+  setup: '#6366F1',
 };
 
-const DEFAULT_STYLE = { accent: '#F97316', tint: 'rgba(249,115,22,.12)', glow: 'rgba(249,115,22,.14)', labelKey: 'insight.category.cash_flow' };
-
 // ===========================
-// Running Steps (using translation keys)
+// Running steps
 // ===========================
 
 const RUNNING_STEP_KEYS: Record<string, string[]> = {
   cash_ar_overdue: ['insight.step.cash_ar_overdue.1', 'insight.step.cash_ar_overdue.2', 'insight.step.cash_ar_overdue.3'],
   sales_stalled: ['insight.step.sales_stalled.1', 'insight.step.sales_stalled.2', 'insight.step.sales_stalled.3'],
-  ret_no_show_spike: ['insight.step.ret_no_show_spike.1', 'insight.step.ret_no_show_spike.2', 'insight.step.ret_no_show_spike.3'],
   default: ['insight.step.default.1', 'insight.step.default.2', 'insight.step.default.3'],
 };
 
 // ===========================
-// Component
+// Component (matching mockup .adv)
 // ===========================
 
 export function InsightAdvisorCard({
@@ -75,74 +74,119 @@ export function InsightAdvisorCard({
   currentIndex,
   projection,
   automationConfig,
+  stage = 'run',
   onIndexChange,
   onAction,
   onAutomate,
   onDeclineAutomate,
 }: InsightAdvisorCardProps) {
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, formatCurrency } = useLanguage();
   const [cardState, setCardState] = useState<InsightCardState>('default');
-  const [baExpanded, setBaExpanded] = useState(false);
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [runningStep, setRunningStep] = useState(0);
-  // Default automation threshold value
-  const defaultThreshold = (automationConfig?.suggestedParams?.days_threshold as number) || 7;
-  const [autoValue, setAutoValue] = useState(defaultThreshold);
+  const [autoValue, setAutoValue] = useState(
+    (automationConfig?.suggestedParams?.days_threshold as number) || 14
+  );
+  const [vertical, setVertical] = useState<string | null>(null);
+
+  // Fetch user's vertical for personalized advisor badge
+  useEffect(() => {
+    async function fetchVertical() {
+      try {
+        const response = await fetch('/api/business-os/business-profile');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            setVertical(data.vertical);
+          }
+        }
+      } catch {
+        // Silent fail
+      }
+    }
+    fetchVertical();
+  }, []);
 
   const insight = insights[currentIndex];
-  if (!insight) return null;
 
-  const style = CATEGORY_STYLES[insight.category] || DEFAULT_STYLE;
-  const stepKeys = RUNNING_STEP_KEYS[insight.detector_id] || RUNNING_STEP_KEYS.default;
+  // Determine effective stage - if no insights exist, force setup stage
+  const effectiveStage = !insight ? 'setup' : stage;
+
+  // Setup stage content (Day 1 - no insights yet)
+  const setupContent = {
+    title: t('insight.setup.title') || 'Everything is built. None of it is on.',
+    description: t('insight.setup.description') || 'I can\'t tell you anything about your business until your business is reachable. One button changes that, and I\'ve done the rest.',
+    category: 'setup',
+    primaryAction: t('insight.setup.action.primary') || 'Publish it',
+    secondaryAction: t('insight.setup.action.secondary') || 'Show me what you built',
+    projection: {
+      left: {
+        label: t('insight.setup.projection.left.label') || 'Right now',
+        value: t('insight.setup.projection.left.value') || '0 ways in',
+        subtext: t('insight.setup.projection.left.subtext') || 'nobody can find you',
+      },
+      right: {
+        label: t('insight.setup.projection.right.label') || 'Two minutes from now',
+        value: t('insight.setup.projection.right.value') || 'Live',
+        subtext: t('insight.setup.projection.right.subtext') || 'Google usually indexes within the hour',
+      },
+    },
+  };
+
+  // Use setup content if no insight available
+  const displayTitle = insight?.title || setupContent.title;
+  const displayDescription = insight?.description || setupContent.description;
+  const displayCategory = insight?.category || setupContent.category;
+
+  const categoryColor = CATEGORY_COLORS[displayCategory] || '#F97316';
+  const stepKeys = insight ? (RUNNING_STEP_KEYS[insight.detector_id] || RUNNING_STEP_KEYS.default) : RUNNING_STEP_KEYS.default;
   const steps = stepKeys.map(key => t(key));
-  const canAutomate = insight.eligible_for_automation && automationConfig;
+  const canAutomate = insight?.eligible_for_automation && automationConfig;
 
-  // Get translated content based on detector_id
-  const getTranslatedTitle = () => {
-    const titleKey = `insight.${insight.detector_id}.title`;
-    const translated = t(titleKey);
-    if (translated !== titleKey) {
-      // Replace placeholders with actual values
-      return translated
-        .replace('{amount}', insight.estimated_impact_usd ? `$${insight.estimated_impact_usd.toLocaleString()}` : '')
-        .replace('{count}', String(insight.affected_count || 0));
+  // Get eyebrow text based on stage
+  const getEyebrowText = () => {
+    switch (effectiveStage) {
+      case 'setup':
+        return { main: t('insight.advisor') || 'Your advisor', sub: t('insight.stage.setup.eyebrow') || 'Nothing to advise on yet — so here\'s the only thing that matters' };
+      case 'win':
+        return { main: t('insight.advisor.noticed') || 'Your advisor noticed', sub: t('insight.stage.win.eyebrow') || 'A good thing, which is still worth telling you' };
+      case 'automate':
+        return { main: t('insight.advisor') || 'Your advisor', sub: t('insight.stage.automate.eyebrow') || 'Third time — so I\'d like to stop asking' };
+      default:
+        return { main: t('insight.advisor.noticed') || 'Your advisor noticed', sub: '' };
     }
-    return insight.title;
   };
 
-  const getTranslatedDescription = () => {
-    const descKey = `insight.${insight.detector_id}.description`;
-    const translated = t(descKey);
-    if (translated !== descKey) {
-      // Replace placeholders with actual values
-      return translated
-        .replace('{weeks}', '3')
-        .replace('{percent}', '12')
-        .replace('{days}', '21');
-    }
-    return insight.description;
-  };
-
+  // Get category label
   const getCategoryLabel = () => {
-    return t(style.labelKey);
+    if (effectiveStage === 'setup') {
+      return t('insight.category.setup') || 'Getting you switched on';
+    }
+    const key = `insight.category.${displayCategory}`;
+    const translated = t(key);
+    return translated !== key ? translated : displayCategory;
   };
 
-  // Get primary action text
-  const getPrimaryAction = () => {
-    switch (insight.detector_id) {
-      case 'cash_ar_overdue': return t('insight.action.chase') || 'Chase them for me';
-      case 'sales_stalled': return t('insight.action.followup') || 'Follow up for me';
-      case 'ret_no_show_spike': return t('insight.action.remind') || 'Set up reminders';
-      default: return t('insight.action.handle') || 'Handle this for me';
+  // Get "seen" text for first occurrence tracking
+  const getSeenText = () => {
+    // No "seen" text for setup stage
+    if (effectiveStage === 'setup') {
+      return null;
     }
+    if (effectiveStage === 'win') {
+      return t('insight.seen.win') || 'Wins are the only thing I can honestly report this early — they\'re facts, not judgements.';
+    }
+    if (cardState === 'default' && insight) {
+      return t('insight.seen.first') || 'First time I\'ve seen this. I\'ll offer to handle it standing once it has happened a few times.';
+    }
+    return null;
   };
 
   // Handle run action
   const handleRun = useCallback(async () => {
+    if (!insight) return; // Don't run for setup stage
     setCardState('running');
     setRunningStep(0);
 
-    // Simulate progress
     const interval = setInterval(() => {
       setRunningStep(prev => {
         if (prev >= steps.length - 1) {
@@ -157,24 +201,14 @@ export function InsightAdvisorCard({
     }, 800);
 
     await onAction('run', insight.id);
-  }, [insight.id, onAction, steps.length, canAutomate]);
-
-  // Handle snooze
-  const handleSnooze = useCallback(async (_duration: 'tomorrow' | 'week' | 'never') => {
-    setSnoozeOpen(false);
-    await onAction('snooze', insight.id);
-  }, [insight.id, onAction]);
-
-  // Handle dismiss
-  const handleDismiss = useCallback(async () => {
-    await onAction('dismiss', insight.id);
-  }, [insight.id, onAction]);
+  }, [insight, onAction, steps.length, canAutomate]);
 
   // Handle automate
   const handleAutomate = useCallback(async () => {
+    if (!insight) return;
     await onAutomate(insight.id, { days_threshold: autoValue });
     setCardState('automated');
-  }, [insight.id, autoValue, onAutomate]);
+  }, [insight, autoValue, onAutomate]);
 
   // Handle decline automate
   const handleDeclineAutomate = useCallback(() => {
@@ -182,414 +216,709 @@ export function InsightAdvisorCard({
     onDeclineAutomate();
   }, [onDeclineAutomate]);
 
-  // Step value for automation config
+  // Handle dismiss
+  const handleDismiss = useCallback(async () => {
+    if (!insight) return;
+    await onAction('dismiss', insight.id);
+  }, [insight, onAction]);
+
+  // Step automation threshold
   const stepAutoValue = (delta: number) => {
-    if (!canAutomate) return;
-    // Default range: 1-30 days
-    const min = 1;
-    const max = 30;
-    setAutoValue(Math.max(min, Math.min(max, autoValue + delta)));
+    setAutoValue(Math.max(7, Math.min(45, autoValue + delta * 7)));
   };
+
+  /**
+   * Projection copy in the reader's language.
+   *
+   * The projector runs on the server with no access to the interface language,
+   * so it sends a dictionary key and the numbers to fill it, alongside an
+   * English rendering. Prefer the key; fall back to the English only when there
+   * is no key or the dictionary has no entry — `t` returns the key itself when
+   * a string is missing, which would otherwise print `insight.generic.do_nothing`
+   * on the card.
+   *
+   * Without this the panel showed the server's English under a Hebrew heading.
+   */
+  const renderLine = (
+    line: { text: string; key?: string; params?: Record<string, string | number> } | undefined,
+    fallback: string | undefined
+  ): string => {
+    if (line?.key) {
+      const translated = t(line.key, line.params);
+      if (translated && translated !== line.key) return translated;
+    }
+    return line?.text || fallback || '';
+  };
+
+  // Build projection columns for BeforeAfterPanel
+  const projectionColumns: { left: ProjectionColumn; right: ProjectionColumn } | null =
+    effectiveStage === 'setup'
+      ? setupContent.projection
+      : projection
+        ? {
+            // These read `doNothing` / `letMeHandleIt`, the field names the
+            // projection actually carries. They were snake_case here, so every
+            // projection silently fell through to the generic fallback text.
+            left: {
+              label: t('insight.projection.do_nothing') || 'If you do nothing',
+              value: renderLine(projection.doNothing?.summaryLine, projection.doNothing?.summary)
+                || `${insight?.affected_count || 0} outstanding`,
+              subtext: renderLine(projection.doNothing?.detailsLine, projection.doNothing?.details),
+            },
+            right: {
+              label: t('insight.projection.handle_it') || 'If I handle it',
+              value: renderLine(projection.letMeHandleIt?.summaryLine, projection.letMeHandleIt?.summary)
+                || `~${formatCurrency(insight?.estimated_impact_usd || 0, { showFree: false })} recovered`,
+              subtext: renderLine(projection.letMeHandleIt?.detailsLine, projection.letMeHandleIt?.details),
+            },
+          }
+        : null;
+
+  const eyebrow = getEyebrowText();
+  const seenText = getSeenText();
+
+  // CSS Reference from mockup:
+  // .adv{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:0 26px 60px -32px rgba(20,26,44,.3);overflow:hidden;margin-bottom:16px}
+  // .adv-in{padding:20px 22px}
+  // .adv-top{display:flex;align-items:center;gap:11px;margin-bottom:12px}
+  // .adv-orb{width:30px;height:30px;border-radius:50%;background:var(--aurora);flex:none;box-shadow:0 0 0 5px rgba(249,115,22,.12)}
+  // .adv-ey{font-size:12.5px;font-weight:600;color:var(--violet)}
+  // .adv-ey small{display:block;font-weight:400;color:var(--muted);font-size:11.5px}
+  // .adv-vt{margin-left:auto;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;background:#F1F3F8;color:var(--muted);padding:5px 11px;border-radius:20px;white-space:nowrap}
+  // .adv-h{font-family:var(--display);font-size:clamp(19px,2.6vw,23px);font-weight:600;letter-spacing:-.025em;margin-bottom:7px;line-height:1.25}
+  // .adv-p{font-size:14.5px;color:var(--muted);max-width:46rem}
 
   return (
     <div
-      className="relative overflow-hidden transition-all bg-[var(--v2-bg)]"
+      className="adv"
       style={{
-        borderRadius: '16px',
-        borderLeft: `4px solid ${style.accent}`,
-        background: `linear-gradient(135deg, ${style.tint} 0%, var(--v2-bg) 100%)`,
+        direction: isRTL ? 'rtl' : 'ltr',
+        background: '#FFFFFF',
+        border: '1px solid #E7E9F1',
+        borderRadius: '22px',
+        boxShadow: '0 26px 60px -32px rgba(20,26,44,0.3)',
+        overflow: 'hidden',
+        marginBottom: '16px',
       }}
     >
-      {/* Background glow */}
-      <div
-        className="absolute pointer-events-none"
-        style={{
-          top: '-30%',
-          [isRTL ? 'left' : 'right']: '-4%',
-          width: '280px',
-          height: '280px',
-          borderRadius: '50%',
-          background: `radial-gradient(circle, ${style.glow}, transparent 68%)`,
-        }}
-      />
-
-      {/* Header */}
-      <div className="flex items-center gap-3 px-5 pt-4 pb-1 relative">
-        {/* Badge */}
-        <div className="flex items-center gap-2">
-          <span
-            className="w-6 h-6 rounded-lg flex items-center justify-center"
-            style={{
-              background: 'rgba(249, 115, 22, 0.12)',
-            }}
-          >
-            <Sparkles className="w-3.5 h-3.5" style={{ color: '#F97316' }} strokeWidth={2} />
-          </span>
-          <span
-            className="text-xs font-semibold uppercase tracking-wide text-[var(--v2-text-muted)]"
-            style={{ letterSpacing: '0.08em' }}
-          >
-            {t('insight.badge') || 'Your advisor noticed'}
-          </span>
-        </div>
-
-        {/* Category Tag */}
-        <span
-          className="text-xs font-bold uppercase px-2.5 py-1 rounded-full"
+      {/* Main content area: .adv-in */}
+      <div className="adv-in" style={{ padding: '20px 22px' }}>
+        {/* Top row: .adv-top */}
+        <div
+          className="adv-top"
           style={{
-            background: style.tint,
-            color: style.accent,
-            letterSpacing: '0.04em',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '11px',
+            marginBottom: '12px',
           }}
         >
-          {getCategoryLabel()}
-        </span>
+          {/* Orange gradient orb: .adv-orb */}
+          <span
+            className="adv-orb"
+            style={{
+              width: '30px',
+              height: '30px',
+              borderRadius: '50%',
+              background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
+              flexShrink: 0,
+              boxShadow: '0 0 0 5px rgba(249,115,22,0.12)',
+            }}
+          />
 
-        {/* Navigation */}
-        <div className={`flex items-center gap-3 ${isRTL ? 'mr-auto' : 'ml-auto'}`}>
+          {/* Eyebrow text: .adv-ey */}
+          <span
+            className="adv-ey"
+            style={{
+              fontSize: '12.5px',
+              fontWeight: 600,
+              color: '#F97316',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            {eyebrow.main}
+            {eyebrow.sub && (
+              <small
+                style={{
+                  display: 'block',
+                  fontWeight: 400,
+                  color: '#697187',
+                  fontSize: '11.5px',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {eyebrow.sub}
+              </small>
+            )}
+          </span>
+
+          {/* Category badge: .adv-vt */}
+          <span
+            className="adv-vt"
+            style={{
+              marginLeft: isRTL ? undefined : 'auto',
+              marginRight: isRTL ? 'auto' : undefined,
+              fontSize: '11px',
+              fontWeight: 600,
+              letterSpacing: '0.05em',
+              textTransform: 'uppercase',
+              background: '#F1F3F8',
+              color: '#697187',
+              padding: '5px 11px',
+              borderRadius: '20px',
+              whiteSpace: 'nowrap',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            {getCategoryLabel()}
+          </span>
+
+          {/* Which of several insights this is, and a way to reach the others.
+              The card only ever shows one at a time, so without this the rest
+              are invisible — the parent has always tracked the index and passed
+              onIndexChange; nothing rendered a control for it. */}
           {insights.length > 1 && (
-            <>
-              <span className="text-xs text-[#697187] font-medium">
-                {currentIndex + 1} of {insights.length}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+              <span
+                style={{
+                  fontSize: '11.5px',
+                  fontWeight: 500,
+                  color: '#697187',
+                  whiteSpace: 'nowrap',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {t('insight.nav.position', { current: currentIndex + 1, total: insights.length })}
               </span>
-              <div className="flex gap-1.5">
-                {insights.map((_, i) => (
+              <div style={{ display: 'flex', gap: '5px' }}>
+                {insights.map((entry, i) => (
                   <button
-                    key={i}
+                    key={entry.id ?? i}
                     onClick={() => onIndexChange(i)}
-                    className="transition-all"
+                    aria-label={t('insight.nav.goTo', { number: i + 1 })}
+                    aria-current={i === currentIndex}
                     style={{
+                      // The active one is a stadium rather than a bigger dot:
+                      // size alone is hard to read at 6px, length is not.
                       width: i === currentIndex ? '14px' : '6px',
                       height: '6px',
                       borderRadius: i === currentIndex ? '4px' : '50%',
-                      background: i === currentIndex ? style.accent : '#D6DAE6',
+                      background: i === currentIndex ? '#F97316' : '#D6DAE6',
+                      border: 'none',
+                      padding: 0,
+                      cursor: i === currentIndex ? 'default' : 'pointer',
+                      transition: 'width 0.2s, background 0.2s',
                     }}
                   />
                 ))}
               </div>
-            </>
+            </div>
           )}
-          <button
-            onClick={handleDismiss}
-            className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[#FAFAFC] transition-colors"
-          >
-            <X className="w-4 h-4 text-[#697187]" strokeWidth={2} />
-          </button>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="flex gap-5 px-5 pt-2 pb-4 relative">
-        {/* Body */}
-        <div className="flex-1 min-w-0">
-          <h2
-            className="mb-2 text-[var(--v2-text-primary)]"
+        {/* Headline: .adv-h */}
+        <div
+          className="adv-h"
+          style={{
+            fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
+            fontSize: 'clamp(19px, 2.6vw, 23px)',
+            fontWeight: 600,
+            letterSpacing: '-0.025em',
+            marginBottom: '7px',
+            lineHeight: 1.25,
+            color: '#131A2B',
+          }}
+        >
+          {displayTitle}
+        </div>
+
+        {/* Description: .adv-p */}
+        <div
+          className="adv-p"
+          style={{
+            fontSize: '14.5px',
+            color: '#697187',
+            maxWidth: '46rem',
+            fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            lineHeight: 1.5,
+          }}
+          dangerouslySetInnerHTML={{ __html: displayDescription }}
+        />
+
+        {/* Before/After Projection (if available and in default state) */}
+        {projectionColumns && cardState === 'default' && (
+          <BeforeAfterPanel left={projectionColumns.left} right={projectionColumns.right} />
+        )}
+
+        {/* Action buttons (default state): .adv-acts */}
+        {cardState === 'default' && (
+          <div
+            className="adv-acts"
             style={{
-              fontFamily: '"Space Grotesk", system-ui, sans-serif',
-              fontWeight: 600,
-              fontSize: '20px',
-              letterSpacing: '-0.02em',
-              lineHeight: 1.25,
+              display: 'flex',
+              gap: '10px',
+              alignItems: 'center',
+              marginTop: '16px',
+              flexWrap: 'wrap',
             }}
           >
-            {getTranslatedTitle()}
-          </h2>
-          <p
-            className="mb-3 text-[var(--v2-text-secondary)]"
-            style={{ fontSize: '14px', lineHeight: 1.55 }}
-            dangerouslySetInnerHTML={{ __html: getTranslatedDescription() }}
-          />
-
-          {/* Evidence Chips */}
-          {insight.affected_count > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              <span
-                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)]"
-              >
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: style.accent }} />
-                {t(`insight.${insight.detector_id}.chip.invoices`).replace('{count}', String(insight.affected_count)) !== `insight.${insight.detector_id}.chip.invoices`
-                  ? t(`insight.${insight.detector_id}.chip.invoices`).replace('{count}', String(insight.affected_count))
-                  : `${insight.affected_count} ${insight.detector_id === 'cash_ar_overdue' ? t('myday.insight.overdue_invoices').replace('{count}', '') : 'items'}`
-                }
-              </span>
-              {insight.estimated_impact_usd && insight.estimated_impact_usd > 0 && (
-                <span
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)]"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: style.accent }} />
-                  {t(`insight.${insight.detector_id}.chip.total`).replace('{amount}', `$${insight.estimated_impact_usd.toLocaleString()}`) !== `insight.${insight.detector_id}.chip.total`
-                    ? t(`insight.${insight.detector_id}.chip.total`).replace('{amount}', `$${insight.estimated_impact_usd.toLocaleString()}`)
-                    : `$${insight.estimated_impact_usd.toLocaleString()} total`
-                  }
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Before/After Toggle */}
-          {projection && cardState === 'default' && (
-            <button
-              onClick={() => setBaExpanded(!baExpanded)}
-              className="inline-flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-lg transition-colors"
-              style={{ background: style.tint, color: style.accent }}
-            >
-              <ChevronDown
-                className="w-4 h-4 transition-transform"
-                style={{ transform: baExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
-                strokeWidth={2.2}
-              />
-              {t('insight.compare') || "See what happens if you do vs. don't"}
-            </button>
-          )}
-        </div>
-
-        {/* Action Column */}
-        {cardState === 'default' && (
-          <div className="flex-none w-52 flex flex-col gap-2 pt-1">
+            {/* Primary button: .adv-btn */}
             <button
               onClick={handleRun}
-              className="flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl font-semibold text-sm text-white transition-transform active:scale-[0.98]"
+              className="adv-btn"
               style={{
                 background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-                boxShadow: '0 12px 24px -10px rgba(249,115,22,.5)',
+                color: '#FFFFFF',
+                borderRadius: '12px',
+                padding: '11px 18px',
+                fontSize: '14px',
+                fontWeight: 600,
+                boxShadow: '0 8px 20px -9px rgba(249,115,22,0.9)',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >
-              <ArrowRight className="w-4 h-4" strokeWidth={2.2} />
-              {getPrimaryAction()}
+              {t('insight.action.primary') || 'Handle it for me'}
+            </button>
+            {/* Secondary button: .adv-lite */}
+            <button
+              onClick={handleDismiss}
+              className="adv-lite"
+              style={{
+                border: '1.5px solid #E7E9F1',
+                background: '#FFFFFF',
+                borderRadius: '12px',
+                padding: '11px 18px',
+                fontSize: '14px',
+                fontWeight: 600,
+                color: '#697187',
+                cursor: 'pointer',
+                fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+              }}
+            >
+              {t('insight.action.secondary') || 'Not now'}
             </button>
 
-            <div className="relative">
-              <button
-                onClick={() => setSnoozeOpen(!snoozeOpen)}
-                className="flex items-center justify-center w-full py-3 px-4 rounded-xl font-semibold text-sm transition-colors bg-[var(--v2-surface)] border-[1.5px] border-[var(--v2-border)] text-[var(--v2-text-primary)]"
+            {/* "Seen" note: .adv-seen */}
+            {seenText && (
+              <span
+                className="adv-seen"
+                style={{
+                  fontSize: '12.5px',
+                  color: '#697187',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '7px',
+                  marginLeft: isRTL ? undefined : 'auto',
+                  marginRight: isRTL ? 'auto' : undefined,
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
               >
-                {t('insight.snooze') || 'Not now'} ▾
-              </button>
-
-              {snoozeOpen && (
-                <div
-                  className="absolute top-full left-0 right-0 mt-1.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-xl shadow-lg p-1 z-10"
-                  style={{ boxShadow: '0 14px 30px -12px rgba(20,26,43,.3)' }}
-                >
-                  <button
-                    onClick={() => handleSnooze('tomorrow')}
-                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[var(--v2-surface)] text-[var(--v2-text-primary)]"
-                  >
-                    {t('insight.snooze.tomorrow') || 'Remind me tomorrow'}
-                  </button>
-                  <button
-                    onClick={() => handleSnooze('week')}
-                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[var(--v2-surface)] text-[var(--v2-text-primary)]"
-                  >
-                    {t('insight.snooze.week') || 'Remind me next week'}
-                  </button>
-                  <button
-                    onClick={() => handleSnooze('never')}
-                    className="block w-full text-left text-sm px-3 py-2 rounded-lg hover:bg-[var(--v2-surface)] text-[var(--v2-text-primary)]"
-                  >
-                    {t('insight.snooze.never') || 'Not a problem — mute this'}
-                  </button>
-                </div>
-              )}
-            </div>
+                <Clock
+                  style={{
+                    width: '14px',
+                    height: '14px',
+                    stroke: '#697187',
+                    fill: 'none',
+                    strokeWidth: 2,
+                  }}
+                />
+                {seenText}
+              </span>
+            )}
           </div>
         )}
 
-        {/* Running State */}
+        {/* Running state */}
         {cardState === 'running' && (
-          <div className="flex-none w-52 pt-1">
-            <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
+          <div
+            style={{
+              marginTop: '16px',
+              padding: '16px',
+              borderRadius: '14px',
+              background: '#F8F9FC',
+              border: '1px solid #E7E9F1',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <Loader2 style={{ width: '20px', height: '20px', color: '#F97316' }} className="animate-spin" strokeWidth={2.5} />
+              <span
+                style={{
+                  fontSize: '15px',
+                  fontWeight: 600,
+                  color: '#131A2B',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {t('insight.running') || 'Working on it...'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {steps.map((step, i) => (
-                <div key={i} className="flex items-center gap-2.5 text-sm font-semibold" style={{ marginTop: i > 0 ? '10px' : 0 }}>
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '14px' }}>
                   {i < runningStep ? (
-                    <span className="w-5 h-5 rounded-full bg-[#22C58B] flex items-center justify-center flex-none">
-                      <Check className="w-3 h-3 text-white" strokeWidth={3} />
+                    <span
+                      style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        background: '#22C58B',
+                        display: 'grid',
+                        placeItems: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Check style={{ width: '12px', height: '12px', color: '#FFFFFF' }} strokeWidth={3} />
                     </span>
                   ) : i === runningStep ? (
-                    <Loader2 className="w-5 h-5 text-[#F97316] animate-spin flex-none" strokeWidth={2.5} />
+                    <span
+                      style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        background: 'rgba(249,115,22,0.12)',
+                        display: 'grid',
+                        placeItems: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span
+                        className="animate-pulse"
+                        style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#F97316' }}
+                      />
+                    </span>
                   ) : (
-                    <span className="w-5 h-5 rounded-full border-2 border-[var(--v2-border)] flex-none opacity-40" />
+                    <span
+                      style={{
+                        width: '20px',
+                        height: '20px',
+                        borderRadius: '50%',
+                        border: '2px solid #E7E9F1',
+                        flexShrink: 0,
+                      }}
+                    />
                   )}
-                  <span className={i <= runningStep ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)]'}>{step}</span>
+                  <span style={{ color: i <= runningStep ? '#131A2B' : '#697187', fontWeight: i <= runningStep ? 500 : 400 }}>
+                    {step}
+                  </span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Completed State */}
+        {/* Completed state - matches .auto-done styling */}
         {cardState === 'completed' && (
-          <div className="flex-none w-52 pt-1">
-            <div className="bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl p-4">
-              <div className="flex items-center gap-2.5">
-                <span className="w-5 h-5 rounded-full bg-[#22C58B] flex items-center justify-center flex-none">
-                  <Check className="w-3 h-3 text-white" strokeWidth={3} />
+          <div
+            style={{
+              marginTop: '18px',
+              border: '1.5px solid #B8E9D3',
+              background: '#F3FBF7',
+              borderRadius: '16px',
+              padding: '17px 18px',
+              display: 'flex',
+              gap: '12px',
+              alignItems: 'flex-start',
+            }}
+          >
+            <span
+              style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                background: '#22C58B',
+                flexShrink: 0,
+                display: 'grid',
+                placeItems: 'center',
+                boxShadow: '0 0 0 4px rgba(34,197,139,0.17)',
+              }}
+            >
+              <Check style={{ width: '14px', height: '14px', color: '#FFFFFF' }} strokeWidth={3} />
+            </span>
+            <div>
+              <b
+                style={{
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
+                  fontSize: '15.5px',
+                  fontWeight: 600,
+                  display: 'block',
+                  marginBottom: '3px',
+                  color: '#131A2B',
+                }}
+              >
+                {t('insight.completed.title') || 'Done'}
+              </b>
+              <p
+                style={{
+                  fontSize: '13.5px',
+                  color: '#697187',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                  margin: 0,
+                }}
+              >
+                {t('insight.completed.subtitle') || 'I\'ll keep watching this for you.'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Automation offer state: .auto-offer */}
+        {cardState === 'automate_offer' && canAutomate && (
+          <div
+            className="auto-offer"
+            style={{
+              marginTop: '18px',
+              border: '1.5px solid #FBDCC0',
+              background: 'linear-gradient(180deg, #FFF8F2, #FFFDFB)',
+              borderRadius: '16px',
+              padding: '17px 18px',
+            }}
+          >
+            {/* Eyebrow: .auto-ey */}
+            <div
+              className="auto-ey"
+              style={{
+                fontSize: '11px',
+                fontWeight: 700,
+                letterSpacing: '0.09em',
+                textTransform: 'uppercase',
+                color: '#F97316',
+                marginBottom: '6px',
+                fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+              }}
+            >
+              {t('insight.automate.eyebrow') || 'Standing automation'}
+            </div>
+            {/* Headline: .auto-h */}
+            <div
+              className="auto-h"
+              style={{
+                fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
+                fontSize: '17px',
+                fontWeight: 600,
+                letterSpacing: '-0.02em',
+                marginBottom: '6px',
+                color: '#131A2B',
+              }}
+            >
+              {t('insight.automate.title') || 'Want me to just handle this from now on?'}
+            </div>
+            {/* Description: .auto-p */}
+            <div
+              className="auto-p"
+              style={{
+                fontSize: '13.5px',
+                color: '#697187',
+                marginBottom: '14px',
+                fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+              }}
+            >
+              {t('insight.automate.description') || 'I\'ll watch every invoice and chase the ones that pass your limit. Up to three reminders, a week apart, in your voice. I stop the moment they pay, and I tell you when it works.'}
+            </div>
+
+            {/* Threshold control: .auto-thr */}
+            <div
+              className="auto-thr"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                background: '#FFFFFF',
+                border: '1px solid #F3D2B4',
+                borderRadius: '12px',
+                padding: '11px 14px',
+                flexWrap: 'wrap',
+              }}
+            >
+              {/* Label: .thr-lb */}
+              <span
+                className="thr-lb"
+                style={{
+                  fontSize: '13.5px',
+                  fontWeight: 500,
+                  flex: 1,
+                  minWidth: '150px',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {t('insight.automate.threshold_label') || 'Chase anything unpaid after'}
+              </span>
+              {/* Control: .thr-ctl */}
+              <div
+                className="thr-ctl"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '2px',
+                  border: '1.5px solid #E7E9F1',
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                }}
+              >
+                {/* Minus button: .thr-b */}
+                <button
+                  onClick={() => stepAutoValue(-1)}
+                  className="thr-b"
+                  style={{
+                    width: '34px',
+                    height: '34px',
+                    fontSize: '17px',
+                    fontWeight: 600,
+                    color: '#F97316',
+                    background: '#FFF6EE',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  −
+                </button>
+                {/* Value: .thr-v */}
+                <span
+                  className="thr-v"
+                  style={{
+                    minWidth: '62px',
+                    textAlign: 'center',
+                    fontFamily: '"Space Grotesk", system-ui, sans-serif',
+                    fontSize: '15px',
+                    fontWeight: 600,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {autoValue} {t('insight.automate.days') || 'days'}
                 </span>
-                <span className="text-sm font-bold text-[var(--v2-text-primary)]">
-                  {t('insight.done') || 'Done'}
-                </span>
+                {/* Plus button: .thr-b */}
+                <button
+                  onClick={() => stepAutoValue(1)}
+                  className="thr-b"
+                  style={{
+                    width: '34px',
+                    height: '34px',
+                    fontSize: '17px',
+                    fontWeight: 600,
+                    color: '#F97316',
+                    background: '#FFF6EE',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  +
+                </button>
               </div>
-              <p className="text-xs text-[var(--v2-text-muted)] mt-2 ml-7">
-                {insight.recommendation || "I'll keep watching this."}
+            </div>
+
+            {/* Action buttons: .auto-acts */}
+            <div
+              className="auto-acts"
+              style={{
+                display: 'flex',
+                gap: '10px',
+                marginTop: '14px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <button
+                className="adv-btn"
+                onClick={handleAutomate}
+                style={{
+                  background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
+                  color: '#FFFFFF',
+                  borderRadius: '12px',
+                  padding: '11px 18px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  boxShadow: '0 8px 20px -9px rgba(249,115,22,0.9)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {t('insight.automate.yes') || 'Yes, handle it'}
+              </button>
+              <button
+                className="adv-lite"
+                onClick={handleDeclineAutomate}
+                style={{
+                  border: '1.5px solid #E7E9F1',
+                  background: '#FFFFFF',
+                  borderRadius: '12px',
+                  padding: '11px 18px',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  color: '#697187',
+                  cursor: 'pointer',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                }}
+              >
+                {t('insight.automate.no') || 'Keep asking me'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Automated confirmation state: .auto-done */}
+        {cardState === 'automated' && (
+          <div
+            className="auto-done"
+            style={{
+              marginTop: '18px',
+              border: '1.5px solid #B8E9D3',
+              background: '#F3FBF7',
+              borderRadius: '16px',
+              padding: '17px 18px',
+              display: 'flex',
+              gap: '12px',
+              alignItems: 'flex-start',
+            }}
+          >
+            {/* Icon: .auto-done-ic */}
+            <span
+              className="auto-done-ic"
+              style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                background: '#22C58B',
+                flexShrink: 0,
+                display: 'grid',
+                placeItems: 'center',
+                boxShadow: '0 0 0 4px rgba(34,197,139,0.17)',
+              }}
+            >
+              <Check style={{ width: '14px', height: '14px', color: '#FFFFFF' }} strokeWidth={3} />
+            </span>
+            <div>
+              <b
+                style={{
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
+                  fontSize: '15.5px',
+                  fontWeight: 600,
+                  display: 'block',
+                  marginBottom: '3px',
+                  color: '#131A2B',
+                }}
+              >
+                {t('insight.automated.title') || 'Done — I\'ll chase them from now on'}
+              </b>
+              <p
+                style={{
+                  fontSize: '13.5px',
+                  color: '#697187',
+                  fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+                  margin: 0,
+                }}
+              >
+                {t('insight.automated.subtitle')?.replace('{days}', String(autoValue)) || `Anything unpaid past ${autoValue} days, up to three reminders. It shows up in what I've handled, not in your inbox. Turn it off in Operation whenever you like.`}
               </p>
             </div>
           </div>
         )}
       </div>
 
-      {/* Before/After Panel */}
-      {projection && (
-        <BeforeAfterPanel
-          expanded={baExpanded}
-          doNothingPoints={[
-            t(`insight.${insight.detector_id}.do_nothing`) !== `insight.${insight.detector_id}.do_nothing`
-              ? t(`insight.${insight.detector_id}.do_nothing`)
-                  .replace('{amount}', insight.estimated_impact_usd ? `$${insight.estimated_impact_usd.toLocaleString()}` : '')
-                  .replace('{count}', String(insight.affected_count || 0))
-              : projection.doNothing.summary,
-            ...(t(`insight.${insight.detector_id}.do_nothing_detail`) !== `insight.${insight.detector_id}.do_nothing_detail`
-              ? [t(`insight.${insight.detector_id}.do_nothing_detail`).replace('{hours}', '2')]
-              : projection.doNothing.details ? [projection.doNothing.details] : []),
-          ]}
-          handlePoints={[
-            t(`insight.${insight.detector_id}.handle_it`) !== `insight.${insight.detector_id}.handle_it`
-              ? t(`insight.${insight.detector_id}.handle_it`)
-                  .replace('{count}', String(insight.affected_count || 0))
-                  .replace('{days}', '7')
-              : projection.letMeHandleIt.summary,
-            ...(t(`insight.${insight.detector_id}.handle_it_detail`) !== `insight.${insight.detector_id}.handle_it_detail`
-              ? [t(`insight.${insight.detector_id}.handle_it_detail`).replace('{days}', '7')]
-              : projection.letMeHandleIt.details ? [projection.letMeHandleIt.details] : []),
-          ]}
-        />
-      )}
-
-      {/* Automate Offer Panel */}
-      {cardState === 'automate_offer' && canAutomate && (
-        <div
-          className="mx-5 mb-4 rounded-2xl p-4 transition-all border-[1.5px] border-[rgba(249,115,22,.25)]"
-          style={{
-            background: 'linear-gradient(180deg, rgba(249,115,22,0.08) 0%, var(--v2-bg) 100%)',
-          }}
-        >
-          <div className="flex items-center gap-3 mb-3">
-            <span
-              className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{
-                background: 'rgba(249, 115, 22, 0.12)',
-              }}
-            >
-              <Sparkles className="w-4 h-4" style={{ color: '#F97316' }} strokeWidth={2} />
-            </span>
-            <div>
-              <b className="block text-sm font-semibold text-[var(--v2-text-primary)]" style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}>
-                {t('insight.automate.title') || 'Want me to handle this for you from now on?'}
-              </b>
-              <span className="text-xs text-[var(--v2-text-muted)]">
-                {t('insight.automate.subtitle') || "I'll do it on my own — you won't need to ask each time"}
-              </span>
-            </div>
-          </div>
-
-          {/* Config */}
-          <div className="flex items-center gap-3 flex-wrap bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-xl p-3 mb-3">
-            <span className="text-sm font-medium text-[var(--v2-text-primary)]">{t('insight.automate.after')}</span>
-            <div className="inline-flex items-center bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg overflow-hidden">
-              <button
-                onClick={() => stepAutoValue(-1)}
-                className="w-8 h-9 flex items-center justify-center text-lg font-semibold text-[#F97316] hover:bg-[rgba(249,115,22,0.08)]"
-              >
-                −
-              </button>
-              <span
-                className="min-w-[50px] text-center text-sm font-bold border-x border-[var(--v2-border)] h-9 flex items-center justify-center text-[var(--v2-text-primary)]"
-                style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}
-              >
-                {autoValue}
-              </span>
-              <button
-                onClick={() => stepAutoValue(1)}
-                className="w-8 h-9 flex items-center justify-center text-lg font-semibold text-[#F97316] hover:bg-[rgba(249,115,22,0.08)]"
-              >
-                +
-              </button>
-            </div>
-            <span className="text-sm font-bold text-[var(--v2-text-primary)]">{t('insight.automate.days')}</span>
-          </div>
-
-          {/* Note */}
-          <p className="flex items-start gap-2 text-xs text-[var(--v2-text-muted)] mb-3">
-            <span className="w-4 h-4 flex-none mt-0.5 text-[#F97316]">ℹ</span>
-            {t('insight.automate.note') || "This runs by itself in the background — I'll do it without asking. You'll see everything I do in your daily summary, and you can pause it anytime."}
-          </p>
-
-          {/* Buttons */}
-          <div className="flex gap-2">
-            <button
-              onClick={handleDeclineAutomate}
-              className="flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm transition-colors bg-[var(--v2-surface)] border-[1.5px] border-[var(--v2-border)] text-[var(--v2-text-primary)]"
-            >
-              {t('insight.automate.decline') || 'No, just this once'}
-            </button>
-            <button
-              onClick={handleAutomate}
-              className="flex-1 py-2.5 px-4 rounded-xl font-semibold text-sm text-white transition-transform active:scale-[0.98]"
-              style={{
-                background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
-                boxShadow: '0 10px 20px -8px rgba(249,115,22,.5)',
-              }}
-            >
-              {t('insight.automate.confirm') || 'Yes, automate it'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Automated Confirmation Panel */}
-      {cardState === 'automated' && (
-        <div
-          className="mx-5 mb-4 rounded-2xl p-4 transition-all"
-          style={{
-            background: 'rgba(34,197,139,.07)',
-            border: '1.5px solid rgba(34,197,139,.3)',
-          }}
-        >
-          <div className="flex items-center gap-3">
-            <span
-              className="w-9 h-9 rounded-xl bg-[#22C58B] flex items-center justify-center flex-none"
-              style={{ boxShadow: '0 7px 16px -6px rgba(34,197,139,.5)' }}
-            >
-              <Check className="w-5 h-5 text-white" strokeWidth={2.4} />
-            </span>
-            <div className="flex-1">
-              <b className="block text-sm font-semibold text-[var(--v2-text-primary)]" style={{ fontFamily: '"Space Grotesk", system-ui, sans-serif' }}>
-                {t('insight.automated.title') || 'Automation created'}
-              </b>
-              <span className="text-xs text-[var(--v2-text-muted)]">
-                {t('insight.automated.subtitle') || "I'll handle this automatically from now on"}
-              </span>
-            </div>
-            <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-[rgba(34,197,139,.15)] text-[#128a5e]">
-              New
-            </span>
-          </div>
-
-          <div className="flex gap-2 mt-3">
-            <button className="inline-flex items-center gap-2 text-sm font-semibold bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg px-3 py-2 hover:border-[var(--v2-border-hover)] transition-colors text-[var(--v2-text-primary)]">
-              <Pause className="w-3.5 h-3.5" strokeWidth={2} /> Pause
-            </button>
-            <button className="inline-flex items-center gap-2 text-sm font-semibold bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg px-3 py-2 hover:border-[var(--v2-border-hover)] transition-colors text-[var(--v2-text-primary)]">
-              <Settings className="w-3.5 h-3.5" strokeWidth={2} /> Manage
-            </button>
-            <button
-              onClick={handleDismiss}
-              className="inline-flex items-center gap-2 text-sm font-semibold bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg px-3 py-2 hover:border-[var(--v2-border-hover)] transition-colors text-[var(--v2-text-primary)]"
-            >
-              <Minus className="w-3.5 h-3.5" strokeWidth={2} /> Done
-            </button>
-          </div>
-        </div>
-      )}
+      {/* The vectors strip and "what I've handled" used to render here as well
+          as in LiveDashboard, so both appeared twice — with different numbers —
+          whenever there was a pending insight. LiveDashboard owns them now, and
+          shows them whether or not an insight is pending. */}
     </div>
   );
 }

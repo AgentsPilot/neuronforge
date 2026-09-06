@@ -667,7 +667,6 @@ NEVER dump entity data as plain text - ALWAYS use this tool for a polished prese
                 enum: [
                   '/business-os',
                   '/business-os/crm',
-                  '/business-os/payments',
                   '/business-os/email-automation',
                   '/business-os/website',
                   '/business-os/reports',

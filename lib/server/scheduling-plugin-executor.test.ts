@@ -24,6 +24,9 @@ const bookingRepo = {
   checkOverlap: jest.fn(),
 };
 const businessProfileRepo = { findByUserId: jest.fn() };
+// Contact resolution moved into the executor when `client_*` left scheduling_bookings
+// (20260810_remove_client_fields_and_total_amount.sql) - see the guardrail test below.
+const crmContactRepo = { findByEmail: jest.fn(), create: jest.fn() };
 
 jest.mock('@/lib/repositories/SchedulingRepository', () => ({
   schedulingServiceRepository: serviceRepo,
@@ -31,6 +34,9 @@ jest.mock('@/lib/repositories/SchedulingRepository', () => ({
 }));
 jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
   businessProfileRepository: businessProfileRepo,
+}));
+jest.mock('@/lib/repositories/CRMContactRepository', () => ({
+  crmContactRepository: crmContactRepo,
 }));
 
 import { SchedulingPluginExecutor } from './scheduling-plugin-executor';
@@ -64,14 +70,19 @@ describe('SchedulingPluginExecutor — dispatch + user_id scoping', () => {
     expect(serviceRepo.listAll).toHaveBeenCalledWith('u1', true);
   });
 
-  it('create_booking → bookingRepo.create with user_id (delegate-only)', async () => {
+  it('create_booking → bookingRepo.create with user_id and a resolved contact_id', async () => {
+    // Was: asserted `client_email` reached the booking row. That column no longer exists
+    // (20260810_remove_client_fields_and_total_amount.sql); the client is carried by
+    // contact_id into crm_contacts. Updated during the merge - see F4 / D14.
+    crmContactRepo.findByEmail.mockResolvedValueOnce({ data: { id: 'c1' }, error: null });
     await run('create_booking', {
       service_id: 's1', client_first_name: 'Ada', client_email: 'ada@x.com',
       start_time: '2026-08-10T10:00:00Z', end_time: '2026-08-10T10:30:00Z',
     });
     expect(bookingRepo.create).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: 'u1', service_id: 's1', client_email: 'ada@x.com' })
+      expect.objectContaining({ user_id: 'u1', service_id: 's1', contact_id: 'c1' })
     );
+    expect(bookingRepo.create.mock.calls[0][0]).not.toHaveProperty('client_email');
   });
 
   it('count_bookings → countBookings(service_id, userId) (M2 user-scoped)', async () => {
@@ -88,14 +99,43 @@ describe('SchedulingPluginExecutor — dispatch + user_id scoping', () => {
 });
 
 describe('SchedulingPluginExecutor — T1/T2 delegate-only guardrail', () => {
-  it('create_booking touches ONLY the booking repo (no service writes, no CRM emission)', async () => {
+  // The guardrail narrowed during the merge (F4 / D14). It used to read "no CRM emission at
+  // all", because trigger T1 created the contact from the booking's client_* columns. Those
+  // columns are gone and T1's fallback with them, so the caller must resolve the contact
+  // first -- exactly what app/api/website/booking/create does. What still holds, and is what
+  // the guardrail was actually protecting: the executor writes no services and emits no CRM
+  // ACTIVITY (T2 owns that).
+  it('create_booking reuses an existing contact and writes no service or activity', async () => {
+    crmContactRepo.findByEmail.mockResolvedValueOnce({ data: { id: 'c1' }, error: null });
     await run('create_booking', {
       service_id: 's1', client_first_name: 'Ada', client_email: 'ada@x.com',
       start_time: '2026-08-10T10:00:00Z', end_time: '2026-08-10T10:30:00Z',
     });
     expect(bookingRepo.create).toHaveBeenCalledTimes(1);
     expect(serviceRepo.create).not.toHaveBeenCalled();
-    // (the executor imports no CRM repo at all — contacts/activities are trigger-owned)
+    expect(crmContactRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('create_booking creates the contact when none exists, then books against it', async () => {
+    crmContactRepo.findByEmail.mockResolvedValueOnce({ data: null, error: null });
+    crmContactRepo.create.mockResolvedValueOnce({ data: { id: 'c2' }, error: null });
+    await run('create_booking', {
+      service_id: 's1', client_first_name: 'Ada', client_email: 'ada@x.com',
+      start_time: '2026-08-10T10:00:00Z', end_time: '2026-08-10T10:30:00Z',
+    });
+    expect(crmContactRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'u1', email: 'ada@x.com', first_name: 'Ada' })
+    );
+    expect(bookingRepo.create).toHaveBeenCalledWith(expect.objectContaining({ contact_id: 'c2' }));
+  });
+
+  it('create_booking honours an explicit contact_id without a lookup', async () => {
+    await run('create_booking', {
+      service_id: 's1', contact_id: 'c9', client_first_name: 'Ada', client_email: 'ada@x.com',
+      start_time: '2026-08-10T10:00:00Z', end_time: '2026-08-10T10:30:00Z',
+    });
+    expect(crmContactRepo.findByEmail).not.toHaveBeenCalled();
+    expect(bookingRepo.create).toHaveBeenCalledWith(expect.objectContaining({ contact_id: 'c9' }));
   });
 });
 

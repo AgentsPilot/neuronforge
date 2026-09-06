@@ -8,6 +8,10 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, X, Loader2, ImageIcon, AlertCircle, Check } from 'lucide-react';
+import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'MediaUploader' });
 
 interface MediaUploaderProps {
   value?: string;
@@ -46,8 +50,11 @@ export function MediaUploader({
   const [urlInput, setUrlInput] = useState('');
   const [imageLoadError, setImageLoadError] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { t } = useLanguage();
 
   const maxSizeBytes = maxSizeMB * 1024 * 1024;
+  // `undefined` takes the default prompt; `''` deliberately suppresses it.
+  const placeholderText = placeholder ?? t('media.upload.prompt');
 
   // Reset image load error when value changes
   useEffect(() => {
@@ -61,13 +68,13 @@ export function MediaUploader({
     // Validate file type
     const validTypes = accept.split(',').map(t => t.trim());
     if (!validTypes.some(type => file.type === type || type === '*/*')) {
-      setError('Invalid file type. Please upload an image.');
+      setError(t('media.upload.invalid_type'));
       return;
     }
 
     // Validate file size
     if (file.size > maxSizeBytes) {
-      setError(`File too large. Maximum size is ${maxSizeMB}MB.`);
+      setError(t('media.upload.too_large', { size: maxSizeMB }));
       return;
     }
 
@@ -91,7 +98,7 @@ export function MediaUploader({
       const result = await response.json();
 
       if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Upload failed');
+        throw new Error(result.error || t('media.upload.failed'));
       }
 
       if (result.url) {
@@ -101,11 +108,11 @@ export function MediaUploader({
         // Reset success status after 2 seconds
         setTimeout(() => setStatus('idle'), 2000);
       } else {
-        throw new Error('Failed to get public URL');
+        throw new Error(t('media.upload.no_url'));
       }
     } catch (err) {
-      console.error('File upload failed:', err);
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      logger.error({ err }, 'File upload failed');
+      setError(err instanceof Error ? err.message : t('media.upload.failed'));
       setStatus('error');
     }
   }, [accept, bucket, folder, maxSizeBytes, maxSizeMB, onChange]);
@@ -176,7 +183,7 @@ export function MediaUploader({
           <>
             <img
               src={value}
-              alt="Uploaded"
+              alt={t('media.upload.uploaded_alt')}
               className="w-full h-full object-cover"
               onError={() => setImageLoadError(true)}
             />
@@ -188,7 +195,7 @@ export function MediaUploader({
                   handleRemove();
                 }}
                 className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-lg"
-                title="Remove"
+                title={t('media.upload.remove')}
               >
                 <X className="w-4 h-4" />
               </button>
@@ -200,12 +207,12 @@ export function MediaUploader({
             {status === 'uploading' ? (
               <>
                 <Loader2 className="w-8 h-8 animate-spin text-[#4F6EF7]" />
-                <span className="text-sm">Uploading...</span>
+                <span className="text-sm">{t('media.upload.uploading')}</span>
               </>
             ) : status === 'success' ? (
               <>
                 <Check className="w-8 h-8 text-green-500" />
-                <span className="text-sm text-green-500">Uploaded!</span>
+                <span className="text-sm text-green-500">{t('media.upload.uploaded')}</span>
               </>
             ) : (
               <>
@@ -214,10 +221,16 @@ export function MediaUploader({
                 ) : (
                   <ImageIcon className="w-8 h-8" />
                 )}
-                <span className="text-sm text-center px-4">
-                  {placeholder || 'Drag & drop or click to upload'}
-                </span>
-                <span className="text-xs">Max {maxSizeMB}MB</span>
+                {/* An explicitly empty placeholder means "just the icon" — the
+                    caller has a compact box and its own label beside it. Using
+                    `||` here rendered the full prompt plus the size hint inside
+                    a 56px square, which wrapped into a mess. */}
+                {placeholderText && (
+                  <>
+                    <span className="text-sm text-center px-4">{placeholderText}</span>
+                    <span className="text-xs">{t('media.upload.max_size', { size: maxSizeMB })}</span>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -249,7 +262,7 @@ export function MediaUploader({
             type="text"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="Or paste image URL..."
+            placeholder={t('media.upload.url_placeholder')}
             className="flex-1 px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
             disabled={disabled}
             onKeyDown={(e) => {
@@ -265,7 +278,7 @@ export function MediaUploader({
             disabled={!urlInput.trim() || disabled}
             className="px-3 py-2 bg-[#4F6EF7] text-white rounded-lg hover:bg-[#3B5AE5] disabled:opacity-50 disabled:cursor-not-allowed text-sm transition-colors"
           >
-            Add
+            {t('media.upload.add')}
           </button>
         </div>
       )}

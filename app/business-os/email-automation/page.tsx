@@ -1,19 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { BusinessOSHeader } from '@/components/business-os/BusinessOSHeader';
 import { EmailSequenceList } from '@/components/email-automation/EmailSequenceList';
 import { EmailSendStats } from '@/components/email-automation/EmailSendStats';
+import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 
 export default function EmailAutomationPage() {
   const [activeTab, setActiveTab] = useState<'sequences' | 'stats'>('sequences');
 
   return (
     <div className="flex flex-col h-screen bg-[var(--v2-bg)]">
-      <BusinessOSHeader />
 
       <div className="flex-1 overflow-auto">
-        <div className="max-w-7xl mx-auto p-8">
+        <div className={`${PAGE_CONTAINER} py-8`}>
           {/* Header */}
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-[var(--v2-text-primary)]">📧 Automated emails</h1>

@@ -9,22 +9,46 @@ import { notFound } from 'next/navigation';
 import { BookingWidget } from './BookingWidget';
 import { isValidLocale, getDirection, type Locale } from '@/lib/i18n/config';
 
+// Flow step types - matches the wizard
+type ClientFlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+
 interface PageProps {
   params: Promise<{ subdomain: string }>;
-  searchParams: Promise<{ service?: string }>;
+  searchParams: Promise<{
+    service?: string;
+    flow?: string;  // Comma-separated flow steps: scheduling,client_info,payment,intake
+  }>;
+}
+
+// Parse flow query param into array of steps
+function parseFlowParam(flow: string | undefined): ClientFlowStep[] | null {
+  if (!flow) return null;
+
+  const validSteps = ['scheduling', 'client_info', 'booking', 'payment', 'intake', 'confirmation'];
+  const steps = flow.split(',').filter(s => validSteps.includes(s)) as ClientFlowStep[];
+
+  // Ensure confirmation is always at the end
+  if (steps.length > 0 && !steps.includes('confirmation')) {
+    steps.push('confirmation');
+  }
+
+  return steps.length > 0 ? steps : null;
 }
 
 interface BusinessData {
   success: boolean;
   businessName: string;
   timezone: string;
+  processorReady?: boolean;
   services: Array<{
     id: string;
     name: string;
     description: string | null;
-    duration_minutes: number;
+    duration_minutes: number | null;
     price: number | null;
     currency: string;
+    is_scheduled?: boolean;
+    collection?: 'online' | 'invoice' | null;
   }>;
   theme?: {
     colors?: {
@@ -112,11 +136,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function PublicBookingPage({ params, searchParams }: PageProps) {
   const { subdomain } = await params;
-  const { service: initialServiceId } = await searchParams;
+  const { service: initialServiceId, flow: flowParam } = await searchParams;
   const [businessData, websiteData] = await Promise.all([
     getBusinessData(subdomain),
     getWebsiteData(subdomain)
   ]);
+
+  // Parse custom flow from query param
+  const customFlow = parseFlowParam(flowParam);
 
   if (!businessData?.success) {
     notFound();
@@ -137,17 +164,36 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
       <link rel="stylesheet" href={heeboFontLink} />
 
       {/* Global styles from theme */}
-      <style>
-        {`
-          :root {
-            --booking-primary: ${primaryColor};
-            --booking-primary-hover: ${primaryColor}dd;
-          }
-          body {
-            font-family: 'Heebo', sans-serif;
-          }
-        `}
-      </style>
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            :root {
+              --booking-primary: ${primaryColor};
+              --booking-primary-hover: ${primaryColor}dd;
+            }
+            body {
+              font-family: 'Heebo', sans-serif;
+            }
+            /* Phone input styles */
+            .phone-input-booking .PhoneInputInput {
+              width: 100%;
+              padding: 0.625rem 1rem;
+              border: 1px solid #e5e7eb;
+              border-radius: 0.5rem;
+              font-size: 1rem;
+              outline: none;
+              transition: all 0.2s;
+            }
+            .phone-input-booking .PhoneInputInput:focus {
+              border-color: ${primaryColor};
+              box-shadow: 0 0 0 2px ${primaryColor}33;
+            }
+            .phone-input-booking .PhoneInputCountry {
+              display: none;
+            }
+          `
+        }}
+      />
 
       <main className="min-h-screen bg-gray-50" dir={isRTL ? 'rtl' : 'ltr'}>
         {/* Header */}
@@ -171,6 +217,8 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
             primaryColor={primaryColor}
             locale={language}
             initialServiceId={initialServiceId}
+            // The journey follows the service now, so no flow is passed.
+            processorReady={businessData.processorReady === true}
           />
         </div>
 

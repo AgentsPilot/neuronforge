@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 
 const logger = createLogger({ module: 'API', service: 'BookingManage' });
 
@@ -33,14 +34,13 @@ export async function GET(
     const { bookingId, email } = decoded;
     requestLogger.info({ bookingId }, 'Fetching booking for self-service');
 
-    // Fetch booking with service details
+    // Fetch booking with service and contact details
+    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')
       .select(`
         id,
-        client_first_name,
-        client_last_name,
-        client_email,
+        contact_id,
         start_time,
         end_time,
         timezone,
@@ -48,6 +48,12 @@ export async function GET(
         payment_status,
         notes,
         user_id,
+        contact:crm_contacts(
+          first_name,
+          last_name,
+          email,
+          phone
+        ),
         service:scheduling_services(
           id,
           service_name,
@@ -58,7 +64,6 @@ export async function GET(
         )
       `)
       .eq('id', bookingId)
-      .eq('client_email', email)
       .single();
 
     if (error || !booking) {
@@ -69,12 +74,30 @@ export async function GET(
       );
     }
 
-    // Fetch business profile for display
-    const { data: profile } = await supabaseServer
-      .from('business_profiles')
-      .select('company_name, logo_url, primary_color, website_url')
-      .eq('user_id', booking.user_id)
-      .single();
+    // Get contact data from the JOIN
+    const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
+    const contactEmail = contact?.email || '';
+
+    // Verify the email matches the token's email (security check)
+    if (contactEmail.toLowerCase() !== email.toLowerCase()) {
+      requestLogger.warn({ bookingId, tokenEmail: email, contactEmail }, 'Email mismatch');
+      return NextResponse.json(
+        { success: false, error: 'Booking not found' },
+        { status: 404 }
+      );
+    }
+
+    /*
+     * The business's real identity, from the one public resolver.
+     *
+     * This used to be a direct profile select whose result was flattened into
+     * `primaryColor: '#4F46E5'` with a comment explaining that the column did
+     * not exist. It was half right — there is no `primary_color` column — but
+     * the colour was never missing: it lives in `theme`, the same JSONB the
+     * confirmation email that carried this very link already reads. So a client
+     * got a correctly branded email and then landed on a platform-indigo page.
+     */
+    const brand = await resolvePublicBranding({ by: 'userId', userId: booking.user_id });
 
     // Calculate if booking can be rescheduled/cancelled
     const startTime = new Date(booking.start_time);
@@ -86,8 +109,8 @@ export async function GET(
       success: true,
       booking: {
         id: booking.id,
-        clientName: [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' '),
-        clientEmail: booking.client_email,
+        clientName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),
+        clientEmail: contactEmail,
         startTime: booking.start_time,
         endTime: booking.end_time,
         timezone: booking.timezone,
@@ -99,11 +122,22 @@ export async function GET(
         canCancel: canModify,
         hoursUntilBooking: Math.max(0, Math.floor(hoursUntilBooking))
       },
-      business: profile ? {
-        name: profile.company_name,
-        logoUrl: profile.logo_url,
-        primaryColor: profile.primary_color,
-        websiteUrl: profile.website_url
+      business: brand ? {
+        name: brand.businessName,
+        logoUrl: brand.logoUrl,
+        /** Complete — pages read colours from here rather than guessing. */
+        theme: brand.theme,
+        /**
+         * Retained so the pages that still read a flat colour keep working
+         * while they are migrated onto `theme`. Deprecated: remove once none
+         * of the `/book/manage/*` pages reference it.
+         */
+        primaryColor: brand.theme.colors.primary,
+        websiteUrl: brand.info.websiteUrl,
+        language: brand.locale,
+        dir: brand.dir,
+        userCode: brand.userCode,
+        info: brand.info
       } : null
     });
 

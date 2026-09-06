@@ -162,7 +162,7 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         entityType: 'business_profile',
         entityId: data.id,
-        metadata: { availability: validated.availability },
+        details: { availability: validated.availability },
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));

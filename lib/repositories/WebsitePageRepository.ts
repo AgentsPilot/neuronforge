@@ -37,6 +37,15 @@ export interface WebsitePage {
   favicon_url: string | null;
   og_image_url: string | null;
   website_language: WebsiteLanguage;
+  /**
+   * When AI last wrote this page's content.
+   *
+   * NULL means never — the page holds the static scaffold that page creation
+   * installs, and writing it is safe. Non-null means regenerating would delete
+   * every block and replace copy the business may have edited since, so it has
+   * to be asked for rather than done on the way past.
+   */
+  content_generated_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,6 +97,15 @@ export interface WebsitePageUpdate {
   favicon_url?: string | null;
   og_image_url?: string | null;
   website_language?: WebsiteLanguage;
+  /**
+   * The template this page is styled from.
+   *
+   * Declared on `WebsitePageInsert` but not here, while `apply-template` wrote
+   * it on every call — the one update that route exists to make. It reached the
+   * database because the column is real and PostgREST does not check
+   * TypeScript, but every caller was told the field did not exist.
+   */
+  template_id?: string | null;
 }
 
 export interface RepositoryResult<T> {
@@ -486,6 +504,41 @@ export class WebsitePageRepository {
       return { data: null, error: error as Error };
     }
   }
+
+  /**
+   * The public hostnames this user's pages are served on.
+   *
+   * Used to detect whether a connected analytics property already measures a
+   * page AgentPilot tracks itself — which decides whether the two collectors'
+   * visit counts are duplicates or genuinely additive.
+   */
+  async getHostedHosts(userId: string): Promise<RepositoryResult<string[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_pages')
+        .select('subdomain, custom_domain')
+        .eq('user_id', userId)
+        .not('subdomain', 'is', null);
+
+      if (error) throw error;
+
+      const baseHost = process.env.NEXT_PUBLIC_WEBSITE_BASE_HOST || 'agentpilot.io';
+      const hosts = new Set<string>();
+
+      for (const page of (data as any[]) || []) {
+        // A custom domain is what analytics would actually report, so it counts
+        // as the same surface as the subdomain it replaces.
+        if (page.custom_domain) hosts.add(String(page.custom_domain).toLowerCase());
+        if (page.subdomain) hosts.add(`${String(page.subdomain).toLowerCase()}.${baseHost}`);
+      }
+
+      return { data: [...hosts], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to resolve hosted hosts');
+      return { data: null, error: error as Error };
+    }
+  }
+
 }
 
 // Singleton export

@@ -45,15 +45,32 @@ export async function POST(
       // Body is optional, continue without reason
     }
 
-    // Fetch booking
+    // Fetch booking with contact email via JOIN
+    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')
-      .select('id, user_id, client_email, start_time, status')
+      .select(`
+        id,
+        user_id,
+        contact_id,
+        start_time,
+        status,
+        contact:crm_contacts(email)
+      `)
       .eq('id', bookingId)
-      .eq('client_email', email)
       .single();
 
     if (error || !booking) {
+      return NextResponse.json(
+        { success: false, error: 'Booking not found' },
+        { status: 404 }
+      );
+    }
+
+    // Get contact email from JOIN and verify it matches the token
+    const contact = Array.isArray(booking.contact) ? booking.contact[0] : booking.contact;
+    const contactEmail = contact?.email || '';
+    if (contactEmail.toLowerCase() !== email.toLowerCase()) {
       return NextResponse.json(
         { success: false, error: 'Booking not found' },
         { status: 404 }

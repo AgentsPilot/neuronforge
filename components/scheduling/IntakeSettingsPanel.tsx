@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { ClipboardList, Check, Loader2, Eye, ChevronRight } from 'lucide-react';
+import { ClipboardList, Check, Loader2, Eye, ChevronRight , Mail } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
 
@@ -46,9 +46,10 @@ interface IntakeTemplate {
 interface IntakeSettings {
   is_enabled: boolean;
   template_id: string | null;
-  template: IntakeTemplate | null;
-  collect_during_booking: boolean;
+  /** Whether the client is emailed the form after booking. */
   send_after_booking: boolean;
+  template: IntakeTemplate | null;
+
 }
 
 interface IntakeSettingsPanelProps {
@@ -62,13 +63,17 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  /** Why the last save did not stick. Null when it did. */
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<IntakeTemplate[]>([]);
   const [settings, setSettings] = useState<IntakeSettings>({
     is_enabled: false,
     template_id: null,
+    // On by default: a business that turns intake on has said it wants the
+    // information, so the switch starts where that intent points.
+    send_after_booking: true,
     template: null,
-    collect_during_booking: true,
-    send_after_booking: false
+
   });
   const [previewTemplate, setPreviewTemplate] = useState<IntakeTemplate | null>(null);
 
@@ -95,7 +100,30 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
       }
 
       if (settingsData.success && settingsData.settings) {
-        setSettings(settingsData.settings);
+        const loaded = settingsData.settings as IntakeSettings;
+        const available = (templatesData.templates || []) as IntakeTemplate[];
+
+        /*
+         * Choose a form when none is chosen.
+         *
+         * Nothing did, so a business could switch intake ON, save, and store
+         * `template_id: null` — an enabled setting with no form behind it.
+         * Every reader downstream requires a template, so intake silently did
+         * nothing: no step in the booking flow, no email, and no indication why.
+         *
+         * The template marked `is_default` for the business's vertical is the
+         * one the picker already highlights, so defaulting to it changes
+         * nothing a considered choice would have changed.
+         */
+        setSettings(
+          loaded.template_id
+            ? loaded
+            : {
+                ...loaded,
+                template_id: available.find(t => t.is_default)?.id ?? available[0]?.id ?? null,
+                template: available.find(t => t.is_default) ?? available[0] ?? null,
+              }
+        );
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch intake data');
@@ -115,20 +143,28 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
         body: JSON.stringify({
           template_id: settings.template_id,
           is_enabled: settings.is_enabled,
-          collect_during_booking: settings.collect_during_booking,
-          send_after_booking: settings.send_after_booking
+          send_after_booking: settings.send_after_booking,
+
         })
       });
 
       const data = await response.json();
 
       if (data.success) {
+        setSaveError(null);
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
         onSaved?.();
+      } else {
+        // A refused save used to do nothing at all: no tick, no message, and a
+        // panel still showing what you typed. Indistinguishable from success
+        // until you reopened it.
+        logger.warn({ error: data.error }, 'Intake settings were not saved');
+        setSaveError(data.error || 'Could not save these settings');
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to save intake settings');
+      setSaveError('Could not save these settings');
     } finally {
       setSaving(false);
     }
@@ -140,6 +176,13 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
       ...prev,
       template_id: templateId,
       template
+    }));
+  };
+
+  const handleToggleSendAfter = () => {
+    setSettings(prev => ({
+      ...prev,
+      send_after_booking: !prev.send_after_booking
     }));
   };
 
@@ -327,59 +370,74 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
             )}
           </div>
 
-          {/* Collection Options */}
-          <div className="space-y-3">
-            <h4 className="text-sm font-medium text-[var(--v2-text-secondary)]">
-              {t('config.intake.when_collect') || 'When to collect'}
-            </h4>
+          {/* Emailing the form is a CHOICE, not an assumption.
 
-            <div
-              className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-4 space-y-4"
-              style={{ borderRadius: 'var(--v2-radius-card)' }}
-            >
-              {/* During booking */}
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.collect_during_booking}
-                  onChange={() => setSettings(prev => ({ ...prev, collect_during_booking: !prev.collect_during_booking }))}
-                  className="w-4 h-4 mt-0.5 rounded border-[var(--v2-border)] accent-[#D14E97]"
-                />
+              It replaces two checkboxes — "during booking" and "send link after
+              booking" — which made four states of which only two did anything,
+              and which the code read the wrong one of, so a business could save
+              a configuration that looked right and sent nothing.
+
+              One switch now, defaulting ON, because a business that turns
+              intake on has said it wants the information — but it can be turned
+              off, and when it is the panel says what that means rather than
+              leaving the setting silently inert. */}
+          <div
+            className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-4"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <Mail className="w-4 h-4 mt-0.5 flex-shrink-0 text-[var(--v2-text-muted)]" />
                 <div>
                   <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                    {t('config.intake.during_booking') || 'During booking (before confirmation)'}
+                    {t('config.intake.emailed_after') || 'Email the form after every booking'}
                   </p>
                   <p className="text-xs text-[var(--v2-text-muted)] mt-0.5">
-                    {t('config.intake.during_booking_desc') || 'Clients fill out the form as part of the booking process'}
+                    {t('config.intake.emailed_after_desc') ||
+                      'Clients get a link once their booking is confirmed. Nothing is asked of them during booking.'}
                   </p>
                 </div>
-              </label>
+              </div>
 
-              {/* After booking */}
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.send_after_booking}
-                  onChange={() => setSettings(prev => ({ ...prev, send_after_booking: !prev.send_after_booking }))}
-                  className="w-4 h-4 mt-0.5 rounded border-[var(--v2-border)] accent-[#D14E97]"
+              <button
+                onClick={handleToggleSendAfter}
+                className={`relative w-12 h-6 rounded-full transition-colors flex-shrink-0 ${
+                  settings.send_after_booking ? '' : 'bg-[var(--v2-border)]'
+                }`}
+                style={{ backgroundColor: settings.send_after_booking ? CONFIG_COLOR : undefined }}
+                aria-pressed={settings.send_after_booking}
+              >
+                <div
+                  className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
+                    settings.send_after_booking
+                      ? (isRTL ? 'left-1' : 'right-1')
+                      : (isRTL ? 'right-1' : 'left-1')
+                  }`}
                 />
-                <div>
-                  <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                    {t('config.intake.after_booking') || 'Send link after booking (via email)'}
-                  </p>
-                  <p className="text-xs text-[var(--v2-text-muted)] mt-0.5">
-                    {t('config.intake.after_booking_desc') || 'Send an email with a link to the intake form after booking confirmation'}
-                  </p>
-                </div>
-              </label>
+              </button>
             </div>
+
+            {/* Off, with intake on, means nothing reaches the client. Said out
+                loud — that combination is exactly what looked configured and
+                did nothing. */}
+            {!settings.send_after_booking && (
+              <p className="text-xs text-amber-600 mt-3 pt-3 border-t border-[var(--v2-border)]">
+                {t('config.intake.nothing_sent') ||
+                  'With this off, clients are never sent the form. You can still fill it in yourself from a booking.'}
+              </p>
+            )}
           </div>
         </>
       )}
 
       {/* Save Button */}
       <div className="flex items-center justify-end gap-3 pt-4 border-t border-[var(--v2-border)]">
-        {saved && (
+        {saveError && (
+          <span className="text-sm font-medium text-red-600" role="alert">
+            {saveError}
+          </span>
+        )}
+        {saved && !saveError && (
           <span className="text-sm font-medium flex items-center gap-1.5" style={{ color: CONFIG_COLOR }}>
             <Check className="h-4 w-4" />
             {t('config.intake.saved') || 'Saved'}
