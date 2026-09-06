@@ -86,7 +86,14 @@ export function MoneyRow({
     const base = t(`payments.money_status.${item.status}`) || item.status;
 
     if (item.method === 'plan' && item.plan) {
-      return `${item.plan.periodsPaid}/${item.plan.installmentCount} ${t('payments.paid_lower') || 'paid'}`;
+      const progress = `${item.plan.periodsPaid}/${item.plan.installmentCount} ${t('payments.paid_lower') || 'paid'}`;
+
+      // A stopped plan still read "2/12 paid", which describes a plan that is
+      // going to reach twelve. The status is only shown when it is not the
+      // ordinary one — a running plan needs no label.
+      return item.plan.status && item.plan.status !== 'active'
+        ? `${progress} · ${t(`payments.plan.status.${item.plan.status}`)}`
+        : progress;
     }
     if (item.status === 'overdue' && lead?.dueDate) {
       // How late, not when it was due. "overdue since 3 Oct" makes the reader do
@@ -163,6 +170,22 @@ export function MoneyRow({
       {/* The whole row is the target. There is no chevron to aim at any more —
           the row has one meaning now, and the drawer holds what expanding used
           to show. */}
+      {/* A GRID with fixed tracks, not a flex row.
+
+          As flex, the last two columns were `shrink-0` — sized by their own
+          content — so "זוכה" and "1/3 שולמו · נעצרה" produced different widths,
+          and the two `flex-1` columns then divided whatever was left over.
+          Every row ended up with its columns in a different place, which is the
+          one thing a list of rows must not do: the whole reason to put money in
+          a column is that it can be read DOWN without reading across.
+
+          The tracks are declared once, so a long status or a long title changes
+          what that cell shows and never where any other cell sits.
+
+          Two templates, because the client column is dropped on a narrow screen
+          — the drawer names them, and losing WHAT or HOW MUCH would be worse.
+          `hidden` takes it out of the grid entirely, so the four-track template
+          matches. */}
       <div
         role={onSelect ? 'button' : undefined}
         tabIndex={onSelect ? 0 : undefined}
@@ -175,24 +198,20 @@ export function MoneyRow({
             onSelect();
           }
         }}
-        className={`flex items-stretch p-3 ${
+        className={`grid grid-cols-[1.25rem_minmax(0,1fr)_7.5rem_6.5rem] items-stretch gap-0 p-3 sm:grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1fr)_9.5rem_7.5rem] ${
           onSelect ? 'cursor-pointer hover:bg-[var(--v2-surface-hover)]' : ''
         }`}
       >
         <MethodIcon className="h-4 w-4 shrink-0 self-center text-[var(--v2-text-muted)]" />
 
-        {/* Four columns, divided, each holding one KIND of fact.
-
-            Grouped this way the row can be read down a column — every client in
-            one place, every state in another — instead of parsed left to right
-            one row at a time. The dividers are `border-s`, a logical property,
-            so they land on the correct side in Hebrew without a second rule.
-
-            The client column is the one that hides on a narrow screen: the
-            drawer names them, and losing WHAT and HOW MUCH would be worse. */}
+        {/* Each cell holds one KIND of fact — what, who, where it stands, how
+            much — so the row reads down a column instead of being parsed left
+            to right one row at a time. The dividers are `border-s`, a logical
+            property, so they land on the correct side in Hebrew without a
+            second rule. */}
 
         {/* WHAT was sold, and when. */}
-        <div className="min-w-0 flex-1 px-3">
+        <div className="min-w-0 px-3">
           <div className="truncate text-[13px] font-medium text-[var(--v2-text-primary)]">
             {item.title}
           </div>
@@ -202,7 +221,7 @@ export function MoneyRow({
         </div>
 
         {/* WHO it is for, and which paper it is. */}
-        <div className="hidden min-w-0 flex-1 border-s border-[var(--v2-border)] px-3 sm:block">
+        <div className="hidden min-w-0 border-s border-[var(--v2-border)] px-3 sm:block">
           <div className="truncate text-[12px] text-[var(--v2-text-primary)]">
             {item.contactName ?? '—'}
           </div>
@@ -214,13 +233,16 @@ export function MoneyRow({
         </div>
 
         {/* WHERE IT STANDS. */}
-        <div className="shrink-0 border-s border-[var(--v2-border)] px-3">
+        <div className="min-w-0 border-s border-[var(--v2-border)] px-3">
           <div className={`flex items-center gap-1.5 text-[11px] ${style.text}`}>
             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${style.dot}`} />
-            <bdi className="whitespace-nowrap">{statusLabel}</bdi>
+            {/* Truncates rather than widening its column. A long state — "1/3
+                שולמו · נעצרה" — used to push every figure on that row out of
+                line with the rows above and below it. */}
+            <bdi className="truncate">{statusLabel}</bdi>
           </div>
           {stateCounts.length > 0 && (
-            <div className="mt-0.5 whitespace-nowrap text-[11px] text-[var(--v2-text-muted)]">
+            <div className="mt-0.5 truncate text-[11px] text-[var(--v2-text-muted)]">
               {stateCounts.join(' · ')}
             </div>
           )}
@@ -228,7 +250,7 @@ export function MoneyRow({
 
         {/* HOW MUCH. Last, right-aligned, so the figures form a column of their
             own that can be scanned down without reading anything else. */}
-        <div className="shrink-0 border-s border-[var(--v2-border)] ps-3 text-end">
+        <div className="min-w-0 border-s border-[var(--v2-border)] ps-3 text-end">
           <div className="whitespace-nowrap text-[13px] font-semibold tabular-nums text-[var(--v2-text-primary)]">
             {formatCurrency(item.amount, item.currency)}
           </div>

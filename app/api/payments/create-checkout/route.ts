@@ -202,10 +202,25 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    // Build checkout URLs
+    /*
+     * Where Stripe sends the customer afterwards.
+     *
+     * The success URL pointed at `/site/{subdomain}/confirmation`, a route that
+     * does not exist — so every customer who paid and was not given an explicit
+     * `success_url` landed on a 404 immediately after their card was charged,
+     * which is the worst possible moment to lose them.
+     *
+     * This route takes a subdomain and an optional booking, never an invoice,
+     * so there is no branded per-customer page to return to — the booking's own
+     * management page is addressed by a signed token that is not available
+     * here. The generic confirmation screens are therefore the honest
+     * destination, and they at least tell the customer their payment went
+     * through. Callers that DO know the invoice keep passing `success_url`.
+     */
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.agentpilot.io';
-    const successUrl = data.success_url || `${baseUrl}/site/${data.subdomain}/confirmation?session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl = data.cancel_url || `${baseUrl}/site/${data.subdomain}?payment=cancelled`;
+    const successUrl =
+      data.success_url || `${baseUrl}/payments/success?session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = data.cancel_url || `${baseUrl}/payments/cancelled`;
 
     // Create Stripe checkout session
     const checkoutAmount = bookingServiceInfo?.price || data.amount;

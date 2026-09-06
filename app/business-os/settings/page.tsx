@@ -30,8 +30,81 @@ import {
   Sparkles,
   ExternalLink,
   Settings,
+  Mail,
+  MapPin,
 } from 'lucide-react';
+import PhoneInput, { getCountryCallingCode, parsePhoneNumber } from 'react-phone-number-input';
+import type { Country } from 'react-phone-number-input';
+import phoneCountryLabels from 'react-phone-number-input/locale/en';
+import 'react-phone-number-input/style.css';
+import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
+import { toE164 } from '@/lib/branding/phone';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+
+/**
+ * Which country to assume when a stored number has no `+`.
+ *
+ * Numbers saved before this field existed are bare local strings, and showing
+ * one in an E.164 field means guessing. The business's own working language is
+ * the least-wrong guess — an Israeli clinic writing Hebrew is not storing a US
+ * number — and the owner can correct it with the selector, which is why the
+ * selector is there.
+ */
+const COUNTRY_BY_LANGUAGE: Record<string, Country> = { he: 'IL', es: 'ES', en: 'US' };
+
+/**
+ * What the business said it does, wherever onboarding actually left it.
+ *
+ * The answer to "מה העסק שלך עושה" is meant to land in
+ * `business_profiles.description`, but the build step only writes that column
+ * when it receives the value in that exact field. For accounts whose answer
+ * arrived inside the configuration blob it is in `extracted_data` instead —
+ * and the onboarding conversation names it `businessDescription`, the build
+ * schema names it `description`, and the website analyser names it
+ * `business_description`. Some rows nest the whole thing under `metadata`.
+ *
+ * So the column is checked first and the blob is then searched by every name
+ * the value is known to travel under. A business that has answered the question
+ * sees its answer; nothing here writes, so opening settings cannot rewrite it.
+ */
+function readBusinessDescription(profile: {
+  description?: string | null;
+  extracted_data?: unknown;
+  website_analysis?: unknown;
+}): string {
+  if (profile.description?.trim()) return profile.description.trim();
+
+  const KEYS = ['description', 'businessDescription', 'business_description'] as const;
+
+  const pick = (source: unknown): string | null => {
+    if (!source || typeof source !== 'object') return null;
+    const record = source as Record<string, unknown>;
+
+    for (const key of KEYS) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+
+    // One level of nesting, which is where `metadata`-wrapped rows keep it.
+    for (const nested of ['metadata', 'configuration', 'profile']) {
+      const found = pick(record[nested]);
+      if (found) return found;
+    }
+
+    return null;
+  };
+
+  return pick(profile.extracted_data) || pick(profile.website_analysis) || '';
+}
+
+/** The calling code for a country, or the US as a last resort. */
+function getCallingCode(country: Country): string {
+  try {
+    return getCountryCallingCode(country);
+  } catch {
+    return '1';
+  }
+}
 import AvatarUpload from '@/components/ui/AvatarUpload';
 import { MediaUploader } from '@/components/website/MediaUploader';
 import { InvoiceSettingsSection } from '@/components/business-os/settings/InvoiceSettingsSection';
@@ -109,6 +182,18 @@ function BusinessOSSettingsContent() {
      */
     description: '',
     website_url: '',
+    /**
+     * How a client reaches this business: the number they call, the address
+     * they email, and where they come.
+     *
+     * These are the only fields on this screen a CUSTOMER of the business ever
+     * sees — they appear on the public booking, intake, contact and invoice
+     * pages. They live on `business_profiles` rather than in the website
+     * editor, so a business with no website can still publish them.
+     */
+    phone: '',
+    email: '',
+    address: '',
     clients_per_week: 0,
     revenue_tier: '',
   });
@@ -139,6 +224,11 @@ function BusinessOSSettingsContent() {
   const [editingProfile, setEditingProfile] = useState(false);
   /** False until the business profile row has been read — see saveBusiness. */
   const [businessLoaded, setBusinessLoaded] = useState(false);
+
+  /** The country the public phone field composes against. */
+  const [phoneCountry, setPhoneCountry] = useState<Country>(
+    COUNTRY_BY_LANGUAGE[language] || 'US'
+  );
 
   // Expandable sections
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
@@ -218,7 +308,7 @@ function BusinessOSSettingsContent() {
       const [profileRes, prefsRes, businessRes, orgRes, brandingRes] = await Promise.all([
         supabase.from('profiles').select('full_name, avatar_url, job_title').eq('id', user.id).single(),
         supabase.from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle(),
-        supabase.from('business_profiles').select('vertical, sub_vertical, company_name, description, website_url, clients_per_week, revenue_tier').eq('user_id', user.id).maybeSingle(),
+        supabase.from('business_profiles').select('vertical, sub_vertical, company_name, description, website_url, clients_per_week, revenue_tier, phone, email, address, extracted_data, website_analysis').eq('user_id', user.id).maybeSingle(),
         supabase.from('organizations').select('id, name, settings').eq('owner_user_id', user.id).maybeSingle(),
         // Logo columns arrive with the business-logo migration. Asked for
         // separately because PostgREST rejects an entire select when one named
@@ -247,11 +337,25 @@ function BusinessOSSettingsContent() {
           vertical: businessRes.data.vertical || '',
           sub_vertical: businessRes.data.sub_vertical || '',
           company_name: businessRes.data.company_name || '',
-          description: businessRes.data.description || '',
+          description: readBusinessDescription(businessRes.data),
           website_url: businessRes.data.website_url || '',
+          phone: businessRes.data.phone || '',
+          email: businessRes.data.email || '',
+          address: businessRes.data.address || '',
           clients_per_week: businessRes.data.clients_per_week || 0,
           revenue_tier: businessRes.data.revenue_tier || '',
         });
+
+        /*
+         * Show the flag that matches the number already saved.
+         *
+         * Without this the selector always opened on the language default, so
+         * an owner with a saved `+44` number saw an Israeli flag beside it and
+         * would reasonably assume the number was wrong.
+         */
+        const savedPhone = businessRes.data.phone || '';
+        const parsedPhone = savedPhone ? parsePhoneNumber(savedPhone) : undefined;
+        if (parsedPhone?.country) setPhoneCountry(parsedPhone.country);
       }
 
       if (brandingRes.data) {
@@ -516,6 +620,31 @@ function BusinessOSSettingsContent() {
         vertical: businessProfile.vertical,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
+
+      /*
+       * The public contact details go through the API, not the upsert above.
+       *
+       * They are read by the public pages with the service role on behalf of
+       * unauthenticated clients, so they are written through the repository
+       * layer where the validation and the audit entry live — a phone number
+       * that reaches the database unvalidated is one the WhatsApp link cannot
+       * use. (The rest of this save still writes directly; that predates this
+       * and is flagged rather than widened.)
+       */
+      const contactResponse = await fetch('/api/business-os/business-profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: businessProfile.phone.trim(),
+          email: businessProfile.email.trim(),
+          address: businessProfile.address.trim(),
+        }),
+      });
+
+      if (!contactResponse.ok) {
+        const detail = await contactResponse.json().catch(() => null);
+        throw new Error(detail?.error || 'Could not save the contact details');
+      }
 
       // Update organization if exists
       if (orgId) {
@@ -918,6 +1047,117 @@ function BusinessOSSettingsContent() {
                 />
                 <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
                   {t('settings.business.description_hint')}
+                </p>
+              </div>
+
+              {/*
+                What a client uses to reach this business.
+
+                The only fields on this screen a CUSTOMER ever sees: they appear
+                on the booking-management page, the intake confirmation, the
+                smart-link pages and the invoice. Grouped and labelled as public
+                so it is clear these are published, not internal record-keeping.
+              */}
+              <div className="pt-2">
+                <p className="text-xs font-semibold text-[var(--v2-text-secondary)] mb-2">
+                  {t('settings.business.public_contact')}
+                </p>
+
+                <div className="space-y-3">
+                  {/* Phone: country selector + number.
+                      The country code is not decoration — a number stored
+                      without one cannot become a WhatsApp link, and a plain
+                      text field is how businesses end up saving `054-1234567`
+                      and wondering why the WhatsApp row never appears.
+                      `PhoneInput` keeps the value in E.164. */}
+                  <div>
+                    <label
+                      htmlFor="business-phone"
+                      className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1"
+                    >
+                      {t('settings.business.phone')}
+                    </label>
+                    {/* A phone number is Latin digits and reads left-to-right
+                        even on a Hebrew form. */}
+                    <div className="flex gap-2" dir="ltr">
+                      <SearchableCountrySelect
+                        value={phoneCountry}
+                        onChange={setPhoneCountry}
+                        labels={phoneCountryLabels}
+                      />
+                      <PhoneInput
+                        id="business-phone"
+                        international
+                        countryCallingCodeEditable={false}
+                        country={phoneCountry}
+                        value={toE164(businessProfile.phone, getCallingCode(phoneCountry))}
+                        onChange={(value) =>
+                          setBusinessProfile(b => ({ ...b, phone: value || '' }))
+                        }
+                        className="phone-input-settings flex-1"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="business-email"
+                      className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1"
+                    >
+                      {t('settings.business.public_email')}
+                    </label>
+                    <div className="relative">
+                      <Mail className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
+                      <input
+                        id="business-email"
+                        type="email"
+                        dir="ltr"
+                        value={businessProfile.email}
+                        onChange={(e) => setBusinessProfile(b => ({ ...b, email: e.target.value }))}
+                        placeholder="hello@yourbusiness.co.il"
+                        className={`w-full ${isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'} py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="business-address"
+                      className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1"
+                    >
+                      {t('settings.business.public_address')}
+                    </label>
+                    <div className="relative">
+                      <MapPin className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`} />
+                      <input
+                        id="business-address"
+                        type="text"
+                        /*
+                         * Follows what is typed, rather than the interface.
+                         *
+                         * An address is the one field here that can legitimately
+                         * be in either script — a Hebrew business writes
+                         * "רחוב דיזנגוף 50, תל אביב" but may equally write an
+                         * English address for foreign clients. Pinning it to the
+                         * interface direction mis-renders whichever case does
+                         * not match; `auto` picks the direction from the first
+                         * strong character, so both read correctly and the field
+                         * flips as the owner types.
+                         */
+                        dir="auto"
+                        value={businessProfile.address}
+                        onChange={(e) => setBusinessProfile(b => ({ ...b, address: e.target.value }))}
+                        placeholder={t('settings.business.public_address_placeholder')}
+                        className={`w-full ${isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'} py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]`}
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-[var(--v2-text-muted)] mt-2 leading-snug">
+                  {t('settings.business.public_contact_hint')}
                 </p>
               </div>
 
@@ -1327,6 +1567,46 @@ function BusinessOSSettingsContent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/*
+        `react-phone-number-input` ships its own class names and its stylesheet
+        is imported at the top of this file; without these overrides the field
+        renders as a bare browser input beside the design-system controls around
+        it.
+
+        The library's own country dropdown is hidden — `SearchableCountrySelect`
+        is the picker this product uses, and two country selectors on one field
+        is worse than either alone.
+      */}
+      <style jsx global>{`
+        .phone-input-settings {
+          display: flex;
+        }
+
+        .phone-input-settings .PhoneInputCountry {
+          display: none;
+        }
+
+        .phone-input-settings .PhoneInputInput {
+          flex: 1;
+          background: var(--v2-bg);
+          border: 1px solid var(--v2-border);
+          border-radius: var(--v2-radius-button);
+          padding: 0.625rem 0.75rem;
+          color: var(--v2-text-primary);
+          font-size: 0.875rem;
+          outline: none;
+          transition: all 0.2s ease;
+        }
+
+        .phone-input-settings .PhoneInputInput:focus {
+          border-color: var(--v2-primary);
+        }
+
+        .phone-input-settings .PhoneInputInput::placeholder {
+          color: var(--v2-text-muted);
+        }
+      `}</style>
     </div>
   );
 }

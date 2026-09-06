@@ -20,11 +20,11 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, Search, Download, Plus, Receipt } from 'lucide-react';
+import { Search, Download, Plus, Receipt, FileSpreadsheet } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { MoneyList } from '@/components/payments/MoneyList';
 import { InvoiceModal } from '@/components/payments/InvoiceModal';
+import { LedgerExportModal } from '@/components/payments/LedgerExportModal';
 import { REPORTS_COLORS } from '@/lib/business-os/reports/constants';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 
@@ -36,13 +36,13 @@ interface PaymentsViewProps {
 }
 
 export function PaymentsView({ highlightId = null, openCreate = false }: PaymentsViewProps) {
-  const router = useRouter();
   const { t } = useLanguage();
 
   const [searchQuery, setSearchQuery] = useState('');
   /** The money list's own actions, so Export can sit in the page header. */
   const [moneyApi, setMoneyApi] = useState<{ exportCsv: () => void } | null>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(openCreate);
+  const [showLedgerExport, setShowLedgerExport] = useState(false);
   const [invoiceListKey, setInvoiceListKey] = useState(0);
 
   // `?action=create` can arrive after mount — the chat pushes this route with
@@ -68,25 +68,15 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
             </div>
             <div className="min-w-0">
               <h1 className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] truncate">
-                {t('nav.payments') || 'Payments'}
+                {t('nav.payments') || 'Orders'}
               </h1>
               <p className="text-xs text-[var(--v2-text-secondary)] hidden sm:block">
-                {t('payments.subtitle') || 'Invoices and the payments that settle them'}
+                {t('payments.subtitle') || 'Every order, and the money that settles it'}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto">
-            {/* Back to Dashboard */}
-            <button
-              onClick={() => router.push('/business-os')}
-              className="p-2 text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] transition-all hover:bg-[var(--v2-border)] flex-shrink-0"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('reports.back_to_dashboard') || 'Back to dashboard'}
-            >
-              <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
-            </button>
-
             {/* Search Input */}
             <div className="relative hidden md:block">
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
@@ -100,6 +90,9 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
               />
             </div>
 
+            {/* Two exports, deliberately, because they answer different
+                questions. This one saves WHAT IS ON SCREEN — the rows loaded,
+                filtered as the user filtered them. It stays exactly as it was. */}
             {moneyApi && (
               <button
                 onClick={() => moneyApi.exportCsv()}
@@ -111,6 +104,20 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
                 <span className="hidden sm:inline">{t('payments.bulk.export') || 'Export'}</span>
               </button>
             )}
+
+            {/* And this one builds the accountant's file for a whole period,
+                server-side. Reachable from here as well as from Reports, so
+                there is one answer to "how do I get this to my accountant"
+                wherever the question is asked. */}
+            <button
+              onClick={() => setShowLedgerExport(true)}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              title={t('ledger.export_title')}
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden lg:inline">{t('ledger.export_title')}</span>
+            </button>
 
             <button
               onClick={() => setShowInvoiceModal(true)}
@@ -150,6 +157,11 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
           />
         </div>
       </div>
+
+      <LedgerExportModal
+        isOpen={showLedgerExport}
+        onClose={() => setShowLedgerExport(false)}
+      />
 
       {/* Invoice Modal */}
       <InvoiceModal

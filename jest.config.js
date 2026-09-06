@@ -9,6 +9,9 @@ const config = {
   ],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
+    // Next resolves `server-only` internally, so it is not in node_modules and
+    // Jest cannot find it. See __mocks__/server-only.js.
+    '^server-only$': '<rootDir>/__mocks__/server-only.js',
   },
   collectCoverageFrom: [
     'lib/**/*.{ts,tsx}',

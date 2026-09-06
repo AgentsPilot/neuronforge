@@ -105,11 +105,48 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           // synonym table, no translation, and nothing hardcoded per vertical.
           labelColumn: 'stage_label',
           orderColumn: 'position',
-          // `semanticColumn: 'stage_type'` would also work and the compiler
-          // supports it, but that column does not exist on this database — the
-          // migration adding it is untracked and unapplied. Declaring it would
-          // make every stage query fail at execution time. Label + position
-          // makes it unnecessary anyway.
+          /*
+           * What each of this business's stages MEANS.
+           *
+           * This was left off with a note saying the column did not exist and
+           * declaring it would fail every stage query. That is no longer true:
+           * `stage_type` is present on `crm_pipeline_stages` and carries
+           * `lead | prospect | client | past_client`, and the compiler has
+           * supported `semanticColumn` all along.
+           *
+           * It is worth turning on because label and position alone cannot
+           * answer "how many NEW LEADS this week". A lead is not a label — this
+           * account calls its first stage `inquiry`, labelled "פנייה" — and it
+           * is not a position either, since pipelines differ in length. It is a
+           * KIND, and the business has already classified its own stages into
+           * these four. Without this, "leads" has to be guessed from stage keys
+           * per account, which is exactly the per-vertical hardcoding the rest
+           * of this declaration avoids.
+           */
+          semanticColumn: 'stage_type',
+        },
+        /*
+         * The four kinds a stage can be — the stable vocabulary above every
+         * business's own naming.
+         *
+         * These values are CLASSIFIERS, not storage values. Unlike
+         * `invoices.status`, where `unpaid: ['sent','overdue']` names the
+         * statuses directly, a contact's stage is whatever this business called
+         * it: `inquiry` here, labelled "פנייה". The compiler translates each
+         * classifier into that user's own stage keys through `semanticColumn`,
+         * so `{ $semantic: 'lead' }` means the same thing on every account and
+         * matches nothing hardcoded.
+         *
+         * Declared even though the mapping is data-driven because the term has
+         * to be a known word before it can be resolved — an undeclared one is
+         * refused rather than guessed, which is what stops "leads" quietly
+         * matching nobody.
+         */
+        semanticTerms: {
+          lead: ['lead'],
+          prospect: ['prospect'],
+          client: ['client'],
+          past_client: ['past_client'],
         },
       },
       tags: {
@@ -168,6 +205,13 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
     },
 
     relations: {
+      /* What this client has actually paid, as rows rather than a total. */
+      transactions: {
+        target: 'transactions',
+        cardinality: 'many',
+        via: { column: 'contact_id', side: 'remote' },
+        labels: { en: 'payments', he: 'תשלומים', es: 'pagos' },
+      },
       bookings: {
         target: 'bookings',
         cardinality: 'many',
@@ -179,6 +223,18 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         cardinality: 'many',
         via: { column: 'contact_id', side: 'remote' },
         labels: { en: 'invoices', he: 'חשבוניות', es: 'facturas' },
+      },
+      /*
+       * Without this, "who owes me money?" could only ever traverse invoices —
+       * and a client paying a course in three instalments has no invoice at all.
+       * Money owed reaches a contact by two routes now, and both have to be
+       * walkable from here.
+       */
+      installments: {
+        target: 'installments',
+        cardinality: 'many',
+        via: { column: 'contact_id', side: 'remote' },
+        labels: { en: 'plan payments', he: 'תשלומים בתוכנית', es: 'pagos del plan' },
       },
     },
 
@@ -207,6 +263,44 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         labels: { en: 'has bookings', he: 'יש פגישות', es: 'tiene reservas' },
         expand: { relation: 'bookings', quantifier: 'any' },
       },
+      /**
+       * Owes money by EITHER route.
+       *
+       * "Who owes me money?" planned `contacts WHERE ANY(invoices: unpaid)` —
+       * the only route the catalog described — and answered "0 contacts" for a
+       * business whose client was two ₪333 periods behind on a payment plan.
+       * Nothing was wrong with the query; the question simply had a second
+       * answer the planner could not see.
+       *
+       * A plan period is not an invoice: Stripe raises its own subscription
+       * invoice and charges the saved card, so no `payment_invoices` row is
+       * ever created. Both routes are real debt, and neither is a special case
+       * of the other.
+       *
+       * Expressed as one boolean so the planner composes it like any other
+       * field — `owes_money eq true`, negatable, combinable with a stage or a
+       * date — instead of being taught which tables money hides in.
+       */
+      owes_money: {
+        type: 'boolean',
+        labels: {
+          en: 'owes money',
+          he: 'חייב כסף',
+          es: 'debe dinero',
+        },
+        expand: [
+          {
+            relation: 'invoices',
+            quantifier: 'any',
+            where: [{ field: 'status', op: 'eq', value: { $semantic: 'unpaid' } }],
+          },
+          {
+            relation: 'installments',
+            quantifier: 'any',
+            where: [{ field: 'status', op: 'eq', value: { $semantic: 'unpaid' } }],
+          },
+        ],
+      },
     },
 
     actions: {
@@ -228,6 +322,35 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         requiresConfirmation: true,
         // Deliberately never bulk: deleting a contact cascades to its bookings.
         allowBulk: false,
+      },
+      /**
+       * "What does Dana owe, and what has she paid?"
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * The data behind a statement, for one client: the open invoices as a
+       * list of items, the payments received, and totals for each — per
+       * currency, because adding ILS to USD invents a number.
+       *
+       * A capability rather than four calls the caller stitches together,
+       * because stitching requires knowing which statuses count as open, that
+       * money reaches a contact through invoices AND transactions, and that the
+       * currencies must stay apart. Each of those, got wrong, produces a
+       * plausible-looking figure in an email chasing a client for money.
+       *
+       * `risk: 'read'` and no confirmation: it assembles and returns. Saying
+       * anything to the client is a separate `send`, which keeps its own gate.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      statement: {
+        labels: {
+          en: 'get what a client owes and has paid (open invoices and payments)',
+          he: 'מה הלקוח חייב ומה שילם (חשבוניות פתוחות ותשלומים)',
+          es: 'qué debe y qué ha pagado un cliente (facturas abiertas y pagos)',
+        },
+        risk: 'read',
+        requiresConfirmation: false,
+        // Returns a report about the contact; writes nothing to the row.
+        writesRow: false,
       },
       /**
        * Outbound email to a contact.
@@ -427,7 +550,38 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
       },
     },
 
+    derived: {
+      /*
+       * Whether any money went back on this invoice.
+       *
+       * `refunded_amount` lives on the PAYMENT, not on the invoice, so "which
+       * invoices were refunded" meant traversing to payments and knowing which
+       * column carried it. Declared here, every operator composes with it for
+       * free — "unpaid invoices that were never refunded" becomes an ordinary
+       * two-predicate filter.
+       *
+       * `succeeded` only: an attempted refund that failed returned nothing, and
+       * counting it would tell a business it had given money back when it had
+       * not.
+       */
+      was_refunded: {
+        type: 'boolean',
+        labels: { en: 'was refunded', he: 'הוחזר', es: 'reembolsada' },
+        expand: {
+          relation: 'refunds',
+          quantifier: 'any',
+          where: [{ field: 'status', op: 'eq', value: 'succeeded' }],
+        },
+      },
+    },
+
     relations: {
+      refunds: {
+        target: 'refunds',
+        cardinality: 'many',
+        via: { column: 'invoice_id', side: 'remote' },
+        labels: { en: 'refunds', he: 'זיכויים', es: 'reembolsos' },
+      },
       contact: {
         target: 'contacts',
         cardinality: 'one',
@@ -493,6 +647,106 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         // permitted — but capped, and never without an explicit preview.
         allowBulk: true,
         maxFanout: 100,
+      },
+    },
+  },
+
+  /**
+   * Money owed under a PAYMENT PLAN — one row per scheduled period.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * The chat could not see this at all. "Who owes me money?" resolved against
+   * `invoices` alone, so a business selling a ₪1,000 course as three monthly
+   * payments — two still to come — was told "0 contacts". True about invoices,
+   * and the wrong answer to the question that was asked.
+   *
+   * A plan period is NOT an invoice. Nothing is billed for it: Stripe raises
+   * its own subscription invoice each period and charges the saved card, so
+   * there is no `payment_invoices` row to find. The debt is real, and this
+   * table is the only place it exists.
+   *
+   * `unpaid` means here what it means on an invoice — money owed to you — and
+   * excludes `cancelled` for the same reason `draft` is excluded there: a
+   * period that will never be charged is not owed.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  installments: {
+    meaning: 'money owed under a payment plan — one row per scheduled period, whether or not it has been collected',
+    table: 'payment_plan_installments',
+    labels: {
+      one: { en: 'installment', he: 'תשלום', es: 'cuota' },
+      many: { en: 'installments', he: 'תשלומים', es: 'cuotas' },
+    },
+    aliases: ['payment plan', 'תוכנית תשלומים', 'plan de pagos'],
+    userScope: { kind: 'column', column: 'user_id' },
+    labelField: 'installment_number',
+    displayFields: ['installment_number', 'amount', 'due_date', 'status'],
+    displayRelations: ['contact'],
+    searchableFields: [],
+    defaultLimit: 50,
+    maxLimit: 500,
+
+    fields: {
+      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
+      contact_id: {
+        column: 'contact_id',
+        type: 'uuid',
+        labels: { en: 'contact', he: 'איש קשר', es: 'contacto' },
+        references: 'contacts',
+      },
+      installment_number: {
+        column: 'installment_number',
+        type: 'number',
+        labels: { en: 'payment number', he: 'מספר תשלום', es: 'número de pago' },
+      },
+      amount: {
+        column: 'amount',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'amount', he: 'סכום', es: 'importe' },
+      },
+      currency: {
+        column: 'currency',
+        type: 'enum',
+        labels: { en: 'currency', he: 'מטבע', es: 'moneda' },
+        enumValues: ['USD', 'EUR', 'ILS', 'GBP'],
+      },
+      due_date: {
+        column: 'due_date',
+        type: 'date',
+        format: 'date',
+        labels: { en: 'due date', he: 'תאריך תשלום', es: 'fecha de vencimiento' },
+      },
+      /**
+       * Read-only, unlike `invoices.status`.
+       *
+       * A period is marked paid by the Stripe webhook when its subscription
+       * invoice is paid, and cancelled when the schedule ends. Letting the chat
+       * write it would let someone mark money collected that Stripe never took.
+       */
+      status: {
+        column: 'status',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
+        enumValues: ['pending', 'paid', 'overdue', 'cancelled'],
+        enumLabels: {
+          pending: { en: 'pending', he: 'ממתין', es: 'pendiente' },
+          paid: { en: 'paid', he: 'שולם', es: 'pagada' },
+          overdue: { en: 'overdue', he: 'באיחור', es: 'vencida' },
+          cancelled: { en: 'cancelled', he: 'בוטל', es: 'anulada' },
+        },
+        // The same business rule as on invoices: owed means not yet collected
+        // and still collectable. `cancelled` is neither.
+        semanticTerms: {
+          unpaid: ['pending', 'overdue'],
+        },
+      },
+      paid_at: {
+        column: 'paid_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'paid at', he: 'שולם בתאריך', es: 'pagado el' },
       },
     },
   },
@@ -564,9 +818,28 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           completed: { en: 'completed', he: 'הושלמה', es: 'completada' },
           no_show: { en: 'no-show', he: 'לא הגיע', es: 'no se presentó' },
         },
-        // No synonyms: 'confirmed'/'completed'/'cancelled'/'no_show' are
-        // self-describing, so "upcoming", "done" and "missed" need no entries.
-
+        /*
+         * "Done" and "missed" ARE self-describing — `completed` and `no_show`
+         * say themselves, and no synonym entry earns its place.
+         *
+         * "Upcoming" is not, and the comment that used to stand here said it
+         * was. It is not a synonym for a status at all: it is a rule spanning
+         * status AND time, and published as neither, the planner filtered on
+         * time alone. Asked "האם יש לי פגישות קרובות?" it answered "you have 3"
+         * and listed one completed, one cancelled and one no-show — every one
+         * of them in the future, none of them a meeting anyone was going to
+         * attend. A day that does not exist.
+         *
+         * `SchedulingRepository.getUpcoming` has always paired `confirmed` with
+         * a future date. That pairing simply was never published, so the model
+         * had to infer it and inferred the easy half.
+         *
+         * Status only. The "in the future" half stays with the date filter,
+         * which the planner already gets right from the relative anchors.
+         */
+        semanticTerms: {
+          upcoming: ['confirmed'],
+        },
       },
       payment_status: {
         column: 'payment_status',
@@ -664,6 +937,27 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         requiresConfirmation: true,
       },
       /** Ask the client to fill in the intake form for their appointment. */
+      /*
+       * Send the confirmation again.
+       *
+       * "She says she never got it" — previously only reachable from the
+       * bookings screen, so the commonest reason a client misses an appointment
+       * had no capability behind it.
+       *
+       * No invoice goes with it. A resend is about the appointment, not about
+       * asking for money again; attaching a payment link to a booking already
+       * paid for is how a client ends up paying twice.
+       */
+      resend_confirmation: {
+        labels: {
+          en: 'send the booking confirmation again',
+          he: 'שלח שוב את אישור הפגישה',
+          es: 'reenviar la confirmación de la reserva',
+        },
+        risk: 'send',
+        requiresConfirmation: true,
+        writesRow: false,
+      },
       send_intake: {
         labels: {
           en: 'ask the client for their intake form',
@@ -935,7 +1229,34 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
       },
     },
 
+    derived: {
+      /*
+       * A service nobody has ever booked.
+       *
+       * The question behind "what am I offering that isn't working" — and it is
+       * an ABSENCE, which is the one thing PostgREST cannot express and the
+       * reason the compiler's `none` quantifier exists. Without it a caller has
+       * to fetch every service, fetch every booking, and diff them.
+       *
+       * Named for bookings rather than sales on purpose: a booking is not
+       * revenue, and calling this `never_sold` would quietly answer a different
+       * question for any service that is booked and billed separately.
+       */
+      never_booked: {
+        type: 'boolean',
+        labels: { en: 'never booked', he: 'לא הוזמן מעולם', es: 'nunca reservado' },
+        expand: { relation: 'bookings', quantifier: 'none' },
+      },
+    },
+
     relations: {
+      /* Money earned by this service — the other half of "what is working". */
+      transactions: {
+        target: 'transactions',
+        cardinality: 'many',
+        via: { column: 'service_id', side: 'remote' },
+        labels: { en: 'payments', he: 'תשלומים', es: 'pagos' },
+      },
       bookings: {
         target: 'bookings',
         cardinality: 'many',
@@ -994,6 +1315,404 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
     },
   },
 
+
+  // ===========================================================================
+  // PAYMENT PLANS  (the offer: "3 x 500 monthly")
+  // ===========================================================================
+  /*
+   * A plan a business OFFERS, not one a client is on.
+   *
+   * Separate from `plan_subscriptions` because they answer different questions
+   * and get confused constantly: this is the shape of the deal — three payments
+   * of 500, monthly — and exists once per service. Who is actually paying it,
+   * and how far through, is the subscription.
+   */
+  plans: {
+    meaning: 'the instalment offers this business sells — the shape of the deal, not who is on it',
+    table: 'payment_plans',
+    labels: {
+      one: { en: 'payment plan', he: 'תוכנית תשלומים', es: 'plan de pagos' },
+      many: { en: 'payment plans', he: 'תוכניות תשלומים', es: 'planes de pago' },
+    },
+    aliases: ['instalment plans', 'installment plans', 'תוכניות תשלום', 'planes'],
+    userScope: { kind: 'column', column: 'user_id' },
+    labelField: 'name',
+    displayFields: ['name', 'total_amount', 'installment_count', 'installment_frequency'],
+    defaultLimit: 50,
+    maxLimit: 200,
+
+    fields: {
+      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
+      name: { column: 'name', type: 'string', labels: { en: 'name', he: 'שם', es: 'nombre' } },
+      description: {
+        column: 'description',
+        type: 'string',
+        labels: { en: 'description', he: 'תיאור', es: 'descripción' },
+      },
+      service_id: {
+        column: 'service_id',
+        type: 'uuid',
+        labels: { en: 'service', he: 'שירות', es: 'servicio' },
+        references: 'services',
+      },
+      total_amount: {
+        column: 'total_amount',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'total', he: 'סה"כ', es: 'total' },
+      },
+      installment_amount: {
+        column: 'installment_amount',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'per payment', he: 'לתשלום', es: 'por cuota' },
+      },
+      installment_count: {
+        column: 'installment_count',
+        type: 'number',
+        labels: { en: 'payments', he: 'מספר תשלומים', es: 'número de cuotas' },
+      },
+      installment_frequency: {
+        column: 'installment_frequency',
+        type: 'string',
+        labels: { en: 'frequency', he: 'תדירות', es: 'frecuencia' },
+      },
+      currency: {
+        column: 'currency',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'currency', he: 'מטבע', es: 'moneda' },
+        enumValues: ['USD', 'EUR', 'ILS', 'GBP'],
+      },
+      is_active: {
+        column: 'is_active',
+        type: 'boolean',
+        labels: { en: 'offered', he: 'פעילה', es: 'ofrecido' },
+      },
+      created_at: {
+        column: 'created_at',
+        type: 'datetime',
+        format: 'datetime',
+        labels: { en: 'created', he: 'נוצרה', es: 'creado' },
+      },
+    },
+
+    relations: {
+      service: {
+        target: 'services',
+        cardinality: 'one',
+        via: { column: 'service_id', side: 'local' },
+        labels: { en: 'service', he: 'שירות', es: 'servicio' },
+      },
+    },
+  },
+
+  // ===========================================================================
+  // PLAN SUBSCRIPTIONS  (a client actually paying one)
+  // ===========================================================================
+  /*
+   * One client, part-way through a plan.
+   *
+   * The operational half: who is on a plan, how many periods they have paid,
+   * when the next charge is, and whether the last one failed. Without it "whose
+   * card is failing" and "who still owes on their plan" were unanswerable —
+   * only the individual instalments were visible, which shows the payments but
+   * not the arrangement they belong to.
+   */
+  plan_subscriptions: {
+    meaning: 'clients part-way through a payment plan — the live arrangement, not the offer',
+    table: 'payment_plan_subscriptions',
+    labels: {
+      one: { en: 'plan subscription', he: 'מנוי לתוכנית תשלומים', es: 'suscripción a plan' },
+      many: { en: 'plan subscriptions', he: 'מנויים לתוכניות תשלומים', es: 'suscripciones a planes' },
+    },
+    aliases: ['clients on plans', 'active plans', 'מנויים', 'suscripciones'],
+    userScope: { kind: 'column', column: 'user_id' },
+    /*
+     * There is no name on this table, and that is honest rather than an
+     * oversight: a subscription is identified by WHO is on it, and the client's
+     * name lives on `contacts`. `status` is the least-bad single column — it is
+     * what distinguishes one row from another at a glance — and
+     * `displayRelations` brings the client through wherever a row is shown.
+     */
+    labelField: 'status',
+    displayFields: ['status', 'installment_amount', 'periods_paid', 'next_charge_at'],
+    displayRelations: ['contact'],
+    defaultLimit: 50,
+    maxLimit: 200,
+
+    fields: {
+      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
+      contact_id: {
+        column: 'contact_id',
+        type: 'uuid',
+        labels: { en: 'client', he: 'לקוח', es: 'cliente' },
+        references: 'contacts',
+      },
+      payment_plan_id: {
+        column: 'payment_plan_id',
+        type: 'uuid',
+        labels: { en: 'plan', he: 'תוכנית', es: 'plan' },
+        references: 'plans',
+      },
+      status: {
+        column: 'status',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
+        enumValues: ['active', 'completed', 'cancelled', 'past_due', 'paused'],
+      },
+      installment_amount: {
+        column: 'installment_amount',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'per payment', he: 'לתשלום', es: 'por cuota' },
+      },
+      installment_count: {
+        column: 'installment_count',
+        type: 'number',
+        labels: { en: 'payments', he: 'מספר תשלומים', es: 'número de cuotas' },
+      },
+      /* How far through they are — the number a client actually asks about. */
+      periods_paid: {
+        column: 'periods_paid',
+        type: 'number',
+        labels: { en: 'paid so far', he: 'שולמו עד כה', es: 'pagadas hasta ahora' },
+      },
+      currency: {
+        column: 'currency',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'currency', he: 'מטבע', es: 'moneda' },
+        enumValues: ['USD', 'EUR', 'ILS', 'GBP'],
+      },
+      next_charge_at: {
+        column: 'next_charge_at',
+        type: 'datetime',
+        format: 'datetime',
+        labels: { en: 'next charge', he: 'החיוב הבא', es: 'próximo cargo' },
+      },
+      /* Why the last attempt failed — the reason a plan quietly stops paying. */
+      last_failure_code: {
+        column: 'last_failure_code',
+        type: 'string',
+        labels: { en: 'last failure', he: 'כשל אחרון', es: 'último fallo' },
+      },
+      last_failure_at: {
+        column: 'last_failure_at',
+        type: 'datetime',
+        format: 'datetime',
+        labels: { en: 'failed on', he: 'תאריך הכשל', es: 'fecha del fallo' },
+      },
+      card_brand: {
+        column: 'card_brand',
+        type: 'string',
+        labels: { en: 'card', he: 'כרטיס', es: 'tarjeta' },
+      },
+      card_last4: {
+        column: 'card_last4',
+        type: 'string',
+        labels: { en: 'card ending', he: 'ספרות אחרונות', es: 'últimos dígitos' },
+      },
+      created_at: {
+        column: 'created_at',
+        type: 'datetime',
+        format: 'datetime',
+        labels: { en: 'started', he: 'התחיל', es: 'iniciado' },
+      },
+      cancelled_at: {
+        column: 'cancelled_at',
+        type: 'datetime',
+        format: 'datetime',
+        labels: { en: 'cancelled', he: 'בוטל', es: 'cancelado' },
+      },
+    },
+
+    relations: {
+      contact: {
+        target: 'contacts',
+        cardinality: 'one',
+        via: { column: 'contact_id', side: 'local' },
+        labels: { en: 'client', he: 'לקוח', es: 'cliente' },
+      },
+      plan: {
+        target: 'plans',
+        cardinality: 'one',
+        via: { column: 'payment_plan_id', side: 'local' },
+        labels: { en: 'plan', he: 'תוכנית', es: 'plan' },
+      },
+    },
+
+    actions: {
+      /*
+       * Stop the remaining charges.
+       *
+       * Cancels the Stripe subscription so nothing further is taken. It does
+       * NOT refund what has already been collected: `cancelPlan` can do that,
+       * and deliberately is not exposed here — giving money back is a separate
+       * decision with its own capability (`transactions.refund`), and folding
+       * it into "cancel" would let one sentence both stop a plan and move money
+       * out of the business.
+       */
+      cancel: {
+        labels: {
+          en: 'stop the remaining payments on a plan',
+          he: 'עצור את יתרת התשלומים בתוכנית',
+          es: 'detener los pagos restantes de un plan',
+        },
+        risk: 'delete',
+        requiresConfirmation: true,
+        writesRow: false,
+        optionalFields: ['reason'],
+      },
+    },
+  },
+  // ===========================================================================
+  // REFUNDS  (read-only: money going back out is recorded by Stripe, not chat)
+  // ===========================================================================
+  /*
+   * Money returned to a client, as its own thing.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS NOT JUST A FIELD ON A PAYMENT
+   *
+   * `transactions` carries `refunded_amount` and `refunded_at`, which is enough
+   * to ask whether a payment was refunded. It is NOT enough to ask what was
+   * refunded in a PERIOD, and the difference is not academic: aggregating
+   * `refunded_amount` dates every refund by when the original payment was
+   * taken, so a March payment refunded in August lands in March.
+   *
+   * The ledger export already knew this and filters refunds on `succeeded_at`
+   * — "the period a refund belongs to is the one the money actually left in".
+   * Without this entity the chat and the ledger answer "how much did I refund
+   * in August" differently, and neither says so.
+   *
+   * A refund can also exist without a usable parent row and carries its own
+   * reason, its own fee treatment and its own failure state, none of which fit
+   * on the payment it reverses.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  refunds: {
+    meaning:
+      'money RETURNED to a client — dated by when it actually settled, not by when the original payment was taken',
+    table: 'payment_refunds',
+    labels: {
+      one: { en: 'refund', he: 'זיכוי', es: 'reembolso' },
+      many: { en: 'refunds', he: 'זיכויים', es: 'reembolsos' },
+    },
+    aliases: ['money back', 'credits', 'החזרים', 'זיכויים', 'devoluciones'],
+    userScope: { kind: 'column', column: 'user_id' },
+    labelField: 'reason',
+    displayFields: ['amount', 'currency', 'status', 'succeeded_at'],
+    displayRelations: ['transaction'],
+    defaultLimit: 50,
+    maxLimit: 500,
+
+    fields: {
+      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
+      transaction_id: {
+        column: 'transaction_id',
+        type: 'uuid',
+        labels: { en: 'payment', he: 'תשלום', es: 'pago' },
+        references: 'transactions',
+      },
+      invoice_id: {
+        column: 'invoice_id',
+        type: 'uuid',
+        labels: { en: 'invoice', he: 'חשבונית', es: 'factura' },
+        references: 'invoices',
+      },
+      amount: {
+        column: 'amount',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'amount', he: 'סכום', es: 'importe' },
+      },
+      currency: {
+        column: 'currency',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'currency', he: 'מטבע', es: 'moneda' },
+        enumValues: ['USD', 'EUR', 'ILS', 'GBP'],
+      },
+      status: {
+        column: 'status',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
+        enumValues: ['pending', 'succeeded', 'failed', 'cancelled'],
+        enumLabels: {
+          pending: { en: 'pending', he: 'ממתין', es: 'pendiente' },
+          succeeded: { en: 'succeeded', he: 'הושלם', es: 'completado' },
+          failed: { en: 'failed', he: 'נכשל', es: 'fallido' },
+          cancelled: { en: 'cancelled', he: 'בוטל', es: 'cancelado' },
+        },
+      },
+      reason: {
+        column: 'reason',
+        type: 'string',
+        labels: { en: 'reason', he: 'סיבה', es: 'motivo' },
+      },
+      /*
+       * The date that matters.
+       *
+       * `created_at` is when the refund was ATTEMPTED; `succeeded_at` is when
+       * the money left. They differ whenever a refund succeeded after a retry,
+       * and every period question should be asked against this one.
+       */
+      succeeded_at: {
+        column: 'succeeded_at',
+        type: 'datetime',
+        format: 'datetime',
+        labels: { en: 'refunded on', he: 'תאריך הזיכוי', es: 'fecha del reembolso' },
+      },
+      created_at: {
+        column: 'created_at',
+        type: 'datetime',
+        format: 'datetime',
+        labels: { en: 'requested on', he: 'תאריך הבקשה', es: 'fecha de solicitud' },
+      },
+      /*
+       * What the processor did NOT give back.
+       *
+       * Usually zero: Stripe keeps its fee on a refunded payment, which is what
+       * makes a full refund cost the business money rather than being neutral.
+       */
+      fee_returned: {
+        column: 'fee_returned',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'fee returned', he: 'עמלה שהוחזרה', es: 'comisión devuelta' },
+      },
+      refund_fee: {
+        column: 'refund_fee',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'refund fee', he: 'עמלת זיכוי', es: 'comisión del reembolso' },
+      },
+      failure_message: {
+        column: 'failure_message',
+        type: 'string',
+        labels: { en: 'failure reason', he: 'סיבת הכשל', es: 'motivo del fallo' },
+      },
+    },
+
+    relations: {
+      transaction: {
+        target: 'transactions',
+        cardinality: 'one',
+        via: { column: 'transaction_id', side: 'local' },
+        labels: { en: 'payment', he: 'תשלום', es: 'pago' },
+      },
+      invoice: {
+        target: 'invoices',
+        cardinality: 'one',
+        via: { column: 'invoice_id', side: 'local' },
+        labels: { en: 'invoice', he: 'חשבונית', es: 'factura' },
+      },
+    },
+  },
+
   // ===========================================================================
   // TRANSACTIONS  (read-only: money movement is recorded by Stripe, not chat)
   // ===========================================================================
@@ -1022,8 +1741,24 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         references: 'contacts',
       },
       invoice_id: { column: 'invoice_id', type: 'uuid', labels: { en: 'invoice' } },
+      /**
+       * What THIS payment was charged. Correct on a row; ambiguous in a total.
+       *
+       * The column holds the original charge and does not move when money is
+       * refunded. Showing it on a row is right — a payments report lists what
+       * was taken, with refunds beside it. SUMMING it is the trap: the total
+       * means either what was billed or what was kept, and on this account
+       * those are 731.33 and 208.33, because 523 went back and two payments
+       * were refunded in full.
+       *
+       * Making `amount` itself net fixed the totals and broke the rows — one
+       * word meaning gross in a listing and net in a sum. So it means one thing
+       * everywhere, and the two totals are named separately below.
+       */
       amount: {
         column: 'amount',
+        // Summing this is ambiguous — see `aggregateInstead`.
+        aggregateInstead: ['charged_amount', 'net_amount'],
         writable: true,
         type: 'money',
         format: 'money',
@@ -1070,6 +1805,32 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         format: 'money',
         labels: { en: 'refunded amount', he: 'סכום שהוחזר', es: 'importe devuelto' },
       },
+      /**
+       * The ORIGINAL charge, before any refund.
+       *
+       * The honest answer to "how much did I bill", and the wrong answer to
+       * "how much did I earn". Named so that asking for it is a decision.
+       */
+      /**
+       * What was KEPT — the charge less anything refunded.
+       *
+       * The answer to "how much did I earn". A refund does not reduce the
+       * charge, so a revenue total that sums charges reports money already
+       * given back, and counts a fully refunded payment at full value.
+       */
+      net_amount: {
+        column: 'amount',
+        minus: 'refunded_amount',
+        type: 'number',
+        format: 'money',
+        labels: { en: 'net revenue', he: 'הכנסה נטו', es: 'ingresos netos' },
+      },
+      charged_amount: {
+        column: 'amount',
+        type: 'number',
+        format: 'money',
+        labels: { en: 'amount charged', he: 'סכום שחויב', es: 'importe cobrado' },
+      },
       refunded_at: {
         column: 'refunded_at',
         type: 'datetime',
@@ -1110,7 +1871,33 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
       },
     },
 
+    derived: {
+      /*
+       * Whether this payment was given back, from the refund rows themselves.
+       *
+       * `refunded_amount` on this row answers "how much", but it is maintained
+       * by the refund flow — a refund that settled without that write leaves a
+       * payment that looks untouched. The refund rows are the record of what
+       * actually happened, so the boolean is derived from them.
+       */
+      was_refunded: {
+        type: 'boolean',
+        labels: { en: 'was refunded', he: 'הוחזר', es: 'reembolsado' },
+        expand: {
+          relation: 'refunds',
+          quantifier: 'any',
+          where: [{ field: 'status', op: 'eq', value: 'succeeded' }],
+        },
+      },
+    },
+
     relations: {
+      refunds: {
+        target: 'refunds',
+        cardinality: 'many',
+        via: { column: 'transaction_id', side: 'remote' },
+        labels: { en: 'refunds', he: 'זיכויים', es: 'reembolsos' },
+      },
       contact: {
         target: 'contacts',
         cardinality: 'one',
@@ -1446,6 +2233,32 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
        * `create` is deliberately absent: an empty page is not something anyone
        * wants, and building one is the website generator's job, not a sentence.
        */
+      /*
+       * A new page, with the blocks a page is expected to have.
+       *
+       * The only CRUD verb this entity was missing: it could be renamed,
+       * published, unpublished and deleted, but not made — so "build me a
+       * landing page for the new workshop" had no capability behind it and
+       * creating one meant leaving the chat.
+       *
+       * A homepage is created with the standard section set, exactly as the
+       * website API does, because a page row with no blocks is not a page: it
+       * publishes as an empty screen.
+       */
+      create: {
+        labels: {
+          en: 'create a page',
+          he: 'צור עמוד חדש',
+          es: 'crear una página',
+        },
+        risk: 'create',
+        requiresConfirmation: true,
+        writesRow: false,
+        // A title is the one thing that cannot be derived; the slug is built
+        // from it and the type defaults to a landing page.
+        requiredFields: ['title'],
+        optionalFields: ['page_type', 'slug', 'template_id', 'website_language'],
+      },
       update: {
         labels: { en: 'rename a page', he: 'שנה שם עמוד', es: 'renombrar una página' },
         risk: 'update',
@@ -1743,6 +2556,73 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
     },
 
     actions: {
+      /**
+       * "Send my accountant last quarter's ledger."
+       *
+       * ───────────────────────────────────────────────────────────────────────
+       * The ledger is a REPORT, not a row: it is assembled from payments,
+       * refunds and invoices over a period, with tax and fee splits and
+       * per-currency totals. It had exactly one way out of the platform — an
+       * authenticated browser download from the export modal — so nothing on the
+       * server could ask for it and no automation could be built on it.
+       *
+       * It lives on `business_profile` rather than on a `reports` entity of its
+       * own because every entity in this catalog must name a real table that the
+       * physical schema validates against, and a derived report has no table;
+       * declaring one would fail the catalog build at import. `business_profile`
+       * is the singleton that already carries the actions which are ABOUT the
+       * business rather than about a row — which is exactly what a ledger is.
+       *
+       * `risk: 'read'` and no confirmation: this only produces the report.
+       * Emailing it is a separate, confirmed `contacts.send` step, so the
+       * dangerous half stays behind the gate that already guards sends rather
+       * than being smuggled in behind a read.
+       *
+       * The parameters mirror the export modal one-for-one, so the chat, the
+       * kernel and the download produce the same file from the same request.
+       * `period` accepts the modal's presets plus `last_quarter` and
+       * `last_year`, which are what an accountant actually asks for; supplying
+       * `from`/`to` instead is the modal's "custom".
+       * ───────────────────────────────────────────────────────────────────────
+       */
+      export_ledger: {
+        labels: {
+          en: 'export the ledger for a period (for the accountant)',
+          he: 'הפקת דוח הנהלת חשבונות לתקופה (לרואה החשבון)',
+          es: 'exportar el libro mayor de un período (para el contador)',
+        },
+        risk: 'read',
+        requiresConfirmation: false,
+        // Parameters, not columns of business_profiles.
+        writesRow: false,
+        // One profile per user: there is nothing to point at.
+        needsTarget: false,
+        /*
+         * Nothing is required.
+         *
+         * "Export the ledger" with no period is a complete request — it means
+         * the current month, which is what the modal opens on. Demanding a
+         * period would turn the commonest phrasing into a clarifying question.
+         */
+        optionalFields: [
+          'period',
+          'from',
+          'to',
+          'format',
+          'include_payments',
+          'include_refunds',
+          'include_invoices',
+          'include_fees',
+          'include_tax',
+          'include_references',
+          // What to hand back beyond the totals: the ledger rows themselves, and
+          // the rendered file as base64 — the latter drops straight into an
+          // email attachment, which is what makes "send the accountant the
+          // ledger" composable without a download nobody server-side can fetch.
+          'include_rows',
+          'include_file',
+        ],
+      },
       /**
        * "Change Tuesday to 9-2 only."
        *

@@ -99,3 +99,68 @@ describe('resolveInvoicePaymentOptions', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * The invoice's own answer, on top of the business's.
+ *
+ * "Send via Stripe" was read once at send time to pick an email template and
+ * then discarded, so the pay page — which only ever asked whether the BUSINESS
+ * had Stripe — drew a card button on invoices the business had marked
+ * transfer-only. The client paid by card, and the refund then had to go back
+ * through Stripe, on an invoice its author believed was a bank transfer.
+ */
+describe('resolveInvoicePaymentOptions — this invoice, not just this business', () => {
+  const profile = { invoice_bank_name: 'Bank Leumi', invoice_bank_account: '12345' };
+
+  it('withholds the card when the invoice opted out, however capable the business is', () => {
+    const options = resolveInvoicePaymentOptions({
+      canCollectOnline: true,
+      cardUrl: '/pay',
+      profile,
+      allowOnlinePayment: false,
+    });
+
+    expect(options.card).toBe(false);
+    expect(options.cardUrl).toBeNull();
+    // And the client is not left with nothing: the bank details take its place.
+    expect(options.bank).toBe(true);
+  });
+
+  it('offers the card when the invoice opted in', () => {
+    expect(
+      resolveInvoicePaymentOptions({
+        canCollectOnline: true,
+        cardUrl: '/pay',
+        allowOnlinePayment: true,
+      }).card
+    ).toBe(true);
+  });
+
+  /*
+   * The distinction the column exists for. Every invoice written before this
+   * has no recorded choice, including ones already in clients' inboxes —
+   * reading that silence as a refusal would change what those pages offer.
+   */
+  it('treats no recorded choice as no opinion, not as a refusal', () => {
+    for (const allowOnlinePayment of [undefined, null]) {
+      expect(
+        resolveInvoicePaymentOptions({
+          canCollectOnline: true,
+          cardUrl: '/pay',
+          allowOnlinePayment,
+        }).card
+      ).toBe(true);
+    }
+  });
+
+  // Opting in cannot conjure a processor the business does not have.
+  it('still refuses when the business cannot collect at all', () => {
+    expect(
+      resolveInvoicePaymentOptions({
+        canCollectOnline: false,
+        cardUrl: '/pay',
+        allowOnlinePayment: true,
+      }).card
+    ).toBe(false);
+  });
+});

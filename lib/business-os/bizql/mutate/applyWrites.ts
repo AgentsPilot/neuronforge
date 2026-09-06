@@ -80,13 +80,7 @@ export async function applyFrozenWrites(args: ApplyWritesArgs): Promise<ApplyWri
 
       if (result.failed > 0 || result.skipped > 0) partial = true;
 
-      applied.push(
-        result.failed > 0 || result.skipped > 0
-          ? `sent to ${result.succeeded} of ${result.attempted}` +
-              (result.failed ? `, ${result.failed} failed` : '') +
-              (result.skipped ? `, ${result.skipped} already done` : '')
-          : `sent to ${result.succeeded}`
-      );
+      applied.push(sendOutcome(result, language));
       continue;
     }
 
@@ -101,4 +95,48 @@ export async function applyFrozenWrites(args: ApplyWritesArgs): Promise<ApplyWri
   logger.info({ userId, planId, steps: steps.length, partial }, 'Applied frozen writes');
 
   return { applied, partial };
+}
+
+/**
+ * What a fan-out actually did, in the reader's language.
+ *
+ * This is the sentence that reports whether someone's clients were contacted,
+ * and it was English inside an otherwise Hebrew answer: "בוצע — sent to 0 of 1,
+ * 1 failed." The one part of that line a reader most needs to understand — that
+ * nothing was sent — was the part they could not read.
+ *
+ * Phrased per language rather than assembled from fragments, because the pieces
+ * do not compose the same way in each: Hebrew puts the count after the verb and
+ * has no direct equivalent of the bare "of".
+ */
+function sendOutcome(
+  result: { succeeded: number; attempted: number; failed: number; skipped: number },
+  language: string
+): string {
+  const clean = result.failed === 0 && result.skipped === 0;
+
+  if (language === 'he') {
+    if (clean) return `נשלח ל-${result.succeeded}`;
+    return (
+      `נשלח ל-${result.succeeded} מתוך ${result.attempted}` +
+      (result.failed ? `, ${result.failed} נכשלו` : '') +
+      (result.skipped ? `, ${result.skipped} כבר נשלחו` : '')
+    );
+  }
+
+  if (language === 'es') {
+    if (clean) return `enviado a ${result.succeeded}`;
+    return (
+      `enviado a ${result.succeeded} de ${result.attempted}` +
+      (result.failed ? `, ${result.failed} fallaron` : '') +
+      (result.skipped ? `, ${result.skipped} ya enviados` : '')
+    );
+  }
+
+  if (clean) return `sent to ${result.succeeded}`;
+  return (
+    `sent to ${result.succeeded} of ${result.attempted}` +
+    (result.failed ? `, ${result.failed} failed` : '') +
+    (result.skipped ? `, ${result.skipped} already done` : '')
+  );
 }

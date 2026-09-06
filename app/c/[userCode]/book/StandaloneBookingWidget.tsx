@@ -36,6 +36,7 @@ import { BookingModal } from '@/components/website/blocks/BookingModal';
 import { ServicesStep, LABELS, type Service as SharedService } from '@/components/website/blocks/ProcessFlowSection';
 import type { SelectedServiceData, PageTheme } from '@/components/website/blocks/types';
 import type { CollectionMethod } from '@/lib/business-os/setup/setupGraph';
+import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import type { Locale } from '@/lib/i18n/config';
 
 const logger = createLogger({ module: 'StandaloneBookingWidget' });
@@ -49,6 +50,8 @@ interface Service {
   currency: string;
   is_scheduled?: boolean | null;
   collection?: 'online' | 'invoice' | null;
+  /** How this service may be paid over time, when the business offers one. */
+  paymentPlan?: ServicePaymentPlan;
 }
 
 interface StandaloneBookingWidgetProps {
@@ -147,6 +150,9 @@ function toModalService(
     price: service.price,
     currency: service.currency,
     is_scheduled: service.is_scheduled,
+    // Carried through, or the modal shows a single price for a service the
+    // business sells in instalments — and the client agrees to the wrong thing.
+    paymentPlan: service.paymentPlan,
     // The service's own answer, falling back to the business-wide one for a
     // service saved before services carried it.
     collection: service.collection ?? (businessCollection as 'online' | 'invoice' | null),

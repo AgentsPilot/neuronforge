@@ -129,7 +129,7 @@ export function FocusList({ items, loading, stats }: FocusListProps) {
         router.push('/business-os/crm?filter=quiet');
         break;
       case 'collect':
-        router.push('/business-os/payments?filter=pending');
+        router.push('/business-os/orders?filter=pending');
         break;
       case 'share_link':
         router.push('/business-os');

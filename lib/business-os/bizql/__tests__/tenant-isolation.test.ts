@@ -136,6 +136,43 @@ describe('BizQL tenant isolation', () => {
     expectAllQueriesScoped(queries, USER);
   });
 
+  it('unions BOTH routes of a multi-relation derived field, and scopes each', async () => {
+    /*
+     * `owes_money` reaches its fact two ways: an unpaid invoice, or an
+     * uncollected payment-plan period. Applying the two relation predicates in
+     * sequence would AND them — demanding a client be behind on BOTH — which is
+     * not what "owes me money" means and would return nobody.
+     *
+     * This is the bug that made the chat answer "0 contacts" for a business
+     * whose only debt was a payment plan: invoices was the sole route the
+     * catalog described, so the other half of the answer was unreachable.
+     */
+    const { client, queries } = makeFakeClient({
+      payment_invoices: [{ contact_id: 'aaaaaaaa-0000-0000-0000-000000000000' }],
+      payment_plan_installments: [{ contact_id: 'bbbbbbbb-0000-0000-0000-000000000000' }],
+    });
+
+    await compileAndRunFind(
+      client,
+      {
+        op: 'find',
+        entity: 'contacts',
+        where: [{ field: 'owes_money', op: 'eq', value: true }],
+      },
+      { userId: USER }
+    );
+
+    const tables = queries.map((q) => q.table);
+    // Both routes are consulted, not just the first one declared.
+    expect(tables).toContain('payment_invoices');
+    expect(tables).toContain('payment_plan_installments');
+    expect(tables).toContain('crm_contacts');
+
+    // Every sub-query is user-scoped: an unscoped one would pull another
+    // tenant's debtors into this user's answer.
+    expectAllQueriesScoped(queries, USER);
+  });
+
   it('scopes the sub-query of an explicit relation predicate', async () => {
     const { client, queries } = makeFakeClient({
       scheduling_bookings: [{ contact_id: 'aaaaaaaa-0000-0000-0000-000000000000' }],
@@ -169,6 +206,35 @@ describe('BizQL tenant isolation', () => {
       { userId: USER }
     );
 
+    expectAllQueriesScoped(queries, USER);
+  });
+
+  /*
+   * `over` runs TWO scans — the parents, then their related rows — and both are
+   * separate reads that have to carry the tenant filter independently. A join
+   * would have implied the scoping; two queries do not, which is precisely the
+   * shape that has gone wrong here before.
+   */
+  it('scopes BOTH scans of an aggregate over a relation', async () => {
+    const { client, queries } = makeFakeClient();
+
+    await compileAndRunCompute(
+      client,
+      {
+        op: 'compute',
+        entity: 'services',
+        agg: { fn: 'sum', field: 'amount' },
+        over: 'transactions',
+      },
+      { userId: USER }
+    );
+
+    // Both tables were read...
+    const tables = queries.map((q) => q.table);
+    expect(tables).toContain('scheduling_services');
+    expect(tables).toContain('payment_transactions');
+
+    // ...and neither escaped the tenant boundary.
     expectAllQueriesScoped(queries, USER);
   });
 

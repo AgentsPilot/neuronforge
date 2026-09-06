@@ -3,6 +3,8 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { resolveGap, gapStateFor, pickLeak, type FunnelWindow } from '@/lib/business-os/insight/funnelGap';
+import { buildJourney } from '@/lib/business-os/insight/journeyTimeline';
+import { getProcessForDetector } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { localizeStageLabel } from '@/lib/business-os/stageLabels';
 import {
   resolveSetup,
@@ -20,7 +22,6 @@ import { UsageCard } from '@/components/business-os/UsageCard';
 import { CHANNEL_LABELS, type ChannelRow } from './ChannelSourcesSection';
 import { ChannelsOverviewCard } from './ChannelsOverviewCard';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
-import { FirstLightMilestones, Milestone } from './FirstLightMilestones';
 import { FooterReplay, ReplayModal } from './FooterReplay';
 import { VectorsStrip } from './VectorsStrip';
 import { HandledSection, HandledEntry } from './HandledSection';
@@ -30,14 +31,8 @@ import { InsightAdvisorCard } from './InsightAdvisorCard';
 // Types
 // ===========================
 
-type DayKey = 'd1' | 'd4' | 'd18' | 'd60' | 'd90';
-
-interface TimelineStage {
-  key: DayKey;
-  day: number;
-  label: string;
-  sublabel: string;
-}
+// The fixed day-1/4/18/60/90 stages that used to live here are gone. Nodes are
+// built by `buildJourney` from the business's own events.
 
 /** Where a visit landed. Not where it came from — that is the channel. */
 export type VisitSurface = 'website' | 'landing' | 'smart_links' | 'analytics';
@@ -144,6 +139,18 @@ interface LiveDashboardProps {
   isReachable?: boolean;
   /** How that reach is achieved, so the verdict can name the right thing. */
   reachSurfaces?: { livePages: boolean; smartLinks: boolean };
+  /**
+   * How many of each owned surface is live. Counts rather than booleans: the
+   * connections panel lists these as channels and has to name them correctly,
+   * and "a live page" could be a website or a landing page.
+   */
+  ownedSurfaces?: {
+    website: number;
+    landing: number;
+    smartLinks: number;
+    websiteDrafts: number;
+    landingDrafts: number;
+  };
   funnelStats?: FunnelStats;
   pipelineStages?: PipelineStage[];  // Real CRM pipeline stages
   milestoneData?: MilestoneData;
@@ -280,6 +287,7 @@ export function LiveDashboard({
   onChannelsChanged,
   isReachable,
   reachSurfaces,
+  ownedSurfaces,
   funnelStats,
   pipelineStages = [],
   milestoneData,
@@ -314,6 +322,21 @@ export function LiveDashboard({
     () => insights.filter(insight => insight.status === 'new' || insight.status === 'viewed'),
     [insights]
   );
+  /**
+   * How many pending insights the kernel could take over right now.
+   *
+   * Eligibility is per detector, not per insight — `draft_reply_templates` is
+   * advisory and can never run unattended, however many insights point at it.
+   * The registry is plain data with no server imports, so the count is made
+   * here rather than round-tripped.
+   */
+  const automatableNow = useMemo(
+    () => pendingInsights.filter(
+      insight => getProcessForDetector(insight.detector_id)?.eligibleForAutomation
+    ).length,
+    [pendingInsights]
+  );
+
   const [currentInsightIndex, setCurrentInsightIndex] = useState(0);
   const [automationConfig, setAutomationConfig] = useState<{
     processId: string;
@@ -357,17 +380,21 @@ export function LiveDashboard({
 
   const handleDeclineAutomate = useCallback(() => setAutomationConfig(undefined), []);
 
-  // How long this business profile has existed. Used ONLY by the timeline
-  // scrubber below, which is a picture of progress rather than a gate.
-  //
-  // It used to decide what the dashboard showed at all — funnel on day 4,
-  // milestones on 18, vectors on 60, replay on 90. That is gone. The number
-  // comes from `business_profiles.created_at`, so re-running the onboarding
-  // chat recreates the row and resets it to 1, and the whole dashboard emptied
-  // itself for a business that had been running for months. Age was never what
-  // any of those sections needed: each one now asks its own question, and the
-  // answers are things that cannot be reset by rewriting a row.
-  const accountAgeDays = vectorMaturity?.accountAgeDays || 1;
+  /*
+   * `accountAgeDays` is gone from this component, and with it the last thing
+   * the dashboard decided by counting from signup.
+   *
+   * It used to gate what was shown at all — funnel on day 4, milestones on 18,
+   * vectors on 60, replay on 90 — and that went first, because the number comes
+   * from `business_profiles.created_at`: re-running the onboarding chat
+   * recreates the row, resets the age to 1, and emptied the dashboard of a
+   * business that had been running for months. The timeline scrubber was the
+   * last holdout, still lighting "Day 4 · First visitors" on the fourth day
+   * whether or not anyone had visited.
+   *
+   * Every node now carries its own date. Nothing here can be reset by
+   * rewriting a row, because a booking cannot be un-taken.
+   */
 
   const { capabilities, status: capabilitiesStatus } = useCapabilities();
 
@@ -421,36 +448,113 @@ export function LiveDashboard({
     ? setupItems
     : setupItems.filter(item => item.id !== 'meta_insights' && item.id !== 'google_analytics');
 
-  // Timeline stages - using existing translation keys from LanguageContext
-  const TIMELINE_STAGES: TimelineStage[] = useMemo(() => [
-    { key: 'd1', day: 1, label: t('timeline.stage.day1') || 'Day 1', sublabel: t('timeline.stage.day1.sub') || 'Setup' },
-    { key: 'd4', day: 4, label: t('timeline.stage.day4') || 'Day 4', sublabel: t('timeline.stage.day4.sub') || 'First visitors' },
-    { key: 'd18', day: 18, label: t('timeline.stage.day18') || 'Day 18', sublabel: t('timeline.stage.day18.sub') || 'First booking' },
-    { key: 'd60', day: 60, label: t('timeline.stage.day60') || 'Day 60', sublabel: t('timeline.stage.day60.sub') || 'Running' },
-    { key: 'd90', day: 90, label: t('timeline.stage.day90') || 'Day 90', sublabel: t('timeline.stage.day90.sub') || 'Automated' },
-  ], [t]);
+  /**
+   * The journey, built from what happened rather than from how long it has been.
+   *
+   * The milestone dates come from `/stats` and the unlock anchors from the
+   * insight engine's own vector maturity — the same anchors it already uses to
+   * decide when a detector may speak. See `buildJourney` for why each node is
+   * dated the way it is.
+   */
+  const journey = useMemo(() => buildJourney({
+    accountCreatedAt: vectorMaturity?.journeyAnchors?.accountCreatedAt ?? null,
+    firstVisitorAt: milestoneData?.firstVisitor?.date ?? null,
+    firstEnquiryAt: milestoneData?.firstEnquiry?.date ?? null,
+    // The anchor from vector maturity is the booking's `created_at` — when it
+    // was made. The milestone date is the same event from `/stats`; either is
+    // right, and preferring the anchor keeps one node and one unlock in step.
+    firstBookingAt:
+      vectorMaturity?.journeyAnchors?.firstBookingAt ?? milestoneData?.firstBooking?.date ?? null,
+    firstClientAt: vectorMaturity?.journeyAnchors?.firstClientAt ?? null,
+    convCrossedAt: vectorMaturity?.journeyAnchors?.convCrossedAt ?? null,
+    firstAutomationAt: vectorMaturity?.journeyAnchors?.firstAutomationAt ?? null,
+    automatableNow,
+    vectors: vectorMaturity?.vectors ?? [],
+  }), [vectorMaturity, milestoneData, automatableNow]);
 
-  // Determine current stage based on REAL account age
-  const getCurrentStageIndex = useCallback(() => {
-    for (let i = TIMELINE_STAGES.length - 1; i >= 0; i--) {
-      if (accountAgeDays >= TIMELINE_STAGES[i].day) {
-        return i;
-      }
-    }
-    return 0;
-  }, [accountAgeDays, TIMELINE_STAGES]);
+  /**
+   * The journey as words, in the reader's language.
+   *
+   * `buildJourney` returns dates and day numbers and stops there; the sentence
+   * for each node is composed here, where `t` and the locale live.
+   */
+  const journeyRows = useMemo(() => journey.nodes.map(node => {
+    const dated = node.date ? formatMilestoneDate(node.date) : '';
+    const counted = node.progress
+      ? `${node.progress.current} / ${node.progress.threshold}`
+      : '';
+
+    // The headline number. A day when we have one; otherwise the count, for the
+    // one unlock measured in visitors; otherwise nothing to say.
+    const top =
+      node.day !== null
+        ? t('journey.day', { day: node.day })
+        : node.progress
+        ? counted
+        : node.offered !== null
+        ? String(node.offered)
+        : '—';
+
+    // The line under the name. Reached says when; counting says when it will
+    // be; waiting says what it is waiting for, and never a date.
+    const meta =
+      node.state === 'reached'
+        ? dated || (node.progress ? t('journey.meta.visitors') : '')
+        : node.offered !== null
+        ? t('journey.meta.ready')
+        : node.progress
+        ? t('journey.meta.visitors')
+        : node.date
+        ? t('journey.unlocks', { date: dated })
+        : t(`journey.wait.${node.key}`);
+
+    /*
+     * What kind of thing this node is, in the reader's words.
+     *
+     * The four unlock nodes shared one tag, which read "unlock" — a word about
+     * the mechanism rather than about what the business gets. Three of them are
+     * the insight engine starting to watch something; the fourth is the
+     * platform taking a recurring job off the owner, which is not an insight at
+     * all and should never have been labelled as one.
+     */
+    const tag = node.kind !== 'unlock'
+      ? null
+      : node.key === 'handover'
+      ? 'journey.tag.automation'
+      : 'journey.tag.insight';
+
+    return {
+      key: node.key,
+      kind: node.kind,
+      state: node.state,
+      tag,
+      top,
+      name: t(`journey.node.${node.key}`),
+      meta,
+    };
+  }), [journey, t, formatMilestoneDate]);
+
+  /*
+   * Where the rail fills to, and where "today" sits on it.
+   *
+   * The line spans 7.1%–92.9% so that it starts and ends at the centre of the
+   * first and last node, which are each 1/7 of the row wide. `per` is therefore
+   * the distance between two node centres, and the today marker goes in the gap
+   * after the last thing that has actually happened.
+   */
+  const railSpan = 85.8;
+  const railStep = railSpan / Math.max(1, journey.nodes.length - 1);
+  const railFilled = Math.max(0, journey.lastReachedIndex) * railStep;
+  const todayAt =
+    journey.lastReachedIndex >= journey.nodes.length - 1
+      ? 7.1 + railSpan
+      : 7.1 + Math.max(0, journey.lastReachedIndex) * railStep + railStep / 2;
 
   // State
-  const [selectedStageIndex, setSelectedStageIndex] = useState(getCurrentStageIndex);
   const [selectedNode, setSelectedNode] = useState<string>(() =>
     pipelineStages.length > 0 ? pipelineStages[0].stage_key : 'lead'
   );
   const [tipIndex, setTipIndex] = useState(0);
-
-  // Update stage when account age changes
-  useEffect(() => {
-    setSelectedStageIndex(getCurrentStageIndex());
-  }, [getCurrentStageIndex]);
 
   // Update selected node when pipeline stages load
   useEffect(() => {
@@ -518,8 +622,42 @@ export function LiveDashboard({
   const reachesByLink = setupShape.presence === 'booking_only' || setupShape.presence === 'none';
   const hasHours = setupItems.some(item => item.id === 'availability' && item.completed);
   const hasPayments = setupItems.some(item => item.id === 'payments' && item.completed);
-  const setupComplete = setupItems.filter(item => item.completed).length;
-  const setupTotal = setupItems.length;
+  /**
+   * Where this business actually is, in one sentence under the greeting.
+   *
+   * It used to be a coin flip on `setupComplete < setupTotal` — every setup
+   * item, optional ones included. So a business taking bookings and getting
+   * paid was still told "complete your setup to go live" because it had never
+   * connected Google Analytics, and the readiness card immediately below it
+   * said the opposite: that card asks the setup GRAPH what is compulsory, which
+   * shifts with the business (invoice details are optional until payments are
+   * connected). Two components, two answers, one screen.
+   *
+   * So the line now reads from the same two sources as everything else on the
+   * card: the graph for "is anything compulsory outstanding", and the journey
+   * for what has actually happened since. It moves when the business moves.
+   */
+  const status = useMemo((): { key: string; vars: Record<string, string | number> } => {
+    const graph = resolveSetup(setupItems, setupShape);
+    const reached = (key: string) =>
+      journey.nodes.some(node => node.key === key && node.state === 'reached');
+
+    // Reachability is a fact about what is live; readiness is a fact about
+    // what is configured. A business can be fully configured and still have
+    // nothing a client can open, and that is still setup.
+    if (!isReadyForClients(graph) || !hasPublished) {
+      return {
+        key: 'liveDashboard.status.setup',
+        vars: { done: graph.mandatoryDone, total: graph.mandatoryTotal },
+      };
+    }
+    if (reached('handover')) return { key: 'liveDashboard.status.handover', vars: {} };
+    if (reached('booking')) return { key: 'liveDashboard.status.running', vars: {} };
+    if (reached('visitor')) {
+      return { key: 'liveDashboard.status.arriving', vars: { found: stats.found } };
+    }
+    return { key: 'liveDashboard.status.live_quiet', vars: {} };
+  }, [setupItems, setupShape, hasPublished, journey, stats.found]);
 
   /**
    * The funnel as one ordered list, visitors first.
@@ -666,41 +804,19 @@ export function LiveDashboard({
     return result;
   }, [hasPublished, reachesByLink, funnelGaps, funnelNodes, stats, t]);
 
-  // Build milestones from REAL data
-  const milestones: Milestone[] = useMemo(() => {
-    const md = milestoneData || {};
-    const visitorDate = md.firstVisitor?.date ? formatMilestoneDate(md.firstVisitor.date) : '';
-    const enquiryDate = md.firstEnquiry?.date ? formatMilestoneDate(md.firstEnquiry.date) : '';
-    const bookingDate = md.firstBooking?.date ? formatMilestoneDate(md.firstBooking.date) : '';
-
-    return [
-      {
-        t: t('milestone.firstVisitor') || 'First visitor',
-        s: md.firstVisitor
-          ? visitorDate
-          : (t('milestone.waiting.visitor') || 'Usually within a few hours of publishing.'),
-        w: md.firstVisitor ? visitorDate : (t('milestone.waiting') || 'waiting'),
-        lit: !!md.firstVisitor,
-      },
-      {
-        t: t('milestone.firstEnquiry') || 'First enquiry',
-        s: md.firstEnquiry
-          ? `${enquiryDate} · ${t('milestone.answered') || 'answered in'} ${md.firstEnquiry.responseTime}`
-          : (t('milestone.waiting.enquiry') || 'Most businesses see one in the first week or two.'),
-        w: md.firstEnquiry ? enquiryDate : (t('milestone.waiting') || 'waiting'),
-        lit: !!md.firstEnquiry,
-      },
-      {
-        t: t('milestone.firstBooking') || 'First booking',
-        // Show date only - amount no longer available from booking table
-        s: md.firstBooking
-          ? bookingDate
-          : (t('milestone.waiting.booking') || 'I\'ll tell you the moment it happens.'),
-        w: md.firstBooking ? bookingDate : (t('milestone.waiting') || 'waiting'),
-        lit: !!md.firstBooking,
-      },
-    ];
-  }, [milestoneData, t, formatMilestoneDate]);
+  /*
+   * `FirstLightMilestones` and the `milestones` memo that fed it are gone.
+   *
+   * Its three rows — first visitor, first enquiry, first booking — are now the
+   * second, third and fourth nodes of the journey rail above, built from the
+   * same `milestoneData`. Keeping both meant the card carried two timelines: a
+   * fictional one at the top, lit by the calendar, and a factual one at the
+   * foot that only appeared once something had happened.
+   *
+   * One thing did not survive the move: the enquiry row's "answered in 2h".
+   * A seventh of a rail is too narrow for it, and response time is a
+   * performance figure rather than a milestone — it belongs with the funnel.
+   */
 
   /** Says which period a number covers, so no figure sits unlabelled. */
   const windowLabel = useCallback(
@@ -841,10 +957,6 @@ export function LiveDashboard({
   }, [autonomousWorkData, autonomousWork, t]);
 
   // Handlers
-  const handleStageClick = useCallback((index: number) => {
-    setSelectedStageIndex(index);
-  }, []);
-
   const handleNodeSelect = useCallback((nodeKey: string) => {
     setSelectedNode(nodeKey);
     const tipForNode = tips.findIndex(tip => tip.at === nodeKey);
@@ -940,9 +1052,7 @@ export function LiveDashboard({
             className="text-[var(--v2-text-muted)]"
             style={{ fontSize: '15px', maxWidth: '52rem' }}
           >
-            {setupComplete < setupTotal
-              ? (t('liveDashboard.setup') || `${setupComplete} of ${setupTotal} setup steps complete. The map shows what's built and what's waiting.`)
-              : (t('liveDashboard.running') || "Your live dashboard. The map shows what's flowing and where to look.")}
+            {t(status.key, status.vars)}
           </p>
         )}
       </div>
@@ -950,7 +1060,23 @@ export function LiveDashboard({
       {/* Collapsible content - everything below the header */}
       {!collapsed && (
         <>
-      {/* Timeline Scrubber - CLICKABLE */}
+      {/*
+          The journey — every node a fact about this business.
+
+          Three states carry it, and the difference between the last two is the
+          whole point of the rework:
+
+            reached   it happened; the date is the record, the day number is
+                      arithmetic on it
+            counting  the anchor event exists, so the unlock date is COMPUTABLE
+                      (first booking + 42 days) rather than predicted
+            waiting   no anchor, so no date is offered — it names the condition
+                      and stops. Nothing is greyed out as overdue.
+
+          The nodes are not buttons any more. The old ones were, and clicking
+          one only recoloured itself: `selectedStageIndex` was read in exactly
+          one place, to style the dot you had just pressed. A control that looks
+          interactive and does nothing is worse than a plain label. */}
       <div
         className="mb-6"
         style={{
@@ -969,37 +1095,89 @@ export function LiveDashboard({
             textTransform: 'uppercase',
             color: '#697187',
             marginBottom: '14px',
-            paddingLeft: '2px',
+            paddingInlineStart: '2px',
           }}
         >
-          {t('timeline.header') || 'Your journey'}
+          {t('timeline.title') || 'Your journey'}
         </div>
 
-        <div style={{ display: 'flex', position: 'relative' }}>
-          {/* Connection line */}
-          <div
-            style={{
-              position: 'absolute',
-              [isRTL ? 'right' : 'left']: '11%',
-              top: '11px',
-              height: '2px',
-              width: '78%',
-              background: '#E7E9F1',
-            }}
-          />
+        {/* Seven nodes need more room than a narrow card has; the rail scrolls
+            inside its own box rather than pushing the page sideways. */}
+        <div style={{ overflowX: 'auto' }}>
+          <div style={{ display: 'flex', position: 'relative', minWidth: '760px', paddingTop: '26px' }}>
+            {/* The rail, and the part of it already travelled */}
+            <div
+              style={{
+                position: 'absolute',
+                top: '37px',
+                [isRTL ? 'right' : 'left']: '7.1%',
+                height: '2px',
+                width: '85.8%',
+                background: '#E7E9F1',
+              }}
+            />
+            {railFilled > 0 && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '37px',
+                  [isRTL ? 'right' : 'left']: '7.1%',
+                  height: '2px',
+                  width: `${railFilled}%`,
+                  borderRadius: '2px',
+                  background: isRTL
+                    ? 'linear-gradient(270deg, #F9C79A 0%, #F97316 100%)'
+                    : 'linear-gradient(90deg, #F9C79A 0%, #F97316 100%)',
+                }}
+              />
+            )}
 
-          {/* Timeline nodes */}
-          {TIMELINE_STAGES.map((stage, index) => {
-            const isCurrent = accountAgeDays >= stage.day && (index === TIMELINE_STAGES.length - 1 || accountAgeDays < TIMELINE_STAGES[index + 1].day);
-            const isSelected = index === selectedStageIndex;
-            const isPast = accountAgeDays >= stage.day && !isCurrent;
-            const isFuture = accountAgeDays < stage.day;
+            {/* Today. Everything behind it happened; everything ahead has not,
+                and the card no longer pretends to know when it will. */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                [isRTL ? 'right' : 'left']: `${todayAt}%`,
+                transform: isRTL ? 'translateX(50%)' : 'translateX(-50%)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                zIndex: 2,
+                pointerEvents: 'none',
+              }}
+            >
+              <span
+                style={{
+                  fontSize: '9.5px',
+                  fontWeight: 700,
+                  letterSpacing: '0.07em',
+                  textTransform: 'uppercase',
+                  color: '#128A5E',
+                  background: 'rgba(34, 197, 139, 0.13)',
+                  padding: '2px 7px',
+                  borderRadius: '5px',
+                  whiteSpace: 'nowrap',
+                  marginBottom: '4px',
+                }}
+              >
+                {journey.todayDay === null
+                  ? t('journey.today_plain')
+                  : t('journey.today', { day: journey.todayDay })}
+              </span>
+              <span
+                style={{
+                  width: '2px',
+                  height: '20px',
+                  background:
+                    'repeating-linear-gradient(180deg, #22C58B 0 3px, transparent 3px 6px)',
+                }}
+              />
+            </div>
 
-            return (
-              <button
-                key={stage.key}
-                onClick={() => handleStageClick(index)}
-                disabled={isFuture}
+            {journeyRows.map(row => (
+              <div
+                key={row.key}
                 style={{
                   flex: 1,
                   position: 'relative',
@@ -1008,33 +1186,29 @@ export function LiveDashboard({
                   flexDirection: 'column',
                   alignItems: 'center',
                   gap: '9px',
-                  background: 'none',
-                  border: 'none',
-                  cursor: isFuture ? 'not-allowed' : 'pointer',
-                  padding: 0,
-                  opacity: isFuture ? 0.5 : 1,
+                  padding: '0 4px',
                 }}
               >
-                {/* Dot */}
                 <span
                   style={{
                     width: '22px',
                     height: '22px',
                     borderRadius: '50%',
-                    background: isSelected
-                      ? 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)'
-                      : '#FFFFFF',
-                    border: isSelected
-                      ? 'none'
-                      : isPast || isCurrent
-                      ? '2px solid #F9C79A'
-                      : '2px solid #E7E9F1',
                     position: 'relative',
                     zIndex: 1,
-                    transition: '0.25s',
+                    flex: 'none',
                     display: 'grid',
                     placeItems: 'center',
-                    boxShadow: isSelected ? '0 0 0 4px rgba(249,115,22,0.16)' : 'none',
+                    ...(row.state === 'reached'
+                      ? {
+                          background:
+                            'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
+                          border: 'none',
+                          boxShadow: '0 0 0 4px rgba(249,115,22,0.14)',
+                        }
+                      : row.state === 'counting'
+                      ? { background: '#FFF8F2', border: '2px dashed #F9A15C' }
+                      : { background: '#FFFFFF', border: '2px solid #E7E9F1' }),
                   }}
                 >
                   <i
@@ -1042,42 +1216,86 @@ export function LiveDashboard({
                       width: '8px',
                       height: '8px',
                       borderRadius: '50%',
-                      background: isSelected ? '#FFFFFF' : isPast || isCurrent ? '#F9C79A' : '#E7E9F1',
-                      transition: '0.25s',
                       display: 'block',
+                      background:
+                        row.state === 'reached'
+                          ? '#FFFFFF'
+                          : row.state === 'counting'
+                          ? '#F9A15C'
+                          : '#EDEFF5',
                     }}
                   />
                 </span>
 
-                {/* Text */}
                 <span>
                   <b
                     style={{
                       display: 'block',
-                      fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
-                      fontSize: '13.5px',
+                      fontFamily: isRTL
+                        ? '"Heebo", system-ui, sans-serif'
+                        : '"Space Grotesk", system-ui, sans-serif',
+                      fontSize: '14px',
                       fontWeight: 600,
                       letterSpacing: '-0.01em',
-                      color: isSelected ? '#C2410C' : isCurrent ? '#F97316' : '#131A2B',
+                      lineHeight: 1.1,
+                      fontVariantNumeric: 'tabular-nums',
+                      color:
+                        row.state === 'reached'
+                          ? '#131A2B'
+                          : row.state === 'counting'
+                          ? '#C2410C'
+                          : '#C6CAD6',
                     }}
                   >
-                    {stage.label}
+                    {row.top}
                   </b>
-                  <small
+                  <span
                     style={{
                       display: 'block',
                       fontSize: '11.5px',
-                      color: '#697187',
-                      marginTop: '1px',
-                      lineHeight: 1.35,
+                      fontWeight: 500,
+                      lineHeight: 1.3,
+                      marginTop: '3px',
+                      color: row.state === 'waiting' ? '#9AA1B4' : '#4A5165',
                     }}
                   >
-                    {stage.sublabel}
-                  </small>
+                    {row.name}
+                  </span>
+                  {row.meta && (
+                    <span
+                      style={{
+                        display: 'block',
+                        fontSize: '10.5px',
+                        lineHeight: 1.35,
+                        marginTop: '2px',
+                        color: row.state === 'counting' ? '#D97706' : '#8D94A8',
+                      }}
+                    >
+                      {row.meta}
+                    </span>
+                  )}
+                  {row.tag && (
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        marginTop: '5px',
+                        fontSize: '8.5px',
+                        fontWeight: 700,
+                        letterSpacing: '0.07em',
+                        textTransform: 'uppercase',
+                        padding: '2px 5px',
+                        borderRadius: '4px',
+                        background: 'rgba(79, 110, 247, 0.10)',
+                        color: '#4F6EF7',
+                      }}
+                    >
+                      {t(row.tag)}
+                    </span>
+                  )}
                 </span>
-              </button>
-            );
-          })}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -1189,7 +1407,17 @@ export function LiveDashboard({
           pipeline so the reader has seen the funnel before being asked which
           channels feed it. */}
       {showChannels && (
-        <ChannelsOverviewCard performance={channelPerformance} onChanged={onChannelsChanged} />
+        <ChannelsOverviewCard
+          performance={channelPerformance}
+          onChanged={onChannelsChanged}
+          /* Already on this component from `/api/business-os/stats` — the
+             connections column lists owned surfaces beside connected accounts,
+             and needed no query of its own to do it. Undefined rather than
+             false while the stats call is in flight: "not told yet" must not
+             render a Publish button at a business that has a published site. */
+          owned={ownedSurfaces}
+          onAction={action => onAction?.(action)}
+        />
       )}
 
       {/* The advisor. The engine's pending detections are the advice; when it
@@ -1228,9 +1456,6 @@ export function LiveDashboard({
           <VectorsStrip vectorMaturity={vectorMaturity} standalone />
         </div>
       )}
-
-      {/* First Light Milestones */}
-      {milestones.some(milestone => milestone.lit) && <FirstLightMilestones milestones={milestones} />}
 
       {/* Footer Replay */}
       {replayData.rows.length > 0 && (

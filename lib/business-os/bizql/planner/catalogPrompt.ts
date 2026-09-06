@@ -20,6 +20,7 @@
  * @module lib/business-os/bizql/planner
  */
 
+import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { CATALOG, type ResolvedEntity } from '@/lib/business-os/catalog';
 
@@ -42,6 +43,39 @@ function renderField(key: string, entity: ResolvedEntity): string | null {
   if (!field || field.readable === false) return null;
 
   const parts = [`${key}:${TYPE_TAG[field.type] ?? field.type}`];
+
+  /*
+   * A net figure says what it is net OF, and what it is called.
+   *
+   * `amount:money net_amount:money` gave the model no way to tell them apart,
+   * so it summed the gross one and reported money that had been refunded as
+   * money earned. Naming the deduction is the whole signal — the same lesson as
+   * derived fields, which were unfindable until their labels were shown.
+   *
+   * Driven by the declaration, so any future net field explains itself.
+   */
+  /*
+   * The GROSS side of a net pair says so too.
+   *
+   * Annotating only the net field left `amount:money` looking like the ordinary
+   * choice and `net_amount` like a variant, and the model took the familiar
+   * name every time. A pair is only legible as a pair when both halves are
+   * labelled, so the base of someone else's `minus` is marked here.
+   */
+  const netCounterpart = Object.entries(entity.fields).find(
+    ([, f]) => f.minus && f.column === field.column && f.minus !== field.column
+  );
+
+  if (netCounterpart && !field.minus) {
+    parts.push(`(GROSS — before ${netCounterpart[1].minus}; for revenue use ${netCounterpart[0]})`);
+  }
+
+  if (field.minus) {
+    const words = [...new Set(Object.values(field.labels).filter(
+      (v): v is string => typeof v === 'string' && v.length > 0
+    ))];
+    parts.push(`(net of ${field.minus}${words.length ? ` — ${words.join(', ')}` : ''})`);
+  }
 
   // Enum values matter — without them the planner guesses storage values.
   if (field.enumValues?.length) {
@@ -118,11 +152,29 @@ export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): stri
 
     lines.push(`  f: ${fields.join(' ')}`);
 
-    // Derived fields are advertised exactly like real ones. The planner does not
-    // need to know one is backed by an anti-join — that is the compiler's job.
+    /*
+     * Derived fields are advertised exactly like real ones. The planner does not
+     * need to know one is backed by an anti-join — that is the compiler's job.
+     *
+     * WITH THEIR LABELS, which is what makes them findable. A derived field is
+     * chosen only if the model connects the question to it, and `owes_money:bool`
+     * offers nothing to connect to: asked "מי חייב לי כסף", the model rebuilt the
+     * filter by hand from the invoices relation — a plan that is valid, passes
+     * every check, and quietly misses every client who owes money on a payment
+     * plan rather than an invoice.
+     *
+     * The labels already exist and say `חייב כסף` / `debe dinero`. Entities have
+     * shown their aliases on the header line for exactly this reason; derived
+     * fields were the one place the vocabulary was withheld.
+     */
     const derived = Object.entries(entity.derived ?? {});
     if (derived.length) {
-      lines.push(`  d: ${derived.map(([k, d]) => `${k}:${TYPE_TAG[d.type] ?? d.type}`).join(' ')}`);
+      const rendered = derived.map(([key, def]) => {
+        const words = [...new Set(Object.values(def.labels).filter((v): v is string => typeof v === 'string' && v.length > 0))];
+        const tag = TYPE_TAG[def.type] ?? def.type;
+        return words.length ? `${key}:${tag} (${words.join(', ')})` : `${key}:${tag}`;
+      });
+      lines.push(`  d: ${rendered.join(' ')}`);
     }
 
     const relations = Object.entries(entity.relations ?? {});
@@ -266,6 +318,108 @@ export async function renderUserVocabulary(
   }
 
   return lines.join('\n');
+}
+
+/**
+ * The words a business uses for its own enum values.
+ *
+ * Keyed by the SOURCE the values come from (`crm_pipeline_stages.stage_key`)
+ * rather than by the field that uses them, so any field pointing at the same
+ * vocabulary resolves from one entry — and the renderer can find it knowing
+ * only the field's own `enumSource`.
+ *
+ * Some vocabularies are per-user: `contacts.stage` is backed by that business's
+ * own pipeline, so `family_enrolled` is "לקוח" for one tutor and something else
+ * for the next. The catalog cannot hold those labels — they are data, not
+ * schema — which is why `enumSource` names where to read them.
+ *
+ * The PLANNER already loaded this to build its prompt. The RENDERER did not, so
+ * an answer showed the stored token with the underscores prettified away —
+ * "שלב: family enrolled" — a Hebrew sentence ending in an English database key
+ * that the business had already given a Hebrew name.
+ *
+ * Returns an empty map on any failure. A missing label is a worse-looking
+ * answer; a thrown error is no answer at all.
+ */
+export async function loadUserEnumLabels(
+  userId: string,
+  client: SupabaseClient,
+  entityKeys?: string[]
+): Promise<Record<string, Record<string, string>>> {
+  const keys = entityKeys?.length
+    ? entityKeys.filter((k) => CATALOG.entities[k])
+    : Object.keys(CATALOG.entities);
+
+  const labels: Record<string, Record<string, string>> = {};
+
+  for (const key of keys) {
+    const entity = CATALOG.entities[key];
+
+    for (const [fieldKey, field] of Object.entries(entity.fields)) {
+      const source = field.enumSource;
+      if (!source?.labelColumn) continue;
+
+      try {
+        let query = client
+          .from(source.table)
+          .select(`${source.valueColumn},${source.labelColumn}`);
+        if (source.scopedToUser) query = query.eq('user_id', userId);
+
+        const { data, error } = await query;
+        if (error || !data) continue;
+
+        const map: Record<string, string> = {};
+        for (const row of data as unknown as Array<Record<string, unknown>>) {
+          const value = row[source.valueColumn];
+          const label = row[source.labelColumn];
+          if (value != null && label != null) map[String(value)] = String(label);
+        }
+
+        if (Object.keys(map).length > 0) labels[`${source.table}.${source.valueColumn}`] = map;
+      } catch {
+        // Same reason as above: never let a label lookup break an answer.
+      }
+    }
+  }
+
+  return labels;
+}
+
+
+/**
+ * A fingerprint of how the catalog is PRESENTED to the planner.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The plan cache keyed on two things: `CATALOG_VERSION` — which hashes the
+ * catalog's structure and explicitly IGNORES `labels` — and `plannerVersion()`,
+ * which hashes the system prompt and the tool schema. Neither covers this file.
+ *
+ * So a change to how entities and fields are rendered changed every plan the
+ * model produces while leaving the key untouched, and cached plans built from
+ * the old presentation kept being served. Showing derived fields with their
+ * labels took one question from wrong-on-every-attempt to right-on-every-
+ * attempt — and would have been invisible to the cache. It only invalidated
+ * because an unrelated prompt edit happened to move the key first.
+ *
+ * Hashing the full, unscoped rendering: it is a superset of every per-request
+ * scoping, so any change to the presentation moves it, and no change to the
+ * question does.
+ *
+ * Memoised because the render is deterministic within a process and this is
+ * consulted on every cache lookup.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+let cachedPromptVersion: string | undefined;
+
+export function catalogPromptVersion(): string {
+  if (!cachedPromptVersion) {
+    cachedPromptVersion = createHash('sha256')
+      .update(renderCatalogForPrompt({ includeActions: true }))
+      .digest('hex')
+      .slice(0, 12);
+  }
+
+  return cachedPromptVersion;
 }
 
 /**

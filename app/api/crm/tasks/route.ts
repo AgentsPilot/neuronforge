@@ -9,6 +9,9 @@ import { createLogger } from '@/lib/logger';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { z } from 'zod';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence } from '@/lib/business-os/activityText';
+import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ module: 'CRMTasksAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -106,6 +109,37 @@ export async function POST(request: NextRequest) {
       },
       request
     }).catch(err => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
+
+    /*
+     * The task, on the contact's timeline.
+     *
+     * Only when it belongs to a contact: a standalone reminder is the owner's
+     * own business and has no client whose history it belongs in.
+     */
+    if (result.data && validated.contact_id) {
+      const { data: ownerProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const ownerLocale = ownerProfile?.language || 'en';
+
+      crmActivityRepository.create({
+        user_id: user.id,
+        contact_id: validated.contact_id,
+        activity_type: 'task_created',
+        title: activitySentence('task_created', { task: validated.title }, ownerLocale),
+        description: JSON.stringify({
+          kind: 'task_created',
+          task: validated.title,
+          dueDate: validated.due_date || undefined,
+          priority: validated.priority || undefined,
+        }),
+        auto_logged: true,
+        source_capability: 'crm',
+        source_entity_id: result.data.id,
+      }).catch(err => requestLogger.warn({ err }, 'Task-created activity logging failed (non-blocking)'));
+    }
 
     // 5. Return success
     requestLogger.info({ taskId: result.data!.id, userId: user.id }, 'Task created successfully');

@@ -13,9 +13,14 @@ import {
   Check,
   AlertCircle,
   Save,
+  Percent,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { StripeConnectStatus } from '@/components/payments/StripeConnectStatus';
+import {
+  defaultDocumentType,
+  type DocumentType,
+} from '@/lib/payments/documentType';
 
 interface InvoiceAddress {
   line1?: string;
@@ -36,7 +41,21 @@ interface InvoiceSettings {
   invoice_payment_instructions: string;
   invoice_footer_text: string;
   invoice_number_prefix: string;
+  /** Display only. The platform never adds tax to a price. */
+  invoice_prices_include_tax: boolean;
+  invoice_tax_rate: string;
+  invoice_tax_label: string;
+  /** Empty string = follow the derived default. See lib/payments/documentType. */
+  invoice_document_type: DocumentType | '';
 }
+
+/** '' is "Automatic" — follow the derived default rather than pinning a word. */
+const DOCUMENT_TYPE_OPTIONS: readonly (DocumentType | '')[] = [
+  '',
+  'receipt',
+  'invoice',
+  'tax_invoice',
+];
 
 interface InvoiceSettingsSectionProps {
   userId: string;
@@ -65,6 +84,10 @@ export function InvoiceSettingsSection({
     invoice_payment_instructions: '',
     invoice_footer_text: '',
     invoice_number_prefix: 'INV',
+    invoice_prices_include_tax: false,
+    invoice_tax_rate: '',
+    invoice_tax_label: '',
+    invoice_document_type: '',
   });
 
   // Load invoice settings
@@ -91,6 +114,16 @@ export function InvoiceSettingsSection({
             invoice_payment_instructions: data.data.invoice_payment_instructions || '',
             invoice_footer_text: data.data.invoice_footer_text || '',
             invoice_number_prefix: data.data.invoice_number_prefix || 'INV',
+            invoice_prices_include_tax: !!data.data.invoice_prices_include_tax,
+            // Kept as a STRING while editing. Held as a number, a half-typed
+            // "1" on the way to "17" is a saved rate of 1%, and clearing the
+            // box becomes NaN.
+            invoice_tax_rate:
+              data.data.invoice_tax_rate === null || data.data.invoice_tax_rate === undefined
+                ? ''
+                : String(data.data.invoice_tax_rate),
+            invoice_tax_label: data.data.invoice_tax_label || '',
+            invoice_document_type: data.data.invoice_document_type || '',
           });
         }
       }
@@ -107,10 +140,25 @@ export function InvoiceSettingsSection({
       setSuccessMessage('');
       setErrorMessage('');
 
+      /*
+       * The two fields the form holds as text but the API takes typed.
+       *
+       * An empty rate box is `null` — "not set" — never 0, which the server
+       * rejects and which would mean a real 0% tax if it did not. An empty
+       * document type is `null` too, meaning "follow the default": distinct
+       * from any of the three named values.
+       */
+      const rate = settings.invoice_tax_rate.trim();
+      const payload = {
+        ...settings,
+        invoice_tax_rate: rate === '' ? null : Number(rate),
+        invoice_document_type: settings.invoice_document_type || null,
+      };
+
       const response = await fetch('/api/business-os/invoice-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
+        body: JSON.stringify(payload),
       });
 
       if (response.ok) {
@@ -127,6 +175,20 @@ export function InvoiceSettingsSection({
       setSaving(false);
     }
   };
+
+  /*
+   * What "Automatic" resolves to right now, recomputed as the business types.
+   *
+   * Shown inside the option itself rather than as a note below it: the choice
+   * "Automatic" is meaningless without the answer, and a business that ticks
+   * the tax box watches this change from Receipt to Tax invoice in front of it.
+   */
+  const suggestedTypeLabel = t(
+    `settings.invoice.document_type_${defaultDocumentType({
+      invoice_prices_include_tax: settings.invoice_prices_include_tax,
+      invoice_tax_id: settings.invoice_tax_id,
+    })}`
+  );
 
   const updateAddress = (field: keyof InvoiceAddress, value: string) => {
     setSettings((prev) => ({
@@ -274,6 +336,141 @@ export function InvoiceSettingsSection({
                   className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
+              </div>
+
+              {/* Tax & document type.
+                  Placed directly under the Tax ID because the two together are
+                  what decide the suggested document — a business reading down
+                  the form meets the cause immediately before the effect. */}
+              <div className="space-y-3 pt-3 border-t border-[var(--v2-border)]">
+                <label className="flex items-center gap-2 text-xs font-medium text-[var(--v2-text-primary)]">
+                  <Percent className="w-4 h-4 text-[var(--v2-text-muted)]" />
+                  {t('settings.invoice.tax_section')}
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.invoice_prices_include_tax}
+                    onChange={(e) =>
+                      setSettings((prev) => ({
+                        ...prev,
+                        invoice_prices_include_tax: e.target.checked,
+                      }))
+                    }
+                    className="mt-0.5 w-4 h-4 accent-[var(--v2-primary)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-[var(--v2-text-primary)]">
+                      {t('settings.invoice.includes_tax')}
+                    </span>
+                    {/* Said plainly, because this is the fear the toggle
+                        creates: nobody's price changes. */}
+                    <span className="block text-xs text-[var(--v2-text-muted)] mt-0.5">
+                      {t('settings.invoice.includes_tax_hint')}
+                    </span>
+                  </span>
+                </label>
+
+                {settings.invoice_prices_include_tax && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                        {t('settings.invoice.tax_rate')}
+                      </label>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min={0.01}
+                        max={99.99}
+                        step={0.01}
+                        value={settings.invoice_tax_rate}
+                        onChange={(e) =>
+                          setSettings((prev) => ({ ...prev, invoice_tax_rate: e.target.value }))
+                        }
+                        placeholder="17"
+                        className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                        {t('settings.invoice.tax_label')}
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.invoice_tax_label}
+                        onChange={(e) =>
+                          setSettings((prev) => ({ ...prev, invoice_tax_label: e.target.value }))
+                        }
+                        placeholder={isRTL ? 'מע״מ' : 'VAT'}
+                        maxLength={30}
+                        className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                        style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* The consequence, in words, before it reaches a client.
+                    The platform suggests; the business decides — whether it may
+                    issue a tax invoice follows from its registration, which is
+                    not something a settings form can know. */}
+                <div>
+                  <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                    {t('settings.invoice.document_type')}
+                  </label>
+                  {/* A segmented control, the way the platform does every other
+                      short exclusive choice. A native <select> was the one drop
+                      -down on this screen and looked borrowed from the browser.
+
+                      Four segments, so the row wraps rather than squeezing:
+                      "Tax invoice" is two words in every language here and does
+                      not survive a quarter-width segment. */}
+                  <div
+                    className="flex flex-wrap gap-1 bg-[var(--v2-surface-hover)] p-1"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    role="radiogroup"
+                    aria-label={t('settings.invoice.document_type')}
+                  >
+                    {DOCUMENT_TYPE_OPTIONS.map((option) => {
+                      const selected = settings.invoice_document_type === option;
+                      return (
+                        <button
+                          key={option || 'auto'}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          onClick={() =>
+                            setSettings((prev) => ({ ...prev, invoice_document_type: option }))
+                          }
+                          className={`flex-1 min-w-[88px] px-3 py-1.5 text-[12.5px] transition-colors ${
+                            selected
+                              ? 'bg-[var(--v2-bg)] font-medium text-[var(--v2-text-primary)] shadow-sm'
+                              : 'text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                          }`}
+                          style={{ borderRadius: 'calc(var(--v2-radius-button) - 2px)' }}
+                        >
+                          {option === ''
+                            ? t('settings.invoice.document_type_auto')
+                            : t(`settings.invoice.document_type_${option}`)}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* What "Automatic" currently means, on its own line — inside
+                      a segment it would be the one label three times the width
+                      of its neighbours. */}
+                  {settings.invoice_document_type === '' && (
+                    <p className="mt-1.5 text-xs text-[var(--v2-text-secondary)]">
+                      {t('settings.invoice.document_type_auto_hint', { type: suggestedTypeLabel })}
+                    </p>
+                  )}
+                  <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                    {t('settings.invoice.document_type_hint')}
+                  </p>
+                </div>
               </div>
 
               {/* Address Section */}

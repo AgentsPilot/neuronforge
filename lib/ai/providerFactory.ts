@@ -5,6 +5,7 @@
 import { OpenAIProvider } from './providers/openaiProvider';
 import { AnthropicProvider } from './providers/anthropicProvider';
 import { KimiProvider } from './providers/kimiProvider';
+import { GroqProvider } from './providers/groqProvider';
 import { BaseAIProvider } from './providers/baseProvider';
 import { AIAnalyticsService } from '../analytics/aiAnalytics';
 import { createClient } from '@supabase/supabase-js';
@@ -16,7 +17,15 @@ import { createClient } from '@supabase/supabase-js';
 export const PROVIDERS = {
   OPENAI: 'openai',
   ANTHROPIC: 'anthropic',
-  KIMI: 'kimi'
+  KIMI: 'kimi',
+  /**
+   * Groq — open-weights models on their own inference hardware.
+   *
+   * The provider class existed and the factory could not hand it out, so
+   * nothing in the product could reach it. Added here so choosing it is a
+   * config change rather than a code change, which is the point of the factory.
+   */
+  GROQ: 'groq'
 } as const;
 
 export type ProviderName = typeof PROVIDERS[keyof typeof PROVIDERS];
@@ -31,6 +40,7 @@ export class ProviderFactory {
   private static openaiInstance: OpenAIProvider | null = null;
   private static anthropicInstance: AnthropicProvider | null = null;
   private static kimiInstance: KimiProvider | null = null;
+  private static groqInstance: GroqProvider | null = null;
   private static aiAnalytics: AIAnalyticsService | null = null;
 
   /**
@@ -67,8 +77,11 @@ export class ProviderFactory {
       case 'kimi':
         return this.getKimiProvider();
 
+      case 'groq':
+        return this.getGroqProvider();
+
       default:
-        throw new Error(`Unknown provider: ${provider}. Supported providers: openai, anthropic, kimi`);
+        throw new Error(`Unknown provider: ${provider}. Supported providers: openai, anthropic, kimi, groq`);
     }
   }
 
@@ -150,6 +163,32 @@ export class ProviderFactory {
     }
 
     return this.kimiInstance;
+  }
+
+  /**
+   * Get Groq provider instance (singleton)
+   *
+   * @private
+   * @throws Error if GROQ_API_KEY not configured
+   */
+  private static getGroqProvider(): GroqProvider {
+    if (!this.groqInstance) {
+      const apiKey = process.env.GROQ_API_KEY;
+
+      if (!apiKey) {
+        throw new Error(
+          'GROQ_API_KEY environment variable is not configured. ' +
+          'Please set it in your environment or .env file. ' +
+          'Get your API key from: https://console.groq.com'
+        );
+      }
+
+      console.log('🔧 Initializing Groq Provider with analytics tracking');
+      const analytics = this.getAnalytics();
+      this.groqInstance = new GroqProvider(apiKey, analytics);
+    }
+
+    return this.groqInstance;
   }
 
   /**

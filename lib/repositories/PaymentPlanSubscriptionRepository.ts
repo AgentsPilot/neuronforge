@@ -41,6 +41,7 @@ export interface PlanSubscription {
   contact_id: string | null;
   booking_id: string | null;
   service_id: string | null;
+  payment_plan_id: string | null;
   stripe_subscription_id: string | null;
   stripe_schedule_id: string | null;
   stripe_customer_id: string | null;
@@ -64,6 +65,14 @@ export interface CreatePlanSubscriptionInput {
   contactId?: string | null;
   bookingId?: string | null;
   serviceId?: string | null;
+  /**
+   * The `payment_plans` offer this sale was made under.
+   *
+   * A real FK on the table that nothing was writing, so a subscription could
+   * not be traced back to the terms it was sold on — the same link the
+   * projected periods carry.
+   */
+  paymentPlanId?: string | null;
   installmentCount: number;
   installmentAmount: number;
   currency: string;
@@ -95,6 +104,7 @@ export class PaymentPlanSubscriptionRepository {
           contact_id: input.contactId ?? null,
           booking_id: input.bookingId ?? null,
           service_id: input.serviceId ?? null,
+          payment_plan_id: input.paymentPlanId ?? null,
           installment_count: input.installmentCount,
           installment_amount: input.installmentAmount,
           currency: input.currency,

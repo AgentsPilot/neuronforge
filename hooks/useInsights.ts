@@ -105,6 +105,19 @@ export interface VectorMaturityData {
   litCount: number;
   totalVectors: number;
   accountAgeDays: number;
+  /**
+   * Event dates the journey timeline measures from — the account's first day,
+   * and the anchors the pricing and retention vectors already count from.
+   * Optional here because a cached response from before this shipped has none,
+   * and the timeline degrades to undated nodes rather than to wrong ones.
+   */
+  journeyAnchors?: {
+    accountCreatedAt: string | null;
+    firstBookingAt: string | null;
+    firstClientAt: string | null;
+    convCrossedAt: string | null;
+    firstAutomationAt: string | null;
+  };
   /** English fallback. Prefer `noteKey`, which the reader's language can reach. */
   note: string;
   noteKey: 'vecs.note.cold' | 'vecs.note.full' | 'vecs.note.partial';

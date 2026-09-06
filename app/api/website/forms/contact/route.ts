@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
+import { activitySentence } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
@@ -198,13 +199,21 @@ export async function POST(request: NextRequest) {
       activityDescription += `\nReferral Source: ${data.referral_source}`;
     }
 
+    const { data: ownerProfile } = await supabaseServer
+      .from('business_profiles')
+      .select('language')
+      .eq('user_id', ownerId)
+      .maybeSingle();
+    const ownerLocale = ownerProfile?.language || 'en';
+
     const { error: activityError } = await supabaseServer
       .from('crm_activities')
       .insert({
         user_id: ownerId,
         contact_id: contactId,
         activity_type: 'note',
-        title: 'Website Contact Form Submission',
+        // The business's language, not English: this is its own history.
+        title: activitySentence('website_contact_form', {}, ownerLocale),
         description: activityDescription,
         activity_date: new Date().toISOString(),
         auto_logged: true,

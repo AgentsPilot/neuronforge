@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { describeRefundReason } from '@/lib/payments/refundReasons';
 import { RefundModal } from './RefundModal';
 import {
   Loader2, RotateCcw, Copy, Check, Wallet, Search, ChevronDown, ChevronRight,
@@ -780,7 +781,12 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                               payment is untouched. `!hasRefund` made a partial
                               refund a one-way door: refund 40% and the other 60%
                               became unreachable from the UI entirely. */}
+                          {/* And only when there is something at Stripe to refund
+                              against. Without a payment intent or a charge the
+                              server refuses with `MISSING_REFERENCE`, so the
+                              button could only ever lead to a failure. */}
                           {transaction.status === 'succeeded' &&
+                            !!(transaction.stripe_payment_intent_id || transaction.stripe_charge_id) &&
                             transaction.amount - (transaction.refunded_amount || 0) > 0 && (
                             <Button
                               variant="ghost"
@@ -909,8 +915,15 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
                                       <div className={`text-xs text-[var(--v2-text-muted)] mb-1 ${isRTL ? '' : 'uppercase tracking-wider'}`}>
                                         {t('payments.details.refund_reason') || 'Refund Reason'}
                                       </div>
+                                      {/* Through the describer, not raw.
+                                          Picking a reason chip stores the
+                                          canonical key — `no_show`,
+                                          `duplicate_payment` — so printing the
+                                          column put an English identifier in
+                                          front of the owner. Free text the
+                                          owner typed passes through untouched. */}
                                       <div className="text-sm text-[var(--v2-text-primary)]">
-                                        {transaction.refund_reason}
+                                        {describeRefundReason(transaction.refund_reason, t)}
                                       </div>
                                     </div>
                                   )}
@@ -1041,7 +1054,13 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
             setRefundModalOpen(false);
             setSelectedTransaction(null);
           }}
-          transactionId={selectedTransaction.stripe_payment_intent_id || selectedTransaction.id}
+          // The ROW's id. This passed the Stripe payment intent when there was
+          // one — a `pi_…` string to a route whose schema is
+          // `z.string().uuid()`, so this button returned 400 for every
+          // transaction that had actually been charged through Stripe, and
+          // worked only on ones that had not.
+          transactionId={selectedTransaction.id}
+          alreadyRefunded={Number(selectedTransaction.refunded_amount ?? 0)}
           originalAmount={selectedTransaction.amount}
           currency={selectedTransaction.currency}
           onSuccess={handleRefundSuccess}

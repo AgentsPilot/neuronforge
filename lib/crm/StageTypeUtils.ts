@@ -273,3 +273,79 @@ export async function buildClientStageFilter(
 
   return labelMatched.length > 0 ? labelMatched : ['client'];
 }
+
+/**
+ * Move a contact to this business's client stage, because they have paid.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS A FUNCTION AND NOT TWO LINES AT THE CALL SITE
+ *
+ * The pipeline is defined per business. This one runs
+ * פנייה → ייעוץ ראשוני → לקוח → הושלם, and there is no stage called "customer"
+ * anywhere in it — yet the Stripe webhook wrote `stage: 'customer'` on every
+ * paid invoice. The contact landed in a stage that does not exist on their
+ * board, which is not a wrong column so much as no column at all.
+ *
+ * The same event reached the manual path and did nothing: an invoice marked
+ * paid by hand promoted nobody. So whether a paying client appeared as a client
+ * depended on which way the money happened to arrive.
+ *
+ * One function, both callers, and the answer read from the business's own
+ * configuration rather than guessed from a key name.
+ *
+ * WHAT IT REFUSES TO DO
+ *
+ * Promote, never demote. A contact already at `client` or past it — finished,
+ * lost, archived — is left exactly where the business put them. Paying an
+ * invoice is not evidence that somebody who completed their programme is back
+ * at the start, and a payment arriving late would otherwise drag a finished
+ * client backwards on the board.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function promoteToClientStage(
+  supabase: SupabaseClient,
+  userId: string,
+  contactId: string
+): Promise<{ moved: boolean; stageKey: string | null }> {
+  const target = await findClientStage(supabase, userId);
+
+  if (!target) {
+    // No client stage configured. Doing nothing is right: inventing a stage key
+    // would put this contact somewhere the board cannot show them.
+    logger.warn({ userId, contactId }, 'No client stage configured — leaving the contact where it is');
+    return { moved: false, stageKey: null };
+  }
+
+  const { data: contact } = await supabase
+    .from('crm_contacts')
+    .select('stage')
+    .eq('id', contactId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (!contact) return { moved: false, stageKey: null };
+  if (contact.stage === target.stage_key) return { moved: false, stageKey: target.stage_key };
+
+  // Already a client, or past being one. Their position is the business's to
+  // decide from here.
+  const currentType = await getStageType(supabase, userId, contact.stage);
+  if (currentType && !ACTIVE_PIPELINE_TYPES.includes(currentType)) {
+    return { moved: false, stageKey: contact.stage };
+  }
+
+  const { error } = await supabase
+    .from('crm_contacts')
+    .update({ stage: target.stage_key, updated_at: new Date().toISOString() })
+    .eq('id', contactId)
+    .eq('user_id', userId);
+
+  if (error) {
+    // Never fatal. The money is recorded; where the contact sits on a board is
+    // not worth failing a payment over.
+    logger.warn({ err: error, contactId, userId }, 'Could not promote contact to client stage');
+    return { moved: false, stageKey: contact.stage };
+  }
+
+  logger.info({ contactId, from: contact.stage, to: target.stage_key }, 'Contact promoted to client stage');
+  return { moved: true, stageKey: target.stage_key };
+}

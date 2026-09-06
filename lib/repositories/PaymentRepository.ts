@@ -88,6 +88,15 @@ export interface PaymentInvoice {
   payment_received_at: string | null;
   payment_notes: string | null;
   processor_type: string | null;
+  /**
+   * May this invoice be paid online?
+   *
+   * FALSE means collect it by transfer — no card button on the pay page, bank
+   * details instead. NULL means no choice was recorded and the business's own
+   * collection capability decides, which is how every invoice behaved before
+   * the column existed.
+   */
+  allow_online_payment: boolean | null;
   processor_checkout_id: string | null;
   processor_payment_id: string | null;
   processor_customer_id: string | null;
@@ -651,6 +660,7 @@ export type CreatePaymentInvoiceInput =
     | 'payment_method' | 'payment_received_at' | 'payment_notes'
     | 'processor_type' | 'processor_checkout_id' | 'processor_payment_id'
     | 'processor_customer_id' | 'processor_payment_method_id'
+    | 'allow_online_payment'
     | 'retry_count' | 'last_retry_at' | 'next_retry_at'
     | 'stripe_invoice_id' | 'stripe_hosted_invoice_url' | 'stripe_invoice_pdf'
     | 'client_address'
@@ -673,6 +683,7 @@ export type CreatePaymentInvoiceInput =
       | 'payment_method' | 'payment_received_at' | 'payment_notes'
       | 'processor_type' | 'processor_checkout_id' | 'processor_payment_id'
       | 'processor_customer_id' | 'processor_payment_method_id'
+      | 'allow_online_payment'
       | 'retry_count' | 'last_retry_at' | 'next_retry_at'
       | 'stripe_invoice_id' | 'stripe_hosted_invoice_url' | 'stripe_invoice_pdf'
       | 'client_address'

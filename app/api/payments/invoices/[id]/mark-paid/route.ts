@@ -23,6 +23,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
+import { promoteToClientStage } from '@/lib/crm/StageTypeUtils';
 
 const logger = createLogger({ module: 'InvoiceMarkPaidAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -105,6 +106,22 @@ export async function POST(
       description: `Invoice ${invoice.invoice_number}`,
       metadata: { source: 'manual_mark_paid', notes: parsed.data.notes ?? null },
     });
+
+    /*
+     * Money arriving by hand is still money arriving.
+     *
+     * The Stripe path promoted the contact and this one did not, so whether a
+     * paying client showed up as a client on the board depended on which way
+     * they happened to pay. Same helper, same rule, same result.
+     *
+     * Not awaited for its answer: the payment is recorded either way, and where
+     * a contact sits on a board is not worth failing a settlement over.
+     */
+    if (invoice.contact_id) {
+      await promoteToClientStage(supabaseServer, user.id, invoice.contact_id).catch(err =>
+        requestLogger.warn({ err, contactId: invoice.contact_id }, 'Stage promotion failed (non-blocking)')
+      );
+    }
 
     if (result.alreadySettled) {
       return NextResponse.json({

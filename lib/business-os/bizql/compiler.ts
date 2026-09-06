@@ -529,6 +529,50 @@ async function prefetchEnumSources(
     );
 
     ctx._enumCache.set(key, mapping);
+
+    /*
+     * Values in USE that the configuration does not account for.
+     *
+     * The mapping above says what each configured option means. It says nothing
+     * about rows holding a value that was configured once and later renamed or
+     * removed — those match no classifier, so every semantic filter skips them
+     * silently and the row becomes invisible rather than miscategorised.
+     *
+     * One extra scoped read, only on a field a semantic actually asked for.
+     */
+    const owner = CATALOG.entities[entityKey];
+    const ownerField = owner?.fields[fieldKey];
+
+    // Only a user-scoped table can be read this way; a relation-scoped entity
+    // would need the join, and guessing the column would read someone else's
+    // rows. Skipping is correct: no report is better than a wrong one.
+    if (owner && ownerField && owner.userScope.kind === 'column') {
+      const configured = new Set([...mapping.values()].flat());
+
+      const { data: inUse } = await supabase
+        .from(owner.table)
+        .select(ownerField.column)
+        .eq(owner.userScope.column, ctx.userId)
+        .not(ownerField.column, 'is', null)
+        .limit(1000);
+
+      const orphans = [
+        ...new Set(
+          ((inUse ?? []) as QueryRow[])
+            .map((row) => String(row[ownerField.column]))
+            .filter((value) => value && !configured.has(value))
+        ),
+      ];
+
+      if (orphans.length > 0) {
+        logger.warn(
+          { entity: entityKey, field: fieldKey, orphans, configured: [...configured] },
+          'Rows hold a value the configuration does not account for'
+        );
+        ctx._enumOrphans = ctx._enumOrphans ?? [];
+        ctx._enumOrphans.push({ field: fieldKey, values: orphans });
+      }
+    }
   }
 }
 
@@ -875,24 +919,52 @@ async function applyPredicate(
     if (derived) {
       // `has_completed_intake eq false` → the NONE quantifier; `eq true` → ANY.
       const wantsTrue = predicate.value !== false;
-      const baseQuantifier = derived.expand.quantifier === 'none' ? 'none' : 'any';
-      const quantifier: 'any' | 'none' = wantsTrue
-        ? baseQuantifier
-        : baseQuantifier === 'any'
-          ? 'none'
-          : 'any';
+      const expansions = Array.isArray(derived.expand) ? derived.expand : [derived.expand];
 
-      return applyPredicate(
-        supabase,
-        builder,
-        entity,
-        {
-          relation: derived.expand.relation,
-          quantifier,
-          where: (derived.expand.where ?? []) as Predicate[],
-        },
-        ctx
-      );
+      /*
+       * Several expansions are OR'd, by unioning the ids each one matches.
+       *
+       * A row satisfies "owes me money" if it is owed on an invoice OR on a
+       * plan period. Applying the relation predicates in sequence would AND
+       * them — demanding both — which is not what any reader means, and would
+       * return nobody.
+       *
+       * `eq false` then means NONE of them: the complement of the same union,
+       * which is why the exclusion is decided once here rather than per route.
+       */
+      const matchedIds = new Set<string>();
+      let column = '';
+
+      for (const expansion of expansions) {
+        const resolved = await resolveRelationPredicate(
+          supabase,
+          entity,
+          {
+            relation: expansion.relation,
+            quantifier: 'any',
+            where: (expansion.where ?? []) as Predicate[],
+          },
+          ctx
+        );
+
+        column = resolved.column;
+        for (const id of resolved.ids) matchedIds.add(id);
+      }
+
+      const anyMeansPresent = expansions[0].quantifier !== 'none';
+      const include = wantsTrue ? anyMeansPresent : !anyMeansPresent;
+      const ids = [...matchedIds];
+
+      if (!include) {
+        // Nothing matched, so nothing is excluded — every row qualifies.
+        if (ids.length === 0) return box(builder);
+        return box(builder.not(column, 'in', `(${ids.join(',')})`));
+      }
+
+      if (ids.length === 0) {
+        return box(builder.in(column, ['00000000-0000-0000-0000-000000000000']));
+      }
+      return box(builder.in(column, ids));
     }
 
     // A foreign key filtered with an id from the wrong table is repaired here
@@ -1018,10 +1090,36 @@ function buildSelect(entity: ResolvedEntity, query: FindQuery): string {
       ]);
     }
     const target = requireEntity(relation.target);
-    const targetColumns = (include.select?.length
+
+    /*
+     * Always fetch what the embedded row is CALLED.
+     *
+     * The columns come from the target's `displayFields`, which need not
+     * include its `labelField` — and `transactions` is exactly that case: it
+     * displays amount, currency, status and paid_at, and is named by its
+     * `description`. So an embedded payment arrived with no description, the
+     * renderer had nothing to label it with, and fell back to the first eight
+     * characters of its uuid. A refunds report read "56a24794" where it should
+     * have read the payment.
+     *
+     * Added rather than substituted: the display fields are still what the
+     * reader asked to see. This only guarantees the row can say its own name.
+     */
+    const labelKeys = Array.isArray(target.labelField)
+      ? target.labelField
+      : [target.labelField].filter(Boolean);
+
+    const requestedKeys = include.select?.length
       ? include.select
-      : (target.displayFields ?? Object.keys(target.fields))
-    ).map((key) => requireReadableField(target, key).column);
+      : (target.displayFields ?? Object.keys(target.fields));
+
+    const targetColumns = [
+      ...new Set(
+        [...requestedKeys, ...(labelKeys as string[])]
+          .filter((key) => target.fields[key] && target.fields[key].readable !== false)
+          .map((key) => requireReadableField(target, key).column)
+      ),
+    ];
 
     // PostgREST embedded resource, in BOTH directions.
     //
@@ -1165,6 +1263,7 @@ export async function compileAndRunFind(
     limit,
     ...(collapsed > 0 ? { collapsed } : {}),
     ...(reportUnmatched(unmatched, candidates, rows.length === 0)),
+    ...(ctx._enumOrphans?.length ? { unclassified: ctx._enumOrphans } : {}),
   };
 }
 
@@ -1225,12 +1324,194 @@ async function resolveGroupLabels(
   return labels;
 }
 
+/**
+ * Aggregate the rows on the far side of a relation, one group per row here.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NOT `group_by`
+ *
+ * Grouping payments by service ranks only the services that HAVE payments. A
+ * service that never sold produces no rows, so it is missing from the result
+ * rather than sitting at zero — and "which service sells least" comes back
+ * naming the lowest non-zero seller. The answer is the one that is absent.
+ *
+ * So this starts from the PARENT: every service is a group before any payment
+ * is counted, and the ones with nothing stay at 0. It also disposes of the
+ * orphan bucket — a payment with no service has no parent to be filed under,
+ * instead of appearing as a service called "—".
+ *
+ * Two scans, both capped and both user-scoped: the parents, then their related
+ * rows. `approximate` is set if either hits its cap, because a truncated parent
+ * scan means groups are missing entirely and a truncated child scan means the
+ * totals are short — the caller cannot tell which from the number alone.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function computeOverRelation(
+  supabase: SupabaseClient,
+  query: ComputeQuery,
+  entity: ResolvedEntity,
+  ctx: QueryContext
+): Promise<ComputeResult> {
+  const relationKey = query.over!;
+  const relation = entity.relations?.[relationKey];
+
+  if (!relation) {
+    throw new BizQLValidationError([
+      `'${entity.key}' has no relation called '${relationKey}'. ` +
+        `Available: ${Object.keys(entity.relations ?? {}).join(', ') || 'none'}.`,
+    ]);
+  }
+
+  if (relation.cardinality !== 'many' || relation.via.side !== 'remote') {
+    throw new BizQLValidationError([
+      `'${entity.key}.${relationKey}' points at a single row, so there is nothing ` +
+        `to aggregate. Use a relation that holds many, or group_by instead.`,
+    ]);
+  }
+
+  const target = CATALOG.entities[relation.target];
+  if (!target) {
+    throw new BizQLValidationError([`'${relationKey}' points at an unknown entity.`]);
+  }
+
+  const fn = query.agg.fn;
+  const aggFieldKey = query.agg.field;
+  const aggField = aggFieldKey ? target.fields[aggFieldKey] : undefined;
+
+  if (fn !== 'count' && !aggField) {
+    throw new BizQLValidationError([
+      `'${fn}' needs a field on '${target.key}' to aggregate` +
+        (aggFieldKey ? `; '${aggFieldKey}' is not one.` : '.'),
+    ]);
+  }
+
+  // The parents — every one of them is a group, whether or not it has children.
+  const labelKeys = Array.isArray(entity.labelField)
+    ? entity.labelField
+    : [entity.labelField].filter(Boolean);
+  const labelColumns = (labelKeys as string[])
+    .map((key) => entity.fields[key]?.column)
+    .filter((column): column is string => Boolean(column));
+
+  const { data: parentData, error: parentError } = await scopedFrom(
+    supabase,
+    entity,
+    ['id', ...labelColumns],
+    ctx.userId
+  ).limit(AGGREGATE_SCAN_CAP + 1);
+
+  if (parentError) throw parentError;
+
+  const parentRows = (parentData ?? []) as QueryRow[];
+  const parentsTruncated = parentRows.length > AGGREGATE_SCAN_CAP;
+  const parents = parentsTruncated ? parentRows.slice(0, AGGREGATE_SCAN_CAP) : parentRows;
+
+  // The children, filtered by `where` — which describes the RELATED rows.
+  const fkColumn = relation.via.column;
+  const childColumns = [
+    fkColumn,
+    ...(aggField ? [aggField.column] : []),
+    ...(aggField?.minus ? [aggField.minus] : []),
+  ];
+
+  let childBuilder = scopedFrom(supabase, target, childColumns, ctx.userId);
+  await prefetchEnumSources(supabase, target, query.where ?? [], ctx);
+  for (const predicate of query.where ?? []) {
+    childBuilder = (await applyPredicate(supabase, childBuilder, target, predicate, ctx)).b;
+  }
+
+  const { data: childData, error: childError } = await childBuilder.limit(AGGREGATE_SCAN_CAP + 1);
+  if (childError) throw childError;
+
+  const childRows = (childData ?? []) as QueryRow[];
+  const childrenTruncated = childRows.length > AGGREGATE_SCAN_CAP;
+  const children = childrenTruncated ? childRows.slice(0, AGGREGATE_SCAN_CAP) : childRows;
+
+  const buckets = new Map<string, number[]>();
+  for (const row of children) {
+    const parentId = row[fkColumn];
+    // A child with no parent belongs to no group. Dropped rather than bucketed
+    // under "—": this ranking is of PARENTS, and an orphan is not one of them.
+    if (parentId === null || parentId === undefined) continue;
+
+    const key = String(parentId);
+    if (!buckets.has(key)) buckets.set(key, []);
+    if (aggField) {
+      buckets
+        .get(key)!
+        .push(
+          (Number(row[aggField.column]) || 0) -
+            (aggField.minus ? Number(row[aggField.minus]) || 0 : 0)
+        );
+    }
+    else buckets.get(key)!.push(1);
+  }
+
+  const reduce = (values: number[]): number => {
+    if (fn === 'count') return values.length;
+    if (values.length === 0) return 0;
+    switch (fn) {
+      case 'sum':
+        return values.reduce((a, b) => a + b, 0);
+      case 'avg':
+        return values.reduce((a, b) => a + b, 0) / values.length;
+      case 'min':
+        return Math.min(...values);
+      case 'max':
+        return Math.max(...values);
+      default:
+        return 0;
+    }
+  };
+
+  const groups = parents.map((parent) => {
+    const id = String(parent.id);
+    const label = labelColumns
+      .map((column) => parent[column])
+      .filter((part) => part !== null && part !== undefined && String(part) !== '')
+      .join(' ')
+      .trim();
+
+    return { key: label || id, value: reduce(buckets.get(id) ?? []) };
+  });
+
+  const kept = query.having
+    ? groups.filter((g) => {
+        const { op, value } = query.having!;
+        if (op === 'gt') return g.value > value;
+        if (op === 'gte') return g.value >= value;
+        if (op === 'lt') return g.value < value;
+        if (op === 'lte') return g.value <= value;
+        if (op === 'neq') return g.value !== value;
+        return g.value === value;
+      })
+    : groups;
+
+  // Biggest first, like every other grouped aggregate — the least is the last,
+  // and a caller after "the worst" reads from the end rather than re-sorting.
+  kept.sort((a, b) => b.value - a.value);
+
+  return {
+    op: 'compute',
+    entity: entity.key,
+    agg: { fn, field: aggFieldKey },
+    value: null,
+    groups: kept,
+    approximate: parentsTruncated || childrenTruncated,
+    ...(ctx._enumOrphans?.length ? { unclassified: ctx._enumOrphans } : {}),
+  };
+}
+
 export async function compileAndRunCompute(
   supabase: SupabaseClient,
   query: ComputeQuery,
   ctx: QueryContext
 ): Promise<ComputeResult> {
   const entity = requireEntity(query.entity);
+
+  // Starting from the parent is a different query, not a variation of this one.
+  if (query.over) return computeOverRelation(supabase, query, entity, ctx);
+
   const { fn, field: aggFieldKey } = query.agg;
 
   const unmatched: UnmatchedFilter[] = [];
@@ -1264,6 +1545,8 @@ export async function compileAndRunCompute(
 
   const columns = [
     ...(aggField ? [aggField.column] : []),
+    // The deduction travels with the figure it reduces, or the net is the gross.
+    ...(aggField?.minus ? [aggField.minus] : []),
     ...(groupColumn ? [groupColumn] : []),
     // Same lesson as buildSelect: a dedupe key that is not fetched reads as
     // undefined for every row, and the distinct count silently equals the raw one.
@@ -1338,8 +1621,17 @@ export async function compileAndRunCompute(
     }
   };
 
+  /*
+   * The value being aggregated, net of any declared deduction.
+   *
+   * A field with `minus` is a gross figure and a giveback held in two columns:
+   * summing the first alone reports money that was returned as money earned.
+   */
   const numeric = (row: QueryRow): number =>
-    aggField ? Number(row[aggField.column] ?? 0) : 0;
+    aggField
+      ? Number(row[aggField.column] ?? 0) -
+        (aggField.minus ? Number(row[aggField.minus] ?? 0) : 0)
+      : 0;
 
   if (group) {
     const column = groupColumn!;
@@ -1352,10 +1644,32 @@ export async function compileAndRunCompute(
       // inventing one ("—" beside real months) would put a bar on a trend chart
       // that answers nothing. Rows without the date are left out and the group
       // list says so by their absence.
+      const missing = raw === null || raw === undefined || raw === '';
+
+      /*
+       * A row with no relation is not one of the things being grouped.
+       *
+       * Grouping by a relation used to invent a "—" bucket for them, and that
+       * bucket competed as though it were a real member. Asked for the most
+       * profitable SERVICE, the answer came back "— with $398": payments that
+       * belong to no service at all, out-earning every service that exists.
+       *
+       * The date path already refuses to do this, for the same reason and in
+       * the comment just above — a "—" bar beside real months answers nothing.
+       * A relation is no different: money attached to no service cannot be your
+       * best service, and their absence from the list says so more honestly
+       * than a nameless group at the top of it.
+       *
+       * A plain FIELD grouping keeps its "—": "how many contacts have no
+       * source" is a real question about a real value, and the empty value IS
+       * the answer there rather than a stand-in for a missing thing.
+       */
+      if (missing && group.kind === 'relation') continue;
+
       const key =
         group.kind === 'bucket'
           ? bucketKey(raw, group.bucket, ctx.timezone ?? 'UTC')
-          : raw === null || raw === undefined || raw === ''
+          : missing
             ? '—'
             : String(raw);
 
@@ -1373,10 +1687,35 @@ export async function compileAndRunCompute(
         ? await resolveGroupLabels(supabase, group, [...buckets.keys()], ctx)
         : undefined;
 
-    const groups = Array.from(buckets.entries()).map(([key, values]) => ({
+    const allGroups = Array.from(buckets.entries()).map(([key, values]) => ({
       key: labels?.get(key) ?? key,
       value: reduce(values) ?? 0,
+      // The raw grouping value, kept only when it is a relation id — that is
+      // the one case where the key shown is a label standing in for a row, and
+      // the only case where a follow-up needs the row itself.
+      ...(group.kind === 'relation' && labels?.has(key) ? { id: key } : {}),
     }));
+
+    /*
+     * `having` — the threshold, applied to the aggregate rather than to a row.
+     *
+     * In JS because the aggregate itself is: the scan is capped and reduced
+     * here, so there is no SQL GROUP BY to hang a HAVING clause off. That also
+     * means a threshold interacts with `approximate` — a group can fall below
+     * the line only because the scan stopped early — which is why the flag is
+     * carried through unchanged rather than being cleared by filtering.
+     */
+    const groups = query.having
+      ? allGroups.filter((g) => {
+          const { op, value } = query.having!;
+          if (op === 'gt') return g.value > value;
+          if (op === 'gte') return g.value >= value;
+          if (op === 'lt') return g.value < value;
+          if (op === 'lte') return g.value <= value;
+          if (op === 'neq') return g.value !== value;
+          return g.value === value;
+        })
+      : allGroups;
 
     // A trend reads in time order; everything else reads biggest-first. Sorting
     // months by amount would answer "which month was best" — a different
@@ -1391,6 +1730,7 @@ export async function compileAndRunCompute(
       groups,
       approximate,
       ...(reportUnmatched(unmatched, candidates, groups.length === 0)),
+      ...(ctx._enumOrphans?.length ? { unclassified: ctx._enumOrphans } : {}),
     };
   }
 

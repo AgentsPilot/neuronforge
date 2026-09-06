@@ -14,6 +14,7 @@ import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { getStripeInvoiceService } from '@/lib/stripe/StripeInvoiceService';
 import Stripe from 'stripe';
+import { isSettledInvoice } from '@/lib/payments/invoiceSettlement';
 
 const logger = createLogger({ module: 'InvoicePaymentLinkAPI' });
 
@@ -52,8 +53,15 @@ export async function GET(
       );
     }
 
-    // Check if invoice is payable
-    if (invoice.status === 'paid') {
+    /*
+     * Already settled, so there is nothing to pay.
+     *
+     * `status === 'paid'` stopped being the whole answer when `refunded` and
+     * `partially_refunded` were added: a refunded invoice fell through this
+     * guard, and a fresh payment link could be issued for money that had
+     * already come in and gone back — the client could pay it a second time.
+     */
+    if (isSettledInvoice(invoice)) {
       return NextResponse.json(
         { success: false, error: 'Invoice is already paid' },
         { status: 400 }

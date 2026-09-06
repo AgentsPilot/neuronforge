@@ -45,6 +45,23 @@ export interface SendEmailParams {
   text?: string;
   /** Resend honors this (verified domain required); SMTP/Gmail use configured sender. */
   from?: string;
+  /**
+   * Where a reply goes.
+   *
+   * The address a client hits Reply on. This is how a booking confirmation gets
+   * answered by the business rather than by the platform, and it needs no domain
+   * verification — unlike `from`, which must stay on a domain we can sign for.
+   */
+  replyTo?: string;
+  /**
+   * The business this email is sent on behalf of.
+   *
+   * Every booking email passed this already and the transport ignored it — it
+   * was not even a parameter, so the value was dropped and every client received
+   * mail from "NeuronForge". Given it, the sender is presented as the business
+   * and replies go to the owner.
+   */
+  ownerUserId?: string;
   /** Optional file attachments */
   attachments?: EmailAttachment[];
 }
@@ -95,6 +112,8 @@ async function sendViaResend(p: SendEmailParams): Promise<void> {
     subject: p.subject,
     html: p.html,
     text: resolveText(p), // D9: multipart/alternative — plaintext part alongside HTML
+    // So a client's reply reaches the business, not an unattended platform inbox.
+    ...(p.replyTo ? { reply_to: p.replyTo } : {}),
   };
 
   // Add attachments if present (Resend format)
@@ -155,6 +174,7 @@ async function sendViaSMTP(p: SendEmailParams): Promise<void> {
 
   const mailOptions: nodemailer.SendMailOptions = {
     from: p.from || `"${fromName}" <${fromEmail}>`,
+    ...(p.replyTo ? { replyTo: p.replyTo } : {}),
     to: p.to.join(', '),
     subject: p.subject,
     html: p.html,
@@ -197,7 +217,10 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
 
   // Build mail options
   const mailOptions: nodemailer.SendMailOptions = {
-    from: `"NeuronForge" <${process.env.GMAIL_USER}>`,
+    // Gmail forces the authenticated account as the sender, so the business's
+    // name cannot appear here — but a reply can still reach the owner.
+    from: p.from || `"NeuronForge" <${process.env.GMAIL_USER}>`,
+    ...(p.replyTo ? { replyTo: p.replyTo } : {}),
     to: p.to.join(', '),
     subject: p.subject,
     html: p.html,
@@ -228,6 +251,59 @@ async function sendViaGmail(p: SendEmailParams): Promise<void> {
  * Send a transactional email via the first configured/working provider.
  * Never throws — returns { sent, provider, error }.
  */
+/**
+ * Who the client sees the email from, and where a reply goes.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A booking confirmation is from the practice, not from us. Every one of these
+ * went out as "NeuronForge <notifications@neuronforge.app>", so a client
+ * received an appointment reminder from a company they have never heard of, and
+ * hitting Reply reached nobody.
+ *
+ * The display NAME becomes the business and Reply-To becomes the owner. The
+ * envelope address deliberately stays on our own verified domain: SPF and DKIM
+ * are published for it, and forging a From on a domain we cannot sign for is how
+ * mail lands in spam or is rejected outright. A client sees the business's name
+ * in their inbox and replies reach the owner — which is the whole of what is
+ * wanted here, without breaking deliverability to get it.
+ *
+ * A business that wants its own address in the envelope needs its domain
+ * verified with the provider; that is a separate, opt-in piece of work.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function resolveSender(
+  ownerUserId: string | undefined,
+  fallbackFrom: string
+): Promise<{ from: string; replyTo?: string }> {
+  if (!ownerUserId) return { from: fallbackFrom };
+
+  try {
+    const { supabaseServer } = await import('@/lib/supabaseServer');
+    const { data: profile } = await supabaseServer
+      .from('business_profiles')
+      .select('company_name')
+      .eq('user_id', ownerUserId)
+      .maybeSingle();
+
+    const { data: authUser } = await supabaseServer.auth.admin.getUserById(ownerUserId);
+    const ownerEmail = authUser?.user?.email || undefined;
+
+    const address = fallbackFrom.match(/<([^>]+)>/)?.[1] || fallbackFrom;
+    const name = profile?.company_name?.trim();
+
+    return {
+      // Quoted: a business name with a comma in it splits the header otherwise.
+      from: name ? `"${name.replace(/"/g, '')}" <${address}>` : fallbackFrom,
+      replyTo: ownerEmail,
+    };
+  } catch (err) {
+    // Never block a send on this. An email from the platform's own name still
+    // reaches the client; an email that was not sent does not.
+    logger.warn({ err, ownerUserId }, 'Could not resolve business sender — using the platform default');
+    return { from: fallbackFrom };
+  }
+}
+
 export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
   const errors: string[] = [];
 
@@ -246,6 +322,16 @@ export async function sendEmail(p: SendEmailParams): Promise<SendEmailResult> {
     smtpConfigured: smtpConfigured(),
     gmailConfigured: gmailConfigured(),
   }, 'Attempting to send email');
+
+  /*
+   * Resolved once, before any transport: all three need the same answer, and
+   * the fallback chain must not ask the database three times.
+   */
+  const sender = await resolveSender(
+    p.ownerUserId,
+    p.from || process.env.RESEND_FROM_EMAIL || RESEND_DEFAULT_FROM
+  );
+  p = { ...p, from: sender.from, replyTo: p.replyTo || sender.replyTo };
 
   // 1. Resend (preferred for production)
   if (resendConfigured()) {

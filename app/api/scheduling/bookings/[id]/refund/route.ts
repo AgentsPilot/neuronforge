@@ -13,17 +13,92 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { refund, resolveRefundTarget } from '@/lib/payments/RefundService';
+import { refund, refundGroup, resolveRefundTargets } from '@/lib/payments/RefundService';
+import { syncBookingPaymentState } from '@/lib/payments/syncBookingPaymentState';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
 
 const logger = createLogger({ module: 'BookingRefundAPI' });
 
 const RefundSchema = z.object({
   refund_type: z.enum(['full', 'partial']),
+  /**
+   * Supplied by the client so a retry of one request replays instead of
+   * refunding twice. Optional: absent, each call is its own intent, which is
+   * the safe reading when the caller has not thought about it.
+   */
+  client_request_id: z.string().max(200).optional(),
   amount: z.number().positive().optional(),
   reason: z.string().optional(),
   notify_contact: z.boolean().optional().default(true)
 });
+
+
+/**
+ * Refund every payment on a booking, as one intent.
+ *
+ * Reports per-payment outcomes rather than a single boolean: Stripe refunds are
+ * individually final, so seven successes and five failures is a real end state
+ * and the owner has to be told which is which.
+ */
+async function refundWholeBooking(input: {
+  userId: string;
+  bookingId: string;
+  transactionIds: string[];
+  reason?: string;
+  notifyContact: boolean;
+  clientRequestId?: string;
+  requestLogger: typeof logger;
+}) {
+  const group = await refundGroup({
+    userId: input.userId,
+    transactionIds: input.transactionIds,
+    reason: input.reason,
+    source: 'app',
+    initiatedBy: input.userId,
+    clientRequestId: input.clientRequestId,
+  });
+
+  const state = await syncBookingPaymentState(input.bookingId, input.userId);
+  const complete = group.succeeded === group.requested;
+
+  input.requestLogger.info(
+    {
+      bookingId: input.bookingId,
+      requested: group.requested,
+      succeeded: group.succeeded,
+      refundedTotal: group.refundedTotal,
+    },
+    'Booking refunded in full'
+  );
+
+  // One email for the whole booking. Told per period, a client with a
+  // twelve-month plan would receive twelve refund confirmations at once.
+  if (input.notifyContact && group.refundedTotal > 0) {
+    BookingEmailService.sendRefundConfirmation(input.bookingId, input.userId, {
+      refundAmount: group.refundedTotal,
+      originalAmount: state.collected,
+      currency: group.currency ?? '',
+      refundType: state.status === 'refunded' ? 'full' : 'partial',
+      reason: input.reason,
+      isManualRefund: false,
+    }).catch(err =>
+      input.requestLogger.warn({ err }, 'Failed to send refund email (non-blocking)')
+    );
+  }
+
+  return NextResponse.json(
+    {
+      success: complete,
+      refunded_amount: group.refundedTotal,
+      refund_status: state.status === 'refunded' ? 'full' : 'partial',
+      payments: group.legs,
+      error: complete
+        ? undefined
+        : `${group.succeeded} of ${group.requested} payments were refunded.`,
+    },
+    { status: complete ? 200 : 409 }
+  );
+}
 
 export async function POST(
   request: NextRequest,
@@ -55,7 +130,7 @@ export async function POST(
       );
     }
 
-    const { refund_type, amount, reason, notify_contact } = parseResult.data;
+    const { refund_type, amount, reason, notify_contact, client_request_id } = parseResult.data;
 
     requestLogger.info({ bookingId, refundType: refund_type, amount }, 'Processing booking refund');
 
@@ -92,14 +167,53 @@ export async function POST(
     //
     // What stays here is what only this route knows: the booking's own
     // payment_status, and telling the client.
-    const target = await resolveRefundTarget({ userId: user.id, bookingId });
+    const targets = await resolveRefundTargets({ userId: user.id, bookingId });
 
-    if ('error' in target) {
+    if ('error' in targets) {
       return NextResponse.json(
-        { success: false, error: target.message, code: target.error },
-        { status: target.error === 'NOT_FOUND' ? 404 : 400 }
+        { success: false, error: targets.message, code: targets.error },
+        { status: targets.error === 'NOT_FOUND' ? 404 : 400 }
       );
     }
+
+    /*
+     * A booking can hold several payments — a deposit and a balance, or every
+     * period of a payment plan.
+     *
+     * This route took the NEWEST one and refunded that. On a twelve-period plan
+     * that returned one twelfth of the money, then read that single
+     * transaction's `refund_status` and marked the entire booking refunded. The
+     * owner saw "refunded" over eleven-twelfths of the money still held.
+     *
+     * A full refund of a booking means all of it; a partial amount is a
+     * statement about ONE payment and cannot be split honestly across several.
+     */
+    if (targets.transactionIds.length > 1 && refund_type === 'full') {
+      return await refundWholeBooking({
+        userId: user.id,
+        bookingId,
+        transactionIds: targets.transactionIds,
+        reason,
+        notifyContact: notify_contact,
+        clientRequestId: client_request_id,
+        requestLogger,
+      });
+    }
+
+    if (targets.transactionIds.length > 1) {
+      return NextResponse.json(
+        {
+          success: false,
+          code: 'AMBIGUOUS_TARGET',
+          error:
+            'This booking has more than one payment. Refund a specific payment from the payments list, or refund the booking in full.',
+          payment_count: targets.transactionIds.length,
+        },
+        { status: 409 }
+      );
+    }
+
+    const target = { transactionId: targets.transactionIds[0] };
 
     const outcome = await refund({
       userId: user.id,
@@ -110,7 +224,19 @@ export async function POST(
       reason,
       source: 'app',
       initiatedBy: user.id,
-      clientRequestId: `booking:${bookingId}:${refund_type}:${amount ?? 'all'}`
+      /**
+       * The CALLER's request id, not a hash of what was asked for.
+       *
+       * This was `booking:{id}:{type}:{amount}` — stable across separate,
+       * legitimate intents. Two £50 partial refunds a week apart produced the
+       * same key, so the second collided on the unique index, returned as a
+       * replay, and this route then updated the booking and emailed the client
+       * about a refund that never happened.
+       *
+       * A request id identifies a REQUEST. Two requests to refund £50 are two
+       * requests; only a retry of the same one should collapse.
+       */
+      clientRequestId: client_request_id ?? crypto.randomUUID()
     });
 
     if (!outcome.ok) {
@@ -130,16 +256,11 @@ export async function POST(
       .eq('id', target.transactionId)
       .maybeSingle();
 
-    const fullyRefunded = settled?.refund_status === 'full';
-
-    await supabaseServer
-      .from('scheduling_bookings')
-      .update({
-        payment_status: fullyRefunded ? 'refunded' : 'paid',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', bookingId)
-      .eq('user_id', user.id);
+    // The BOOKING's state, from all of its money — not from this one payment's
+    // `refund_status`, which said "refunded" for a booking still holding the
+    // rest of it.
+    const state = await syncBookingPaymentState(bookingId, user.id);
+    const fullyRefunded = state.status === 'refunded';
 
     // Only after the money actually moved. Fired before, this told clients
     // about refunds that had failed.

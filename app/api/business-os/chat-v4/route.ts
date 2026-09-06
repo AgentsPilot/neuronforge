@@ -30,6 +30,8 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { getBizQLPlanner } from '@/lib/business-os/bizql/planner/Planner';
+import { loadUserEnumLabels } from '@/lib/business-os/bizql/planner/catalogPrompt';
+import { recipientSummary } from '@/lib/business-os/bizql/mutate/previewSummary';
 import { runBusinessQuery } from '@/lib/business-os/bizql';
 import {
   BizQLValidationError,
@@ -72,6 +74,93 @@ import type {
 } from '@/lib/business-os/bizql/types';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
 import type { Plan } from '@/lib/business-os/bizql/planner/Planner';
+
+/**
+ * What a completed write is called, in the reader's language.
+ *
+ * The planner writes its answers in the user's language, so a Hebrew
+ * conversation ended in a Hebrew sentence — except after a confirmed write,
+ * where this route composed "Done — …" itself and the one English word in the
+ * thread was the one confirming money or records had changed.
+ */
+const WRITE_DONE: Record<string, string> = {
+  en: 'Done',
+  he: 'בוצע',
+  es: 'Hecho',
+};
+
+/** And what DECLINING one is called — the other half of the same exchange. */
+const WRITE_CANCELLED: Record<string, string> = {
+  en: 'Cancelled — nothing was changed.',
+  he: 'בוטל — שום דבר לא שונה.',
+  es: 'Cancelado — no se cambió nada.',
+};
+
+function writeDone(language: string): string {
+  return WRITE_DONE[language] ?? WRITE_DONE.en;
+}
+
+function writeCancelled(language: string): string {
+  return WRITE_CANCELLED[language] ?? WRITE_CANCELLED.en;
+}
+
+/**
+ * What the chat says when it cannot answer, in the reader's language.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every one of these was English, and two spliced the validator's own words
+ * into the reply. A Hebrew conversation ended in:
+ *
+ *   "I can't do that yet — 'emails' has no action 'send'. Available: none."
+ *
+ * which names internal entities and actions the user has never heard of and
+ * reads like the platform broke. It did not: the request was for something the
+ * product genuinely cannot do yet, and saying so plainly is the whole job.
+ *
+ * The technical detail is not lost — it stays in the logs and in the dev-only
+ * `debug` block, where the people who can act on it will look. What reaches the
+ * user is one clear sentence about what happened and what to try.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+type ChatErrorKey = 'cannotYet' | 'notUnderstood' | 'tooMuchData' | 'unexpected';
+
+const CHAT_ERRORS: Record<ChatErrorKey, Record<string, string>> = {
+  /** The request was understood; the product cannot do it. */
+  cannotYet: {
+    en: "I can't do that yet. It isn't something I can handle at the moment — try asking for it a different way, or do it from the relevant screen.",
+    he: 'זה עדיין לא משהו שאני יודע לעשות. אפשר לנסח את הבקשה אחרת, או לבצע את הפעולה מהמסך המתאים.',
+    es: 'Todavía no puedo hacer eso. Prueba a pedirlo de otra forma, o hazlo desde la pantalla correspondiente.',
+  },
+  /** The request was not understood well enough to plan. */
+  notUnderstood: {
+    en: "I didn't quite follow that. Could you say it another way?",
+    he: 'לא הצלחתי להבין את הבקשה. אפשר לנסח אותה אחרת?',
+    es: 'No terminé de entenderlo. ¿Puedes decirlo de otra manera?',
+  },
+  /** Understood, but too broad to answer safely. */
+  tooMuchData: {
+    en: 'That covers too much data to answer in one go. Try narrowing it — a date range, or a specific status.',
+    he: 'הבקשה מכסה יותר מדי נתונים לתשובה אחת. כדאי לצמצם — טווח תאריכים, או סטטוס מסוים.',
+    es: 'Eso abarca demasiados datos para responder de una vez. Prueba a acotarlo — un rango de fechas, o un estado concreto.',
+  },
+  /**
+   * Something actually went wrong on our side.
+   *
+   * Worded as a delay, not a fault. "Something went wrong" / "משהו השתבש"
+   * reads as breakage to someone whose business records are in here, and
+   * invites them to worry about their data rather than simply try again — a
+   * transient failure should not sound like a lost invoice.
+   */
+  unexpected: {
+    en: "I couldn't complete that just now. Please try again in a moment.",
+    he: 'לא הצלחתי להשלים את הבקשה כרגע. אפשר לנסות שוב בעוד רגע.',
+    es: 'No pude completarlo ahora mismo. Inténtalo de nuevo en un momento.',
+  },
+};
+
+function chatError(key: ChatErrorKey, language: string): string {
+  return CHAT_ERRORS[key][language] ?? CHAT_ERRORS[key].en;
+}
 
 const logger = createLogger({ module: 'BusinessChatV4' });
 const auditTrail = AuditTrailService.getInstance();
@@ -153,6 +242,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
   const correlationId = incomingCorrelationId ?? turnId;
   const requestLogger = logger.child({ correlationId });
 
+  /*
+   * The reader's language, reachable from the catch below.
+   *
+   * `language` is resolved inside the try, after the profile is read — so the
+   * error paths that matter most, the unexpected ones, had no way to know what
+   * language to apologise in. Held out here and assigned as soon as it is
+   * known, defaulting to English only if the failure happened before that.
+   */
+  let resolvedLanguage = 'en';
+
   try {
     // 1. Authenticate. userId comes from the session and is the ONLY source of
     //    tenant scoping — the compiler injects it and never reads it from input.
@@ -176,6 +275,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     const profileResult = await businessProfileRepository.findByUserId(user.id);
     const profile = profileResult.data;
     const language = parsed.data.language ?? (profile?.language as 'en' | 'he' | 'es') ?? 'en';
+    resolvedLanguage = language;
     const timezone = profile?.timezone ?? 'UTC';
     // Derived, not read off the profile: there is no currency column there, so
     // `profile.currency` was always undefined and every sum in the chat rendered
@@ -213,7 +313,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
         return NextResponse.json({
           success: true,
           answer: {
-            text: 'Cancelled — nothing was changed.',
+            text: writeCancelled(language),
             rows: [],
             truncated: false,
             approximate: false,
@@ -260,7 +360,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
         return NextResponse.json({
           success: true,
           answer: {
-            text: `Done — ${applied.join('; ')}.`,
+            text: `${writeDone(language)} — ${applied.join('; ')}.`,
             rows: [],
             truncated: false,
             approximate: false,
@@ -361,13 +461,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
         return NextResponse.json(
           {
             success: false,
-            error: capabilityGap
-              ? `I can't do that yet — ${detail
-                  .split('\n')
-                  .pop()
-                  ?.replace(/^steps\[\d+\][^:]*:\s*/, '')
-                  .trim()}`
-              : "I couldn't work out how to answer that. Could you rephrase it?",
+            // The detail names entities and actions, which is engineering
+            // vocabulary. It stays in the log line above and in `debug`.
+            error: chatError(capabilityGap ? 'cannotYet' : 'notUnderstood', language),
             debug: process.env.NODE_ENV === 'development'
               ? {
                   catalogVersion: CATALOG_VERSION,
@@ -414,7 +510,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
 
     if (!plan) {
       return NextResponse.json(
-        { success: false, error: "I couldn't work out how to answer that.", debug },
+        { success: false, error: chatError('notUnderstood', language), debug },
         { status: 200 }
       );
     }
@@ -567,14 +663,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
             { planId: 'preview', dryRun: true, language }
           );
 
-          const sample = preview.items
-            .slice(0, 5)
-            .map((i) => i.target ?? i.id)
-            .join(', ');
-
           previews.push(
-            `${preview.attempted} recipient${preview.attempted === 1 ? '' : 's'}` +
-              (sample ? ` — ${sample}${preview.attempted > 5 ? ', …' : ''}` : '')
+            recipientSummary(
+              preview.attempted,
+              preview.items.map((i) => i.target ?? i.id),
+              language
+            )
           );
           continue;
         }
@@ -674,7 +768,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       return NextResponse.json({
         success: true,
         answer: {
-          text: `Done — ${applied.join('; ')}.`,
+          text: `${writeDone(language)} — ${applied.join('; ')}.`,
           rows: [],
           truncated: false,
           approximate: false,
@@ -707,16 +801,65 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     }
     const executionMs = Date.now() - executionStart;
 
-    // 8. Render — substitution into the planner's own sentence, no templates.
+    /*
+     * 8. Render — substitution into the planner's own sentence, no templates.
+     *
+     * The business's own enum words are loaded here rather than taken from the
+     * planning step: a cache hit skips planning entirely, and that is exactly
+     * the path most answers take. Loading it there would have left the labels
+     * missing on every cached turn — the common case, not the rare one.
+     *
+     * Scoped to the entities actually being rendered, so it is one small query
+     * for the vocabularies the answer can possibly show.
+     */
+    const enumLabels = await loadUserEnumLabels(
+      user.id,
+      supabaseServer,
+      [...new Set(plan.steps.map((step) => step.entity))]
+    );
+
     const answer = renderAnswer(plan.answer?.text, plan.steps, results, {
       language,
       currency,
       timezone,
+      enumLabels,
     });
 
     // Remember what was shown, so "it" / "him" / "the second one" resolve next
     // turn. Ids and labels only — this is context, not a copy of the data.
     const primary = results.find((r) => r.op === 'find');
+
+    /*
+     * A GROUPED answer names its subject too.
+     *
+     * "Your most profitable service is X" identifies a service as surely as a
+     * find does — but only `find` results were remembered, so the next turn had
+     * nothing to point at and fell back to `context.lastRows`: whatever was
+     * listed by some earlier question. Asked "how much have we earned from this
+     * service", the chat answered about a service from a different question
+     * thirteen minutes earlier, and returned 0 with complete confidence.
+     *
+     * Carrying the previous rows forward is right for a genuine follow-up. It
+     * is wrong once a later turn has established a different subject, and a
+     * grouped compute is exactly that.
+     *
+     * Only groups that carry an `id` qualify: a date bucket or a raw enum value
+     * is not a row anything can be asked about.
+     */
+    const groupedSubject = results.find(
+      (r): r is typeof r & { groups: Array<{ key: string; value: number; id?: string }> } =>
+        r.op === 'compute' && Array.isArray((r as { groups?: unknown[] }).groups) &&
+        ((r as { groups: Array<{ id?: string }> }).groups ?? []).some((g) => g.id)
+    );
+
+    const groupedEntity = (() => {
+      if (!groupedSubject) return undefined;
+      const step = plan.steps.find((s) => s.entity === groupedSubject.entity && s.op === 'compute');
+      const relationKey = (step as { group_by?: unknown } | undefined)?.group_by;
+      if (typeof relationKey !== 'string') return undefined;
+      return CATALOG.entities[groupedSubject.entity]?.relations?.[relationKey]?.target;
+    })();
+
     remember(
       plan.steps.map((step) => `${step.op} ${step.entity}`).join(', '),
       {
@@ -728,7 +871,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
                 items: answer.rows.map((r) => ({ id: r.id, label: r.label })),
                 at: new Date().toISOString(),
               }
-            : context.lastRows,
+            : groupedSubject && groupedEntity
+              ? {
+                  entity: groupedEntity,
+                  items: groupedSubject.groups
+                    .filter((g): g is { key: string; value: number; id: string } => Boolean(g.id))
+                    .map((g) => ({ id: g.id, label: g.key })),
+                  at: new Date().toISOString(),
+                }
+              : context.lastRows,
       }
     );
 
@@ -785,7 +936,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           error:
             process.env.NODE_ENV === 'development'
               ? error.message
-              : "I couldn't run that query. Could you rephrase it?",
+              : chatError('notUnderstood', resolvedLanguage),
         },
         { status: 200 }
       );
@@ -798,9 +949,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       return NextResponse.json(
         {
           success: false,
-          error:
-            'That covers too much data to answer in one go. Try narrowing it — ' +
-            'a date range, or a specific status.',
+          error: chatError('tooMuchData', resolvedLanguage),
         },
         { status: 200 }
       );
@@ -813,7 +962,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
         error:
           process.env.NODE_ENV === 'development'
             ? (error as Error).message
-            : 'Internal server error',
+            : chatError('unexpected', resolvedLanguage),
       },
       { status: 500 }
     );

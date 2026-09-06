@@ -154,12 +154,53 @@ export interface VectorStatus {
   note?: string;
 }
 
+/**
+ * The dates the journey timeline counts from.
+ *
+ * Every vector below is already anchored to an event rather than to signup —
+ * `days_with_bookings` runs from the first booking, `days_with_clients` from the
+ * first client. Those anchors were computed here, reduced to an elapsed count,
+ * and thrown away. The count alone cannot say WHEN a vector lights: only
+ * `anchor + threshold` can, and that is the whole difference between a timeline
+ * that predicts and one that states a date.
+ */
+export interface JourneyAnchors {
+  /** `business_profiles.created_at` — day zero for every day number shown. */
+  accountCreatedAt: string | null;
+  /** First booking ever taken. Anchors the pricing vector. */
+  firstBookingAt: string | null;
+  /** First contact to reach the client stage. Anchors the retention vector. */
+  firstClientAt: string | null;
+  /**
+   * When the conversion vector's visitor threshold was actually crossed.
+   *
+   * The only unlock measured in a count rather than in days, so it is the only
+   * one whose date cannot be derived — the 25th visit has to be read. Fetched
+   * once the count says the threshold is met, and null before that: there is no
+   * arithmetic that can predict when a 25th visitor will arrive.
+   */
+  convCrossedAt: string | null;
+  /**
+   * The first standing automation the owner handed over.
+   *
+   * This is what the old "Day 90 · Automated / Takes over" node was reaching
+   * for — the platform doing recurring work instead of the owner. It was
+   * written as a date on the calendar, which it never was: handover happens
+   * when there is something worth handing over and the owner agrees to it,
+   * which can be week two or never. `insight_automations` records exactly that
+   * moment, so the node can state it.
+   */
+  firstAutomationAt: string | null;
+}
+
 export interface VectorMaturityData {
   vectors: VectorStatus[];
   maturityLevel: MaturityLevel;
   litCount: number;
   totalVectors: number;
   accountAgeDays: number;
+  /** Event dates the journey timeline measures from. */
+  journeyAnchors: JourneyAnchors;
   /**
    * English prose, kept as a fallback for any caller that has not been updated.
    * The UI should prefer `noteKey`.
@@ -2269,7 +2310,8 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         ? Math.floor((Date.now() - new Date(firstBooking.created_at).getTime()) / (1000 * 60 * 60 * 24))
         : 0;
 
-      // Get first client date to calculate days with clients
+      // Get first client date to calculate days with clients.
+      // The date itself is kept, not just the elapsed count — see JourneyAnchors.
       const { data: firstClient } = await this.supabase
         .from('crm_contacts')
         .select('created_at')
@@ -2278,6 +2320,32 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();
+
+      /*
+       * The first job the owner handed over, for the journey's last node.
+       *
+       * A standing automation rather than a one-off kernel run: `run` is the
+       * owner pressing a button, which is still the owner working. An entry in
+       * `insight_automations` is the platform holding a recurring job on its
+       * own — the thing the old day-90 node was pointing at.
+       *
+       * `status` is deliberately not filtered: an automation later paused was
+       * still handed over on the day it was created, and a timeline records
+       * what happened rather than what is currently switched on.
+       */
+      const { data: firstAutomation, error: firstAutomationError } = await this.supabase
+        .from('insight_automations')
+        .select('created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (firstAutomationError) {
+        logger.error(
+          { err: firstAutomationError, userId },
+          'Failed to read first automation for the journey timeline'
+        );
+      }
 
       const daysWithClients = firstClient?.created_at
         ? Math.floor((Date.now() - new Date(firstClient.created_at).getTime()) / (1000 * 60 * 60 * 24))
@@ -2323,6 +2391,35 @@ Generate in ${langName}. Respond with ONLY a JSON object:
 
       // Count lit vectors
       const litCount = vectors.filter(v => v.state === 'lit').length;
+
+      /*
+       * The date the conversion threshold was crossed, for the journey timeline.
+       *
+       * Read as the Nth row rather than counted, because "when did the 25th
+       * visitor arrive" is a position in the log, not an elapsed time. Only run
+       * once the count says it happened — before that the query would return
+       * nothing and cost a round trip to learn what the count already said.
+       *
+       * `total_visitors` falls back to contacts where a business has no website,
+       * so the crossing is read from whichever source the metric actually used.
+       */
+      const convVector = vectors.find(v => v.key === 'conv');
+      let convCrossedAt: string | null = null;
+      if (convVector?.state === 'lit') {
+        const nth = convVector.threshold - 1;
+        const usedPageViews = (visitorsResult.count || 0) >= convVector.threshold;
+        const { data: crossing, error: crossingError } = await this.supabase
+          .from(usedPageViews ? 'website_page_views' : 'crm_contacts')
+          .select('created_at')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: true })
+          .range(nth, nth)
+          .maybeSingle();
+        if (crossingError) {
+          logger.error({ err: crossingError, userId }, 'Failed to read conversion crossing date');
+        }
+        convCrossedAt = crossing?.created_at ?? null;
+      }
 
       // Determine overall maturity level
       let maturityLevel: MaturityLevel;
@@ -2372,6 +2469,16 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           litCount,
           totalVectors: 7,
           accountAgeDays,
+          journeyAnchors: {
+            // `accountResult` rather than the local `accountCreatedAt`, which
+            // falls back to today when there is no profile row. A missing
+            // anchor must read as "unknown", not as "started this morning".
+            accountCreatedAt: accountResult.data?.created_at ?? null,
+            firstBookingAt: firstBooking?.created_at ?? null,
+            firstClientAt: firstClient?.created_at ?? null,
+            convCrossedAt,
+            firstAutomationAt: firstAutomation?.created_at ?? null,
+          },
           note,
           noteKey,
           noteLearning,

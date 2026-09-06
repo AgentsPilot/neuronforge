@@ -180,15 +180,45 @@ export class WebsiteAnalyticsRepository {
    */
   async getSummary(userId: string, subdomain?: string): Promise<RepositoryResult<AnalyticsSummary>> {
     try {
-      // Query raw page_views table and compute stats
-      // The owner previewing their own site is not an audience. Excluding this
-      // is the difference between reporting customers and reporting the owner —
-      // before the flag existed, every stored view was in fact a preview.
+      /*
+       * Bounded to thirty days, and this one is free.
+       *
+       * The method returns ten figures, four of which are all-time. Its ONE
+       * caller — the dashboard stats route — reads three: `visitors_today`,
+       * `visitors_7d`, `visitors_30d`. Every one of those windows sits inside
+       * thirty days, so a thirty-day floor cannot move any number that anybody
+       * reads. The all-time figures it still returns are already unused.
+       *
+       * Without the floor this pulled every page view ever recorded for the
+       * user and counted them in JavaScript. That cost grows with traffic and
+       * with nothing else — the numbers it produced stopped changing long
+       * before the query stopped getting slower.
+       *
+       * The predicate now matches `idx_page_views_user_viewed_real`
+       * (user_id, viewed_at DESC) WHERE is_owner_view = false, so this becomes
+       * a bounded index range scan without a new index.
+       *
+       * `now` is hoisted here rather than declared again below, so the cutoff
+       * and the counters are measured from the same instant. Two `new Date()`
+       * calls milliseconds apart could otherwise drop a view that arrived
+       * between them.
+       *
+       * NOTE: this reasoning does NOT extend to `getPageSummary`. That one's
+       * all-time totals ARE displayed — see the comment there.
+       *
+       * The owner previewing their own site is not an audience. Excluding this
+       * is the difference between reporting customers and reporting the owner —
+       * before the flag existed, every stored view was in fact a preview.
+       */
+      const now = new Date();
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
       let query = this.supabase
         .from('website_page_views')
         .select('viewed_at, ip_hash')
         .eq('user_id', userId)
-        .eq('is_owner_view', false);
+        .eq('is_owner_view', false)
+        .gte('viewed_at', thirtyDaysAgo.toISOString());
 
       if (subdomain) {
         query = query.eq('subdomain', subdomain);
@@ -219,11 +249,11 @@ export class WebsiteAnalyticsRepository {
         };
       }
 
-      // Calculate date boundaries
-      const now = new Date();
+      // Calculate date boundaries. `now` and `thirtyDaysAgo` are the ones the
+      // query above already used — see the note there on measuring the cutoff
+      // and the counters from a single instant.
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
       // Aggregate stats
@@ -441,6 +471,34 @@ export class WebsiteAnalyticsRepository {
 
   /**
    * Get analytics summary for a specific page
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * DELIBERATELY UNBOUNDED, and the known cost of this method.
+   *
+   * `getSummary` above takes a thirty-day floor because its only caller reads
+   * three figures that all sit inside thirty days. This one cannot: the website
+   * page renders `analytics.total_views` and `analytics.unique_visitors`, which
+   * are ALL-TIME, and each landing page's row shows its own all-time total. A
+   * date floor here would silently shrink numbers already on the screen.
+   *
+   * So it reads every view row for the page and counts them in JavaScript. At
+   * present that is trivial. It grows linearly with traffic, and it is called
+   * once per landing page on every load of the website builder, so the cost is
+   * rows × pages × concurrent users.
+   *
+   * The fix is a SQL aggregate — `COUNT(*)` and `COUNT(DISTINCT …)` with
+   * `FILTER (WHERE viewed_at >= …)` per window — returning one row instead of
+   * thousands, with no change to any figure. Not a date floor. Four details
+   * have to match exactly, or the numbers move: an empty `ip_hash` counts as
+   * one 'unknown' visitor (see the `|| 'unknown'` below); today and month are
+   * date-truncated while 7d and 30d are exact instants; there is no
+   * `is_owner_view` filter here, unlike `getSummary`; and the existing
+   * `website_analytics_summary` view is NOT a drop-in — it groups by subdomain
+   * and uses different boundaries.
+   *
+   * An index will not help: `idx_website_page_views_page_id` already finds the
+   * rows. The cost is the rows returned, not the rows found.
+   * ───────────────────────────────────────────────────────────────────────────
    */
   async getPageSummary(pageId: string, userId: string): Promise<RepositoryResult<AnalyticsSummary>> {
     try {

@@ -33,6 +33,19 @@ const invoiceSettingsSchema = z.object({
   invoice_payment_instructions: z.string().max(1000).optional(),
   invoice_footer_text: z.string().max(500).optional(),
   invoice_number_prefix: z.string().max(10).optional(),
+
+  // Tax, as the business states it. Display only — the platform never adds tax
+  // to a price. The rate bounds match the database CHECK: a value outside them
+  // is a typo rather than an instruction, and 100 is excluded because the tax
+  // cannot be the whole of an inclusive price.
+  invoice_prices_include_tax: z.boolean().optional(),
+  invoice_tax_rate: z.number().gt(0).lt(100).nullable().optional(),
+  invoice_tax_label: z.string().max(30).nullable().optional(),
+
+  // Null is a real value here, not an omission: it means "follow the derived
+  // default", which is different from "leave what is stored alone". Hence
+  // `.nullable()` before `.optional()`.
+  invoice_document_type: z.enum(['receipt', 'invoice', 'tax_invoice']).nullable().optional(),
 });
 
 /**
@@ -128,6 +141,15 @@ export async function PUT(request: NextRequest) {
         invoice_payment_instructions: settings.invoice_payment_instructions || null,
         invoice_footer_text: settings.invoice_footer_text || null,
         invoice_number_prefix: settings.invoice_number_prefix || 'INV',
+
+        // Passed through undefined-and-all: the repository skips keys that are
+        // `undefined`, so a caller that does not send these leaves them as they
+        // were. Coercing to a default here — the pattern the fields above use —
+        // would switch tax off for any client posting a partial body.
+        invoice_prices_include_tax: settings.invoice_prices_include_tax,
+        invoice_tax_rate: settings.invoice_tax_rate,
+        invoice_tax_label: settings.invoice_tax_label,
+        invoice_document_type: settings.invoice_document_type,
         // The logo is not an invoice setting — it belongs to the business and is
         // written through updateBranding. Passing it here is what used to null
         // it on every save of this form.

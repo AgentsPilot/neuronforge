@@ -1,7 +1,7 @@
 'use client';
 
 import { Briefcase, Receipt } from 'lucide-react';
-import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import { REPORTS_COLORS, DISPLAY_LIMITS, UNATTRIBUTED_SERVICE_ID } from '@/lib/business-os/reports/constants';
 
 interface ServiceRevenue {
@@ -13,6 +13,14 @@ interface ServiceRevenue {
 
 interface RevenueByServicesSectionProps {
   services: ServiceRevenue[];
+  /**
+   * The currency these amounts are in, from the money itself.
+   *
+   * Without it `formatCurrency` picks a symbol from the interface LANGUAGE —
+   * Hebrew means shekels — so a business billing in dollars had its revenue
+   * stamped ₪. Optional so an un-updated caller behaves exactly as before.
+   */
+  currency?: CurrencyCode;
 }
 
 // Simple bar representation for each service (copied from GrowthGraph MetricBar)
@@ -69,9 +77,13 @@ function ServiceBar({
 }
 
 export function RevenueByServicesSection({
-  services
+  services,
+  currency
 }: RevenueByServicesSectionProps) {
   const { language, formatCurrency } = useLanguage();
+  /** Money in its own currency, never the reader's. See the `currency` prop. */
+  const money = (amount: number | null) =>
+    formatCurrency(amount, { showFree: false, currencyOverride: currency });
   const isRTL = language === 'he';
 
   const labels: Record<string, Record<string, string>> = {
@@ -172,7 +184,7 @@ export function RevenueByServicesSection({
               serviceName={isUnattributed ? getLabel('unattributed') : service.service_name}
               revenue={service.revenue}
               count={service.count}
-              formattedRevenue={formatCurrency(service.revenue, { showFree: false })}
+              formattedRevenue={money(service.revenue)}
               maxValue={maxValue}
               color={color}
               percentage={percentage}

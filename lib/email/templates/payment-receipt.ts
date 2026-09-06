@@ -63,21 +63,21 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
 
   // Build details rows
   const detailRows = [
-    emailDetailRow('Receipt Number', data.receiptNumber),
-    emailDetailRow('Amount Paid', formatCurrency(data.amount, data.currency)),
-    emailDetailRow('Payment Date', formattedPaymentDate),
+    emailDetailRow(t.receiptNumberLabel[locale], data.receiptNumber),
+    emailDetailRow(t.amountLabel[locale], formatCurrency(data.amount, data.currency)),
+    emailDetailRow(t.paymentDateLabel[locale], formattedPaymentDate),
   ];
 
   if (data.paymentMethod) {
-    detailRows.push(emailDetailRow('Payment Method', data.paymentMethod));
+    detailRows.push(emailDetailRow(t.paymentMethodLabel[locale], data.paymentMethod));
   }
 
   if (data.serviceName) {
-    detailRows.push(emailDetailRow('Service', data.serviceName));
+    detailRows.push(emailDetailRow(t.serviceLabel[locale], data.serviceName));
   }
 
   if (formattedAppointmentDate) {
-    detailRows.push(emailDetailRow('Appointment', formattedAppointmentDate));
+    detailRows.push(emailDetailRow(t.appointmentLabel[locale], formattedAppointmentDate));
   }
 
   const content = `
@@ -89,10 +89,10 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
             <span style="font-size: 32px; color: #ffffff;">✓</span>
           </div>
           <h2 style="margin: 0 0 8px; font-size: 24px; font-weight: 600; color: #1a1a1a;">
-            Payment Confirmed
+            ${t.confirmedTitle[locale]}
           </h2>
           <p style="margin: 0; font-size: 15px; color: #666666;">
-            Thank you for your payment, ${data.clientName}!
+            ${t.thankYou[locale](data.clientName)}
           </p>
         </td>
       </tr>
@@ -103,7 +103,7 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
       <tr>
         <td style="padding: 24px; text-align: center;">
           <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #166534; text-transform: uppercase;">
-            Amount Paid
+            ${t.amountLabel[locale]}
           </p>
           <p style="margin: 0; font-size: 32px; font-weight: 700; color: #166534;">
             ${formatCurrency(data.amount, data.currency)}
@@ -117,7 +117,7 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
       <tr>
         <td>
           <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
-            Receipt Details
+            ${t.receiptDetails[locale]}
           </p>
           ${emailDetailsTable(detailRows)}
         </td>
@@ -133,10 +133,10 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
             <tr>
               <td>
                 <p style="margin: 0 0 8px; font-size: 14px; color: #0369a1;">
-                  <strong>📅 Your appointment:</strong> ${data.serviceName || 'Service'} on ${formattedAppointmentDate}
+                  ${t.appointmentLine[locale](data.serviceName || t.serviceLabel[locale], formattedAppointmentDate)}
                 </p>
                 <p style="margin: 0; font-size: 13px; color: #0369a1;">
-                  You can manage your booking using the link below.
+                  ${t.manageNote[locale]}
                 </p>
               </td>
             </tr>
@@ -149,7 +149,7 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px;">
       <tr>
         <td style="text-align: center;">
-          ${emailButton('View Booking Details', data.bookingManageUrl, {
+          ${emailButton(t.viewBooking[locale], data.bookingManageUrl, {
             backgroundColor: data.branding.primaryColor
           })}
         </td>
@@ -159,8 +159,7 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
 
     <!-- Final Note -->
     <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
-      This receipt confirms your payment to ${data.branding.businessName}. Please save this email for your records.
-      If you have any questions, please reply to this email or contact us directly.
+      ${t.finalNote[locale](data.branding.businessName)}
     </p>
   `;
 

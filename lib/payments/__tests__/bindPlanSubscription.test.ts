@@ -167,6 +167,9 @@ describe('bindPlanSubscription', () => {
         installmentAmount: 333.33,
         currency: 'USD',
         frequency: 'monthly',
+        // A real FK that nothing was writing, so a subscription could not be
+        // traced back to the terms it was sold on.
+        paymentPlanId: 'plan_row_1',
       })
     );
 

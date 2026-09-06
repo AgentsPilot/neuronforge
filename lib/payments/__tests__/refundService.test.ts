@@ -26,7 +26,21 @@ const dbState: {
   insertError: { code: string; message: string } | null;
   existingRefund: Record<string, unknown> | null;
   updates: Array<Record<string, unknown>>;
-} = { transaction: null, insertError: null, existingRefund: null, updates: [] };
+  /** Per-id rows, for the group tests. Falls back to `transaction` when empty. */
+  transactionsById: Record<string, Record<string, unknown>>;
+  /** Every idempotency key the ledger was asked to insert, in order. */
+  insertedKeys: string[];
+  /** The full ledger rows, for assertions about status and processor. */
+  insertedRows: Array<Record<string, unknown>>;
+} = {
+  transaction: null,
+  insertError: null,
+  existingRefund: null,
+  updates: [],
+  transactionsById: {},
+  insertedKeys: [],
+  insertedRows: [],
+};
 
 jest.mock('@/lib/supabaseServer', () => ({
   supabaseServer: {
@@ -34,18 +48,32 @@ jest.mock('@/lib/supabaseServer', () => ({
       const builder: Record<string, unknown> = {};
       const chain = () => builder;
 
+      let requestedId: string | null = null;
+
       builder.select = chain;
-      builder.eq = chain;
+      builder.eq = (column: string, value: unknown) => {
+        if (column === 'id') requestedId = value as string;
+        return builder;
+      };
       builder.in = chain;
       builder.order = chain;
       builder.limit = chain;
 
-      builder.maybeSingle = async () => ({
-        data: table === 'payment_transactions' ? dbState.transaction : dbState.existingRefund,
-        error: null,
-      });
+      builder.maybeSingle = async () => {
+        if (table !== 'payment_transactions') return { data: dbState.existingRefund, error: null };
 
-      builder.insert = () => ({
+        // A group refund asks for each transaction in turn, so the harness has
+        // to be able to answer differently per id.
+        const perId = requestedId ? dbState.transactionsById[requestedId] : undefined;
+        return { data: perId ?? dbState.transaction, error: null };
+      };
+
+      builder.insert = (row: Record<string, unknown>) => {
+        if (table === 'payment_refunds' && typeof row?.idempotency_key === 'string') {
+          dbState.insertedKeys.push(row.idempotency_key);
+          dbState.insertedRows.push(row);
+        }
+        return ({
         select: () => ({
           single: async () =>
             dbState.insertError
@@ -53,6 +81,7 @@ jest.mock('@/lib/supabaseServer', () => ({
               : { data: { id: 'refund-row-1' }, error: null },
         }),
       });
+      };
 
       builder.update = (row: Record<string, unknown>) => {
         dbState.updates.push(row);
@@ -73,7 +102,12 @@ jest.mock('@/lib/logger', () => ({
   }),
 }));
 
-import { refund } from '../RefundService';
+import {
+  refund,
+  refundGroup,
+  getRefundability,
+  resolveStripeRefundTarget,
+} from '../RefundService';
 
 const settledTransaction = (over: Record<string, unknown> = {}) => ({
   id: 'tx-1',
@@ -96,6 +130,9 @@ beforeEach(() => {
   dbState.insertError = null;
   dbState.existingRefund = null;
   dbState.updates = [];
+  dbState.transactionsById = {};
+  dbState.insertedKeys = [];
+  dbState.insertedRows = [];
   process.env.STRIPE_SECRET_KEY = 'sk_test_x';
 });
 
@@ -175,6 +212,54 @@ describe('refund — refusals that must never reach Stripe', () => {
   });
 });
 
+describe('refund — money with no Stripe reference', () => {
+  /*
+   * Every payment plan installment was in this state: recorded with the Stripe
+   * INVOICE id and neither a payment intent nor a charge. The old code wrote a
+   * ledger row, called Stripe, and threw — so the owner got a 502 on a button
+   * the UI had offered them, and the ledger kept a failed row for a refund that
+   * was never possible.
+   */
+  const noReference = () =>
+    settledTransaction({ stripe_payment_intent_id: null, stripe_charge_id: null });
+
+  it('refuses before writing a ledger row', async () => {
+    dbState.transaction = noReference();
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      clientRequestId: 'req-no-ref',
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'MISSING_REFERENCE' });
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
+    // The refusal happens ahead of the insert, so nothing was written and no
+    // refund budget was held for money that could never move.
+    expect(dbState.updates).toHaveLength(0);
+  });
+
+  it('reports it through getRefundability, so the button is never offered', async () => {
+    dbState.transaction = noReference();
+
+    const verdict = await getRefundability('user-1', 'tx-1');
+
+    expect(verdict).toMatchObject({ refundable: false, reason: 'MISSING_REFERENCE' });
+    // The remaining amount is still reported: the money is real and partly
+    // refundable in principle — it just cannot be returned through Stripe.
+    expect(verdict.remaining).toBe(200);
+  });
+
+  it('prefers the payment intent when both are present', () => {
+    // Stripe rejects a request carrying both, so the choice has to be made once
+    // and in one place — which is the reason this resolver is shared.
+    expect(
+      resolveStripeRefundTarget({ stripe_payment_intent_id: 'pi_1', stripe_charge_id: 'ch_1' })
+    ).toEqual({ payment_intent: 'pi_1' });
+  });
+});
+
 describe('refund — the Stripe call', () => {
   it('passes the connected account and an idempotency key', async () => {
     stripeRefundsCreate.mockResolvedValue({ id: 're_1', status: 'succeeded' });
@@ -222,6 +307,132 @@ describe('refund — the Stripe call', () => {
   });
 });
 
+
+/**
+ * Refunding everything a booking holds.
+ *
+ * The defect this exists for: a twelve-period plan puts twelve transactions on
+ * one booking, the old resolver took the newest, and "refund this booking"
+ * returned one twelfth of the money and reported success.
+ */
+describe('refundGroup', () => {
+  const threePeriods = () => {
+    dbState.transactionsById = {
+      'tx-a': settledTransaction({ id: 'tx-a', amount: 100 }),
+      'tx-b': settledTransaction({ id: 'tx-b', amount: 100 }),
+      'tx-c': settledTransaction({ id: 'tx-c', amount: 100 }),
+    };
+  };
+
+  it('refunds every payment and totals what actually went back', async () => {
+    threePeriods();
+    stripeRefundsCreate.mockResolvedValue({ id: 're_x', status: 'succeeded' });
+
+    const result = await refundGroup({
+      userId: 'user-1',
+      transactionIds: ['tx-a', 'tx-b', 'tx-c'],
+      source: 'app',
+      clientRequestId: 'group-1',
+    });
+
+    expect(stripeRefundsCreate).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ requested: 3, succeeded: 3, refundedTotal: 300 });
+  });
+
+  it('gives each leg its own key, derived from the group', async () => {
+    // A retry of the same group intent must replay all three legs rather than
+    // refund each of them again — and a per-leg `randomUUID()` would silently
+    // discard that guarantee. Derived keys also have to DIFFER from each other,
+    // or leg two collides with leg one and returns leg one's refund.
+    threePeriods();
+    stripeRefundsCreate.mockResolvedValue({ id: 're_x', status: 'succeeded' });
+
+    await refundGroup({
+      userId: 'user-1',
+      transactionIds: ['tx-a', 'tx-b', 'tx-c'],
+      source: 'app',
+      clientRequestId: 'group-1',
+    });
+
+    expect(new Set(dbState.insertedKeys).size).toBe(3);
+  });
+
+  it('reports a partial failure as a partial failure', async () => {
+    // Stripe refunds are individually final: two succeeded and one did not, and
+    // there is no rolling that back. Collapsing this into `ok: true` is how the
+    // original defect stayed invisible.
+    threePeriods();
+    stripeRefundsCreate
+      .mockResolvedValueOnce({ id: 're_1', status: 'succeeded' })
+      .mockResolvedValueOnce({ id: 're_2', status: 'succeeded' })
+      .mockRejectedValueOnce(Object.assign(new Error('insufficient funds'), {
+        code: 'balance_insufficient',
+      }));
+
+    const result = await refundGroup({
+      userId: 'user-1',
+      transactionIds: ['tx-a', 'tx-b', 'tx-c'],
+      source: 'app',
+      clientRequestId: 'group-2',
+    });
+
+    expect(result.succeeded).toBe(2);
+    expect(result.requested).toBe(3);
+    expect(result.refundedTotal).toBe(200);
+    expect(result.legs[2]).toMatchObject({ ok: false, code: 'BALANCE_INSUFFICIENT' });
+  });
+
+  it('treats an already-refunded payment as done, not as a failure', async () => {
+    // Refunding a booking whose periods were partly returned already should end
+    // with everything refunded and no alarm: the end state asked for is the end
+    // state reached.
+    dbState.transactionsById = {
+      'tx-a': settledTransaction({ id: 'tx-a', amount: 100, refunded_amount: 100 }),
+      'tx-b': settledTransaction({ id: 'tx-b', amount: 100 }),
+    };
+    stripeRefundsCreate.mockResolvedValue({ id: 're_x', status: 'succeeded' });
+
+    const result = await refundGroup({
+      userId: 'user-1',
+      transactionIds: ['tx-a', 'tx-b'],
+      source: 'app',
+      clientRequestId: 'group-3',
+    });
+
+    expect(result.succeeded).toBe(2);
+    expect(result.refundedTotal).toBe(100);
+    expect(stripeRefundsCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refunds one at a time', async () => {
+    /*
+     * The over-refund guard is a `SELECT … FOR UPDATE` in a trigger. Firing
+     * these concurrently makes legitimate legs contend for the row lock and
+     * surface as spurious EXCEEDS_REMAINING, so the loop must not overlap.
+     */
+    threePeriods();
+    let inFlight = 0;
+    let overlapped = false;
+
+    stripeRefundsCreate.mockImplementation(async () => {
+      inFlight++;
+      if (inFlight > 1) overlapped = true;
+      await new Promise(resolve => setTimeout(resolve, 1));
+      inFlight--;
+      return { id: 're_x', status: 'succeeded' };
+    });
+
+    await refundGroup({
+      userId: 'user-1',
+      transactionIds: ['tx-a', 'tx-b', 'tx-c'],
+      source: 'app',
+      clientRequestId: 'group-4',
+    });
+
+    expect(overlapped).toBe(false);
+  });
+});
+
 describe('refund — replay and failure', () => {
   it('returns the original refund instead of issuing a second', async () => {
     // The duplicate-submit case. The unique index on idempotency_key rejects the
@@ -232,6 +443,10 @@ describe('refund — replay and failure', () => {
       processor_refund_id: 're_original',
       amount: 200,
       currency: 'ILS',
+      // A replay is only a success if the original SUCCEEDED. Without this the
+      // fixture described a row in no particular state, which is how the code
+      // came to return `ok: true` for refunds that had failed.
+      status: 'succeeded',
     };
 
     const result = await refund({
@@ -284,5 +499,241 @@ describe('refund — replay and failure', () => {
 
     // @ts-expect-error - restoring
     process.env.NODE_ENV = previous;
+  });
+
+  it('does NOT report success when the original refund failed', async () => {
+    /*
+     * The dangerous replay. The first attempt hit `balance_insufficient` and the
+     * ledger row is `failed`; a retry with the same request id collides on the
+     * unique index. This used to return `ok: true` with a null
+     * `processorRefundId`, and the callers believed it — the booking was marked
+     * refunded, an audit entry was written at severity `critical`, and the
+     * client was emailed about money that never moved.
+     */
+    dbState.insertError = { code: '23505', message: 'duplicate key' };
+    dbState.existingRefund = {
+      id: 'refund-row-1',
+      processor_refund_id: null,
+      amount: 200,
+      currency: 'ILS',
+      status: 'failed',
+      failure_code: 'balance_insufficient',
+      failure_message: 'The connected account has insufficient funds.',
+    };
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      clientRequestId: 'same-request',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
+  });
+
+  it('reports an in-flight refund distinctly, so callers do not act on it', async () => {
+    // Still pending: the money may yet move. Neither a success to record nor a
+    // failure to retry — the caller must wait rather than email the client.
+    dbState.insertError = { code: '23505', message: 'duplicate key' };
+    dbState.existingRefund = {
+      id: 'refund-row-1',
+      processor_refund_id: null,
+      amount: 200,
+      currency: 'ILS',
+      status: 'pending',
+    };
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      clientRequestId: 'same-request',
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'IN_FLIGHT' });
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Money that never went through a processor.
+ *
+ * A business collecting by bank transfer can take money through the platform —
+ * `mark-paid` records it as a real transaction — but until now could never
+ * record it coming back. The refund was refused, so the invoice stayed paid
+ * forever, reports overstated, and the ledger export showed no reversal.
+ *
+ * The tests that matter here are the REFUSALS, again. Recording a refund is
+ * writing "this money went back" with nothing to verify it against, so the one
+ * thing that must never happen is recording it for money a processor is
+ * actually holding.
+ */
+describe('refund — money returned by hand', () => {
+  const manualTransaction = (over: Record<string, unknown> = {}) =>
+    settledTransaction({
+      processor_type: 'manual',
+      stripe_payment_intent_id: null,
+      stripe_charge_id: null,
+      stripe_connect_account_id: null,
+      account_resolution: null,
+      ...over,
+    });
+
+  it('records the refund without calling Stripe', async () => {
+    dbState.transaction = manualTransaction();
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      amount: 50,
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-manual-1',
+    });
+
+    expect(result).toMatchObject({ ok: true, amount: 50, currency: 'ILS' });
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
+  });
+
+  /*
+   * `pending` exists to cover the wait for a processor's answer. There is no
+   * wait here — the money already moved — and a row left pending would hold
+   * refund budget against a completed movement with nothing ever coming along
+   * to close it, making the rest of the payment permanently un-refundable.
+   */
+  it('writes the ledger row already succeeded, not pending', async () => {
+    dbState.transaction = manualTransaction();
+
+    await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-manual-2',
+    });
+
+    expect(dbState.insertedRows).toHaveLength(1);
+    expect(dbState.insertedRows[0]).toMatchObject({
+      status: 'succeeded',
+      processor_type: 'manual',
+      stripe_connect_account_id: null,
+    });
+    expect(dbState.insertedRows[0].succeeded_at).toEqual(expect.any(String));
+  });
+
+  it('reports no processor reference rather than inventing one', async () => {
+    dbState.transaction = manualTransaction();
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-manual-3',
+    });
+
+    // A reconciler matches on this field. A placeholder would match nothing and
+    // read as a reference that has gone missing.
+    expect(result).toMatchObject({ ok: true, processorRefundId: null });
+  });
+
+  // No account to resolve, so the guard that protects Stripe refunds must not
+  // block the one path that never touches Stripe.
+  it('does not need a resolved Stripe account', async () => {
+    dbState.transaction = manualTransaction({ account_resolution: 'ambiguous' });
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-manual-4',
+    });
+
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  /*
+   * THE ONE THAT MATTERS.
+   *
+   * The flag says the business returned the money itself. If that were trusted
+   * alone, a live card charge could be marked refunded: the invoice would
+   * close, the booking would free, revenue would drop — and the client would
+   * still be out of pocket holding a document saying they were repaid.
+   */
+  it('refuses to record a manual refund against processor money', async () => {
+    dbState.transaction = settledTransaction({ processor_type: 'stripe' });
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-manual-5',
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'NOT_REFUNDABLE' });
+    expect(stripeRefundsCreate).not.toHaveBeenCalled();
+    expect(dbState.insertedRows).toHaveLength(0);
+  });
+
+  /*
+   * The subtler half of the same rule. A Stripe payment whose charge reference
+   * was never recorded looks referenceless — but that money DID go through
+   * Stripe and has to come back through it. Recording it by hand would leave a
+   * real charge standing against a ledger claiming it was returned.
+   */
+  it('refuses for a Stripe payment that merely lost its reference', async () => {
+    dbState.transaction = settledTransaction({
+      processor_type: 'stripe',
+      stripe_payment_intent_id: null,
+      stripe_charge_id: null,
+    });
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      manual: true,
+      clientRequestId: 'req-manual-6',
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'NOT_REFUNDABLE' });
+    expect(dbState.insertedRows).toHaveLength(0);
+  });
+
+  // Without the flag nothing changes: the caller has not asserted anything, so
+  // the old refusal stands. This is what keeps every existing caller identical.
+  it('still refuses manual money when the caller did not ask to record one', async () => {
+    dbState.transaction = manualTransaction();
+
+    const result = await refund({
+      userId: 'user-1',
+      transactionId: 'tx-1',
+      source: 'app',
+      clientRequestId: 'req-manual-7',
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'MISSING_REFERENCE' });
+    expect(dbState.insertedRows).toHaveLength(0);
+  });
+
+  it('tells the UI that manual money is recordable, and Stripe money is not', async () => {
+    dbState.transaction = manualTransaction();
+    await expect(getRefundability('user-1', 'tx-1')).resolves.toMatchObject({
+      refundable: false,
+      recordable: true,
+    });
+
+    dbState.transaction = settledTransaction({
+      processor_type: 'stripe',
+      stripe_payment_intent_id: null,
+      stripe_charge_id: null,
+    });
+    await expect(getRefundability('user-1', 'tx-1')).resolves.toMatchObject({
+      refundable: false,
+      recordable: false,
+    });
   });
 });

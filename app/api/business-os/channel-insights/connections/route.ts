@@ -61,9 +61,24 @@ export async function GET(request: NextRequest) {
             // history…" forever. An error outranks the spinner.
             is_backfilling:
               c.insights_enabled && !c.backfill_completed_at && !c.last_sync_error,
-            // Meta tokens are long-lived but not refreshable, so connections do
-            // expire. Surfaced as a reconnect prompt rather than silent staleness.
-            needs_reconnect: isStale || !!c.last_sync_error,
+            /*
+             * Losing access and going quiet are DIFFERENT FACTS, and this
+             * conflated them.
+             *
+             * `isStale` only says nothing has synced for 48 hours. That is not
+             * evidence a token died — the nightly cron may simply not have run,
+             * which on this deployment it does not — and the card turned it
+             * into "we lost access to this account", an accusation about
+             * authorization that staleness cannot support. Every healthy
+             * connection read as broken, with a Reconnect button that would
+             * have fixed nothing.
+             *
+             * So: `needs_reconnect` now means the platform actually refused us.
+             * Staleness travels separately and is rendered as the quiet fact it
+             * is.
+             */
+            needs_reconnect: !!c.last_sync_error,
+            is_stale: isStale,
             last_sync_error: c.last_sync_error,
           };
         }),

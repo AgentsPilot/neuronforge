@@ -115,6 +115,38 @@ export type FieldType =
 export interface FieldDef {
   /** Physical column name. MUST exist in the physical catalog. */
   column: string;
+  /**
+   * Another column subtracted from `column` when this field is aggregated.
+   *
+   * Some money is not what was kept. `payment_transactions.amount` is the
+   * ORIGINAL charge and stays at its full value after a refund, so summing it
+   * reports gross takings as revenue: four payments totalling 731.33 with 523
+   * refunded read as 731.33 earned, and two fully refunded payments counted at
+   * face value. Every "how much did I earn" answer was overstated by exactly
+   * what had been given back.
+   *
+   * Declared rather than computed in SQL because there is no generated column
+   * to lean on, and declared here rather than special-cased in the compiler
+   * because nothing about it is specific to payments: any entity with a gross
+   * figure and a deduction can say so.
+   *
+   * Both columns must exist — the drift check enforces it.
+   */
+  minus?: string;
+  /**
+   * Aggregating THIS field is ambiguous; use one of these instead.
+   *
+   * `payment_transactions.amount` is a per-payment charge — the right thing to
+   * show on a row and to filter on, and a trap to sum: the total means either
+   * what was billed or what was kept, and those differ by every refund. Naming
+   * one of them `amount` made the same word mean gross in a listing and net in
+   * a total, which is the confusion this catalog exists to prevent.
+   *
+   * So the field stays honest for display and refuses to be summed, and the
+   * two totals have their own unambiguous names. The planner is told which,
+   * and repairs.
+   */
+  aggregateInstead?: string[];
   type: FieldType;
   labels: Labels;
   /** Readable by the worker. Default true. Set false to hide (e.g. internal notes). */
@@ -218,15 +250,32 @@ export interface RelationDef {
  * catalog declares `has_completed_intake` and the compiler expands it. Every
  * operator then composes with it for free.
  */
+export interface DerivedExpansion {
+  relation: string;
+  /** 'any' → EXISTS, 'none' → NOT EXISTS, 'count' → aggregate. */
+  quantifier: 'any' | 'none' | 'count';
+  where?: Array<{ field: string; op: string; value?: unknown }>;
+}
+
 export interface DerivedFieldDef {
   type: 'boolean' | 'number' | 'datetime';
   labels: Labels;
-  expand: {
-    relation: string;
-    /** 'any' → EXISTS, 'none' → NOT EXISTS, 'count' → aggregate. */
-    quantifier: 'any' | 'none' | 'count';
-    where?: Array<{ field: string; op: string; value?: unknown }>;
-  };
+  /**
+   * One expansion, or SEVERAL that are OR'd together.
+   *
+   * A single relation could not express a fact that reaches a row by more than
+   * one route, and "owes me money" is exactly that: an unpaid invoice OR an
+   * uncollected payment-plan period. The plan grammar has no OR — `where` is a
+   * conjunction — so a question spanning two routes was inexpressible at every
+   * layer, and the planner answered it from whichever route it thought of
+   * first. Invoices, in that case, which for a business selling in instalments
+   * is always the empty one.
+   *
+   * The array form resolves each expansion and unions the matching ids, so the
+   * planner still emits one ordinary boolean and never learns there are two
+   * tables behind it.
+   */
+  expand: DerivedExpansion | DerivedExpansion[];
 }
 
 /** Risk tier. Drives confirmation, and whether bulk fan-out is permitted at all. */

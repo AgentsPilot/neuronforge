@@ -395,8 +395,10 @@ const RESPONSES: Record<string, Record<string, string>> = {
   },
   // Invoice
   'invoice.create.response': {
-    en: `To create an invoice for <b>{contact}</b> ({amount}), please use the invoices tab. <a href="/business-os/payments" style="color: #F97316; text-decoration: underline;">Open invoices →</a>`,
-    he: `כדי ליצור חשבונית עבור <b>{contact}</b> ({amount}), השתמש בלשונית החשבוניות. <a href="/business-os/payments" style="color: #F97316; text-decoration: underline;">פתח חשבוניות ←</a>`,
+    // Names the tab the reader can actually see. There has been no "invoices
+    // tab" since the money view moved, and it is now called Orders.
+    en: `To create an invoice for <b>{contact}</b> ({amount}), please use the Orders tab. <a href="/business-os/orders" style="color: #F97316; text-decoration: underline;">Open orders →</a>`,
+    he: `כדי ליצור חשבונית עבור <b>{contact}</b> ({amount}), השתמש בלשונית ההזמנות. <a href="/business-os/orders" style="color: #F97316; text-decoration: underline;">פתח הזמנות ←</a>`,
   },
   'invoice.create.contact.default': {
     en: 'client',
@@ -3543,7 +3545,7 @@ async function executeInvoiceQuery(
     return {
       success: true,
       response: t('invoice.query.none', lang),
-      route: '/business-os/payments',
+      route: '/business-os/orders',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3561,7 +3563,7 @@ async function executePaymentRecord(
     return {
       success: false,
       response: t('error.general', lang),
-      route: '/business-os/payments',
+      route: '/business-os/orders',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3625,7 +3627,7 @@ async function executePaymentRecord(
     return {
       success: false,
       response: t('error.general', lang),
-      route: '/business-os/payments',
+      route: '/business-os/orders',
       suggestions: getSuggestionsLocalized(['suggestion.openPayments'], lang),
     };
   }
@@ -3684,8 +3686,8 @@ function executeNavigate(entities: Record<string, any>, lang: string): CommandRe
     services: '/business-os',
     scheduling: '/business-os',
     calendar: '/business-os',
-    payments: '/business-os/payments',
-    invoices: '/business-os/payments',
+    payments: '/business-os/orders',
+    invoices: '/business-os/orders',
     settings: '/business-os/settings',
     config: '/business-os/settings',
     home: '/business-os',

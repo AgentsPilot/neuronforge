@@ -8,7 +8,7 @@ import { CRMTaskList } from '@/components/crm/CRMTaskList';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { CRMTaskModal } from '@/components/crm/CRMTaskModal';
 import { CRMContactDrawerV2 } from '@/components/crm/contact-drawer';
-import { Plus, Search, ArrowLeft, Users, Download, LayoutGrid, List, CheckSquare } from 'lucide-react';
+import { Plus, Search, Users, Download, LayoutGrid, List, CheckSquare } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
@@ -268,16 +268,6 @@ export default function CRMPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0">
-            {/* Back to Dashboard */}
-            <button
-              onClick={() => router.push('/business-os')}
-              className="p-2 text-[var(--v2-text-secondary)] bg-[var(--v2-surface)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] hover:text-[var(--v2-text-primary)] transition-all flex-shrink-0"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('crm.back_to_dashboard')}
-            >
-              <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
-            </button>
-
             <div className="relative hidden md:block">
               <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--v2-text-muted)]" />
               <input

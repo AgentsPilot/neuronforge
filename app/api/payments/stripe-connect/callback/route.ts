@@ -24,14 +24,14 @@ export async function GET(request: NextRequest) {
   const requestLogger = logger.child({ correlationId });
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const paymentsUrl = `${appUrl}/business-os/payments`;
+  const paymentsUrl = `${appUrl}/business-os/orders`;
 
   try {
     // 1. Authenticate
     const user = await getUser();
     if (!user) {
       // Redirect to login, then back to reports
-      return NextResponse.redirect(`${appUrl}/login?redirect=/business-os/payments`);
+      return NextResponse.redirect(`${appUrl}/login?redirect=/business-os/orders`);
     }
 
     const searchParams = request.nextUrl.searchParams;

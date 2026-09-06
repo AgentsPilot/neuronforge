@@ -7,6 +7,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import type { DocumentType } from '@/lib/payments/documentType';
 
 const logger = createLogger({ service: 'BusinessProfileRepository' });
 
@@ -50,6 +51,24 @@ export interface InvoiceSettings {
   invoice_payment_instructions: string | null;
   invoice_footer_text: string | null;
   invoice_number_prefix: string;
+  /**
+   * The tax the business says is already inside its prices.
+   *
+   * Display only — the platform never adds tax to a price, decides whether tax
+   * applies, or looks up a rate. These carry what the business typed so the
+   * invoice, its PDF and the pay page can repeat it.
+   */
+  invoice_prices_include_tax: boolean;
+  invoice_tax_rate: number | null;
+  invoice_tax_label: string | null;
+  /**
+   * What the client-facing document is titled: receipt, invoice or tax_invoice.
+   *
+   * NULL follows the derived default in `lib/payments/documentType`. Kept
+   * nullable deliberately — storing the derived value would freeze it, so a
+   * business that registers for VAT later would go on issuing receipts.
+   */
+  invoice_document_type: DocumentType | null;
 }
 
 /**
@@ -696,6 +715,10 @@ export class BusinessProfileRepository {
           invoice_bank_routing,
           invoice_payment_instructions,
           invoice_footer_text,
+          invoice_prices_include_tax,
+          invoice_tax_rate,
+          invoice_tax_label,
+          invoice_document_type,
           invoice_number_prefix
         `)
         .eq('user_id', userId)
@@ -714,6 +737,10 @@ export class BusinessProfileRepository {
               invoice_bank_routing: null,
               invoice_payment_instructions: null,
               invoice_footer_text: null,
+              invoice_prices_include_tax: false,
+              invoice_tax_rate: null,
+              invoice_tax_label: null,
+              invoice_document_type: null,
               invoice_number_prefix: 'INV'
             },
             error: null
@@ -739,6 +766,10 @@ export class BusinessProfileRepository {
         invoice_bank_routing: data.invoice_bank_routing,
         invoice_payment_instructions: data.invoice_payment_instructions,
         invoice_footer_text: data.invoice_footer_text,
+        invoice_prices_include_tax: data.invoice_prices_include_tax ?? false,
+        invoice_tax_rate: data.invoice_tax_rate ?? null,
+        invoice_tax_label: data.invoice_tax_label ?? null,
+        invoice_document_type: (data.invoice_document_type as DocumentType) ?? null,
         invoice_number_prefix: data.invoice_number_prefix || 'INV'
       };
 
@@ -790,6 +821,51 @@ export class BusinessProfileRepository {
       return { data: true, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to update business branding');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The contact details a business publishes to its own clients.
+   *
+   * Deliberately not folded into `updateBranding`. A phone number is not a
+   * brand asset — it is how a client reaches the business — and keeping the two
+   * paths apart is what stops one save blanking the other, which is the exact
+   * failure that made the invoice-settings screen wipe the logo on every write.
+   *
+   * `null` clears the number, which is why the field is nullable rather than
+   * merely optional; `undefined` leaves it untouched.
+   */
+  async updateContactDetails(
+    userId: string,
+    contact: { phone?: string | null; email?: string | null; address?: string | null }
+  ): Promise<BusinessProfileRepositoryResult<true>> {
+    try {
+      const updateData: Record<string, unknown> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      // An empty string is the form's way of saying "cleared"; store null so the
+      // public pages see one absent value rather than two. A field left
+      // undefined is not written at all.
+      for (const field of ['phone', 'email', 'address'] as const) {
+        const value = contact[field];
+        if (value !== undefined) {
+          updateData[field] = value?.trim() ? value.trim() : null;
+        }
+      }
+
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update(updateData)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, fields: Object.keys(contact) }, 'Business contact details updated');
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update business contact details');
       return { data: null, error: error as Error };
     }
   }
@@ -864,6 +940,18 @@ export class BusinessProfileRepository {
       if (settings.invoice_footer_text !== undefined) {
         updateData.invoice_footer_text = settings.invoice_footer_text;
       }
+      if (settings.invoice_prices_include_tax !== undefined) {
+        updateData.invoice_prices_include_tax = settings.invoice_prices_include_tax;
+      }
+      if (settings.invoice_tax_rate !== undefined) {
+        updateData.invoice_tax_rate = settings.invoice_tax_rate;
+      }
+      if (settings.invoice_tax_label !== undefined) {
+        updateData.invoice_tax_label = settings.invoice_tax_label;
+      }
+      if (settings.invoice_document_type !== undefined) {
+        updateData.invoice_document_type = settings.invoice_document_type;
+      }
       if (settings.invoice_number_prefix !== undefined) {
         updateData.invoice_number_prefix = settings.invoice_number_prefix;
       }
@@ -913,6 +1001,10 @@ export class BusinessProfileRepository {
           invoice_bank_routing,
           invoice_payment_instructions,
           invoice_footer_text,
+          invoice_prices_include_tax,
+          invoice_tax_rate,
+          invoice_tax_label,
+          invoice_document_type,
           invoice_number_prefix,
           logo_url
         `)
@@ -942,6 +1034,10 @@ export class BusinessProfileRepository {
         invoice_bank_routing: data.invoice_bank_routing,
         invoice_payment_instructions: data.invoice_payment_instructions,
         invoice_footer_text: data.invoice_footer_text,
+        invoice_prices_include_tax: data.invoice_prices_include_tax ?? false,
+        invoice_tax_rate: data.invoice_tax_rate ?? null,
+        invoice_tax_label: data.invoice_tax_label ?? null,
+        invoice_document_type: (data.invoice_document_type as DocumentType) ?? null,
         invoice_number_prefix: data.invoice_number_prefix || 'INV',
         logo_url: data.logo_url
       };

@@ -13,6 +13,7 @@ import {
   Check,
   Loader2,
   AlertCircle,
+  Banknote,
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import type { MoneyEntry } from '@/lib/payments/moneyItems';
@@ -173,11 +174,42 @@ export function MoneyEntryActions({
     }
   }
 
-  if (settled && remaining > 0 && onRefund) {
+  /*
+   * Can this money be returned from here at all?
+   *
+   * TWO WAYS YES, and they used to be conflated into one.
+   *
+   *   A Stripe payment with a reference — the intent or the charge — can be
+   *   refunded through Stripe.
+   *
+   *   MANUAL money can be RECORDED as refunded. The business returns it the way
+   *   it arrived and tells us, which closes the invoice, nets the reports and
+   *   puts the reversal in the ledger on its own date.
+   *
+   * The second used to be excluded: the gate was `!!entry.processorRef`, and
+   * the comment here said manual money "is returned outside Stripe too, so
+   * there is nothing to offer" — true of the processor call, false of the
+   * record. A business collecting by transfer could take money through the
+   * platform and never show it coming back.
+   *
+   * Still excluded, deliberately: a payment whose `processor_type` is 'stripe'
+   * but which never recorded a reference. That money DID go through Stripe and
+   * has to come back through it — the server refuses to record one by hand, and
+   * offering the action would only lead into a dialog that cannot act.
+   */
+  const isManualMoney = entry.processorType === 'manual';
+  const canReturn = !!entry.processorRef || isManualMoney;
+
+  if (settled && remaining > 0 && canReturn && onRefund) {
     items.push({
       key: 'refund',
-      label: t('payments.refund') || 'Refund',
-      icon: RotateCcw,
+      // "Record" for manual money, because that is what pressing it does: the
+      // business returns the money itself and this writes it down. Calling it
+      // Refund would promise the platform was moving something.
+      label: isManualMoney
+        ? t('payments.refund.record_action')
+        : t('payments.refund') || 'Refund',
+      icon: isManualMoney ? Banknote : RotateCcw,
       action: async e => onRefund(e),
       danger: true,
     });

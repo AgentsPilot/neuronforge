@@ -468,7 +468,16 @@ export async function createBooking(
  * an unbilled booking should be reported — but swallows Stripe failures, since a
  * local invoice the owner can chase is a working outcome.
  */
-async function createBookingInvoice(
+/**
+ * Raise the invoice for a booking.
+ *
+ * Exported because the WEBSITE booking flow needs it too. A service set to
+ * `collection: 'invoice'` took no money online, and the public route raised no
+ * invoice at all — so a ₪200 booking was marked paid, billed nobody, and the
+ * client received a confirmation with nothing to pay against. This is the one
+ * producer of booking invoices; there must not be a second.
+ */
+export async function createBookingInvoice(
   userId: string,
   bookingId: string,
   service: SchedulingService,
@@ -831,13 +840,21 @@ export async function deleteBooking(params: {
 
   const bookingInvoices = invoicesResult.data || [];
 
-  // A refund leaves the invoice sitting at 'paid' — refunding updates the
-  // booking and the transaction, never the invoice — so the booking's own
-  // payment_status is what says whether the money went back.
-  const wasRefunded = existing.data.payment_status === 'refunded';
-  const paidInvoices = wasRefunded ? [] : bookingInvoices.filter(isSettledInvoice);
+  const { bookingPaymentState } = await import('@/lib/payments/bookingPaymentState');
 
-  // Money can also have arrived without the invoice being marked paid.
+  /*
+   * Does this booking still HOLD money?
+   *
+   * It used to ask `payment_status === 'refunded'`, which only the booking
+   * refund route ever writes. So money refunded from the money list, the CRM
+   * drawer, or the Stripe dashboard left the booking reading `paid` and this
+   * guard refused the delete, telling the owner to "refund the payment first"
+   * about money already returned.
+   *
+   * Derived from the payments themselves instead, which every refund path
+   * updates by trigger. `netHeld` also gets partial refunds right: a booking
+   * with £40 of £100 returned is still holding £60 and is still undeletable.
+   */
   const settledResult = await paymentTransactionRepository.findSettledForBooking(
     bookingId,
     bookingInvoices.map((inv) => inv.id),
@@ -846,13 +863,28 @@ export async function deleteBooking(params: {
   if (settledResult.error) return { data: null, error: settledResult.error as Error };
   const settledPayments = settledResult.data || [];
 
-  if (paidInvoices.length > 0 || settledPayments.length > 0) {
-    const paidAmount = [
-      ...paidInvoices.map((inv) => Number(inv.amount) || 0),
-      ...settledPayments
-        .filter((t) => !t.invoice_id || !paidInvoices.some((inv) => inv.id === t.invoice_id))
-        .map((t) => Number(t.amount) || 0),
-    ].reduce((sum, amount) => sum + amount, 0);
+  const money = bookingPaymentState(settledPayments);
+
+  /*
+   * An invoice marked paid with no payment recorded against it still counts.
+   *
+   * Marking an invoice paid by hand is a normal thing to do, and the money is
+   * just as real for having arrived by bank transfer. Its refunded amount is
+   * derived by trigger, so the same subtraction applies.
+   */
+  const invoiceHeld = bookingInvoices
+    .filter(isSettledInvoice)
+    .filter((inv) => !settledPayments.some((t) => t.invoice_id === inv.id))
+    .reduce(
+      (sum, inv) => sum + Math.max(0, (Number(inv.amount) || 0) - (Number(inv.refunded_amount) || 0)),
+      0
+    );
+
+  const heldAmount = Math.round((money.netHeld + invoiceHeld) * 100) / 100;
+
+  if (heldAmount > 0) {
+    const paidInvoices = bookingInvoices.filter(isSettledInvoice);
+    const paidAmount = heldAmount;
 
     log.info({ userId, bookingId }, 'Refused to delete a booking that has been paid for');
 

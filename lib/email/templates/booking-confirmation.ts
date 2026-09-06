@@ -31,6 +31,18 @@ export interface BookingConfirmationData {
   rescheduleUrl: string;
   cancelUrl: string;
   bookingId: string;
+  /**
+   * Was a time actually booked?
+   *
+   * Defaults to true, so every existing caller sends the appointment email it
+   * always sent. False strips everything that assumes a slot — the date, time
+   * and duration rows, the calendar invitation, the reschedule link — and
+   * switches to order wording.
+   *
+   * The test is the booking's own start time. Nothing else in the data
+   * distinguishes a course from a session.
+   */
+  hasSchedule?: boolean;
   branding: BrandingData;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
@@ -165,10 +177,12 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
   const content = `
     <!-- Greeting -->
     <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
-      ${t.greeting[locale]}
+      ${data.hasSchedule === false ? t.unscheduledGreeting[locale] : t.greeting[locale]}
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
-      ${t.intro[locale](data.clientName, data.branding.businessName)}
+      ${data.hasSchedule === false
+        ? t.unscheduledIntro[locale](data.clientName, data.branding.businessName)
+        : t.intro[locale](data.clientName, data.branding.businessName)}
     </p>
 
     <!-- Appointment Details Card -->
@@ -180,9 +194,12 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
           </h3>
 
           ${emailDetailsTable([
-            emailDetailRow(tIntake.dateLabel[locale], dateStr),
-            timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr) : '',
-            emailDetailRow(tIntake.durationLabel[locale], `${data.duration} ${tIntake.minutes[locale]}`),
+            // Date, time and duration exist only because something was
+            // scheduled. On a product they described the moment of purchase as
+            // if it were an appointment, with a duration in minutes.
+            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr),
+            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr) : '',
+            data.hasSchedule === false ? '' : emailDetailRow(tIntake.durationLabel[locale], `${data.duration} ${tIntake.minutes[locale]}`),
             data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location) : '',
             data.price && data.price > 0 ? emailDetailRow(t.priceLabel[locale], formatCurrency(data.price, data.currency || 'USD')) : ''
           ].filter(Boolean))}
@@ -192,11 +209,13 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
 
     ${hasPendingPayment ? `
     <!-- Payment Pending Notice -->
-    ${emailNoticeBox(t.paymentRequired[locale](formatCurrency(data.price!, data.currency || 'USD')), 'warning')}
+    ${emailNoticeBox((data.hasSchedule === false ? t.unscheduledPaymentRequired : t.paymentRequired)[locale](formatCurrency(data.price!, data.currency || 'USD')), 'warning')}
     ${data.paymentUrl ? emailButton(t.payNow[locale], data.paymentUrl, { backgroundColor: data.branding.primaryColor }) : ''}
     ` : ''}
 
-    <!-- Add to Calendar -->
+    ${data.hasSchedule === false ? '' : `
+    <!-- Add to Calendar. Omitted with no schedule: there is no time to add,
+         and the links would create an event at the moment of purchase. -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
         <td>
@@ -223,6 +242,7 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
         </td>
       </tr>
     </table>
+    `}
 
     <!-- Manage Booking Section -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid #e5e5e5;">
@@ -233,9 +253,11 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
             <tr>
+              ${data.hasSchedule === false ? '' : `
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
                 ${emailOutlineButton(tIntake.reschedule[locale], data.rescheduleUrl, { color: data.branding.primaryColor })}
               </td>
+              `}
               <td>
                 ${emailOutlineButton(tIntake.cancel[locale], data.cancelUrl, { color: '#DC2626' })}
               </td>
@@ -252,7 +274,7 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
   `;
 
   return {
-    subject: t.subject[locale](data.serviceName),
+    subject: (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale),
     icsContent: generateICSContent(data)
   };
@@ -268,6 +290,14 @@ export function generateBookingCancellationEmail(data: {
   timezone: string;
   reason?: string;
   bookAgainUrl?: string;
+  /**
+   * Was a time booked? Defaults to true, so existing callers are unchanged.
+   *
+   * False switches to order wording and drops the date and time rows, which
+   * otherwise printed the moment of purchase as though an appointment had been
+   * struck from the calendar.
+   */
+  hasSchedule?: boolean;
   branding: BrandingData;
   locale?: Locale;
 }): {
@@ -290,13 +320,13 @@ export function generateBookingCancellationEmail(data: {
   const content = `
     <!-- Greeting -->
     <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
-      ${t.greeting[locale]}
+      ${data.hasSchedule === false ? t.unscheduledGreeting[locale] : t.greeting[locale]}
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
-      ${t.intro[locale](data.clientName)}
+      ${(data.hasSchedule === false ? t.unscheduledIntro : t.intro)[locale](data.clientName)}
     </p>
 
-    <!-- Cancelled Appointment Details -->
+    <!-- What was cancelled -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: #fef2f2; border-radius: 12px; border: 1px solid #fecaca;">
       <tr>
         <td style="padding: 24px;">
@@ -305,8 +335,10 @@ export function generateBookingCancellationEmail(data: {
           </h3>
 
           ${emailDetailsTable([
-            emailDetailRow(tIntake.dateLabel[locale], dateStr),
-            timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr) : '',
+            // No date or time when none was booked: they would describe the
+            // moment of purchase as an appointment that had been struck out.
+            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr),
+            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr) : '',
             data.reason ? emailDetailRow(t.reasonLabel[locale], data.reason) : ''
           ].filter(Boolean))}
         </td>
@@ -328,7 +360,7 @@ export function generateBookingCancellationEmail(data: {
   `;
 
   return {
-    subject: t.subject[locale](data.serviceName),
+    subject: (data.hasSchedule === false ? t.unscheduledSubject : t.subject)[locale](data.serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale)
   };
 }

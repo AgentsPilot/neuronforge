@@ -333,8 +333,8 @@ RULES
    ("how many CLIENTS have unpaid invoices"), counting the invoice rows answers a
    different question with a bigger number — one client with two invoices is one
    client. Either query that thing directly:
-     find/compute over contacts, filtered by {"relation":"invoices","quantifier":"any",
-     "where":[{"field":"status","op":"eq","value":{"$semantic":"unpaid"}}]}
+     find/compute over contacts, filtered by {"relation":"bookings","quantifier":"any",
+     "where":[{"field":"status","op":"eq","value":"cancelled"}]}
    or count the DISTINCT values of the field identifying it:
      {"fn":"count","field":"contact_id","distinct":true}
    Counting distinct "id" is just counting rows again.
@@ -342,11 +342,63 @@ RULES
    - a QUANTITY (a total, a sum, an average, "how much", "how many") -> op "compute" with agg.
    - a LIST or the identities of things -> op "find".
    Answering "how much am I owed" with a list of rows answers a different question.
-9. Derived fields (d:) are used exactly like normal fields, including with eq true/false.
-10. answer.text must be ONE short sentence in the user's own language, containing only
+   WHEN THE SUBJECT IS MONEY, a bare quantity question means the AMOUNT — sum the
+   money field. Counting the rows answers "how many payments", which is a
+   different and almost never the intended question: a business asking about its
+   income wants a sum of money, not the number of times money arrived.
+   Count rows only when the question names the ROWS themselves ("how many
+   payments did I receive", "how many invoices are open").
+   Some words name the MONEY rather than the records that carry it — revenue,
+   income, turnover, sales, takings, הכנסות, מחזור, ingresos, facturación. They
+   appear among an entity's aliases because they lead to the right table, but a
+   question asking for one of them is asking for a SUM even though it looks like
+   it is naming rows. "How much income do I have" is the total, never 2.
+   This matters most where the language does not distinguish them. Hebrew "כמה"
+   and Spanish "cuánto/cuántos" cover both "how much" and "how many", so the
+   subject decides: money -> sum, things -> count.
+9. SUPERLATIVES ("the most", "the highest", "the best", "top", "הכי", "el que más")
+   are ONE find, ordered and limited — never an aggregate followed by a filter.
+   Right: {"op":"find","entity":X,"order_by":{"field":F,"direction":"desc"},"limit":1}
+   Wrong: compute max(F), then find where F equals some number.
+   There is NO WAY to reference an earlier step's result inside a filter, so the
+   second shape forces you to invent the number — and an invented number
+   produces a confident, wrong answer that every check passes. If you find
+   yourself writing a literal into a filter to stand for something you just
+   computed, order and limit instead.
+10. RANKING BY MONEY EARNED — most profitable, best selling, biggest earner,
+   הכי רווחי, el que más ingresos — aggregates the MONEY and groups it by the
+   thing being ranked:
+     {"op":"compute","entity":<the entity whose meaning is money received>,
+      "agg":{"fn":"sum","field":<its amount field>},"group_by":"<relation naming
+      the thing being ranked>","order_by":[{"field":"total","dir":"desc"}]}
+   Aggregate what was KEPT, not what was charged: where a money field has a net
+   counterpart, revenue means the net one. A refund does not reduce the original
+   charge, so summing the charge reports money that was given back as money
+   earned — and a fully refunded payment counts at full value.
+   A price on a catalogue row is what something COSTS, not what it EARNED.
+   Ranking by price calls an expensive service that never sold once the most
+   profitable one — a fluent, confident, wrong answer. Rank by what was
+   actually collected.
+   EXCLUDE rows that have no such thing: add {"field":"<the foreign key>",
+   "op":"is_not_null"}. Grouping puts everything with no match into one "—"
+   bucket, and that bucket is not a candidate — money that belongs to no
+   service cannot be your most profitable service, but it is often the largest
+   group and it wins.
+   Name the winner with {sN.first.key} and its money with {sN.first.value}:
+   a grouped step returns groups, not rows, so its first row has no field of
+   the entity — only what the group IS and what it totals.
+     "השירות הכי רווחי שלך הוא {s1.first.key} עם {s1.first.value}." 
+11. Derived fields (d:) are used exactly like normal fields, including with eq true/false.
+   Prefer a derived field over hand-building the relation filter it stands for. A
+   derived field can reach its fact by SEVERAL routes at once, and the where list
+   is a conjunction — it has no OR — so a hand-built filter can only ever ask
+   about one of them. "Who owes me money" is the case that bites: money is owed
+   on an unpaid invoice OR an uncollected payment-plan period, and filtering
+   invoices alone answers "0 clients" for a business that sells in instalments.
+20. answer.text must be ONE short sentence in the user's own language, containing only
    {placeholders} for any data. You have not seen the data, so never state a number or a
    name directly. Placeholders may only reference steps you emitted.
-11. USE THE CONVERSATION. If a CONVERSATION SO FAR section is present:
+20. USE THE CONVERSATION. If a CONVERSATION SO FAR section is present:
     - a message that answers a question you just asked must be COMBINED with the
       original request and planned — asking again is never the right move;
     - "it", "him", "her", "that one" and ordinals refer to the rows listed there;

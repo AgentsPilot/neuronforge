@@ -7,6 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
@@ -103,6 +104,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const capability = await resolvePaymentCollectionCapability(supabaseServer, config.userId);
     const processorReady = capability.canCollect;
 
+    /**
+     * The business's look, so a smart link wears it too.
+     *
+     * A smart link has no website page, and the theme used to live on one — so
+     * this surface had nothing to read and fell back to a single
+     * `primaryColor`. The booking modal it now opens is the same component the
+     * website and landing pages use, and it draws from a full theme: colours
+     * AND fonts. Sending only a primary colour would leave the same dialog
+     * looking like a different product depending on which link opened it.
+     */
+    const template = await getBusinessTemplate(config.userId);
+
     requestLogger.info(
       { userCode, companyName: config.companyName, serviceCount: formattedServices.length, processorReady },
       'Conversion config retrieved'
@@ -120,15 +133,30 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         primaryColor: config.primaryColor,
         customerJourney: config.customerJourney || ['scheduling', 'client_info', 'confirmation'],
         collectionMethod: config.collectionMethod,
-        processorReady
+        processorReady,
+        // Null where the business has published nothing yet; the modal then
+        // falls back to the platform default rather than to nothing.
+        theme: template.theme ?? null
       },
       services: formattedServices,
       hasPaidServices,
-      // Links for this user's conversion pages
+      /*
+       * The conversion pages that actually exist.
+       *
+       * A `payment: /c/{userCode}/pay` entry used to be added here whenever the
+       * business had a paid service — but no such route was ever built, so this
+       * advertised a URL that returns 404. It was surfaced to owners as a link
+       * to copy and share, which means the failure landed on their client
+       * rather than on them.
+       *
+       * Paid services are still reachable: a paid service booked through
+       * `/c/{userCode}/book` collects at checkout, and an invoice carries its
+       * own `/invoice/{id}` page. Restore this line when the route exists, not
+       * before.
+       */
       links: {
         booking: `/c/${userCode}/book`,
-        contact: `/c/${userCode}/contact`,
-        ...(hasPaidServices ? { payment: `/c/${userCode}/pay` } : {})
+        contact: `/c/${userCode}/contact`
       }
     });
   } catch (error) {

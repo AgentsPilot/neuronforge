@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, ClipboardList, Sparkles } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
@@ -60,6 +61,30 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
    */
   const [intakeEnabled, setIntakeEnabled] = useState(false);
 
+  /**
+   * Whether this business collects intake.
+   *
+   * Read once on open and again whenever the Intake tab saves. Without the
+   * second read, toggling intake left every service's journey strip on the
+   * Services tab showing the state from before the toggle — two tabs of one
+   * dialog disagreeing about the same setting, until it was closed and
+   * reopened.
+   */
+  const refreshIntakeEnabled = useCallback(async () => {
+    try {
+      const response = await fetch('/api/intake/settings');
+      if (!response.ok) return;
+      const data = await response.json();
+      // "Does a form reach the client", not "is a setting on". Reading
+      // `is_enabled` alone drew an intake step on every service for a business
+      // whose email toggle was off, or which had no form chosen.
+      setIntakeEnabled(intakeReachesClient(data?.settings));
+    } catch {
+      // Never fatal: without the flag the journey omits a step it cannot
+      // confirm, which is the safer of the two mistakes.
+    }
+  }, []);
+
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
@@ -67,7 +92,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     fetch('/api/intake/settings')
       .then(response => (response.ok ? response.json() : null))
       .then(data => {
-        if (!cancelled) setIntakeEnabled(!!data?.settings?.is_enabled);
+        if (!cancelled) setIntakeEnabled(intakeReachesClient(data?.settings));
       })
       .catch(() => {
         // Never fatal: without the flag the journey omits a step it cannot
@@ -646,7 +671,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
 
             {/* Intake Tab */}
             {activeTab === 'intake' && (
-              <IntakeSettingsPanel />
+              <IntakeSettingsPanel onSaved={refreshIntakeEnabled} />
             )}
 
             {/* Payments Tab */}

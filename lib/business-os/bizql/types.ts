@@ -35,18 +35,40 @@
  * Resolved server-side against the user's timezone, which is what removes the
  * need for separate `today` / `tomorrow` / `this week` handling per phrasing.
  */
+/**
+ * Every anchor a relative date may name.
+ *
+ * A runtime list, not just a union, because the union alone is erased at
+ * compile time — and the values that reach here come from a language model, not
+ * from TypeScript. Without something to check against, an invented anchor like
+ * `last_7_days` passed every guard and resolved to "today", which is how a
+ * weekly report can arrive saying "0 new leads" and read as a quiet week.
+ *
+ * A window is expressed as an anchor PLUS an offset — `{ $date: 'today',
+ * offset: { days: -7 } }` — rather than as its own token, so the vocabulary
+ * stays small and every combination is expressible.
+ */
+export const DATE_ANCHORS = [
+  'now',
+  'today',
+  'tomorrow',
+  'yesterday',
+  'start_of_day',
+  'end_of_day',
+  'start_of_week',
+  'end_of_week',
+  'start_of_month',
+  'end_of_month',
+] as const;
+
+export type DateAnchor = (typeof DATE_ANCHORS)[number];
+
+export function isDateAnchor(value: unknown): value is DateAnchor {
+  return typeof value === 'string' && (DATE_ANCHORS as readonly string[]).includes(value);
+}
+
 export interface DateExpr {
-  $date:
-    | 'now'
-    | 'today'
-    | 'tomorrow'
-    | 'yesterday'
-    | 'start_of_day'
-    | 'end_of_day'
-    | 'start_of_week'
-    | 'end_of_week'
-    | 'start_of_month'
-    | 'end_of_month';
+  $date: DateAnchor;
   offset?: { days?: number; weeks?: number; months?: number };
 }
 
@@ -77,6 +99,14 @@ export type ArrayMember = ScalarValue | DateExpr | SemanticValue;
 
 export type QueryValue = ScalarValue | ArrayMember[] | DateExpr | SemanticValue | StepRef;
 
+/**
+ * Whether this is a date expression AT ALL — the shape, not the anchor.
+ *
+ * Deliberately still shape-only: a `{ $date: 'nonsense' }` must be recognised
+ * as an attempted date so the resolver can reject it BY NAME. Narrowing here
+ * instead would make it fall through as an ordinary literal and be compared
+ * against the column as the string "nonsense", which fails just as silently.
+ */
 export function isDateExpr(v: unknown): v is DateExpr {
   return typeof v === 'object' && v !== null && '$date' in v;
 }
@@ -217,6 +247,40 @@ export interface ComputeQuery {
     distinct?: boolean;
   };
   group_by?: string;
+  /**
+   * Aggregate the rows on the OTHER side of a relation, one group per row here.
+   *
+   * "Which service sells least" cannot be answered by grouping payments: a
+   * service that has never sold produces no payment rows, so it is ABSENT from
+   * the result rather than present at zero — and the lowest group returned is
+   * the lowest NON-ZERO seller, which is the opposite of the answer. Aggregation
+   * can only rank what exists in the rows it scans.
+   *
+   * Naming the relation instead starts from this entity: every service gets a
+   * group, the ones with no payments get 0, and the ranking is complete. It also
+   * removes the orphan bucket — a payment with no service has no parent to land
+   * under, rather than appearing as a service called "—".
+   *
+   * `where` applies to the RELATED rows (only succeeded payments), not to the
+   * parents.
+   */
+  over?: string;
+  /**
+   * Keep only the groups whose aggregate passes this test.
+   *
+   * The difference between "revenue per client" and "which clients are worth
+   * chasing" — the second is the one a report is actually built on, and without
+   * it the caller receives every group and filters them itself, which for a
+   * long tail means shipping hundreds of rows to discard most of them.
+   *
+   * Applied AFTER the aggregate, to the computed value, and only meaningful
+   * alongside `group_by`: a single total either passes or vanishes, which is not
+   * a question anyone asks.
+   */
+  having?: {
+    op: 'gt' | 'gte' | 'lt' | 'lte' | 'eq' | 'neq';
+    value: number;
+  };
 }
 
 /**
@@ -340,6 +404,19 @@ export interface FindResult {
    * Present only when non-empty, so callers can test truthiness.
    */
   unmatched?: UnmatchedFilter[];
+  /**
+   * Stored values that no configured option accounts for.
+   *
+   * A contact sitting in stage `customer` when this business's pipeline is
+   * `inquiry / initial_consultation / family_enrolled / completed` belongs to
+   * none of them — so `{ $semantic: 'lead' }` correctly returns nothing, and
+   * that row is invisible to every semantic filter forever.
+   *
+   * Reported rather than silently tolerated, because a truthful empty answer
+   * and a truthful empty answer over a misconfigured pipeline look identical to
+   * the reader, and only one of them is worth acting on.
+   */
+  unclassified?: Array<{ field: string; values: string[] }>;
 }
 
 export interface ComputeResult {
@@ -356,7 +433,18 @@ export interface ComputeResult {
    */
   agg: { fn: string; field?: string; distinct?: boolean };
   value: number | null;
-  groups?: Array<{ key: string; value: number }>;
+  /**
+   * `key` is what the group is CALLED; `id` is what it is.
+   *
+   * A relation grouping resolves ids to labels so the reader sees "התמחות…"
+   * rather than a uuid — and the id was then thrown away. That made a grouped
+   * answer unfollowable: "your most profitable service is X" identified a
+   * service that the next turn had no way to point at, so "how much from this
+   * service" resolved against whatever rows happened to be remembered from an
+   * earlier question. Keeping the id costs nothing; it is already in hand when
+   * the label is looked up.
+   */
+  groups?: Array<{ key: string; value: number; id?: string }>;
   /**
    * Filters that matched nothing because what they named does not exist.
    *
@@ -371,6 +459,19 @@ export interface ComputeResult {
   approximate: boolean;
   /** Repeated rows collapsed by the entity's dedupe key before counting. */
   collapsed?: number;
+  /**
+   * Stored values that no configured option accounts for.
+   *
+   * A contact sitting in stage `customer` when this business's pipeline is
+   * `inquiry / initial_consultation / family_enrolled / completed` belongs to
+   * none of them — so `{ $semantic: 'lead' }` correctly returns nothing, and
+   * that row is invisible to every semantic filter forever.
+   *
+   * Reported rather than silently tolerated, because a truthful empty answer
+   * and a truthful empty answer over a misconfigured pipeline look identical to
+   * the reader, and only one of them is worth acting on.
+   */
+  unclassified?: Array<{ field: string; values: string[] }>;
 }
 
 export interface MutateResult {
@@ -471,6 +572,8 @@ export interface QueryContext {
    * whose allowed values live in another table.
    */
   _enumCache?: Map<string, Map<string, string[]>>;
+  /** Values found in rows that no configured option accounts for. */
+  _enumOrphans?: Array<{ field: string; values: string[] }>;
 
   /**
    * Internal. This user's raw values for a data-driven field, used to build a

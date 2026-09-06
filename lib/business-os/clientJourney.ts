@@ -136,10 +136,19 @@ export function journeySteps(
     steps.push('payment');
   }
 
-  // After the money: a form asked before the client has committed is a reason
-  // to leave.
-  if (options.intakeEnabled) steps.push('intake');
-
+  /*
+   * Intake is NOT a step here.
+   *
+   * It used to be — a form between the client and the thing they came to do,
+   * placed after the money on the reasoning that asking earlier loses people.
+   * The setting now says what it always meant: the client is EMAILED the form
+   * once their booking is confirmed. So the booking flow ends at confirmation
+   * and the form arrives afterwards, when they are no longer mid-task.
+   *
+   * `intakeEnabled` is still taken so callers do not all have to change, and so
+   * a surface can say "and then we will email you a form" — but it no longer
+   * lengthens the journey.
+   */
   steps.push('confirmation');
   return steps;
 }

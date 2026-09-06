@@ -743,7 +743,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         router.push(`/business-os`);
         break;
       case 'invoices':
-        router.push(`/business-os/payments?invoice=${entityId}`);
+        router.push(`/business-os/orders?invoice=${entityId}`);
         break;
       default:
         // Fallback - prompt user to describe the edit

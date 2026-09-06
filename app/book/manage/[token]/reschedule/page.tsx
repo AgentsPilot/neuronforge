@@ -1,8 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import { Calendar, Clock, ChevronLeft, ChevronRight, CheckCircle, ArrowLeft, X } from 'lucide-react';
+import { useParams } from 'next/navigation';
+import { Calendar, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
+
+import { BrandButton } from '@/components/public/BrandButton';
+import { PublicPageSpinner, PublicSpinner } from '@/components/public/PublicSpinner';
+import { PublicShell } from '@/components/public/PublicShell';
+import { StatusCard } from '@/components/public/StatusCard';
+import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
+import {
+  createPublicT,
+  formatPublicDate,
+  localeCode as intlLocale,
+  timeZoneLabel,
+} from '@/lib/i18n/public-pages';
 
 interface RescheduleConfig {
   bookingId: string;
@@ -16,12 +28,6 @@ interface RescheduleConfig {
   };
 }
 
-interface BusinessData {
-  name: string;
-  logoUrl: string | null;
-  primaryColor: string;
-}
-
 interface TimeSlot {
   start_time: string;
   end_time: string;
@@ -30,24 +36,32 @@ interface TimeSlot {
 
 export default function RescheduleBookingPage() {
   const params = useParams();
-  const router = useRouter();
   const token = params.token as string;
+  const brand = useOptionalPublicBrand();
 
   const [config, setConfig] = useState<RescheduleConfig | null>(null);
-  const [business, setBusiness] = useState<BusinessData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Date selection
+  const locale = brand?.locale ?? 'en';
+  const t = createPublicT(locale);
+
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
-  // Time slots
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
 
-  // Rescheduling state
+  /**
+   * The booking's own timezone.
+   *
+   * A booking stores a real instant plus the zone it was made in, so the hour a
+   * client sees must be rendered in THAT zone — not the viewer's. Defaults to
+   * UTC only until the booking loads.
+   */
+  const [bookingTimezone, setBookingTimezone] = useState('UTC');
+
   const [rescheduling, setRescheduling] = useState(false);
   const [rescheduled, setRescheduled] = useState(false);
   const [newBookingTime, setNewBookingTime] = useState<string | null>(null);
@@ -55,36 +69,28 @@ export default function RescheduleBookingPage() {
   useEffect(() => {
     async function fetchRescheduleConfig() {
       try {
-        // First get booking details for business info
         const bookingResponse = await fetch(`/api/book/manage/${token}`);
         const bookingData = await bookingResponse.json();
-
-        if (bookingData.success) {
-          setBusiness(bookingData.business);
+        if (bookingData.success && bookingData.booking?.timezone) {
+          setBookingTimezone(bookingData.booking.timezone);
         }
 
-        // Then get reschedule config
         const response = await fetch(`/api/book/manage/${token}/reschedule`);
         const data = await response.json();
 
-        if (data.success) {
-          setConfig(data);
-        } else {
-          setError(data.error || 'Cannot reschedule this booking');
-        }
+        if (data.success) setConfig(data);
+        else setError(data.error || t('cannotReschedule'));
       } catch {
-        setError('Failed to load reschedule options');
+        setError(t('loadFailed'));
       } finally {
         setLoading(false);
       }
     }
 
-    if (token) {
-      fetchRescheduleConfig();
-    }
+    if (token) fetchRescheduleConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // Fetch available slots when date is selected
   useEffect(() => {
     async function fetchSlots() {
       if (!selectedDate || !config) return;
@@ -94,17 +100,13 @@ export default function RescheduleBookingPage() {
       setSelectedSlot(null);
 
       try {
-        // Use userId directly for availability lookup
         const response = await fetch(
           `/api/website/scheduling/availability?service_id=${config.serviceId}&date=${selectedDate}`
         );
         const data = await response.json();
-
-        if (data.success && data.slots) {
-          setSlots(data.slots);
-        }
+        if (data.success && data.slots) setSlots(data.slots);
       } catch {
-        // Silently fail, show no slots
+        // No slots is a legitimate answer; a failed lookup renders the same way.
       } finally {
         setLoadingSlots(false);
       }
@@ -125,46 +127,33 @@ export default function RescheduleBookingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           newStartTime: selectedSlot.start_time,
-          newEndTime: selectedSlot.end_time
-        })
+          newEndTime: selectedSlot.end_time,
+        }),
       });
-
       const data = await response.json();
 
       if (data.success) {
         setRescheduled(true);
         setNewBookingTime(data.booking.startTime);
       } else {
-        setError(data.error || 'Failed to reschedule booking');
+        setError(data.error || t('rescheduleFailed'));
       }
     } catch {
-      setError('Failed to reschedule booking');
+      setError(t('rescheduleFailed'));
     } finally {
       setRescheduling(false);
     }
   };
 
-  // Calendar helpers
   const getDaysInMonth = (date: Date) => {
     const year = date.getFullYear();
     const month = date.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const daysInMonth = lastDay.getDate();
-    const startingDay = firstDay.getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const startingDay = new Date(year, month, 1).getDay();
 
     const days: (number | null)[] = [];
-
-    // Add empty cells for days before the first of the month
-    for (let i = 0; i < startingDay; i++) {
-      days.push(null);
-    }
-
-    // Add the days of the month
-    for (let day = 1; day <= daysInMonth; day++) {
-      days.push(day);
-    }
-
+    for (let i = 0; i < startingDay; i++) days.push(null);
+    for (let day = 1; day <= daysInMonth; day++) days.push(day);
     return days;
   };
 
@@ -174,177 +163,217 @@ export default function RescheduleBookingPage() {
     const date = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
-    // Must be in the future
     if (date < today) return false;
 
-    // Must be within advance booking days
     const maxDate = new Date();
     maxDate.setDate(maxDate.getDate() + config.serviceConfig.advanceBookingDays);
-    if (date > maxDate) return false;
-
-    return true;
+    return date <= maxDate;
   };
 
   const formatDateString = (day: number) => {
     const year = currentMonth.getFullYear();
     const month = String(currentMonth.getMonth() + 1).padStart(2, '0');
-    const dayStr = String(day).padStart(2, '0');
-    return `${year}-${month}-${dayStr}`;
+    return `${year}-${month}-${String(day).padStart(2, '0')}`;
   };
 
-  const formatDisplayDate = (dateStr: string) => {
-    const date = new Date(dateStr + 'T12:00:00');
-    return date.toLocaleDateString('en-US', {
+  const formatDisplayDate = (dateStr: string) =>
+    formatPublicDate(new Date(`${dateStr}T12:00:00`), locale, {
       weekday: 'long',
       month: 'long',
-      day: 'numeric'
+      day: 'numeric',
     });
-  };
 
-  const formatNewBookingTime = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleString('en-US', {
+  /** The new time, in the booking's own zone rather than the viewer's. */
+  const formatNewBookingTime = (dateStr: string) =>
+    new Date(dateStr).toLocaleString(intlLocale(locale), {
       weekday: 'long',
       month: 'long',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-      hour12: true
+      hour12: locale === 'en',
+      timeZone: bookingTimezone,
     });
-  };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-      </div>
-    );
-  }
+  /**
+   * The month name, in the reader's language.
+   *
+   * This was a hardcoded English array, so a Hebrew client got an RTL calendar
+   * headed "September 2026" with every other word on the page in Hebrew — which
+   * reads worse than a page that was never translated at all.
+   */
+  const monthLabel = currentMonth.toLocaleDateString(intlLocale(locale), {
+    month: 'long',
+    year: 'numeric',
+  });
 
-  if (error && !config) {
+  if (loading) return <PublicPageSpinner label={t('loading')} />;
+
+  if (!brand || (error && !config)) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <X className="w-8 h-8 text-red-600" />
-          </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Cannot Reschedule</h1>
-          <p className="text-gray-600 mb-6">{error}</p>
-          <button
-            onClick={() => router.push(`/book/manage/${token}`)}
-            className="text-sm text-gray-500 hover:text-gray-700"
-          >
-            ← Back to booking
-          </button>
-        </div>
+      <div style={{ background: 'var(--ap-bg)' }}>
+        <StatusCard
+          standalone
+          tone="error"
+          title={t('cannotReschedule')}
+          description={error ?? t('loadFailed')}
+          actions={
+            <BrandButton href={`/book/manage/${token}`} variant="ghost">
+              {t('backToBooking')}
+            </BrandButton>
+          }
+        />
       </div>
     );
   }
 
   if (rescheduled) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full text-center">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle className="w-8 h-8 text-green-600" />
-          </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Booking Rescheduled!</h1>
-          <p className="text-gray-600 mb-4">
-            Your appointment has been rescheduled.
-          </p>
+      <PublicShell brand={brand} width="narrow" header={{ compact: true }}>
+        <StatusCard
+          standalone
+          tone="success"
+          title={t('rescheduledTitle')}
+          description={t('rescheduledDesc')}
+          actions={
+            <BrandButton href={`/book/manage/${token}`} size="lg" fullWidth>
+              {t('viewUpdatedBooking')}
+            </BrandButton>
+          }
+        >
           {newBookingTime && (
-            <div className="bg-gray-50 rounded-xl p-4 mb-6">
-              <p className="text-sm text-gray-500 mb-1">New appointment time</p>
-              <p className="text-gray-900 font-medium">{formatNewBookingTime(newBookingTime)}</p>
+            <div
+              className="p-4 text-center"
+              style={{ background: 'var(--ap-brand-tint)', borderRadius: 'var(--ap-radius-md)' }}
+            >
+              <p className="mb-1 text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+                {t('newAppointmentTime')}
+              </p>
+              <p className="font-semibold" style={{ color: 'var(--ap-text)' }}>
+                {formatNewBookingTime(newBookingTime)}
+              </p>
             </div>
           )}
-          <p className="text-sm text-gray-500 mb-6">
-            You will receive a confirmation email shortly.
+          <p className="mt-3 text-center text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+            {t('confirmationEmail')}
           </p>
-          <button
-            onClick={() => router.push(`/book/manage/${token}`)}
-            className="px-6 py-2 rounded-xl font-medium text-white transition-all"
-            style={{ backgroundColor: business?.primaryColor || '#4F46E5' }}
-          >
-            View Updated Booking
-          </button>
-        </div>
-      </div>
+        </StatusCard>
+      </PublicShell>
     );
   }
 
-  if (!config) {
-    return null;
-  }
-
-  const primaryColor = business?.primaryColor || '#4F46E5';
-  const businessName = business?.name || 'Business';
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  if (!config) return null;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
-      <div className="max-w-lg mx-auto">
-        {/* Back Button */}
-        <button
-          onClick={() => router.push(`/book/manage/${token}`)}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Back to booking
-        </button>
-
-        {/* Header */}
-        <div className="text-center mb-8">
-          {business?.logoUrl && (
-            <img
-              src={business.logoUrl}
-              alt={businessName}
-              className="h-12 mx-auto mb-3"
-            />
-          )}
-          <h1 className="text-2xl font-bold text-gray-900">Reschedule Appointment</h1>
-          <p className="text-gray-600 mt-1">Select a new date and time</p>
+    <PublicShell
+      brand={brand}
+      width="narrow"
+      header={{
+        compact: true,
+        backHref: `/book/manage/${token}`,
+        backLabel: t('backToBooking'),
+      }}
+    >
+      <div className="space-y-4">
+        <div>
+          <h1
+            className="text-xl font-bold"
+            style={{ color: 'var(--ap-text)', fontFamily: 'var(--ap-font-heading)' }}
+          >
+            {t('reschedule')}
+          </h1>
+          <p className="mt-1 text-sm" style={{ color: 'var(--ap-text-muted)' }}>
+            {t('selectNewTime')}
+          </p>
         </div>
 
-        {/* Calendar Card */}
-        <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-          {/* Calendar Header */}
-          <div className="p-4 border-b flex items-center justify-between">
+        {/* The appointment being replaced, dimmed so it reads as context. */}
+        <div
+          className="flex items-center gap-2.5 px-4 py-3 text-sm"
+          style={{
+            background: 'var(--ap-surface-2)',
+            border: '1px solid var(--ap-border)',
+            borderRadius: 'var(--ap-radius-md)',
+            color: 'var(--ap-text-muted)',
+          }}
+        >
+          <Clock className="h-4 w-4 shrink-0" aria-hidden />
+          <span>
+            {t('currentAppointment')}:{' '}
+            <span style={{ color: 'var(--ap-text)' }}>
+              {formatNewBookingTime(config.currentStartTime)}
+            </span>
+          </span>
+        </div>
+
+        <div
+          className="overflow-hidden"
+          style={{
+            background: 'var(--ap-surface)',
+            border: '1px solid var(--ap-border)',
+            borderRadius: 'var(--ap-radius-lg)',
+            boxShadow: 'var(--ap-shadow-sm)',
+          }}
+        >
+          <div
+            className="flex items-center justify-between p-4"
+            style={{ borderBottom: '1px solid var(--ap-border)' }}
+          >
             <button
-              onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              type="button"
+              aria-label={t('back')}
+              onClick={() =>
+                setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))
+              }
+              className="p-2 transition-opacity hover:opacity-60"
+              style={{ borderRadius: 'var(--ap-radius-sm)' }}
             >
-              <ChevronLeft className="w-5 h-5" />
+              {/* The chevrons follow the reading direction, not the axis. */}
+              {brand.dir === 'rtl' ? (
+                <ChevronRight className="h-5 w-5" style={{ color: 'var(--ap-text)' }} />
+              ) : (
+                <ChevronLeft className="h-5 w-5" style={{ color: 'var(--ap-text)' }} />
+              )}
             </button>
-            <h2 className="text-lg font-semibold text-gray-900">
-              {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
+
+            <h2 className="text-base font-semibold" style={{ color: 'var(--ap-text)' }}>
+              {monthLabel}
             </h2>
+
             <button
-              onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              type="button"
+              onClick={() =>
+                setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))
+              }
+              className="p-2 transition-opacity hover:opacity-60"
+              style={{ borderRadius: 'var(--ap-radius-sm)' }}
             >
-              <ChevronRight className="w-5 h-5" />
+              {brand.dir === 'rtl' ? (
+                <ChevronLeft className="h-5 w-5" style={{ color: 'var(--ap-text)' }} />
+              ) : (
+                <ChevronRight className="h-5 w-5" style={{ color: 'var(--ap-text)' }} />
+              )}
             </button>
           </div>
 
-          {/* Calendar Grid */}
           <div className="p-4">
-            {/* Day headers */}
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                <div key={day} className="text-center text-xs font-medium text-gray-500 py-2">
-                  {day}
-                </div>
-              ))}
+            <div className="mb-2 grid grid-cols-7 gap-1">
+              {t('weekdaysShort')
+                .split(',')
+                .map(day => (
+                  <div
+                    key={day}
+                    className="py-2 text-center text-xs font-medium"
+                    style={{ color: 'var(--ap-text-muted)' }}
+                  >
+                    {day}
+                  </div>
+                ))}
             </div>
 
-            {/* Days */}
             <div className="grid grid-cols-7 gap-1">
               {getDaysInMonth(currentMonth).map((day, index) => {
-                if (day === null) {
-                  return <div key={`empty-${index}`} className="aspect-square" />;
-                }
+                if (day === null) return <div key={`empty-${index}`} className="aspect-square" />;
 
                 const dateStr = formatDateString(day);
                 const isSelectable = isDateSelectable(day);
@@ -353,18 +382,24 @@ export default function RescheduleBookingPage() {
                 return (
                   <button
                     key={day}
+                    type="button"
                     onClick={() => isSelectable && setSelectedDate(dateStr)}
                     disabled={!isSelectable}
-                    className={`
-                      aspect-square rounded-lg text-sm font-medium transition-all
-                      ${isSelected
-                        ? 'text-white'
+                    className="aspect-square text-sm font-medium transition-colors disabled:cursor-not-allowed"
+                    style={{
+                      borderRadius: 'var(--ap-radius-sm)',
+                      background: isSelected
+                        ? 'var(--ap-brand)'
                         : isSelectable
-                          ? 'text-gray-900 hover:bg-gray-100'
-                          : 'text-gray-300 cursor-not-allowed'
-                      }
-                    `}
-                    style={isSelected ? { backgroundColor: primaryColor } : undefined}
+                          ? 'transparent'
+                          : 'transparent',
+                      color: isSelected
+                        ? 'var(--ap-on-brand)'
+                        : isSelectable
+                          ? 'var(--ap-text)'
+                          : 'var(--ap-text-muted)',
+                      opacity: isSelectable ? 1 : 0.35,
+                    }}
                   >
                     {day}
                   </button>
@@ -373,24 +408,31 @@ export default function RescheduleBookingPage() {
             </div>
           </div>
 
-          {/* Selected Date & Time Slots */}
           {selectedDate && (
-            <div className="border-t">
-              <div className="p-4 bg-gray-50 flex items-center gap-2">
-                <Calendar className="w-4 h-4" style={{ color: primaryColor }} />
-                <span className="text-sm font-medium text-gray-700">
+            <div style={{ borderTop: '1px solid var(--ap-border)' }}>
+              <div
+                className="flex items-center gap-2 p-4"
+                style={{ background: 'var(--ap-brand-tint)' }}
+              >
+                <Calendar className="h-4 w-4" style={{ color: 'var(--ap-brand)' }} aria-hidden />
+                <span className="text-sm font-medium" style={{ color: 'var(--ap-text)' }}>
                   {formatDisplayDate(selectedDate)}
                 </span>
               </div>
 
               <div className="p-4">
                 {loadingSlots ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="animate-spin rounded-full h-6 w-6 border-2 border-gray-300 border-t-gray-600"></div>
+                  <div className="py-8">
+                    <PublicSpinner label={t('loadingTimes')} />
                   </div>
                 ) : slots.length === 0 ? (
-                  <p className="text-center text-gray-500 py-8">
-                    No available times on this date
+                  <p
+                    className="py-8 text-center text-sm"
+                    style={{ color: 'var(--ap-text-muted)' }}
+                  >
+                    {t('noTimesAvailable')}
+                    <br />
+                    {t('pickAnotherDay')}
                   </p>
                 ) : (
                   <div className="grid grid-cols-3 gap-2">
@@ -399,15 +441,17 @@ export default function RescheduleBookingPage() {
                       return (
                         <button
                           key={slot.start_time}
+                          type="button"
                           onClick={() => setSelectedSlot(slot)}
-                          className={`
-                            px-3 py-2 rounded-lg text-sm font-medium transition-all border
-                            ${isSelected
-                              ? 'text-white border-transparent'
-                              : 'text-gray-700 border-gray-200 hover:border-gray-300'
-                            }
-                          `}
-                          style={isSelected ? { backgroundColor: primaryColor } : undefined}
+                          // A clock time reads left-to-right in every language.
+                          dir="ltr"
+                          className="px-3 py-2.5 text-sm font-medium transition-colors"
+                          style={{
+                            borderRadius: 'var(--ap-radius-sm)',
+                            border: `1px solid ${isSelected ? 'transparent' : 'var(--ap-border)'}`,
+                            background: isSelected ? 'var(--ap-brand)' : 'transparent',
+                            color: isSelected ? 'var(--ap-on-brand)' : 'var(--ap-text)',
+                          }}
                         >
                           {slot.display_time}
                         </button>
@@ -419,41 +463,35 @@ export default function RescheduleBookingPage() {
             </div>
           )}
 
-          {/* Error Message */}
           {error && (
-            <div className="px-4 py-3 bg-red-50 border-t border-red-100">
-              <p className="text-red-600 text-sm">{error}</p>
+            <div className="px-4 py-3" style={{ background: '#FEE2E2' }}>
+              <p className="text-sm" style={{ color: '#B91C1C' }}>
+                {error}
+              </p>
             </div>
           )}
 
-          {/* Actions */}
-          <div className="p-4 border-t space-y-3">
-            <button
+          <div className="p-4" style={{ borderTop: '1px solid var(--ap-border)' }}>
+            <BrandButton
+              size="lg"
+              fullWidth
+              loading={rescheduling}
+              disabled={!selectedSlot}
               onClick={handleReschedule}
-              disabled={!selectedSlot || rescheduling}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              style={{ backgroundColor: primaryColor }}
             >
-              {rescheduling ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-                  Rescheduling...
-                </>
-              ) : (
-                <>
-                  <Clock className="w-5 h-5" />
-                  Confirm New Time
-                </>
-              )}
-            </button>
+              {!rescheduling && <Clock className="h-4 w-4" aria-hidden />}
+              {rescheduling ? t('rescheduling') : t('confirmNewTime')}
+            </BrandButton>
           </div>
         </div>
 
-        {/* Footer */}
-        <p className="text-center text-gray-500 text-sm mt-6">
-          Questions? Contact {businessName} directly.
+        {/* Which clock these hours are on. Said once, near the times, because
+            "09:00" to somebody in another country is an invitation to arrive at
+            the wrong hour. */}
+        <p className="text-center text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+          {t('timesShownIn', { zone: timeZoneLabel(bookingTimezone, locale) })}
         </p>
       </div>
-    </div>
+    </PublicShell>
   );
 }

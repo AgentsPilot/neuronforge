@@ -139,13 +139,12 @@ export async function bindPlanSubscription({
       planId: existing.data.id,
       ownerId,
       bookingId,
-      serviceId,
-      paymentPlanId,
       planTotal,
       currency: (planCurrency || 'USD').toUpperCase(),
       planFrequency,
       planCount,
       contactId: await resolveContactId(bookingId, ownerId),
+      planRowId: await resolvePlanRowId(paymentPlanId, serviceId, ownerId),
     });
 
     return { scheduleId: existing.data.stripe_schedule_id, planId: existing.data.id, alreadyBound: true };
@@ -247,12 +246,16 @@ export async function bindPlanSubscription({
    * that reliably knows, and Stripe metadata cannot be trusted to carry it.
    */
   const contactId = await resolveContactId(bookingId, ownerId);
+  // Resolved once and used for both the mirror and its periods, so the two
+  // cannot end up pointing at different offers.
+  const planRowId = await resolvePlanRowId(paymentPlanId, serviceId, ownerId);
 
   const created = await planRepo.create({
     userId: ownerId,
     contactId,
     bookingId,
     serviceId,
+    paymentPlanId: planRowId,
     installmentCount: planCount,
     installmentAmount: fromMinorUnits(projected.phases[0].amountMinor, currency),
     currency,
@@ -288,13 +291,12 @@ export async function bindPlanSubscription({
     planId: created.data.id,
     ownerId,
     bookingId,
-    serviceId,
-    paymentPlanId,
     planTotal,
     currency,
     planFrequency,
     planCount,
     contactId,
+    planRowId,
   });
 
   return { scheduleId: schedule.id, planId: created.data.id, alreadyBound: false };
@@ -316,49 +318,24 @@ async function projectPeriods({
   planId,
   ownerId,
   bookingId,
-  serviceId,
-  paymentPlanId,
   planTotal,
   currency,
   planFrequency,
   planCount,
   contactId,
+  planRowId,
 }: {
   planId: string;
   ownerId: string;
   bookingId: string | null;
-  serviceId: string | null;
-  paymentPlanId?: string | null;
   planTotal: number;
   currency: string;
   planFrequency: PlanFrequency;
   planCount: number;
   contactId: string | null;
+  /** Already resolved by the caller, so the mirror and its periods agree. */
+  planRowId: string | null;
 }): Promise<void> {
-  /*
-   * The plan row these periods hang off.
-   *
-   * Preferred from metadata, because that is the plan the client was actually
-   * shown at checkout. Falling back to the service's active plan covers the
-   * hosted-checkout path, which never carried the id — and matches how the
-   * public pages pick a plan: oldest active one for the service.
-   */
-  let planRowId = paymentPlanId ?? null;
-
-  if (!planRowId && serviceId) {
-    const { data: planRow } = await supabaseServer
-      .from('payment_plans')
-      .select('id')
-      .eq('user_id', ownerId)
-      .eq('service_id', serviceId)
-      .eq('is_active', true)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    planRowId = planRow?.id ?? null;
-  }
-
   if (!planRowId) {
     // `payment_plan_installments.payment_plan_id` is NOT NULL, so there is
     // nothing to write. Loud, because the plan then reads "0 of N paid" forever
@@ -418,4 +395,33 @@ async function resolveContactId(
   }
 
   return data?.contact_id ?? null;
+}
+
+/**
+ * Which `payment_plans` offer this sale was made under.
+ *
+ * Preferred from metadata, because that is the plan the client was actually
+ * shown at checkout. Falling back to the service's active plan covers the
+ * hosted-checkout path, which never carried the id — and matches how the public
+ * pages pick a plan: the oldest active one for the service.
+ */
+async function resolvePlanRowId(
+  paymentPlanId: string | null | undefined,
+  serviceId: string | null,
+  ownerId: string
+): Promise<string | null> {
+  if (paymentPlanId) return paymentPlanId;
+  if (!serviceId) return null;
+
+  const { data } = await supabaseServer
+    .from('payment_plans')
+    .select('id')
+    .eq('user_id', ownerId)
+    .eq('service_id', serviceId)
+    .eq('is_active', true)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  return data?.id ?? null;
 }

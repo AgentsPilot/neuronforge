@@ -17,6 +17,22 @@ import { buildAttributionFromRequest, appendUTMToUrl } from '@/lib/utils/attribu
 
 const logger = createLogger({ module: 'SmartLinkRedirect' });
 
+/**
+ * Where a visitor goes when the link does not work.
+ *
+ * Every one of these paths used to be `redirect('/')` — the platform's own
+ * marketing homepage — so a client who clicked an expired link from a business
+ * they know was dropped, without explanation, onto a B2B software site.
+ */
+function unavailable(request: NextRequest, reason: 'invalid' | 'notfound' | 'inactive' | 'error', userCode?: string | null) {
+  const url = new URL('/go/unavailable', request.url);
+  url.searchParams.set('reason', reason);
+  // Only present for `inactive`, where the link still identifies its owner and
+  // the screen can therefore be branded and offer the links that do work.
+  if (userCode) url.searchParams.set('u', userCode);
+  return NextResponse.redirect(url, { status: 302 });
+}
+
 interface RouteParams {
   params: Promise<{ code: string }>;
 }
@@ -32,7 +48,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // Validate code format (alphanumeric, 6-10 chars)
     if (!code || !/^[a-z0-9]{6,10}$/i.test(code)) {
       requestLogger.warn({ code }, 'Invalid smart link code format');
-      return NextResponse.redirect(new URL('/', request.url));
+      return unavailable(request, 'invalid');
     }
 
     // Find the smart link
@@ -41,8 +57,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     if (result.error || !result.data) {
       requestLogger.warn({ code }, 'Smart link not found');
-      // Redirect to homepage if link not found
-      return NextResponse.redirect(new URL('/', request.url));
+      return unavailable(request, 'notfound');
     }
 
     const smartLink = result.data;
@@ -50,7 +65,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // Check if link is active
     if (!smartLink.is_active) {
       requestLogger.info({ code, linkId: smartLink.id }, 'Smart link is inactive');
-      return NextResponse.redirect(new URL('/', request.url));
+      // The link is off, but we know whose it is — so the client can be sent to
+      // the business's working booking and contact pages instead of nowhere.
+      const { data: ownerCode } = await businessProfileRepository.getUserCode(smartLink.user_id);
+      return unavailable(request, 'inactive', ownerCode);
     }
 
     // Build attribution data from request
@@ -129,7 +147,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return NextResponse.redirect(redirectUrl, { status: 302 });
   } catch (error) {
     requestLogger.error({ err: error, code }, 'Smart link redirect failed');
-    // Fallback to homepage on error
-    return NextResponse.redirect(new URL('/', request.url));
+    return unavailable(request, 'error');
   }
 }

@@ -228,24 +228,41 @@ export class CRMActivityRepository {
 
   /**
    * Log booking activity (auto-logged from scheduling capability)
+   *
+   * Facts, not a sentence: the drawer composes the wording at render, in the
+   * reader's language. These used to write `Booking: {service}` and
+   * `Scheduled for {date}` in English, into a database read by three locales.
    */
   async logBooking(
     userId: string,
     contactId: string,
     bookingId: string,
     serviceName: string,
-    startTime: string
+    startTime: string | null,
+    timeZone?: string,
+    locale?: string
   ): Promise<CRMActivityRepositoryResult<CRMActivity>> {
     return this.create({
       user_id: userId,
       contact_id: contactId,
       activity_type: 'booking',
-      title: `Booking: ${serviceName}`,
-      description: `Scheduled for ${new Date(startTime).toLocaleString()}`,
+      title: activitySentence(
+        startTime ? 'booking_created_dated' : 'booking_created',
+        { service: serviceName, date: activityMoment(startTime, locale, timeZone) || '' },
+        locale
+      ),
+      description: JSON.stringify({
+        kind: 'booking_created',
+        service: serviceName,
+        // Omitted when the booking has no time — a course or a product. Passed
+        // through `new Date()` regardless, it rendered as 12/31/1969.
+        bookingDate: startTime || undefined,
+        timeZone,
+      }),
       auto_logged: true,
       source_capability: 'scheduling',
       source_entity_id: bookingId,
-      activity_date: startTime
+      activity_date: startTime || undefined
     });
   }
 
@@ -253,9 +270,20 @@ export class CRMActivityRepository {
   // (zero callers) and a double-log footgun — the `log_payment_activity` Postgres trigger
   // (T3) is the sole owner of the `crm_activities` payment row on the succeeded-transaction
   // path. Removed to prevent any future caller from double-logging alongside the trigger.
+  //
+  // MERGE NOTE (2026-09-02, D24): the feature branch rewrote this helper rather than
+  // deleting it, to fix a real bug — it hard-coded `$` into the title regardless of the
+  // currency the business actually bills in. Re-verified at the branch tip: still zero
+  // callers, so the deletion stands and the trigger remains the single writer. If this is
+  // ever revived, format the amount with `Intl.NumberFormat(undefined, { style: 'currency',
+  // currency })` — do not reintroduce the hard-coded symbol.
 
   /**
    * Log email activity (auto-logged from email capability)
+   *
+   * Kept for a genuinely one-off message. Routine mail about a booking is
+   * already recorded by the event it belongs to — logging both put the same
+   * thing on the timeline twice, which is what made it unreadable.
    */
   async logEmail(
     userId: string,
@@ -268,8 +296,12 @@ export class CRMActivityRepository {
       user_id: userId,
       contact_id: contactId,
       activity_type: 'email',
-      title: `Email Sent: ${subject}`,
-      description: sequenceName || null,
+      title: subject,
+      description: JSON.stringify({
+        kind: 'email_sent',
+        subject,
+        sequence: sequenceName || undefined,
+      }),
       auto_logged: true,
       source_capability: 'email_automation',
       source_entity_id: emailId
@@ -278,5 +310,6 @@ export class CRMActivityRepository {
 }
 
 // Singleton export (will be initialized with server-side Supabase client)
+import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
 export const crmActivityRepository = new CRMActivityRepository(supabaseServer);

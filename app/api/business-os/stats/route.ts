@@ -12,6 +12,12 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
+import {
+  grossRevenue,
+  netRevenue,
+  processorFees,
+  revenueByCurrency,
+} from '@/lib/payments/revenueMath';
 import { channelConnectionRepository } from '@/lib/repositories/ChannelConnectionRepository';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import {
@@ -85,6 +91,13 @@ interface CapabilityStats {
     page_count: number;
     wants_website: boolean;
     has_live_pages: boolean;
+    /** Live pages split by kind, and active smart links. */
+    live_website_count?: number;
+    live_landing_count?: number;
+    smart_links_count?: number;
+    /** Built and unpublished — "publish" rather than "create". */
+    draft_website_count?: number;
+    draft_landing_count?: number;
     /**
      * A client has some way to reach and book: a published site, a landing
      * page, or a smart link. Any one of them will do — which is the whole
@@ -180,8 +193,48 @@ interface CapabilityStats {
   payments: {
     status: 'active' | 'inactive';
     revenue_30d: number;
+    /** Collected before refunds, over the reporting period. */
+    gross_revenue_30d: number;
+    /** Refunds ISSUED in the period, from the ledger — not refunds of this period's sales. */
+    refunds_amount_30d: number;
+    /** gross − refunds. */
+    net_revenue_30d: number;
+    /** What the processor kept out of the period's payments. */
+    processor_fees_30d: number;
+    /** How many of the period's payments the fee is known for, and for how many it is not. */
+    processor_fees_known: number;
+    processor_fees_unknown: number;
+    /** Fees paid to collect money that was later refunded. Never returned. */
+    refund_fees_kept_30d?: number;
+    /** gross − refunds − fees. The figure that matches what the bank saw. */
+    banked_revenue_30d: number;
+    /** The currency every total in this block is denominated in. */
+    primary_currency?: string | null;
+    /**
+     * The same figures per currency.
+     *
+     * The flat numbers add every currency together, as this endpoint always
+     * has. This is the breakdown that does not.
+     */
+    revenue_by_currency: {
+      currency: string;
+      gross: number;
+      refunds: number;
+      net: number;
+      refunds_issued: number;
+    }[];
     revenue_paid_30d: number;
     revenue_owed_30d: number;
+    /** Unpaid plan installments — owed money that is not an invoice. */
+    plan_owed_amount: number;
+    plan_pending_count: number;
+    /** Revenue by origin, each payment counted once; these sum to revenue_30d. */
+    source_direct_amount: number;
+    source_direct_count: number;
+    source_invoices_paid: number;
+    source_invoices_outstanding: number;
+    source_plans_paid: number;
+    source_plans_outstanding: number;
     // Revenue breakdown by source
     transactions_revenue_30d: number;
     invoices_paid_amount_30d: number;
@@ -192,6 +245,8 @@ interface CapabilityStats {
     revenue_last_week: number;
     // Detailed breakdown
     successful_transactions_30d: number;
+    /** Charges accepted, whatever happened to the money afterwards. */
+    charged_transactions_30d?: number;
     failed_transactions_30d: number;
     refunded_30d: number;
     invoices_sent_30d: number;
@@ -358,6 +413,7 @@ export async function GET(request: NextRequest) {
       { data: bookedValueThisWeekData },
       { data: bookedValueLastWeekData },
       { data: bookedValuePeriodData },
+      { data: refundLedger30d },
       intakeSettingsResult,
       channelConnectionsResult,
     ] = await Promise.all([
@@ -479,11 +535,31 @@ export async function GET(request: NextRequest) {
         .eq('plugin_key', 'stripe')
         .maybeSingle(),
       // Payments: revenue in last 30 days (status='succeeded' per migration)
+      //
+      // `metadata` says whether a payment is a plan installment. Without it the
+      // revenue-sources breakdown could only split money two ways — direct or
+      // invoiced — and a plan payment was filed under "direct", which is the
+      // one thing it is not.
+      /*
+       * `refunded` as well as `succeeded`, and `refunded_amount` alongside the
+       * amount.
+       *
+       * These two go together and neither is safe alone. A FULL refund flips
+       * `status` to 'refunded', so filtering on 'succeeded' deleted the sale
+       * from revenue entirely — the business appeared never to have made it. A
+       * PARTIAL refund leaves the status alone, so the whole original amount
+       * went on counting as revenue. Widening the filter without subtracting
+       * would raise the number; subtracting without widening would leave full
+       * refunds invisible.
+       *
+       * `currency` because a refund must only ever be subtracted from money in
+       * its own currency.
+       */
       supabaseServer
         .from('payment_transactions')
-        .select('amount, invoice_id')
+        .select('amount, refunded_amount, currency, processor_fee, invoice_id, metadata')
         .eq('user_id', user.id)
-        .eq('status', 'succeeded')
+        .in('status', ['succeeded', 'refunded'])
         .gte('created_at', periodStart),
       // Payments: pending invoices (sent, overdue, or pending - anything not paid/cancelled/draft)
       supabaseServer
@@ -601,39 +677,63 @@ export async function GET(request: NextRequest) {
       // paid invoice and the transaction that settled it count once, not twice.
       supabaseServer
         .from('payment_transactions')
-        .select('amount, invoice_id')
+        .select('amount, refunded_amount, currency, invoice_id')
         .eq('user_id', user.id)
-        .eq('status', 'succeeded')
+        .in('status', ['succeeded', 'refunded'])
         .gte('created_at', sevenDaysAgo),
       // Payments: revenue last week (7-14 days ago)
       supabaseServer
         .from('payment_transactions')
-        .select('amount, invoice_id')
+        .select('amount, refunded_amount, currency, invoice_id')
         .eq('user_id', user.id)
-        .eq('status', 'succeeded')
+        .in('status', ['succeeded', 'refunded'])
         .gte('created_at', fourteenDaysAgoDate)
         .lt('created_at', sevenDaysAgo),
       // Paid invoices this week (paid_at in last 7 days)
+      /*
+       * A refunded invoice was still PAID.
+       *
+       * `status` becomes 'refunded' or 'partially_refunded' by trigger, so
+       * `.eq('status', 'paid')` silently dropped those invoices out of revenue
+       * — money that genuinely arrived, vanishing because some of it later went
+       * back. The refunded part is subtracted below rather than deleted here.
+       */
       supabaseServer
         .from('payment_invoices')
-        .select('id, amount')
+        .select('id, amount, refunded_amount, currency')
         .eq('user_id', user.id)
-        .eq('status', 'paid')
+        .in('status', ['paid', 'refunded', 'partially_refunded'])
         .gte('paid_at', sevenDaysAgo),
       // Paid invoices last week (paid_at 7-14 days ago)
+      /*
+       * A refunded invoice was still PAID.
+       *
+       * `status` becomes 'refunded' or 'partially_refunded' by trigger, so
+       * `.eq('status', 'paid')` silently dropped those invoices out of revenue
+       * — money that genuinely arrived, vanishing because some of it later went
+       * back. The refunded part is subtracted below rather than deleted here.
+       */
       supabaseServer
         .from('payment_invoices')
-        .select('id, amount')
+        .select('id, amount, refunded_amount, currency')
         .eq('user_id', user.id)
-        .eq('status', 'paid')
+        .in('status', ['paid', 'refunded', 'partially_refunded'])
         .gte('paid_at', fourteenDaysAgoDate)
         .lt('paid_at', sevenDaysAgo),
       // Paid invoices 30 days (for total revenue)
+      /*
+       * A refunded invoice was still PAID.
+       *
+       * `status` becomes 'refunded' or 'partially_refunded' by trigger, so
+       * `.eq('status', 'paid')` silently dropped those invoices out of revenue
+       * — money that genuinely arrived, vanishing because some of it later went
+       * back. The refunded part is subtracted below rather than deleted here.
+       */
       supabaseServer
         .from('payment_invoices')
-        .select('id, amount')
+        .select('id, amount, refunded_amount, currency')
         .eq('user_id', user.id)
-        .eq('status', 'paid')
+        .in('status', ['paid', 'refunded', 'partially_refunded'])
         .gte('paid_at', periodStart),
       // Bookings this week (all statuses, for weekly comparison)
       supabaseServer
@@ -696,6 +796,24 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .neq('status', 'cancelled')
         .gte('created_at', periodStart),
+      /*
+       * Refunds that HAPPENED in this period, from the ledger.
+       *
+       * Deliberately not the `refunded_amount` columns, which are attributed to
+       * the SALE's date: a refund issued today against a sale from two months
+       * ago would silently restate a closed month, and the owner would watch a
+       * number they had already reported change underneath them.
+       *
+       * The ledger carries the refund's own date, which is when a refund
+       * belongs — the same basis every accounting system uses. `succeeded` only:
+       * a pending or failed refund is not money that has left.
+       */
+      supabaseServer
+        .from('payment_refunds')
+        .select('amount, currency, succeeded_at')
+        .eq('user_id', user.id)
+        .eq('status', 'succeeded')
+        .gte('succeeded_at', periodStart),
       // Intake form configuration (repository — no row means never set up)
       intakeRepository.getSettings(user.id),
       // Connected social/analytics channels, for the readiness chips
@@ -826,12 +944,24 @@ export async function GET(request: NextRequest) {
     // payment_transaction, or an invoice marked paid outside one. An invoice
     // settled through Stripe is both — the transaction carries its invoice_id —
     // so the invoice side drops whatever a transaction already accounts for.
-    type MoneyRow = { amount: number | string | null };
+    type MoneyRow = {
+      amount: number | string | null;
+      refunded_amount?: number | string | null;
+      currency?: string | null;
+      processor_fee?: number | string | null;
+    };
     type TransactionRow = MoneyRow & { invoice_id: string | null };
     type PaidInvoiceRow = MoneyRow & { id: string };
 
-    const sumAmounts = (rows: unknown): number =>
-      ((rows as MoneyRow[] | null) || []).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+    /*
+     * NET, not gross. The rules are in `lib/payments/revenueMath`, tested
+     * there — this route is 1,500 lines and the arithmetic behind a number the
+     * owner reports to other people should not be buried in the middle of it.
+     */
+    const sumNet = (rows: unknown): number => netRevenue((rows as MoneyRow[] | null) || []);
+    const sumGross = (rows: unknown): number => grossRevenue((rows as MoneyRow[] | null) || []);
+
+    const sumAmounts = sumNet;
 
     const settledInvoiceIdsIn = (transactions: unknown): Set<string> =>
       new Set(
@@ -840,12 +970,15 @@ export async function GET(request: NextRequest) {
           .filter((id): id is string => !!id)
       );
 
-    const sumInvoicesNotSettledByTransaction = (invoices: unknown, transactions: unknown): number => {
+    const invoicesNotSettledByTransaction = (invoices: unknown, transactions: unknown): PaidInvoiceRow[] => {
       const settled = settledInvoiceIdsIn(transactions);
-      return ((invoices as PaidInvoiceRow[] | null) || [])
-        .filter(inv => !settled.has(inv.id))
-        .reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
+      return ((invoices as PaidInvoiceRow[] | null) || []).filter(inv => !settled.has(inv.id));
     };
+
+    // Net here as well: an invoice paid by bank transfer and later refunded is
+    // money that came in and went back out, and only the difference is revenue.
+    const sumInvoicesNotSettledByTransaction = (invoices: unknown, transactions: unknown): number =>
+      sumNet(invoicesNotSettledByTransaction(invoices, transactions));
 
     const paymentTransactionsRevenue30d = sumAmounts(paymentsData);
     const paymentRevenueThisWeek = sumAmounts(revenueThisWeekData);
@@ -854,6 +987,81 @@ export async function GET(request: NextRequest) {
     const invoiceRevenueThisWeek = sumInvoicesNotSettledByTransaction(paidInvoicesThisWeekData, revenueThisWeekData);
     const invoiceRevenueLastWeek = sumInvoicesNotSettledByTransaction(paidInvoicesLastWeekData, revenueLastWeekData);
     const invoiceRevenue30d = sumInvoicesNotSettledByTransaction(paidInvoices30dData, paymentsData);
+
+    /*
+     * Gross, refunds and net — shown together, because a net figure alone
+     * cannot be checked.
+     *
+     * An owner looking at a number that dropped needs to see whether they sold
+     * less or refunded more, and those are entirely different problems.
+     */
+    const invoicesOutsideTransactions30d = invoicesNotSettledByTransaction(
+      paidInvoices30dData,
+      paymentsData
+    );
+
+    const grossRevenue30d =
+      sumGross(paymentsData) + sumGross(invoicesOutsideTransactions30d);
+
+    // From the ledger, by the refund's own date — see the query.
+    const refundsAmount30d =
+      ((refundLedger30d as Array<{ amount: number | string | null }> | null) || []).reduce(
+        (sum, row) => sum + (Number(row.amount) || 0),
+        0
+      );
+
+    /*
+     * Net is gross minus refunds ISSUED in the period, not minus the refunded
+     * amounts carried on this period's sales. The two differ whenever a refund
+     * crosses a month boundary, and this is the one that does not restate a
+     * month that has already been reported.
+     */
+    const netRevenue30d = Math.round((grossRevenue30d - refundsAmount30d) * 100) / 100;
+
+    /*
+     * What the processor kept.
+     *
+     * Transactions only — an invoice settled outside Stripe (bank transfer, cash)
+     * has no processing fee, and counting it as unknown would make the coverage
+     * figure below look worse than it is.
+     */
+    const fees30d = processorFees(((paymentsData as MoneyRow[] | null) || []));
+
+    /*
+     * What the refunds cost in fees.
+     *
+     * Stripe keeps its processing fee on a refunded payment — that is what
+     * makes a refund cost the business money instead of being neutral. So the
+     * true cost of refunding is the refunded amount PLUS the fee that was
+     * already paid to collect it and is not coming back.
+     *
+     * Distinct from `processor_fees_30d`, which is every fee on every payment.
+     * These two coincide only on an account where everything was refunded.
+     *
+     * Read off the transaction, not off `payment_refunds.refund_fee`: that
+     * column exists and is documented in the catalog, but nothing has ever
+     * written to it, so it is null on every row.
+     */
+    const refundFeesKept30d =
+      (((paymentsData as MoneyRow[] | null) || []))
+        .filter(row => (Number(row.refunded_amount) || 0) > 0)
+        .reduce((sum, row) => sum + (Number(row.processor_fee) || 0), 0);
+
+    const revenueCurrencies = revenueByCurrency([
+      ...(((paymentsData as MoneyRow[] | null) || [])),
+      ...invoicesOutsideTransactions30d,
+    ]);
+
+    // Refunds counted the same way the money is: how much went back in each
+    // currency, never added across them.
+    const refundsByCurrency = (() => {
+      const totals: Record<string, number> = {};
+      for (const row of ((refundLedger30d as Array<{ amount: number | string | null; currency: string | null }> | null) || [])) {
+        const currency = (row.currency || 'unknown').toUpperCase();
+        totals[currency] = (totals[currency] ?? 0) + (Number(row.amount) || 0);
+      }
+      return totals;
+    })();
 
     // Total weekly revenue = payment_transactions plus invoices paid outside them.
     // Bookings carry no amount of their own since total_amount was dropped, so
@@ -902,23 +1110,61 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5); // Top 5 sources
 
-    // Payment transactions breakdown
+    /*
+     * Payment transactions breakdown.
+     *
+     * A REFUNDED CHARGE SUCCEEDED. The card was charged; the money was returned
+     * later, which is a separate event with its own row in `payment_refunds`.
+     * The success rate on the reports page divides succeeded by
+     * succeeded + failed, so every refunded sale used to vanish from BOTH sides
+     * — an account with two refunded sales and two clean ones reported "2 of 2"
+     * when four charges went through, and any account with failures alongside
+     * refunds got a rate that was simply wrong.
+     *
+     * `charged` is what that rate should be built on: every charge the
+     * processor accepted, whatever happened to the money afterwards.
+     */
     const transactionCounts = { succeeded: 0, failed: 0, refunded: 0 };
     (allTransactions30d || []).forEach((t: { status: string }) => {
       if (t.status in transactionCounts) {
         transactionCounts[t.status as keyof typeof transactionCounts]++;
       }
     });
+    const chargedTransactions30d = transactionCounts.succeeded + transactionCounts.refunded;
 
     // Invoice breakdown
     const invoiceCounts = { sent: 0, paid: 0 };
     let totalInvoiceAmount = 0;
     let paidInvoiceCount = 0;
     (allInvoices30d || []).forEach((inv: { status: string; amount: number }) => {
-      // Count all invoices (sent or paid) as "sent"
-      if (inv.status === 'sent' || inv.status === 'paid') invoiceCounts.sent++;
+      /*
+       * Everything that reached a client counts as sent — and OVERDUE is the
+       * one that mattered.
+       *
+       * `markOverdueInvoices` rewrites a late invoice from 'sent' to 'overdue',
+       * and this counted neither 'overdue' nor 'refunded'. So an invoice going
+       * unpaid quietly left the denominator, and the collection rate climbed
+       * back toward 100% as invoices aged — the rate reporting best at exactly
+       * the moment collection was going worst, which is the failure this KPI
+       * exists to catch.
+       *
+       * A refunded invoice was sent AND paid; the refund is a later event and
+       * belongs to the refund rate, not to whether the client ever paid.
+       * Draft and cancelled stay out: neither was ever owed.
+       */
+      if (
+        inv.status === 'sent' ||
+        inv.status === 'paid' ||
+        inv.status === 'overdue' ||
+        inv.status === 'refunded'
+      ) {
+        invoiceCounts.sent++;
+      }
+      if (inv.status === 'paid' || inv.status === 'refunded') invoiceCounts.paid++;
+      // The average-invoice figures below stay on genuinely paid invoices: a
+      // refunded one is money that came and went, and averaging it in would
+      // overstate what a typical invoice is worth.
       if (inv.status === 'paid') {
-        invoiceCounts.paid++;
         paidInvoiceCount++;
         totalInvoiceAmount += inv.amount || 0;
       }
@@ -931,6 +1177,81 @@ export async function GET(request: NextRequest) {
 
     // Calculate pending invoices total amount (what clients owe)
     const pendingInvoicesAmount = (pendingInvoicesData || []).reduce((sum: number, inv: { amount: number }) => sum + (inv.amount || 0), 0);
+
+    /**
+     * Money owed on payment plans, which is owed money too.
+     *
+     * An installment is not an invoice — it becomes one only when it is charged
+     * — so every figure here was blind to plan money: a business eleven months
+     * into a twelve-month plan was reported as owed nothing, on the reports page
+     * and on the dashboard both. The payments list already counted it, so the
+     * two screens disagreed about the same debt.
+     *
+     * `paid` is settled and `cancelled` was called off; `pending` and `overdue`
+     * are still coming. Not windowed, matching the pending-invoice figures above,
+     * which are also all-time despite the `_30d` in the names they feed.
+     *
+     * Its own query rather than a 49th entry in the fan-out above: that array is
+     * already the heaviest thing on this route, and this is one indexed read.
+     */
+    const { data: unpaidInstallments, error: installmentError } = await supabaseServer
+      .from('payment_plan_installments')
+      .select('amount')
+      .eq('user_id', user.id)
+      .in('status', ['pending', 'overdue']);
+
+    if (installmentError) {
+      // Said out loud. Swallowed, this reports a business with live plans as
+      // owed nothing — which is the bug this block exists to fix.
+      requestLogger.warn({ err: installmentError }, 'Could not read plan installments for owed totals');
+    }
+
+    const planOwedAmount = (unpaidInstallments || []).reduce(
+      (sum: number, row: { amount: number }) => sum + (Number(row.amount) || 0),
+      0
+    );
+    const planPendingCount = unpaidInstallments?.length || 0;
+
+    /** Everything a client still owes, however it was arranged. */
+    const totalOwedAmount = pendingInvoicesAmount + planOwedAmount;
+
+    /**
+     * Where the money came from, counted once each.
+     *
+     * The breakdown under the cards had two rows and summed to less than the
+     * headline above it. Two reasons, both visible on one small account:
+     *
+     *   - Every succeeded payment was filed under "direct", including the ones
+     *     settling an invoice and the ones paying a plan installment. The
+     *     invoices row then had to SUBTRACT anything a payment had settled to
+     *     avoid double counting — so an invoice paid by card showed as a row
+     *     reading "1 invoice, 0.00", and its money appeared under direct.
+     *   - Plans were not a row at all, so a plan's money — collected and owed
+     *     alike — was missing from a total the reader compares against the
+     *     headline figure.
+     *
+     * Each payment is now attributed to exactly one origin, which is what makes
+     * the three rows add up to the revenue card above them.
+     */
+    const succeededPayments = (paymentsData || []) as Array<{
+      amount: number;
+      invoice_id: string | null;
+      metadata: Record<string, unknown> | null;
+    }>;
+
+    const isPlanPayment = (row: { metadata: Record<string, unknown> | null }) =>
+      row.metadata?.source === 'payment_plan';
+
+    const planCollected = succeededPayments
+      .filter(isPlanPayment)
+      .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+
+    const invoiceCollected = succeededPayments
+      .filter(row => !isPlanPayment(row) && row.invoice_id)
+      .reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+
+    const directPayments = succeededPayments.filter(row => !isPlanPayment(row) && !row.invoice_id);
+    const directCollected = directPayments.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
 
     // Calculate "went quiet" - contacts in lead/client stage with no activity in last 14 days
     const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -1240,6 +1561,33 @@ export async function GET(request: NextRequest) {
         has_live_pages: hasLivePages,
         is_reachable: isReachable,
         has_smart_links: hasSmartLinks,
+        /*
+         * The owned surfaces, counted apart.
+         *
+         * `has_live_pages` is true for a site OR a landing page, which is the
+         * right test for "can a client reach you" and the wrong one for naming
+         * what they reach. A business whose only live page is a landing page
+         * was shown a row that said "Website" — claiming something it does not
+         * have, and hiding the thing it does.
+         *
+         * `page_type` is already in the select above, so this costs no query.
+         */
+        live_website_count: livePages.filter((p: any) => p.page_type === 'homepage').length,
+        live_landing_count: livePages.filter((p: any) => p.page_type === 'landing').length,
+        smart_links_count: activeSmartLinks || 0,
+        /*
+         * Built but not published — a different prompt from having nothing.
+         *
+         * Offering "create a landing page" to a business that already wrote one
+         * and left it in draft is the platform failing to look. The panel says
+         * "publish" instead, which is one click from done.
+         */
+        draft_website_count: allPages.filter(
+          (p: any) => p.page_type === 'homepage' && p.status !== 'live'
+        ).length,
+        draft_landing_count: allPages.filter(
+          (p: any) => p.page_type === 'landing' && p.status !== 'live'
+        ).length,
         theme_customized: themeCustomized,
         url: websiteUrl,
         draft_page_id: draftPageId, // For quick publish from dashboard
@@ -1345,11 +1693,89 @@ export async function GET(request: NextRequest) {
         // Total revenue = paid + owed (pending invoices).
         // The by-service breakdown is a view over these same transactions and
         // invoices, never a third source, so it is not added here.
-        revenue_30d: paymentTransactionsRevenue30d + invoiceRevenue30d + pendingInvoicesAmount,
+        revenue_30d: paymentTransactionsRevenue30d + invoiceRevenue30d + totalOwedAmount,
+        /*
+         * What the money actually did this period.
+         *
+         * `revenue_30d` above is collected PLUS owed — a forecast, not takings —
+         * and it is what several cards already read, so it is left alone. These
+         * three are the accounting view: what came in, what went back, and the
+         * difference.
+         */
+        gross_revenue_30d: Math.round(grossRevenue30d * 100) / 100,
+        refunds_amount_30d: Math.round(refundsAmount30d * 100) / 100,
+        net_revenue_30d: netRevenue30d,
+        /*
+         * What Stripe kept, and what the business actually banked.
+         *
+         * No fee column existed anywhere before this, so every figure this
+         * endpoint returned was what the CLIENT paid. On a ₪200 card payment
+         * that overstates the business's takings by about ₪6.30 — and a refunded
+         * payment by the whole fee, since Stripe does not give it back.
+         */
+        processor_fees_30d: fees30d.total,
+        /*
+         * How many payments the fee is actually known for.
+         *
+         * Published rather than hidden: fees are backfilled from Stripe, so a
+         * business mid-backfill would otherwise see a suspiciously small fee
+         * total with nothing saying why.
+         */
+        processor_fees_known: fees30d.known,
+        processor_fees_unknown: fees30d.unknown,
+        /** Fees already paid on money that was then refunded, and not returned. */
+        refund_fees_kept_30d: Math.round(refundFeesKept30d * 100) / 100,
+        /** gross − refunds − fees. What the bank balance actually moved by. */
+        banked_revenue_30d: Math.round((netRevenue30d - fees30d.total) * 100) / 100,
+        /** The same three per currency, since only these may honestly be added. */
+        revenue_by_currency: revenueCurrencies.map(row => ({
+          ...row,
+          refunds_issued: Math.round((refundsByCurrency[row.currency] ?? 0) * 100) / 100,
+        })),
+        /*
+         * WHICH CURRENCY THE FIGURES ABOVE ARE IN.
+         *
+         * Every total on this response is a bare number, and the dashboard was
+         * stamping a symbol on it chosen from the UI LANGUAGE — Hebrew meant
+         * shekels. A business billing in dollars and working in Hebrew read
+         * every figure as ₪, so $523 refunded appeared as ₪523. Not a
+         * conversion: a mislabel, and at roughly 3.7 to 1 it is not a small one.
+         *
+         * The currency of money is a property of the money. This reports the
+         * one the period's revenue is actually in — the largest by gross where
+         * a business bills in more than one, since the totals above are already
+         * summed and a single label is the only honest thing to put on them.
+         * `revenue_by_currency` remains the answer for anyone who needs them
+         * kept apart.
+         *
+         * Null when nothing was collected: there is no currency to name, and
+         * the caller should fall back to its own default rather than be handed
+         * a guess.
+         */
+        primary_currency:
+          revenueCurrencies.length > 0
+            ? revenueCurrencies.reduce((biggest, row) =>
+                row.gross > biggest.gross ? row : biggest
+              ).currency
+            : null,
         // Revenue already collected (paid)
         revenue_paid_30d: paymentTransactionsRevenue30d + invoiceRevenue30d,
-        // Revenue owed (pending invoices not yet paid)
-        revenue_owed_30d: pendingInvoicesAmount,
+        // Revenue owed: unpaid invoices AND unpaid plan installments. An
+        // installment is owed money that is not an invoice, and counting only
+        // invoices reported a live payment plan as nothing outstanding.
+        revenue_owed_30d: totalOwedAmount,
+        /** The plan half of what is owed, so a caller can name it separately. */
+        plan_owed_amount: planOwedAmount,
+        plan_pending_count: planPendingCount,
+
+        // Revenue by origin, each payment counted once. These three add up to
+        // `revenue_30d`, which the two-row breakdown they replace did not.
+        source_direct_amount: directCollected,
+        source_direct_count: directPayments.length,
+        source_invoices_paid: invoiceCollected + invoiceRevenue30d,
+        source_invoices_outstanding: pendingInvoicesAmount,
+        source_plans_paid: planCollected,
+        source_plans_outstanding: planOwedAmount,
         // Revenue breakdown by source (for RevenueSourcesSection)
         transactions_revenue_30d: paymentTransactionsRevenue30d,
         invoices_paid_amount_30d: invoiceRevenue30d,
@@ -1361,7 +1787,18 @@ export async function GET(request: NextRequest) {
         // Detailed breakdown
         successful_transactions_30d: transactionCounts.succeeded,
         failed_transactions_30d: transactionCounts.failed,
-        refunded_30d: transactionCounts.refunded,
+        /** Charges the processor accepted, refunded ones included. */
+        charged_transactions_30d: chargedTransactions30d,
+        /*
+         * How many refunds were ISSUED, not how many transactions ended up
+         * fully refunded.
+         *
+         * This counted `status === 'refunded'`, which only a FULL refund
+         * produces — so a month of partial refunds reported zero, and a
+         * transaction refunded twice counted once. The ledger has one row per
+         * refund, which is the thing being counted.
+         */
+        refunded_30d: (refundLedger30d ?? []).length,
         invoices_sent_30d: invoiceCounts.sent,
         invoices_paid_30d: invoiceCounts.paid,
         invoices_overdue: overdueInvoices || 0,

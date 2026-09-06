@@ -15,6 +15,9 @@ const createContact = jest.fn();
 const updateContact = jest.fn();
 const linkIntakeContact = jest.fn();
 const createActivity = jest.fn();
+// The route reads the owner's `language` to localise the activity title, so this
+// repository is now part of its data path (merge 2026-09-02, D25).
+const findProfileByUserId = jest.fn();
 const supabaseFrom = jest.fn();
 
 jest.mock('@/lib/supabaseServer', () => ({
@@ -40,6 +43,12 @@ jest.mock('@/lib/repositories/CRMContactRepository', () => ({
 jest.mock('@/lib/repositories/CRMActivityRepository', () => ({
   crmActivityRepository: {
     create: (...args: unknown[]) => createActivity(...args),
+  },
+}));
+
+jest.mock('@/lib/repositories/BusinessProfileRepository', () => ({
+  businessProfileRepository: {
+    findByUserId: (...args: unknown[]) => findProfileByUserId(...args),
   },
 }));
 
@@ -82,6 +91,7 @@ describe('POST /api/website/forms/intake', () => {
     updateContact.mockResolvedValue({ data: { id: CONTACT_ID }, error: null });
     linkIntakeContact.mockResolvedValue({ data: { id: BOOKING_ID }, error: null });
     createActivity.mockResolvedValue({ data: { id: 'activity-1' }, error: null });
+    findProfileByUserId.mockResolvedValue({ data: { language: 'en' }, error: null });
   });
 
   // T1 — new contact, real column names only

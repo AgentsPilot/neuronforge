@@ -39,10 +39,25 @@ describe('business-os plugin definition', () => {
     expect(actual).toEqual(expected);
   });
 
+  /*
+   * Every entity can be asked a quantitative question, not just listed.
+   *
+   * Paired with the find check because the two are the read surface: without
+   * this, an automation that needs a total can only fetch rows and add them up
+   * in generated code, over a row set that stops at the limit.
+   */
+  it('exposes an aggregate action for every catalog entity', () => {
+    const expected = Object.keys(CATALOG.entities).map((e) => `aggregate_${e}`).sort();
+    const actual = Object.keys(definition.actions).filter((a) => a.startsWith('aggregate_')).sort();
+
+    expect(actual).toEqual(expected);
+  });
+
   it('exposes an action for every catalog action, and no others', () => {
     const expected: string[] = [];
     for (const [entityKey, entity] of Object.entries(CATALOG.entities)) {
       expected.push(`find_${entityKey}`);
+      expected.push(`aggregate_${entityKey}`);
       for (const actionKey of Object.keys(entity.actions ?? {})) {
         expected.push(`${actionKey}_${entityKey}`);
       }

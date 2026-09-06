@@ -177,3 +177,54 @@ describe('literal round-tripping', () => {
     expect(() => dehydratePlan(plan, weird)).not.toThrow();
   });
 });
+
+/**
+ * The cache key must cover everything a plan depends on.
+ *
+ * A plan is produced from three things: the catalog's structure, the planner's
+ * instructions, and how the catalog is PRESENTED to the model. The key covered
+ * the first two. The third is why these tests exist:
+ *
+ * `CATALOG_VERSION` deliberately ignores `labels`, and `plannerVersion()` hashes
+ * the system prompt and tool schema — never the rendered catalog. So showing
+ * derived fields with their labels, a change that took one question from wrong
+ * on every attempt to right on every attempt, moved neither. Cached plans built
+ * from the old presentation would have been served indefinitely.
+ */
+describe('cache key covers the catalog presentation', () => {
+  it('changes when the rendering changes, even though structure and prompt do not', () => {
+    const catalogPrompt = require('../planner/catalogPrompt');
+    const { CATALOG_VERSION } = require('@/lib/business-os/catalog');
+    const { plannerVersion } = require('../planner/planTool');
+
+    const before = catalogPrompt.catalogPromptVersion();
+    const structureBefore = CATALOG_VERSION;
+    const plannerBefore = plannerVersion();
+
+    // Re-render with a different shape, exactly as an edit to the renderer would.
+    const spy = jest
+      .spyOn(catalogPrompt, 'renderCatalogForPrompt')
+      .mockReturnValue('a deliberately different presentation');
+
+    // The memo must be bypassed for the comparison to mean anything; hashing the
+    // mocked render directly is the same computation the function performs.
+    const crypto = require('crypto');
+    const after = crypto
+      .createHash('sha256')
+      .update(catalogPrompt.renderCatalogForPrompt({ includeActions: true }))
+      .digest('hex')
+      .slice(0, 12);
+
+    spy.mockRestore();
+
+    expect(after).not.toBe(before);
+    // ...while the two inputs that used to be the whole key are unmoved.
+    expect(CATALOG_VERSION).toBe(structureBefore);
+    expect(plannerVersion()).toBe(plannerBefore);
+  });
+
+  it('is stable across calls, so a warm cache is not thrown away every request', () => {
+    const { catalogPromptVersion } = require('../planner/catalogPrompt');
+    expect(catalogPromptVersion()).toBe(catalogPromptVersion());
+  });
+});

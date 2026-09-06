@@ -12,6 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { loadServicePaymentPlans } from '@/lib/business-os/servicePaymentPlan';
 import { createLogger } from '@/lib/logger';
 import { windowsForDay, hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -115,6 +116,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // Format services for response
+    // A smart link sells the same services the website does, so it has to
+    // describe them the same way.
+    const plansByService = await loadServicePaymentPlans(ownerId);
+
     const formattedServices: Service[] = (services || []).map(s => ({
       id: s.id,
       name: s.service_name,
@@ -126,7 +131,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // disagree about a service: a null `is_scheduled` means an older row that
       // predates the column, and those were appointments.
       is_scheduled: s.is_scheduled !== false,
-      collection: s.collection ?? null
+      collection: s.collection ?? null,
+      // How this service may be paid over time.
+      //
+      // The config endpoint beside this one already returned it, and this one
+      // did not — and this is the one the booking page reads its services from.
+      // So a service sold in instalments was presented on a smart link as a
+      // single price, and the client agreed to something other than what the
+      // business had configured.
+      paymentPlan: plansByService[s.id]
     }));
 
     // Default timezone (column doesn't exist in business_profiles)

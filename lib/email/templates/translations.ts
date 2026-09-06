@@ -277,6 +277,45 @@ export const emailTranslations = {
       es: '¡Tu cita está confirmada!',
       he: 'הפגישה שלך אושרה!'
     },
+    /*
+     * The same email when nothing was SCHEDULED.
+     *
+     * Not "product" — the distinction is whether a time was booked, and that is
+     * the only thing the data actually knows. A course, a package, a retainer,
+     * anything sold without a slot: the appointment wording told the client
+     * their meeting was confirmed, then offered a calendar invitation and a
+     * reschedule link for a meeting that does not exist.
+     *
+     * Separate strings rather than one neutral phrasing for both: "your booking
+     * is confirmed" is vaguer than either, and the scheduled case is the common
+     * one and reads best when it says what it means.
+     */
+    unscheduledSubject: {
+      en: (serviceName: string) => `Your order is confirmed - ${serviceName}`,
+      es: (serviceName: string) => `Tu pedido está confirmado - ${serviceName}`,
+      he: (serviceName: string) => `ההזמנה שלך אושרה - ${serviceName}`
+    },
+    unscheduledGreeting: {
+      en: 'Your order is confirmed!',
+      es: '¡Tu pedido está confirmado!',
+      he: 'ההזמנה שלך אושרה!'
+    },
+    unscheduledIntro: {
+      en: (clientName: string, businessName: string) =>
+        `Hi ${clientName}, your order with ${businessName} has been confirmed.`,
+      es: (clientName: string, businessName: string) =>
+        `Hola ${clientName}, tu pedido con ${businessName} ha sido confirmado.`,
+      he: (clientName: string, businessName: string) =>
+        `שלום ${clientName}, ההזמנה שלך מ-${businessName} אושרה.`
+    },
+    unscheduledPaymentRequired: {
+      en: (amount: string) =>
+        `<strong>Payment Required:</strong> Please complete your payment of ${amount} to confirm your order.`,
+      es: (amount: string) =>
+        `<strong>Pago Requerido:</strong> Por favor completa tu pago de ${amount} para confirmar tu pedido.`,
+      he: (amount: string) =>
+        `<strong>נדרש תשלום:</strong> אנא השלימו את התשלום בסך ${amount} כדי לאשר את ההזמנה.`
+    },
     intro: {
       en: (clientName: string, businessName: string) =>
         `Hi ${clientName}, your booking with ${businessName} has been confirmed.`,
@@ -359,6 +398,26 @@ export const emailTranslations = {
         `Hola ${clientName}, tu cita ha sido cancelada.`,
       he: (clientName: string) =>
         `שלום ${clientName}, הפגישה שלך בוטלה.`
+    },
+    /*
+     * The same email when nothing was scheduled — an order rather than an
+     * appointment. Cancelling a course sale told the client their "meeting was
+     * cancelled" about something that never had one.
+     */
+    unscheduledSubject: {
+      en: (serviceName: string) => `Order cancelled - ${serviceName}`,
+      es: (serviceName: string) => `Pedido cancelado - ${serviceName}`,
+      he: (serviceName: string) => `ההזמנה בוטלה - ${serviceName}`
+    },
+    unscheduledGreeting: {
+      en: 'Order Cancelled',
+      es: 'Pedido Cancelado',
+      he: 'ההזמנה בוטלה'
+    },
+    unscheduledIntro: {
+      en: (clientName: string) => `Hi ${clientName}, your order has been cancelled.`,
+      es: (clientName: string) => `Hola ${clientName}, tu pedido ha sido cancelado.`,
+      he: (clientName: string) => `שלום ${clientName}, ההזמנה שלך בוטלה.`
     },
     reasonLabel: {
       en: '📝 Reason',
@@ -480,6 +539,78 @@ export const emailTranslations = {
       en: 'Please keep this receipt for your records.',
       es: 'Por favor guarda este recibo para tus registros.',
       he: 'אנא שמור קבלה זו לתיעוד.'
+    },
+
+    /*
+     * The receipt body was hardcoded English.
+     *
+     * Only `subject` was ever translated, so a Hebrew client received an email
+     * whose dates and currency were formatted `he-IL` — correctly — wrapped in
+     * "Payment Confirmed", "Amount Paid" and "Receipt Details". The locale was
+     * being passed in and used for everything except the words.
+     */
+    confirmedTitle: {
+      en: 'Payment Confirmed',
+      es: 'Pago Confirmado',
+      he: 'התשלום אושר'
+    },
+    thankYou: {
+      en: (clientName: string) => `Thank you for your payment, ${clientName}!`,
+      es: (clientName: string) => `¡Gracias por tu pago, ${clientName}!`,
+      he: (clientName: string) => `תודה על התשלום, ${clientName}!`
+    },
+    receiptDetails: {
+      en: 'Receipt Details',
+      es: 'Detalles del Recibo',
+      he: 'פרטי הקבלה'
+    },
+    receiptNumberLabel: {
+      en: 'Receipt Number',
+      es: 'Número de Recibo',
+      he: 'מספר קבלה'
+    },
+    paymentDateLabel: {
+      en: 'Payment Date',
+      es: 'Fecha de Pago',
+      he: 'תאריך תשלום'
+    },
+    paymentMethodLabel: {
+      en: 'Payment Method',
+      es: 'Método de Pago',
+      he: 'אמצעי תשלום'
+    },
+    serviceLabel: {
+      en: 'Service',
+      es: 'Servicio',
+      he: 'שירות'
+    },
+    appointmentLabel: {
+      en: 'Appointment',
+      es: 'Cita',
+      he: 'מועד הפגישה'
+    },
+    appointmentLine: {
+      en: (serviceName: string, when: string) => `<strong>📅 Your appointment:</strong> ${serviceName} on ${when}`,
+      es: (serviceName: string, when: string) => `<strong>📅 Tu cita:</strong> ${serviceName} el ${when}`,
+      he: (serviceName: string, when: string) => `<strong>📅 הפגישה שלך:</strong> ${serviceName} בתאריך ${when}`
+    },
+    manageNote: {
+      en: 'You can manage your booking using the link below.',
+      es: 'Puedes gestionar tu reserva con el enlace de abajo.',
+      he: 'ניתן לנהל את ההזמנה בקישור שלמטה.'
+    },
+    viewBooking: {
+      en: 'View Booking Details',
+      es: 'Ver Detalles de la Reserva',
+      he: 'צפייה בפרטי ההזמנה'
+    },
+    finalNote: {
+      en: (businessName: string) =>
+        `This receipt confirms your payment to ${businessName}. Please save this email for your records. If you have any questions, please reply to this email or contact us directly.`,
+      es: (businessName: string) =>
+        `Este recibo confirma tu pago a ${businessName}. Guarda este correo para tus registros. Si tienes preguntas, responde a este correo o contáctanos directamente.`,
+      he: (businessName: string) =>
+        `קבלה זו מאשרת את התשלום שלך ל${businessName}. מומלץ לשמור את המייל לתיעוד. לכל שאלה, ניתן להשיב למייל זה או לפנות אלינו ישירות.`
     }
   },
 
@@ -550,6 +681,41 @@ export const emailTranslations = {
       es: 'Motivo',
       he: 'סיבה'
     },
+    /*
+     * The reason itself, in the CLIENT's email.
+     *
+     * `payment_refunds.reason` stores a canonical key for the common reasons —
+     * `goodwill`, `no_show` — so every reader can render it in their own
+     * language and two owners describing the same thing produce one value. The
+     * email printed that key, so a client in Hebrew received "סיבה: goodwill".
+     *
+     * Kept here rather than reused from the app's language files because this
+     * is what a CLIENT reads, not the business: the wording is addressed to the
+     * person who was refunded, and the two can differ.
+     */
+    reasonValues: {
+      en: {
+        no_show: 'You did not attend the appointment',
+        cancelled_by_client: 'You cancelled',
+        service_not_delivered: 'The service was not provided',
+        duplicate_payment: 'You were charged twice',
+        goodwill: 'As a gesture of goodwill',
+      },
+      es: {
+        no_show: 'No asististe a la cita',
+        cancelled_by_client: 'Cancelaste la cita',
+        service_not_delivered: 'El servicio no se prestó',
+        duplicate_payment: 'Se te cobró dos veces',
+        goodwill: 'Como gesto de buena voluntad',
+      },
+      he: {
+        no_show: 'לא הגעת לפגישה',
+        cancelled_by_client: 'ביטלת את הפגישה',
+        service_not_delivered: 'השירות לא ניתן',
+        duplicate_payment: 'חויבת פעמיים',
+        goodwill: 'כמחווה מצידנו',
+      },
+    },
     processingNote: {
       en: 'The refund will be credited to your original payment method within 5-10 business days, depending on your bank.',
       es: 'El reembolso se acreditará a tu método de pago original dentro de 5-10 días hábiles, dependiendo de tu banco.',
@@ -592,10 +758,31 @@ export const emailTranslations = {
       he: (businessName: string, invoiceNumber: string) =>
         `חשבונית #${invoiceNumber} מ-${businessName}`
     },
+    /*
+     * The same sentence with the document's own name in it — "Receipt #12 from
+     * X" for a business that takes payment on the spot, "Tax invoice" for one
+     * registered for VAT. The word is passed in rather than chosen here: which
+     * document a business may issue is its call, not the email layer's.
+     *
+     * `subject` above stays for callers that have no settings to resolve.
+     */
+    subjectFor: {
+      en: (noun: string, businessName: string, invoiceNumber: string) =>
+        `${noun} #${invoiceNumber} from ${businessName}`,
+      es: (noun: string, businessName: string, invoiceNumber: string) =>
+        `${noun} #${invoiceNumber} de ${businessName}`,
+      he: (noun: string, businessName: string, invoiceNumber: string) =>
+        `${noun} #${invoiceNumber} מ-${businessName}`
+    },
     greeting: {
       en: (businessName: string) => `Invoice from ${businessName}`,
       es: (businessName: string) => `Factura de ${businessName}`,
       he: (businessName: string) => `חשבונית מ-${businessName}`
+    },
+    greetingFor: {
+      en: (noun: string, businessName: string) => `${noun} from ${businessName}`,
+      es: (noun: string, businessName: string) => `${noun} de ${businessName}`,
+      he: (noun: string, businessName: string) => `${noun} מ-${businessName}`
     },
     intro: {
       en: (clientName: string) =>
@@ -634,6 +821,12 @@ export const emailTranslations = {
       en: 'Total',
       es: 'Total',
       he: 'סה"כ'
+    },
+    /* "Includes VAT 19%" — the tax the business says is already in the price. */
+    includesTax: {
+      en: 'Includes',
+      es: 'Incluye',
+      he: 'כולל'
     },
     payNow: {
       en: 'Pay Now',

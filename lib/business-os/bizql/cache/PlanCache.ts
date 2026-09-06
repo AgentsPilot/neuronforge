@@ -28,6 +28,7 @@ import { EmbeddingService } from '@/lib/services/EmbeddingService';
 import { CATALOG_VERSION } from '@/lib/business-os/catalog';
 import type { Plan } from '../planner/Planner';
 import { plannerVersion } from '../planner/planTool';
+import { catalogPromptVersion } from '../planner/catalogPrompt';
 import {
   cacheKey,
   dehydratePlan,
@@ -46,7 +47,21 @@ const TABLE = 'business_chat_plan_cache';
  * against AND the instructions that produced it.
  */
 function cacheVersion(): string {
-  return `${CATALOG_VERSION}.${plannerVersion()}`;
+  /*
+   * Three inputs, because a plan depends on three things.
+   *
+   * The catalog's STRUCTURE (`CATALOG_VERSION`), the planner's instructions and
+   * tool schema (`plannerVersion`), and how the catalog is PRESENTED
+   * (`catalogPromptVersion`). The third was missing: `CATALOG_VERSION`
+   * deliberately ignores labels, and `plannerVersion` never sees the rendered
+   * catalog — so changing the presentation changed every plan while the key
+   * stayed put, and stale plans were served from a catalog that no longer
+   * looked the same.
+   *
+   * Over-invalidating costs one round of re-planning. Under-invalidating serves
+   * a plan nobody would produce today.
+   */
+  return `${CATALOG_VERSION}.${plannerVersion()}.${catalogPromptVersion()}`;
 }
 
 export type CacheLayer = 'exact' | 'semantic' | 'miss';

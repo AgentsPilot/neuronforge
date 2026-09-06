@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Receipt, CreditCard, Plus, DollarSign, Calendar, ExternalLink, FileText, RotateCcw } from 'lucide-react';
 import { RefundModal } from '@/components/payments/RefundModal';
-import { buildMoneyItems, totalMoney, type MoneyEntry, type MoneyItem } from '@/lib/payments/moneyItems';
+import { createLogger } from '@/lib/logger';
+import { buildMoneyItems, totalMoney, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 import { MoneyDetailDrawer } from '@/components/payments/MoneyDetailDrawer';
 import { MoneyRow } from '@/components/payments/MoneyRow';
@@ -22,6 +23,8 @@ interface PaymentTransaction {
   description: string;
   created_at: string;
   stripe_payment_intent_id?: string;
+  /** Carries a plan period's numbers, so the label can be localised here. */
+  metadata?: Record<string, unknown> | null;
 }
 
 interface Invoice {
@@ -59,6 +62,16 @@ interface PaymentsSectionProps {
   onToggle?: (isOpen: boolean) => void;
   onCreateInvoice?: () => void;
   onInvoiceCreated?: () => void;
+  /**
+   * Money moved — a refund, a void, an invoice marked paid.
+   *
+   * This section owns the money lists and refreshes those itself, but the same
+   * facts are drawn again in the journey above it, from data the drawer holds.
+   * Without this the owner refunded a payment, watched the money list update,
+   * and saw the timeline still showing the full amount until they closed the
+   * drawer and opened it again.
+   */
+  onMoneyChanged?: () => void;
 }
 
 const INVOICE_STATUS_STYLES: Record<string, { color: string; bg: string }> = {
@@ -79,6 +92,8 @@ const PAYMENT_STATUS_STYLES = {
   refunded: { color: 'text-gray-500', bg: 'bg-gray-500/10' }
 };
 
+const logger = createLogger({ module: 'PaymentsSection' });
+
 export function PaymentsSection({
   contactId,
   contactName,
@@ -91,6 +106,7 @@ export function PaymentsSection({
   isOpen,
   onToggle,
   onCreateInvoice,
+  onMoneyChanged,
   onInvoiceCreated
 }: PaymentsSectionProps) {
   const router = useRouter();
@@ -101,12 +117,28 @@ export function PaymentsSection({
    * a booking, and an invoice with no booking could not be refunded from the
    * drawer at all.
    */
-  const [refundTarget, setRefundTarget] = useState<Invoice | null>(null);
+  /**
+   * The money row being refunded.
+   *
+   * Was an `Invoice`, which is why a standalone payment could not be refunded
+   * from here at all. A `MoneyEntry` covers both: it carries the invoice id when
+   * there is one and the transaction ids when there is not.
+   */
+  const [refundEntry, setRefundEntry] = useState<MoneyEntry | null>(null);
   /** The money row whose full detail is open. */
   const [detail, setDetail] = useState<MoneyItem | null>(null);
   /** A refund the processor or the ledger refused. */
   const [refundError, setRefundError] = useState<string | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  /**
+   * The projected periods of any payment plan, keyed by booking.
+   *
+   * Without these `item.plan` is undefined, so a plan showed ONLY the period
+   * that had been collected — one ₪333 row — and the two still to come were
+   * invisible. The reader saw a paid booking rather than a plan two thirds
+   * outstanding.
+   */
+  const [plansByBookingId, setPlansByBookingId] = useState<Record<string, MoneyPlan>>({});
   const [payments, setPayments] = useState<PaymentTransaction[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [loadingPayments, setLoadingPayments] = useState(false);
@@ -135,42 +167,102 @@ export function PaymentsSection({
           startTime: session.booking.start_time ?? session.booking.created_at ?? null,
           contactId,
         })),
+        plansByBookingId,
         standaloneLabel: t('payments.payment') || 'Payment',
+        /*
+         * A plan period, phrased here rather than read from the database.
+         *
+         * The stored description is written in English by the webhook, so a
+         * Hebrew reader saw "Payment 1 of 3" in the middle of a Hebrew drawer.
+         * The numbers come through metadata; the words come from `t`.
+         */
+        installmentLabel: (number, count) =>
+          (t('payments.installment_payment') || 'Payment {n} of {count}')
+            .replace('{n}', String(number))
+            .replace('{count}', String(count)),
       }),
-    [invoices, payments, sessions, contactId, t]
+    [invoices, payments, sessions, contactId, plansByBookingId, t]
   );
 
   const totals = useMemo(() => totalMoney(moneyItems), [moneyItems]);
 
-  // Fetch invoices
-  const fetchInvoices = async () => {
-    setLoadingInvoices(true);
+  /*
+   * `silent` skips the loading state, for a refresh after an action.
+   *
+   * A refund used to blank this list back to skeletons and rebuild it, which
+   * reads as the section reloading rather than a number changing — and on a
+   * slow request the row the owner was looking at simply vanished for a moment.
+   * The first load still shows the loading state; a refresh just swaps the
+   * figures underneath.
+   */
+  const fetchInvoices = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setLoadingInvoices(true);
     try {
-      const response = await fetch(`/api/payments/invoices?contact_id=${contactId}`);
+      /*
+       * `no-store`, and this is the whole reason the refund did not appear.
+       *
+       * The refetch goes to the same URL that was just fetched, so without this
+       * it is answered from cache — the request completes, the state is set to
+       * exactly what it already held, and the list shows the refund has not
+       * happened. The money HAD moved; only this view disagreed.
+       */
+      const response = await fetch(`/api/payments/invoices?contact_id=${contactId}`, {
+        cache: 'no-store',
+      });
       const data = await response.json();
       if (data.success) {
         setInvoices(data.data || []);
       }
     } catch (error) {
-      console.error('Failed to fetch invoices:', error);
+      logger.error({ err: error, contactId }, 'Failed to fetch invoices');
     } finally {
-      setLoadingInvoices(false);
+      if (!silent) setLoadingInvoices(false);
     }
   };
 
-  // Fetch payments
-  const fetchPayments = async () => {
-    setLoadingPayments(true);
+  const fetchPayments = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setLoadingPayments(true);
     try {
-      const response = await fetch(`/api/payments/transactions?contact_id=${contactId}`);
+      const response = await fetch(`/api/payments/transactions?contact_id=${contactId}`, {
+        cache: 'no-store',
+      });
       const data = await response.json();
       if (data.success) {
         setPayments(data.data || []);
       }
     } catch (error) {
-      console.error('Failed to fetch payments:', error);
+      logger.error({ err: error, contactId }, 'Failed to fetch payments');
     } finally {
-      setLoadingPayments(false);
+      if (!silent) setLoadingPayments(false);
+    }
+  };
+
+  /*
+   * Plan periods come from the money endpoint, which already assembles them.
+   *
+   * Re-querying `payment_plan_installments` here would be a second copy of that
+   * logic, and the two would drift — which is exactly how this surface ended up
+   * without plans while the payments page had them. Only the plan data is taken;
+   * the rows themselves are still grouped client-side, because the labels have
+   * to be phrased in the reader's language and the server does not know it.
+   */
+  const fetchPlans = async () => {
+    try {
+      const response = await fetch(`/api/payments/money?contact_id=${contactId}&limit=100`, {
+        cache: 'no-store',
+      });
+      const data = await response.json();
+      if (!data.success) return;
+
+      const byBooking: Record<string, MoneyPlan> = {};
+      for (const item of data.data?.items ?? []) {
+        if (item.bookingId && item.plan) byBooking[item.bookingId] = item.plan;
+      }
+      setPlansByBookingId(byBooking);
+    } catch (error) {
+      // Not fatal: the list still shows what was collected, just without the
+      // schedule beside it.
+      logger.error({ err: error, contactId }, 'Failed to fetch payment plans');
     }
   };
 
@@ -186,13 +278,14 @@ export function PaymentsSection({
     if (!isOpen) return;
     if (invoices.length === 0) fetchInvoices();
     if (payments.length === 0) fetchPayments();
+    if (Object.keys(plansByBookingId).length === 0) fetchPlans();
   }, [isOpen]);
 
   // Refresh data when onInvoiceCreated is called
   useEffect(() => {
     if (onInvoiceCreated && isOpen) {
-      fetchInvoices();
-      fetchPayments();
+      fetchInvoices({ silent: true });
+      fetchPayments({ silent: true });
     }
   }, [onInvoiceCreated]);
 
@@ -203,14 +296,26 @@ export function PaymentsSection({
    * and one sent from reports do exactly the same thing.
    */
   const entryHandlers = buildEntryActions({
+    // Silent for the same reason as the refund: these run AFTER an action —
+    // sending, voiding, marking paid — and blanking the list to skeletons makes
+    // a successful action look like the section fell over.
     refresh: async () => {
-      await fetchInvoices();
-      await fetchPayments();
+      await fetchInvoices({ silent: true });
+      await fetchPayments({ silent: true });
+      onMoneyChanged?.();
     },
     t,
     onRefund: (entry: MoneyEntry) => {
-      const target = invoices.find(i => i.id === entry.invoiceId);
-      if (target) setRefundTarget(target);
+      /*
+       * The ENTRY, not an invoice looked up from it.
+       *
+       * This did `invoices.find(i => i.id === entry.invoiceId)` and opened the
+       * modal only `if (target)`. A standalone payment carries
+       * `invoiceId: null`, so for every payment-without-an-invoice row the
+       * lookup found nothing, no modal opened, and nothing was said — the menu
+       * offered Refund and the click went nowhere.
+       */
+      setRefundEntry(entry);
     },
   });
 
@@ -404,21 +509,49 @@ export function PaymentsSection({
         isRTL={isRTL}
         formatCurrency={formatCurrency}
         formatDate={formatDate}
+        /* The drawer's Stop-plan button was rendering here already — this is
+           the same component the orders page uses — but with nothing wired to
+           it the plan stayed reading "active" after being stopped, which looks
+           exactly like the button not working. */
+        onPlanCancelled={() => {
+          setDetail(null);
+          fetchPlans();
+          fetchPayments({ silent: true });
+          fetchInvoices({ silent: true });
+          onMoneyChanged?.();
+        }}
+        onActionError={message => setRefundError(message)}
         {...entryHandlers}
       />
 
-      {refundTarget && (
+      {refundEntry && (
         <RefundModal
-          isOpen={!!refundTarget}
-          onClose={() => setRefundTarget(null)}
-          /* The invoice is named rather than a transaction: the server resolves
-             which payment sits behind it, so this section never has to know. */
-          invoiceId={refundTarget.id}
-          originalAmount={refundTarget.amount}
-          currency={refundTarget.currency}
-          alreadyRefunded={refundTarget.refunded_amount || 0}
+          isOpen={!!refundEntry}
+          onClose={() => setRefundEntry(null)}
+          /* An invoice when there is one — the server resolves which payment
+             sits behind it — otherwise the payment itself. */
+          invoiceId={refundEntry.invoiceId ?? undefined}
+          transactionId={refundEntry.invoiceId ? undefined : refundEntry.transactionIds[0]}
+          originalAmount={refundEntry.amount}
+          currency={refundEntry.currency}
+          alreadyRefunded={refundEntry.refunded}
           isRTL={isRTL}
-          onSuccess={() => { setRefundTarget(null); fetchInvoices(); }}
+          onSuccess={() => {
+            setRefundEntry(null);
+            /*
+             * BOTH halves, silently. Refreshing only the invoices left the
+             * payments side of this merged list showing the refund had not
+             * happened; showing skeletons while it reloads makes a refund look
+             * like the section broke.
+             */
+            fetchInvoices({ silent: true });
+            fetchPayments({ silent: true });
+            // And the plans: a refund can now stop the payment plan behind the
+            // booking, which changes the schedule shown beside it.
+            fetchPlans();
+            // And the journey, which draws the same figures a section above.
+            onMoneyChanged?.();
+          }}
           // Without this a refused refund — 409 NOTHING_REMAINING,
           // ACCOUNT_UNRESOLVED, a 502 from the processor — left the dialog open
           // with the spinner off and nothing said, which reads as "nothing

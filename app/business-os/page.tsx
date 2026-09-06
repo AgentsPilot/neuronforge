@@ -102,7 +102,18 @@ function BusinessOSContent() {
    * as THE way to be live. The dashboard used to infer this from the website
    * setup item and got it wrong for exactly those businesses.
    */
-  const [reach, setReach] = useState<{ isReachable: boolean; livePages: boolean; smartLinks: boolean } | undefined>(undefined);
+  const [reach, setReach] = useState<{
+    isReachable: boolean;
+    livePages: boolean;
+    smartLinks: boolean;
+    /** Live pages split by kind, so a surface can be named rather than guessed. */
+    websiteCount: number;
+    landingCount: number;
+    smartLinkCount: number;
+    /** Pages that exist but are not live, so the panel can say "publish". */
+    websiteDrafts: number;
+    landingDrafts: number;
+  } | undefined>(undefined);
   const [milestoneData, setMilestoneData] = useState<MilestoneData | undefined>(undefined);
   const [channelPerformance, setChannelPerformance] = useState<ChannelPerformance | undefined>(undefined);
 
@@ -471,6 +482,11 @@ function BusinessOSContent() {
             isReachable: !!s.website?.is_reachable,
             livePages: !!s.website?.has_live_pages,
             smartLinks: !!s.website?.has_smart_links,
+            websiteCount: s.website?.live_website_count ?? 0,
+            landingCount: s.website?.live_landing_count ?? 0,
+            smartLinkCount: s.website?.smart_links_count ?? 0,
+            websiteDrafts: s.website?.draft_website_count ?? 0,
+            landingDrafts: s.website?.draft_landing_count ?? 0,
           });
 
           setFunnelStats({
@@ -653,7 +669,7 @@ function BusinessOSContent() {
         break;
 
       case 'open_invoice_dialog':
-        router.push('/business-os/payments?action=create');
+        router.push('/business-os/orders?action=create');
         break;
 
       case 'show_service_list':
@@ -1084,6 +1100,13 @@ function BusinessOSContent() {
             onChannelsChanged={fetchDashboardData}
             isReachable={reach?.isReachable}
             reachSurfaces={reach && { livePages: reach.livePages, smartLinks: reach.smartLinks }}
+            ownedSurfaces={reach && {
+              website: reach.websiteCount,
+              landing: reach.landingCount,
+              smartLinks: reach.smartLinkCount,
+              websiteDrafts: reach.websiteDrafts,
+              landingDrafts: reach.landingDrafts,
+            }}
             funnelStats={funnelStats}
             pipelineStages={pipelineStages}
             milestoneData={milestoneData}

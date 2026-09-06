@@ -200,23 +200,29 @@ function buildCatalog(): ResolvedCatalog {
         );
       }
 
-      const relation = entity.relations?.[derived.expand.relation];
-      if (!relation) {
-        problems.push(
-          `${entityKey}.derived.${derivedKey} expands relation ` +
-            `'${derived.expand.relation}', which is not declared on the entity.`
-        );
-        continue;
-      }
+      // A derived field may reach its fact by more than one route; each is
+      // checked, so an OR'd expansion cannot smuggle in an undeclared relation.
+      const expansions = Array.isArray(derived.expand) ? derived.expand : [derived.expand];
 
-      // Predicates inside a derived field run against the TARGET entity.
-      const target = SEMANTIC_CATALOG[relation.target];
-      for (const predicate of derived.expand.where ?? []) {
-        if (target && !target.fields[predicate.field]) {
+      for (const expansion of expansions) {
+        const relation = entity.relations?.[expansion.relation];
+        if (!relation) {
           problems.push(
-            `${entityKey}.derived.${derivedKey} filters on ` +
-              `'${relation.target}.${predicate.field}', which is not a declared field.`
+            `${entityKey}.derived.${derivedKey} expands relation ` +
+              `'${expansion.relation}', which is not declared on the entity.`
           );
+          continue;
+        }
+
+        // Predicates inside a derived field run against the TARGET entity.
+        const target = SEMANTIC_CATALOG[relation.target];
+        for (const predicate of expansion.where ?? []) {
+          if (target && !target.fields[predicate.field]) {
+            problems.push(
+              `${entityKey}.derived.${derivedKey} filters on ` +
+                `'${relation.target}.${predicate.field}', which is not a declared field.`
+            );
+          }
         }
       }
     }
@@ -228,6 +234,20 @@ function buildCatalog(): ResolvedCatalog {
     // at. The executor refuses a reference the caller does not own, but it can
     // only do that if it knows what the field points to — so declaring it is
     // mandatory, and a `references` naming an unknown entity is a build failure.
+      // A `minus` column is aggregated alongside the main one, so it has to be
+      // as real as the field itself. Declared and missing means every net
+      // figure silently reads as gross.
+      for (const [fieldKey, field] of Object.entries(fields)) {
+        if (!field.minus) continue;
+        const physical = PHYSICAL_CATALOG.tables[entity.table]?.columns ?? [];
+        if (!physical.some((c) => c.name === field.minus)) {
+          problems.push(
+            `${entityKey}.fields.${fieldKey}.minus names '${field.minus}', ` +
+              `which is not a column of '${entity.table}'.`
+          );
+        }
+      }
+
     for (const [fieldKey, field] of Object.entries(fields)) {
       if (field.references && !SEMANTIC_CATALOG[field.references]) {
         problems.push(

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { ChannelsCard } from './ChannelsCard';
@@ -45,49 +45,64 @@ interface ChannelsOverviewCardProps {
     visits?: { total: number; bySurface: { surface: VisitSurface; visits: number }[] };
   };
   onChanged?: () => void;
+  /**
+   * The surfaces the business already owns. Passed straight through to the
+   * connections column, which lists them alongside the connected accounts —
+   * a website and a smart link are channels whether or not anything is linked.
+   */
+  owned?: {
+    website: number;
+    landing: number;
+    smartLinks: number;
+    websiteDrafts: number;
+    landingDrafts: number;
+  };
+  /** Publish a site, create a link. The dashboard owns what those do. */
+  onAction?: (action: string) => void;
 }
 
-/** Remembered per browser, so the choice is not remade on every visit. */
-const SHOW_CONNECTIONS_KEY = 'business-os.channels.showConnections';
-
-export function ChannelsOverviewCard({ performance, onChanged }: ChannelsOverviewCardProps) {
+export function ChannelsOverviewCard({ performance, onChanged, owned, onAction }: ChannelsOverviewCardProps) {
   const { isRTL, t } = useLanguage();
 
   /*
-   * Either half can have the card to itself.
+   * Folded away on every load, and deliberately NOT remembered.
    *
-   * The two columns answer different questions, and a business reads them at
-   * different times: the connections side matters while setting channels up and
-   * then rarely again, while "where are my customers coming from" is the part
-   * worth looking at every week. So it starts folded away and the sources
-   * column has the whole card; opening it is one click, and is remembered.
+   * The dashboard's question is "where are my customers coming from", and that
+   * is the sources column. Connecting an account is occasional and deliberate,
+   * so the column that does it waits behind one click.
    *
-   * Read after mount rather than during render: the server has no
-   * `localStorage`, and seeding state from it directly makes the first client
-   * render disagree with the HTML.
+   * The choice used to persist in `localStorage`, and that is what this
+   * removes. Opening the column once — to check a connection, to publish a
+   * draft — meant it opened on every dashboard load from then on, halving the
+   * sources column for good on the strength of a single visit weeks earlier.
+   * A browser that had stored `true` could not be talked out of it by changing
+   * the default, because the stored value is exactly what a default is for
+   * overriding.
+   *
+   * One click still opens it, for as long as the page is open. It just does not
+   * follow the reader into tomorrow.
    */
   const [showConnections, setShowConnections] = useState(false);
 
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(SHOW_CONNECTIONS_KEY);
-      if (stored === 'true') setShowConnections(true);
-    } catch {
-      // A browser that refuses storage keeps the default.
-    }
-  }, []);
+  const toggleConnections = () => setShowConnections(previous => !previous);
 
-  const toggleConnections = () => {
-    setShowConnections(previous => {
-      const next = !previous;
-      try {
-        window.localStorage.setItem(SHOW_CONNECTIONS_KEY, String(next));
-      } catch {
-        // Not remembering the choice is better than not honouring it.
-      }
-      return next;
-    });
-  };
+  /*
+   * The card is one column until the connections have arrived.
+   *
+   * `ChannelsCard` renders nothing while it fetches, but the grid was already
+   * two columns from the first paint — so its half sat empty and bordered (the
+   * RIGHT half in Hebrew) while the sources column beside it was squeezed to
+   * fit a column with nothing in it. Then the content landed and everything
+   * moved.
+   *
+   * Waiting costs nothing: the sources column has the width it would have had
+   * anyway, and gains a neighbour only when there is a neighbour to gain.
+   */
+  const [connectionsReady, setConnectionsReady] = useState(false);
+  const handleConnectionsReady = useCallback(() => setConnectionsReady(true), []);
+
+  /** Open, wanted by the reader, AND with something to draw. */
+  const splitColumns = showConnections && connectionsReady;
 
   const empty: NonNullable<ChannelsOverviewCardProps['performance']> = {
     rows: [],
@@ -124,7 +139,12 @@ export function ChannelsOverviewCard({ performance, onChanged }: ChannelsOvervie
           Aligned to the inline-end so it sits at the card's leading edge in
           Hebrew and its trailing edge in English, rather than being pinned to
           one physical side. */}
-      <div className="flex px-4 pt-3">
+      {/* Always offered while the column is closed — it is the only way to open
+          it. The "hide" form waits for the column to actually appear, since
+          offering to hide something still loading is a control with nothing
+          behind it. */}
+      <div className="flex px-4 pt-3" style={{ minHeight: '28px' }}>
+        {(!showConnections || connectionsReady) && (
         <button
           type="button"
           onClick={toggleConnections}
@@ -138,17 +158,32 @@ export function ChannelsOverviewCard({ performance, onChanged }: ChannelsOvervie
             ? (t('channels.hideConnections') || 'Hide connections')
             : (t('channels.showConnections') || 'Show connections')}
         </button>
+        )}
       </div>
 
-      <div className={`grid grid-cols-1 ${showConnections ? 'md:grid-cols-2' : ''}`}>
+      <div className={`grid grid-cols-1 ${splitColumns ? 'md:grid-cols-2' : ''}`}>
+        {/* Mounted only once asked for — the column is closed by default, and a
+            card that is not on screen should not be fetching its connections on
+            every dashboard load.
+
+            Once mounted it is `hidden` rather than unmounted until it has
+            loaded: it renders nothing while fetching, and giving it a column
+            before then left an empty bordered half (the RIGHT half in Hebrew)
+            squeezing the sources column beside it. */}
         {showConnections && (
-          <div className="p-4">
-            <ChannelsCard embedded onChanged={onChanged} />
+          <div className={splitColumns ? 'p-4' : 'hidden'}>
+            <ChannelsCard
+              embedded
+              onChanged={onChanged}
+              owned={owned}
+              onAction={onAction}
+              onReady={handleConnectionsReady}
+            />
           </div>
         )}
 
         <div
-          className={showConnections
+          className={splitColumns
             ? 'border-t border-[#EEF0F5] p-4 md:border-t-0 md:border-s'
             : 'p-4'}
           /* `border-s` is inline-start, so in Hebrew the hairline lands on the

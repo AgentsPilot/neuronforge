@@ -167,6 +167,30 @@ export function renderContextForPrompt(context: ConversationContext): string {
       .map((t) => `  "${t.utterance}" -> ${t.summary}`)
       .join('\n');
     parts.push(`Earlier in this conversation:\n${recent}`);
+
+    /*
+     * What the LAST question was about, said plainly.
+     *
+     * "Them" and "their total" refer to whatever the previous turn was about —
+     * and that subject was only ever implied by a one-line summary, while the
+     * remembered ROWS below announced themselves as "you last showed these X".
+     * Asked "how many refunds were made?" and then "what is their total?", the
+     * planner summed transactions: the rows block was still naming services
+     * from two turns earlier, and it was the louder signal.
+     *
+     * A turn that aggregates has no rows to remember but still fixes what the
+     * conversation is about, which is exactly what a bare pronoun needs.
+     */
+    const last = context.turns[context.turns.length - 1];
+    const subject = /\b(?:find|compute)\s+(\w+)/.exec(last.summary)?.[1];
+
+    if (subject) {
+      parts.push(
+        `The last question was about ${subject}. A bare "them", "their", "it" or ` +
+          `"the total" with no other subject refers to ${subject} — not to any ` +
+          `earlier list.`
+      );
+    }
   }
 
   if (context.lastRows && context.lastRows.items.length > 0) {
@@ -174,8 +198,20 @@ export function renderContextForPrompt(context: ConversationContext): string {
       .map((r, i) => `  ${i + 1}. ${r.label} (id ${r.id})`)
       .join('\n');
 
+    /*
+     * Say WHEN these rows were shown.
+     *
+     * Presented flatly as "you last showed these", a list survived every later
+     * turn and kept claiming to be the most recent thing on screen. It is only
+     * that if the previous turn produced it.
+     */
+    const lastTurn = context.turns[context.turns.length - 1];
+    const isCurrent =
+      !lastTurn || !context.lastRows.at || context.lastRows.at >= lastTurn.at;
+
     parts.push(
-      `You last showed these ${context.lastRows.entity}:\n${rows}\n` +
+      `${isCurrent ? 'You last showed' : 'Earlier — not in the last question — you showed'}` +
+        ` these ${context.lastRows.entity}:\n${rows}\n` +
         `This list exists ONLY to resolve a reference back to it — "it", "him", "her", ` +
         `"that one", "the second one". If the new message does not refer back to these ` +
         `rows, IGNORE this list completely and treat the request as new; re-showing the ` +

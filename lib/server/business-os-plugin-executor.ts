@@ -6,7 +6,7 @@ import { BasePluginExecutor } from './base-plugin-executor';
 import { runBusinessQuery } from '@/lib/business-os/bizql';
 import { executeMutate } from '@/lib/business-os/bizql/mutate/MutateExecutor';
 import { CATALOG } from '@/lib/business-os/catalog';
-import type { FindQuery, MutateQuery, Predicate, SortSpec } from '@/lib/business-os/bizql/types';
+import type { ComputeQuery, FindQuery, MutateQuery, Predicate, SortSpec } from '@/lib/business-os/bizql/types';
 
 const pluginName = 'business-os';
 
@@ -64,9 +64,9 @@ export class BusinessOsPluginExecutor extends BasePluginExecutor {
 
     const { verb, entityKey } = parsed;
 
-    return verb === 'find'
-      ? this.find(userId, entityKey, parameters)
-      : this.write(userId, entityKey, verb, parameters);
+    if (verb === 'find') return this.find(userId, entityKey, parameters);
+    if (verb === 'aggregate') return this.aggregate(userId, entityKey, parameters);
+    return this.write(userId, entityKey, verb, parameters);
   }
 
   /**
@@ -86,7 +86,7 @@ export class BusinessOsPluginExecutor extends BasePluginExecutor {
       if (!verb) continue;
 
       const entity = CATALOG.entities[entityKey];
-      if (verb === 'find' || entity.actions?.[verb]) return { verb, entityKey };
+      if (verb === 'find' || verb === 'aggregate' || entity.actions?.[verb]) return { verb, entityKey };
     }
     return null;
   }
@@ -108,6 +108,62 @@ export class BusinessOsPluginExecutor extends BasePluginExecutor {
       count: result.rows.length,
       truncated: result.truncated,
       ...(result.collapsed ? { collapsed: result.collapsed } : {}),
+    };
+  }
+
+  /**
+   * Totals, counts and averages — the arithmetic done against the data.
+   *
+   * Exposed because the plugin previously offered 21 ways to fetch rows and no
+   * way to ask a question about them, so an automation wanting "revenue last
+   * month by service" had to pull every transaction and add them up in the
+   * workflow. That is arithmetic in generated code, over a row set that
+   * silently stops at the limit.
+   *
+   * `approximate` is passed through deliberately. An aggregate that ran over a
+   * capped scan returns a number indistinguishable from a correct one — an
+   * under-counted revenue figure reads as a bad month, not as a bug — so the
+   * caller is told, every time.
+   */
+  private async aggregate(userId: string, entityKey: string, parameters: any): Promise<any> {
+    const fn = parameters?.fn;
+    if (!fn) {
+      throw new Error('business-os: aggregate needs `fn` (count, sum, avg, min or max).');
+    }
+
+    // Everything except `count` is meaningless without something to aggregate,
+    // and a missing field would otherwise surface as a null total rather than
+    // as the mistake it is.
+    if (fn !== 'count' && !parameters?.field) {
+      throw new Error(`business-os: '${fn}' needs a \`field\` to aggregate.`);
+    }
+
+    const query: ComputeQuery = {
+      op: 'compute',
+      entity: entityKey,
+      where: (parameters?.filters ?? []) as Predicate[],
+      agg: {
+        fn: fn as ComputeQuery['agg']['fn'],
+        ...(parameters?.field ? { field: String(parameters.field) } : {}),
+        ...(parameters?.distinct === true ? { distinct: true } : {}),
+      },
+      ...(parameters?.group_by ? { group_by: String(parameters.group_by) } : {}),
+      // Rank this entity's records by their related rows, zeros included —
+      // "which service sells least" is only answerable from this side.
+      ...(parameters?.over ? { over: String(parameters.over) } : {}),
+      // A threshold on the aggregate — "clients who spent over 5000". Ignored
+      // without a group_by, which the compiler treats the same way.
+      ...(parameters?.having ? { having: parameters.having as ComputeQuery['having'] } : {}),
+    };
+
+    const result = await runBusinessQuery(query, { userId, consumer: 'kernel' });
+    if (result.op !== 'compute') throw new Error('business-os: expected an aggregate result');
+
+    return {
+      value: result.value,
+      ...(result.groups ? { groups: result.groups } : {}),
+      approximate: result.approximate,
+      ...(result.unmatched?.length ? { unmatched: result.unmatched } : {}),
     };
   }
 

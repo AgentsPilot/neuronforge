@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { Copy, Check, QrCode, Link2, Calendar, FileText, CreditCard, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
+import { Copy, Check, QrCode, Link2, Calendar, FileText, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
 interface LeadCaptureLink {
@@ -16,14 +16,12 @@ interface LeadCaptureLink {
 interface LeadCaptureLinksProps {
   userCode: string | null;
   hasScheduling: boolean;
-  hasPaidServices: boolean;
   onCreateSmartLink?: () => void;
 }
 
 export function LeadCaptureLinks({
   userCode,
   hasScheduling,
-  hasPaidServices,
   onCreateSmartLink
 }: LeadCaptureLinksProps) {
   const { t, isRTL } = useLanguage();
@@ -59,15 +57,19 @@ export function LeadCaptureLinks({
       icon: FileText
     });
 
-    if (hasPaidServices) {
-      links.push({
-        type: 'payment',
-        url: `${baseUrl}/c/${userCode}/pay`,
-        label: t('lead_capture.payment_link') || 'Payment Link',
-        description: t('lead_capture.payment_desc') || 'Share this link for clients to pay',
-        icon: CreditCard
-      });
-    }
+    /*
+     * There is no payment link to offer.
+     *
+     * A "Payment Link" pointing at `/c/{userCode}/pay` was shown here whenever
+     * the business had a paid service, with a Copy button beside it — but that
+     * route does not exist. Every owner who copied it and sent it to a client
+     * sent them to a 404, and the owner had no way to know: the link looked
+     * exactly like the two beside it that work.
+     *
+     * Paid services still convert through the booking link (a paid service
+     * collects at checkout) and through invoices, which carry their own public
+     * page. Restore this entry when `/c/{userCode}/pay` is built.
+     */
   }
 
   const handleCopy = async (url: string, type: string) => {

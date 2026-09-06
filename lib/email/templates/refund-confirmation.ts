@@ -11,6 +11,7 @@ import {
   type BrandingData
 } from './base-template';
 import { emailTranslations } from './translations';
+import { refundReasonKey } from '@/lib/payments/refundReasons';
 
 export interface RefundConfirmationData {
   clientName: string;
@@ -79,7 +80,20 @@ export function generateRefundConfirmationEmail(data: RefundConfirmationData): {
   }
 
   if (data.reason) {
-    detailRows.push(emailDetailRow(t.reasonLabel[locale], data.reason));
+    /*
+     * Translated, not printed.
+     *
+     * The stored reason is a canonical key for the common cases, so a Hebrew
+     * client was reading "סיבה: goodwill". Free text the business typed itself
+     * passes through as written — those are its own words about this client,
+     * and paraphrasing them would be worse than leaving them.
+     */
+    const reasonKey = refundReasonKey(data.reason);
+    const reasonText = reasonKey
+      ? t.reasonValues[locale][reasonKey] ?? data.reason
+      : data.reason;
+
+    detailRows.push(emailDetailRow(t.reasonLabel[locale], reasonText));
   }
 
   // Get the appropriate processing note

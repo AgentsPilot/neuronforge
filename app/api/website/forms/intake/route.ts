@@ -29,6 +29,8 @@ import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import type { CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { activitySentence } from '@/lib/business-os/activityText';
 import { z } from 'zod';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 
@@ -291,16 +293,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Create activity for intake submission.
-    // The structured payload lives on the contact's custom_fields.intake_data —
-    // crm_activities has no metadata column; booking_id is carried in source_entity_id.
-    const description = `Client completed the ${template} intake form.\nSite: ${subdomain}`;
+    //
+    // The branch's localised title is kept — the business's own history should read in the
+    // business's language — but sourced through the repositories rather than two raw
+    // `supabaseServer` calls (D13; the guard test asserts `supabaseFrom` is never called).
+    // `source_entity_id` carries booking_id: crm_activities has no metadata column, and the
+    // branch's version dropped that linkage.
+    const { data: ownerProfile } = await businessProfileRepository.findByUserId(ownerId);
+    const ownerLocale = ownerProfile?.language || 'en';
 
     const { error: activityError } = await crmActivityRepository.create({
       user_id: ownerId,
       contact_id: contactId,
       activity_type: 'note',
-      title: `Intake Form Completed (${template})`,
-      description,
+      title: activitySentence('intake_completed', { template: String(template) }, ownerLocale),
+      description: null,
       auto_logged: true,
       source_capability: 'website',
       source_entity_id: booking_id || null,

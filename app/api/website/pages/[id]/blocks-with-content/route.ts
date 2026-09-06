@@ -92,8 +92,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const blockRepo = new WebsiteBlockRepository(supabaseServer);
     const contentRepo = new WebsiteContentRepository(supabaseServer);
 
+    /*
+     * The ownership check and the block read, together.
+     *
+     * `findByPageId` needs only the page id, which arrived in the URL — it was
+     * waiting on `findById` for no reason except the order the lines were
+     * written in. This endpoint sits on the critical path of the website
+     * builder and made five database round trips in series; every one of them
+     * is a serverless function holding a connection open while it waits.
+     *
+     * The 404 is still decided first, and still before anything is read out of
+     * the blocks result, so an unauthorised caller learns nothing new. The cost
+     * is one wasted block read on a request that was going to 404 anyway.
+     */
+    const [pageResult, blocksResult] = await Promise.all([
+      pageRepo.findById(pageId, user.id),
+      blockRepo.findByPageId(pageId),
+    ]);
+
     // Verify page ownership
-    const pageResult = await pageRepo.findById(pageId, user.id);
     if (pageResult.error || !pageResult.data) {
       return NextResponse.json({ success: false, error: 'Page not found' }, { status: 404 });
     }
@@ -101,23 +118,58 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const page = pageResult.data;
     const isLandingPage = page.page_type === 'landing';
 
-    // Get blocks for this page
-    const blocksResult = await blockRepo.findByPageId(pageId);
     if (blocksResult.error) {
       throw blocksResult.error;
     }
 
     const blocks = blocksResult.data || [];
 
+    /*
+     * The remaining three reads, started together.
+     *
+     * Central content, the live service list and the business logo are each
+     * decided by `blocks` and by nothing from one another, yet they ran in
+     * series — so the editor waited three round trips where it needed one. Each
+     * is still awaited and handled at its original line below, with the same
+     * fallbacks and the same log lines, so nothing about the response changes.
+     *
+     * Settled rather than raw: a promise started here and awaited further down
+     * would otherwise be an unhandled rejection in the gap between the two.
+     */
+    const hasServicesBlock = blocks.some(b => b.block_type === 'services');
+    const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
+    // The editor previews what visitors will see, so the header's logo is
+    // injected from the business profile here exactly as the public route does.
+    // The block itself only stores `show_logo`.
+    const headerShowsLogo = blocks.some(
+      b => b.block_type === 'header' && (b.content as Record<string, unknown>)?.show_logo === true
+    );
+
+    const centralContentPromise = isLandingPage ? null : contentRepo.findByUserId(user.id);
+
+    const liveServicesPromise = hasServicesBlock || hasPricingBlock
+      ? Promise.all([
+          // Both in one pass, and the same pair the public route loads — the
+          // editor and the live site must describe a service identically.
+          new SchedulingServiceRepository(supabaseServer).listAll(user.id, true), // active only
+          loadServicePaymentPlans(user.id),
+        ]).then(
+          value => ({ ok: true as const, value }),
+          (error: unknown) => ({ ok: false as const, error })
+        )
+      : null;
+
+    const businessLogoPromise = headerShowsLogo ? resolveBusinessLogo(user.id) : null;
+
     // For landing pages, use block content directly (AI-generated content is stored in blocks)
     // Only fetch central content for homepage/main website pages
     let centralContent: WebsiteContent | null = null;
-    if (!isLandingPage) {
+    if (centralContentPromise) {
       // Read, never create. Materialising the row here filled it with the
       // table's English column defaults, which then outranked the generated
       // block content in the merge below — so simply opening the editor turned
       // a Hebrew site English.
-      const contentResult = await contentRepo.findByUserId(user.id);
+      const contentResult = await centralContentPromise;
       if (contentResult.error) {
         // Degrade to block content instead of 500ing the whole endpoint. This
         // is the only source of the editor's section list: throwing here left
@@ -143,19 +195,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       paymentPlan?: ServicePaymentPlan;
       hidden?: boolean;
     }> = [];
-    const hasServicesBlock = blocks.some(b => b.block_type === 'services');
-    const hasPricingBlock = blocks.some(b => b.block_type === 'pricing');
-
     // Fetch live services if we have services block OR pricing block (for landing pages)
-    if (hasServicesBlock || hasPricingBlock) {
+    if (liveServicesPromise) {
       try {
-        const schedulingRepo = new SchedulingServiceRepository(supabaseServer);
-        // Both in one pass, and the same pair the public route loads — the
-        // editor and the live site must describe a service identically.
-        const [servicesResult, plansByService] = await Promise.all([
-          schedulingRepo.listAll(user.id, true), // active only
-          loadServicePaymentPlans(user.id),
-        ]);
+        const settled = await liveServicesPromise;
+        if (!settled.ok) throw settled.error;
+        const [servicesResult, plansByService] = settled.value;
         if (servicesResult.data && servicesResult.data.length > 0) {
           liveServices = servicesResult.data.map(s => ({
             id: s.id,
@@ -194,13 +239,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // The editor previews what visitors will see, so the header's logo is
-    // injected from the business profile here exactly as the public route does.
-    // The block itself only stores `show_logo`.
-    const headerShowsLogo = blocks.some(
-      b => b.block_type === 'header' && (b.content as Record<string, unknown>)?.show_logo === true
-    );
-    const businessLogoUrl = headerShowsLogo ? await resolveBusinessLogo(user.id) : null;
+    const businessLogoUrl = businessLogoPromise ? await businessLogoPromise : null;
 
     // Merge central content into blocks (only for homepage/main website, not landing pages)
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {

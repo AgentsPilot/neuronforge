@@ -13,6 +13,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { wallClockToInstant } from '@/lib/scheduling/wallClock';
+import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
+import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 import { shouldTakePayment } from '@/lib/business-os/clientJourney';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { getUser } from '@/lib/auth';
@@ -177,6 +180,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    /*
+     * The hour belongs to the business, so the booking is measured in the
+     * business's timezone — and stored as the instant that hour actually is.
+     *
+     * Two bugs met here. The zone came from `data.timezone`, whatever the
+     * CLIENT's browser reported, so one diary held bookings labelled
+     * `America/New_York` and `UTC` at once. And `new Date(naive)` parses a
+     * string with no offset as SERVER-local, so the slot a client picked at
+     * 13:00 was stored as 13:00Z and read back — correctly, in the business's
+     * own zone — as 09:00. Four hours lost between the button and the row.
+     *
+     * The timezone is read from `user_preferences`, which is where the settings
+     * page writes it.
+     */
+    const { data: ownerPrefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', ownerId)
+      .maybeSingle();
+
+    const bookingTimezone = ownerPrefs?.timezone || data.timezone || 'UTC';
+
     // Determine if this is a scheduled booking (has start_time) or non-scheduled (course, product, etc.)
     const isScheduledBooking = !!data.start_time;
     let startTime: Date | null = null;
@@ -184,7 +209,7 @@ export async function POST(request: NextRequest) {
 
     if (isScheduledBooking) {
       // Calculate end time for scheduled bookings
-      startTime = new Date(data.start_time!);
+      startTime = new Date(wallClockToInstant(data.start_time!, bookingTimezone));
       endTime = new Date(startTime.getTime() + (service.duration_minutes || 0) * 60 * 1000);
 
       // Check for conflicts (only for scheduled bookings)
@@ -408,15 +433,65 @@ export async function POST(request: NextRequest) {
         start_time: startTime?.toISOString() || null,
         end_time: endTime?.toISOString() || null,
         status: requiresPayment ? 'pending' : 'confirmed',
-        payment_status: requiresPayment ? 'pending' : 'paid',
+        /*
+         * Owing money is not the same as having paid it.
+         *
+         * This read `requiresPayment ? 'pending' : 'paid'`, which is only right
+         * when the service is FREE. A service set to `collection: 'invoice'`
+         * takes no money online — `shouldTakePayment` is false — so a ₪200
+         * booking was written straight to `paid` having billed nobody. The
+         * owner's money list showed it collected, and no invoice existed.
+         *
+         * Paid means paid: price zero, or nothing to collect.
+         */
+        payment_status: (service.price || 0) > 0 ? 'pending' : 'paid',
         notes: data.notes || null,
         booking_source: 'website',
-        timezone: data.timezone
+        timezone: bookingTimezone
       })
       .select('id, start_time, end_time')
       .single();
 
     const { data: booking, error: bookingError } = insertResult;
+
+    /*
+     * The appointment itself, on the client's timeline.
+     *
+     * Nothing recorded a booking being made: the drawer showed the emails about
+     * it and never the event, so the first thing in a client's history was a
+     * confirmation for something that appeared from nowhere.
+     */
+    if (!bookingError && booking && contactId) {
+      const { data: ownerProfile } = await supabaseServer
+        .from('business_profiles')
+        .select('language')
+        .eq('user_id', ownerId)
+        .maybeSingle();
+      const ownerLocale = ownerProfile?.language || 'en';
+      const when = activityMoment(booking.start_time, ownerLocale, bookingTimezone);
+
+      crmActivityRepository.create({
+        user_id: ownerId,
+        contact_id: contactId,
+        activity_type: 'booking_created',
+        // No date phrase for a course or a product, which has no time at all.
+        title: activitySentence(
+          when ? 'booking_created_dated' : 'booking_created',
+          { service: service.service_name, date: when || '' },
+          ownerLocale
+        ),
+        description: JSON.stringify({
+          kind: 'booking_created',
+          service: service.service_name,
+          bookingDate: booking.start_time || undefined,
+          timeZone: bookingTimezone,
+        }),
+        auto_logged: true,
+        source_capability: 'scheduling',
+        source_entity_id: booking.id,
+        activity_date: booking.start_time || undefined,
+      }).catch(err => requestLogger.warn({ err }, 'Booking-created activity logging failed (non-blocking)'));
+    }
 
     if (bookingError || !booking) {
       requestLogger.error({ err: bookingError }, 'Failed to create booking');
@@ -427,10 +502,63 @@ export async function POST(request: NextRequest) {
     // (log_booking_activity_trigger) on the booking INSERT when contact_id is set. We do NOT
     // insert it here — doing so double-logged the activity. (Scheduling plugin workplan §2 0.2.)
 
+    /*
+     * Bill for it, when the business bills rather than charges.
+     *
+     * `collection: 'invoice'` means the money is not taken at the point of
+     * booking — but it IS owed. The website flow raised no invoice at all, so a
+     * ₪200 booking produced a confirmation email, no bill, and nothing for the
+     * client to pay against. Only the owner-created path invoiced; a client who
+     * booked through the business's own website did not.
+     *
+     * `createBookingInvoice` is that same producer, exported rather than
+     * copied — one invoice numbering sequence, one shape of row.
+     */
+    let bookingInvoice: { id: string; stripe_hosted_invoice_url?: string | null } | null = null;
+    const billsByInvoice = !requiresPayment && (service.price || 0) > 0;
+
+    if (billsByInvoice && contactId) {
+      try {
+        const { createBookingInvoice } = await import('@/lib/services/BookingLifecycleService');
+        const clientName = [clientFirstName, clientLastName].filter(Boolean).join(' ').trim();
+
+        bookingInvoice = await createBookingInvoice(
+          ownerId,
+          booking.id,
+          service as never,
+          {
+            contact_id: contactId,
+            contact_name: clientName || 'Client',
+            contact_email: data.email,
+            // Products have no slot; the invoice still needs a due date, and
+            // `new Date(null)` would make it 1 January 1970.
+            start_time: booking.start_time ?? new Date().toISOString(),
+          },
+          requestLogger as never
+        );
+
+        requestLogger.info(
+          { bookingId: booking.id, invoiceId: bookingInvoice?.id },
+          'Invoice raised for a booking the business bills for'
+        );
+      } catch (err) {
+        // Loud: the appointment exists and nobody has been billed for it.
+        requestLogger.error({ err, bookingId: booking.id }, 'Failed to raise the invoice for this booking');
+      }
+    }
+
     // Send booking confirmation email (non-blocking)
     // Only for FREE bookings - paid bookings get confirmation after payment in Stripe webhook
     if (!requiresPayment) {
-      BookingEmailService.sendBookingConfirmation(booking.id, ownerId)
+      // `skipInvoice` when one was just raised: its payment link travels with
+      // the confirmation rather than in a second email.
+      BookingEmailService.sendBookingConfirmation(booking.id, ownerId, bookingInvoice
+        ? {
+            skipInvoice: true,
+            invoiceId: bookingInvoice.id,
+            stripeHostedInvoiceUrl: bookingInvoice.stripe_hosted_invoice_url || undefined,
+          }
+        : undefined)
         .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
 
       // Send intake form request email (non-blocking)

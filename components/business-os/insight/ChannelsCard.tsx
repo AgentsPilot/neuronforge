@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, Check, X, AlertCircle, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Loader2, X, AlertCircle, RefreshCw, Globe, Link2, FileText, MoreHorizontal } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useChannelConnect } from '@/hooks/useChannelConnect';
 import { PluginIcon } from '@/components/PluginIcon';
@@ -28,6 +28,9 @@ interface ConnectionRow {
   insights_enabled: boolean;
   is_backfilling: boolean;
   needs_reconnect: boolean;
+  /** Nothing has synced for a while. A fact, not a fault — see the API note. */
+  is_stale?: boolean;
+  last_synced_at?: string | null;
   last_sync_error: string | null;
 }
 
@@ -90,6 +93,35 @@ const COPY: Record<string, Record<string, string>> = {
     es: 'Conecta una cuenta para ver a cuánta gente llega',
     he: 'חבר חשבון כדי לראות לכמה אנשים הוא מגיע',
   },
+
+  /*
+   * The channels a business owns before it connects anything.
+   *
+   * This card listed three OAuth providers and called itself "Your channels",
+   * so a business with no social accounts opened it to three buttons and no
+   * content — while its website and its smart links were the things actually
+   * bringing people in. They are channels; they were simply never listed.
+   */
+  surfaceWebsite: { en: 'Website', es: 'Sitio web', he: 'אתר' },
+  surfaceSmartLinks: { en: 'Smart links', es: 'Enlaces inteligentes', he: 'לינקים חכמים' },
+  surfaceLanding: { en: 'Landing pages', es: 'Páginas de destino', he: 'דפי נחיתה' },
+  createLanding: { en: 'Create', es: 'Crear', he: 'צור' },
+  draftWaiting: {
+    en: 'Written but not published yet',
+    es: 'Escrita pero aún sin publicar',
+    he: 'נכתב אבל עדיין לא פורסם',
+  },
+  published: { en: 'Published', es: 'Publicado', he: 'פורסם' },
+  smartLinksActive: { en: 'Active', es: 'Activos', he: 'פעילים' },
+  publishWebsite: { en: 'Publish', es: 'Publicar', he: 'פרסם' },
+  createSmartLink: { en: 'Create', es: 'Crear', he: 'צור' },
+
+  /** The summary line that replaced the subtitle once something is live. */
+  activeCount: { en: 'active', es: 'activos', he: 'פעילים' },
+  addableCount: { en: 'can be added', es: 'para añadir', he: 'אפשר להוסיף' },
+  addTitle: { en: 'Add a channel', es: 'Añadir un canal', he: 'אפשר להוסיף' },
+  reconnect: { en: 'Reconnect', es: 'Reconectar', he: 'התחבר מחדש' },
+  manage: { en: 'Manage', es: 'Gestionar', he: 'ניהול' },
   connect: { en: 'Connect', es: 'Conectar', he: 'חבר' },
   connecting: { en: 'Connecting…', es: 'Conectando…', he: 'מתחבר…' },
   backfilling: {
@@ -234,20 +266,96 @@ function isReconnectable(message: string): boolean {
   return /token|expired|permission|oauth|access|session/i.test(message);
 }
 
+/** Which OAuth flow reconnects a given platform. Instagram's lives behind Meta. */
+function providerOf(platform: string): ChannelProvider {
+  return (
+    PROVIDERS.find(p => p.platforms.includes(platform))?.provider ?? 'meta'
+  );
+}
+
 const PLATFORM_LABELS: Record<string, Record<string, string>> = {
   facebook_page: { en: 'Facebook', es: 'Facebook', he: 'פייסבוק' },
   instagram: { en: 'Instagram', es: 'Instagram', he: 'אינסטגרם' },
-  ga4: { en: 'Website', es: 'Sitio web', he: 'אתר' },
+  ga4: { en: 'Google Analytics', es: 'Google Analytics', he: 'גוגל אנליטיקס' },
   google_business_profile: { en: 'Google listing', es: 'Ficha de Google', he: 'רישום בגוגל' },
 };
+
+/**
+ * Tint per platform, for the mark behind its logo.
+ *
+ * A wash of the brand at 12%, never the brand at full strength: the tile has to
+ * sit quietly in a list of six, and a saturated Facebook blue beside a
+ * saturated Instagram pink turns a settings panel into a toy. Identity comes
+ * from the logo; the tint only says which family it belongs to.
+ */
+const PLATFORM_TINTS: Record<string, string> = {
+  facebook_page: '#1877F2',
+  instagram: '#E4405F',
+  ga4: '#E8710A',
+  google_business_profile: '#4285F4',
+};
+
+/** A 26px rounded tile holding one logo or status glyph. */
+function Mark({ tint, children }: { tint?: string; children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        width: 26,
+        height: 26,
+        borderRadius: 8,
+        flexShrink: 0,
+        display: 'grid',
+        placeItems: 'center',
+        background: tint ? `${tint}1F` : '#F1F3F8',
+      }}
+    >
+      {children}
+    </span>
+  );
+}
 
 export function ChannelsCard({
   onChanged,
   embedded = false,
+  owned,
+  onAction,
+  onReady,
 }: {
   onChanged?: () => void;
   /** Drop the card chrome when this sits inside a shared card. */
   embedded?: boolean;
+  /**
+   * The surfaces the business owns, which are channels whether or not anything
+   * is connected. Both flags come from `/api/business-os/stats` and are already
+   * on the dashboard — no query was added to show them here.
+   *
+   * Counts, not booleans, and that distinction was a bug: `has_live_pages` is
+   * true for a website OR a landing page, so a business whose only live page
+   * was a landing page got a row labelled "Website" — naming a thing it does
+   * not have while hiding the thing it does.
+   *
+   * Omitted rather than zeroed: "we were not told" and "there is none" are
+   * different, and only the second one prints a Publish button.
+   */
+  owned?: {
+    website: number;
+    landing: number;
+    smartLinks: number;
+    websiteDrafts: number;
+    landingDrafts: number;
+  };
+  /** Publish a site, create a link — the dashboard owns what those do. */
+  onAction?: (action: string) => void;
+  /**
+   * Fired once the connections have loaded and this column has something to
+   * draw.
+   *
+   * The card renders nothing at all while it is fetching, and the parent lays
+   * out two columns from the first paint — so the half holding this one sat
+   * empty and bordered, squeezing the sources column beside it, until the
+   * request came back. The parent waits for this before splitting.
+   */
+  onReady?: () => void;
 }) {
   const { language, isRTL } = useLanguage();
   const t = (key: string) => COPY[key]?.[language] || COPY[key]?.en || key;
@@ -273,6 +381,10 @@ export function ChannelsCard({
   // Which row is asking "are you sure?" — the confirm replaces that row's
   // actions rather than opening a dialog over a card this small.
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  // Which row has its settings open. Pause and Remove are used once per account
+  // and were sitting at the same weight as "connect"; behind a menu they stop
+  // competing with the actions a reader actually came for.
+  const [menuId, setMenuId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   // Outcome of a manual refresh, shown until the next one. Null while idle.
   const [syncing, setSyncing] = useState(false);
@@ -293,6 +405,21 @@ export function ChannelsCard({
   useEffect(() => {
     load();
   }, [load]);
+
+  /*
+   * Told once, when there is something to show.
+   *
+   * Through a ref because the parent passes an inline arrow: as a dependency it
+   * would be a new function on every render and announce readiness on each one.
+   * `loaded` is a boolean, so this fires on the single transition.
+   */
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+
+  const loaded = connections !== null;
+  useEffect(() => {
+    if (loaded) onReadyRef.current?.();
+  }, [loaded]);
 
   const connect = useChannelConnect(() => {
     load();
@@ -389,6 +516,185 @@ export function ChannelsCard({
   const rowsFor = (platforms: string[]) =>
     connections.filter(c => platforms.includes(c.platform));
 
+  /**
+   * What is live, and what could be added — the panel's whole structure.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The card used to lead with three provider tiles, so its height was set by
+   * how many integrations EXIST rather than by how many this business has. A
+   * business with nothing connected saw three buttons and no content; a
+   * business with everything connected saw the tiles, then an account list,
+   * then a confirm, then a sync error, then a cadence note — five stacked
+   * states in a column this narrow.
+   *
+   * Now only live channels get a row. Everything else is one chip strip at the
+   * foot, so the panel grows with the business instead of starting full.
+   *
+   * A CONNECTED PROVIDER IS NOT ONE ROW. Connecting Meta selects a Facebook
+   * Page and an Instagram account, and each is listed separately with its own
+   * name — that is deliberate and load-bearing: discovering that the wrong Page
+   * was being monitored, with no way to see which, is the failure this card was
+   * built to prevent. The provider's chip disappears once ANY of its platforms
+   * is connected, so nothing offers to connect what is already connected.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  type LiveRow = {
+    id: string;
+    icon: React.ReactNode;
+    name: string;
+    meta: string;
+    /** `alert` sorts to the top and is the only state allowed to be loud. */
+    state: 'live' | 'alert' | 'paused';
+    connection?: ConnectionRow;
+    action?: { label: string; run: () => void };
+  };
+
+  const liveRows: LiveRow[] = [];
+
+  // Owned surfaces first: they are live without anyone connecting anything, and
+  // on a new account they are the only thing this panel can truthfully show.
+  if (owned && owned.website > 0) {
+    liveRows.push({
+      id: 'owned:website',
+      icon: <Mark tint="#0F8F60"><Globe className="w-[15px] h-[15px]" style={{ color: '#0F8F60' }} /></Mark>,
+      name: t('surfaceWebsite'),
+      meta: t('published'),
+      state: 'live',
+    });
+  }
+  if (owned && owned.landing > 0) {
+    liveRows.push({
+      id: 'owned:landing',
+      icon: <Mark tint="#2563EB"><FileText className="w-[15px] h-[15px]" style={{ color: '#2563EB' }} /></Mark>,
+      name: t('surfaceLanding'),
+      // The count IS the fact here: one landing page and nine are different
+      // businesses, and the panel has no other place to say which.
+      meta: `${owned.landing} ${t('published').toLowerCase()}`,
+      state: 'live',
+    });
+  }
+  if (owned && owned.smartLinks > 0) {
+    liveRows.push({
+      id: 'owned:smart-links',
+      icon: <Mark tint="#7C5CD6"><Link2 className="w-[15px] h-[15px]" style={{ color: '#7C5CD6' }} /></Mark>,
+      name: t('surfaceSmartLinks'),
+      meta: `${owned.smartLinks} ${t('smartLinksActive').toLowerCase()}`,
+      state: 'live',
+    });
+  }
+
+  for (const row of connections) {
+    /*
+     * A connected account is CONNECTED. That is the first thing the row says.
+     *
+     * This regressed the moment the row's state was driven by sync health: two
+     * healthy accounts, connected and enabled, rendered as "we lost access to
+     * this account — reconnect" because a nightly job had not run for a week.
+     * The card that replaced them had shown a green tick regardless, and it was
+     * right to.
+     *
+     * Only the platform actually refusing us is an alert. Everything else —
+     * quiet for days, still fetching history — is a note beside the account
+     * name, never instead of it: the name is how you catch the wrong Facebook
+     * Page being read, which is what this card exists for.
+     */
+    const broken = row.needs_reconnect;
+    const identity = row.account_name || row.platform;
+    const aside = row.is_backfilling
+      ? t('backfilling')
+      : !row.insights_enabled
+        ? t('paused')
+        : null;
+
+    liveRows.push({
+      id: row.id,
+      icon: PLATFORM_LOGOS[row.platform] ? (
+        <Mark tint={PLATFORM_TINTS[row.platform]}>
+          <PluginIcon pluginId={PLATFORM_LOGOS[row.platform]} className="w-[15px] h-[15px]" alt="" />
+        </Mark>
+      ) : null,
+      name:
+        PLATFORM_LABELS[row.platform]?.[language] ||
+        PLATFORM_LABELS[row.platform]?.en ||
+        row.platform,
+      meta: broken
+        ? `${identity} · ${isReconnectable(row.last_sync_error ?? '') ? t('errorReconnect') : t('errorGeneric')}`
+        : aside
+          ? `${identity} · ${aside}`
+          : identity,
+      state: broken ? 'alert' : row.insights_enabled ? 'live' : 'paused',
+      connection: row,
+    });
+  }
+
+  // Whatever needs the reader now goes first. That is the whole of option B's
+  // idea, without a heading of its own — one row at the top rather than a
+  // third group that is empty most days.
+  liveRows.sort((a, b) => (a.state === 'alert' ? 0 : 1) - (b.state === 'alert' ? 0 : 1));
+
+  /** One chip per thing that could exist and does not. */
+  const addable: {
+    key: string;
+    logos: string[];
+    icon?: React.ReactNode;
+    label: string;
+    /** The full name, for the chip's tooltip — "Facebook" is really both. */
+    title?: string;
+    run: () => void;
+  }[] = [];
+
+  /*
+   * Written but not published is not the same as not written.
+   *
+   * Offering "create a landing page" to a business that already wrote one and
+   * left it in draft is the platform failing to look at what it has. The chip
+   * says PUBLISH instead, and either way it goes to the builder — publishing is
+   * a decision about content, and it belongs on the page that shows the content.
+   */
+  if (owned && owned.website === 0) {
+    const hasDraft = owned.websiteDrafts > 0;
+    addable.push({
+      key: 'website',
+      logos: [],
+      icon: <Globe className="w-3.5 h-3.5" style={{ color: '#8A93A6' }} />,
+      label: `${t('surfaceWebsite')} · ${hasDraft ? t('publishWebsite') : t('createLanding')}`,
+      title: hasDraft ? t('draftWaiting') : undefined,
+      run: () => onAction?.(hasDraft ? 'publish_website' : 'open_website'),
+    });
+  }
+  if (owned && owned.landing === 0) {
+    const hasDraft = owned.landingDrafts > 0;
+    addable.push({
+      key: 'landing',
+      logos: [],
+      icon: <FileText className="w-3.5 h-3.5" style={{ color: '#8A93A6' }} />,
+      label: `${t('surfaceLanding')} · ${hasDraft ? t('publishWebsite') : t('createLanding')}`,
+      title: hasDraft ? t('draftWaiting') : undefined,
+      // Always the builder, never a direct publish: a landing page is one of
+      // several, and the panel does not know which draft was meant.
+      run: () => onAction?.('open_website'),
+    });
+  }
+  if (owned && owned.smartLinks === 0) {
+    addable.push({
+      key: 'smart-links',
+      logos: [],
+      icon: <Link2 className="w-3.5 h-3.5" style={{ color: '#8A93A6' }} />,
+      label: `${t('surfaceSmartLinks')} · ${t('createSmartLink')}`,
+      run: () => onAction?.('create_booking_link'),
+    });
+  }
+  for (const { provider, platforms, logos, short, labels } of PROVIDERS) {
+    if (rowsFor(platforms).length > 0) continue;
+    addable.push({
+      key: provider,
+      logos,
+      label: short[language] || short.en,
+      title: labels[language] || labels.en,
+      run: () => connect.connect(provider),
+    });
+  }
+
   return (
     <div
       style={{
@@ -404,7 +710,7 @@ export function ChannelsCard({
             }),
       }}
     >
-      <div style={{ marginBottom: '2px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px' }}>
         <span
           style={{
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
@@ -437,271 +743,282 @@ export function ChannelsCard({
           </button>
         )}
       </div>
-      <p style={{ fontSize: '11px', color: '#8A93A6', marginBottom: syncNote ? '4px' : '10px', lineHeight: 1.4 }}>
-        {t('subtitle')}
-      </p>
-      {syncNote && (
-        <p style={{ fontSize: '10.5px', color: '#4B5468', marginBottom: '10px', lineHeight: 1.4 }}>
-          {syncNote}
+
+      {/* A count where the instruction used to be. "Connect an account to see
+          how many people it reaches" was the right sentence when the card had
+          nothing else to say; with live rows beneath it, it was telling a
+          business to do something it had already done. */}
+      {liveRows.length > 0 ? (
+        <p style={{ fontSize: '11px', color: '#8A93A6', margin: '3px 0 10px', lineHeight: 1.4 }}>
+          <b style={{ color: '#212838', fontWeight: 600 }}>{liveRows.length}</b> {t('activeCount')}
+          {addable.length > 0 && (
+            <>
+              {' · '}
+              <b style={{ color: '#212838', fontWeight: 600 }}>{addable.length}</b> {t('addableCount')}
+            </>
+          )}
+        </p>
+      ) : (
+        <p style={{ fontSize: '11px', color: '#8A93A6', margin: '3px 0 10px', lineHeight: 1.4 }}>
+          {t('subtitle')}
         </p>
       )}
 
-      {/* Three tiles across: a compact status row, not a settings list. Each is
-          the whole control — press an unconnected one to connect it. */}
-      <div className="grid grid-cols-3 gap-1.5">
-        {PROVIDERS.map(({ provider, platforms, logos, short }) => {
-          const rows = rowsFor(platforms);
-          const connected = rows.length > 0;
-          const isConnecting = connect.isBusy && connect.provider === provider;
-          const label = short[language] || short.en;
+      {liveRows.map(row => {
+        const busy = row.connection ? busyId === row.connection.id : false;
+        const confirming = row.connection ? confirmingId === row.connection.id : false;
+        const open = menuId === row.id;
 
-          return (
-            <button
-              key={provider}
-              onClick={() => connect.connect(provider)}
-              disabled={isConnecting}
-              title={connected ? rows.map(r => r.account_name).filter(Boolean).join(', ') : undefined}
+        return (
+          <div key={row.id}>
+            <div
+              className="group"
               style={{
                 display: 'flex',
-                flexDirection: 'column',
                 alignItems: 'center',
-                gap: '4px',
-                padding: '8px 4px',
+                gap: '9px',
+                padding: '7px 8px',
                 borderRadius: '10px',
-                // Dashed and pale reads as "nothing here yet" before a word is
-                // read; a connected tile is solid and settled.
-                border: connected ? '1px solid #D5EEE2' : '1px dashed #CBD3E1',
-                background: connected ? '#F7FCFA' : '#FBFCFE',
-                cursor: isConnecting ? 'default' : 'pointer',
-                transition: 'border-color 0.15s, background 0.15s',
-              }}
-              onMouseEnter={e => {
-                if (isConnecting) return;
-                e.currentTarget.style.borderColor = connected ? '#A9DCC4' : '#9AA7BE';
-              }}
-              onMouseLeave={e => {
-                if (isConnecting) return;
-                e.currentTarget.style.borderColor = connected ? '#D5EEE2' : '#CBD3E1';
+                background: row.state === 'alert' ? '#FEF9F1' : 'transparent',
               }}
             >
-              <span
+              <span style={{ flexShrink: 0, display: 'flex' }}>
+                {row.state === 'alert' ? (
+                  <Mark tint="#D97706"><AlertCircle className="w-[15px] h-[15px]" style={{ color: '#B45309' }} /></Mark>
+                ) : row.connection?.is_backfilling ? (
+                  <Mark tint="#8A93A6"><Loader2 className="w-[15px] h-[15px] animate-spin" style={{ color: '#6B7285' }} /></Mark>
+                ) : row.state === 'paused' ? (
+                  <Mark tint="#8A93A6"><X className="w-[15px] h-[15px]" style={{ color: '#8A93A6' }} /></Mark>
+                ) : (
+                  row.icon
+                )}
+              </span>
+
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    lineHeight: 1.25,
+                    color: row.state === 'paused' ? '#8A93A6' : '#212838',
+                  }}
+                >
+                  {row.state === 'live' && (
+                    <i
+                      aria-hidden
+                      style={{ width: 6, height: 6, borderRadius: '99px', background: '#12A66F', flexShrink: 0 }}
+                    />
+                  )}
+                  {row.name}
+                </span>
+                <span
+                  style={{
+                    display: 'block',
+                    fontSize: '10.5px',
+                    lineHeight: 1.35,
+                    marginTop: '1px',
+                    color: row.state === 'alert' ? '#A9700F' : '#8A93A6',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {row.meta}
+                </span>
+              </span>
+
+              {/* Reconnecting is the one action urgent enough to stay on the
+                  row. Pause and Remove are settings used once and go behind the
+                  menu, where they no longer compete with it. */}
+              {row.state === 'alert' && row.connection && (
+                <button
+                  onClick={() => connect.connect(providerOf(row.connection!.platform))}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: '#FFFFFF',
+                    background: '#B45309',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {t('reconnect')}
+                </button>
+              )}
+
+              {row.connection && (
+                <button
+                  onClick={() => {
+                    setMenuId(open ? null : row.id);
+                    setConfirmingId(null);
+                    setRemoveError(null);
+                  }}
+                  aria-label={t('manage')}
+                  aria-expanded={open}
+                  className="opacity-0 group-hover:opacity-100 focus:opacity-100"
+                  style={{
+                    flexShrink: 0,
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    color: '#A2A9B8',
+                    opacity: open ? 1 : undefined,
+                    transition: 'opacity 140ms ease',
+                  }}
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* The menu, and the confirm inside it. Both stay inline: a dialog
+                over a column this narrow reads as heavier than the act. */}
+            {open && row.connection && (
+              <div
                 style={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '2px',
-                  // Desaturated until connected, so the eye lands on the
-                  // channels that are actually reporting.
-                  filter: connected ? 'none' : 'grayscale(1)',
-                  opacity: connected ? 1 : 0.5,
-                }}
-              >
-                {logos.map(logo => (
-                  <PluginIcon key={logo} pluginId={logo} className="w-4 h-4" alt="" />
-                ))}
-              </span>
-
-              <span
-                style={{
+                  gap: '12px',
+                  padding: '4px 8px 8px',
                   fontSize: '10.5px',
-                  fontWeight: 500,
-                  lineHeight: 1.2,
-                  color: connected ? '#1F7A55' : '#6B7385',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  maxWidth: '100%',
                 }}
               >
-                {label}
-              </span>
-
-              <span style={{ display: 'flex', alignItems: 'center', gap: '3px', height: '13px' }}>
-                {isConnecting ? (
-                  <Loader2 className="w-3 h-3 animate-spin" style={{ color: '#8A93A6' }} />
-                ) : connected ? (
-                  <Check className="w-3 h-3" style={{ color: '#10B981', strokeWidth: 3.5 }} />
+                {confirming ? (
+                  <>
+                    <button
+                      onClick={() => remove(row.connection!)}
+                      disabled={busy}
+                      style={{ fontWeight: 700, color: '#B4442E', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      {busy ? '…' : t('removeYes')}
+                    </button>
+                    <button
+                      onClick={() => { setConfirmingId(null); setRemoveError(null); }}
+                      disabled={busy}
+                      style={{ fontWeight: 600, color: '#8A93A6', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      {t('removeCancel')}
+                    </button>
+                    <span style={{ color: '#8A93A6', lineHeight: 1.4 }}>{t('removeNote')}</span>
+                  </>
                 ) : (
-                  <span style={{ fontSize: '9.5px', fontWeight: 600, color: '#131A2B' }}>
-                    {t('connect')}
-                  </span>
+                  <>
+                    <button
+                      onClick={() => setEnabled(row.connection!.id, !row.connection!.insights_enabled)}
+                      disabled={busy}
+                      style={{
+                        fontWeight: 600,
+                        color: row.connection.insights_enabled ? '#8A93A6' : '#1F7A55',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {busy ? '…' : row.connection.insights_enabled ? t('pause') : t('resume')}
+                    </button>
+                    <button
+                      onClick={() => setConfirmingId(row.connection!.id)}
+                      disabled={busy}
+                      style={{ fontWeight: 600, color: '#B4442E', background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      {t('remove')}
+                    </button>
+                  </>
                 )}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+              </div>
+            )}
 
-      {/* Connected accounts, listed once beneath the tiles rather than inside
-          them. Names like "בית הספר הבינלאומי להורות" need the full width, and
-          this is also where the wrong Page gets switched off. */}
-      {connections.length > 0 && (
-        <div style={{ marginTop: '9px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          {connections.map(row => (
-            <div
-              key={row.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '8px',
-                padding: '5px 8px',
-                borderRadius: '7px',
-                background: row.insights_enabled ? '#F4FBF8' : '#F7F8FB',
-                border: `1px solid ${row.insights_enabled ? '#D5EEE2' : '#E7E9F1'}`,
-              }}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
-                {PLATFORM_LOGOS[row.platform] && (
-                  <PluginIcon
-                    pluginId={PLATFORM_LOGOS[row.platform]}
-                    className="w-3.5 h-3.5 shrink-0"
-                    alt=""
-                  />
-                )}
-                {row.needs_reconnect ? (
-                  <AlertCircle className="w-3 h-3 shrink-0" style={{ color: '#FB923C' }} />
-                ) : row.is_backfilling ? (
-                  <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: '#8A93A6' }} />
-                ) : !row.insights_enabled ? (
-                  <X className="w-3 h-3 shrink-0" style={{ color: '#8A93A6' }} />
-                ) : null}
-                <span style={{ minWidth: 0 }}>
-                  <span
-                    style={{
-                      display: 'block',
-                      fontSize: '11.5px',
-                      lineHeight: 1.3,
-                      color: row.insights_enabled ? '#131A2B' : '#8A93A6',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {row.account_name || row.platform}
-                  </span>
-                  <span style={{ display: 'block', fontSize: '9.5px', lineHeight: 1.3, color: '#8A93A6' }}>
-                    {PLATFORM_LABELS[row.platform]?.[language] ||
-                      PLATFORM_LABELS[row.platform]?.en ||
-                      row.platform}
-                    {row.is_backfilling && ` · ${t('backfilling')}`}
-                    {!row.insights_enabled && ` · ${t('paused')}`}
-                  </span>
-                </span>
-              </span>
-
-              {/* The confirm takes the actions' place: at this width a second
-                  row of buttons would push the account name out of view, and a
-                  dialog over a card this small reads as heavier than the act. */}
-              {confirmingId === row.id ? (
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                  <button
-                    onClick={() => remove(row)}
-                    disabled={busyId === row.id}
-                    style={{
-                      fontSize: '10.5px',
-                      fontWeight: 700,
-                      color: '#B4442E',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {busyId === row.id ? '…' : t('removeYes')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setConfirmingId(null);
-                      setRemoveError(null);
-                    }}
-                    disabled={busyId === row.id}
-                    style={{
-                      fontSize: '10.5px',
-                      fontWeight: 600,
-                      color: '#8A93A6',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {t('removeCancel')}
-                  </button>
-                </span>
-              ) : (
-                <span style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                  <button
-                    onClick={() => setEnabled(row.id, !row.insights_enabled)}
-                    disabled={busyId === row.id}
-                    style={{
-                      fontSize: '10.5px',
-                      fontWeight: 600,
-                      color: row.insights_enabled ? '#8A93A6' : '#1F7A55',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {busyId === row.id ? '…' : row.insights_enabled ? t('pause') : t('resume')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setConfirmingId(row.id);
-                      setRemoveError(null);
-                    }}
-                    disabled={busyId === row.id}
-                    style={{
-                      fontSize: '10.5px',
-                      fontWeight: 600,
-                      color: '#B4442E',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {t('remove')}
-                  </button>
-                </span>
-              )}
-            </div>
-          ))}
-
-          {/* What "remove" costs, said before it is clicked — and what it does
-              not touch, since the plugin stays connected for agents to use. */}
-          {confirmingId && (
-            <p style={{ fontSize: '10px', color: '#8A93A6', lineHeight: 1.4 }}>
-              {t('removeConfirm')} {t('removeNote')}
-            </p>
-          )}
-
-          {removeError && (
-            <p style={{ fontSize: '10.5px', color: '#B4442E', lineHeight: 1.4 }}>{removeError}</p>
-          )}
-        </div>
-      )}
-
-      {/* A failed sync is named here rather than left as silent zeros. The raw
-          provider message stays in the server logs; the card says what it means
-          and what to do about it. */}
-      {(() => {
-        const failed = connections.find(c => c.last_sync_error);
-        if (!failed?.last_sync_error) return null;
-
-        return (
-          <p style={{ marginTop: '6px', fontSize: '10.5px', color: '#B4442E', lineHeight: 1.4 }}>
-            {isReconnectable(failed.last_sync_error) ? t('errorReconnect') : t('errorGeneric')}
-          </p>
+            {removeError && confirming && (
+              <p style={{ padding: '0 8px 6px', fontSize: '10.5px', color: '#B4442E', lineHeight: 1.4 }}>
+                {removeError}
+              </p>
+            )}
+          </div>
         );
-      })()}
+      })}
 
-      {/* When the numbers arrive. Only once something is connected — before
-          that the subtitle already explains what connecting is for. */}
-      {connections.length > 0 && (
-        <p style={{ marginTop: '6px', fontSize: '10px', color: '#8A93A6', lineHeight: 1.4 }}>
-          {connections.some(c => c.is_backfilling) ? t('backfillNote') : t('cadence')}
-        </p>
+      {/* Everything not yet live, as chips. The catalogue no longer sets the
+          panel's height — it costs one wrapped strip however many integrations
+          the platform grows to. */}
+      {addable.length > 0 && (
+        <div
+          style={{
+            marginTop: liveRows.length > 0 ? '10px' : 0,
+            paddingTop: liveRows.length > 0 ? '9px' : 0,
+            borderTop: liveRows.length > 0 ? '1px solid #F1F3F8' : 'none',
+          }}
+        >
+          <p
+            style={{
+              fontSize: '10px',
+              fontWeight: 600,
+              letterSpacing: '0.07em',
+              textTransform: 'uppercase',
+              color: '#A2A9B8',
+              marginBottom: '6px',
+            }}
+          >
+            {t('addTitle')}
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+            {addable.map(item => {
+              const isConnecting = connect.isBusy && connect.provider === item.key;
+
+              return (
+                <button
+                  key={item.key}
+                  onClick={item.run}
+                  disabled={isConnecting}
+                  title={item.title}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    border: '1px solid #DDE3ED',
+                    borderRadius: '99px',
+                    padding: '4px 10px',
+                    fontSize: '11px',
+                    color: '#4A5165',
+                    background: '#FFFFFF',
+                    cursor: isConnecting ? 'default' : 'pointer',
+                    transition: 'border-color 0.15s, color 0.15s',
+                  }}
+                  onMouseEnter={e => {
+                    if (isConnecting) return;
+                    e.currentTarget.style.borderColor = '#9EC0FA';
+                    e.currentTarget.style.color = '#2563EB';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.borderColor = '#DDE3ED';
+                    e.currentTarget.style.color = '#4A5165';
+                  }}
+                >
+                  {isConnecting ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : item.icon ? (
+                    item.icon
+                  ) : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px' }}>
+                      {item.logos.map(logo => (
+                        <PluginIcon key={logo} pluginId={logo} className="w-3.5 h-3.5" alt="" />
+                      ))}
+                    </span>
+                  )}
+                  {item.label}
+                  <span style={{ color: '#9AA1B0', fontWeight: 700 }} aria-hidden>+</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* The multi-account chooser, when the provider returns more than one. */}
@@ -749,14 +1066,27 @@ export function ChannelsCard({
         </div>
       )}
 
-      {/* Same shape as the sync failure above: a sentence the reader can act
-          on, and the provider's own words one disclosure away for whoever has
-          to fix it. Google's version of "this API is switched off" names a
-          Cloud project number, which tells a business owner nothing except
-          that something is broken and it might be their fault. */}
       {connect.phase === 'error' && connect.error && (
         <p style={{ marginTop: '8px', fontSize: '11px', color: '#B4442E', lineHeight: 1.4 }}>
           {connectErrorText(connect.error, connect.provider)}
+        </p>
+      )}
+
+      {/* One muted footer line where three paragraphs used to be: when the
+          numbers refresh, and how the last manual refresh went. */}
+      {(connections.length > 0 || syncNote) && (
+        <p
+          style={{
+            marginTop: '10px',
+            paddingTop: '8px',
+            borderTop: '1px solid #F1F3F8',
+            fontSize: '10px',
+            color: '#A2A9B8',
+            lineHeight: 1.4,
+          }}
+        >
+          {connections.some(c => c.is_backfilling) ? t('backfillNote') : t('cadence')}
+          {syncNote && ` · ${syncNote}`}
         </p>
       )}
     </div>

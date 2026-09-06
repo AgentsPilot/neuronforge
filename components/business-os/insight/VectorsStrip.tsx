@@ -1,7 +1,11 @@
 'use client';
 
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import type { VectorStatus, VectorMaturityData } from '@/lib/business-os/insight/repository/InsightRepository';
+import type { VectorStatus } from '@/lib/business-os/insight/repository/InsightRepository';
+// The hook's shape, not the repository's: this renders what the API returned,
+// which may be a response cached from before a field existed. The repository
+// type is the server's guarantee and is stricter than anything a client holds.
+import type { VectorMaturityData } from '@/hooks/useInsights';
 
 // ===========================
 // Types

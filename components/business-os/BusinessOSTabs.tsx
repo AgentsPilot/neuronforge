@@ -68,7 +68,7 @@ interface TabDef {
 const TABS: TabDef[] = [
   { href: '/business-os', color: '#F97316', Icon: Sun, labelKey: 'nav.myday', fallback: 'My day' },
   { href: '/business-os/crm', color: '#8B5CF6', Icon: Users, labelKey: 'cap.people.name', fallback: 'People', capability: 'crm' },
-  { href: '/business-os/payments', color: '#22C58B', Icon: Receipt, labelKey: 'nav.payments', fallback: 'Payments', capability: 'payments' },
+  { href: '/business-os/orders', color: '#22C58B', Icon: Receipt, labelKey: 'nav.payments', fallback: 'Orders', capability: 'payments' },
   { href: '/business-os/reports', color: '#22C58B', Icon: BarChart3, labelKey: 'cap.reports.name', fallback: 'Reports', capability: 'reports' },
   { href: '/business-os/website', color: '#4F6EF7', Icon: Globe, labelKey: 'cap.website.name', fallback: 'Online presence', capability: 'website' },
   { href: null, color: '#D14E97', Icon: Settings, labelKey: 'cap.config.name', fallback: 'Configuration' },

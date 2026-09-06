@@ -121,8 +121,34 @@ describe('Business Catalog', () => {
      * could NOT read off the enum: either multiple stored values, or a classifier
      * for a per-user field. A term that maps 1:1 onto a value it already sees is
      * a synonym, and synonyms are how this grows out of control.
+     *
+     * Arity is the proxy for "could not read it off the enum", and it is not a
+     * perfect one. `bookings.status.upcoming -> confirmed` is single-valued and
+     * is still not a synonym: "upcoming" is a temporal word, not a restatement
+     * of "confirmed", and the pairing of that status with a future date is a
+     * business rule (`SchedulingRepository.getUpcoming`) rather than something
+     * legible in the enum. Published as nothing, the planner filtered on time
+     * alone and answered "האם יש לי פגישות קרובות?" with three meetings, one
+     * completed, one cancelled and one no-show.
+     *
+     * The synonyms this guard exists to reject share a shape arity misses: the
+     * term is a lexical restatement of the one value it maps to — `done` for
+     * `completed`, `missed` for `no_show`, `booked` for `confirmed`. So a
+     * single-valued term stays rejected by default, and earning an exemption
+     * costs an entry here plus the sentence saying why. That friction is the
+     * point: it is the difference between a considered rule and a reflex.
      */
     it('declares no synonyms — only multi-value business rules or per-user classifiers', () => {
+      /**
+       * Single-valued terms that are NOT restatements of their value.
+       * One line of justification each, or it does not belong here.
+       */
+      const JUSTIFIED_SINGLE_VALUE = new Set([
+        // "Upcoming" is about time, not status; the status half is a business
+        // rule the enum cannot show. See the block comment above.
+        'bookings.status.upcoming',
+      ]);
+
       const offenders: string[] = [];
 
       for (const entity of Object.values(CATALOG.entities)) {
@@ -131,7 +157,9 @@ describe('Business Catalog', () => {
             const isBusinessRule = values.length > 1;
             const isPerUserClassifier = Boolean(field.enumSource);
 
-            if (!isBusinessRule && !isPerUserClassifier) {
+            const isJustified = JUSTIFIED_SINGLE_VALUE.has(`${entity.key}.${fieldKey}.${term}`);
+
+            if (!isBusinessRule && !isPerUserClassifier && !isJustified) {
               offenders.push(`${entity.key}.${fieldKey}.${term} -> ${values.join('|')}`);
             }
           }
@@ -139,6 +167,18 @@ describe('Business Catalog', () => {
       }
 
       expect(offenders).toEqual([]);
+    });
+
+    it('still rejects a single-valued term that is a plain restatement', () => {
+      // The exemption is an allowlist, not a hole: `done -> completed` has the
+      // same arity as `upcoming -> confirmed` and must still be refused.
+      const JUSTIFIED_SINGLE_VALUE = new Set(['bookings.status.upcoming']);
+      const wouldBeOffender = (key: string, values: string[]) =>
+        values.length === 1 && !JUSTIFIED_SINGLE_VALUE.has(key);
+
+      expect(wouldBeOffender('bookings.status.done', ['completed'])).toBe(true);
+      expect(wouldBeOffender('bookings.status.missed', ['no_show'])).toBe(true);
+      expect(wouldBeOffender('bookings.status.upcoming', ['confirmed'])).toBe(false);
     });
 
     it('keeps the total number of declared terms small', () => {

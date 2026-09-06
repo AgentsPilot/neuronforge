@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { resolvePublicBranding } from '@/lib/branding/publicBranding';
 
 const logger = createLogger({ module: 'API', service: 'BookingManage' });
 
@@ -86,13 +87,17 @@ export async function GET(
       );
     }
 
-    // Fetch business profile for display
-    // Note: logo_url and primary_color columns don't exist in business_profiles table
-    const { data: profile } = await supabaseServer
-      .from('business_profiles')
-      .select('company_name, logo_url, website_url, language')
-      .eq('user_id', booking.user_id)
-      .single();
+    /*
+     * The business's real identity, from the one public resolver.
+     *
+     * This used to be a direct profile select whose result was flattened into
+     * `primaryColor: '#4F46E5'` with a comment explaining that the column did
+     * not exist. It was half right — there is no `primary_color` column — but
+     * the colour was never missing: it lives in `theme`, the same JSONB the
+     * confirmation email that carried this very link already reads. So a client
+     * got a correctly branded email and then landed on a platform-indigo page.
+     */
+    const brand = await resolvePublicBranding({ by: 'userId', userId: booking.user_id });
 
     // Calculate if booking can be rescheduled/cancelled
     const startTime = new Date(booking.start_time);
@@ -117,12 +122,22 @@ export async function GET(
         canCancel: canModify,
         hoursUntilBooking: Math.max(0, Math.floor(hoursUntilBooking))
       },
-      business: profile ? {
-        name: profile.company_name,
-        logoUrl: profile.logo_url,
-        primaryColor: '#4F46E5', // Default color since primary_color column doesn't exist
-        websiteUrl: profile.website_url,
-        language: profile.language || 'en'
+      business: brand ? {
+        name: brand.businessName,
+        logoUrl: brand.logoUrl,
+        /** Complete — pages read colours from here rather than guessing. */
+        theme: brand.theme,
+        /**
+         * Retained so the pages that still read a flat colour keep working
+         * while they are migrated onto `theme`. Deprecated: remove once none
+         * of the `/book/manage/*` pages reference it.
+         */
+        primaryColor: brand.theme.colors.primary,
+        websiteUrl: brand.info.websiteUrl,
+        language: brand.locale,
+        dir: brand.dir,
+        userCode: brand.userCode,
+        info: brand.info
       } : null
     });
 
