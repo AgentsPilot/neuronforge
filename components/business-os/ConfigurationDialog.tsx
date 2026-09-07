@@ -72,7 +72,13 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
    */
   const refreshIntakeEnabled = useCallback(async () => {
     try {
-      const response = await fetch('/api/intake/settings');
+      /*
+       * `no-store`, because this is a REFETCH of a URL already fetched on open.
+       * Without it the browser answers from its own cache and this reports the
+       * state from before the change that triggered it — the dialog saying
+       * intake does not reach clients seconds after the owner published it.
+       */
+      const response = await fetch('/api/intake/settings', { cache: 'no-store' });
       if (!response.ok) return;
       const data = await response.json();
       // "Does a form reach the client", not "is a setting on". Reading
@@ -89,7 +95,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     if (!isOpen) return;
     let cancelled = false;
 
-    fetch('/api/intake/settings')
+    fetch('/api/intake/settings', { cache: 'no-store' })
       .then(response => (response.ok ? response.json() : null))
       .then(data => {
         if (!cancelled) setIntakeEnabled(intakeReachesClient(data?.settings));

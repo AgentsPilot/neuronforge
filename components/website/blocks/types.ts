@@ -13,7 +13,6 @@ export type BlockType =
   | 'services'
   | 'testimonials'
   | 'contact_form'
-  | 'intake_form'
   | 'pricing'
   | 'faq'
   | 'about'

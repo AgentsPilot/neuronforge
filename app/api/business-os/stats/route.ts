@@ -12,6 +12,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
+import { intakeFormRepository } from '@/lib/repositories/IntakeFormRepository';
 import {
   grossRevenue,
   netRevenue,
@@ -155,6 +156,24 @@ interface CapabilityStats {
     calendar_synced: boolean;
     calendar_provider: 'google_calendar' | 'outlook' | null;
     intake_enabled: boolean;
+    /**
+     * A form exists but nobody has approved it.
+     *
+     * The state every business lands in the moment onboarding writes their
+     * intake, and the one the readiness card has to act on: `intake_enabled`
+     * alone cannot tell "never set up" from "written, waiting to be read", and
+     * those need different sentences.
+     */
+    intake_draft_pending: boolean;
+    /**
+     * A form exists and has been approved — regardless of the on/off switch.
+     *
+     * Separate from `intake_enabled`, which also asks whether the business
+     * currently wants it. Without the distinction, a business that set intake
+     * up and deliberately switched it off was told to "set up your intake" —
+     * sent back to finish work it had finished and chosen to pause.
+     */
+    intake_published: boolean;
     // Weekly comparison
     bookings_this_week: number;
     bookings_last_week: number;
@@ -415,6 +434,8 @@ export async function GET(request: NextRequest) {
       { data: bookedValuePeriodData },
       { data: refundLedger30d },
       intakeSettingsResult,
+      intakePublishedResult,
+      intakeDraftResult,
       channelConnectionsResult,
     ] = await Promise.all([
       // CRM: total contacts
@@ -816,6 +837,10 @@ export async function GET(request: NextRequest) {
         .gte('succeeded_at', periodStart),
       // Intake form configuration (repository — no row means never set up)
       intakeRepository.getSettings(user.id),
+      // The approved form, if there is one. `is_enabled` says the business
+      // wants intake; only this says a client could actually receive it.
+      intakeFormRepository.getPublished(user.id),
+      intakeFormRepository.getDraft(user.id),
       // Connected social/analytics channels, for the readiness chips
       channelConnectionRepository.findByUser(user.id),
     ]);
@@ -1629,8 +1654,20 @@ export async function GET(request: NextRequest) {
         stripe_connected: stripeConnected,
         calendar_synced: calendarSynced,
         calendar_provider: calendarProvider,
-        // Intake forms are opt-in: no settings row, or is_enabled false, both mean off.
-        intake_enabled: !!intakeSettingsResult?.data?.is_enabled,
+        /*
+         * Complete means a client could receive it: switched on AND published.
+         *
+         * This read `is_enabled` alone, which marked the step done for a
+         * business whose only form was an unread draft — the readiness card
+         * said "configured" about something that sends nobody anything.
+         */
+        intake_enabled:
+          !!intakeSettingsResult?.data?.is_enabled && !!intakePublishedResult?.data,
+        // Written, not yet approved. The card turns this into "review and
+        // publish" rather than "set up".
+        intake_draft_pending:
+          !!intakeDraftResult?.data && !intakePublishedResult?.data,
+        intake_published: !!intakePublishedResult?.data,
         // Weekly comparison
         bookings_this_week: bookingsThisWeek || 0,
         bookings_last_week: bookingsLastWeek || 0,

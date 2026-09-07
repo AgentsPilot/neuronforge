@@ -1,7 +1,24 @@
 /**
- * IntakeRepository
- * Repository for intake_form_templates and user_intake_settings tables
- * Handles CRUD operations for intake forms configuration
+ * The two intake switches, and the answers stored on a booking.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This was the repository for `intake_form_templates` — a shared catalogue of
+ * eleven forms that every business picked one of. That table is gone. A business
+ * now owns its form, and `IntakeFormRepository` is where it lives.
+ *
+ * Eleven methods went with the table, and they were not merely unused: each one
+ * still queried `intake_form_templates` or `user_intake_settings.template_id`,
+ * both dropped by the migration, so a surviving caller got a Postgres error
+ * rather than an empty result. That is what happened to the owner's "send
+ * intake" endpoint — `getCollectableTemplateForUser` threw, the endpoint read
+ * the absent result as "not configured", and every send was refused for a
+ * business whose form was published and working.
+ *
+ * What is left is what still exists: the settings row, and the responses stored
+ * on a booking.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * @module lib/repositories/IntakeRepository
  */
 
 import { createLogger } from '@/lib/logger';
@@ -9,52 +26,18 @@ import { supabaseServer } from '@/lib/supabaseServer';
 
 const logger = createLogger({ service: 'IntakeRepository' });
 
-// ============================================
-// Types
-// ============================================
-
-export interface IntakeFieldOption {
-  value: string;
-  label_en: string;
-  label_es: string;
-  label_he: string;
-}
-
-export interface IntakeField {
-  key: string;
-  type: 'text' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'tel' | 'email';
-  label_en: string;
-  label_es: string;
-  label_he: string;
-  required: boolean;
-  options?: IntakeFieldOption[];
-  placeholder_en?: string;
-  placeholder_es?: string;
-  placeholder_he?: string;
-}
-
-export interface IntakeFormTemplate {
-  id: string;
-  template_key: string;
-  vertical: string;
-  name_en: string;
-  name_es: string;
-  name_he: string;
-  description_en: string | null;
-  description_es: string | null;
-  description_he: string | null;
-  fields: IntakeField[];
-  is_default: boolean;
-  display_order: number;
-  created_at: string;
-}
-
+/**
+ * Whether the business collects intake, and whether we email it for them.
+ *
+ * Neither is "is there a form" — that belongs to
+ * `IntakeFormRepository.getPublished`, and `lib/business-os/intakeReach` is
+ * where the two are put together. `template_id` and `collect_during_booking`
+ * are dropped columns, deliberately absent here so nothing can read them back.
+ */
 export interface UserIntakeSettings {
   id: string;
   user_id: string;
-  template_id: string | null;
   is_enabled: boolean;
-  collect_during_booking: boolean;
   send_after_booking: boolean;
   created_at: string;
   updated_at: string;
@@ -65,117 +48,26 @@ export interface IntakeRepositoryResult<T> {
   error: Error | null;
 }
 
-// ============================================
-// Repository Class
-// ============================================
+/**
+ * A completed intake as stored on the booking.
+ *
+ * `questions` is the snapshot taken when the client answered — what makes a
+ * submission readable on its own after the form is edited and republished.
+ * `template_id` / `template_key` are the pre-migration shape, kept optional so
+ * an older row still parses; the migration backfilled those rows' labels into
+ * `questions` before dropping the catalogue.
+ */
+export interface StoredIntakeResponses {
+  form_id?: string;
+  version?: number;
+  questions?: unknown[];
+  responses: Record<string, unknown>;
+  template_id?: string;
+  template_key?: string;
+}
 
 export class IntakeRepository {
   private supabase = supabaseServer;
-
-  // ============================================
-  // Template Methods
-  // ============================================
-
-  /**
-   * List all templates for a given vertical
-   */
-  async listTemplatesByVertical(vertical: string): Promise<IntakeRepositoryResult<IntakeFormTemplate[]>> {
-    try {
-      logger.info({ vertical }, 'Listing intake templates by vertical');
-
-      const { data, error } = await this.supabase
-        .from('intake_form_templates')
-        .select('*')
-        .eq('vertical', vertical)
-        .order('display_order', { ascending: true });
-
-      if (error) throw error;
-
-      logger.info({ vertical, count: data?.length || 0 }, 'Templates found');
-      return { data: data as IntakeFormTemplate[], error: null };
-    } catch (error) {
-      logger.error({ err: error, vertical }, 'Failed to list templates');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * List all available templates (for admin or when vertical is unknown)
-   */
-  async listAllTemplates(): Promise<IntakeRepositoryResult<IntakeFormTemplate[]>> {
-    try {
-      logger.info('Listing all intake templates');
-
-      const { data, error } = await this.supabase
-        .from('intake_form_templates')
-        .select('*')
-        .order('vertical', { ascending: true })
-        .order('display_order', { ascending: true });
-
-      if (error) throw error;
-
-      return { data: data as IntakeFormTemplate[], error: null };
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to list all templates');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Get a template by ID
-   */
-  async getTemplateById(templateId: string): Promise<IntakeRepositoryResult<IntakeFormTemplate>> {
-    try {
-      logger.info({ templateId }, 'Getting template by ID');
-
-      const { data, error } = await this.supabase
-        .from('intake_form_templates')
-        .select('*')
-        .eq('id', templateId)
-        .single();
-
-      if (error) {
-        if (error.code === 'PGRST116') {
-          logger.debug({ templateId }, 'Template not found');
-          return { data: null, error: null };
-        }
-        throw error;
-      }
-
-      return { data: data as IntakeFormTemplate, error: null };
-    } catch (error) {
-      logger.error({ err: error, templateId }, 'Failed to get template');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Get a template by key
-   */
-  async getTemplateByKey(templateKey: string): Promise<IntakeRepositoryResult<IntakeFormTemplate>> {
-    try {
-      logger.info({ templateKey }, 'Getting template by key');
-
-      const { data, error } = await this.supabase
-        .from('intake_form_templates')
-        .select('*')
-        .eq('template_key', templateKey)
-        .single();
-
-      if (error) {
-        if (error.code === 'PGRST116') {
-          logger.debug({ templateKey }, 'Template not found');
-          return { data: null, error: null };
-        }
-        throw error;
-      }
-
-      return { data: data as IntakeFormTemplate, error: null };
-    } catch (error) {
-      logger.error({ err: error, templateKey }, 'Failed to get template');
-      return { data: null, error: error as Error };
-    }
-  }
 
   // ============================================
   // User Settings Methods
@@ -207,102 +99,6 @@ export class IntakeRepository {
       return { data: data as UserIntakeSettings, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to get intake settings');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Get user's intake settings with template details
-   */
-  async getSettingsWithTemplate(userId: string): Promise<IntakeRepositoryResult<UserIntakeSettings & { template: IntakeFormTemplate | null }>> {
-    try {
-      logger.info({ userId }, 'Getting user intake settings with template');
-
-      const { data, error } = await this.supabase
-        .from('user_intake_settings')
-        .select(`
-          *,
-          template:intake_form_templates(*)
-        `)
-        .eq('user_id', userId)
-        .single();
-
-      if (error) {
-        if (error.code === 'PGRST116') {
-          logger.debug({ userId }, 'No intake settings found for user');
-          return { data: null, error: null };
-        }
-        throw error;
-      }
-
-      return {
-        data: {
-          ...data,
-          template: data.template as IntakeFormTemplate | null
-        } as UserIntakeSettings & { template: IntakeFormTemplate | null },
-        error: null
-      };
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Failed to get intake settings with template');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Create user intake settings
-   */
-  async createSettings(
-    userId: string,
-    settings: Partial<Omit<UserIntakeSettings, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
-  ): Promise<IntakeRepositoryResult<UserIntakeSettings>> {
-    try {
-      logger.info({ userId }, 'Creating user intake settings');
-
-      const { data, error } = await this.supabase
-        .from('user_intake_settings')
-        .insert({
-          user_id: userId,
-          ...settings
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      logger.info({ userId, settingsId: data.id }, 'Intake settings created');
-      return { data: data as UserIntakeSettings, error: null };
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Failed to create intake settings');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Update user intake settings
-   */
-  async updateSettings(
-    userId: string,
-    settings: Partial<Omit<UserIntakeSettings, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
-  ): Promise<IntakeRepositoryResult<UserIntakeSettings>> {
-    try {
-      logger.info({ userId }, 'Updating user intake settings');
-
-      const { data, error } = await this.supabase
-        .from('user_intake_settings')
-        .update({
-          ...settings,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', userId)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      logger.info({ userId, settingsId: data.id }, 'Intake settings updated');
-      return { data: data as UserIntakeSettings, error: null };
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Failed to update intake settings');
       return { data: null, error: error as Error };
     }
   }
@@ -341,226 +137,8 @@ export class IntakeRepository {
   }
 
   // ============================================
-  // Booking Flow Methods
+  // Booking Submissions
   // ============================================
-
-  /**
-   * Get the enabled template for a user (for booking flow)
-   * Returns null if intake is disabled or no template is selected
-   */
-  /**
-   * The template to EMAIL after a booking, if the business asked for that.
-   *
-   * The intake email used to call `getEnabledTemplateForUser`, which gates on
-   * `collect_during_booking` — the toggle for showing the form as a step INSIDE
-   * the booking flow. So the email was governed by the wrong switch, and
-   * `send_after_booking` — the toggle whose label reads "Send link after
-   * booking (via email)" — was read by nothing at all: stored, rendered,
-   * saved, and inert.
-   *
-   * A business that wanted only the email got none; one that wanted only the
-   * in-flow step got an email as well.
-   */
-  /**
-   * The template for anything the OWNER does — sending by hand, filling it in.
-   *
-   * Asks only whether the business collects intake and has a form. Not whether
-   * it emails automatically: that switch means "send it for me", and reading it
-   * here would refuse the manual send it exists to make room for.
-   */
-  async getCollectableTemplateForUser(userId: string): Promise<IntakeRepositoryResult<IntakeFormTemplate | null>> {
-    try {
-      const { data: settings, error: settingsError } = await this.supabase
-        .from('user_intake_settings')
-        .select('template_id, is_enabled')
-        .eq('user_id', userId)
-        .single();
-
-      if (settingsError) {
-        if (settingsError.code === 'PGRST116') return { data: null, error: null };
-        throw settingsError;
-      }
-
-      if (!settings.is_enabled || !settings.template_id) return { data: null, error: null };
-
-      const { data: template, error: templateError } = await this.supabase
-        .from('intake_form_templates')
-        .select('*')
-        .eq('id', settings.template_id)
-        .single();
-
-      if (templateError) {
-        if (templateError.code === 'PGRST116') return { data: null, error: null };
-        throw templateError;
-      }
-
-      return { data: template as IntakeFormTemplate, error: null };
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Failed to resolve the collectable intake template');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  async getEmailableTemplateForUser(userId: string): Promise<IntakeRepositoryResult<IntakeFormTemplate | null>> {
-    try {
-      const { data: settings, error: settingsError } = await this.supabase
-        .from('user_intake_settings')
-        .select('template_id, is_enabled, send_after_booking')
-        .eq('user_id', userId)
-        .single();
-
-      if (settingsError) {
-        // No settings row at all is "not configured", not a failure.
-        if (settingsError.code === 'PGRST116') return { data: null, error: null };
-        throw settingsError;
-      }
-
-      /*
-       * Three things, and `send_after_booking` is the one that decides whether
-       * an email goes out.
-       *
-       * This used to call the booking-flow resolver, which gates on
-       * `collect_during_booking` — the switch for showing the form as a step
-       * INSIDE the booking. So the email obeyed the wrong flag and the one
-       * labelled "email after booking" was read by nothing: stored, rendered,
-       * saved, inert.
-       *
-       * `collect_during_booking` is gone as a choice; the form is never a step
-       * in the booking flow now. What remains is whether it is emailed.
-       */
-      if (!settings.is_enabled || !settings.send_after_booking || !settings.template_id) {
-        logger.info(
-          {
-            userId,
-            isEnabled: settings.is_enabled,
-            sendAfterBooking: settings.send_after_booking,
-            hasTemplate: !!settings.template_id,
-          },
-          'Intake email not enabled for this business'
-        );
-        return { data: null, error: null };
-      }
-
-      const { data: template, error: templateError } = await this.supabase
-        .from('intake_form_templates')
-        .select('*')
-        .eq('id', settings.template_id)
-        .single();
-
-      if (templateError) {
-        if (templateError.code === 'PGRST116') return { data: null, error: null };
-        throw templateError;
-      }
-
-      return { data: template as IntakeFormTemplate, error: null };
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Failed to resolve the emailable intake template');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * DEPRECATED — the booking flow no longer collects intake.
-   *
-   * Intake is one thing now: the form is emailed after the booking. A step
-   * inside the flow put a long form between a client and the thing they came to
-   * do, and it existed only because the setting offered the choice.
-   *
-   * Kept because the owner-side booking screens still read it to decide whether
-   * to show a form they are filling in themselves, which is a different act.
-   * Nothing on a public surface should call this.
-   */
-  async getEnabledTemplateForUser(userId: string): Promise<IntakeRepositoryResult<IntakeFormTemplate | null>> {
-    try {
-      logger.info({ userId }, 'Getting enabled intake template for user');
-
-      // First get user settings
-      const { data: settings, error: settingsError } = await this.supabase
-        .from('user_intake_settings')
-        .select('template_id, is_enabled, collect_during_booking')
-        .eq('user_id', userId)
-        .single();
-
-      if (settingsError) {
-        if (settingsError.code === 'PGRST116') {
-          // No settings = intake not configured
-          logger.debug({ userId }, 'No intake settings found');
-          return { data: null, error: null };
-        }
-        throw settingsError;
-      }
-
-      // Check if intake is enabled and should be collected during booking
-      //
-      // This answers the BOOKING-FLOW question — "does the client fill this in
-      // as a step?" — and `collect_during_booking` is the right flag for it.
-      // It is NOT the right flag for the after-booking email; see
-      // `getEmailableTemplateForUser` below, which was missing entirely.
-      if (!settings.is_enabled || !settings.collect_during_booking || !settings.template_id) {
-        logger.debug({ userId }, 'Intake not enabled for booking flow');
-        return { data: null, error: null };
-      }
-
-      // Get the template
-      const { data: template, error: templateError } = await this.supabase
-        .from('intake_form_templates')
-        .select('*')
-        .eq('id', settings.template_id)
-        .single();
-
-      if (templateError) {
-        if (templateError.code === 'PGRST116') {
-          logger.warn({ userId, templateId: settings.template_id }, 'Selected template not found');
-          return { data: null, error: null };
-        }
-        throw templateError;
-      }
-
-      logger.info({ userId, templateKey: template.template_key }, 'Found enabled template for booking');
-      return { data: template as IntakeFormTemplate, error: null };
-    } catch (error) {
-      logger.error({ err: error, userId }, 'Failed to get enabled template');
-      return { data: null, error: error as Error };
-    }
-  }
-
-  /**
-   * Save intake responses to a booking
-   */
-  async saveIntakeResponses(
-    bookingId: string,
-    userId: string,
-    templateId: string,
-    templateKey: string,
-    responses: Record<string, any>
-  ): Promise<IntakeRepositoryResult<boolean>> {
-    try {
-      logger.info({ bookingId, templateKey }, 'Saving intake responses to booking');
-
-      const intakeData = {
-        template_id: templateId,
-        template_key: templateKey,
-        responses
-      };
-
-      const { error } = await this.supabase
-        .from('scheduling_bookings')
-        .update({
-          intake_responses: intakeData,
-          intake_completed_at: new Date().toISOString()
-        })
-        .eq('id', bookingId)
-        .eq('user_id', userId);
-
-      if (error) throw error;
-
-      logger.info({ bookingId, templateKey }, 'Intake responses saved');
-      return { data: true, error: null };
-    } catch (error) {
-      logger.error({ err: error, bookingId }, 'Failed to save intake responses');
-      return { data: null, error: error as Error };
-    }
-  }
 
   /**
    * Get intake responses for a booking
@@ -568,7 +146,7 @@ export class IntakeRepository {
   async getIntakeResponses(
     bookingId: string,
     userId: string
-  ): Promise<IntakeRepositoryResult<{ template_id: string; template_key: string; responses: Record<string, any> } | null>> {
+  ): Promise<IntakeRepositoryResult<StoredIntakeResponses | null>> {
     try {
       const { data, error } = await this.supabase
         .from('scheduling_bookings')
@@ -585,7 +163,7 @@ export class IntakeRepository {
       }
 
       return {
-        data: data.intake_responses as { template_id: string; template_key: string; responses: Record<string, any> } | null,
+        data: data.intake_responses as StoredIntakeResponses | null,
         error: null
       };
     } catch (error) {
@@ -596,7 +174,10 @@ export class IntakeRepository {
 
   /**
    * Update intake responses for a booking
-   * Preserves the template_id and template_key, only updates the responses
+   *
+   * Only the answers change. Everything else the submission carries — the form
+   * id, the version, the question snapshot — is what makes it readable, so it is
+   * preserved rather than rewritten by an edit.
    */
   async updateIntakeResponses(
     bookingId: string,
@@ -606,7 +187,7 @@ export class IntakeRepository {
     try {
       logger.info({ bookingId }, 'Updating intake responses for booking');
 
-      // First get the existing intake data to preserve template info
+      // First get the existing intake data to preserve the question snapshot
       const { data: existing, error: fetchError } = await this.supabase
         .from('scheduling_bookings')
         .select('intake_responses')
@@ -627,7 +208,6 @@ export class IntakeRepository {
         return { data: false, error: new Error('No existing intake responses found') };
       }
 
-      // Update the responses while preserving template info
       const updatedIntakeData = {
         ...existing.intake_responses,
         responses

@@ -27,6 +27,20 @@ config({ path: '.env.local', quiet: true });
 
 /** Tables the AI worker is allowed to know about. Extend deliberately. */
 const TABLES = [
+  /*
+   * The business's own intake form.
+   *
+   * Needed here before the `intake` entity can be declared at all: the catalog
+   * refuses an entity whose table was never introspected, and it refuses it at
+   * IMPORT — so a premature declaration takes the whole chat down rather than
+   * just that capability.
+   *
+   * The questions live in a JSONB column, so the assistant's intake actions are
+   * all `writesRow: false`: they take a question as a parameter and a handler
+   * rewrites the array, rather than mapping onto columns.
+   */
+  'business_intake_forms',
+
   // Core CRM / scheduling / money
   'crm_contacts',
   'crm_tasks',

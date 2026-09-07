@@ -1,6 +1,7 @@
 // Shared types for CRM Contact Drawer components
 
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
+import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import type { CRMActivity } from '@/lib/repositories/CRMActivityRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 
@@ -13,34 +14,25 @@ export interface PaymentTransaction {
   description?: string;
 }
 
+/**
+ * A completed intake, as stored on the booking.
+ *
+ * `questions` is a snapshot taken when the client answered, which is what lets
+ * this be rendered without fetching anything — and what keeps it readable after
+ * the form has been edited and republished.
+ *
+ * `template_id` and `template_key` are the shape submissions had before the
+ * shared catalogue was replaced. Kept optional so an older row still parses;
+ * nothing reads them, and a submission carrying them has no `questions`, so it
+ * renders under its own keys.
+ */
 export interface IntakeResponses {
-  template_id: string;
-  template_key: string;
+  form_id?: string;
+  version?: number;
+  questions?: IntakeQuestion[];
   responses: Record<string, unknown>;
-}
-
-export interface IntakeTemplateField {
-  key: string;
-  type: 'text' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'tel' | 'email';
-  label_en: string;
-  label_es: string;
-  label_he: string;
-  required?: boolean;
-  options?: Array<{
-    value: string;
-    label_en: string;
-    label_es: string;
-    label_he: string;
-  }>;
-}
-
-export interface IntakeTemplate {
-  id: string;
-  template_key: string;
-  name_en: string;
-  name_es: string;
-  name_he: string;
-  fields: IntakeTemplateField[];
+  template_id?: string;
+  template_key?: string;
 }
 
 export interface Appointment {

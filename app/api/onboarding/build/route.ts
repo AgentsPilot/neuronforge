@@ -228,13 +228,35 @@ export async function POST(request: NextRequest) {
       // business selling nothing.
       clients_per_week: clientsPerWeek || null,
       tools,
-      website_url: profile?.website_url || null,
       profile_completeness: profileCompleteness,
       onboarding_completed: true,
       // NEW: Intelligent onboarding fields
       pain_points: painPoints,
       goals,
     };
+
+    /*
+     * The business's OWN website address, and only when we were actually given one.
+     *
+     * This used to be `website_url: profile?.website_url || null` — reading the
+     * legacy `profile` branch of the request, which the only caller does not
+     * send. It sends four keys: company_name, vertical, language, description.
+     * So the expression was always null, and every completed onboarding wrote
+     * NULL over the column. An upsert that nulls a field no caller populates
+     * can only destroy data.
+     *
+     * It matters most to the business that declines a website here: someone on
+     * `booking_only` is the one most likely to HAVE a site of their own and be
+     * using this platform for the booking half. The public pages, the email
+     * branding and the booking email's "book again" link all reach for it.
+     *
+     * Onboarding still does not ask for the address — it only learns
+     * `has_website` as a boolean — so in practice this key is absent and the
+     * column is left alone for Settings to fill.
+     */
+    if (profile?.website_url) {
+      profileData.website_url = profile.website_url;
+    }
 
     // Add new configuration fields if using new format
     if (configuration) {
@@ -590,6 +612,48 @@ export async function POST(request: NextRequest) {
         requestLogger.info(
           { serviceId: created.id, installments: plan.installment_count },
           'Payment plan created from the conversation'
+        );
+      }
+    }
+
+    /*
+     * Write their intake form.
+     *
+     * AFTER the services exist, because the questions are built from what this
+     * business actually sells — a form generated before them would describe the
+     * trade in general rather than this business in particular.
+     *
+     * A DRAFT. It reaches nobody until the owner reads it and publishes, which
+     * is the first thing the readiness card will ask them to do.
+     *
+     * Only for businesses that said they collect intake. Generating one for
+     * everybody would put an unread draft and a standing "publish this" prompt
+     * in front of businesses that never asked for a form.
+     *
+     * Never fatal, and never awaited for its answer: a business whose onboarding
+     * failed because a model was slow has lost far more than an intake form.
+     */
+    if (configuration?.needs_intake) {
+      try {
+        const { intakeGenerationService } = await import('@/lib/services/IntakeGenerationService');
+        const intake = await intakeGenerationService.generateIntakeForm(user.id);
+
+        requestLogger.info(
+          {
+            userId: user.id,
+            formId: intake.formId,
+            questions: intake.questionCount,
+            // 'fallback' means the model was not reachable and the questions
+            // are generic. Worth knowing here rather than discovering from a
+            // confused owner reading three stock questions.
+            contentSource: intake.contentSource,
+          },
+          intake.success ? 'Intake draft generated during onboarding' : 'Intake generation failed'
+        );
+      } catch (intakeError) {
+        requestLogger.error(
+          { err: intakeError, userId: user.id },
+          'Intake generation threw during onboarding (non-blocking)'
         );
       }
     }

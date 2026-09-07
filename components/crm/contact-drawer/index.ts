@@ -23,8 +23,6 @@ export type {
   ContactEmail,
   ContactDocument,
   IntakeResponses,
-  IntakeTemplate,
-  IntakeTemplateField,
   PaymentTransaction,
   CRMContact,
   CRMActivity,

@@ -43,7 +43,6 @@ import type {
   ContactDocument,
   ContactEmail,
   IntakeResponses,
-  IntakeTemplate,
   BookingJourneyStep,
   Appointment
 } from './types';
@@ -588,14 +587,21 @@ export function CRMContactDrawerV2({
   const [emails, setEmails] = useState<ContactEmail[]>([]);
   const [tasks, setTasks] = useState<ContactTask[]>([]);
   const [documents, setDocuments] = useState<ContactDocument[]>([]);
+  /*
+   * Completed intakes, for the Files tab.
+   *
+   * No `template` beside them any more, and no cache of templates to fill it:
+   * the submission carries the questions it was answered against, so there is
+   * nothing left to fetch and nothing that can arrive late.
+   */
   const [intakeResponses, setIntakeResponses] = useState<Array<{
     booking_id: string;
-    booking_date: string;
+    // Null for a product bought without a time. The Files tab formats it, and
+    // a date that does not exist is a fact rather than a missing value.
+    booking_date: string | null;
     service_name: string;
     intake: IntakeResponses;
-    template?: IntakeTemplate;
   }>>([]);
-  const [intakeTemplates, setIntakeTemplates] = useState<Record<string, IntakeTemplate>>({});
 
   /**
    * The business collects intake — whether or not it emails it automatically.
@@ -1178,7 +1184,7 @@ export function CRMContactDrawerV2({
             timezone: booking.timezone,
             status: booking.status,
             notes: booking.notes,
-            intake_responses: booking.intake_responses,
+            intake_responses: booking.intake_responses ?? undefined,
             intake_completed_at: booking.intake_completed_at,
             created_at: booking.created_at,
             service: booking.service
@@ -1402,71 +1408,6 @@ export function CRMContactDrawerV2({
       console.error('Failed to fetch all bookings:', error);
     }
   };
-
-  // Fetch intake template by ID (with caching)
-  const fetchIntakeTemplate = async (templateId: string): Promise<IntakeTemplate | null> => {
-    // Check cache first
-    if (intakeTemplates[templateId]) {
-      return intakeTemplates[templateId];
-    }
-
-    try {
-      const response = await fetch(`/api/intake/templates/${templateId}`);
-      const data = await response.json();
-
-      if (data.success && data.template) {
-        const template = data.template as IntakeTemplate;
-        setIntakeTemplates(prev => ({ ...prev, [templateId]: template }));
-        return template;
-      }
-    } catch (error) {
-      console.error('Failed to fetch intake template:', error);
-    }
-    return null;
-  };
-
-  // Fetch intake templates for bookings that have intake responses
-  useEffect(() => {
-    const fetchTemplatesForIntakes = async () => {
-      // Collect unique template IDs that we don't have yet
-      const templateIdsToFetch = new Set<string>();
-      for (const item of intakeResponses) {
-        const templateId = item.intake.template_id;
-        if (templateId && !intakeTemplates[templateId] && !item.template) {
-          templateIdsToFetch.add(templateId);
-        }
-      }
-
-      // Fetch missing templates
-      for (const templateId of templateIdsToFetch) {
-        await fetchIntakeTemplate(templateId);
-      }
-    };
-
-    if (intakeResponses.length > 0) {
-      fetchTemplatesForIntakes();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intakeResponses.length]); // Re-run when intakeResponses count changes
-
-  // Update intake responses with templates when they become available
-  useEffect(() => {
-    if (Object.keys(intakeTemplates).length > 0 && intakeResponses.length > 0) {
-      const needsUpdate = intakeResponses.some(ir =>
-        ir.intake.template_id && !ir.template && intakeTemplates[ir.intake.template_id]
-      );
-
-      if (needsUpdate) {
-        setIntakeResponses(prev => prev.map(ir => {
-          const templateId = ir.intake.template_id;
-          if (templateId && !ir.template && intakeTemplates[templateId]) {
-            return { ...ir, template: intakeTemplates[templateId] };
-          }
-          return ir;
-        }));
-      }
-    }
-  }, [intakeTemplates, intakeResponses]);
 
   // Save contact changes
   const handleSave = async () => {
@@ -1980,7 +1921,6 @@ export function CRMContactDrawerV2({
                   setShowInvoiceConfirm(true);
                 }}
                 isLoading={loadingSessions}
-                intakeTemplates={intakeTemplates}
                 isOpen={openSection === 'bookings'}
                 onToggle={handleSectionToggle('bookings')}
               />

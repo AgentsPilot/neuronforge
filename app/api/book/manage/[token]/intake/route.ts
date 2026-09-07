@@ -6,18 +6,24 @@ import { createLogger } from '@/lib/logger';
 import { verifyBookingToken } from '@/lib/services/BookingEmailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
+import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'API', service: 'BookingIntake' });
 
+/**
+ * Only the answers.
+ *
+ * `templateId` and `templateKey` used to arrive here and decide what the
+ * submission was filed against. They are gone: which form this is belongs to
+ * the business, is resolved server-side, and is not a client's to assert.
+ */
 const submitIntakeSchema = z.object({
-  templateId: z.string().uuid(),
-  templateKey: z.string(),
-  responses: z.record(z.any())
+  responses: z.record(z.any()),
 });
 
 // GET /api/book/manage/[token]/intake
-// Returns intake template for this booking
+// Returns the published intake form for this booking
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
@@ -143,20 +149,27 @@ export async function GET(
       );
     }
 
-    // Get intake template for this user
-    const { data: template, error: templateError } = await intakeRepository.getEnabledTemplateForUser(booking.user_id);
+    /*
+     * The published form, or nothing.
+     *
+     * This called `getEnabledTemplateForUser`, whose own docblock said nothing
+     * on a public surface should — and which gated on `collect_during_booking`,
+     * a flag the settings API accepted and discarded. A business with it false
+     * received an intake email whose link opened this page saying there was no
+     * form.
+     *
+     * `resolveIntakeForSending` is the one answer now, and `forClient` is false
+     * here on purpose: the client is holding a link the business sent them, so
+     * whether the business asked us to send it AUTOMATICALLY is already
+     * answered. Requiring it would break every form sent by hand.
+     */
+    const { form } = await resolveIntakeForSending(booking.user_id);
 
-    if (templateError) {
-      requestLogger.error({ err: templateError }, 'Failed to fetch intake template');
-      throw templateError;
-    }
-
-    // No template configured
-    if (!template) {
+    if (!form) {
       return NextResponse.json({
         success: true,
         hasIntake: false,
-        template: null,
+        form: null,
         booking: {
           id: booking.id,
           clientName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),
@@ -169,18 +182,17 @@ export async function GET(
       });
     }
 
-    requestLogger.info({ bookingId, templateKey: template.template_key }, 'Intake template fetched');
+    requestLogger.info({ bookingId, formId: form.id, version: form.version }, 'Intake form fetched');
 
     return NextResponse.json({
       success: true,
       hasIntake: true,
-      template: {
-        id: template.id,
-        template_key: template.template_key,
-        name_en: template.name_en,
-        name_es: template.name_es,
-        name_he: template.name_he,
-        fields: template.fields
+      // The form, in the business's language. There is no label to pick from
+      // three any more — a per-business form is written in one.
+      form: {
+        id: form.id,
+        version: form.version,
+        questions: form.questions,
       },
       booking: {
         id: booking.id,
@@ -279,20 +291,36 @@ export async function POST(
       );
     }
 
-    // Verify template exists
-    const { data: template, error: templateError } = await intakeRepository.getTemplateById(validated.templateId);
-    if (templateError || !template) {
+    /*
+     * Resolved SERVER-SIDE from the business, never taken from the submission.
+     *
+     * The form id used to arrive in the body and be looked up. A client posting
+     * a different id would have their answers filed against a form they were
+     * never shown — and since the questions are snapshotted next to the answers
+     * below, that snapshot would then be a lie about what was asked.
+     */
+    const { form } = await resolveIntakeForSending(booking.user_id);
+
+    if (!form) {
       return NextResponse.json(
-        { success: false, error: 'Invalid template' },
+        { success: false, error: 'This form is no longer being collected' },
         { status: 400 }
       );
     }
 
-    // Save intake responses
+    /*
+     * The QUESTIONS travel with the answers.
+     *
+     * A form is edited and republished; without the questions recorded here, a
+     * submission from an earlier version renders as a list of values with
+     * nothing to say what was asked. `form_id` and `version` identify it;
+     * the snapshot is what makes it readable regardless.
+     */
     const intakeData = {
-      template_id: validated.templateId,
-      template_key: validated.templateKey,
-      responses: validated.responses
+      form_id: form.id,
+      version: form.version,
+      questions: form.questions,
+      responses: validated.responses,
     };
 
     const { error: updateError } = await supabaseServer
@@ -308,7 +336,7 @@ export async function POST(
       throw updateError;
     }
 
-    requestLogger.info({ bookingId, templateKey: validated.templateKey }, 'Intake responses saved');
+    requestLogger.info({ bookingId, formId: form.id, version: form.version }, 'Intake responses saved');
 
     return NextResponse.json({
       success: true,

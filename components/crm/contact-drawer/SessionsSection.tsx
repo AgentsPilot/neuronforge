@@ -5,7 +5,7 @@ import { Calendar, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SessionCard } from '../SessionCard';
 import { CollapsibleSection } from '../CollapsibleSection';
-import type { SessionCardData, Appointment, SessionPayment, IntakeTemplate } from './types';
+import type { SessionCardData, Appointment, SessionPayment } from './types';
 
 interface SessionsSectionProps {
   sessions: SessionCardData[];
@@ -16,7 +16,6 @@ interface SessionsSectionProps {
   onEditSession?: (bookingId: string) => void;
   onViewIntake?: (bookingId: string) => void;
   isLoading?: boolean;
-  intakeTemplates?: Record<string, IntakeTemplate>;
 }
 
 export function SessionsSection({
@@ -28,7 +27,6 @@ export function SessionsSection({
   onEditSession,
   onViewIntake,
   isLoading = false,
-  intakeTemplates = {}
 }: SessionsSectionProps) {
   const [showAll, setShowAll] = useState(false);
 
@@ -130,9 +128,6 @@ export function SessionsSection({
         ) : (
           <>
             {displayedSessions.map((session) => {
-              // Get intake template for this session if it has intake responses
-              const templateId = session.booking.intake_responses?.template_id;
-              const template = templateId ? intakeTemplates[templateId] : undefined;
 
               return (
                 <SessionCard
@@ -143,7 +138,6 @@ export function SessionsSection({
                   t={t}
                   onEdit={onEditSession}
                   onViewIntake={onViewIntake}
-                  intakeTemplate={template}
                 />
               );
             })}
