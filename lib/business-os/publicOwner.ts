@@ -19,7 +19,16 @@
  *
  * NOT user-scoped, by nature: these are public requests with no session. The
  * subdomain and the user code ARE the credential, and both are public
- * identifiers that only ever resolve to the business that owns them.
+ * identifiers that only ever resolve to the business that owns them. This is
+ * the documented exception to the `.eq('user_id', userId)` rule — there is no
+ * caller identity yet; resolving one is the entire job of this module.
+ *
+ * Both lookups go through the repository layer (CLAUDE.md mandatory rule 1).
+ * `app/api/website/forms/intake` locks that with an explicit
+ * `expect(supabaseFrom).not.toHaveBeenCalled()` guard assertion, so a raw
+ * `supabaseServer` query here would fail its test rather than merely violate
+ * the standard. See D19 in
+ * docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * @module lib/business-os/publicOwner
@@ -27,8 +36,14 @@
 
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
+import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 
 const logger = createLogger({ module: 'PublicOwner' });
+
+// Service-role client: a public request has no session, so RLS has no identity
+// to evaluate. The subdomain / user code is the credential (see module note).
+const websitePageRepository = new WebsitePageRepository(supabaseServer);
 
 export interface PublicOwnerRef {
   /** A published website's subdomain. */
@@ -56,29 +71,20 @@ export async function resolvePublicOwner(ref: PublicOwnerRef): Promise<PublicOwn
   const userCode = ref.userCode?.trim();
 
   if (subdomain) {
-    const { data, error } = await supabaseServer
-      .from('website_pages')
-      .select('id, user_id')
-      .eq('subdomain', subdomain)
-      .maybeSingle();
+    // `findBySubdomainAny` deliberately applies no status filter — a public
+    // capture surface must also work on a draft/preview site.
+    const { data, error } = await websitePageRepository.findBySubdomainAny(subdomain);
 
     if (error) {
       logger.warn({ err: error, subdomain }, 'Could not resolve a website by subdomain');
-      return null;
-    }
-
-    if (data?.user_id) {
+    } else if (data?.user_id) {
       return { userId: data.user_id, pageId: data.id, source: 'subdomain' };
     }
   }
 
   if (userCode) {
-    const { data, error } = await supabaseServer
-      .from('business_profiles')
-      // Stored lower-case; a link pasted with different casing must still work.
-      .select('user_id')
-      .eq('user_code', userCode.toLowerCase())
-      .maybeSingle();
+    // Stored lower-case; a link pasted with different casing must still work.
+    const { data, error } = await businessProfileRepository.findByUserCode(userCode.toLowerCase());
 
     if (error) {
       logger.warn({ err: error, userCode }, 'Could not resolve a business by user code');

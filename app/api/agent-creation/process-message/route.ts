@@ -5,6 +5,7 @@ import { OpenAIProvider } from '@/lib/ai/providers/openaiProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context';
+import { isPluginDiscoverable } from '@/lib/plugins/plugin-visibility';
 import { createLogger } from '@/lib/logger';
 import { getAgentPromptThreadRepository } from '@/lib/agent-creation/agent-prompt-thread-repository';
 import type {
@@ -201,7 +202,13 @@ export async function POST(request: NextRequest) {
     // Step 4.5: Get ALL available plugins with full context (for LLM to understand capabilities)
     try {
       const pluginManager = await PluginManagerV2.getInstance();
-      const allAvailablePlugins = pluginManager.getAvailablePlugins();
+      // Discovery-scoped: exclude business_os plugins (e.g. internal CRM) from the general
+      // capability hints fed to the LLM. They stay resolvable/executable by key.
+      // See docs/PLUGIN_VISIBILITY_SCOPING.md.
+      const allAvailablePlugins = Object.fromEntries(
+        Object.entries(pluginManager.getAvailablePlugins())
+          .filter(([, definition]) => isPluginDiscoverable(definition, false))
+      );
       const availablePluginsKeys = Object.keys(allAvailablePlugins);
 
       // Convert to full LLM context with actions and capabilities

@@ -498,7 +498,9 @@ export async function POST(request: NextRequest) {
       throw bookingError || new Error('Failed to create booking');
     }
 
-    // Note: Activity is auto-created by log_booking_activity_trigger (scheduling_bookings table trigger)
+    // NOTE: the booking `crm_activities` row is logged automatically by Postgres trigger T2
+    // (log_booking_activity_trigger) on the booking INSERT when contact_id is set. We do NOT
+    // insert it here — doing so double-logged the activity. (Scheduling plugin workplan §2 0.2.)
 
     /*
      * Bill for it, when the business bills rather than charges.

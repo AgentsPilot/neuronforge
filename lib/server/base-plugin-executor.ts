@@ -5,10 +5,12 @@ import { PluginManagerV2 } from './plugin-manager-v2';
 import { ExecutionResult } from '@/lib/types/plugin-types';
 import { createLogger } from '@/lib/logger';
 import { applyParamConstraintGuard } from './param-constraint-guard';
+import { AccessStrategyResolver } from './access-strategy';
 
 export abstract class BasePluginExecutor {
   protected userConnections: UserPluginConnections;
   protected pluginManager: PluginManagerV2;
+  protected accessResolver: AccessStrategyResolver;
   protected debug = process.env.NODE_ENV === 'development';
   protected pluginName: string;
   protected logger: ReturnType<typeof createLogger>;
@@ -17,6 +19,7 @@ export abstract class BasePluginExecutor {
     this.pluginName = pluginName;
     this.userConnections = userConnections;
     this.pluginManager = pluginManager;
+    this.accessResolver = new AccessStrategyResolver(userConnections);
     this.logger = createLogger({ module: 'PluginExecutor' }).child({ plugin: pluginName });
   }
 
@@ -81,7 +84,13 @@ export abstract class BasePluginExecutor {
         };
       }
       
-      // Step 2: Get user connection with auth config
+      // Step 2: Resolve access / eligibility strategy — the SINGLE source of the connection
+      // for every strategy (oauth / platform_key / db_active). This supersedes the old
+      // `getConnection` + `isSystem` short-circuit: the resolver returns the (real or virtual)
+      // connection when eligible, and a fail-closed denial otherwise. A denied strategy — e.g.
+      // a `db_active` internal plugin for a non-tenant — MUST block here and never reach
+      // executeSpecificAction (which for internal plugins would otherwise receive a null
+      // connection and lose tenant scoping).
       const pluginDefinition = this.pluginManager.getPluginDefinition(this.pluginName);
       if (!pluginDefinition) {
         return {
@@ -91,20 +100,26 @@ export abstract class BasePluginExecutor {
         };
       }
 
-      const authConfig = pluginDefinition.plugin.auth_config;
-      const connection = await this.userConnections.getConnection(userId, this.pluginName, authConfig);
+      const resolution = await this.accessResolver.resolve(userId, this.pluginName, {
+        authConfig: pluginDefinition.plugin.auth_config,
+        accessStrategy: pluginDefinition.plugin.access_strategy,
+      });
 
-      // For system plugins, connection will be a virtual connection
-      // For OAuth plugins, connection must exist or we fail
-      const isSystemPlugin = pluginDefinition.plugin.isSystem;
-
-      if (!connection && !isSystemPlugin) {
+      if (!resolution.eligible) {
+        // Strategy-specific error contract: oauth → 'auth_failed' (byte-identical to the prior
+        // behavior), db_active → 'access_denied'. Not collapsed to one generic code.
+        this.logger.info(
+          { userId, strategy: resolution.strategy, reason: resolution.reason },
+          'Plugin access denied'
+        );
         return {
           success: false,
-          error: 'auth_failed',
-          message: `${this.pluginName} connection not found or expired. Please reconnect in Settings.`
+          error: resolution.errorCode || 'access_denied',
+          message: resolution.message || 'Access denied.'
         };
       }
+
+      const connection = resolution.connection;
 
       // Step 3: Execute the specific action (implemented by subclass)
       const result = await this.executeSpecificAction(connection, actionName, parameters);
@@ -296,18 +311,24 @@ export abstract class BasePluginExecutor {
         };
       }
 
-      const authConfig = pluginDefinition.plugin.auth_config;
-      const connection = await this.userConnections.getConnection(userId, this.pluginName, authConfig);
-      if (!connection) {
+      // Route through the same access-strategy resolver as executeAction so non-OAuth
+      // strategies (e.g. db_active internal plugins) are tested correctly. Previously this
+      // called getConnection() directly, which for an internal `auth_type` returned null for
+      // every user — misreporting valid tenants as "not connected".
+      const resolution = await this.accessResolver.resolve(userId, this.pluginName, {
+        authConfig: pluginDefinition.plugin.auth_config,
+        accessStrategy: pluginDefinition.plugin.access_strategy,
+      });
+      if (!resolution.eligible || !resolution.connection) {
         return {
           success: false,
-          error: 'no_connection',
-          message: `${this.pluginName} not connected. Please connect in Settings.`
+          error: resolution.errorCode || 'no_connection',
+          message: resolution.message || `${this.pluginName} not connected. Please connect in Settings.`
         };
       }
 
       // Subclasses can override this to test with a specific API call
-      const testResult = await this.performConnectionTest(connection);
+      const testResult = await this.performConnectionTest(resolution.connection);
       
       return {
         success: true,

@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { businessProfileRepository, type BusinessProfileInsert } from '@/lib/repositories/BusinessProfileRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
     })();
 
     // 3. Upsert business profile with intelligent data
-    const profileData: Record<string, unknown> = {
+    const profileData: BusinessProfileInsert = {
       user_id: user.id,
       vertical,
       // The sub-vertical decides which pipeline preset is used — a parenting
@@ -227,6 +227,16 @@ export async function POST(request: NextRequest) {
       // account with three services, so anything that trusted it saw a
       // business selling nothing.
       clients_per_week: clientsPerWeek || null,
+      // `tools` IS persisted, and that is deliberate.
+      //
+      // main removed this write (commit eb57f3f) because `business_profiles`
+      // had no `tools` column and PostgREST answered PGRST204, failing the whole
+      // upsert. That was correct for main's schema. It is not correct here:
+      // migration 20260812_add_onboarding_intelligence_columns.sql adds `tools`
+      // (with pain_points, goals, payment_mode, online_presence_mode,
+      // needs_stripe_connect, extracted_data). Do not remove it again without
+      // first checking the migration set.
+      // See docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md - F2 / D10.
       tools,
       profile_completeness: profileCompleteness,
       onboarding_completed: true,

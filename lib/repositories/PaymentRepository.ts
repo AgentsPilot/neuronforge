@@ -1,3 +1,4 @@
+import { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 
@@ -143,7 +144,13 @@ export type PaymentRepositoryResult<T> = {
 
 // Transaction Repository
 export class PaymentTransactionRepository {
-  private supabase = supabaseServer;
+  private supabase: SupabaseClient;
+
+  // Constructor injection (matches PaymentPlanRepository/Scheduling/CRM). The singleton export
+  // below passes `supabaseServer`, keeping existing importers byte-compatible.
+  constructor(supabase: SupabaseClient = supabaseServer) {
+    this.supabase = supabase;
+  }
 
   async create(transaction: Omit<PaymentTransaction, 'id' | 'created_at' | 'updated_at'>): Promise<PaymentRepositoryResult<PaymentTransaction>> {
     try {
@@ -263,6 +270,17 @@ export class PaymentTransactionRepository {
     }
   }
 
+  /**
+   * Count invoices for a user, optionally filtered by status and/or contact. Uses a
+   * head-only exact count (no rows fetched). Backs the `count_invoices` plugin op.
+   *
+   * MERGE NOTE (2026-09-02): main and the feature branch each wrote a `count()` here and
+   * git unioned both into this class - a duplicate implementation TypeScript rejected.
+   * This (branch) version is kept because it is a strict superset: it also filters by
+   * `contactId` (required by app/api/payments/invoices/route.ts) and applies the same
+   * comma-separated status grouping as list(), so a single status behaves identically to
+   * main's version used by payments-plugin-executor. See D12.
+   */
   async count(
     userId: string,
     options: {
@@ -646,6 +664,18 @@ export type CreatePaymentInvoiceInput =
     | 'retry_count' | 'last_retry_at' | 'next_retry_at'
     | 'stripe_invoice_id' | 'stripe_hosted_invoice_url' | 'stripe_invoice_pdf'
     | 'client_address'
+    // MERGE FIX (2026-09-02, F4): every one of these is nullable or DB-defaulted, so none
+    // belongs in the required set of an insert. They entered PaymentInvoice via the feature
+    // branch's migrations while main's callers (CapabilityEngine.createInvoice,
+    // payments-plugin-executor.buildInvoiceInsert) were written against the narrower row
+    // type -- which is why the merged tree failed to compile:
+    //   refund_status  DEFAULT 'none'  |  refunded_amount DEFAULT 0  |  refunded_at NULL
+    //   client_name / client_email     (20260806_add_invoice_profile_fields, nullable)
+    //   booking_id                     (nullable, "Optional link to booking")
+    //   service_id                     (20260809214450, nullable)
+    | 'refund_status' | 'refunded_amount' | 'refunded_at'
+    | 'client_name' | 'client_email'
+    | 'booking_id' | 'service_id'
   > &
   Partial<
     Pick<
@@ -657,6 +687,9 @@ export type CreatePaymentInvoiceInput =
       | 'retry_count' | 'last_retry_at' | 'next_retry_at'
       | 'stripe_invoice_id' | 'stripe_hosted_invoice_url' | 'stripe_invoice_pdf'
       | 'client_address'
+      | 'refund_status' | 'refunded_amount' | 'refunded_at'
+      | 'client_name' | 'client_email'
+      | 'booking_id' | 'service_id'
     >
   >;
 
@@ -673,7 +706,13 @@ export const ISSUED_INVOICE_STATUSES = ['sent', 'pending', 'overdue'] as const;
 
 // Invoice Repository
 export class PaymentInvoiceRepository {
-  private supabase = supabaseServer;
+  private supabase: SupabaseClient;
+
+  // Constructor injection (matches PaymentPlanRepository/Scheduling/CRM). The singleton export
+  // below passes `supabaseServer`, keeping existing importers byte-compatible.
+  constructor(supabase: SupabaseClient = supabaseServer) {
+    this.supabase = supabase;
+  }
 
   async create(invoice: CreatePaymentInvoiceInput): Promise<PaymentRepositoryResult<PaymentInvoice>> {
     try {
@@ -1032,18 +1071,32 @@ export class PaymentInvoiceRepository {
   }
 
   /**
-   * Get overdue invoices
+   * Get overdue invoices.
+   *
+   * Generalized to serve both the AR-overdue detector and the ar_overdue_usd metric.
+   * All filters default to sensible values so existing narrow use cases remain valid:
+   *  - statuses:  unpaid states (defaults to pending/sent/overdue)
+   *  - asOfDate:  due before this ISO timestamp (defaults to now)
+   *  - minAmount: exclusive lower bound on `amount` (defaults to 0)
+   *
+   * Value column is `amount` (never the phantom `total_amount`). Always `user_id`-scoped.
    */
-  async getOverdueInvoices(userId: string): Promise<PaymentRepositoryResult<PaymentInvoice[]>> {
+  async getOverdueInvoices(
+    userId: string,
+    opts?: { asOfDate?: string; statuses?: string[]; minAmount?: number }
+  ): Promise<PaymentRepositoryResult<PaymentInvoice[]>> {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const statuses = opts?.statuses ?? ['pending', 'sent', 'overdue'];
+      const asOfDate = opts?.asOfDate ?? new Date().toISOString();
+      const minAmount = opts?.minAmount ?? 0;
 
       const { data, error } = await this.supabase
         .from('payment_invoices')
         .select('*')
         .eq('user_id', userId)
-        .eq('status', 'sent')
-        .lt('due_date', today)
+        .in('status', statuses)
+        .lt('due_date', asOfDate)
+        .gt('amount', minAmount)
         .order('due_date', { ascending: true });
 
       if (error) throw error;
@@ -1274,10 +1327,12 @@ export class PaymentInvoiceRepository {
 
 // Stripe Connect Repository
 export class StripeConnectRepository {
-  private supabase;
+  private supabase: SupabaseClient;
 
-  constructor(supabaseClient = supabaseServer) {
-    this.supabase = supabaseClient;
+  // Constructor injection (matches PaymentPlanRepository/Scheduling/CRM). The singleton export
+  // below passes `supabaseServer`, keeping existing importers byte-compatible.
+  constructor(supabase: SupabaseClient = supabaseServer) {
+    this.supabase = supabase;
   }
 
   async create(account: Omit<StripeConnectAccount, 'id' | 'created_at' | 'updated_at'>): Promise<PaymentRepositoryResult<StripeConnectAccount>> {

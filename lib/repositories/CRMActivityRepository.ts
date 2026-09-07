@@ -266,36 +266,17 @@ export class CRMActivityRepository {
     });
   }
 
-  /**
-   * Log payment activity (auto-logged from payments capability)
-   *
-   * The currency travels with the amount. This wrote `Payment Received: $${amount}`
-   * — a dollar sign on every payment, whatever the business actually billed in.
-   */
-  async logPayment(
-    userId: string,
-    contactId: string,
-    paymentId: string,
-    amount: number,
-    currency: string,
-    note?: string
-  ): Promise<CRMActivityRepositoryResult<CRMActivity>> {
-    return this.create({
-      user_id: userId,
-      contact_id: contactId,
-      activity_type: 'payment',
-      title: `${new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'USD' }).format(amount)}`,
-      description: JSON.stringify({
-        kind: 'payment_received',
-        amount,
-        currency,
-        note: note || undefined,
-      }),
-      auto_logged: true,
-      source_capability: 'payments',
-      source_entity_id: paymentId
-    });
-  }
+  // NOTE (Payments plugin P0.4): a `logPayment` helper used to live here. It was DEAD
+  // (zero callers) and a double-log footgun — the `log_payment_activity` Postgres trigger
+  // (T3) is the sole owner of the `crm_activities` payment row on the succeeded-transaction
+  // path. Removed to prevent any future caller from double-logging alongside the trigger.
+  //
+  // MERGE NOTE (2026-09-02, D24): the feature branch rewrote this helper rather than
+  // deleting it, to fix a real bug — it hard-coded `$` into the title regardless of the
+  // currency the business actually bills in. Re-verified at the branch tip: still zero
+  // callers, so the deletion stands and the trigger remains the single writer. If this is
+  // ever revived, format the amount with `Intl.NumberFormat(undefined, { style: 'currency',
+  // currency })` — do not reintroduce the hard-coded symbol.
 
   /**
    * Log email activity (auto-logged from email capability)

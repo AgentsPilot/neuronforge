@@ -302,7 +302,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Note: Activity is auto-created by log_booking_activity_trigger (scheduling_bookings table trigger)
+    // Create CRM activity (non-blocking)
+    // NOTE: the booking `crm_activities` row is logged automatically by Postgres trigger T2 on
+    // the booking UPDATE-to-confirmed (contact_id set) — not inserted here (was double-logging).
+    // (Scheduling plugin workplan §2 0.2.)
 
     // Send booking confirmation email (non-blocking)
     // skipInvoice=true since payment is already completed

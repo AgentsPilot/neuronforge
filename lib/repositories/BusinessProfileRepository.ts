@@ -4,16 +4,12 @@
  * Handles CRUD operations for user business profiles
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import type { Database } from '@/types/database';
 import type { DocumentType } from '@/lib/payments/documentType';
 
 const logger = createLogger({ service: 'BusinessProfileRepository' });
-
-type BusinessProfile = Database['public']['Tables']['business_profiles']['Row'];
-type BusinessProfileInsert = Database['public']['Tables']['business_profiles']['Insert'];
-type BusinessProfileUpdate = Database['public']['Tables']['business_profiles']['Update'];
 
 export interface BusinessProfileRepositoryResult<T> {
   data: T | null;
@@ -75,8 +71,247 @@ export interface InvoiceSettings {
   invoice_document_type: DocumentType | null;
 }
 
+/**
+ * Supported external calendar providers for two-way sync.
+ * DB-enforced via `valid_profile_calendar_sync_provider` CHECK constraint.
+ */
+export type CalendarSyncProvider = 'google_calendar' | 'outlook';
+
+/**
+ * Weekly availability for scheduling, keyed by day name (e.g. "monday").
+ * Backs the `scheduling_availability` JSONB column. Mirrors the shape read by
+ * OpsUtilizationLowDetector's `WeeklyAvailability`.
+ */
+export type SchedulingAvailability = Record<string, { start: string; end: string }[]>;
+
+/**
+ * Row shape for the `business_profiles` table.
+ *
+ * Hand-written to mirror the generated Supabase types the rest of the repo layer
+ * avoids depending on (see CRMContactRepository / PaymentRepository). Column set
+ * covers the base CREATE (20260721) plus every later ALTER:
+ * services (20260722), scheduling_availability (20260722), calendar sync fields
+ * (20260723), setup_checklist_dismissed (20260723), process_steps (20260728),
+ * dismissed_setup_steps (20260802), template_id (20260903), subdomain (20260904).
+ * Nullability follows the DB: only id/user_id/
+ * vertical are NOT NULL; defaulted-but-nullable columns are `| null`.
+ */
+export interface BusinessProfile {
+  id: string;
+  user_id: string;
+
+  // Vertical identification
+  vertical: string;
+  sub_vertical: string | null;
+
+  // Business metrics
+  company_name: string | null;
+  company_size: string | null;
+  clients_per_week: number | null;
+  revenue_tier: string | null;
+
+  // Online presence
+  website_url: string | null;
+  landing_pages: string[] | null;
+  website_analysis: Record<string, unknown> | null;
+
+  // Connected tools
+  connected_plugins: string[] | null;
+  primary_crm: string | null;
+  primary_calendar: string | null;
+  primary_payment: string | null;
+
+  // Onboarding state
+  onboarding_completed: boolean | null;
+  onboarding_conversation: Record<string, unknown> | null;
+  profile_completeness: number | null;
+
+  // Language preference
+  language: string | null;
+
+  // Services offered (20260722)
+  services: string[] | null;
+
+  // Weekly scheduling availability (20260722)
+  scheduling_availability: SchedulingAvailability | null;
+
+  // Calendar sync preferences (20260723)
+  calendar_sync_enabled: boolean | null;
+  calendar_sync_provider: CalendarSyncProvider | null;
+  calendar_last_synced_at: string | null;
+
+  // Dashboard setup checklist (20260723 / 20260802)
+  setup_checklist_dismissed: boolean | null;
+  dismissed_setup_steps: string[] | null;
+
+  // Website "How It Works" steps (20260728)
+  process_steps: ProcessStep[] | null;
+
+  // Payment settings — processor agnostic (20260723 enhance_payments)
+  default_payment_processor: string | null;
+  payment_retry_enabled: boolean | null;
+  payment_retry_intervals: number[] | null;
+  payment_max_retries: number | null;
+  payment_reminder_enabled: boolean | null;
+  payment_reminder_days_before: number[] | null;
+  payment_overdue_reminder_days: number[] | null;
+  payment_reminder_channels: string[] | null;
+
+  // ---------------------------------------------------------------------------
+  // Columns added by the feature branch's own migrations. main's interface was a
+  // closed column list written before these landed; without them TypeScript
+  // rejects the branch's own reads/writes. Nullability follows each migration.
+  // ---------------------------------------------------------------------------
+
+  // Business description (20260812_add_description_to_business_profiles)
+  description: string | null;
+
+  // Onboarding intelligence (20260812_add_onboarding_intelligence_columns)
+  pain_points: string[] | null;
+  goals: string[] | null;
+  tools: string[] | null;
+  payment_mode: string | null;
+  online_presence_mode: string | null;
+  needs_stripe_connect: boolean | null;
+  extracted_data: Record<string, unknown> | null;
+
+  // Invoice identity and bank details (20260806_add_invoice_profile_fields).
+  // `invoice_address` is JSONB DEFAULT '{}' -- see InvoiceAddress above.
+  invoice_company_name: string | null;
+  invoice_address: InvoiceAddress | null;
+  invoice_tax_id: string | null;
+  invoice_bank_name: string | null;
+  invoice_bank_account: string | null;
+  invoice_bank_routing: string | null;
+  invoice_payment_instructions: string | null;
+  invoice_footer_text: string | null;
+  invoice_number_prefix: string | null;
+  invoice_logo_url: string | null;
+
+  // Conversion layer -- short public link code (20260824_add_conversion_layer)
+  user_code: string | null;
+
+  // Branding. `show_logo_on_smart_links` is NOT NULL DEFAULT true, so it is not
+  // nullable. `theme` is nullable JSONB -- NULL means the platform default.
+  // No BusinessTheme type exists in the repo yet; typed structurally for now.
+  // (20260827_business_logo_single_source / 20260902_business_theme)
+  show_logo_on_smart_links: boolean;
+  theme: Record<string, unknown> | null;
+
+  // Payment collection method (20260831_collection_method)
+  collection_method: string | null;
+
+  // Which website template the business is wearing, and the one subdomain every
+  // surface it publishes lives under. Both nullable text with no default -- a
+  // business that has chosen neither has NULL.
+  // (20260903_business_template / 20260904_business_subdomain)
+  template_id: string | null;
+  subdomain: string | null;
+
+  // Timestamps
+  created_at: string | null;
+  updated_at: string | null;
+
+  // --- Not backed by a physical column ---
+  // No migration defines `currency`, `timezone`, or `contact_email` on
+  // business_profiles (the scheduling availability route even carries a
+  // "TODO: Add timezone column" note). Existing consumers nonetheless read them
+  // defensively with a fallback (ContextBuilder, SafeExecutionLayer,
+  // BookingEmailService). Typed here as optional, read-only extras to preserve
+  // that behavior; deliberately absent from Insert/Update so nobody writes a
+  // non-existent column (cf. the documented `tools` PGRST204 bug in the
+  // onboarding build route). Follow-up: add real columns or drop the reads.
+  currency?: string | null;
+  timezone?: string | null;
+  contact_email?: string | null;
+}
+
+/**
+ * Insert shape for `business_profiles`. Only NOT NULL columns without a default
+ * are required; everything else is optional (DB defaults or nullable).
+ */
+export interface BusinessProfileInsert {
+  id?: string;
+  user_id: string;
+  // NOT NULL at the DB, but the onboarding build route writes
+  // `profile.vertical || null` (its request schema treats vertical as optional).
+  // Allow null here to mirror that call site; the NOT NULL constraint is enforced
+  // by Postgres, not the type.
+  vertical: string | null;
+  sub_vertical?: string | null;
+  company_name?: string | null;
+  company_size?: string | null;
+  clients_per_week?: number | null;
+  revenue_tier?: string | null;
+  website_url?: string | null;
+  landing_pages?: string[] | null;
+  website_analysis?: Record<string, unknown> | null;
+  connected_plugins?: string[] | null;
+  primary_crm?: string | null;
+  primary_calendar?: string | null;
+  primary_payment?: string | null;
+  onboarding_completed?: boolean | null;
+  onboarding_conversation?: Record<string, unknown> | null;
+  profile_completeness?: number | null;
+  language?: string | null;
+  services?: string[] | null;
+  scheduling_availability?: SchedulingAvailability | null;
+  calendar_sync_enabled?: boolean | null;
+  calendar_sync_provider?: CalendarSyncProvider | null;
+  calendar_last_synced_at?: string | null;
+  setup_checklist_dismissed?: boolean | null;
+  dismissed_setup_steps?: string[] | null;
+  process_steps?: ProcessStep[] | null;
+  default_payment_processor?: string | null;
+  payment_retry_enabled?: boolean | null;
+  payment_retry_intervals?: number[] | null;
+  payment_max_retries?: number | null;
+  payment_reminder_enabled?: boolean | null;
+  payment_reminder_days_before?: number[] | null;
+  payment_overdue_reminder_days?: number[] | null;
+  payment_reminder_channels?: string[] | null;
+  // --- Feature-branch columns (see BusinessProfile above for provenance) ---
+  description?: string | null;
+  pain_points?: string[] | null;
+  goals?: string[] | null;
+  tools?: string[] | null;
+  payment_mode?: string | null;
+  online_presence_mode?: string | null;
+  needs_stripe_connect?: boolean | null;
+  extracted_data?: Record<string, unknown> | null;
+  invoice_company_name?: string | null;
+  invoice_address?: InvoiceAddress | null;
+  invoice_tax_id?: string | null;
+  invoice_bank_name?: string | null;
+  invoice_bank_account?: string | null;
+  invoice_bank_routing?: string | null;
+  invoice_payment_instructions?: string | null;
+  invoice_footer_text?: string | null;
+  invoice_number_prefix?: string | null;
+  invoice_logo_url?: string | null;
+  user_code?: string | null;
+  show_logo_on_smart_links?: boolean;
+  theme?: Record<string, unknown> | null;
+  collection_method?: string | null;
+  template_id?: string | null;
+  subdomain?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/**
+ * Update shape for `business_profiles`. All columns optional.
+ */
+export type BusinessProfileUpdate = Partial<BusinessProfileInsert>;
+
 export class BusinessProfileRepository {
-  private supabase = supabaseServer;
+  private supabase: SupabaseClient;
+
+  // Constructor injection so callers with an injected (service-role) client can reuse it,
+  // while the singleton export below stays byte-compatible (`new BusinessProfileRepository()`).
+  constructor(supabase: SupabaseClient = supabaseServer) {
+    this.supabase = supabase;
+  }
 
   /**
    * Find business profile by user ID

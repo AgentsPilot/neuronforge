@@ -226,7 +226,8 @@ export class WebsiteAnalyticsRepository {
 
       const { data, error } = await query;
 
-      logger.debug({ userId, subdomain, rowCount: data?.length ?? 0 }, 'Loaded page views');
+      // Log counts/ids only — never full row bodies (M4).
+      logger.debug({ recordCount: data?.length ?? 0, userId, subdomain }, 'Analytics summary query result');
 
       if (error) throw error;
 
@@ -307,7 +308,10 @@ export class WebsiteAnalyticsRepository {
         visitors_7d: sevenDayIpHashes.size
       };
 
-      logger.debug({ userId, subdomain, result }, 'Computed analytics summary');
+      logger.debug(
+        { userId, subdomain, totalViews: result.total_views, uniqueVisitors: result.unique_visitors },
+        'Computed analytics summary stats'
+      );
 
       return {
         data: result,

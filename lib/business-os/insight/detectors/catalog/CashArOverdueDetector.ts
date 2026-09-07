@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
 import { COMMON_GUARDRAILS } from '../types';
+import { PaymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 
 export class CashArOverdueDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -78,18 +79,17 @@ export class CashArOverdueDetector extends BaseDetector {
       return null;
     }
 
-    // Get overdue invoices directly from payment_invoices table
+    // Get overdue invoices via the repository (routed off the direct `.from()` read).
     const daysThreshold = 7;
     const overdueDate = new Date();
     overdueDate.setDate(overdueDate.getDate() - daysThreshold);
 
-    const { data: overdueInvoices, error } = await this.supabase
-      .from('payment_invoices')
-      .select('id, amount, due_date')
-      .eq('user_id', userId)
-      .in('status', ['pending', 'sent', 'overdue']) // Unpaid statuses
-      .lt('due_date', overdueDate.toISOString())
-      .gt('amount', 0);
+    const invoiceRepo = new PaymentInvoiceRepository(this.supabase);
+    const { data: overdueInvoices, error } = await invoiceRepo.getOverdueInvoices(userId, {
+      asOfDate: overdueDate.toISOString(), // M6: opt is typed `string`, we hold a `Date`
+      statuses: ['pending', 'sent', 'overdue'], // Unpaid statuses
+      minAmount: 0,
+    });
 
     if (error) {
       throw error;
@@ -101,9 +101,9 @@ export class CashArOverdueDetector extends BaseDetector {
       return null;
     }
 
-    // Calculate total AR
+    // Calculate total AR (amount is a numeric column on payment_invoices)
     const totalArOverdue = overdueInvoices.reduce(
-      (sum, inv) => sum + parseFloat(inv.amount || '0'),
+      (sum, inv) => sum + (Number(inv.amount) || 0),
       0
     );
 

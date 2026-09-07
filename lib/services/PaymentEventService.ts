@@ -12,6 +12,8 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
+import { PaymentEventRepository } from '@/lib/repositories/PaymentEventRepository';
+import { enqueuePaymentReactions } from '@/lib/payments/paymentReactionEnqueuer';
 
 const logger = createLogger({ service: 'PaymentEventService' });
 
@@ -115,18 +117,15 @@ export interface PaymentEventServiceResult<T> {
   error: Error | null;
 }
 
-// ==================== EVENT SUBSCRIBERS ====================
-
-type EventCallback = (event: PaymentEvent) => void | Promise<void>;
-const eventSubscribers: EventCallback[] = [];
-
 // ==================== SERVICE ====================
 
 export class PaymentEventService {
   private supabase: SupabaseClient;
+  private eventRepo: PaymentEventRepository;
 
   constructor(supabaseClient: SupabaseClient) {
     this.supabase = supabaseClient;
+    this.eventRepo = new PaymentEventRepository(supabaseClient);
   }
 
   /**
@@ -149,25 +148,21 @@ export class PaymentEventService {
         processorType
       }, 'Emitting payment event');
 
-      const { data, error } = await this.supabase
-        .from('payment_events')
-        .insert({
-          user_id: userId,
-          event_type: eventType,
-          entity_type: entityType,
-          entity_id: entityId,
-          contact_id: contactId || null,
-          processor_type: processorType || null,
-          metadata
-        })
-        .select()
-        .single();
+      const { data, error } = await this.eventRepo.create(userId, {
+        event_type: eventType,
+        entity_type: entityType,
+        entity_id: entityId,
+        contact_id: contactId || null,
+        processor_type: processorType || null,
+        metadata
+      });
 
       if (error) throw error;
 
-      // Notify subscribers (non-blocking)
-      this.notifySubscribers(data).catch(err => {
-        logger.warn({ err, eventId: data.id }, 'Event subscriber notification failed');
+      // Durably enqueue automation reactions (non-blocking, best-effort). Replaces
+      // the retired in-process subscribe() bus (§8.2). Never throws into emit().
+      enqueuePaymentReactions(data!).catch(err => {
+        logger.warn({ err, eventId: data!.id }, 'reaction enqueue failed (non-blocking)');
       });
 
       return { data, error: null };
@@ -192,7 +187,6 @@ export class PaymentEventService {
       logger.info({ userId, count: events.length }, 'Emitting batch payment events');
 
       const eventsToInsert = events.map(params => ({
-        user_id: userId,
         event_type: params.eventType,
         entity_type: params.entityType,
         entity_id: params.entityId,
@@ -201,17 +195,14 @@ export class PaymentEventService {
         metadata: params.metadata || {}
       }));
 
-      const { data, error } = await this.supabase
-        .from('payment_events')
-        .insert(eventsToInsert)
-        .select();
+      const { data, error } = await this.eventRepo.createMany(userId, eventsToInsert);
 
       if (error) throw error;
 
-      // Notify subscribers for each event (non-blocking)
+      // Durably enqueue automation reactions for each event (non-blocking).
       for (const event of data || []) {
-        this.notifySubscribers(event).catch(err => {
-          logger.warn({ err, eventId: event.id }, 'Event subscriber notification failed');
+        enqueuePaymentReactions(event).catch(err => {
+          logger.warn({ err, eventId: event.id }, 'reaction enqueue failed (non-blocking)');
         });
       }
 
@@ -253,56 +244,7 @@ export class PaymentEventService {
     options: GetEventsOptions = {}
   ): Promise<PaymentEventServiceResult<PaymentEvent[]>> {
     try {
-      const {
-        eventType,
-        entityType,
-        entityId,
-        contactId,
-        processorType,
-        fromDate,
-        toDate,
-        limit = 100,
-        offset = 0
-      } = options;
-
-      let query = this.supabase
-        .from('payment_events')
-        .select('*')
-        .eq('user_id', userId);
-
-      if (eventType) {
-        query = query.eq('event_type', eventType);
-      }
-
-      if (entityType) {
-        query = query.eq('entity_type', entityType);
-      }
-
-      if (entityId) {
-        query = query.eq('entity_id', entityId);
-      }
-
-      if (contactId) {
-        query = query.eq('contact_id', contactId);
-      }
-
-      if (processorType) {
-        query = query.eq('processor_type', processorType);
-      }
-
-      if (fromDate) {
-        query = query.gte('created_at', fromDate);
-      }
-
-      if (toDate) {
-        query = query.lte('created_at', toDate);
-      }
-
-      query = query
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      const { data, error } = await query;
+      const { data, error } = await this.eventRepo.list(userId, options);
 
       if (error) throw error;
 
@@ -323,20 +265,7 @@ export class PaymentEventService {
     try {
       const { fromDate, toDate } = options;
 
-      let query = this.supabase
-        .from('payment_events')
-        .select('event_type')
-        .eq('user_id', userId);
-
-      if (fromDate) {
-        query = query.gte('created_at', fromDate);
-      }
-
-      if (toDate) {
-        query = query.lte('created_at', toDate);
-      }
-
-      const { data, error } = await query;
+      const { data, error } = await this.eventRepo.listEventTypes(userId, { fromDate, toDate });
 
       if (error) throw error;
 
@@ -354,34 +283,6 @@ export class PaymentEventService {
   }
 
   /**
-   * Subscribe to events (for real-time processing like automation engine)
-   */
-  subscribe(callback: EventCallback): () => void {
-    eventSubscribers.push(callback);
-
-    // Return unsubscribe function
-    return () => {
-      const index = eventSubscribers.indexOf(callback);
-      if (index > -1) {
-        eventSubscribers.splice(index, 1);
-      }
-    };
-  }
-
-  /**
-   * Notify all subscribers of a new event
-   */
-  private async notifySubscribers(event: PaymentEvent): Promise<void> {
-    for (const callback of eventSubscribers) {
-      try {
-        await callback(event);
-      } catch (error) {
-        logger.warn({ err: error, eventId: event.id }, 'Event subscriber threw error');
-      }
-    }
-  }
-
-  /**
    * Get recent events of specific types (useful for automation)
    */
   async getRecentEventsByTypes(
@@ -390,13 +291,7 @@ export class PaymentEventService {
     limit: number = 50
   ): Promise<PaymentEventServiceResult<PaymentEvent[]>> {
     try {
-      const { data, error } = await this.supabase
-        .from('payment_events')
-        .select('*')
-        .eq('user_id', userId)
-        .in('event_type', eventTypes)
-        .order('created_at', { ascending: false })
-        .limit(limit);
+      const { data, error } = await this.eventRepo.findRecentByTypes(userId, eventTypes, limit);
 
       if (error) throw error;
 
@@ -421,19 +316,16 @@ export class PaymentEventService {
     try {
       const threshold = new Date(Date.now() - withinMinutes * 60 * 1000).toISOString();
 
-      const { data, error } = await this.supabase
-        .from('payment_events')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('event_type', eventType)
-        .eq('entity_type', entityType)
-        .eq('entity_id', entityId)
-        .gte('created_at', threshold)
-        .limit(1);
+      const { data, error } = await this.eventRepo.existsRecent(userId, {
+        eventType,
+        entityType,
+        entityId,
+        since: threshold
+      });
 
       if (error) throw error;
 
-      return { data: (data?.length || 0) > 0, error: null };
+      return { data: !!data, error: null };
     } catch (error) {
       logger.error({ err: error, userId, eventType, entityId }, 'Failed to check recent event');
       return { data: null, error: error as Error };

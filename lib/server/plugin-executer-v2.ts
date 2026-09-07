@@ -31,6 +31,11 @@ import { GoogleAnalyticsPluginExecutor } from './google-analytics-plugin-executo
 import { GoogleBusinessProfilePluginExecutor } from './google-business-profile-plugin-executor';
 import { DropboxPluginExecutor } from './dropbox-plugin-executor';
 import { StripePluginExecutor } from './stripe-plugin-executor';
+import { CRMPluginExecutor } from './crm-plugin-executor';
+import { SchedulingPluginExecutor } from './scheduling-plugin-executor';
+import { PaymentsPluginExecutor } from './payments-plugin-executor';
+import { IntakePluginExecutor } from './intake-plugin-executor';
+import { WebsitePluginExecutor } from './website-plugin-executor';
 
 const logger = createLogger({ module: 'PluginExecuter', service: 'plugin-system' });
 let pluginExecuterInstance: PluginExecuterV2 | null = null;
@@ -56,6 +61,12 @@ export class PluginExecuterV2 {
     'linkedin': LinkedInPluginExecutor,
     'airtable': AirtablePluginExecutor,
     'document-extractor': DocumentExtractorPluginExecutor,
+    // INTERIM DUPLICATION - see the note on corePluginFiles in plugin-manager-v2.ts.
+    // `business-os` (BizQL-backed, discoverable) and the five internal plugins below
+    // (repository-backed, hidden from discovery) are two surfaces over the same tables,
+    // built in parallel and kept side by side on purpose. They have distinct consumers
+    // and do not contend. Decision owed - see D9 / Q2-Q4 in
+    // docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md.
     'business-os': BusinessOsPluginExecutor,
     'notion': NotionPluginExecutor,
     'outlook': OutlookPluginExecutor,
@@ -68,6 +79,11 @@ export class PluginExecuterV2 {
     'google-business-profile': GoogleBusinessProfilePluginExecutor,
     'dropbox': DropboxPluginExecutor,
     'stripe': StripePluginExecutor,
+    'crm': CRMPluginExecutor, // Internal (repository-backed) plugin — db_active access strategy
+    'scheduling': SchedulingPluginExecutor, // Internal (repository-backed) plugin — db_active
+    'payments': PaymentsPluginExecutor, // Internal (repository-backed) plugin — db_active
+    'intake': IntakePluginExecutor, // Internal (repository-backed) plugin — db_active
+    'website': WebsitePluginExecutor, // Internal (repository-backed) plugin — db_active
     // Add new plugin executors here
   };
 
