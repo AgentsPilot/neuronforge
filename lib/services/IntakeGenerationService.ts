@@ -457,8 +457,16 @@ Reply with JSON in exactly this shape:
    * recognise as a starting point, and edit. The library that used to serve
    * this purpose is gone, so this has to live in code.
    */
-  private fallbackQuestions(profile: Record<string, unknown>): IntakeQuestion[] {
-    const language = (profile.language as string) || 'en';
+  /**
+   * Takes only what it reads.
+   *
+   * This asked for `Record<string, unknown>`, which a declared interface is not
+   * assignable to — so it stopped compiling the moment `BusinessProfile` gained
+   * a real type. Narrowing to the one field it uses is both the fix and the
+   * honest signature.
+   */
+  private fallbackQuestions(profile: { language?: string | null }): IntakeQuestion[] {
+    const language = profile.language || 'en';
 
     const copy: Record<string, Array<[string, IntakeQuestionType, boolean]>> = {
       en: [
