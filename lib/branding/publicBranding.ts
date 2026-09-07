@@ -38,6 +38,7 @@ import { resolveBusinessTheme } from '@/lib/branding/resolveTheme';
 import { completeTheme, DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
 import { cleanPublicContact } from '@/lib/branding/placeholderContact';
 import { whatsappLink } from '@/lib/branding/phone';
+import { safeExternalUrl } from '@/lib/branding/externalUrl';
 import { isDarkColor } from '@/lib/branding/color';
 import { DAY_NAMES, windowsForDay, hasAnyAvailability, type AvailabilityWindow } from '@/lib/scheduling/availabilityWindows';
 import { isValidLocale, getDirection, defaultLocale, type Locale } from '@/lib/i18n/config';
@@ -316,7 +317,15 @@ async function loadPublicBranding(
     : null;
 
   const hours = includeInfo ? readHours(profile?.scheduling_availability) : null;
-  const websiteUrl = profile?.website_url?.trim() || null;
+  /*
+   * Parsed, not trusted.
+   *
+   * This becomes an `href` on a public page (`BusinessInfoPanel`), and the
+   * column is owner-supplied text. It has been null on every account so far
+   * only because nothing can write it yet — the guard belongs here before that
+   * changes, not after.
+   */
+  const websiteUrl = safeExternalUrl(profile?.website_url);
   const userCode = profile?.user_code ?? null;
   const bookingUrl = userCode ? `/c/${userCode}/book` : null;
 

@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { resolveGap, gapStateFor, pickLeak, type FunnelWindow } from '@/lib/business-os/insight/funnelGap';
-import { buildJourney } from '@/lib/business-os/insight/journeyTimeline';
+import { buildJourney, daysSince } from '@/lib/business-os/insight/journeyTimeline';
 import { getProcessForDetector } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { localizeStageLabel } from '@/lib/business-os/stageLabels';
 import {
@@ -471,6 +471,18 @@ export function LiveDashboard({
     automatableNow,
     vectors: vectorMaturity?.vectors ?? [],
   }), [vectorMaturity, milestoneData, automatableNow]);
+
+  /*
+   * Today, read at render rather than taken from the memo above.
+   *
+   * `buildJourney` also returns a `todayDay`, and it is correct at the moment
+   * it runs — but the memo is keyed on the DATA, which does not change when the
+   * date does. A dashboard left open across midnight kept insisting it was
+   * yesterday, because nothing had happened to make it recompute.
+   *
+   * The nodes are facts about the past and belong in the memo. Today does not.
+   */
+  const todayDay = daysSince(vectorMaturity?.journeyAnchors?.accountCreatedAt);
 
   /**
    * The journey as words, in the reader's language.
@@ -1161,9 +1173,9 @@ export function LiveDashboard({
                   marginBottom: '4px',
                 }}
               >
-                {journey.todayDay === null
+                {todayDay === null
                   ? t('journey.today_plain')
-                  : t('journey.today', { day: journey.todayDay })}
+                  : t('journey.today', { day: todayDay })}
               </span>
               <span
                 style={{
