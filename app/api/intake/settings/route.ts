@@ -1,114 +1,97 @@
 /**
- * GET/POST /api/intake/settings - User intake form settings
- * GET: Retrieve user's current intake settings
- * POST: Save/update user's intake settings
+ * Whether the business collects intake, and whether we send it for them.
+ *
+ *   GET  /api/intake/settings
+ *   POST /api/intake/settings
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Two switches, and a fact that is not a switch.
+ *
+ *   is_enabled          the business collects intake at all
+ *   send_after_booking  we email it when a booking is made, or they send it
+ *   hasPublishedForm    derived — there is an approved form to send
+ *
+ * The third is why this route exists in its current shape. Every caller feeds
+ * this response into `intakeReachesClient` or `businessCollectsIntake`, and
+ * both now require an approved form; returning the switches without it would
+ * let a caller conclude intake is live while the only form is an unread draft.
+ * So the join happens here, once, rather than at each surface.
+ *
+ * `template_id` and `collect_during_booking` are gone. The first pointed at a
+ * shared catalogue that no longer exists; the second was accepted and silently
+ * discarded by this route while a deprecated resolver still gated the public
+ * form on it — so a business with it false received an intake email whose link
+ * said there was no intake form.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * @module app/api/intake/settings
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
-import { z } from 'zod';
+import { intakeFormRepository } from '@/lib/repositories/IntakeFormRepository';
 
 const logger = createLogger({ module: 'IntakeSettingsAPI' });
 
-// Validation schema for POST
 const updateSettingsSchema = z.object({
-  template_id: z.string().uuid().nullable().optional(),
   is_enabled: z.boolean().optional(),
-  /** Whether the client is emailed the form after booking. */
   send_after_booking: z.boolean().optional(),
-  /**
-   * Accepted and ignored.
-   *
-   * The form is never a step inside the booking flow now — a long form between
-   * a client and the thing they came to do. Kept in the schema so an older
-   * client does not get a 400, and in the table so no data is destroyed.
-   */
-  collect_during_booking: z.boolean().optional()
 });
 
-/**
- * GET /api/intake/settings
- * Get user's current intake settings with template details
- */
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
   try {
-    // 1. Authenticate
     const user = await getUser();
     if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    requestLogger.info({ userId: user.id }, 'Fetching intake settings');
+    const [settings, published] = await Promise.all([
+      intakeRepository.getSettings(user.id),
+      intakeFormRepository.getPublished(user.id),
+    ]);
 
-    // 2. Get settings with template
-    const { data: settings, error } = await intakeRepository.getSettingsWithTemplate(user.id);
-    if (error) {
-      throw error;
-    }
-
-    // Return default settings if none exist
-    if (!settings) {
-      return NextResponse.json({
-        success: true,
-        settings: {
-          is_enabled: false,
-          template_id: null,
-          template: null,
-          collect_during_booking: true,
-          send_after_booking: false
-        }
-      });
-    }
-
-    requestLogger.info({ userId: user.id, isEnabled: settings.is_enabled }, 'Settings fetched');
+    if (settings.error) throw settings.error;
 
     return NextResponse.json({
       success: true,
-      settings
+      settings: {
+        is_enabled: settings.data?.is_enabled ?? false,
+        // Defaults to false rather than true. A business with no row has not
+        // said we may email their clients, and the switch is the saying.
+        send_after_booking: settings.data?.send_after_booking ?? false,
+        hasPublishedForm: !!published.data,
+      },
     });
-
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to fetch intake settings');
     return NextResponse.json(
       {
         success: false,
         error: 'Internal server error',
-        details: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined
+        details: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
       },
       { status: 500 }
     );
   }
 }
 
-/**
- * POST /api/intake/settings
- * Save/update user's intake settings
- */
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
 
   try {
-    // 1. Authenticate
     const user = await getUser();
     if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 2. Validate input
-    const body = await request.json();
-    const validation = updateSettingsSchema.safeParse(body);
+    const validation = updateSettingsSchema.safeParse(await request.json());
     if (!validation.success) {
       return NextResponse.json(
         { success: false, error: 'Invalid request body', details: validation.error.errors },
@@ -117,74 +100,44 @@ export async function POST(request: NextRequest) {
     }
 
     const updates = validation.data;
-    requestLogger.info({ userId: user.id, updates }, 'Updating intake settings');
 
-    // 3. Validate template_id exists if provided
-    if (updates.template_id) {
-      const { data: template, error: templateError } = await intakeRepository.getTemplateById(updates.template_id);
-      if (templateError) {
-        throw templateError;
-      }
-      if (!template) {
-        return NextResponse.json(
-          { success: false, error: 'Template not found' },
-          { status: 400 }
-        );
-      }
-    }
-
-    /**
-     * Refuse "enabled, with no form".
-     *
-     * That state stored cleanly and did nothing: every reader — the booking
-     * flow's intake step, the intake email, the manage page — requires a
-     * template, so a business could switch intake on, see it saved, and collect
-     * nothing, with no error anywhere to explain it.
-     *
-     * Checked against what would REMAIN after the update, not against the
-     * payload, because a partial update that only flips `is_enabled` carries no
-     * template_id of its own.
-     */
-    const { data: existing } = await intakeRepository.getSettings(user.id);
-
-    const willBeEnabled = updates.is_enabled ?? existing?.is_enabled ?? false;
-    const willHaveTemplate =
-      (updates.template_id !== undefined ? updates.template_id : existing?.template_id) ?? null;
-
-    if (willBeEnabled && !willHaveTemplate) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'Choose an intake form before turning this on — without one, nothing is collected.',
-          code: 'INTAKE_TEMPLATE_REQUIRED'
-        },
-        { status: 400 }
-      );
-    }
-
-    // 4. Upsert settings
     const { data: settings, error } = await intakeRepository.upsertSettings(user.id, updates);
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
-    // 5. Fetch full settings with template for response
-    const { data: fullSettings } = await intakeRepository.getSettingsWithTemplate(user.id);
+    const { data: published } = await intakeFormRepository.getPublished(user.id);
 
-    requestLogger.info({ userId: user.id, settingsId: settings?.id }, 'Settings saved');
+    requestLogger.info(
+      { userId: user.id, ...updates, hasPublishedForm: !!published },
+      'Intake settings saved'
+    );
 
+    /*
+     * Switching intake on with nothing published is ALLOWED, and deliberately.
+     *
+     * The old route refused the equivalent state — enabled with no template —
+     * because it stored cleanly and did nothing. That reasoning does not carry
+     * over: turning the switch on is now the first step of a flow that
+     * continues on the same screen, with the form written and waiting to be
+     * read. Refusing it would mean refusing the owner's first click.
+     *
+     * Nothing is at risk, because the publish gate lives in `intakeReach` and
+     * not in this switch: enabled with no published form sends nobody anything.
+     */
     return NextResponse.json({
       success: true,
-      settings: fullSettings || settings
+      settings: {
+        is_enabled: settings?.is_enabled ?? false,
+        send_after_booking: settings?.send_after_booking ?? false,
+        hasPublishedForm: !!published,
+      },
     });
-
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to save intake settings');
     return NextResponse.json(
       {
         success: false,
         error: 'Internal server error',
-        details: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined
+        details: process.env.NODE_ENV === 'development' ? (error as Error).message : undefined,
       },
       { status: 500 }
     );

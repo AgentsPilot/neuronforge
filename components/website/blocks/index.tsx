@@ -24,7 +24,6 @@ import { ServicesBlock } from './ServicesBlock';
 import { CTABlock } from './CTABlock';
 import { TestimonialsBlock } from './TestimonialsBlock';
 import { ContactFormBlock } from './ContactFormBlock';
-import { IntakeFormBlock } from './IntakeFormBlock';
 import { PricingBlock } from './PricingBlock';
 import { FAQBlock } from './FAQBlock';
 import { AboutBlock } from './AboutBlock';
@@ -50,7 +49,6 @@ export {
   CTABlock,
   TestimonialsBlock,
   ContactFormBlock,
-  IntakeFormBlock,
   PricingBlock,
   FAQBlock,
   AboutBlock,
@@ -82,7 +80,6 @@ const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<BlockRendererProps>>
   cta: CTABlock,
   testimonials: TestimonialsBlock,
   contact_form: ContactFormBlock,
-  intake_form: IntakeFormBlock,
   pricing: PricingBlock,
   faq: FAQBlock,
   about: AboutBlock,
@@ -108,7 +105,6 @@ export const BLOCK_DISPLAY_NAMES: Record<BlockType, { en: string; es: string; he
   cta: { en: 'Call to Action', es: 'Llamada a la Acción', he: 'קריאה לפעולה' },
   testimonials: { en: 'Testimonials', es: 'Testimonios', he: 'המלצות' },
   contact_form: { en: 'Contact Form', es: 'Formulario de Contacto', he: 'טופס יצירת קשר' },
-  intake_form: { en: 'Intake Form', es: 'Formulario de Admisión', he: 'טופס קליטה' },
   pricing: { en: 'Pricing', es: 'Precios', he: 'מחירון' },
   faq: { en: 'FAQ', es: 'Preguntas Frecuentes', he: 'שאלות נפוצות' },
   about: { en: 'About', es: 'Acerca de', he: 'אודות' },
@@ -134,7 +130,6 @@ export const BLOCK_ICONS: Record<BlockType, string> = {
   cta: '📢',
   testimonials: '💬',
   contact_form: '✉️',
-  intake_form: '📝',
   pricing: '💰',
   faq: '❓',
   about: '👤',

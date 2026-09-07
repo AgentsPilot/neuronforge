@@ -128,6 +128,20 @@ const parse = (value: string | null | undefined): number | null => {
 const dayNumber = (at: number | null, zero: number | null): number | null =>
   at === null || zero === null ? null : Math.max(0, Math.floor((at - zero) / DAY_MS));
 
+/**
+ * Whole days from day zero to now — the "today" marker's number.
+ *
+ * Exported so the dashboard can compute it OUTSIDE the memo that builds the
+ * nodes. Everything else in a journey is a fact about the past and changes only
+ * when the data does; today is the one value that goes stale on its own, and
+ * behind a memo keyed on the data it froze at whatever it read when the page
+ * was opened. A tab left open over a weekend went on insisting it was Friday.
+ */
+export function daysSince(iso: string | null | undefined, now: number = Date.now()): number | null {
+  // `dayNumber` already answers null for an absent or unparseable anchor.
+  return dayNumber(now, parse(iso));
+}
+
 /** A milestone: reached the moment the event has a date, waiting until then. */
 function milestone(
   key: JourneyNodeKey,

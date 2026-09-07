@@ -12,34 +12,24 @@ import { PublicShell } from '@/components/public/PublicShell';
 import { StatusCard } from '@/components/public/StatusCard';
 import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider';
 import { createPublicT } from '@/lib/i18n/public-pages';
+import {
+  visibleQuestions,
+  type IntakeQuestion,
+} from '@/lib/business-os/intake/types';
+import { IntakeAnswerField } from '@/components/public/IntakeAnswerField';
 
-interface IntakeFieldOption {
-  value: string;
-  label_en: string;
-  label_es: string;
-  label_he: string;
-}
-
-interface IntakeField {
-  key: string;
-  type: 'text' | 'textarea' | 'select' | 'radio' | 'checkbox' | 'tel' | 'email';
-  label_en: string;
-  label_es: string;
-  label_he: string;
-  required: boolean;
-  options?: IntakeFieldOption[];
-  placeholder_en?: string;
-  placeholder_es?: string;
-  placeholder_he?: string;
-}
-
-interface IntakeTemplate {
+/**
+ * The form, as published for this business.
+ *
+ * One language, because the form belongs to one business and was written in
+ * theirs — the three label columns are gone with the shared catalogue that
+ * needed them. Shape imported rather than redeclared: this page was one of five
+ * files carrying its own copy, and they had already drifted.
+ */
+interface PublishedIntakeForm {
   id: string;
-  template_key: string;
-  name_en: string;
-  name_es: string;
-  name_he: string;
-  fields: IntakeField[];
+  version: number;
+  questions: IntakeQuestion[];
 }
 
 interface BookingData extends PublicBookingSummary {
@@ -60,7 +50,7 @@ export default function IntakeFormPage() {
   const token = params.token as string;
   const brand = useOptionalPublicBrand();
 
-  const [template, setTemplate] = useState<IntakeTemplate | null>(null);
+  const [form, setForm] = useState<PublishedIntakeForm | null>(null);
   const [booking, setBooking] = useState<BookingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +79,7 @@ export default function IntakeFormPage() {
             setHasNoIntake(true);
             setBooking(data.booking);
           } else {
-            setTemplate(data.template);
+            setForm(data.form);
             setBooking(data.booking);
           }
         } else {
@@ -106,12 +96,6 @@ export default function IntakeFormPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // The template carries a column per language rather than a nested object.
-  const localized = <T extends Record<string, unknown>>(source: T, base: string): string => {
-    const key = `${base}_${locale}` as keyof T;
-    return (source[key] as string) || (source[`${base}_en` as keyof T] as string) || '';
-  };
-
   const handleChange = (fieldKey: string, value: unknown) => {
     setResponses(prev => ({ ...prev, [fieldKey]: value }));
     if (validationErrors[fieldKey]) {
@@ -125,11 +109,26 @@ export default function IntakeFormPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!template) return;
+    if (!form) return;
 
+    /*
+     * Only what the client can SEE is required.
+     *
+     * A conditional question the client never reached is still `required` in
+     * the definition. Validating it would block a form on an answer to a
+     * question that was never displayed — a dead end with nothing on screen to
+     * explain it.
+     */
     const errors: Record<string, string> = {};
-    template.fields.forEach(field => {
-      if (field.required && !responses[field.key]) errors[field.key] = t('required');
+    visibleQuestions(form.questions, responses).forEach(question => {
+      const answer = responses[question.id];
+      const empty =
+        answer === undefined ||
+        answer === '' ||
+        answer === null ||
+        (Array.isArray(answer) && answer.length === 0);
+
+      if (question.required && empty) errors[question.id] = t('required');
     });
 
     if (Object.keys(errors).length > 0) {
@@ -144,11 +143,9 @@ export default function IntakeFormPage() {
       const response = await fetch(`/api/book/manage/${token}/intake`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          templateId: template.id,
-          templateKey: template.template_key,
-          responses,
-        }),
+        // Only the answers. Which form this is belongs to the business and is
+        // resolved server-side rather than asserted here.
+        body: JSON.stringify({ responses }),
       });
       const data = await response.json();
 
@@ -163,7 +160,7 @@ export default function IntakeFormPage() {
 
   if (loading) return <PublicPageSpinner label={t('loading')} />;
 
-  if (!brand || (error && !template && !alreadyCompleted && !hasNoIntake)) {
+  if (!brand || (error && !form && !alreadyCompleted && !hasNoIntake)) {
     return (
       <div style={{ background: 'var(--ap-bg)' }}>
         <StatusCard
@@ -235,10 +232,16 @@ export default function IntakeFormPage() {
     );
   }
 
-  if (!template) return null;
+  if (!form) return null;
 
-  const answered = template.fields.filter(field => Boolean(responses[field.key])).length;
-  const progress = template.fields.length ? (answered / template.fields.length) * 100 : 0;
+  // Progress counts what is ON SCREEN. Including hidden conditional questions
+  // would make the bar stall at a number the client cannot move.
+  const shown = visibleQuestions(form.questions, responses);
+  const answered = shown.filter(question => {
+    const answer = responses[question.id];
+    return Array.isArray(answer) ? answer.length > 0 : Boolean(answer);
+  }).length;
+  const progress = shown.length ? (answered / shown.length) * 100 : 0;
 
   return (
     <PublicShell
@@ -299,21 +302,19 @@ export default function IntakeFormPage() {
               boxShadow: 'var(--ap-shadow-sm)',
             }}
           >
-            {template.fields.map(field => {
-              const label = localized(field, 'label');
-              const placeholder = localized(field, 'placeholder');
-              const invalid = Boolean(validationErrors[field.key]);
-              const value = responses[field.key];
+            {shown.map(question => {
+              const invalid = Boolean(validationErrors[question.id]);
+              const value = responses[question.id];
 
               return (
-                <div key={field.key}>
+                <div key={question.id}>
                   <label
-                    htmlFor={field.key}
+                    htmlFor={question.id}
                     className="mb-1.5 block text-sm font-medium"
                     style={{ color: 'var(--ap-text)' }}
                   >
-                    {label}
-                    {field.required && (
+                    {question.label}
+                    {question.required && (
                       // Logical margin, so the asterisk sits after the label in
                       // both directions.
                       <span className="ms-1" style={{ color: '#DC2626' }}>
@@ -322,105 +323,24 @@ export default function IntakeFormPage() {
                     )}
                   </label>
 
-                  {field.type === 'textarea' ? (
-                    <textarea
-                      id={field.key}
-                      rows={4}
-                      value={(value as string) || ''}
-                      placeholder={placeholder}
-                      onChange={e => handleChange(field.key, e.target.value)}
-                      className="w-full px-3 py-2.5 text-sm outline-none"
-                      style={{
-                        ...fieldStyle,
-                        borderColor: invalid ? '#DC2626' : 'var(--ap-border)',
-                      }}
-                    />
-                  ) : field.type === 'select' ? (
-                    <select
-                      id={field.key}
-                      value={(value as string) || ''}
-                      onChange={e => handleChange(field.key, e.target.value)}
-                      className="w-full px-3 py-2.5 text-sm outline-none"
-                      style={{
-                        ...fieldStyle,
-                        borderColor: invalid ? '#DC2626' : 'var(--ap-border)',
-                      }}
-                    >
-                      <option value="">{t('select')}</option>
-                      {field.options?.map(option => (
-                        <option key={option.value} value={option.value}>
-                          {localized(option, 'label')}
-                        </option>
-                      ))}
-                    </select>
-                  ) : field.type === 'radio' ? (
-                    <div className="space-y-2">
-                      {field.options?.map(option => (
-                        <label
-                          key={option.value}
-                          className="flex cursor-pointer items-center gap-2.5 text-sm"
-                          style={{ color: 'var(--ap-text)' }}
-                        >
-                          <input
-                            type="radio"
-                            name={field.key}
-                            value={option.value}
-                            checked={value === option.value}
-                            onChange={e => handleChange(field.key, e.target.value)}
-                            style={{ accentColor: 'var(--ap-brand)' }}
-                          />
-                          {localized(option, 'label')}
-                        </label>
-                      ))}
-                    </div>
-                  ) : field.type === 'checkbox' ? (
-                    <div className="space-y-2">
-                      {field.options?.map(option => {
-                        const selected = Array.isArray(value) ? (value as string[]) : [];
-                        return (
-                          <label
-                            key={option.value}
-                            className="flex cursor-pointer items-center gap-2.5 text-sm"
-                            style={{ color: 'var(--ap-text)' }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selected.includes(option.value)}
-                              onChange={e =>
-                                handleChange(
-                                  field.key,
-                                  e.target.checked
-                                    ? [...selected, option.value]
-                                    : selected.filter(v => v !== option.value)
-                                )
-                              }
-                              style={{ accentColor: 'var(--ap-brand)' }}
-                            />
-                            {localized(option, 'label')}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <input
-                      id={field.key}
-                      type={field.type}
-                      value={(value as string) || ''}
-                      placeholder={placeholder}
-                      onChange={e => handleChange(field.key, e.target.value)}
-                      // Email and phone are Latin-scripted even on a Hebrew form.
-                      dir={field.type === 'email' || field.type === 'tel' ? 'ltr' : undefined}
-                      className="w-full px-3 py-2.5 text-sm outline-none"
-                      style={{
-                        ...fieldStyle,
-                        borderColor: invalid ? '#DC2626' : 'var(--ap-border)',
-                      }}
-                    />
+                  {question.help && (
+                    <p className="mb-1.5 text-xs" style={{ color: 'var(--ap-text-muted)' }}>
+                      {question.help}
+                    </p>
                   )}
+
+                  <IntakeAnswerField
+                    question={question}
+                    value={value}
+                    invalid={invalid}
+                    token={token}
+                    onChange={(next: unknown) => handleChange(question.id, next)}
+                    t={t}
+                  />
 
                   {invalid && (
                     <p className="mt-1 text-xs" style={{ color: '#DC2626' }}>
-                      {validationErrors[field.key]}
+                      {validationErrors[question.id]}
                     </p>
                   )}
                 </div>

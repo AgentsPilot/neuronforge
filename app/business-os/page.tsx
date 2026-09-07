@@ -402,9 +402,28 @@ function BusinessOSContent() {
             });
           }
 
-          // Intake form — recommended. Opt-in feature, so an absent settings row
-          // is a legitimate choice rather than an unfinished step.
-          if (!s.scheduling?.intake_enabled) {
+          /*
+           * Intake form — three states, not two.
+           *
+           * A written-but-unpublished form is not "not set up": the work is
+           * done and one click stands between it and the client. Telling that
+           * owner to "set up your intake" sends them looking for a task they
+           * have already finished, and the form stays unpublished because
+           * nothing ever said that was the thing to do.
+           */
+          if (s.scheduling?.intake_draft_pending) {
+            computedSetupItems.push({
+              id: 'intake',
+              title: t('setup.intake.review'),
+              description: t('setup.intake.review_why'),
+              completed: false,
+              action: 'setup_intake',
+              // Not merely recommended once a form is waiting: an unpublished
+              // intake collects nothing, and the business believes it does.
+              required: true
+            });
+          } else if (!s.scheduling?.intake_enabled && !s.scheduling?.intake_published) {
+            // Nothing written and nothing published: genuinely not set up.
             computedSetupItems.push({
               id: 'intake',
               title: t('setup.intake.todo'),

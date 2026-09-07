@@ -40,8 +40,8 @@ const pluginName = 'website';
  * - **M1 (page allow-lists, load-bearing security).** `create_page` / `update_page` build their
  *   payload field-by-field from an explicit allow-list — raw `params` is NEVER forwarded. `user_id`
  *   is always the authenticated id (never from params), `id` is never taken from params on create,
- *   and `status` / `published` / `custom_domain_verified` can never be injected. Mirrors
- *   `IntakePluginExecutor.updateSettings`.
+ *   and `status` / `published` / `custom_domain_verified` can never be injected. (The intake
+ *   executor this pattern was mirrored from is gone — see below.)
  * - **M2 (ownership reads branch on `!data`).** `WebsitePageRepository.findById` uses `.single()`
  *   and does NOT special-case PGRST116, so a not-owned/not-found page returns
  *   `{ data: null, error: <PGRST116> }`. The ownership guards branch on `!data` (treating a non-null

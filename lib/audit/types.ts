@@ -36,7 +36,11 @@ export type EntityType =
   | 'payment_plan_subscription'
   | 'crm_contact'
   | 'business_profile'
-  | 'website_page';
+  | 'website_page'
+  // Publishing an intake decides what every future client is asked, so it is
+  // audited against the form version that went live rather than against the
+  // business — "which questions did we send in September" has to be answerable.
+  | 'intake_form';
 
 /**
  * Compliance frameworks this event relates to

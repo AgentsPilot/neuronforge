@@ -68,7 +68,6 @@ const corePluginFiles = [
       'crm-plugin-v2.json',
       'scheduling-plugin-v2.json',
       'payments-plugin-v2.json',
-      'intake-plugin-v2.json',
       'website-plugin-v2.json',
     ];
 

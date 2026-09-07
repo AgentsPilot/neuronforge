@@ -65,8 +65,7 @@ const BLOCK_TO_SECTION_MAP: Record<string, SectionType> = {
   'logo_cloud': 'logo_cloud',
   'video': 'video',
   'booking_widget': 'booking_widget',
-  'payment_button': 'payment_button',
-  'intake_form': 'intake_form'
+  'payment_button': 'payment_button'
 };
 
 interface RouteParams {

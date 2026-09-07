@@ -11,7 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CollapsibleSection } from '../CollapsibleSection';
-import type { SessionCardData, IntakeTemplate, BookingJourneyData, BookingJourneyStep } from './types';
+import type { SessionCardData, BookingJourneyData, BookingJourneyStep } from './types';
+import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import { groupJourneyByDay } from '@/lib/business-os/journeyDays';
 
 interface BookingsTabProps {
@@ -58,7 +59,6 @@ interface BookingsTabProps {
     status: 'completed' | 'no_show' | 'cancelled'
   ) => Promise<void> | void;
   isLoading?: boolean;
-  intakeTemplates?: Record<string, IntakeTemplate>;
   isOpen?: boolean;
   onToggle?: (isOpen: boolean) => void;
 }
@@ -153,7 +153,6 @@ export function BookingsTab({
   onResendConfirmation,
   onSetBookingStatus,
   isLoading = false,
-  intakeTemplates = {},
   isOpen,
   onToggle
 }: BookingsTabProps) {
@@ -381,32 +380,30 @@ export function BookingsTab({
   };
 
   // Build intake content for expanded view (supports view and edit modes)
-  const buildIntakeContent = (booking: SessionCardData['booking'], template?: IntakeTemplate) => {
+  const buildIntakeContent = (booking: SessionCardData['booking']) => {
     if (!booking.intake_responses?.responses) return null;
 
     const isEditing = editingIntakeBookingId === booking.id;
 
+    /*
+     * The questions travel WITH the answers.
+     *
+     * This used to fetch the template the submission pointed at, cache it, and
+     * translate its labels — which meant an answer could not be read until a
+     * second request landed, and could not be read at all once the form was
+     * edited. The submission now carries the questions as they stood when they
+     * were asked, so the labels are already here and already correct for that
+     * version.
+     */
+    const questions = booking.intake_responses.questions ?? [];
+    const responses = Object.entries(booking.intake_responses.responses);
+    const responseCount = responses.length;
+
     const getFieldLabel = (key: string): string => {
-      if (!template?.fields) return key.replace(/_/g, ' ');
-      const field = template.fields.find(f => f.key === key);
-      if (!field) return key.replace(/_/g, ' ');
-      const langKey = `label_${language}` as keyof typeof field;
-      return (field[langKey] as string) || field.label_en;
-    };
-
-    const getFieldPlaceholder = (field: IntakeTemplate['fields'][0]) => {
-      const langKey = `placeholder_${language}` as keyof typeof field;
-      return (field[langKey] as string) || '';
-    };
-
-    const getOptionLabel = (key: string, value: string): string => {
-      if (!template?.fields) return value;
-      const field = template.fields.find(f => f.key === key);
-      if (!field?.options) return value;
-      const option = field.options.find(opt => opt.value === value);
-      if (!option) return value;
-      const langKey = `label_${language}` as keyof typeof option;
-      return (option[langKey] as string) || option.label_en || value;
+      const question = questions.find(item => item.id === key);
+      // A key with no question is a submission from before the snapshot
+      // existed. Its own key, tidied, is the best that can honestly be shown.
+      return question?.label ?? key.replace(/_/g, ' ');
     };
 
     const translateValue = (key: string, value: unknown): string => {
@@ -416,168 +413,142 @@ export function BookingsTab({
       if (typeof value === 'string') {
         if (value.toLowerCase() === 'yes') return t('common.yes') || 'Yes';
         if (value.toLowerCase() === 'no') return t('common.no') || 'No';
-        return getOptionLabel(key, value);
+        return value;
       }
       if (Array.isArray(value)) {
-        return value.map(v => typeof v === 'string' ? getOptionLabel(key, v) : String(v)).join(', ');
+        /*
+         * Uploaded files arrive as `{documentId, name}`, and their name is the
+         * only part worth reading here — the file itself is in the Files tab,
+         * which is where someone goes to open it.
+         */
+        return value
+          .map(item =>
+            item && typeof item === 'object' && 'name' in item
+              ? String((item as { name: unknown }).name)
+              : String(item)
+          )
+          .join(', ');
       }
       return String(value);
     };
 
-    // Render editable field based on template field type
-    const renderEditableField = (field: IntakeTemplate['fields'][0]) => {
-      const value = editingIntakeResponses[field.key];
-      const label = getFieldLabel(field.key);
-      const placeholder = getFieldPlaceholder(field);
+    /*
+     * One editable control per question, from the snapshot.
+     *
+     * The version this replaces switched on the four types the old shared
+     * catalogue could produce and localised every label out of three columns.
+     * A per-business form has one language and eight types, so the localisation
+     * is gone and the missing four are here.
+     */
+    const renderEditableField = (question: IntakeQuestion) => {
+      const value = editingIntakeResponses[question.id];
+      const input =
+        'w-full px-2 py-1.5 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:border-[#8B5CF6] outline-none';
 
-      switch (field.type) {
-        case 'text':
-        case 'email':
-        case 'tel':
-          return (
-            <div key={field.key} className="space-y-1">
-              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
-                {label}
-                {field.required && <span className="text-red-500 ms-0.5">*</span>}
-              </label>
-              <Input
-                type={field.type}
-                value={(value as string) || ''}
-                onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
-                placeholder={placeholder}
-                className="h-8 text-sm bg-[var(--v2-surface)] border-[var(--v2-border)] focus:border-[#8B5CF6]"
-                dir={isRTL ? 'rtl' : 'ltr'}
-              />
+      return (
+        <div key={question.id} className="space-y-1">
+          <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
+            {question.label}
+          </label>
+
+          {question.type === 'long_text' ? (
+            <textarea
+              rows={3}
+              value={(value as string) || ''}
+              onChange={e => handleIntakeFieldChange(question.id, e.target.value)}
+              className={`${input} resize-none`}
+              dir={isRTL ? 'rtl' : 'ltr'}
+            />
+          ) : question.type === 'yes_no' ? (
+            <div className="flex gap-2">
+              {[true, false].map(option => (
+                <button
+                  key={String(option)}
+                  type="button"
+                  onClick={() => handleIntakeFieldChange(question.id, option)}
+                  className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+                    value === option
+                      ? 'border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10'
+                      : 'border-[var(--v2-border)] text-[var(--v2-text-muted)]'
+                  }`}
+                >
+                  {option ? t('common.yes') : t('common.no')}
+                </button>
+              ))}
             </div>
-          );
-
-        case 'textarea':
-          return (
-            <div key={field.key} className="space-y-1">
-              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
-                {label}
-                {field.required && <span className="text-red-500 ms-0.5">*</span>}
-              </label>
-              <textarea
-                value={(value as string) || ''}
-                onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
-                placeholder={placeholder}
-                rows={2}
-                className="w-full px-3 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-md text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6]/20 resize-none"
-                dir={isRTL ? 'rtl' : 'ltr'}
-              />
+          ) : question.type === 'single_choice' ? (
+            <div className="flex flex-wrap gap-1.5">
+              {(question.options ?? []).map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => handleIntakeFieldChange(question.id, option.label)}
+                  className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                    value === option.label
+                      ? 'border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10'
+                      : 'border-[var(--v2-border)] text-[var(--v2-text-muted)]'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
-          );
-
-        case 'select':
-          return (
-            <div key={field.key} className="space-y-1">
-              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
-                {label}
-                {field.required && <span className="text-red-500 ms-0.5">*</span>}
-              </label>
-              <select
-                value={(value as string) || ''}
-                onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
-                className="w-full h-8 px-3 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-md text-[var(--v2-text-primary)] focus:outline-none focus:border-[#8B5CF6]"
-                dir={isRTL ? 'rtl' : 'ltr'}
-              >
-                <option value="">{t('common.select') || 'Select...'}</option>
-                {field.options?.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {getOptionLabel(field.key, option.value)}
-                  </option>
-                ))}
-              </select>
+          ) : question.type === 'multi_choice' ? (
+            <div className="flex flex-wrap gap-1.5">
+              {(question.options ?? []).map(option => {
+                const selected = Array.isArray(value) && (value as string[]).includes(option.label);
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      const current = Array.isArray(value) ? (value as string[]) : [];
+                      handleIntakeFieldChange(
+                        question.id,
+                        selected
+                          ? current.filter(item => item !== option.label)
+                          : [...current, option.label]
+                      );
+                    }}
+                    className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                      selected
+                        ? 'border-[#8B5CF6] text-[#8B5CF6] bg-[#8B5CF6]/10'
+                        : 'border-[var(--v2-border)] text-[var(--v2-text-muted)]'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
             </div>
-          );
-
-        case 'radio':
-          return (
-            <div key={field.key} className="space-y-1.5">
-              <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
-                {label}
-                {field.required && <span className="text-red-500 ms-0.5">*</span>}
-              </label>
-              <div className="space-y-1">
-                {field.options?.map(option => (
-                  <label key={option.value} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name={field.key}
-                      value={option.value}
-                      checked={value === option.value}
-                      onChange={(e) => handleIntakeFieldChange(field.key, e.target.value)}
-                      className="h-3.5 w-3.5 text-[#8B5CF6] border-gray-300 focus:ring-[#8B5CF6]"
-                    />
-                    <span className="text-sm text-[var(--v2-text-primary)]">
-                      {getOptionLabel(field.key, option.value)}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          );
-
-        case 'checkbox':
-          const isMultiple = field.options && field.options.length > 1;
-          if (isMultiple) {
-            const selectedValues = Array.isArray(value) ? value : [];
-            return (
-              <div key={field.key} className="space-y-1.5">
-                <label className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
-                  {label}
-                  {field.required && <span className="text-red-500 ms-0.5">*</span>}
-                </label>
-                <div className="space-y-1">
-                  {field.options?.map(option => (
-                    <label key={option.value} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        value={option.value}
-                        checked={selectedValues.includes(option.value)}
-                        onChange={(e) => {
-                          const newValues = e.target.checked
-                            ? [...selectedValues, option.value]
-                            : selectedValues.filter((v: string) => v !== option.value);
-                          handleIntakeFieldChange(field.key, newValues);
-                        }}
-                        className="h-3.5 w-3.5 rounded text-[#8B5CF6] border-gray-300 focus:ring-[#8B5CF6]"
-                      />
-                      <span className="text-sm text-[var(--v2-text-primary)]">
-                        {getOptionLabel(field.key, option.value)}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            );
-          } else {
-            return (
-              <div key={field.key} className="space-y-1">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={value === true || value === 'yes'}
-                    onChange={(e) => handleIntakeFieldChange(field.key, e.target.checked ? 'yes' : 'no')}
-                    className="h-3.5 w-3.5 rounded text-[#8B5CF6] border-gray-300 focus:ring-[#8B5CF6]"
-                  />
-                  <span className="text-[10px] font-semibold text-[var(--v2-text-muted)] uppercase tracking-wider">
-                    {label}
-                    {field.required && <span className="text-red-500 ms-0.5">*</span>}
-                  </span>
-                </label>
-              </div>
-            );
-          }
-
-        default:
-          return null;
-      }
+          ) : question.type === 'file' ? (
+            /*
+             * Read-only here. The owner is correcting what a client wrote, not
+             * uploading on their behalf — and the files themselves live in the
+             * Files tab, which is where they are opened and removed.
+             */
+            <p className="text-sm text-[var(--v2-text-muted)]">
+              {translateValue(question.id, value) || '—'}
+            </p>
+          ) : (
+            <Input
+              type={question.type === 'number' ? 'number' : question.type === 'date' ? 'date' : 'text'}
+              value={value === undefined || value === null ? '' : String(value)}
+              onChange={e =>
+                handleIntakeFieldChange(
+                  question.id,
+                  question.type === 'number' && e.target.value !== ''
+                    ? Number(e.target.value)
+                    : e.target.value
+                )
+              }
+              className="h-8 text-sm bg-[var(--v2-surface)] border-[var(--v2-border)] focus:border-[#8B5CF6]"
+              dir={question.type === 'number' || question.type === 'date' ? 'ltr' : isRTL ? 'rtl' : 'ltr'}
+            />
+          )}
+        </div>
+      );
     };
-
-    const responses = Object.entries(booking.intake_responses.responses);
-    const responseCount = responses.length;
 
     // EDIT MODE
     if (isEditing) {
@@ -608,8 +579,8 @@ export function BookingsTab({
 
           {/* Editable fields */}
           <div className="space-y-3">
-            {template?.fields ? (
-              template.fields.map(renderEditableField)
+            {questions.length > 0 ? (
+              questions.map(renderEditableField)
             ) : (
               // Fallback: render text inputs for each response key
               responses.map(([key]) => (
@@ -803,9 +774,6 @@ export function BookingsTab({
               const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
               const isPendingProduct = isProduct && booking.status !== 'completed' && booking.status !== 'cancelled';
 
-              // Get intake template
-              const templateId = booking.intake_responses?.template_id;
-              const template = templateId ? intakeTemplates[templateId] : undefined;
               const hasIntake = booking.intake_responses && Object.keys(booking.intake_responses.responses || {}).length > 0;
 
               return (
@@ -1490,7 +1458,7 @@ export function BookingsTab({
                                           className="pb-3"
                                         >
                                           <div className="p-4 bg-[var(--v2-bg)] rounded-xl border border-[var(--v2-border)] shadow-sm">
-                                            {buildIntakeContent(booking, template)}
+                                            {buildIntakeContent(booking)}
                                           </div>
                                         </div>
                                       )}

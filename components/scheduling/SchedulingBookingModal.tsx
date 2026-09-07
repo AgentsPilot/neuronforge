@@ -10,6 +10,11 @@ import en from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
 import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import {
+  businessCollectsIntake,
+  intakeBlockReason,
+  type IntakeBlockReason,
+} from '@/lib/business-os/intakeReach';
 import { createLogger } from '@/lib/logger';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
@@ -385,6 +390,15 @@ export function SchedulingBookingModal({
 
   // Intake form configuration status
   const [intakeConfigured, setIntakeConfigured] = useState<boolean | null>(null); // null = loading
+  /**
+   * WHY it cannot be sent, when it cannot.
+   *
+   * "Set up an intake form" was the only thing this could say, and it is the
+   * wrong sentence for the state most businesses are actually in: a form that
+   * exists, was written for them, and has not been published yet. Being sent to
+   * create something they already have is how it stays unpublished.
+   */
+  const [intakeBlock, setIntakeBlock] = useState<IntakeBlockReason | null>(null);
 
   // External calendar busy slots
   const [externalBusySlots, setExternalBusySlots] = useState<ExternalBusySlot[]>([]);
@@ -421,12 +435,24 @@ export function SchedulingBookingModal({
         const response = await fetch('/api/intake/settings');
         if (response.ok) {
           const data = await response.json();
-          // Intake is configured if: is_enabled AND template_id is set AND collect_during_booking is true
+          /*
+           * The shared predicate, not a third opinion.
+           *
+           * This asked for `template_id` and `collect_during_booking` — one
+           * pointing at a catalogue that no longer exists, the other a flag the
+           * settings API had already stopped returning. Both read as undefined,
+           * so the toggle was permanently disabled and told every business to
+           * go and configure the form it had just written.
+           *
+           * `businessCollectsIntake` is the OWNER's question — can I send this
+           * myself — which is exactly what this toggle does.
+           */
           const settings = data.settings;
-          const configured = settings?.is_enabled && settings?.template_id && settings?.collect_during_booking;
-          setIntakeConfigured(!!configured);
+          setIntakeConfigured(businessCollectsIntake(settings));
+          setIntakeBlock(intakeBlockReason(settings));
         } else {
           setIntakeConfigured(false);
+          setIntakeBlock(null);
         }
       } catch (error) {
         console.error('Failed to fetch intake settings:', error);
@@ -1548,7 +1574,12 @@ export function SchedulingBookingModal({
                     </p>
                     {intakeConfigured === false ? (
                       <p className="text-xs text-amber-600 dark:text-amber-400">
-                        {t('scheduling.booking.intake_not_configured')}
+                        {/* Named, so the owner knows which of the two things to
+                            go and do. A form written but not published is one
+                            click from working. */}
+                        {intakeBlock === 'not_published'
+                          ? t('scheduling.booking.intake_not_published')
+                          : t('scheduling.booking.intake_not_configured')}
                       </p>
                     ) : (
                       <p className="text-xs text-[var(--v2-text-muted)]">

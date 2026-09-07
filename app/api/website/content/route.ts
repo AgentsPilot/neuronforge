@@ -78,7 +78,7 @@ export async function PUT(request: NextRequest) {
       'hero', 'about', 'services', 'testimonials', 'faq',
       'team', 'contact', 'process', 'features', 'stats',
       'pricing', 'gallery', 'cta', 'newsletter', 'logo_cloud',
-      'video', 'booking_widget', 'payment_button', 'intake_form'
+      'video', 'booking_widget', 'payment_button'
     ];
 
     const invalidSections = Object.keys(validated.sections).filter(

@@ -70,7 +70,7 @@ export class WebMissingCtaDetector extends BaseDetector {
     }
 
     // CTA-type blocks that count as conversion opportunities
-    const ctaBlockTypes = ['booking_widget', 'cta', 'contact_form', 'intake_form', 'payment_button'];
+    const ctaBlockTypes = ['booking_widget', 'cta', 'contact_form', 'payment_button'];
 
     // Check each page for CTA blocks
     const pagesWithoutCta: Array<{ id: string; page_type: string; slug: string; title: string }> = [];

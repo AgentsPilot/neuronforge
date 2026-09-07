@@ -7,16 +7,15 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CollapsibleSection } from '../CollapsibleSection';
-import type { ContactDocument, IntakeResponses, IntakeTemplate } from './types';
+import type { ContactDocument, IntakeResponses } from './types';
 
 interface FilesTabProps {
   documents: ContactDocument[];
   intakeResponses: Array<{
     booking_id: string;
-    booking_date: string;
+    booking_date: string | null;
     service_name: string;
     intake: IntakeResponses;
-    template?: IntakeTemplate;
   }>;
   t: (key: string) => string;
   isRTL: boolean;
@@ -70,40 +69,34 @@ export function FilesTab({
     return FILE_ICONS[mimeType] || FileText;
   };
 
-  const getFieldLabel = (field: { label_en: string; label_es: string; label_he: string }) => {
-    const langKey = `label_${language}` as keyof typeof field;
-    return field[langKey] || field.label_en;
-  };
-
-  // Get translated option label for select/radio fields
-  const getOptionLabel = (
-    field: { options?: Array<{ value: string; label_en: string; label_es?: string; label_he?: string }> } | undefined,
-    value: string
-  ): string => {
-    if (!field?.options) return value;
-    const option = field.options.find(opt => opt.value === value);
-    if (!option) return value;
-    const langKey = `label_${language}` as keyof typeof option;
-    return (option[langKey] as string) || option.label_en || value;
-  };
-
-  // Translate yes/no values
-  const translateValue = (value: unknown, field?: { options?: Array<{ value: string; label_en: string; label_es?: string; label_he?: string }> }): string => {
+  /**
+   * An answer, as a line of text.
+   *
+   * The three helpers this replaces existed to translate labels out of a
+   * shared, trilingual catalogue and to turn stored option CODES into words.
+   * Neither job remains: the form is written in one language, and an answer to
+   * a choice question stores the option's own label.
+   */
+  const translateValue = (value: unknown): string => {
     if (typeof value === 'boolean') {
-      return value ? (t('common.yes') || 'Yes') : (t('common.no') || 'No');
+      return value ? t('common.yes') || 'Yes' : t('common.no') || 'No';
     }
     if (typeof value === 'string') {
-      // Check if it's an option value that needs translation
-      if (field?.options) {
-        return getOptionLabel(field, value);
-      }
-      // Handle common yes/no string values
+      // Older submissions stored these words rather than a boolean.
       if (value.toLowerCase() === 'yes') return t('common.yes') || 'Yes';
       if (value.toLowerCase() === 'no') return t('common.no') || 'No';
       return value;
     }
     if (Array.isArray(value)) {
-      return value.map(v => typeof v === 'string' && field?.options ? getOptionLabel(field, v) : String(v)).join(', ');
+      // Uploaded files arrive as `{documentId, name}`; the name is the readable
+      // half, and the file itself is a row in this very tab.
+      return value
+        .map(item =>
+          item && typeof item === 'object' && 'name' in item
+            ? String((item as { name: unknown }).name)
+            : String(item)
+        )
+        .join(', ');
     }
     return String(value);
   };
@@ -173,10 +166,7 @@ export function FilesTab({
                         </div>
                         <div className="text-start">
                           <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                            {item.template
-                              ? getFieldLabel(item.template as { label_en: string; label_es: string; label_he: string })
-                              : t('crm.files.intake_form') || 'Intake Form'
-                            }
+                            {t('crm.files.intake_form') || 'Intake Form'}
                           </p>
                           <p className="text-xs text-[var(--v2-text-muted)]">
                             <bdi>{item.service_name}</bdi>
@@ -197,11 +187,17 @@ export function FilesTab({
                       <div className="p-4 pt-0 border-t border-[var(--v2-border)]">
                         <div className="mt-3 space-y-3">
                           {Object.entries(item.intake.responses || {}).map(([key, value]) => {
-                            // Try to find field label from template
-                            const field = item.template?.fields?.find(f => f.key === key);
-                            const label = field
-                              ? getFieldLabel(field as { label_en: string; label_es: string; label_he: string })
-                              : key.replace(/_/g, ' ');
+                            /*
+                             * The label comes from the submission itself.
+                             *
+                             * This looked the question up in a template fetched
+                             * separately and cached — so an answer was
+                             * unreadable until that arrived, and unreadable for
+                             * good once the form was edited. The questions now
+                             * travel with the answers.
+                             */
+                            const question = item.intake.questions?.find(q => q.id === key);
+                            const label = question?.label ?? key.replace(/_/g, ' ');
 
                             return (
                               <div key={key} className="flex flex-col gap-0.5">
@@ -209,7 +205,7 @@ export function FilesTab({
                                   {label}
                                 </span>
                                 <span className="text-sm text-[var(--v2-text-primary)]">
-                                  {translateValue(value, field as { options?: Array<{ value: string; label_en: string; label_es?: string; label_he?: string }> })}
+                                  {translateValue(value)}
                                 </span>
                               </div>
                             );

@@ -126,34 +126,30 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // 3. Get enabled template for this user
-    const { data: template, error } = await intakeRepository.getEnabledTemplateForUser(userId);
-    if (error) {
-      throw error;
-    }
-
-    // No template or intake disabled
-    if (!template) {
-      return NextResponse.json({
-        success: true,
-        hasIntake: false,
-        template: null
-      });
-    }
-
-    requestLogger.info({ userId, templateKey: template.template_key }, 'Intake template found');
+    /*
+     * 3. There is no intake DURING booking any more.
+     *
+     * Intake follows the booking: the client gets an email with a token link,
+     * and answers there. That is one form per business, published by the owner,
+     * answered once — not a form embedded mid-flow that a client meets before
+     * their booking even exists.
+     *
+     * This used to call `getEnabledTemplateForUser`, which read
+     * `user_intake_settings.template_id` — a column the intake migration
+     * dropped — so every booking page that asked logged a Postgres error while
+     * the visitor saw nothing at all.
+     *
+     * `hasIntake: false` is the shape both callers already handle, so the step
+     * simply does not appear. Removing the in-flow step from `BookingWidget`
+     * and `ProcessFlowSection` is the follow-up; answering honestly here is
+     * what stops the error and the half-flow today.
+     */
+    requestLogger.info({ userId }, 'In-flow intake is retired; intake is sent after booking');
 
     return NextResponse.json({
       success: true,
-      hasIntake: true,
-      template: {
-        id: template.id,
-        template_key: template.template_key,
-        name_en: template.name_en,
-        name_es: template.name_es,
-        name_he: template.name_he,
-        fields: template.fields
-      }
+      hasIntake: false,
+      template: null
     });
 
   } catch (error) {
@@ -226,46 +222,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Verify template exists
-    const { data: template, error: templateError } = await intakeRepository.getTemplateById(templateId);
-    if (templateError || !template) {
-      requestLogger.warn({ templateId }, 'Template not found');
-      return NextResponse.json(
-        { success: false, error: 'Template not found' },
-        { status: 404 }
-      );
-    }
+    /*
+     * 3. Nothing should be arriving here.
+     *
+     * The GET above no longer offers a form, so no current client can reach
+     * this. It verified the template against `intake_form_templates`, a table
+     * that no longer exists — and writing an answer keyed to a template id
+     * would produce a submission the drawer cannot read, since submissions now
+     * carry their own questions.
+     *
+     * Refused rather than deleted: a stale page still holding the old flow gets
+     * a clear answer instead of a 404 from a route that vanished. The intake
+     * that reaches this client is the emailed one.
+     */
+    requestLogger.warn(
+      { bookingId, userId, templateId },
+      'In-flow intake submission refused; intake is answered from the emailed link'
+    );
 
-    // 4. Save intake responses (using service role for public access)
-    const intakeData = {
-      template_id: templateId,
-      template_key: templateKey,
-      responses
-    };
-
-    requestLogger.info({ bookingId, intakeData }, 'Attempting to save intake responses');
-
-    const { data: updateResult, error: updateError } = await supabaseServer
-      .from('scheduling_bookings')
-      .update({
-        intake_responses: intakeData,
-        intake_completed_at: new Date().toISOString()
-      })
-      .eq('id', bookingId)
-      .select('id, intake_responses, intake_completed_at')
-      .single();
-
-    if (updateError) {
-      requestLogger.error({ err: updateError, bookingId }, 'Failed to update booking with intake');
-      throw updateError;
-    }
-
-    requestLogger.info({ bookingId, templateKey, updateResult }, 'Intake responses saved successfully');
-
-    return NextResponse.json({
-      success: true,
-      message: 'Intake responses saved'
-    });
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Intake is now completed from the link we email after booking.',
+      },
+      { status: 410 }
+    );
 
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to submit intake responses');

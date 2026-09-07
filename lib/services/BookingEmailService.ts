@@ -14,12 +14,15 @@ import { activitySentence, activityMoment, activityRecord } from '@/lib/business
 import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { safeExternalUrl } from '@/lib/branding/externalUrl';
+import { resolvePublishedWebsiteSubdomain } from '@/lib/branding/platformSite';
 import { emailSendRepository } from '@/lib/repositories/EmailAutomationRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 // The same source `/book/manage/[token]/intake` reads, so the email asking for
 // an intake form and the page it links to cannot disagree about whether one exists.
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { generateBookingConfirmationEmail, generateBookingCancellationEmail, generateBookingRescheduledEmail, generateICSContent } from '@/lib/email/templates/booking-confirmation';
+import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
 import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-receipt';
 import { generateRefundConfirmationEmail } from '@/lib/email/templates/refund-confirmation';
@@ -36,6 +39,49 @@ const logger = createLogger({ service: 'BookingEmailService' });
 // JWT secret for booking manage tokens
 const BOOKING_TOKEN_SECRET = process.env.BOOKING_TOKEN_SECRET || process.env.NEXTAUTH_SECRET || 'fallback-secret-change-in-prod';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
+
+/**
+ * Where to send a client who wants to book.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A "book again" link has one job, and it was the only thing the old chain did
+ * not check: that the destination is somewhere you can actually book.
+ *
+ * The order matters and is not arbitrary:
+ *
+ *   1. its WEBSITE on this platform, when we host one — a booking widget
+ *   2. its smart link — `/c/{user_code}/book`, which exists for EVERY account
+ *      and is the whole answer for a business that never wanted a website
+ *
+ * A landing page is deliberately not step 1: it is a campaign surface, and the
+ * smart link below is purpose-built for booking and never goes stale. The
+ * business's own external site is not in the list at all — a homepage is not a
+ * booking page, and a button that says "book again" has to land on one.
+ *
+ * Step 2 was missing entirely. Without it, a business on `booking_only` — one
+ * that told onboarding it did not want a site — had no bookable link to offer,
+ * so a cancelled client got no button at all. Meanwhile `user_code` was sitting
+ * on the profile, populated for every account, pointing at a booking page built
+ * for exactly this.
+ *
+ * `status = 'published'`: an unpublished page's subdomain resolves to nothing.
+ * Two of the four call sites did not filter on it. `maybeSingle` rather than
+ * `single` for the same reason the filter matters — a business with two pages
+ * made `single()` throw, and the error was swallowed into "no link".
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function resolveBookingUrl(
+  userId: string,
+  profile: { user_code?: string | null } | null | undefined
+): Promise<string | undefined> {
+  // The same helper the email branding uses, so "do we host their website"
+  // cannot be answered one way in the footer and another in the button above it.
+  const subdomain = await resolvePublishedWebsiteSubdomain(userId);
+
+  if (subdomain) return `${APP_URL}/site/${subdomain}/book`;
+  if (profile?.user_code) return `${APP_URL}/c/${profile.user_code}/book`;
+  return undefined;
+}
 
 // Token expiry for booking management links (30 days)
 const TOKEN_EXPIRY_DAYS = 30;
@@ -649,20 +695,9 @@ export class BookingEmailService {
       const profileResult = await businessProfileRepository.findByUserId(userId);
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
-      // Get booking URL from website subdomain
-      let bookAgainUrl: string | undefined;
-      const { data: websitePage } = await supabaseServer
-        .from('website_pages')
-        .select('subdomain')
-        .eq('user_id', userId)
-        .eq('status', 'published')
-        .single();
-
-      if (websitePage?.subdomain) {
-        bookAgainUrl = `${APP_URL}/site/${websitePage.subdomain}/book`;
-      } else if (profileResult.data?.website_url) {
-        bookAgainUrl = profileResult.data.website_url;
-      }
+      // Somewhere the client can actually book — see `resolveBookingUrl`.
+      // Never the business's own site: see the note there.
+      const bookAgainUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Parse booking datetime
       const startTime = new Date(booking.start_time);
@@ -836,23 +871,26 @@ export class BookingEmailService {
       const profileResult = await businessProfileRepository.findByUserId(userId);
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
-      // Get website URL for booking link
-      const websiteUrl = profileResult.data?.website_url || undefined;
-
-      // Build booking URL if website has booking enabled
-      let bookingUrl: string | undefined;
-      if (websiteUrl) {
-        // Check if website has booking capability
-        const { data: websitePage } = await supabaseServer
-          .from('website_pages')
-          .select('subdomain')
-          .eq('user_id', userId)
-          .single();
-
-        if (websitePage?.subdomain) {
-          bookingUrl = `${APP_URL}/site/${websitePage.subdomain}/book`;
-        }
-      }
+      /*
+       * Two links with two different jobs, previously tangled into one.
+       *
+       * `websiteUrl` is the business's own site, rendered as "Visit our
+       * website" — a signature, the same thing the email footer carries. An
+       * external address is exactly right there: it says who sent this.
+       *
+       * `bookingUrl` is a call to action, and must land somewhere a client can
+       * actually book — so it never points off this platform. See
+       * `resolveBookingUrl`.
+       *
+       * The bug was that the booking lookup sat INSIDE `if (websiteUrl)`,
+       * gating a link to THIS platform on the business having an external site
+       * — which nothing could record. The block never ran for anyone, so a
+       * business with a published page here got no booking link at all.
+       *
+       * Sanitised because it reaches an href and is owner-typed text.
+       */
+      const websiteUrl = safeExternalUrl(profileResult.data?.website_url) ?? undefined;
+      const bookingUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Generate email
       const { subject, html } = generateWelcomeEmail({
@@ -921,23 +959,26 @@ export class BookingEmailService {
       const profileResult = await businessProfileRepository.findByUserId(userId);
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
-      // Get website URL for booking link
-      const websiteUrl = profileResult.data?.website_url || undefined;
-
-      // Build booking URL if website has booking enabled
-      let bookingUrl: string | undefined;
-      if (websiteUrl) {
-        // Check if website has booking capability
-        const { data: websitePage } = await supabaseServer
-          .from('website_pages')
-          .select('subdomain')
-          .eq('user_id', userId)
-          .single();
-
-        if (websitePage?.subdomain) {
-          bookingUrl = `${APP_URL}/site/${websitePage.subdomain}/book`;
-        }
-      }
+      /*
+       * Two links with two different jobs, previously tangled into one.
+       *
+       * `websiteUrl` is the business's own site, rendered as "Visit our
+       * website" — a signature, the same thing the email footer carries. An
+       * external address is exactly right there: it says who sent this.
+       *
+       * `bookingUrl` is a call to action, and must land somewhere a client can
+       * actually book — so it never points off this platform. See
+       * `resolveBookingUrl`.
+       *
+       * The bug was that the booking lookup sat INSIDE `if (websiteUrl)`,
+       * gating a link to THIS platform on the business having an external site
+       * — which nothing could record. The block never ran for anyone, so a
+       * business with a published page here got no booking link at all.
+       *
+       * Sanitised because it reaches an href and is owner-typed text.
+       */
+      const websiteUrl = safeExternalUrl(profileResult.data?.website_url) ?? undefined;
+      const bookingUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Generate email
       const { subject, html } = generateReturningContactEmail({
@@ -1053,16 +1094,32 @@ export class BookingEmailService {
        * The off switch means "I will send it myself" — which is this. Reading
        * `send_after_booking` here refused the act it exists to permit.
        */
-      const templateResult = options?.manual
-        ? await intakeRepository.getCollectableTemplateForUser(userId)
-        : await intakeRepository.getEmailableTemplateForUser(userId);
+      const { form, blocked } = await resolveIntakeForSending(userId, {
+        // The automatic path is the one that has to respect `send_after_booking`;
+        // the manual path IS the owner sending it themselves.
+        forClient: !options?.manual,
+      });
 
-      if (!templateResult.data) {
+      if (!form) {
+        /*
+         * `blocked` says which of three things is in the way, and the caller
+         * passes it back to the owner. "No intake form configured" was true of
+         * all three and actionable for none — a business one click from working
+         * was told the same thing as one that had never switched it on.
+         */
         requestLogger.info(
-          { manual: !!options?.manual },
-          'No intake form to send for this business, skipping'
+          { manual: !!options?.manual, blocked },
+          'Intake not sendable for this business, skipping'
         );
-        return { sent: false, error: 'No intake form configured' };
+        return {
+          sent: false,
+          error:
+            blocked === 'not_published'
+              ? 'Your intake form has not been published yet'
+              : blocked === 'not_automatic'
+                ? 'Automatic sending is switched off for this business'
+                : 'No intake form configured',
+        };
       }
 
       // Generate booking management token and URLs
@@ -1199,20 +1256,9 @@ export class BookingEmailService {
       const profileResult = await businessProfileRepository.findByUserId(userId);
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
-      // Get booking URL from website subdomain
-      let bookAgainUrl: string | undefined;
-      const { data: websitePage } = await supabaseServer
-        .from('website_pages')
-        .select('subdomain')
-        .eq('user_id', userId)
-        .eq('status', 'published')
-        .single();
-
-      if (websitePage?.subdomain) {
-        bookAgainUrl = `${APP_URL}/site/${websitePage.subdomain}/book`;
-      } else if (profileResult.data?.website_url) {
-        bookAgainUrl = profileResult.data.website_url;
-      }
+      // Somewhere the client can actually book — see `resolveBookingUrl`.
+      // Never the business's own site: see the note there.
+      const bookAgainUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Build client name
       const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');

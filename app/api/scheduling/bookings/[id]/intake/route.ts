@@ -65,13 +65,22 @@ export async function GET(
       );
     }
 
-    // 3. Get the template
-    const templateResult = await intakeRepository.getTemplateById(result.data.template_id);
-
+    /*
+     * 3. The questions come WITH the answers.
+     *
+     * This looked the template up by id in `intake_form_templates` — a table
+     * that no longer exists, so the lookup threw. It does not need to exist: a
+     * submission stores the questions it was answered against, which is what
+     * keeps it readable after the form is edited and republished. Older rows
+     * had their labels backfilled by the same migration that dropped the table.
+     *
+     * `template` stays in the response shape, always null, so a caller still
+     * reading it gets nothing rather than an error.
+     */
     return NextResponse.json({
       success: true,
       intake: result.data,
-      template: templateResult.data
+      template: null
     });
 
   } catch (error) {
@@ -213,35 +222,38 @@ export async function POST(
     }
 
     /*
-     * 4. Does this business collect intake?
+     * 4. Send it. The gate lives in one place, and this is not it.
      *
-     * NOT "does it email automatically". This is the owner pressing Send on one
-     * booking — an explicit act, and refusing it because they had turned OFF the
-     * automatic email would be refusing the very thing that switch is for.
+     * There used to be a pre-flight check here asking whether the business had
+     * a collectable template — a second opinion on a question the email service
+     * already answers, and one that queried `user_intake_settings.template_id`,
+     * a column the intake migration dropped. It threw, returned no data, and
+     * this endpoint refused with "no intake form configured" for a business
+     * whose form was published and working.
      *
-     * It called `getEnabledTemplateForUser`, which gates on
-     * `collect_during_booking` — a flag nothing sets any more — so this endpoint
-     * would have refused every request.
+     * `sendIntakeFormRequest` resolves the published form and reports which of
+     * the three things is in the way. That answer is the one the owner sees.
      */
-    const templateResult = await intakeRepository.getCollectableTemplateForUser(user.id);
-    if (!templateResult.data) {
-      return NextResponse.json(
-        { success: false, error: 'No intake form configured. Please enable an intake form in settings first.' },
-        { status: 400 }
-      );
-    }
-
-    // 5. Send intake form email
     // Manual: the owner pressed Send on this one booking.
     const emailResult = await BookingEmailService.sendIntakeFormRequest(bookingId, user.id, {
       manual: true,
     });
 
     if (!emailResult.sent) {
-      requestLogger.error({ err: emailResult.error, bookingId }, 'Failed to send intake form email');
+      requestLogger.warn({ err: emailResult.error, bookingId }, 'Intake form email not sent');
+      /*
+       * A refusal the owner can act on is a 400, not a 500. "Your intake form
+       * has not been published yet" is not a server fault, and answering 500
+       * makes the button look broken instead of telling them what to do.
+       */
+      const ownerFixable =
+        emailResult.error === 'Your intake form has not been published yet' ||
+        emailResult.error === 'Automatic sending is switched off for this business' ||
+        emailResult.error === 'No intake form configured';
+
       return NextResponse.json(
         { success: false, error: emailResult.error || 'Failed to send intake form email' },
-        { status: 500 }
+        { status: ownerFixable ? 400 : 500 }
       );
     }
 

@@ -443,7 +443,20 @@ export async function createBooking(
       intake_responses: { template_id: '', template_key: 'pending', responses: {} },
     });
 
-    BookingEmailService.sendIntakeFormRequest(booking.id, userId).catch(err =>
+    /*
+     * `manual`, because the OWNER asked for this one.
+     *
+     * `send_after_booking` answers a different question — "send it for me
+     * automatically, for bookings clients make themselves". A business that
+     * sends intake by hand has that switch off, and reading it here refused
+     * the exact act the toggle in the booking dialog exists to perform: the
+     * owner ticked "send intake form", the booking confirmation arrived, and
+     * the intake email was silently skipped.
+     *
+     * The client-booking routes (`website/booking/create`, `finalize`) stay
+     * automatic — nobody is present there to press anything.
+     */
+    BookingEmailService.sendIntakeFormRequest(booking.id, userId, { manual: true }).catch(err =>
       log.warn({ err, bookingId: booking.id }, 'Intake form request email failed')
     );
   }
@@ -964,7 +977,11 @@ export async function sendIntakeForm(params: {
 
   let clientNotified = false;
   try {
-    const email = await BookingEmailService.sendIntakeFormRequest(bookingId, userId);
+    // The owner (or the assistant on their behalf) pressed Send — manual, for
+    // the same reason as the creation path above.
+    const email = await BookingEmailService.sendIntakeFormRequest(bookingId, userId, {
+      manual: true,
+    });
     clientNotified = email.sent;
     if (!email.sent) {
       log.warn({ bookingId, error: email.error }, 'Intake form request not sent');

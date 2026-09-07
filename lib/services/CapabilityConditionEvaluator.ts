@@ -36,7 +36,20 @@ interface UserProfile {
   tools?: string[];
   pain_points?: string[];
   goals?: string[];
-  has_website?: boolean;
+  /*
+   * `has_website` used to be declared here and selected from the table below.
+   *
+   * It is not a column and never was. Onboarding DERIVES it in memory —
+   * `app/api/onboarding/build/route.ts:280` reads it off `online_presence_mode`
+   * — and hands it to `capabilityActivationService.activateFromProfile` as part
+   * of an activation profile that is used once and discarded. This evaluator
+   * later tried to re-read that same shape from `business_profiles`, as though
+   * it had been persisted.
+   *
+   * If a condition ever needs it, derive it the same way: `online_presence_mode`
+   * is a real, populated column. Do not add one — whether a site is live is a
+   * fact about `website_pages`, not about the profile.
+   */
 }
 
 interface BuildingBlock {
@@ -374,7 +387,17 @@ export class CapabilityConditionEvaluator {
     try {
       const { data: profile, error } = await supabaseServer
         .from('business_profiles')
-        .select('vertical, clients_per_week, tools, pain_points, goals, has_website')
+        /*
+         * Every name here must be a real column.
+         *
+         * This asked for `has_website` too, and Postgres rejects the WHOLE
+         * select for one unknown column — so this query failed on every call,
+         * for every user, since the day it was written. `getUserProfile` threw,
+         * logged, and returned null, and no capability condition has ever seen
+         * profile data. A silent, total failure that looked like "this user has
+         * no profile".
+         */
+        .select('vertical, clients_per_week, tools, pain_points, goals')
         .eq('user_id', userId)
         .single();
 

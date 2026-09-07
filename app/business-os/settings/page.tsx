@@ -39,6 +39,7 @@ import phoneCountryLabels from 'react-phone-number-input/locale/en';
 import 'react-phone-number-input/style.css';
 import { SearchableCountrySelect } from '@/components/crm/SearchableCountrySelect';
 import { toE164 } from '@/lib/branding/phone';
+import { safeExternalUrl } from '@/lib/branding/externalUrl';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 /**
@@ -618,6 +619,19 @@ function BusinessOSSettingsContent() {
         company_name: businessProfile.company_name,
         description: businessProfile.description,
         vertical: businessProfile.vertical,
+        /*
+         * The business's own website, if it has one.
+         *
+         * Nothing could set this before: onboarding stopped asking for the
+         * address when the old extraction path was replaced — it now learns
+         * only WHETHER a site exists, not where — and this screen showed it as
+         * a read-only link. A column three surfaces read from could never be
+         * filled.
+         *
+         * Stored as null when blank rather than '', because every reader tests
+         * for a value; an empty string would render an empty link.
+         */
+        website_url: safeExternalUrl(businessProfile.website_url),
         updated_at: new Date().toISOString(),
       }, { onConflict: 'user_id' });
 
@@ -1049,6 +1063,38 @@ function BusinessOSSettingsContent() {
                   {t('settings.business.description_hint')}
                 </p>
               </div>
+
+              {/*
+                The business's own website, for a business that has one.
+
+                Sits with the description rather than with the public contact
+                details below: those are what a CLIENT uses to reach the
+                business, while this is a fact about the business that happens
+                to be published. It reaches the public contact page, the email
+                branding, and — only when there is no bookable page anywhere on
+                this platform — a booking email's "book again" link.
+              */}
+              <div>
+                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                  {t('settings.business.website')}
+                </label>
+                <input
+                  type="url"
+                  inputMode="url"
+                  value={businessProfile.website_url}
+                  onChange={(e) => setBusinessProfile(b => ({ ...b, website_url: e.target.value }))}
+                  placeholder="https://example.com"
+                  // Latin script, left to right, even in Hebrew: a URL is not
+                  // prose, and mirroring it puts the scheme on the wrong end.
+                  dir="ltr"
+                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                />
+                <p className="text-[11px] text-[var(--v2-text-muted)] mt-1 leading-snug">
+                  {t('settings.business.website_hint')}
+                </p>
+              </div>
+
 
               {/*
                 What a client uses to reach this business.

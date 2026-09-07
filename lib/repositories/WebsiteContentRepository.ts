@@ -185,17 +185,6 @@ export interface PaymentButtonContent {
   currency: string;
 }
 
-export interface IntakeFormContent {
-  title: string;
-  subtitle: string;
-  fields: Array<{
-    name: string;
-    type: string;
-    label: string;
-    required: boolean;
-  }>;
-}
-
 // Full website content record
 export interface WebsiteContent {
   id: string;
@@ -218,7 +207,6 @@ export interface WebsiteContent {
   video: VideoContent;
   booking_widget: BookingWidgetContent;
   payment_button: PaymentButtonContent;
-  intake_form: IntakeFormContent;
   created_at: string;
   updated_at: string;
 }
@@ -228,7 +216,7 @@ export type SectionType =
   | 'hero' | 'about' | 'services' | 'testimonials' | 'faq'
   | 'team' | 'contact' | 'process' | 'features' | 'stats'
   | 'pricing' | 'gallery' | 'cta' | 'newsletter' | 'logo_cloud'
-  | 'video' | 'booking_widget' | 'payment_button' | 'intake_form';
+  | 'video' | 'booking_widget' | 'payment_button';
 
 export interface RepositoryResult<T> {
   data: T | null;

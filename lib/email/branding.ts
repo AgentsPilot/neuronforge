@@ -24,6 +24,8 @@ import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { resolveBusinessTheme } from '@/lib/branding/resolveTheme';
+import { resolvePlatformWebsiteUrl } from '@/lib/branding/platformSite';
+import { safeExternalUrl } from '@/lib/branding/externalUrl';
 import type { Locale } from '@/lib/i18n/config';
 import type { BrandingData } from './templates/base-template';
 
@@ -107,7 +109,30 @@ export async function resolveEmailBranding(
     logoUrl: (await resolveBusinessLogo(userId, p)) || undefined,
     primaryColor: theme?.colors?.primary || DEFAULT_EMAIL_BRANDING.primaryColor,
     secondaryColor: theme?.colors?.secondary || DEFAULT_EMAIL_BRANDING.secondaryColor,
-    websiteUrl: p.website_url || undefined,
+    /*
+     * OUR website once it is live, the business's own until then.
+     *
+     * This read `business_profiles.website_url` and nothing else, so the day a
+     * business published a website with us its emails went on advertising its old
+     * one — or, far more often, carried no address at all, since nothing could
+     * write that column. The colours and the logo already followed the platform
+     * page; only the address did not, which made the footer disagree with the
+     * email around it.
+     *
+     * Resolved on every send, which is what makes it switch by itself: publish
+     * a website today and tonight's receipts point at it, with nothing to
+     * migrate. Unpublish it and they fall back to the business's own address.
+     *
+     * A landing page does not count — see `platformSite`. It is one campaign,
+     * not the business's website, and it disappears when the campaign ends.
+     *
+     * The external one is sanitised — it is owner-typed text on its way into an
+     * href — while ours is built from a subdomain we control.
+     */
+    websiteUrl:
+      (await resolvePlatformWebsiteUrl(userId)) ??
+      safeExternalUrl(p.website_url) ??
+      undefined,
     headingFont: theme?.fonts?.heading || undefined,
     bodyFont: theme?.fonts?.body || undefined,
     locale,
