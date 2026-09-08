@@ -982,6 +982,9 @@ const translations = {
     'chat.entity.services': 'service',
     'chat.which_one': 'Which one did you mean?',
     'chat.need_fields': 'I need a bit more to do that:',
+    // Said every time, because while a write is unfinished the next message is
+    // treated as the answer — so the way out has to be visible, not guessed.
+    'chat.need_fields_cancel': "(or say 'cancel' to drop it)",
     'chat.budget.warn': 'You have {remaining} of {limit} questions left today.',
     'usage.title': 'AI credits',
     'usage.available': 'available',
@@ -1475,6 +1478,22 @@ const translations = {
     'crm.activity.type.email_sent': 'Email Sent',
     'crm.activity.type.stage_changed': 'Stage Changed',
     'crm.activity.type.contact_updated': 'Contact Updated',
+    /*
+     * Types the writers emit that this list never knew about.
+     *
+     * `getActivityLabel` falls back to the raw type with its underscores swapped
+     * for spaces, which is English by construction — so a Hebrew drawer showed
+     * "booking rescheduled" and "intake form sent" in lower-case English among
+     * translated rows. Every type any writer can produce needs an entry here.
+     */
+    'crm.activity.type.booking_rescheduled': 'Booking Rescheduled',
+    'crm.activity.type.booking_confirmation_sent': 'Confirmation Sent',
+    'crm.activity.type.refund_issued': 'Refund Issued',
+    'crm.activity.type.invoice_sent': 'Invoice Sent',
+    'crm.activity.type.intake_form_sent': 'Intake Form Sent',
+    'crm.activity.type.intake_form_completed': 'Intake Form Completed',
+    'crm.activity.type.no_show': 'No-Show',
+    'crm.activity.type.website_contact_form': 'Website Enquiry',
     // Activity filter labels
     'crm.activity.filter.all': 'All',
     'crm.activity.filter.notes': 'Notes',
@@ -2937,6 +2956,7 @@ const translations = {
     'config.intake.state_draft': 'Draft — your clients are not receiving this yet',
     'setup.intake.review': 'Review and publish your intake form',
     'scheduling.booking.intake_not_published': 'Your intake form is written but not published yet — publish it in Settings → Intake.',
+    'scheduling.booking.time_already_booked': 'You already have a booking at this time.',
     'config.intake.load_failed': "Couldn't load your intake form. Please try again.",
     'setup.intake.review_why': 'We wrote one from what you do. Nobody receives it until you publish it.',
     'config.intake.state_published': 'Published — new bookings receive this form',
@@ -4013,6 +4033,7 @@ const translations = {
     'chat.entity.services': 'servicio',
     'chat.which_one': '¿A cuál te referías?',
     'chat.need_fields': 'Necesito un poco más para hacerlo:',
+    'chat.need_fields_cancel': '(o di "cancelar" para descartarlo)',
     'chat.budget.warn': 'Te quedan {remaining} de {limit} preguntas hoy.',
     'usage.title': 'Créditos de IA',
     'usage.available': 'disponibles',
@@ -4505,6 +4526,14 @@ const translations = {
     'crm.activity.type.email_sent': 'Correo Enviado',
     'crm.activity.type.stage_changed': 'Etapa Cambiada',
     'crm.activity.type.contact_updated': 'Contacto Actualizado',
+    'crm.activity.type.booking_rescheduled': 'Cita Reprogramada',
+    'crm.activity.type.booking_confirmation_sent': 'Confirmación Enviada',
+    'crm.activity.type.refund_issued': 'Reembolso Emitido',
+    'crm.activity.type.invoice_sent': 'Factura Enviada',
+    'crm.activity.type.intake_form_sent': 'Formulario Enviado',
+    'crm.activity.type.intake_form_completed': 'Formulario Completado',
+    'crm.activity.type.no_show': 'No Asistió',
+    'crm.activity.type.website_contact_form': 'Consulta desde la Web',
     // Activity filter labels
     'crm.activity.filter.all': 'Todos',
     'crm.activity.filter.notes': 'Notas',
@@ -5958,6 +5987,7 @@ const translations = {
     'config.intake.state_draft': 'Borrador — tus clientes aún no lo reciben',
     'setup.intake.review': 'Revisa y publica tu formulario',
     'scheduling.booking.intake_not_published': 'Tu formulario está escrito pero sin publicar — publícalo en Ajustes → Admisión.',
+    'scheduling.booking.time_already_booked': 'Ya tienes una reserva a esta hora.',
     'config.intake.load_failed': 'No se pudo cargar tu formulario de admisión. Inténtalo de nuevo.',
     'setup.intake.review_why': 'Escribimos uno según lo que haces. Nadie lo recibe hasta que lo publiques.',
     'config.intake.state_published': 'Publicado — las nuevas reservas reciben este formulario',
@@ -6392,6 +6422,14 @@ const translations = {
     'crm.activity.type.email_sent': 'אימייל נשלח',
     'crm.activity.type.stage_changed': 'שלב השתנה',
     'crm.activity.type.contact_updated': 'איש קשר עודכן',
+    'crm.activity.type.booking_rescheduled': 'מועד הפגישה שונה',
+    'crm.activity.type.booking_confirmation_sent': 'אישור נשלח',
+    'crm.activity.type.refund_issued': 'הוחזר תשלום',
+    'crm.activity.type.invoice_sent': 'חשבונית נשלחה',
+    'crm.activity.type.intake_form_sent': 'טופס קליטה נשלח',
+    'crm.activity.type.intake_form_completed': 'טופס הקליטה מולא',
+    'crm.activity.type.no_show': 'הלקוח לא הגיע',
+    'crm.activity.type.website_contact_form': 'פנייה מהאתר',
     // Activity filter labels
     'crm.activity.filter.all': 'הכל',
     'crm.activity.filter.notes': 'הערות',
@@ -7845,6 +7883,7 @@ const translations = {
     'config.intake.state_draft': 'טיוטה — הלקוחות שלכם עדיין לא מקבלים את זה',
     'setup.intake.review': 'עברו על טופס הקליטה ופרסמו אותו',
     'scheduling.booking.intake_not_published': 'טופס הקליטה שלכם נכתב אבל עדיין לא פורסם — פרסמו אותו בהגדרות ← טפסי קליטה.',
+    'scheduling.booking.time_already_booked': 'כבר יש לכם הזמנה בשעה הזו.',
     'config.intake.load_failed': 'לא הצלחנו לטעון את טופס הקליטה. נסו שוב.',
     'setup.intake.review_why': 'כתבנו אחד לפי מה שאתם עושים. אף אחד לא מקבל אותו עד שתפרסמו.',
     'config.intake.state_published': 'פורסם — הזמנות חדשות מקבלות את הטופס הזה',
@@ -8766,6 +8805,7 @@ const translations = {
     'chat.entity.services': 'שירות',
     'chat.which_one': 'לאיזה מהם התכוונת?',
     'chat.need_fields': 'צריך עוד קצת פרטים בשביל זה:',
+    'chat.need_fields_cancel': '(או כתוב "ביטול" כדי לבטל)',
     'chat.budget.warn': 'נשארו לך {remaining} שאלות מתוך {limit} להיום.',
     'usage.title': 'קרדיטים של AI',
     'usage.available': 'זמינים',

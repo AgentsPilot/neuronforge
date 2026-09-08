@@ -171,7 +171,8 @@ export function SchedulingDialog({
   const [availability, setAvailability] = useState<WeeklyAvailability>(DEFAULT_AVAILABILITY);
 
   // Side panel booking form state
-  const [showBookingPanel, setShowBookingPanel] = useState(false);
+  /** The slot a click landed on, handed to the shared modal as its start time. */
+  const [prefilledSlot, setPrefilledSlot] = useState<{ date: Date; hour: number } | undefined>();
   const [formData, setFormData] = useState({
     service_id: '',
     contact_id: null as string | null,
@@ -205,10 +206,12 @@ export function SchedulingDialog({
     }
   }, [isOpen]);
 
-  // Reset form when dialog closes
+  // Reset when the dialog closes.
   useEffect(() => {
     if (!isOpen) {
-      setShowBookingPanel(false);
+      setShowEditModal(false);
+      setEditingBooking(undefined);
+      setPrefilledSlot(undefined);
       resetForm();
     }
   }, [isOpen]);
@@ -333,14 +336,36 @@ export function SchedulingDialog({
     setSelectedContact(null);
   };
 
+  /*
+   * One booking dialog, reached three ways.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Clicking an existing booking opened `SchedulingBookingModal`. Clicking an
+   * empty slot, or "new booking", opened a 327-line form written into this file
+   * instead — a second implementation of the same act.
+   *
+   * They had drifted, as two of anything do. The shared modal has the quick-pick
+   * slots, the conflict warning, the intake toggle, contact search, payment
+   * plans, and its strings come from the translation dictionary; this panel had
+   * none of that and spelled its own labels inline as
+   * `language === 'he' ? 'ביטול' : 'Cancel'`. Every fix made to booking went to
+   * the modal, and the calendar quietly did not receive any of them.
+   *
+   * The modal already accepts `prefilledDateTime`, which is exactly what a slot
+   * click has to say. So the panel is gone and all three routes arrive at the
+   * same dialog.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const handleSlotClick = (date: Date, hour: number) => {
-    initializeNewBookingForm(date, hour);
-    setShowBookingPanel(true);
+    setEditingBooking(undefined);
+    setPrefilledSlot({ date, hour });
+    setShowEditModal(true);
   };
 
   const handleNewBooking = () => {
-    initializeNewBookingForm();
-    setShowBookingPanel(true);
+    setEditingBooking(undefined);
+    setPrefilledSlot(undefined);
+    setShowEditModal(true);
   };
 
   const handleBookingClick = (booking: SchedulingBooking) => {
@@ -470,7 +495,6 @@ export function SchedulingDialog({
       const data = await response.json();
 
       if (response.ok) {
-        setShowBookingPanel(false);
         resetForm();
         refreshBookingsSilently();
         onBookingCreated?.();
@@ -597,7 +621,7 @@ export function SchedulingDialog({
         {/* Content - Calendar + Side Panel */}
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
           {/* Calendar View - takes remaining space */}
-          <div className={`flex-1 overflow-hidden p-2 sm:p-3 md:p-4 transition-all duration-300 ${showBookingPanel ? 'opacity-50 md:opacity-100' : ''}`}>
+          <div className="flex-1 overflow-hidden p-2 sm:p-3 md:p-4">
             {loading ? (
               <div className="flex items-center justify-center h-full">
                 <Loader2 className="w-6 h-6 sm:w-8 sm:h-8 animate-spin" style={{ color: SCHEDULING_COLOR }} />
@@ -614,349 +638,26 @@ export function SchedulingDialog({
             )}
           </div>
 
-          {/* Side Panel - Booking Form - Overlay on mobile, side panel on desktop */}
-          <div
-            className={`flex-shrink-0 border-s-0 md:border-s border-[var(--v2-border)] bg-[var(--v2-surface)] transition-all duration-300 overflow-hidden
-              ${showBookingPanel
-                ? 'fixed md:relative inset-0 md:inset-auto z-50 md:z-auto w-full md:w-[380px]'
-                : 'w-0 md:w-0'
-              }`}
-          >
-            {showBookingPanel && (
-              <form onSubmit={handleSubmit} className="h-full flex flex-col">
-                {/* Panel Header */}
-                <div className="flex items-center justify-between p-4 border-b border-[var(--v2-border)]">
-                  <h3 className="font-semibold text-[var(--v2-text-primary)]">
-                    {language === 'he' ? 'פגישה חדשה' : 'New Booking'}
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowBookingPanel(false);
-                      resetForm();
-                    }}
-                    className="p-1.5 hover:bg-[var(--v2-surface-hover)] rounded-lg transition-colors"
-                  >
-                    <X className="w-4 h-4 text-[var(--v2-text-muted)]" />
-                  </button>
-                </div>
-
-                {/* Scrollable Form Content */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                  {/* Error Message */}
-                  {formError && (
-                    <div
-                      className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      {formError}
-                    </div>
-                  )}
-
-                  {/* Service Selection */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">
-                      {language === 'he' ? 'שירות' : 'Service'}
-                    </label>
-                    <Select
-                      value={formData.service_id}
-                      onValueChange={handleServiceChange}
-                    >
-                      <SelectTrigger
-                        className="w-full bg-[var(--v2-bg)] border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:border-[#14B8A6] focus:ring-[#14B8A6]/20"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <SelectValue placeholder={language === 'he' ? 'בחר שירות' : 'Select service'} />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)] p-1">
-                        {services
-                          .filter(service => service.status === 'active')
-                          .map(service => (
-                            <SelectItem
-                              key={service.id}
-                              value={service.id}
-                              className="text-[var(--v2-text-primary)] focus:bg-[#14B8A6]/10 focus:text-[#0D9488] py-2 px-3 cursor-pointer text-sm"
-                            >
-                              <div className="flex items-center justify-between gap-2 w-full">
-                                <span>{service.service_name}</span>
-                                <span className="text-xs text-[var(--v2-text-muted)]">{service.duration_minutes}m</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Client Section */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">
-                      {language === 'he' ? 'לקוח' : 'Client'}
-                    </label>
-
-                    {/* Selected Contact Display */}
-                    {selectedContact && !showClientSearch && (
-                      <div
-                        className="flex items-center justify-between p-3 bg-[#14B8A6]/10 border border-[#14B8A6]/30"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10">
-                            {(selectedContact.first_name?.[0] || '') + (selectedContact.last_name?.[0] || '')}
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium text-[var(--v2-text-primary)]">
-                              {selectedContact.first_name} {selectedContact.last_name}
-                            </p>
-                            <p className="text-xs text-[var(--v2-text-muted)]">{selectedContact.email}</p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={clearSelectedContact}
-                          className="p-1 text-[var(--v2-text-muted)] hover:text-red-500 transition-colors"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Client Search */}
-                    {showClientSearch && (
-                      <div className="space-y-2">
-                        <div className="relative">
-                          <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
-                          <input
-                            type="text"
-                            value={clientSearchQuery}
-                            onChange={(e) => setClientSearchQuery(e.target.value)}
-                            placeholder={language === 'he' ? 'חפש לקוח...' : 'Search client...'}
-                            className="w-full ps-9 pe-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                          />
-                          {isSearching && (
-                            <div className="absolute end-3 top-1/2 -translate-y-1/2">
-                              <div className="w-3.5 h-3.5 border-2 border-[#14B8A6] border-t-transparent rounded-full animate-spin" />
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Search Results */}
-                        {clientSearchResults.length > 0 && (
-                          <div
-                            className="max-h-32 overflow-y-auto border border-[var(--v2-border)] bg-[var(--v2-surface)] divide-y divide-[var(--v2-border)]"
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                          >
-                            {clientSearchResults.map(contact => (
-                              <button
-                                key={contact.id}
-                                type="button"
-                                onClick={() => selectContact(contact)}
-                                className="w-full flex items-center gap-2 p-2 hover:bg-[#14B8A6]/10 transition-colors text-start"
-                              >
-                                <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-semibold text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 flex-shrink-0">
-                                  {(contact.first_name?.[0] || '') + (contact.last_name?.[0] || '')}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-[var(--v2-text-primary)] truncate">
-                                    {contact.first_name} {contact.last_name}
-                                  </p>
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Add New Client Button */}
-                        <button
-                          type="button"
-                          onClick={() => setShowClientSearch(false)}
-                          className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-[#14B8A6] bg-[#14B8A6]/10 border border-[#14B8A6]/30 hover:bg-[#14B8A6]/20 transition-all"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          <UserPlus className="h-3.5 w-3.5" />
-                          {language === 'he' ? 'לקוח חדש' : 'New client'}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Manual Client Entry */}
-                    {!showClientSearch && !selectedContact && (
-                      <div className="space-y-3">
-                        <button
-                          type="button"
-                          onClick={() => setShowClientSearch(true)}
-                          className="text-xs text-[#14B8A6] hover:underline flex items-center gap-1"
-                        >
-                          <Search className="h-3 w-3" />
-                          {language === 'he' ? 'חפש לקוח קיים' : 'Search existing'}
-                        </button>
-
-                        <div className="grid grid-cols-2 gap-2">
-                          <input
-                            value={formData.client_first_name}
-                            onChange={(e) => setFormData(prev => ({ ...prev, client_first_name: e.target.value }))}
-                            placeholder={language === 'he' ? 'שם פרטי *' : 'First name *'}
-                            required
-                            className="px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                          />
-                          <input
-                            value={formData.client_last_name}
-                            onChange={(e) => setFormData(prev => ({ ...prev, client_last_name: e.target.value }))}
-                            placeholder={language === 'he' ? 'שם משפחה' : 'Last name'}
-                            className="px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                            style={{ borderRadius: 'var(--v2-radius-button)' }}
-                          />
-                        </div>
-
-                        <input
-                          type="email"
-                          value={formData.client_email}
-                          onChange={(e) => setFormData(prev => ({ ...prev, client_email: e.target.value }))}
-                          placeholder={language === 'he' ? 'אימייל *' : 'Email *'}
-                          required
-                          className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        />
-
-                        <input
-                          type="tel"
-                          value={formData.client_phone}
-                          onChange={(e) => setFormData(prev => ({ ...prev, client_phone: e.target.value }))}
-                          placeholder={language === 'he' ? 'טלפון' : 'Phone'}
-                          className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Quick Pick Time Slots */}
-                  {quickSlots.length > 0 && (
-                    <div className="space-y-2">
-                      <label className="text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">
-                        {language === 'he' ? 'זמנים פנויים' : 'Available'}
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {quickSlots.map((slot, index) => {
-                          const isSelected =
-                            formData.start_time === formatDateTimeLocal(slot.start) &&
-                            formData.end_time === formatDateTimeLocal(slot.end);
-
-                          return (
-                            <button
-                              key={index}
-                              type="button"
-                              onClick={() => {
-                                setFormData(prev => ({
-                                  ...prev,
-                                  start_time: formatDateTimeLocal(slot.start),
-                                  end_time: formatDateTimeLocal(slot.end)
-                                }));
-                              }}
-                              className={`flex flex-col items-center p-2 text-xs transition-all ${
-                                isSelected
-                                  ? 'bg-[#14B8A6] text-white'
-                                  : 'bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] hover:border-[#14B8A6] hover:bg-[#14B8A6]/10'
-                              }`}
-                              style={{ borderRadius: 'var(--v2-radius-button)' }}
-                            >
-                              <span className={`text-[10px] ${isSelected ? 'text-white/80' : 'text-[var(--v2-text-muted)]'}`}>
-                                {getDayLabel(slot.dayOffset, slot.start)}
-                              </span>
-                              <span className="font-semibold" dir="ltr">{getTimeLabel(slot.start)}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Custom Time Selection */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">
-                      {language === 'he' ? 'זמן' : 'Time'}
-                    </label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="datetime-local"
-                        value={formData.start_time}
-                        onChange={(e) => setFormData(prev => ({ ...prev, start_time: e.target.value }))}
-                        required
-                        className="px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-xs focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                      <input
-                        type="datetime-local"
-                        value={formData.end_time}
-                        onChange={(e) => setFormData(prev => ({ ...prev, end_time: e.target.value }))}
-                        required
-                        className="px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-xs focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Notes */}
-                  <div className="space-y-2">
-                    <label className="text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">
-                      {language === 'he' ? 'הערות' : 'Notes'}
-                    </label>
-                    <textarea
-                      value={formData.notes}
-                      onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-                      placeholder={language === 'he' ? 'הערות...' : 'Notes...'}
-                      rows={2}
-                      className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all resize-none"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    />
-                  </div>
-                </div>
-
-                {/* Form Footer */}
-                <div className="flex-shrink-0 flex gap-2 p-4 border-t border-[var(--v2-border)]">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowBookingPanel(false);
-                      resetForm();
-                    }}
-                    className="flex-1 px-4 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {language === 'he' ? 'ביטול' : 'Cancel'}
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={formLoading || !formData.service_id || !formData.client_first_name || !formData.client_email}
-                    className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-[#14B8A6] hover:bg-[#0D9488] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {formLoading
-                      ? (language === 'he' ? 'שומר...' : 'Saving...')
-                      : (language === 'he' ? 'צור' : 'Create')
-                    }
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
         </div>
       </DialogContent>
 
-      {/* Edit Booking Modal */}
+      {/* The booking dialog — new bookings and existing ones alike. */}
       <SchedulingBookingModal
         booking={editingBooking}
         services={services}
+        servicesLoading={loading}
         isOpen={showEditModal}
+        prefilledDateTime={prefilledSlot}
         onClose={() => {
           setShowEditModal(false);
           setEditingBooking(undefined);
+          setPrefilledSlot(undefined);
         }}
         onBookingUpdated={() => {
           fetchAllData();
           setShowEditModal(false);
           setEditingBooking(undefined);
+          setPrefilledSlot(undefined);
         }}
         availability={availability}
         existingBookings={bookings}

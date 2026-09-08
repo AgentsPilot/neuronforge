@@ -2531,10 +2531,40 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   business_profile: {
     table: 'business_profiles',
     meaning: 'this business itself — its name, its trade, and the weekly hours clients can book',
+    /*
+     * One row of configuration, not a collection. Reading it returns a company
+     * name and a vertical, which answers nothing anyone asks — while looking
+     * like an answer. Everything worth knowing here comes from the actions.
+     */
+    queryable: false,
     labels: {
       one: { en: 'business profile', he: 'פרופיל העסק', es: 'perfil del negocio' },
       many: { en: 'business profile', he: 'פרופיל העסק', es: 'perfil del negocio' },
     },
+    /*
+     * Nobody calls this their "business profile" — they call it their hours,
+     * their availability, their schedule. The formal label is the one word a
+     * user will never type, so without these the entity is unreachable by the
+     * questions it exists to answer.
+     */
+    aliases: [
+      // Matching is substring-based, so short stems beat exact phrases: "open
+      // hours" never appears inside "how many hours are still open", while
+      // "hours" does. Over-matching only widens the catalog that gets shown —
+      // it costs tokens, never correctness — so the stem is the safer choice.
+      'availability',
+      'hours',
+      'slots',
+      'free time',
+      'schedule',
+      'זמינות',
+      'שעות',
+      'פנוי',
+      'לוח זמנים',
+      'disponibilidad',
+      'horas',
+      'horario',
+    ],
     userScope: { kind: 'column', column: 'user_id' },
     labelField: 'company_name',
     displayFields: ['company_name', 'vertical'],
@@ -2664,6 +2694,41 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         // One profile per user: there is nothing to point at.
         needsTarget: false,
         requiredFields: ['day'],
+      },
+      /**
+       * "How much of Wednesday is still free?"
+       *
+       * READS. Availability was write-only: the owner could set their hours and
+       * close a day, and could not ask what was left of one. Asked "מה הזמינות
+       * שלי ביום רביעי?" the planner did the only thing the catalog allowed and
+       * listed BOOKINGS — two of them, one completed and one cancelled, neither
+       * of which says whether Wednesday is free. Pressed for hours it answered
+       * "0 שעות פתוחות היום": the wrong day, and a number nothing could supply.
+       *
+       * Working hours minus what is actually booked. `service` is optional and
+       * changes the question from "how long" to "how many": free minutes are one
+       * answer, appointments that still fit are another, and only the caller
+       * knows which was meant.
+       *
+       * No confirmation and no risk — it changes nothing.
+       */
+      open_time: {
+        labels: {
+          // Worded with the words people use. "free" alone lost every English
+          // phrasing built on "open" — "how many hours are still open on
+          // Wednesday" read as a field lookup on the profile, which has three
+          // columns and cannot answer anything.
+          en: 'how many hours or slots are still open / free / available on a given day',
+          he: 'כמה שעות או פגישות פנויות/פתוחות נשארו ביום מסוים',
+          es: 'cuántas horas o huecos quedan libres / disponibles en un día',
+        },
+        risk: 'read',
+        requiresConfirmation: false,
+        writesRow: false,
+        // One profile per user: there is nothing to point at.
+        needsTarget: false,
+        requiredFields: ['date'],
+        optionalFields: ['service'],
       },
     },
   },

@@ -47,7 +47,7 @@ export async function GET(
     const decoded = verifyBookingToken(token);
     if (!decoded) {
       return NextResponse.json(
-        { success: false, error: 'Invalid or expired link' },
+        { success: false, code: 'invalid_link', error: 'Invalid or expired link' },
         { status: 401 }
       );
     }
@@ -78,7 +78,7 @@ export async function GET(
 
     if (error || !booking) {
       return NextResponse.json(
-        { success: false, error: 'Booking not found' },
+        { success: false, code: 'not_found', error: 'Booking not found' },
         { status: 404 }
       );
     }
@@ -88,7 +88,7 @@ export async function GET(
     const contactEmail = contact?.email || '';
     if (contactEmail.toLowerCase() !== email.toLowerCase()) {
       return NextResponse.json(
-        { success: false, error: 'Booking not found' },
+        { success: false, code: 'not_found', error: 'Booking not found' },
         { status: 404 }
       );
     }
@@ -100,26 +100,46 @@ export async function GET(
 
     if (booking.status !== 'confirmed') {
       return NextResponse.json(
-        { success: false, error: 'This booking cannot be rescheduled' },
+        { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
         { status: 400 }
       );
     }
 
-    if (hoursUntilBooking < 24) {
-      return NextResponse.json(
-        { success: false, error: 'Bookings must be rescheduled at least 24 hours in advance' },
-        { status: 400 }
-      );
-    }
-
-    // Return service availability info for the client to select a new time
-    // The actual slot calculation would be handled by the website booking widget
+    // Read before the notice check, because the notice period is a property of
+    // the SERVICE and the check below has to use it.
     const service = booking.service as {
       duration_minutes: number;
       advance_booking_days: number;
       min_notice_hours: number;
       availability: Record<string, unknown>;
     };
+
+    /*
+     * The service's own notice period, not a hardcoded day.
+     *
+     * `min_notice_hours` was loaded, defaulted to 24 further down, and then
+     * ignored: the test said `< 24` and the message said "24 hours" whatever
+     * the business had configured. A clinic asking for 48 hours' notice let
+     * clients move an appointment 30 hours out, and one asking for 2 refused a
+     * change 20 hours out while telling them the rule was 24.
+     */
+    const noticeHours = service?.min_notice_hours ?? 24;
+
+    if (hoursUntilBooking < noticeHours) {
+      return NextResponse.json(
+        {
+          success: false,
+          // The sentence is composed on the client, which owns the dictionary:
+          // this page is read in three languages and the reason was arriving in
+          // English regardless. `hours` travels with the code so the message can
+          // state the real rule.
+          code: 'too_late',
+          hours: noticeHours,
+          error: `Bookings must be rescheduled at least ${noticeHours} hours in advance`,
+        },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json({
       success: true,
@@ -137,7 +157,7 @@ export async function GET(
   } catch (error) {
     requestLogger.error({ err: error }, 'Error fetching reschedule options');
     return NextResponse.json(
-      { success: false, error: 'Failed to fetch reschedule options' },
+      { success: false, code: 'load_failed', error: 'Failed to fetch reschedule options' },
       { status: 500 }
     );
   }
@@ -158,7 +178,7 @@ export async function POST(
     const decoded = verifyBookingToken(token);
     if (!decoded) {
       return NextResponse.json(
-        { success: false, error: 'Invalid or expired link' },
+        { success: false, code: 'invalid_link', error: 'Invalid or expired link' },
         { status: 401 }
       );
     }
@@ -171,6 +191,14 @@ export async function POST(
 
     // Fetch booking with contact email via JOIN
     // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
+    /*
+     * The service comes too, for `min_notice_hours`.
+     *
+     * This path did not load it, so GET offered slots by the service's rule
+     * while POST refused them by a hardcoded 24. A client on a 2-hour-notice
+     * service could pick a time the page had just shown them and be told it was
+     * too late.
+     */
     const { data: bookingData, error } = await supabaseServer
       .from('scheduling_bookings')
       .select(`
@@ -180,14 +208,15 @@ export async function POST(
         start_time,
         status,
         timezone,
-        contact:crm_contacts(email)
+        contact:crm_contacts(email),
+        service:scheduling_services(min_notice_hours)
       `)
       .eq('id', bookingId)
       .single();
 
     if (error || !bookingData) {
       return NextResponse.json(
-        { success: false, error: 'Booking not found' },
+        { success: false, code: 'not_found', error: 'Booking not found' },
         { status: 404 }
       );
     }
@@ -197,7 +226,7 @@ export async function POST(
     const postContactEmail = postContact?.email || '';
     if (postContactEmail.toLowerCase() !== email.toLowerCase()) {
       return NextResponse.json(
-        { success: false, error: 'Booking not found' },
+        { success: false, code: 'not_found', error: 'Booking not found' },
         { status: 404 }
       );
     }
@@ -212,14 +241,26 @@ export async function POST(
 
     if (booking.status !== 'confirmed') {
       return NextResponse.json(
-        { success: false, error: 'This booking cannot be rescheduled' },
+        { success: false, code: 'not_reschedulable', error: 'This booking cannot be rescheduled' },
         { status: 400 }
       );
     }
 
-    if (hoursUntilBooking < 24) {
+    // The same rule GET applied when it offered these slots. See the note there.
+    const bookingService = Array.isArray(bookingData.service)
+      ? bookingData.service[0]
+      : bookingData.service;
+    const noticeHours =
+      (bookingService as { min_notice_hours?: number } | null)?.min_notice_hours ?? 24;
+
+    if (hoursUntilBooking < noticeHours) {
       return NextResponse.json(
-        { success: false, error: 'Bookings must be rescheduled at least 24 hours in advance' },
+        {
+          success: false,
+          code: 'too_late',
+          hours: noticeHours,
+          error: `Bookings must be rescheduled at least ${noticeHours} hours in advance`,
+        },
         { status: 400 }
       );
     }
@@ -273,7 +314,7 @@ export async function POST(
 
     if (conflicts && conflicts.length > 0) {
       return NextResponse.json(
-        { success: false, error: 'The selected time slot is not available' },
+        { success: false, code: 'slot_taken', error: 'The selected time slot is not available' },
         { status: 409 }
       );
     }
@@ -296,7 +337,7 @@ export async function POST(
     if (updateError) {
       requestLogger.error({ err: updateError }, 'Failed to update booking');
       return NextResponse.json(
-        { success: false, error: 'Failed to reschedule booking' },
+        { success: false, code: 'reschedule_failed', error: 'Failed to reschedule booking' },
         { status: 500 }
       );
     }
@@ -373,7 +414,7 @@ export async function POST(
     }
     requestLogger.error({ err: error }, 'Error rescheduling booking');
     return NextResponse.json(
-      { success: false, error: 'Failed to reschedule booking' },
+      { success: false, code: 'reschedule_failed', error: 'Failed to reschedule booking' },
       { status: 500 }
     );
   }

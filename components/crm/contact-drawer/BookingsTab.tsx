@@ -1011,17 +1011,33 @@ export function BookingsTab({
                                     0;
 
                                   /*
-                                   * Shown whenever money exists — charged OR refunded.
+                                   * The ledger appears when there is something to
+                                   * reconcile — which means a refund.
                                    *
-                                   * Gating on `charged > 0` alone let a refund with no
-                                   * price behind it disappear entirely, which is the
-                                   * one case where the figure matters most.
+                                   * It used to appear for any payment at all, so an
+                                   * ordinary sale rendered as a one-row table: the word
+                                   * "Charged" on one side, "$200.00" pushed to the
+                                   * other, inside a 290px block. Beside every other
+                                   * step in the journey — each stating its fact in one
+                                   * plain line — that read as a stray label next to a
+                                   * floating number, and it is the row the eye lands on
+                                   * first because it is the only one shaped differently.
+                                   *
+                                   * Charged, returned and a ruled total earn that shape:
+                                   * three figures that have to be seen to add up. One
+                                   * figure does not. Without a refund the amount is
+                                   * stated the way the schedule and the intake state
+                                   * theirs, from `step.details`, which already carries
+                                   * the formatted amount.
+                                   *
+                                   * A refund with no price behind it still shows — that
+                                   * is why this asks about `refunded`, not `charged`.
                                    */
                                   const showAccount =
                                     isPaymentStep &&
                                     !!payment &&
                                     payment.status !== 'free' &&
-                                    (charged > 0 || refunded > 0);
+                                    refunded > 0;
 
                                   const colors = STATUS_COLORS[step.status];
 

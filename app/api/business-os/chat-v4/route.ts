@@ -55,6 +55,10 @@ import {
   getConfirmationStore,
   readConfirmationReply,
 } from '@/lib/business-os/bizql/mutate/ConfirmationStore';
+import {
+  getPendingFillStore,
+  isCancelMessage,
+} from '@/lib/business-os/bizql/mutate/PendingFillStore';
 import { executeForEach } from '@/lib/business-os/bizql/mutate/ForEachExecutor';
 import { applyFrozenWrites } from '@/lib/business-os/bizql/mutate/applyWrites';
 import { resolveEmailBranding } from '@/lib/email/branding';
@@ -102,6 +106,27 @@ function writeDone(language: string): string {
 
 function writeCancelled(language: string): string {
   return WRITE_CANCELLED[language] ?? WRITE_CANCELLED.en;
+}
+
+/**
+ * Name the fields a write is still missing, in the reader's language.
+ *
+ * The label is what the user is shown; the column is where the answer is
+ * written. Both come from the catalog, so neither is spelled out here — asking
+ * for "title" and then writing to `title` are the same fact, and keeping them
+ * together is what stops a rename from silently breaking the fill.
+ */
+function describeFields(
+  entityKey: string,
+  keys: string[],
+  language: string
+): Array<{ key: string; label: string }> {
+  const entity = CATALOG.entities[entityKey];
+
+  return keys.map((key) => ({
+    key,
+    label: entity?.fields[key]?.labels[language as 'en'] ?? entity?.fields[key]?.labels.en ?? key,
+  }));
 }
 
 /**
@@ -297,12 +322,221 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       resetsAt: budget.resetsAt,
     };
 
+    const confirmations = getConfirmationStore();
+
+    /*
+     * 4a. A write already under way takes precedence over EVERYTHING, planning
+     *     included. While one is parked, the next message is a value — not a
+     *     request to be interpreted.
+     *
+     * This is the difference between a state machine and a guess, and the guess
+     * lost: "הוסף משימה לדויד המלך" -> "which title?" -> "לוודא שהוחזר הכסף"
+     * used to come back as a list of refunds, because that reply is also a
+     * perfectly good question about refunds. Carrying the pending question into
+     * the prompt and asking the model to combine the two was tried first and
+     * failed every one of nine runs across three phrasings.
+     *
+     * So nothing is inferred here. Mid-write, a reply fills the field; the only
+     * way out is to cancel, which is a thing the user does on purpose.
+     */
+    const fills = getPendingFillStore();
+    const inProgress = await fills.take(user.id);
+
+    if (inProgress) {
+      if (isCancelMessage(message)) {
+        await fills.clear(user.id);
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: writeCancelled(language),
+            rows: [],
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          budget: budgetPayload,
+        });
+      }
+
+      const [answering, ...rest] = inProgress.remaining;
+      const value = message.trim();
+
+      /*
+       * Keyed by FIELD KEY, not column.
+       *
+       * `executeMutate` runs `mapWritableData` over `data`, which looks every
+       * key up in `entity.fields` and throws `unknown field` on a miss. A value
+       * written under its column would therefore be rejected outright for any
+       * field whose column differs from its key — invisible on `title`, where
+       * the two match, and broken on the first field where they do not.
+       */
+      const filled = {
+        ...inProgress.step,
+        data: { ...(inProgress.step.data ?? {}), [answering.key]: value },
+      } as MutateQuery;
+
+      /*
+       * The utterance ACCUMULATES, and it has to.
+       *
+       * `executeMutate` checks that a required text value is traceable to what
+       * the user actually said — the guard that stops a model inventing a task
+       * called "new task". Validating the completed write against only the
+       * original request would find the title ungrounded, report it missing
+       * again, and ask for the same field forever.
+       *
+       * The parked utterance is therefore the request as assembled so far, which
+       * is also the honest thing to record in the audit trail.
+       */
+      const utterance = `${inProgress.utterance} ${value}`.trim();
+
+      // Still more to ask for. Park the progress and ask for the next one by
+      // name rather than trying to split one free-text answer across two fields.
+      if (rest.length > 0) {
+        await fills.park({
+          userId: user.id,
+          step: filled,
+          remaining: rest,
+          utterance,
+          language,
+          targetName: inProgress.targetName,
+          referenceNames: inProgress.referenceNames,
+        });
+
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: '',
+            rows: [],
+            entity: filled.entity,
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          needs: {
+            entity: filled.entity,
+            action: filled.action,
+            fields: rest.map((f) => ({ key: f.key, label: f.label })),
+          },
+          budget: budgetPayload,
+        });
+      }
+
+      // Complete, as far as we know. Validate before claiming so.
+      try {
+        const dry = await executeMutate(
+          filled,
+          { userId: user.id, timezone, consumer: 'chat' },
+          {
+            dryRun: true,
+            language,
+            targetName: inProgress.targetName,
+            referenceNames: inProgress.referenceNames,
+            utterance,
+          }
+        );
+
+        // A completed write still obeys the action's own confirmation policy.
+        // Finishing a sentence is not the same as approving what it now says.
+        if (requiresConfirmation(filled)) {
+          await fills.clear(user.id);
+          const parked = await confirmations.park({
+            userId: user.id,
+            steps: [filled],
+            preview: [dry.preview ?? `${filled.entity}.${filled.action}`],
+            utterance,
+            language,
+            names: [
+              {
+                targetName: inProgress.targetName,
+                referenceNames: inProgress.referenceNames,
+              },
+            ],
+          });
+
+          return NextResponse.json({
+            success: true,
+            confirmation: {
+              id: parked.confirmationId,
+              // Deliberately blank, NOT the preview. The card renders the
+              // message AND the preview list, so passing the same string to
+              // both printed the change twice. The client supplies the asking
+              // sentence from its own dictionary, which is also the only way it
+              // comes out in the reader's language.
+              message: '',
+              preview: [dry.preview ?? `${filled.entity}.${filled.action}`],
+            },
+            budget: budgetPayload,
+          });
+        }
+
+        await fills.clear(user.id);
+        const result = await executeMutate(
+          filled,
+          { userId: user.id, timezone, consumer: 'chat' },
+          {
+            language,
+            targetName: inProgress.targetName,
+            referenceNames: inProgress.referenceNames,
+            utterance,
+          }
+        );
+
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: `${writeDone(language)} — ${result.preview ?? `${filled.entity}.${filled.action}`}.`,
+            rows: [],
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          budget: budgetPayload,
+        });
+      } catch (err) {
+        // Another field turned out to be missing — a value can be supplied and
+        // still leave the write incomplete. Ask for that one; do not fall
+        // through to the planner, which would drop the write on the floor.
+        if (!(err instanceof MissingFieldsError)) {
+          await fills.clear(user.id);
+          throw err;
+        }
+
+        const next = describeFields(err.entity, err.fields, language);
+        await fills.park({
+          userId: user.id,
+          step: filled,
+          remaining: next,
+          utterance,
+          language,
+          targetName: inProgress.targetName,
+          referenceNames: inProgress.referenceNames,
+        });
+
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: '',
+            rows: [],
+            entity: err.entity,
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          needs: {
+            entity: err.entity,
+            action: err.action,
+            fields: next.map((f) => ({ key: f.key, label: f.label })),
+          },
+          budget: budgetPayload,
+        });
+      }
+    }
+
     // 4. A pending write takes precedence over planning.
     //
     // Checked first, and ONLY when something is actually parked, so a bare "yes"
     // can never be interpreted in isolation. An unrecognised reply falls through
     // to the planner rather than being read as approval.
-    const confirmations = getConfirmationStore();
     const pending = await confirmations.take(user.id);
 
     if (pending) {
@@ -338,6 +572,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           planId: pending.confirmationId,
           timezone,
           language,
+          // Frozen at preview time. Re-rendering without them reports the id.
+          names: pending.names,
         });
 
         auditTrail
@@ -688,7 +924,39 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           // every time instead of most of the time.
           if (!(err instanceof MissingFieldsError)) throw err;
 
-          const entity = CATALOG.entities[err.entity];
+          // Labelled from the catalog, in the user's language, so the client
+          // needs one framing sentence rather than a string per field.
+          const wanted = describeFields(err.entity, err.fields, language);
+
+          /*
+           * Park the write. This branch used to return `needs` and keep NOTHING
+           * — not the question, not even the turn — which is the whole bug: the
+           * user's answer came back as a fresh request and was planned instead
+           * of filled. See PendingFillStore for why context in the prompt was
+           * not enough to fix it.
+           *
+           * `step` is the right thing to park rather than the planner's original:
+           * its target and references are already resolved, so finishing the
+           * write later cannot re-resolve "דויד המלך" onto a different contact.
+           */
+          if (step.op === 'mutate') {
+            await fills.park({
+              userId: user.id,
+              step,
+              remaining: wanted,
+              utterance: message,
+              language,
+              targetName,
+              referenceNames,
+            });
+          }
+
+          // Recorded for the same reason the `clarification` branch does it:
+          // the transcript should show that a question was asked. The fill above
+          // is what actually resolves the next turn.
+          remember(`asked for: ${wanted.map((f) => f.label).join(', ')}`, {
+            pendingQuestion: wanted.map((f) => f.label).join(', '),
+          });
 
           return NextResponse.json({
             success: true,
@@ -703,15 +971,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
             needs: {
               entity: err.entity,
               action: err.action,
-              // Labelled from the catalog, in the user's language, so the client
-              // needs one framing sentence rather than a string per field.
-              fields: err.fields.map((key) => ({
-                key,
-                label:
-                  entity?.fields[key]?.labels[language as 'en'] ??
-                  entity?.fields[key]?.labels.en ??
-                  key,
-              })),
+              fields: wanted,
             },
             budget: budgetPayload,
         debug,
@@ -733,13 +993,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           utterance: message,
           language,
           frozenRows,
+          // Positionally aligned with `steps` above — same array, same order.
+          names: resolved.map((r) => ({
+            targetName: r.targetName,
+            referenceNames: r.referenceNames,
+          })),
         });
 
         return NextResponse.json({
           success: true,
           confirmation: {
             id: parked.confirmationId,
-            message: plan.answer?.text || 'Confirm this change?',
+            // Empty rather than an English fallback: the client asks in the
+            // reader's language. A hardcoded sentence here is how a Hebrew
+            // conversation ended with "Confirm this change?" in it.
+            message: plan.answer?.text || '',
             preview: previews,
           },
           budget: budgetPayload,

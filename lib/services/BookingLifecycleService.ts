@@ -371,7 +371,20 @@ export async function createBooking(
       const sync = await CalendarSyncService.syncBookingToCalendar(booking, service, userId);
       calendarSynced = sync.success;
       if (!sync.success) {
-        log.warn({ bookingId: booking.id, error: sync.error }, 'Calendar sync failed');
+        /*
+         * "Not connected" is not a failure.
+         *
+         * Most businesses have never linked a calendar, so every booking they
+         * made logged a warning saying calendar sync had failed — for a feature
+         * they never switched on. A warning that fires on the normal path stops
+         * being read, and takes the real ones with it.
+         */
+        const notConfigured = sync.error === 'Calendar sync not enabled';
+        if (notConfigured) {
+          log.debug({ bookingId: booking.id }, 'No calendar connected; skipping sync');
+        } else {
+          log.warn({ bookingId: booking.id, error: sync.error }, 'Calendar sync failed');
+        }
       }
     } catch (err) {
       log.warn({ err, bookingId: booking.id }, 'Calendar sync threw');

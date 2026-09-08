@@ -1480,12 +1480,24 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   } else {
     console.log('ℹ️  [Webhook] No platform invoice found by stripe_invoice_id, checking metadata...');
 
-    // Fallback: Look up by invoice_id from Checkout Session metadata
-    // When paying via Checkout Session, the invoice.metadata contains invoice_id
-    const metadataInvoiceId = invoice.metadata?.invoice_id;
+    /*
+     * Fallback: find our own invoice id in the Stripe invoice's metadata.
+     *
+     * Two writers, two key names, and this knew only one. The Checkout Session
+     * path writes `invoice_id`; the booking and invoice system writes
+     * `neuronforge_invoice_id` (BookingLifecycleService). So for every invoice
+     * raised with a booking, this fallback looked up `undefined`, found
+     * nothing, and the webhook gave up — which matters most in exactly the case
+     * the fallback exists for: the `invoice.paid` event arriving before we have
+     * stored `stripe_invoice_id` on our row.
+     *
+     * Both keys are read now, ours first.
+     */
+    const metadataInvoiceId =
+      invoice.metadata?.neuronforge_invoice_id || invoice.metadata?.invoice_id;
 
     if (metadataInvoiceId) {
-      console.log('🔍 [Webhook] Looking up by metadata.invoice_id:', metadataInvoiceId);
+      console.log('🔍 [Webhook] Looking up platform invoice by metadata:', metadataInvoiceId);
       const { data: invoiceByMetadata, error: metadataLookupError } = await supabaseAdmin
         .from('payment_invoices')
         .select('*')

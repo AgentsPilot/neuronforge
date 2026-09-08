@@ -28,7 +28,7 @@ export async function POST(
     const decoded = verifyBookingToken(token);
     if (!decoded) {
       return NextResponse.json(
-        { success: false, error: 'Invalid or expired link' },
+        { success: false, code: 'invalid_link', error: 'Invalid or expired link' },
         { status: 401 }
       );
     }
@@ -47,6 +47,11 @@ export async function POST(
 
     // Fetch booking with contact email via JOIN
     // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
+    /*
+     * The service comes too, for its `min_notice_hours` — the same rule the
+     * reschedule route applies. Both said "24 hours" whatever the business had
+     * configured.
+     */
     const { data: booking, error } = await supabaseServer
       .from('scheduling_bookings')
       .select(`
@@ -55,14 +60,15 @@ export async function POST(
         contact_id,
         start_time,
         status,
-        contact:crm_contacts(email)
+        contact:crm_contacts(email),
+        service:scheduling_services(min_notice_hours)
       `)
       .eq('id', bookingId)
       .single();
 
     if (error || !booking) {
       return NextResponse.json(
-        { success: false, error: 'Booking not found' },
+        { success: false, code: 'not_found', error: 'Booking not found' },
         { status: 404 }
       );
     }
@@ -72,7 +78,7 @@ export async function POST(
     const contactEmail = contact?.email || '';
     if (contactEmail.toLowerCase() !== email.toLowerCase()) {
       return NextResponse.json(
-        { success: false, error: 'Booking not found' },
+        { success: false, code: 'not_found', error: 'Booking not found' },
         { status: 404 }
       );
     }
@@ -84,14 +90,26 @@ export async function POST(
 
     if (booking.status !== 'confirmed') {
       return NextResponse.json(
-        { success: false, error: 'This booking cannot be cancelled' },
+        { success: false, code: 'not_cancellable', error: 'This booking cannot be cancelled' },
         { status: 400 }
       );
     }
 
-    if (hoursUntilBooking < 24) {
+    // The service's own notice period, not a hardcoded day — see the query above.
+    const bookingService = Array.isArray(booking.service) ? booking.service[0] : booking.service;
+    const noticeHours =
+      (bookingService as { min_notice_hours?: number } | null)?.min_notice_hours ?? 24;
+
+    if (hoursUntilBooking < noticeHours) {
       return NextResponse.json(
-        { success: false, error: 'Bookings must be cancelled at least 24 hours in advance' },
+        {
+          success: false,
+          // A code, not a sentence: this page is read in three languages and
+          // the reason was arriving in English regardless.
+          code: 'too_late',
+          hours: noticeHours,
+          error: `Bookings must be cancelled at least ${noticeHours} hours in advance`,
+        },
         { status: 400 }
       );
     }
@@ -111,7 +129,7 @@ export async function POST(
     if (updateError) {
       requestLogger.error({ err: updateError }, 'Failed to cancel booking');
       return NextResponse.json(
-        { success: false, error: 'Failed to cancel booking' },
+        { success: false, code: 'cancel_failed', error: 'Failed to cancel booking' },
         { status: 500 }
       );
     }
@@ -134,7 +152,7 @@ export async function POST(
   } catch (error) {
     requestLogger.error({ err: error }, 'Error cancelling booking');
     return NextResponse.json(
-      { success: false, error: 'Failed to cancel booking' },
+      { success: false, code: 'cancel_failed', error: 'Failed to cancel booking' },
       { status: 500 }
     );
   }

@@ -146,11 +146,24 @@ export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): stri
       lines.push(`  m: ${entity.meaning}`);
     }
 
-    const fields = Object.keys(entity.fields)
-      .map((f) => renderField(f, entity))
-      .filter((f): f is string => f !== null);
+    /*
+     * A non-queryable entity does not advertise fields it cannot be asked about.
+     *
+     * Listing `f: id company_name vertical` under something that only answers
+     * through actions is an invitation to `find` it — and that find compiles,
+     * returns two useless columns, and reads like an answer. The validator
+     * refuses it, but the cheaper fix is not to offer it: a repair round costs a
+     * whole extra model call.
+     */
+    if (entity.queryable === false) {
+      lines.push('  f: (not queryable — one configuration row; use the actions below)');
+    } else {
+      const fields = Object.keys(entity.fields)
+        .map((f) => renderField(f, entity))
+        .filter((f): f is string => f !== null);
 
-    lines.push(`  f: ${fields.join(' ')}`);
+      lines.push(`  f: ${fields.join(' ')}`);
+    }
 
     /*
      * Derived fields are advertised exactly like real ones. The planner does not
@@ -442,6 +455,20 @@ export function guessRelevantEntities(message: string): string[] {
       for (const value of Object.values(label)) {
         if (typeof value === 'string' && value.length >= 3) needles.push(value.toLowerCase());
       }
+    }
+
+    /*
+     * Aliases count as names, because that is what an alias IS.
+     *
+     * They were declared and then never consulted here, so scoping recognised
+     * an entity only by its formal label. Nobody says "business profile" when
+     * they mean their working hours, so "how many hours are open on Wednesday"
+     * scoped to tasks — `open` is a task status — and the availability action
+     * was not in the prompt at all. The planner could not pick a capability it
+     * had never been shown.
+     */
+    for (const alias of entity.aliases ?? []) {
+      if (alias.length >= 3) needles.push(alias.toLowerCase());
     }
 
     for (const field of Object.values(entity.fields)) {

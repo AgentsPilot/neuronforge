@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookingModal';
 import { createLogger } from '@/lib/logger';
+import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { toast } from 'sonner';
@@ -671,11 +672,9 @@ export function CRMContactDrawerV2({
     if (!cards.some(card => card.payment?.plan)) return;
 
     try {
-      const response = await fetch(
-        `/api/payments/money?contact_id=${contactId}&limit=100`,
-        { cache: 'no-store' }
-      );
-      const data = await response.json();
+      // Shared with PaymentsSection, which needs the same answer at the same
+      // moment. One request goes out, not two.
+      const data = await fetchContactMoney(contactId);
       if (!data.success) return;
 
       const byBooking: Record<
@@ -975,27 +974,45 @@ export function CRMContactDrawerV2({
     // These are the most important for the drawer UI
     const priorityFetch = async () => {
       try {
-        const [bookingsResponse, emailsResponse] = await Promise.all([
-          fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`),
-          fetch(`/api/crm/contacts/${contactId}/emails?limit=100`)
-        ]);
+        /*
+         * Both go out together, and the emails list paints on its own.
+         *
+         * The two are NOT independent: `processBookingsData` matches each
+         * booking to the confirmation email sent alongside it, so a session card
+         * genuinely cannot be drawn until both have arrived. That wait is
+         * correct and is left alone.
+         *
+         * What was not correct is that the EMAILS tab waited for the bookings
+         * query too — a heavier request joining invoices, transactions, services
+         * and contacts — to render a list it has no need of. Emails now render
+         * the moment they land.
+         */
+        const bookingsPromise = fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`)
+          .then(response => (response.ok ? response.json() : { success: false }))
+          .catch(error => {
+            logger.warn({ err: error, contactId }, 'Could not load bookings');
+            return { success: false };
+          });
 
-        const [bookingsData, emailsData] = await Promise.all([
-          bookingsResponse.ok ? bookingsResponse.json() : { success: false },
-          emailsResponse.ok ? emailsResponse.json() : { emails: [] }
-        ]);
+        const emailsPromise = fetch(`/api/crm/contacts/${contactId}/emails?limit=100`)
+          .then(response => (response.ok ? response.json() : { emails: [] }))
+          .catch(error => {
+            logger.warn({ err: error, contactId }, 'Could not load emails');
+            return { emails: [] };
+          })
+          .then(data => {
+            if (data.emails) setEmails(data.emails || []);
+            setLoadingEmails(false);
+            return data;
+          });
 
-        // Process bookings/sessions immediately
+        const [bookingsData, emailsData] = await Promise.all([bookingsPromise, emailsPromise]);
+
+        // Sessions need both: the cards carry the confirmation email.
         if (bookingsData.success && bookingsData.bookings) {
           processBookingsData(bookingsData, emailsData);
         }
         setLoadingSessions(false);
-
-        // Process emails
-        if (emailsData.emails) {
-          setEmails(emailsData.emails || []);
-        }
-        setLoadingEmails(false);
       } catch (error) {
         console.error('Failed to load priority data:', error);
         setLoadingSessions(false);
@@ -1003,83 +1020,110 @@ export function CRMContactDrawerV2({
       }
     };
 
-    // Priority 2: Load remaining data in parallel (can take longer)
+    /*
+     * Priority 2: the rest, each landing on its own.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This used to be two `Promise.all` barriers back to back — one over the six
+     * fetches, another over the six `.json()` parses — and only then did the six
+     * `setState` calls run. So every panel in the drawer waited for the SLOWEST
+     * of the six, twice over.
+     *
+     * The service dropdown is where that showed. `/api/scheduling/services`
+     * answers in about half a second, but the dropdown said "loading your
+     * services" until activities, tasks, documents, availability AND a hundred
+     * bookings had all arrived — and in development, until whichever of those
+     * routes had not been compiled yet finished compiling.
+     *
+     * The six requests still go out together; they simply stop waiting for each
+     * other to be READ. Each one parses and paints the moment it lands, which is
+     * what "in parallel" was supposed to mean.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const secondaryFetch = async () => {
-      try {
-        const [
-          activitiesResponse,
-          tasksResponse,
-          documentsResponse,
-          servicesResponse,
-          availabilityResponse,
-          allBookingsResponse
-        ] = await Promise.all([
-          fetch(`/api/crm/activities?contact_id=${contactId}&limit=50`),
-          fetch(`/api/crm/tasks?contact_id=${contactId}&limit=50`),
-          fetch(`/api/crm/documents?contact_id=${contactId}&limit=50`),
-          fetch('/api/scheduling/services?activeOnly=true'),
-          fetch('/api/scheduling/availability'),
-          fetch('/api/scheduling/bookings?limit=100')
-        ]);
-
-        const [
-          activitiesData,
-          tasksData,
-          documentsData,
-          servicesData,
-          availabilityData,
-          allBookingsData
-        ] = await Promise.all([
-          activitiesResponse.ok ? activitiesResponse.json() : { success: false },
-          tasksResponse.ok ? tasksResponse.json() : { success: false },
-          documentsResponse.ok ? documentsResponse.json() : { success: false },
-          servicesResponse.ok ? servicesResponse.json() : { success: false },
-          availabilityResponse.ok ? availabilityResponse.json() : { success: false },
-          allBookingsResponse.ok ? allBookingsResponse.json() : { success: false }
-        ]);
-
-        // Process activities
-        if (activitiesData.success) {
-          setActivities(activitiesData.activities || []);
+      /** Fetch, parse, and hand over — failure is contained to this one panel. */
+      const load = async (
+        url: string,
+        apply: (data: Record<string, unknown>) => void,
+        done?: () => void
+      ) => {
+        try {
+          const response = await fetch(url);
+          const data = response.ok ? await response.json() : { success: false };
+          apply(data);
+        } catch (error) {
+          logger.warn({ err: error, url }, 'Drawer panel failed to load');
+        } finally {
+          done?.();
         }
-        setLoadingActivities(false);
+      };
 
-        // Process tasks
-        if (tasksData.success) {
-          setTasks(tasksData.tasks || []);
-        }
-        setLoadingTasks(false);
+      await Promise.all([
+        load(
+          `/api/crm/activities?contact_id=${contactId}&limit=50`,
+          data => {
+            if (data.success) setActivities((data.activities as CRMActivity[]) || []);
+          },
+          () => setLoadingActivities(false)
+        ),
 
-        // Process documents
-        if (documentsData.success) {
-          setDocuments(documentsData.documents || []);
-        }
-        setLoadingDocuments(false);
+        load(
+          // `include_completed` matters here: TasksSection renders completed
+          // tasks behind its own toggle, so the drawer has to be given them.
+          // Without it the repository defaults to pending/in_progress only and
+          // a task disappears from the tab the moment it is ticked off.
+          `/api/crm/tasks?contact_id=${contactId}&include_completed=true&limit=50`,
+          data => {
+            if (data.success) setTasks((data.tasks as ContactTask[]) || []);
+          },
+          () => setLoadingTasks(false)
+        ),
 
-        // Process services
-        if (servicesData.success) {
-          setServices(servicesData.services || []);
-        }
-        // Answered, whatever the answer. The dropdown can stop saying "loading"
-        // and start saying "none configured" if that is the truth.
-        setServicesLoading(false);
+        load(
+          `/api/crm/documents?contact_id=${contactId}&limit=50`,
+          data => {
+            if (data.success) setDocuments((data.documents as ContactDocument[]) || []);
+          },
+          () => setLoadingDocuments(false)
+        ),
 
-        // Process availability
-        if (availabilityData.success && availabilityData.settings) {
-          setAvailability(availabilityData.settings.weekly_hours);
-          setTimezone(availabilityData.settings.timezone || 'UTC');
-        }
+        load(
+          '/api/scheduling/services?activeOnly=true',
+          data => {
+            if (data.success) setServices((data.services as SchedulingService[]) || []);
+          },
+          // Answered, whatever the answer. The dropdown can stop saying "loading"
+          // and start saying "none configured" if that is the truth.
+          () => setServicesLoading(false)
+        ),
 
-        // Process all bookings (for calendar)
-        if (allBookingsData.success) {
-          setAllBookings(allBookingsData.bookings || []);
-        }
-      } catch (error) {
-        console.error('Failed to load secondary data:', error);
-        setLoadingActivities(false);
-        setLoadingTasks(false);
-        setLoadingDocuments(false);
-      }
+        /*
+         * Availability.
+         *
+         * This read `availabilityData.settings.weekly_hours`. The endpoint
+         * returns `{ success, availability }` — the weekly map directly — so
+         * `settings` was always undefined, the guard always failed, and
+         * `availability` stayed undefined for the whole life of the drawer.
+         *
+         * Two things depended on it and quietly stopped: the booking dialog's
+         * quick-pick slot cards are gated on `availability` and so never
+         * rendered, and its default time fell back to the no-availability path.
+         *
+         * The block could never have run, either: it also called a `setTimezone`
+         * that is not declared in this file. A guard that always fails hides a
+         * ReferenceError sitting one line below it.
+         */
+        load('/api/scheduling/availability', data => {
+          if (data.success && data.availability) {
+            setAvailability(data.availability as Record<string, { start: string; end: string }[]>);
+          }
+        }),
+
+        // All bookings, for the calendar and for the booking dialog's conflict check.
+        load('/api/scheduling/bookings?limit=100', data => {
+          if (data.success) setAllBookings((data.bookings as SchedulingBooking[]) || []);
+        }),
+      ]);
     };
 
     // Start both fetches in parallel, but priority fetch will update UI first
@@ -1374,18 +1418,6 @@ export function CRMContactDrawerV2({
       }
     } catch (error) {
       console.error('Failed to fetch services:', error);
-    }
-  };
-
-  const fetchAvailability = async () => {
-    try {
-      const response = await fetch('/api/scheduling/availability');
-      const data = await response.json();
-      if (data.success) {
-        setAvailability(data.availability);
-      }
-    } catch (error) {
-      console.error('Failed to fetch availability:', error);
     }
   };
 

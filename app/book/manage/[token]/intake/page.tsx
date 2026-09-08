@@ -208,10 +208,24 @@ export default function IntakeFormPage() {
 
   if (terminal) {
     return (
-      <PublicShell brand={brand} width="narrow" header={{ compact: true }}>
+      /*
+       * `default` (42rem), not `narrow` (32rem).
+       *
+       * This screen carries more than a sentence: the appointment card with its
+       * service name, date, time range and duration, and — uniquely among the
+       * booking-management screens — the business's contact panel, which holds
+       * a full street address. At 32rem the address wrapped mid-line and the
+       * date ran onto two.
+       *
+       * `default` is also what the intake FORM below uses and what the booking
+       * details page this links to uses, so the page no longer changes width
+       * between filling the form in and being thanked for it.
+       */
+      <PublicShell brand={brand} width="default" header={{ compact: true }}>
         <div className="space-y-4">
           <StatusCard
             standalone
+            inShell
             tone={terminal.tone}
             title={terminal.title}
             description={terminal.desc}

@@ -25,7 +25,7 @@ import { createLogger } from '@/lib/logger';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { CATALOG_VERSION } from '@/lib/business-os/catalog';
+import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
 import type { ComputeQuery, FindQuery, Query } from '../types';
 import { normalizePlan, validatePlan } from './validatePlan';
 import { buildPlanTool, PLANNER_SYSTEM_PROMPT } from './planTool';
@@ -253,10 +253,38 @@ export class BizQLPlanner {
       if (cached.entryId) await cache.recordOutcome(cached.entryId, false);
     }
 
-    // Scope the catalog when we can identify the subject, purely to save tokens.
-    // A miss falls back to the whole catalog, so this never costs correctness.
-    const guessed = guessRelevantEntities(request.message);
-    const entities = guessed.length > 0 ? guessed : undefined;
+    /*
+     * Scope the catalog when we can identify the subject, to save tokens.
+     * A miss falls back to the whole catalog, so this never costs correctness.
+     *
+     * The guess reads the MESSAGE, and a follow-up does not name its subject —
+     * it inherited it from the turn before. "שנה עדיפות לנמוכה" and "change the
+     * due date to 30 October" both scope to nothing, so the whole catalog ships
+     * on exactly the turns a conversation is mostly made of.
+     *
+     * The subject is not unknown though: `lastRows.entity` is what the user was
+     * just shown, and it is the thing they are talking about. Seeding from it
+     * costs nothing and is a better signal than the words in a short reply.
+     *
+     * It also buys correctness, which the message-only guess was quietly
+     * costing: "set the priority to urgent" matched `insights` — whose severity
+     * field publishes "urgent" — and NOT `tasks`, so the planner was handed the
+     * wrong entity and produced `insights.confirm`, an action that does not
+     * exist. Naming the real subject stops that.
+     */
+    const guessed = new Set(guessRelevantEntities(request.message));
+
+    const subject = request.context?.lastRows?.entity;
+    if (subject && CATALOG.entities[subject]) {
+      guessed.add(subject);
+      // Its relations too, matching what the message-based guess does: a reply
+      // about a task may still need the contact it belongs to.
+      for (const relation of Object.values(CATALOG.entities[subject].relations ?? {})) {
+        guessed.add(relation.target);
+      }
+    }
+
+    const entities = guessed.size > 0 ? [...guessed] : undefined;
 
     // Writes are now expressible, so the planner must see which actions exist
     // and which of them require confirmation.
@@ -279,9 +307,29 @@ export class BizQLPlanner {
       `${PLANNER_SYSTEM_PROMPT}\n\nCATALOG\n${catalogText}` +
       (vocabulary ? `\n\nTHIS USER'S CONFIGURED VALUES\n${vocabulary}` : '') +
       (conversation ? `\n\nCONVERSATION SO FAR\n${conversation}` : '');
-    const user = request.language
-      ? `Answer in language: ${request.language}\n\nRequest: ${request.message}`
-      : `Request: ${request.message}`;
+    /*
+     * Today, in the business's own timezone.
+     *
+     * Needed the moment a user names a day rather than describing one. Asked to
+     * set a due date to "30 October" the planner answered 2023-10-30 — a year
+     * three in the past, because nothing had ever told it what year it is.
+     *
+     * It goes in the USER message, not the system prompt, and that placement is
+     * the point: `plannerVersion()` hashes the system prompt into the plan-cache
+     * key, so a date up there would invalidate every cached plan at midnight,
+     * every night.
+     */
+    const todayInZone = new Intl.DateTimeFormat('en-CA', {
+      timeZone: request.timezone ?? 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+
+    const user =
+      `Today is ${todayInZone}.\n` +
+      (request.language ? `Answer in language: ${request.language}\n` : '') +
+      `\nRequest: ${request.message}`;
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: system },
@@ -292,7 +340,21 @@ export class BizQLPlanner {
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    /*
+     * Three attempts: the first plan, then up to two repairs.
+     *
+     * It was one repair, and one was not enough for a failure mode the model
+     * repeats. Asked to change a task's status it would emit a mutate step with
+     * no `action`, be told exactly that, and do it again — so the user saw "I
+     * didn't understand" for a request that succeeded on the very next try.
+     *
+     * Enumerating `action` in the tool schema took that from roughly half of
+     * attempts to about one in eight. A second repair is the cheap half of the
+     * remainder: a repair only runs when the turn has ALREADY failed, so this
+     * costs nothing on the normal path and turns a visible failure into a
+     * slightly slower success.
+     */
+    for (let attempt = 0; attempt < 3; attempt++) {
       let raw: Record<string, unknown>;
 
       try {
@@ -304,11 +366,34 @@ export class BizQLPlanner {
             tools: [tool],
             tool_choice: 'required',
             temperature: 0,
+            /*
+             * What stops the runaway the cap below only made cheap.
+             *
+             * Greedy decoding at temperature 0, under an instruction prompt this
+             * long, collapses into a repetition loop. It emitted a perfectly
+             * good `steps` array, reached `answer`, and then produced
+             * `"  " , "  " , "  " ,` until it hit the cap — invalid JSON, so the
+             * user was told "I couldn't understand the request" for something as
+             * ordinary as "how many meetings do I have tomorrow".
+             *
+             * Deterministic per question, which is why it looked like a parsing
+             * bug rather than a sampling one: count-plus-a-date failed every
+             * time, while counting alone and listing with a date were fine.
+             *
+             * Neither temperature (0.3 recovered 1 run in 4) nor tool_choice nor
+             * the schema made any difference. A frequency penalty did, because
+             * this is exactly the failure it exists for: measured across eight
+             * representative questions, 6/8 parsed without it and 8/8 with it,
+             * with nothing that previously worked regressed. Kept low — JSON is
+             * legitimately repetitive, and `"field"`/`"op"`/`"value"` must stay
+             * cheap to re-emit.
+             */
+            frequency_penalty: 0.3,
             // A plan is small — a handful of steps and one sentence. Without a
             // cap the model can run away: one Hebrew case produced 16,384
             // output tokens of invalid JSON, costing ~40x a normal turn and
             // still failing. Capping makes a runaway fail fast and cheaply
-            // instead of expensively.
+            // instead of expensively — this is the belt to the penalty's braces.
             max_tokens: MAX_PLAN_TOKENS,
           },
           {
@@ -468,11 +553,13 @@ export class BizQLPlanner {
         };
       }
 
-      if (attempt === 0) {
+      // Not `attempt === 0`: with a third iteration available, stopping the
+      // repair after the first one would leave the extra attempt unused.
+      if (attempt < 2) {
         // Feed the exact problems back. A machine-readable repair message is far
         // more effective than "that was wrong, try again".
         repairAttempted = true;
-        logger.warn({ problems }, 'Plan failed validation; attempting one repair');
+        logger.warn({ problems, attempt }, 'Plan failed validation; attempting a repair');
 
         messages.push({
           role: 'assistant',

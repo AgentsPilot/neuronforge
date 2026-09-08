@@ -45,15 +45,29 @@ const OPERATORS = [
   'is_not_null',
 ];
 
+/*
+ * Kept in step with DATE_ANCHORS in ../types by the drift test — this copy had
+ * silently lost start_of_day and end_of_day, so the schema advertised a
+ * narrower vocabulary than the resolver accepts.
+ */
 const DATE_ANCHORS = [
   'now',
   'today',
   'tomorrow',
   'yesterday',
+  'start_of_day',
+  'end_of_day',
   'start_of_week',
   'end_of_week',
   'start_of_month',
   'end_of_month',
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
 ];
 
 /**
@@ -85,7 +99,7 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
           'One of: a literal; an array of literals; {"$semantic":"TERM"} where TERM is one ' +
           `of the {..} terms shown for the field; or {"$date":"ANCHOR"} where ANCHOR is ` +
           `exactly one of ${DATE_ANCHORS.join('|')}, with an optional ` +
-          '{"offset":{"days":N}}. ' +
+          '{"offset":{"days":N}}; or {"$date":"YYYY-MM-DD"} for a day the user named. ' +
           'If the field shows {..} semantic terms, you MUST use {"$semantic":"..."} — ' +
           'passing the term name as a plain string matches nothing and silently returns ' +
           'zero rows.',
@@ -181,8 +195,31 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
                 },
                 action: {
                   type: 'string',
+                  /*
+                   * Enumerated, not merely described.
+                   *
+                   * "Required for op=mutate" in prose was not enough: asked to
+                   * change a task's status the model emitted a mutate step with
+                   * no `action` at all — roughly a third of the time, and only
+                   * once there was conversation history to distract it. The
+                   * plan failed validation, the repair round failed the same
+                   * way, and the user saw "I didn't understand" for a perfectly
+                   * ordinary request that worked on the next attempt.
+                   *
+                   * A schema enum is a much stronger constraint on generation
+                   * than a sentence. The union spans every offered entity, so
+                   * it cannot express which action belongs to which entity —
+                   * validation still owns that pairing. What it does own is the
+                   * failure that actually happened: the field going missing.
+                   */
+                  enum: [
+                    ...new Set(
+                      entities.flatMap((key) => Object.keys(CATALOG.entities[key]?.actions ?? {}))
+                    ),
+                  ].sort(),
                   description:
-                    'Required for op=mutate. One of the actions listed for the entity (a:).',
+                    'Required for op=mutate. One of the actions listed for the entity (a:) — ' +
+                    'this list spans all offered entities, so pick one shown for YOUR entity.',
                 },
                 target: {
                   type: 'object',
@@ -322,8 +359,23 @@ RULES
    write that cannot find its person fails instead of happening.
 6. For anything relative in time use {"$date":"ANCHOR"} where ANCHOR is one of:
    now, today, tomorrow, yesterday, start_of_day, end_of_day,
-   start_of_week, end_of_week, start_of_month, end_of_month.
-   Never invent an anchor name and never hardcode a calendar date.
+   start_of_week, end_of_week, start_of_month, end_of_month,
+   or a WEEKDAY: sunday..saturday, which resolves to the next one (today if today
+   is that day). "on Wednesday" is {"$date":"wednesday"} — never work out which
+   date that is yourself, and never leave the day out. "last Wednesday" is that
+   anchor with {"offset":{"weeks":-1}}.
+   A whole day is a RANGE: gte the anchor and lt the same anchor with
+   {"offset":{"days":1}}.
+   All of these take an optional {"offset":{"days":N}} for a window.
+   A WEEKDAY IS NEVER A YYYY-MM-DD. "on Wednesday", "ביום רביעי", "el miércoles"
+   are {"$date":"wednesday"} — working out which date that is yourself produces
+   the wrong day, and it has produced a Monday twice.
+   Use {"$date":"YYYY-MM-DD"} ONLY for a day named with a NUMBER — "the 30th of
+   October", "on 3 March". Take the year from the "Today is" line above the
+   request; if the user named such a day with no year, choose its next
+   occurrence.
+   Never invent an anchor name. Prefer an anchor whenever the user described a
+   day relative to now ("tomorrow", "next week") rather than naming one.
 7. Answer the question that was asked, including WHO it is about.
    A question about people ("who owes me money", "which clients...") must carry the
    person, so include the related contact:
@@ -427,7 +479,14 @@ RULES
     is a question, not an instruction to contact every record you have.
     Only actions shown as bulk-capable may be used; the user is always shown who will be
     affected and must approve before anything happens.
-14. WRITES (op "mutate") change the user's real business data, so:
+14. SOME QUESTIONS ARE ANSWERED BY AN ACTION, NOT BY READING FIELDS.
+    An entity's actions (a:) include ones marked read — they compute something the
+    columns do not contain. If an action's label describes what the user is asking,
+    call it with op "mutate" and that action, even though the request is a question.
+    A find over that entity returns its stored columns, which are not the answer and
+    will look like an answer.
+    Read actions change nothing and are never confirmed.
+15. WRITES (op "mutate") change the user's real business data, so:
     - use only the actions listed after a: for that entity;
     - every write except create needs a target. If the user identified the row by name,
       number or any other field, describe it with target.find and the server will resolve

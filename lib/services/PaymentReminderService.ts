@@ -322,13 +322,17 @@ export class PaymentReminderService {
       if (createError || !reminder) throw (createError ?? new Error('Failed to create reminder'));
 
       // Dispatch on the created row (shared with the cron drain).
-      const { sent, errorMessage } = await this.dispatchReminderRow(reminder);
+      const { sent, errorMessage, skipped } = await this.dispatchReminderRow(reminder);
 
       // Update reminder status (B1: user-scoped in the repo; B2: no phantom updated_at).
       // M3: non-fatal — the reminder was already dispatched, so a failed status write
       // must log-and-continue, never abort the send flow.
+      //
+      // `cancelled`, not `failed`, when the thing it was chasing got settled:
+      // nothing went wrong, and a queue full of "failed" rows that were simply
+      // no longer needed hides the ones that actually broke.
       const { error: statusError } = await this.reminderRepo.updateStatus(reminder.id, userId, {
-        status: sent ? 'sent' : 'failed',
+        status: sent ? 'sent' : skipped ? 'cancelled' : 'failed',
         sent_at: sent ? new Date().toISOString() : null,
         error_message: errorMessage
       });
@@ -339,9 +343,9 @@ export class PaymentReminderService {
         );
       }
 
-      // Emit event
+      // Emit event. A skipped reminder is not a failure and is not reported as one.
       await emitPaymentEvent(userId, {
-        eventType: sent ? 'reminder.sent' : 'reminder.failed',
+        eventType: sent ? 'reminder.sent' : skipped ? 'reminder.cancelled' : 'reminder.failed',
         entityType: 'reminder',
         entityId: reminder.id,
         contactId: params.contactId,
@@ -371,7 +375,7 @@ export class PaymentReminderService {
    */
   private async dispatchReminderRow(
     reminder: PaymentReminder
-  ): Promise<{ sent: boolean; errorMessage: string | null }> {
+  ): Promise<{ sent: boolean; errorMessage: string | null; skipped?: boolean }> {
     const userId = reminder.user_id;
 
     // Get contact info (user-scoped via the repository)
@@ -392,6 +396,31 @@ export class PaymentReminderService {
         .single();
 
       if (invoice) {
+        /*
+         * Nothing is owed, so nothing is chased.
+         *
+         * A reminder is scheduled when the invoice is raised and dispatched days
+         * later; whether it should still go out is a question about the invoice
+         * NOW, not about the row that was written then. This was reading
+         * `invoice.status` into the email and never looking at it, so a client
+         * who had already paid was told their invoice was due today — the kind
+         * of message that makes a business look like it is not keeping books.
+         *
+         * Checked here rather than only at scheduling time, because this is the
+         * single point every reminder passes through. `cancelInvoiceReminders`
+         * exists for the tidy path, but a reminder row can always outlive it —
+         * a missed webhook, a payment taken by hand, a refund — and this guard
+         * holds in all of those.
+         */
+        const settled = ['paid', 'cancelled', 'refunded', 'void'].includes(invoice.status);
+        if (settled) {
+          logger.info(
+            { reminderId: reminder.id, invoiceId: invoice.id, status: invoice.status },
+            'Skipping reminder: the invoice is no longer outstanding'
+          );
+          return { sent: false, errorMessage: null, skipped: true };
+        }
+
         entityDetails = {
           type: 'invoice',
           invoiceNumber: invoice.invoice_number,
@@ -410,6 +439,15 @@ export class PaymentReminderService {
         .single();
 
       if (installment) {
+        // Same question, same answer: a period already collected is not chased.
+        if (['paid', 'cancelled', 'refunded'].includes(installment.status)) {
+          logger.info(
+            { reminderId: reminder.id, installmentId: installment.id, status: installment.status },
+            'Skipping reminder: the installment is no longer outstanding'
+          );
+          return { sent: false, errorMessage: null, skipped: true };
+        }
+
         entityDetails = {
           type: 'installment',
           installmentNumber: installment.installment_number,
@@ -632,14 +670,16 @@ export class PaymentReminderService {
       for (const reminder of claimed) {
         stats.processed++;
         try {
-          const { sent, errorMessage } = await this.dispatchReminderRow(reminder);
+          const { sent, errorMessage, skipped } = await this.dispatchReminderRow(reminder);
 
           // Persist terminal status on the claimed row (B1 user-scoped; B2 no updated_at).
+          // Settled-and-skipped is `cancelled`, so the failure count stays a
+          // count of things that actually failed.
           const { error: statusError } = await this.reminderRepo.updateStatus(
             reminder.id,
             reminder.user_id,
             {
-              status: sent ? 'sent' : 'failed',
+              status: sent ? 'sent' : skipped ? 'cancelled' : 'failed',
               sent_at: sent ? new Date().toISOString() : null,
               error_message: errorMessage
             }
@@ -649,11 +689,11 @@ export class PaymentReminderService {
           }
 
           if (sent) stats.sent++;
-          else stats.failed++;
+          else if (!skipped) stats.failed++;
 
           // Emit outcome event.
           await emitPaymentEvent(reminder.user_id, {
-            eventType: sent ? 'reminder.sent' : 'reminder.failed',
+            eventType: sent ? 'reminder.sent' : skipped ? 'reminder.cancelled' : 'reminder.failed',
             entityType: 'reminder',
             entityId: reminder.id,
             contactId: reminder.contact_id,

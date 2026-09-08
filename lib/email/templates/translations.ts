@@ -152,6 +152,77 @@ export const emailTranslations = {
   // ==========================================
   // INTAKE FORM REQUEST EMAIL
   // ==========================================
+  /**
+   * The receipt for an intake, sent once the client has answered.
+   *
+   * Its job is to close a loop, not to open one: the client filled in a form
+   * about themselves and had no way of knowing it arrived. Everything here is
+   * past tense and there is no call to action — the next move belongs to the
+   * business.
+   */
+  intakeReceived: {
+    subject: {
+      en: (serviceName: string) => `We've received your form - ${serviceName}`,
+      es: (serviceName: string) => `Hemos recibido tu formulario - ${serviceName}`,
+      he: (serviceName: string) => `קיבלנו את הטופס שלך - ${serviceName}`
+    },
+    greeting: {
+      en: 'Thank you — we have your answers',
+      es: 'Gracias: ya tenemos tus respuestas',
+      he: 'תודה — קיבלנו את התשובות שלך'
+    },
+    introScheduled: {
+      en: (firstName: string, businessName: string) =>
+        `Hi ${firstName}, thanks for taking the time. ${businessName} will read through your answers before your appointment, so there is nothing else you need to do.`,
+      es: (firstName: string, businessName: string) =>
+        `Hola ${firstName}, gracias por tomarte el tiempo. ${businessName} leerá tus respuestas antes de tu cita, así que no tienes que hacer nada más.`,
+      he: (firstName: string, businessName: string) =>
+        `שלום ${firstName}, תודה שהקדשת מזמנך. ב-${businessName} יעברו על התשובות שלך לפני הפגישה, ואין עוד משהו שצריך לעשות.`
+    },
+    /** No appointment to prepare for — a product or a service without a slot. */
+    introUnscheduled: {
+      en: (firstName: string, businessName: string) =>
+        `Hi ${firstName}, thanks for taking the time. ${businessName} will read through your answers and be in touch if anything else is needed.`,
+      es: (firstName: string, businessName: string) =>
+        `Hola ${firstName}, gracias por tomarte el tiempo. ${businessName} leerá tus respuestas y se pondrá en contacto si hace falta algo más.`,
+      he: (firstName: string, businessName: string) =>
+        `שלום ${firstName}, תודה שהקדשת מזמנך. ב-${businessName} יעברו על התשובות שלך ויחזרו אליך אם יידרש משהו נוסף.`
+    },
+    receivedNotice: {
+      en: '<strong>Your form was received</strong><br/>Your answers are only visible to the people you booked with.',
+      es: '<strong>Tu formulario fue recibido</strong><br/>Tus respuestas solo son visibles para las personas con quienes reservaste.',
+      he: '<strong>הטופס שלך התקבל</strong><br/>התשובות שלך גלויות רק לעסק שאצלו הזמנת.'
+    },
+    appointmentDetails: {
+      en: 'Your appointment',
+      es: 'Tu cita',
+      he: 'הפגישה שלך'
+    },
+    orderDetails: {
+      en: 'Your order',
+      es: 'Tu pedido',
+      he: 'ההזמנה שלך'
+    },
+    dateLabel: { en: '📅 Date', es: '📅 Fecha', he: '📅 תאריך' },
+    timeLabel: { en: '🕐 Time', es: '🕐 Hora', he: '🕐 שעה' },
+    submittedLabel: { en: '✅ Completed', es: '✅ Completado', he: '✅ הושלם' },
+    needChanges: {
+      en: 'Need to make a change?',
+      es: '¿Necesitas hacer un cambio?',
+      he: 'צריך לשנות משהו?'
+    },
+    reschedule: { en: 'Reschedule', es: 'Reprogramar', he: 'שינוי מועד' },
+    cancel: { en: 'Cancel', es: 'Cancelar', he: 'ביטול' },
+    questionsHelp: {
+      en: (businessName: string) =>
+        `If you remembered something after sending the form, just reply to this email and ${businessName} will see it.`,
+      es: (businessName: string) =>
+        `Si recordaste algo después de enviar el formulario, responde a este correo y ${businessName} lo verá.`,
+      he: (businessName: string) =>
+        `אם נזכרת במשהו אחרי ששלחת את הטופס, אפשר פשוט להשיב למייל הזה וב-${businessName} יראו את זה.`
+    }
+  },
+
   intake: {
     subject: {
       en: (serviceName: string) => `Please complete your intake form - ${serviceName}`,

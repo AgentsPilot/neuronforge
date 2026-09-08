@@ -15,7 +15,13 @@
  * @module lib/business-os/bizql
  */
 
-import { BizQLValidationError, DATE_ANCHORS, isDateAnchor, type DateExpr } from './types';
+import {
+  BizQLValidationError,
+  DATE_ANCHORS,
+  isDateAnchor,
+  isIsoCalendarDate,
+  type DateExpr,
+} from './types';
 import type { FieldType } from '@/lib/business-os/catalog';
 
 /**
@@ -41,6 +47,30 @@ function zoneOffsetMinutes(date: Date, timezone: string): number {
   return (local.getTime() - utc.getTime()) / 60_000;
 }
 
+/**
+ * Does this value pin a specific calendar day anywhere inside it?
+ *
+ * Walks the whole structure rather than a known field: a named day arrives as a
+ * filter value and as a written value equally often, and checking only one of
+ * them misses half the cases.
+ *
+ * Lives here rather than beside either caller because both the plan cache and
+ * the plan validator ask the same question of the same shape, for different
+ * reasons.
+ */
+export function containsCalendarDate(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsCalendarDate);
+
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if ('$date' in record && isIsoCalendarDate(record.$date)) return true;
+
+    return Object.values(record).some(containsCalendarDate);
+  }
+
+  return false;
+}
+
 /** Midnight (local to `timezone`) of the given calendar day, as a UTC instant. */
 function startOfDayUtc(y: number, m: number, d: number, timezone: string): Date {
   // Start from the naive UTC midnight, then correct by the zone's offset.
@@ -60,6 +90,27 @@ function addDays(date: Date, days: number): Date {
  * Comparing a timestamptz column against a bare date string is a classic
  * off-by-one, so the field type decides the format.
  */
+/**
+ * Weekday name to `Date.getUTCDay()` index.
+ *
+ * Read from the business's CALENDAR PARTS, never from `today`.
+ *
+ * `today` is local midnight expressed as a UTC instant, so for any zone ahead
+ * of UTC it lands on the previous UTC day — midnight in Jerusalem is 21:00Z
+ * yesterday, and `getUTCDay()` on it answers Monday for a Tuesday. That is one
+ * day of error in every weekday calculation, silently, for everyone east of
+ * Greenwich.
+ */
+const WEEKDAY_INDEX: Record<string, number> = {
+  sunday: 0,
+  monday: 1,
+  tuesday: 2,
+  wednesday: 3,
+  thursday: 4,
+  friday: 5,
+  saturday: 6,
+};
+
 export function resolveDateExpr(
   expr: DateExpr,
   timezone: string = 'UTC',
@@ -77,15 +128,35 @@ export function resolveDateExpr(
   const { y, m, d } = partsInZone(now, zone);
   const today = startOfDayUtc(y, m, d, zone);
 
-  if (!isDateAnchor(expr.$date)) {
-    throw new BizQLValidationError([
-      `'${String(expr.$date)}' is not a date anchor. Use one of: ` +
-        `${DATE_ANCHORS.join(', ')} — with an offset for a window, ` +
-        `e.g. { $date: 'today', offset: { days: -7 } }.`,
-    ]);
-  }
+  /*
+   * The business's own weekday, from its calendar date rather than from the
+   * instant. See WEEKDAY_INDEX above for why the instant cannot be used.
+   */
+  const localDow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 
   let resolved: Date;
+
+  /*
+   * A day the user named, e.g. "set the due date to 30 October".
+   *
+   * Handled before the anchor check because it is not an anchor and never will
+   * be: anchors are relative to now, and this is not. Read in the business's own
+   * timezone so "30 October" means that date where they are, not wherever the
+   * server happens to run.
+   */
+  if (isIsoCalendarDate(expr.$date)) {
+    const [year, month, day] = expr.$date.split('-').map(Number);
+    return finishDate(startOfDayUtc(year, month, day, zone), expr.offset, zone, fieldType);
+  }
+
+  if (!isDateAnchor(expr.$date)) {
+    throw new BizQLValidationError([
+      `'${String(expr.$date)}' is not a date anchor or a calendar date. Use one of: ` +
+        `${DATE_ANCHORS.join(', ')} — with an offset for a window, ` +
+        `e.g. { $date: 'today', offset: { days: -7 } } — or a specific day as ` +
+        `YYYY-MM-DD, e.g. { $date: '2026-10-30' }.`,
+    ]);
+  }
 
   switch (expr.$date) {
     case 'now':
@@ -109,23 +180,38 @@ export function resolveDateExpr(
     case 'end_of_day':
       resolved = addDays(today, 1); // exclusive upper bound
       break;
-    case 'start_of_week': {
+    case 'start_of_week':
       // Week starts Sunday, matching this product's scheduling model.
-      const dow = new Date(today).getUTCDay();
-      resolved = addDays(today, -dow);
+      resolved = addDays(today, -localDow);
       break;
-    }
-    case 'end_of_week': {
-      const dow = new Date(today).getUTCDay();
-      resolved = addDays(today, 6 - dow + 1); // exclusive upper bound
+    case 'end_of_week':
+      resolved = addDays(today, 6 - localDow + 1); // exclusive upper bound
       break;
-    }
     case 'start_of_month':
       resolved = startOfDayUtc(y, m, 1, zone);
       break;
     case 'end_of_month':
       resolved = startOfDayUtc(m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1, 1, zone);
       break;
+    case 'sunday':
+    case 'monday':
+    case 'tuesday':
+    case 'wednesday':
+    case 'thursday':
+    case 'friday':
+    case 'saturday': {
+      /*
+       * The next occurrence, counting today.
+       *
+       * Asked on a Wednesday, "ביום רביעי" means today — nobody skips a week to
+       * talk about the day they are standing in. Any other day means the one
+       * coming. "Last Wednesday" is this anchor with {offset:{weeks:-1}}, which
+       * is why no separate backwards form is needed.
+       */
+      const target = WEEKDAY_INDEX[expr.$date];
+      resolved = addDays(today, (target - localDow + 7) % 7);
+      break;
+    }
     default:
       /*
        * An anchor nobody defined.
@@ -144,8 +230,26 @@ export function resolveDateExpr(
       ]);
   }
 
-  if (expr.offset) {
-    const { days = 0, weeks = 0, months = 0 } = expr.offset;
+  return finishDate(resolved, expr.offset, zone, fieldType);
+}
+
+/**
+ * Apply the offset and render, shared by both ways of naming a day.
+ *
+ * Extracted so an anchor and a calendar date cannot drift on the two things
+ * that are easy to get subtly wrong — month arithmetic clamping, and whether a
+ * `date` column is compared against a bare day or a timestamp.
+ */
+function finishDate(
+  start: Date,
+  offset: DateExpr['offset'],
+  zone: string,
+  fieldType: FieldType
+): string {
+  let resolved = start;
+
+  if (offset) {
+    const { days = 0, weeks = 0, months = 0 } = offset;
     if (days || weeks) resolved = addDays(resolved, days + weeks * 7);
     if (months) {
       const p = partsInZone(resolved, zone);

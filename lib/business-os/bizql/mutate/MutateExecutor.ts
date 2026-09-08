@@ -977,6 +977,82 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
 
       return { data: result.data as unknown as QueryRow, error: result.error };
     },
+
+    /*
+     * What is still free on a day. Reads only.
+     *
+     * Two decisions live here rather than in the arithmetic, because both are
+     * about THIS question rather than about time:
+     *
+     * 1. Only `confirmed` bookings occupy the day. A cancelled slot is free
+     *    again — counting it was the original bug's cousin, since the chat had
+     *    been listing cancelled bookings as if they answered "am I busy".
+     *    Completed ones are excluded for the same reason a past appointment
+     *    does not block a future hour; on a past date the answer is history
+     *    either way.
+     * 2. The service is optional. Without one the honest answer is an amount of
+     *    time; with one it is a count of appointments, because a duration is
+     *    what turns free minutes into slots.
+     */
+    open_time: async (_q, data, ctx) => {
+      const { computeOpenTime } = await import('@/lib/scheduling/openTime');
+
+      const date = String(data.date ?? '').slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return { data: null, error: new Error(`'${String(data.date)}' is not a date.`) };
+      }
+
+      const { data: profile, error: profileError } = await supabaseServer
+        .from('business_profiles')
+        .select('scheduling_availability')
+        .eq('user_id', ctx.userId)
+        .maybeSingle();
+
+      if (profileError) return { data: null, error: profileError as Error };
+
+      // A named service sets the appointment length; without one we report time
+      // rather than slots.
+      let durationMinutes: number | undefined;
+      if (data.service) {
+        const { data: services } = await supabaseServer
+          .from('scheduling_services')
+          .select('name, duration_minutes')
+          .eq('user_id', ctx.userId)
+          .ilike('name', `%${String(data.service)}%`)
+          .limit(1);
+
+        durationMinutes = services?.[0]?.duration_minutes ?? undefined;
+      }
+
+      /*
+       * A generous window either side of the day, then filtered precisely by the
+       * computation in the business's own zone. Querying the exact day in UTC
+       * would drop an early booking for a business east of it and include one
+       * that belongs to the neighbouring day for a business west.
+       */
+      const { data: bookings, error: bookingsError } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('start_time, end_time')
+        .eq('user_id', ctx.userId)
+        .eq('status', 'confirmed')
+        .gte('start_time', `${date}T00:00:00Z`)
+        .lt('start_time', `${date}T23:59:59Z`);
+
+      if (bookingsError) return { data: null, error: bookingsError as Error };
+
+      const result = computeOpenTime({
+        availability: profile?.scheduling_availability,
+        date,
+        timeZone: ctx.timezone ?? 'UTC',
+        bookings: (bookings ?? []).map((b) => ({
+          start: b.start_time as string,
+          end: (b.end_time as string | null) ?? null,
+        })),
+        durationMinutes,
+      });
+
+      return { data: result as unknown as QueryRow, error: null };
+    },
   },
 
   activities: {
@@ -1281,7 +1357,7 @@ async function assertReferencesOwned(
  * question — were these words present? — and a wrong answer costs a clarifying
  * question, never a fabricated record.
  */
-function isGroundedIn(value: string, utterance: string): boolean {
+export function isGroundedIn(value: string, utterance: string): boolean {
   const normalise = (text: string) =>
     text
       .toLowerCase()
@@ -1352,7 +1428,8 @@ function describe(
   query: MutateQuery,
   data: Record<string, unknown>,
   language: string,
-  names: { target?: string; references?: Record<string, string> } = {}
+  names: { target?: string; references?: Record<string, string> } = {},
+  timezone?: string
 ): string {
   const action = entity.actions?.[query.action];
   const label =
@@ -1376,10 +1453,30 @@ function describe(
       if (!field) return null;
 
       const fieldLabel = field.labels[language as 'en'] ?? field.labels.en;
+
+      /*
+       * An enum shows its LABEL, not the value stored in the column.
+       *
+       * The catalog already carries these — the result card renders
+       * "עדיפות: בינונית" from the same table — but this preview printed the raw
+       * value, so a Hebrew conversation ended on "עדיפות: high" and
+       * "סטטוס: completed". The one English word in the sentence was the word
+       * saying what had just been done to the user's data.
+       *
+       * Falls back to the stored value: a value with no label is better shown
+       * as itself than hidden.
+       */
+      const enumLabel =
+        typeof value === 'string'
+          ? (field.enumLabels?.[value]?.[language as 'en'] ?? field.enumLabels?.[value]?.en)
+          : undefined;
+
       // A resolved reference shows the row's NAME. "contact: 36c2ab05-…" is not
       // something a user can check, which makes approving it meaningless.
       const shown =
-        names.references?.[field.key] ?? formatForPreview(value, field.format, language);
+        names.references?.[field.key] ??
+        enumLabel ??
+        formatForPreview(value, field.format, language, timezone);
 
       return `${fieldLabel}: ${shown}`;
     })
@@ -1401,7 +1498,12 @@ function describe(
  * a row yet. Getting a wrong currency symbol onto an approval card would be a
  * worse bug than a plain number.
  */
-function formatForPreview(value: unknown, format: string | undefined, language: string): string {
+function formatForPreview(
+  value: unknown,
+  format: string | undefined,
+  language: string,
+  timezone: string | undefined
+): string {
   if (value === null || value === undefined || value === '') return '—';
 
   // Date expressions are resolved before this point, so anything still an object
@@ -1413,9 +1515,21 @@ function formatForPreview(value: unknown, format: string | undefined, language: 
     const date = new Date(String(value));
     if (!Number.isNaN(date.getTime())) {
       try {
+        /*
+         * In the BUSINESS's timezone, not the server's.
+         *
+         * A date field is stored as the instant of midnight where the business
+         * is — "30 October" in Asia/Jerusalem is 2026-10-29T21:00:00Z. Formatted
+         * with no timeZone this runs in the server's zone, which on Vercel is
+         * UTC, so the confirmation said "29 באוק׳" for a task the dialog then
+         * showed as the 30th. The value written was right the whole time; only
+         * the sentence describing it was wrong, which is worse than it sounds —
+         * this string is the last thing the user reads before approving.
+         */
         return new Intl.DateTimeFormat(language || 'en', {
           dateStyle: 'medium',
           ...(format === 'datetime' ? { timeStyle: 'short' } : {}),
+          ...(timezone ? { timeZone: timezone } : {}),
         }).format(date);
       } catch {
         return date.toISOString();
@@ -1573,10 +1687,14 @@ export async function executeMutate(
 
   const preview = takesParams
     ? describeParams(entity, query, data, options.language ?? 'en')
-    : describe(entity, query, data, options.language ?? 'en', {
-        target: options.targetName,
-        references: options.referenceNames,
-      });
+    : describe(
+        entity,
+        query,
+        data,
+        options.language ?? 'en',
+        { target: options.targetName, references: options.referenceNames },
+        ctx.timezone
+      );
 
   if (options.dryRun) {
     return { op: 'mutate', entity: query.entity, action: query.action, applied: false, preview };

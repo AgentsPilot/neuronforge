@@ -16,10 +16,17 @@
  */
 
 import { CATALOG, type ResolvedEntity } from '@/lib/business-os/catalog';
-import { VALUELESS_OPS, isSemanticValue, type Predicate, type Query } from '../types';
+import {
+  VALUELESS_OPS,
+  isSemanticValue,
+  isIsoCalendarDate,
+  type Predicate,
+  type Query,
+} from '../types';
 import type { Plan } from './Planner';
 import { relationPredicateProblem } from '../predicateRules';
 import { parseGroupBy } from '../groupBy';
+import { containsCalendarDate } from '../dates';
 
 /** The four step operations. Anything else is a slip, not a step. */
 const KNOWN_OPS_SET = new Set(['find', 'compute', 'mutate', 'for_each']);
@@ -804,6 +811,13 @@ const DATE_ANCHORS = new Set([
   'end_of_week',
   'start_of_month',
   'end_of_month',
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
 ]);
 
 /**
@@ -821,10 +835,19 @@ function validateDateExpr(value: unknown, path: string, problems: string[]): voi
     if (typeof candidate !== 'object' || candidate === null || !('$date' in candidate)) continue;
 
     const anchor = (candidate as { $date: unknown }).$date;
+
+    // A day the user named is not an anchor and never will be — anchors are
+    // relative to now. Accepted here as well as in the resolver: validating a
+    // plan more strictly than the resolver executes it rejects writes that
+    // would have worked, which is what happened to "change the due date to 30
+    // October" — the value was legal by the time it reached the resolver, but
+    // the plan never got that far.
+    if (isIsoCalendarDate(anchor)) continue;
+
     if (typeof anchor !== 'string' || !DATE_ANCHORS.has(anchor)) {
       problems.push(
         `${path}: '${String(anchor)}' is not a valid $date anchor. ` +
-          `Use one of: ${[...DATE_ANCHORS].join(', ')}.`
+          `Use one of: ${[...DATE_ANCHORS].join(', ')} — or a specific day as YYYY-MM-DD.`
       );
     }
   }
@@ -928,6 +951,31 @@ function validateStep(
     problems.push(
       `${path}: unknown entity '${step.entity}'. ` +
         `Known entities: ${Object.keys(CATALOG.entities).join(', ')}.`
+    );
+    return;
+  }
+
+  /*
+   * A configuration singleton cannot be queried, only acted on.
+   *
+   * Generic: the catalog says which entities these are, and this states the
+   * consequence. Without it the planner had a plausible wrong option — `find
+   * business_profile` returns a company name and a vertical, answers nothing,
+   * and reads like an answer — and reliably took it for "how many hours are
+   * still open on Wednesday". Making the action's label more inviting moved the
+   * rate around without fixing it, because a wrong option that remains
+   * available eventually gets picked.
+   *
+   * Naming the actions matters as much as the refusal: the repair round can act
+   * on "use one of these", and cannot act on "no".
+   */
+  if ((step.op === 'find' || step.op === 'compute') && entity.queryable === false) {
+    const actions = Object.keys(entity.actions ?? {});
+    problems.push(
+      `${path}: '${entity.key}' holds one row of configuration and cannot be read with ` +
+        `${step.op}. Everything it knows is exposed as an action — use ` +
+        `{"op":"mutate","entity":"${entity.key}","action":"..."} with one of: ` +
+        `${actions.join(', ')}.`
     );
     return;
   }
@@ -1379,8 +1427,85 @@ function countSubjectProblem(
  * data. This is the guardrail that makes "answer text lives in the plan" safe
  * enough to replace ~120 hand-written response templates.
  */
+/**
+ * A calendar date the user never gave a number for.
+ *
+ * "ביום רביעי" — on Wednesday — has no expressible date, so the planner used to
+ * work one out itself and get it wrong: told it was Monday 7 September it
+ * filtered on the 14th, which is a Monday; another run picked the 7th, which is
+ * yesterday and not a Wednesday either. English resolved the weekday anchor
+ * reliably; Hebrew reached for YYYY-MM-DD every time.
+ *
+ * The signal that separates the two cases needs no vocabulary, which is the
+ * point — a per-language weekday table would be the first hardcoded word list
+ * in a system built to avoid them, and every new language would then need one.
+ *
+ *   a day the user NUMBERED   "30 October", "‏30 באוקטובר", "on 3 March"   has a digit
+ *   a day the user NAMED      "Wednesday", "ביום רביעי", "el miércoles"    has none
+ *
+ * So: an absolute date is only legitimate when the message carries a digit it
+ * could have come from. The same technique `validateAnswer` already uses below
+ * to catch an invented figure — compare against the user's own message rather
+ * than banning digits outright.
+ *
+ * Fails toward permissive. An unrelated digit ("for בדיקה 1") lets an absolute
+ * date through, which is a missed catch rather than a false rejection — and a
+ * spelled-out "the thirtieth of October" costs one clarifying round trip, not a
+ * wrong answer.
+ */
+function validateNamedDateHasDigits(
+  plan: Plan,
+  problems: string[],
+  userMessage?: string
+): void {
+  // No message to compare against — this is the eval harness or a stored plan
+  // being re-validated, and there is nothing to be suspicious of.
+  if (userMessage === undefined) return;
+  if (/\d/.test(userMessage)) return;
+
+  plan.steps.forEach((step, index) => {
+    if (!containsCalendarDate(step)) return;
+
+    problems.push(
+      `steps[${index}]: this uses an absolute YYYY-MM-DD date, but the request names no ` +
+        `number to take one from — so it was worked out rather than read, and that has ` +
+        `produced the wrong day. If the user named a WEEKDAY use that anchor ` +
+        `({"$date":"wednesday"}, which resolves to the next one); if they described a day ` +
+        `relative to now use today/tomorrow/start_of_week and an offset.`
+    );
+  });
+}
+
 function validateAnswer(plan: Plan, problems: string[], userMessage?: string): void {
   const text = plan.answer?.text;
+
+  /*
+   * A plan that reads more than one thing MUST say how they relate.
+   *
+   * With no sentence the renderer falls back to labelling the primary step, and
+   * for a single read that is fine — "invoices: 3" answers "how many invoices".
+   * Across two it silently drops the question. Asked "כמה אחוז זה מההכנסות"
+   * the planner correctly computed refunds AND revenue, wrote no sentence, and
+   * the user was shown "סכום שחויב: 931.33 $" — one of the two numbers, labelled
+   * as something they had not asked about. A confident non-answer.
+   *
+   * Writes are exempt: a mutate describes itself on the confirmation card, and
+   * demanding prose for "mark it paid" would reject a perfectly good plan.
+   */
+  const reads = plan.steps.filter((step) => {
+    const op = (step as unknown as { op?: string }).op;
+    return op === 'find' || op === 'compute';
+  });
+
+  if (!text && reads.length > 1) {
+    problems.push(
+      `this plan reads ${reads.length} things, so answer.text is required — it is the only ` +
+        `place their relationship is expressed. Without it only the first is shown and the ` +
+        `question goes unanswered. Cite each step, e.g. ` +
+        `"{s1.value} of {s2.value}, which is {s1.percent_of.s2}".`
+    );
+  }
+
   if (!text) return;
 
   const withoutPlaceholders = text.replace(/\{[^}]*\}/g, '');
@@ -1743,6 +1868,7 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
   validateSendAddress(plan, problems);
   validateNoFabricatedThreshold(plan, problems);
   validateNotAScattergun(plan, problems);
+  validateNamedDateHasDigits(plan, problems, userMessage);
   validateAnswer(plan, problems, userMessage);
 
   return problems;

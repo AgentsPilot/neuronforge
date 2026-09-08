@@ -378,6 +378,24 @@ export interface EntityDef {
    * a count of another.
    */
   aliases?: string[];
+  /**
+   * Whether this entity can be READ with find/compute. Default true.
+   *
+   * False for a configuration singleton: one row, a couple of columns, and
+   * nothing anyone would query. Its purpose in the catalog is its ACTIONS.
+   *
+   * `business_profile` is the case that needed it. Asked "how many hours are
+   * still open on Wednesday" the planner reliably emitted `find
+   * business_profile` — which returns company_name and vertical, cannot answer
+   * the question, and looks like an answer. Wording the action's label more
+   * invitingly moved the rate around and never fixed it, because a plausible
+   * wrong option stays available however the right one is described.
+   *
+   * So the wrong option is removed. A flag on the entity is the honest place
+   * for it: "this is not a queryable collection" is a fact about the entity,
+   * not a rule about one question, and the validator can state it generically.
+   */
+  queryable?: boolean;
   /** Column used when naming a row in prose or a card title. */
   labelField: string | string[];
   /** Columns shown by default in a result card. */

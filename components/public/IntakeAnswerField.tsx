@@ -19,6 +19,7 @@
 import { useState } from 'react';
 import { Loader2, Upload, X } from 'lucide-react';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
+import { INTAKE_UPLOAD_ACCEPT } from '@/lib/business-os/intake/types';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'IntakeAnswerField' });
@@ -249,7 +250,24 @@ function FileAnswer({
         const result = await response.json();
 
         if (!result.success) {
-          setUploadError(result.error || t('uploadFailed'));
+          /*
+           * The page owns the wording, the API owns the reason.
+           *
+           * `result.error` is an English sentence written for a log. Showing it
+           * put "That file type is not accepted" in front of a client reading a
+           * Hebrew form. The code is what crosses the wire; the translation
+           * lives here, with every other word this page says.
+           */
+          const CODES: Record<string, string> = {
+            file_too_large: 'fileTooLarge',
+            file_type: 'fileTypeNotAccepted',
+            no_file: 'uploadFailed',
+            unknown_question: 'uploadFailed',
+            cancelled: 'uploadNotCollecting',
+            already_submitted: 'uploadNotCollecting',
+            not_collecting: 'uploadNotCollecting',
+          };
+          setUploadError(t(CODES[result.code as string] || 'uploadFailed'));
           break;
         }
         added.push({ documentId: result.data.documentId, name: file.name });
@@ -294,6 +312,9 @@ function FileAnswer({
           <input
             type="file"
             className="hidden"
+            // The same list the route enforces, so the picker does not offer a
+            // file that is about to be refused.
+            accept={INTAKE_UPLOAD_ACCEPT}
             multiple={max > 1}
             disabled={uploading}
             onChange={e => {

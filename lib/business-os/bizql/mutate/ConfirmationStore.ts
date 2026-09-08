@@ -49,6 +49,20 @@ export interface PendingWrite {
   frozenRows?: Record<string, QueryRow[]>;
   /** What the user was shown. Re-displayed so they confirm what they saw. */
   preview: string[];
+  /**
+   * The names the steps resolved to, positionally aligned with `steps`.
+   *
+   * Frozen for the same reason the rows are. Resolution happens before the
+   * preview; execution happens after the user says yes. Without carrying the
+   * result across that gap, the executor re-renders its line with nothing to
+   * render from and falls back to the raw id — so a task previewed as
+   * "איש קשר: דויד המלך" was reported as
+   * "איש קשר: 8742fcd8-fdfc-4e32-bb1f-c599cf72adf5" once applied.
+   *
+   * Carried rather than re-queried: the user approved a line naming a specific
+   * person, and looking the name up again could report a different one.
+   */
+  names?: Array<{ targetName?: string; referenceNames?: Record<string, string> }>;
   /** The question that produced it, for the audit trail. */
   utterance: string;
   language: string;
@@ -97,6 +111,7 @@ export class ConfirmationStore {
     utterance: string;
     language: string;
     frozenRows?: Record<string, QueryRow[]>;
+    names?: PendingWrite['names'];
   }): Promise<PendingWrite> {
     const confirmationId = randomUUID();
 
@@ -105,6 +120,7 @@ export class ConfirmationStore {
       steps: args.steps,
       frozenRows: args.frozenRows,
       preview: args.preview,
+      names: args.names,
       utterance: args.utterance,
       language: args.language,
     };
@@ -124,6 +140,7 @@ export class ConfirmationStore {
         // in a session row.
         frozen_rows: args.frozenRows,
         preview: args.preview,
+        names: args.names,
         utterance: args.utterance,
         language: args.language,
         fingerprint: fingerprint(args.steps),
@@ -182,6 +199,7 @@ export class ConfirmationStore {
       steps,
       frozenRows: (params.frozen_rows as Record<string, QueryRow[]>) ?? undefined,
       preview: (params.preview as string[]) ?? [],
+      names: (params.names as PendingWrite['names']) ?? undefined,
       utterance: String(params.utterance ?? ''),
       language: String(params.language ?? 'en'),
     };

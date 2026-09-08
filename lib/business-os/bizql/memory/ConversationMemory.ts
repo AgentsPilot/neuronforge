@@ -216,6 +216,28 @@ export function renderContextForPrompt(context: ConversationContext): string {
         `"that one", "the second one". If the new message does not refer back to these ` +
         `rows, IGNORE this list completely and treat the request as new; re-showing the ` +
         `same rows because they happen to be in context is wrong.\n` +
+        (context.lastRows.items.length === 1
+          ? /*
+             * An instruction to CHANGE something refers back even with no pronoun
+             * in it, and saying so is the difference between doing the work and
+             * searching for it.
+             *
+             * The rule above is written for questions, where "does not refer back"
+             * means "answer something new". Read literally by a command it says the
+             * opposite of what is wanted: "set the priority to urgent" and "סמן את
+             * המשימה כבוטלה" contain no "it" and no "that one", so the planner
+             * treated them as fresh requests, and a fresh request with nothing to
+             * act on becomes a `find`. The user, looking at the one task they just
+             * asked about, got it listed back instead of changed.
+             *
+             * Only when exactly ONE row is remembered. With several, which one is a
+             * real question and asking is the correct outcome — that is what the
+             * target resolver already does.
+             */
+            `A command to change, update, mark, set, cancel or delete something, ` +
+            `naming no other row, refers to the single row above — act on it by id ` +
+            `rather than searching for it again.\n`
+          : '') +
         `When you do use an id, copy it CHARACTER FOR CHARACTER — a dropped character ` +
         `makes it invalid.`
     );

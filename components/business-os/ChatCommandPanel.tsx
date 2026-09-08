@@ -863,9 +863,16 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     // no prompt, no way to approve, and the action silently never happened.
     if (result.confirmation) {
       const pending = result.confirmation as V4Confirmation;
+      // The server sends the preview and leaves the asking sentence to us — it
+      // is the only side with the translations, and duplicating the preview into
+      // the heading printed the same line twice on the card.
+      const asked: V4Confirmation = {
+        ...pending,
+        message: pending.message || t('chat.confirm.default'),
+      };
       setMessages(prev => [
         ...prev,
-        { type: 'pending_write', content: pending.message, pendingWrite: pending },
+        { type: 'pending_write', content: asked.message, pendingWrite: asked },
       ]);
       // Chips give a one-tap answer; typing "yes" works just as well, since the
       // server decides based on what is parked rather than on this UI state.
@@ -881,7 +888,13 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       const wanted = needs.fields.map(f => f.label).join(', ');
       setMessages(prev => [
         ...prev,
-        { type: 'ai', content: `${t('chat.need_fields')} ${wanted}` },
+        {
+          type: 'ai',
+          // The cancel hint is not decoration. The write stays parked until it is
+          // finished or dropped, so from here the next message is read as the
+          // answer — and a user who has changed their mind needs to see the exit.
+          content: `${t('chat.need_fields')} ${wanted}\n${t('chat.need_fields_cancel')}`,
+        },
       ]);
       return;
     }
@@ -1329,7 +1342,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         className="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2 sm:gap-3 scrollbar-thin px-3 sm:px-4 py-3 sm:py-4"
         style={{
           scrollbarWidth: 'thin',
-          scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
+          scrollbarColor: 'var(--v2-border) transparent'
         }}
       >
         {messages.map((msg, index) => (
@@ -1533,17 +1546,17 @@ function ResultListMessage({ rows }: { rows: V4Row[] }) {
       {shown.map((row) => (
         <div
           key={row.id}
-          className="bg-[var(--v2-bg)] border border-[var(--v2-border)] w-full"
+          className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] w-full"
           style={{ borderRadius: '10px', padding: '10px 12px' }}
         >
-          <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text)] mb-1 break-words">
+          <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text-primary)] mb-1 break-words">
             {row.label}
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-0.5">
             {row.fields.map((field) => (
               <span key={field.key} className="text-[11px] text-[var(--v2-text-muted)]">
                 {field.label}:{' '}
-                <span className="text-[var(--v2-text)]">{field.value}</span>
+                <span className="text-[var(--v2-text-primary)]">{field.value}</span>
               </span>
             ))}
           </div>
@@ -1609,7 +1622,7 @@ function PendingWriteMessage({
           style={{ color: '#F97316' }}
           strokeWidth={2}
         />
-        <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text)]">
+        <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text-primary)]">
           {pending.message}
         </div>
       </div>
@@ -1641,7 +1654,7 @@ function PendingWriteMessage({
           <button
             type="button"
             onClick={() => respond(isHebrew ? 'לא' : 'Cancel')}
-            className="text-xs font-medium text-[var(--v2-text)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-colors hover:border-[var(--v2-text-muted)]"
+            className="text-xs font-medium text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-colors hover:border-[var(--v2-text-muted)]"
             style={{ borderRadius: '10px', padding: '6px 14px' }}
           >
             {isHebrew ? 'ביטול' : 'Cancel'}

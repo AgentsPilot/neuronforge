@@ -10615,6 +10615,74 @@
         ]
       }
     },
+    "open_time_business_profile": {
+      "description": "how many hours or slots are still open / free / available on a given day — business profile in the user's own business records",
+      "usage_context": "how many hours or slots are still open / free / available on a given day. This READS the user's business data and changes nothing. Applies to exactly ONE business profile; there is no bulk form.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "open_time",
+      "input_entity": "business_profile",
+      "output_entity": "business_profile",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "company_name",
+        "vertical"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "read",
+      "must_support": [
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The business profile after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "how many hours or slots are still open / free / available on a given day",
+        "sample_output": {
+          "applied": true,
+          "summary": "how many hours or slots are still open / free / available on a given day",
+          "row": {
+            "company_name": "<company_name>",
+            "vertical": "<vertical>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the business profile to act on. Must come from a find_business_profile result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
     "find_sections": {
       "description": "Find sections in the user's own business records",
       "usage_context": "Read the business's own sections. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
