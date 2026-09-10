@@ -10,6 +10,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'OpsPeakUnutilizedDetector' });
 
 interface TimeSlotStats {
   dayOfWeek: number;
@@ -162,17 +165,41 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
     // Calculate severity
     const severity = this.definition.severityFn(utilizationDrop, underutilized.length);
 
-    // Get average booking value
-    const { data: avgValue } = await this.supabase
+    // Get average booking value.
+    //
+    // This selected `price`, which is not a column on scheduling_bookings — it lives on
+    // scheduling_services (OpsServicePerformanceDetector:83 records the same finding). Postgres
+    // rejects the whole select for one unknown name, and the error is discarded by the
+    // destructure below, so `avgValue` was always undefined and every run fell through to the
+    // hardcoded estimate. The detector was reporting `missedBookings * 75` as real money.
+    //
+    // `payment_amount` is what the booking actually took, and is the field the sibling detectors
+    // use (OpsServicePerformance, PricingIntroOfferStuck, RetCancellationSpike). It is
+    // DECIMAL(10,2), which PostgREST returns as a string, hence parseFloat.
+    const { data: avgValue, error: avgValueError } = await this.supabase
       .from('scheduling_bookings')
-      .select('price')
+      .select('payment_amount')
       .eq('user_id', userId)
       .gte('start_time', thirtyDaysAgo.toISOString())
       .in('status', ['completed']);
 
+    if (avgValueError) {
+      // Bind and surface it. Discarding this error is what hid the bug above for the life of
+      // the detector.
+      logger.warn(
+        { err: avgValueError, userId },
+        'Could not read booking values; missed-revenue estimate will be unavailable'
+      );
+    }
+
+    // NOTE (open — W6 in docs/workplans/business-os-phantom-column-remediation.md):
+    // the `75` fallback is still a fabricated number, now on a much narrower path — it fires
+    // only when the account has no completed bookings in the window. Whether an insight should
+    // invent a per-booking value at all, or suppress its impact estimate when it cannot compute
+    // one, is a product decision and is deliberately NOT taken here.
     const avgBookingValue =
       avgValue && avgValue.length > 0
-        ? avgValue.reduce((sum, b) => sum + parseFloat(b.price || '0'), 0) / avgValue.length
+        ? avgValue.reduce((sum, b) => sum + parseFloat(b.payment_amount || '0'), 0) / avgValue.length
         : 75; // Default estimate
 
     // Calculate missed revenue
