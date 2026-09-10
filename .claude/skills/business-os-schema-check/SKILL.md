@@ -72,7 +72,29 @@ The shape that most reliably survives review. Both of these are true simultaneou
 
 A grep for a column name proves nothing without its table. `20260810_remove_client_fields_and_total_amount.sql` dropped `client_first_name`, `client_last_name`, `client_email`, `client_phone` and `total_amount` from `scheduling_bookings` only — the client now lives in `crm_contacts`, reached via the required `contact_id`.
 
-## Rule 7 — Watch for the stale variable name.
+## Rule 7 — A grep over a crashed process looks exactly like a clean result.
+
+```bash
+npx tsc --noEmit -p tsconfig.json | grep -c "error TS"     # 0
+```
+
+Zero errors? No — the process died:
+
+```
+FATAL ERROR: Reached heap limit Allocation failed
+```
+
+`tsc` on this repo needs `NODE_OPTIONS="--max-old-space-size=8192"` to finish. Without it, it crashes **before emitting a single diagnostic**, the grep counts nothing, and the pipeline reports success. Two people ran that command independently and both concluded the tree was clean. It has ~5,000 errors.
+
+The pipe is what hides it: `$?` is the grep's exit code, not the tool's. Whenever you measure something by counting lines:
+
+- **Check the tool's own exit code**, not the pipe's — `${PIPESTATUS[0]}` in bash, or write to a file and count separately
+- **A zero result deserves more suspicion than a large one.** Large numbers are rarely wrong in an interesting way; zero is what both a clean run and a dead one produce
+- **Sanity-check the shape.** If a count collapses to 0 or explodes, confirm the tool ran at all before believing it
+
+This is why `schema-check` exits non-zero on failure and prints what it scanned: a count with no denominator and no exit code is not a measurement.
+
+## Rule 8 — Watch for the stale variable name.
 
 ```typescript
 const email = booking.contact_id;        // the name is now a lie

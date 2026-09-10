@@ -37,11 +37,14 @@ Errors in the first version of this workplan, kept visible rather than edited aw
 | # | Claim (v1) | Reality | Cause |
 |---|-----------|---------|-------|
 | C1 | `20260909_invoice_online_payment` is **not applied** | **It is applied.** The column is `allow_online_payment`, not `online_payment_enabled` | The probe guessed the column name from the *migration filename* instead of reading the migration body. **This is the exact failure class the document is about** |
-| C2 | ~4,400 pre-existing TypeScript errors; `tsc` unusable as a gate | **`npx tsc --noEmit -p tsconfig.json` reports 0** | Earlier counts were taken mid-merge and included `.next/` generated types and test files. Never re-measured on a clean tree |
+| C2 | ~4,400 pre-existing TypeScript errors; `tsc` unusable as a gate | **Corrected twice — see [C5](#corrections-register). The count was wrong; the conclusion was right.** | The v1 figure was measured mid-merge and never re-checked |
+| C5 | **`tsc` reports 0 errors; the CI gate is available today** (the v2 correction) | **False. `tsc` reports thousands.** On `fix/business-os-detector-dead-selects @ 7e432f5b`: **exit 2, 5,084 `error TS` lines across 616 files** — tests 3,148, real source 1,932, `.next/` **4** | **Both auditors ran `npx tsc --noEmit \| grep -c "error TS"` and got 0 from a process that had crashed.** The plain run dies with `FATAL ERROR: Reached heap limit` and emits **zero diagnostics**, so the grep counts nothing and reports success. It needs `NODE_OPTIONS="--max-old-space-size=8192"` to complete. A grep over a crashed process looks exactly like a clean tree |
 | C3 | `@/types/database` is imported in at least one file | **Imported nowhere.** One match in the repo, a comment in a test | It *was* imported in `BusinessProfileRepository` — and removed during the merge under D11/D27. The workplan described a state already fixed by its own author |
 | C4 | The three identity detectors need a `contact_id` fix | The fix **exists** — but on an unmerged branch, not `main` | See [The Tree Problem](#the-tree-problem) |
 
-**C2 changes the plan materially.** A typecheck gate was scoped as a cleanup project behind thousands of errors. At zero errors it is a config change available today, which moves [P2](#p2--generated-types--a-gate-that-fails) up.
+**C5 changes the plan materially, and puts it back where v1 had it.** The gate was rescoped as a config change on the strength of a zero that did not exist. It is a **baseline-and-ratchet** job against thousands of real errors, not a switch to flip — turning `ignoreBuildErrors` off today would red the build immediately. It remains the only item that prevents the next round of these rather than cleaning up the last; the cost was described wrong, not the value.
+
+> **Counts differ by tree and must be quoted with their ref.** 5,084 on `7e432f5b`; Offir measured 2,116 on his. Neither has been reconciled, and neither should be quoted without saying where it came from — which is the same discipline [The Tree Problem](#the-tree-problem) is about.
 
 ---
 
@@ -130,7 +133,13 @@ typescript: { ignoreBuildErrors: true }
 
 so the build discards type errors regardless. Types without a failing gate give the feeling of coverage without the coverage.
 
-**The tree currently typechecks clean (0 errors), so the gate can be switched on immediately** rather than after a cleanup project.
+**The tree does NOT typecheck clean.** On `7e432f5b`: **5,084 errors across 616 files** (tests 3,148, real source 1,932, `.next/` 4). An earlier revision of this document claimed 0; that was a `grep` counting an out-of-memory crash — see [C5](#corrections-register).
+
+So this is a **baseline-and-ratchet**, not a switch:
+
+- `tsc` needs `NODE_OPTIONS="--max-old-space-size=8192"` to run to completion at all. **Fix that first** — until it does, every measurement of this number is untrustworthy, and a CI job would report success on a crash
+- Record the current count as a baseline and gate on *new* errors, not zero
+- Ratchet the baseline down; only flip `ignoreBuildErrors` when it reaches zero
 
 - [ ] Generate `types/database.ts` (`supabase gen types typescript`)
 - [ ] Wire it into the Supabase client generics so `.select()` is checked
@@ -239,7 +248,7 @@ A module-level `getInstance()` starts a `setInterval` flush timer that is never 
 |---|---|---|
 | 1 | **P0** — merge `dda5c51f` | Clean merge. Everything else is measured against the wrong tree until this lands |
 | 2 | **P1** — the two one-liners | Both currently produce *wrong output*, not errors. 1b is putting invented revenue in front of users |
-| 3 | **P2** — types + CI gate | Free today at 0 errors. Do it **before** P3 so the rebuild is type-checked |
+| 3 | **P2** — types + CI gate | **Not free** — a ratchet against ~5,000 errors ([C5](#corrections-register)). Still do it **before** P3 so the rebuild is type-checked. First task is making `tsc` complete without crashing |
 | 4 | **P4** — apply the migration | Cheap, closes a trap |
 | 5 | **P5** — the test defects | Real-DB access from tests is a standing hazard |
 | 6 | **P3** — web detectors | Needs a product call first |
@@ -280,5 +289,6 @@ The engineering fix and the procedural fix are different, and the engineering on
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-10 | **`tsc` claim corrected — the 0 was a crash** | Both auditors ran `npx tsc --noEmit \| grep -c "error TS"` and got 0 from a process that had died of heap exhaustion before emitting a diagnostic. Real figure on `7e432f5b`: **exit 2, 5,084 errors across 616 files**; `.next/` accounts for **4** of them, so the earlier "inflated by generated and test files" explanation does not hold either — 1,932 are in real source. Recorded as [C5](#corrections-register). The CI gate returns to being a baseline-and-ratchet job, and "make `tsc` complete without crashing" becomes its first task. |
 | 2026-09-09 | **Revised after independent audit** | Offir re-ran the list against the live schema. Three v1 claims were wrong ([C1–C3](#corrections-register)) and one was measured on the wrong tree ([C4](#the-tree-problem)). Two new live bugs recorded — `.in('email', <uuids>)` and the fabricated `$75` revenue estimate — both producing wrong output rather than errors. `tsc` is clean at 0 errors, which moves the CI gate from a cleanup project to a config change. Added [Prevention](#prevention) and the ref-stating rule. |
 | 2026-09-07 | Created | Live schema sweep: 530 select pairs across 1,761 files, 48 failing. Found unapplied migrations, 11 broken detector selects, and the missing generated types as common root cause. |
