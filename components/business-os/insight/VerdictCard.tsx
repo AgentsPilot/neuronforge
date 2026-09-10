@@ -11,6 +11,16 @@ interface VerdictCardProps {
   verdict: string;
   verdictSub: string;
   when: string;
+  /**
+   * Fill the height of its container and drop the standalone bottom margin.
+   *
+   * Set when the card sits in the day/week grid, where the row's gap owns the
+   * spacing and both cards must end level. It has to be a prop rather than a
+   * CSS rule: the margin below is an inline style, and inline styles win over
+   * a stylesheet — the card stretched to the row height minus its own 14px and
+   * came out permanently shorter than the one beside it.
+   */
+  fillHeight?: boolean;
 }
 
 // ===========================
@@ -22,6 +32,7 @@ export function VerdictCard({
   verdict,
   verdictSub,
   when,
+  fillHeight = false,
 }: VerdictCardProps) {
   const { isRTL } = useLanguage();
 
@@ -33,12 +44,14 @@ export function VerdictCard({
         display: 'flex',
         gap: '13px',
         alignItems: 'flex-start',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         borderRadius: '18px',
         padding: '17px 18px',
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
-        marginBottom: '14px',
+        marginBottom: fillHeight ? 0 : '14px',
+        height: fillHeight ? '100%' : undefined,
+        boxSizing: 'border-box',
       }}
     >
       {/* Live pulse dot: .lv-live */}
@@ -79,8 +92,8 @@ export function VerdictCard({
             fontWeight: 600,
             letterSpacing: '0.05em',
             textTransform: 'uppercase',
-            color: '#697187',
-            background: '#F1F3F8',
+            color: 'var(--v2-text-secondary)',
+            background: 'var(--v2-bg)',
             padding: '3px 9px',
             borderRadius: '20px',
             marginBottom: '7px',
@@ -98,7 +111,7 @@ export function VerdictCard({
             fontWeight: 600,
             letterSpacing: '-0.02em',
             marginBottom: '4px',
-            color: '#131A2B',
+            color: 'var(--v2-text-primary)',
           }}
         >
           {verdict}
@@ -108,7 +121,7 @@ export function VerdictCard({
         <div
           style={{
             fontSize: '14.5px',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
           }}
         >

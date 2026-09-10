@@ -24,7 +24,9 @@ import { ChannelsOverviewCard } from './ChannelsOverviewCard';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { FooterReplay, ReplayModal } from './FooterReplay';
 import { VectorsStrip } from './VectorsStrip';
-import { HandledSection, HandledEntry } from './HandledSection';
+import type { HandledEntry } from './HandledSection';
+import { DailyBriefingCard } from './DailyBriefingCard';
+import { briefingLines } from '@/lib/business-os/briefing/BriefingNarrator';
 import { InsightAdvisorCard } from './InsightAdvisorCard';
 
 // ===========================
@@ -155,6 +157,20 @@ interface LiveDashboardProps {
   pipelineStages?: PipelineStage[];  // Real CRM pipeline stages
   milestoneData?: MilestoneData;
   autonomousWorkData?: HandledEntry[];
+  /**
+   * Today's narrated briefing, rendered as a list beside the weekly verdict.
+   * `narrative` is newline-separated, one fact per line.
+   * Null on a cold-start account, or on any day it could not be produced.
+   */
+  briefing?: {
+    narrative: string;
+    date: string;
+    /** Undefined when none is set; the morning email is gated on it. */
+    timezone?: string;
+    isQuiet: boolean;
+    source: 'llm' | 'fallback';
+    emailEnabled: boolean;
+  } | null;
   onConfigureClick?: (stepId: string) => void;
   onAction?: (action: string, data?: unknown) => void;
   // Collapse state
@@ -186,8 +202,8 @@ function AdvisorIdleCard({
       className="adv"
       style={{
         marginTop: '16px',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         borderRadius: '18px',
         padding: isSetup ? '20px 22px' : '16px 22px',
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
@@ -224,13 +240,13 @@ function AdvisorIdleCard({
                   fontSize: '19px',
                   fontWeight: 600,
                   letterSpacing: '-0.02em',
-                  color: '#131A2B',
+                  color: 'var(--v2-text-primary)',
                   margin: '6px 0 8px',
                 }}
               >
                 {t('advisor.headline.setup') || 'Everything is built. None of it is on.'}
               </h3>
-              <p style={{ fontSize: '14px', color: '#697187', lineHeight: 1.55, marginBottom: '16px' }}>
+              <p style={{ fontSize: '14px', color: 'var(--v2-text-secondary)', lineHeight: 1.55, marginBottom: '16px' }}>
                 {t('advisor.desc.setup') || 'I can\'t tell you anything about your business until your business is reachable. One button changes that, and I\'ve done the rest.'}
               </p>
               <button
@@ -251,7 +267,7 @@ function AdvisorIdleCard({
               </button>
             </>
           ) : (
-            <div style={{ fontSize: '13px', color: '#697187', marginTop: '2px' }}>
+            <div style={{ fontSize: '13px', color: 'var(--v2-text-secondary)', marginTop: '2px' }}>
               {t('advisor.eyebrow.waiting') || 'Watching, nothing to flag right now'}
             </div>
           )}
@@ -292,6 +308,7 @@ export function LiveDashboard({
   pipelineStages = [],
   milestoneData,
   autonomousWorkData = [],
+  briefing,
   onConfigureClick,
   onAction,
   collapsed = false,
@@ -940,6 +957,47 @@ export function LiveDashboard({
     };
   }, [hasPublished, reachesByLink, stats, formatCurrency, t]);
 
+  /*
+   * Today's briefing, ready for the card.
+   *
+   * Withheld on a cold start: an account with nothing in it gets a briefing
+   * about nothing, and the setup checklist is what that space is for. The
+   * `cold_start` reading is the same one AdvisorIdleCard uses to make the same
+   * judgement, so the two cannot disagree about whether the business has begun.
+   *
+   * The date is formatted here rather than in the API because it has to follow
+   * the interface language, which only the client knows — while the DAY it
+   * names is the business's own, resolved server-side. Those are different
+   * questions and each is answered where its answer lives.
+   */
+  const briefingForCard = useMemo(() => {
+    if (!briefing?.narrative) return undefined;
+    if (vectorMaturity?.maturityLevel === 'cold_start') return undefined;
+
+    const lines = briefingLines(briefing.narrative);
+    if (lines.length === 0) return undefined;
+
+    let dateLabel = briefing.date;
+    try {
+      // Parsed as UTC noon: the string is a calendar date with no time, and
+      // parsing it as local midnight can render the previous day west of UTC.
+      dateLabel = new Intl.DateTimeFormat(language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-GB', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      }).format(new Date(`${briefing.date}T12:00:00Z`));
+    } catch {
+      // Keep the ISO date rather than showing nothing.
+    }
+
+    return {
+      lines,
+      dateLabel,
+      emailEnabled: briefing.emailEnabled,
+      timezone: briefing.timezone,
+    };
+  }, [briefing, vectorMaturity?.maturityLevel, language]);
+
   // Ghost projection (only in setup mode)
   const ghost: GhostProjection | undefined = useMemo(() => {
     if (!hasPublished) {
@@ -1092,8 +1150,8 @@ export function LiveDashboard({
       <div
         className="mb-6"
         style={{
-          background: '#FFFFFF',
-          border: '1px solid #E7E9F1',
+          background: 'var(--v2-surface)',
+          border: '1px solid var(--v2-border)',
           borderRadius: '18px',
           padding: '18px 16px 14px',
           boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
@@ -1105,7 +1163,7 @@ export function LiveDashboard({
             fontWeight: 600,
             letterSpacing: '0.09em',
             textTransform: 'uppercase',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             marginBottom: '14px',
             paddingInlineStart: '2px',
           }}
@@ -1125,7 +1183,7 @@ export function LiveDashboard({
                 [isRTL ? 'right' : 'left']: '7.1%',
                 height: '2px',
                 width: '85.8%',
-                background: '#E7E9F1',
+                background: 'var(--v2-border)',
               }}
             />
             {railFilled > 0 && (
@@ -1219,8 +1277,8 @@ export function LiveDashboard({
                           boxShadow: '0 0 0 4px rgba(249,115,22,0.14)',
                         }
                       : row.state === 'counting'
-                      ? { background: '#FFF8F2', border: '2px dashed #F9A15C' }
-                      : { background: '#FFFFFF', border: '2px solid #E7E9F1' }),
+                      ? { background: 'rgba(249, 115, 22, 0.10)', border: '2px dashed #F9A15C' }
+                      : { background: 'var(--v2-surface)', border: '2px solid var(--v2-border)' }),
                   }}
                 >
                   <i
@@ -1231,10 +1289,10 @@ export function LiveDashboard({
                       display: 'block',
                       background:
                         row.state === 'reached'
-                          ? '#FFFFFF'
+                          ? 'var(--v2-surface)'
                           : row.state === 'counting'
                           ? '#F9A15C'
-                          : '#EDEFF5',
+                          : 'var(--v2-border)',
                     }}
                   />
                 </span>
@@ -1253,9 +1311,9 @@ export function LiveDashboard({
                       fontVariantNumeric: 'tabular-nums',
                       color:
                         row.state === 'reached'
-                          ? '#131A2B'
+                          ? 'var(--v2-text-primary)'
                           : row.state === 'counting'
-                          ? '#C2410C'
+                          ? '#F97316'
                           : '#C6CAD6',
                     }}
                   >
@@ -1268,7 +1326,7 @@ export function LiveDashboard({
                       fontWeight: 500,
                       lineHeight: 1.3,
                       marginTop: '3px',
-                      color: row.state === 'waiting' ? '#9AA1B4' : '#4A5165',
+                      color: row.state === 'waiting' ? 'var(--v2-text-muted)' : 'var(--v2-text-secondary)',
                     }}
                   >
                     {row.name}
@@ -1355,10 +1413,57 @@ export function LiveDashboard({
             grid-template-columns: 1fr;
           }
         }
+        .lv-day-week-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          /* stretch, not start: the two cards are a matched pair and a ragged
+             bottom edge reads as a rendering fault rather than a design. Each
+             one grows to the taller of the two. */
+          align-items: stretch;
+          margin-bottom: 14px;
+        }
+        /* VerdictCard carries its own bottom margin for the stacked case; the
+           grid gap owns the spacing here. */
+        .lv-day-week-row > .lv-verdict {
+          margin-bottom: 0;
+          height: 100%;
+        }
+        .lv-day-week-row > * {
+          height: 100%;
+        }
+        @media (max-width: 900px) {
+          .lv-day-week-row {
+            grid-template-columns: 1fr;
+          }
+        }
       `}</style>
 
-      {/* Verdict Card */}
-      {(
+      {/*
+        Today and this week, side by side.
+
+        Today leads in DOM order, so it lands on the right in RTL and the left
+        in LTR — first in reading order either way, which is what it is: the
+        thing you act on now, with the week beside it as context. They collapse
+        to one column below 900px, where two cards of prose would be unreadable.
+      */}
+      {briefingForCard ? (
+        <div className="lv-day-week-row">
+          <DailyBriefingCard
+            lines={briefingForCard.lines}
+            dateLabel={briefingForCard.dateLabel}
+            emailEnabled={briefingForCard.emailEnabled}
+            timezone={briefingForCard.timezone}
+          />
+          <VerdictCard
+            status={verdict.status}
+            verdict={verdict.text}
+            verdictSub={verdict.sub}
+            when={verdict.when}
+            fillHeight
+          />
+        </div>
+      ) : (
         <VerdictCard
           status={verdict.status}
           verdict={verdict.text}
@@ -1401,7 +1506,7 @@ export function LiveDashboard({
             <p
               style={{
                 fontSize: '12px',
-                color: '#697187',
+                color: 'var(--v2-text-secondary)',
                 margin: '8px 2px 0',
                 lineHeight: 1.45,
               }}
@@ -1477,20 +1582,17 @@ export function LiveDashboard({
         />
       )}
 
-      {/* One handled section, same reason as the strip above — this hand-rolled
-          copy and the real HandledSection inside InsightAdvisorCard both showed
-          the same work whenever there was a pending insight. */}
-      {autonomousWork.length > 0 && (
-        <div style={{ marginTop: '16px' }}>
-          <HandledSection
-            entries={autonomousWork.slice(0, 4).map(work => ({
-              title: work.processName,
-              detail: work.summary || `${work.outcome.itemsSucceeded} completed`,
-            }))}
-            standalone
-          />
-        </div>
-      )}
+      {/* The standalone "What I've handled for you today" block used to sit
+          here. It has moved into the briefing at the top of the page, which
+          covers the same ground in one narrative rather than a second list of
+          today's events three cards below the first.
+
+          Note for whoever reads this next: the comment that used to sit here
+          said a second copy lived inside InsightAdvisorCard. It does not, and
+          did not — HandledSection is rendered nowhere as of this change. It is
+          still exported from ./index.ts. Either give it a home or delete it;
+          this codebase has already carried two orphaned insight components
+          (ReportCard, MyDaySection) long enough for both to be forgotten. */}
 
         </>
       )}

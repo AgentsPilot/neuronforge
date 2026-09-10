@@ -55,6 +55,10 @@ export interface Appointment {
   service?: {
     service_name: string;
     is_product?: boolean;  // true for products (no scheduling)
+    /** Sold outright, or quoted first. Decides whether a quote step appears. */
+    sale_mode?: 'direct' | 'proposal' | null;
+    /** The service's own currency — the only currency a quote can inherit. */
+    currency?: string;
   };
 }
 
@@ -105,6 +109,25 @@ export interface SessionPaymentPlan {
   frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
   /** From the plan's local mirror once it exists; undefined before then. */
   periodsPaid?: number;
+  /**
+   * Named stages, for a plan that is not a uniform instalment schedule.
+   *
+   * An instalment plan is "three payments of the same size, monthly", which the
+   * fields above describe completely. A quoted job's plan is not: its stages
+   * have names, different amounts, and most of them fall due when the owner
+   * says the work happened rather than on a date. Optional, so every existing
+   * plan is unaffected.
+   */
+  stages?: Array<{
+    id: string;
+    label: string | null;
+    amount: number;
+    status: string;
+    /** 'date' bills on a schedule; 'manual' waits for the owner to mark it done. */
+    trigger: 'date' | 'manual' | null;
+    invoiceId: string | null;
+    dueDate: string | null;
+  }>;
 }
 
 export interface SessionPayment {
@@ -138,6 +161,18 @@ export interface SessionPayment {
   last4?: string;  // Last 4 digits of card
   // Invoice data for resend functionality and due date display
   invoiceId?: string;
+  /**
+   * The invoice that is currently OWED, if any.
+   *
+   * Distinct from `invoiceId`, which names the invoice this payment object
+   * DESCRIBES — the last one paid, once money has landed. Resending wants the
+   * outstanding one; refunding wants the paid one. One field cannot be both,
+   * and while it tried, the resend button pointed at a settled invoice.
+   *
+   * Only a plan sets this. A single payment has at most one invoice, so the
+   * two questions have the same answer and `invoiceId` suffices.
+   */
+  outstandingInvoiceId?: string;
   invoiceStatus?: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
   invoiceDueDate?: string;
   invoiceSentAt?: string;

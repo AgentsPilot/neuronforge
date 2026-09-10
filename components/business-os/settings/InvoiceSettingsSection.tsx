@@ -16,6 +16,8 @@ import {
   Percent,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { CONFIG_ACCENT, configAccentButton } from '@/components/business-os/configAccent';
+import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectStatus } from '@/components/payments/StripeConnectStatus';
 import {
   defaultDocumentType,
@@ -58,17 +60,43 @@ const DOCUMENT_TYPE_OPTIONS: readonly (DocumentType | '')[] = [
 ];
 
 interface InvoiceSettingsSectionProps {
+  /**
+   * Draw the accordion header?
+   *
+   * False inside a configuration tab, where the tab bar already names the
+   * panel — a header here would be a second title for the same thing, and the
+   * collapse control would hide content the tab exists to show.
+   */
+  chrome?: boolean;
   userId: string;
-  expanded: boolean;
-  onToggle: () => void;
+  /** Ignored when `chrome` is false: a tab is always open. */
+  expanded?: boolean;
+  onToggle?: () => void;
 }
 
 export function InvoiceSettingsSection({
+  chrome = true,
   userId,
-  expanded,
+  expanded: expandedProp,
   onToggle,
 }: InvoiceSettingsSectionProps) {
+  // Without the accordion there is nothing to collapse, so the panel is open.
+  const expanded = chrome ? expandedProp === true : true;
   const { t, isRTL } = useLanguage();
+
+  /*
+   * Shared field styling.
+   *
+   * The focus ring follows the host: pink inside the configuration dialog so a
+   * focused field matches its tab, the platform primary on the onboarding build
+   * screen. Both class strings are written out literally because Tailwind scans
+   * source text and never sees an interpolated variant.
+   */
+  const FIELD = `border border-[var(--v2-border)] bg-[var(--v2-bg)] text-[var(--v2-text-primary)] transition-colors focus:outline-none focus:ring-2 ${
+    chrome
+      ? 'focus:ring-[var(--v2-primary)]/40 focus:border-[var(--v2-primary)]'
+      : 'focus:ring-[#D14E97]/40 focus:border-[#D14E97]'
+  }`;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
@@ -202,9 +230,10 @@ export function InvoiceSettingsSection({
 
   return (
     <div
-      className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]"
-      style={{ borderRadius: 'var(--v2-radius-card)' }}
+      className={chrome ? 'bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)]' : ''}
+      style={chrome ? { borderRadius: 'var(--v2-radius-card)' } : undefined}
     >
+      {chrome && (
       <button
         onClick={onToggle}
         className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
@@ -227,12 +256,20 @@ export function InvoiceSettingsSection({
           }`}
         />
       </button>
+      )}
 
       {expanded && (
-        <div className="px-4 pb-4 space-y-4 border-t border-[var(--v2-border)] pt-4">
+        <div className={chrome ? 'px-4 pb-4 space-y-4 border-t border-[var(--v2-border)] pt-4' : 'mx-auto w-full max-w-3xl space-y-5'}>
           {loading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-6 h-6 animate-spin text-[var(--v2-primary)]" />
+              {/* `chrome` is what tells the two hosts apart: false means this
+                  is a tab in the configuration dialog, which paints its
+                  spinners and buttons in its own accent. On the onboarding
+                  build screen the section keeps the page's colour. */}
+              <Loader2
+                className="w-6 h-6 animate-spin"
+                style={chrome ? { color: 'var(--v2-primary)' } : { color: CONFIG_ACCENT }}
+              />
             </div>
           ) : (
             <>
@@ -245,97 +282,79 @@ export function InvoiceSettingsSection({
                 <StripeConnectStatus detailed />
               </div>
 
-              {/* Success/Error Messages */}
-              {successMessage && (
-                <div
-                  className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 flex items-center gap-2"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <Check className="w-4 h-4 text-green-600" />
-                  <p className="text-sm text-green-700 dark:text-green-400">{successMessage}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+                {/* Company Name */}
+                <div>
+                  <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                    {t('settings.invoice.company_name') || 'Company Name (for invoices)'}
+                  </label>
+                  <div className="relative">
+                    <Building2
+                      className={`w-4 h-4 absolute ${
+                        isRTL ? 'right-3' : 'left-3'
+                      } top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`}
+                    />
+                    <input
+                      type="text"
+                      value={settings.invoice_company_name}
+                      onChange={(e) =>
+                        setSettings((prev) => ({ ...prev, invoice_company_name: e.target.value }))
+                      }
+                      placeholder={t('settings.invoice.company_name_placeholder') || 'Your Business Name'}
+                      className={`w-full ${
+                        isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'
+                      } py-2.5 text-sm ${FIELD}`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    />
+                  </div>
                 </div>
-              )}
-              {errorMessage && (
-                <div
-                  className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 flex items-center gap-2"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <AlertCircle className="w-4 h-4 text-red-600" />
-                  <p className="text-sm text-red-700 dark:text-red-400">{errorMessage}</p>
-                </div>
-              )}
 
-              {/* Company Name */}
-              <div>
-                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
-                  {t('settings.invoice.company_name') || 'Company Name (for invoices)'}
-                </label>
-                <div className="relative">
-                  <Building2
-                    className={`w-4 h-4 absolute ${
-                      isRTL ? 'right-3' : 'left-3'
-                    } top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`}
-                  />
+                {/* Invoice Number Prefix */}
+                <div>
+                  <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                    {t('settings.invoice.number_prefix') || 'Invoice Number Prefix'}
+                  </label>
+                  <div className="relative">
+                    <Hash
+                      className={`w-4 h-4 absolute ${
+                        isRTL ? 'right-3' : 'left-3'
+                      } top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`}
+                    />
+                    <input
+                      type="text"
+                      value={settings.invoice_number_prefix}
+                      onChange={(e) =>
+                        setSettings((prev) => ({ ...prev, invoice_number_prefix: e.target.value }))
+                      }
+                      placeholder="INV"
+                      maxLength={10}
+                      className={`w-full ${
+                        isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'
+                      } py-2.5 text-sm ${FIELD}`}
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    />
+                  </div>
+                  <p className="text-xs text-[var(--v2-text-muted)] mt-1">
+                    {t('settings.invoice.number_prefix_hint') || 'e.g., INV, BILL, or your initials'}
+                  </p>
+                </div>
+
+                {/* Tax ID */}
+                <div>
+                  <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
+                    {t('settings.invoice.tax_id') || 'Tax ID / VAT Number'}
+                  </label>
                   <input
                     type="text"
-                    value={settings.invoice_company_name}
+                    value={settings.invoice_tax_id}
                     onChange={(e) =>
-                      setSettings((prev) => ({ ...prev, invoice_company_name: e.target.value }))
+                      setSettings((prev) => ({ ...prev, invoice_tax_id: e.target.value }))
                     }
-                    placeholder={t('settings.invoice.company_name_placeholder') || 'Your Business Name'}
-                    className={`w-full ${
-                      isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'
-                    } py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]`}
+                    placeholder={t('settings.invoice.tax_id_placeholder') || 'XX-XXXXXXX'}
+                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                 </div>
-              </div>
-
-              {/* Invoice Number Prefix */}
-              <div>
-                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
-                  {t('settings.invoice.number_prefix') || 'Invoice Number Prefix'}
-                </label>
-                <div className="relative">
-                  <Hash
-                    className={`w-4 h-4 absolute ${
-                      isRTL ? 'right-3' : 'left-3'
-                    } top-1/2 -translate-y-1/2 text-[var(--v2-text-muted)]`}
-                  />
-                  <input
-                    type="text"
-                    value={settings.invoice_number_prefix}
-                    onChange={(e) =>
-                      setSettings((prev) => ({ ...prev, invoice_number_prefix: e.target.value }))
-                    }
-                    placeholder="INV"
-                    maxLength={10}
-                    className={`w-full ${
-                      isRTL ? 'pr-10 pl-3' : 'pl-10 pr-3'
-                    } py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  />
-                </div>
-                <p className="text-xs text-[var(--v2-text-muted)] mt-1">
-                  {t('settings.invoice.number_prefix_hint') || 'e.g., INV, BILL, or your initials'}
-                </p>
-              </div>
-
-              {/* Tax ID */}
-              <div>
-                <label className="block text-xs font-medium text-[var(--v2-text-primary)] mb-1">
-                  {t('settings.invoice.tax_id') || 'Tax ID / VAT Number'}
-                </label>
-                <input
-                  type="text"
-                  value={settings.invoice_tax_id}
-                  onChange={(e) =>
-                    setSettings((prev) => ({ ...prev, invoice_tax_id: e.target.value }))
-                  }
-                  placeholder={t('settings.invoice.tax_id_placeholder') || 'XX-XXXXXXX'}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                />
               </div>
 
               {/* Tax & document type.
@@ -358,7 +377,7 @@ export function InvoiceSettingsSection({
                         invoice_prices_include_tax: e.target.checked,
                       }))
                     }
-                    className="mt-0.5 w-4 h-4 accent-[var(--v2-primary)]"
+                    className={`mt-0.5 w-4 h-4 ${chrome ? 'accent-[var(--v2-primary)]' : 'accent-[#D14E97]'}`}
                   />
                   <span className="min-w-0">
                     <span className="block text-sm text-[var(--v2-text-primary)]">
@@ -389,7 +408,7 @@ export function InvoiceSettingsSection({
                           setSettings((prev) => ({ ...prev, invoice_tax_rate: e.target.value }))
                         }
                         placeholder="17"
-                        className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                        className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       />
                     </div>
@@ -405,7 +424,7 @@ export function InvoiceSettingsSection({
                         }
                         placeholder={isRTL ? 'מע״מ' : 'VAT'}
                         maxLength={30}
-                        className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                        className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       />
                     </div>
@@ -485,7 +504,7 @@ export function InvoiceSettingsSection({
                   value={settings.invoice_address.line1 || ''}
                   onChange={(e) => updateAddress('line1', e.target.value)}
                   placeholder={t('settings.invoice.address_line1') || 'Street address'}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                  className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
 
@@ -494,7 +513,7 @@ export function InvoiceSettingsSection({
                   value={settings.invoice_address.line2 || ''}
                   onChange={(e) => updateAddress('line2', e.target.value)}
                   placeholder={t('settings.invoice.address_line2') || 'Suite, unit, building (optional)'}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                  className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
 
@@ -504,7 +523,7 @@ export function InvoiceSettingsSection({
                     value={settings.invoice_address.city || ''}
                     onChange={(e) => updateAddress('city', e.target.value)}
                     placeholder={t('settings.invoice.city') || 'City'}
-                    className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                   <input
@@ -512,7 +531,7 @@ export function InvoiceSettingsSection({
                     value={settings.invoice_address.state || ''}
                     onChange={(e) => updateAddress('state', e.target.value)}
                     placeholder={t('settings.invoice.state') || 'State/Province'}
-                    className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                 </div>
@@ -523,7 +542,7 @@ export function InvoiceSettingsSection({
                     value={settings.invoice_address.postal_code || ''}
                     onChange={(e) => updateAddress('postal_code', e.target.value)}
                     placeholder={t('settings.invoice.postal_code') || 'Postal code'}
-                    className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                   <input
@@ -531,7 +550,7 @@ export function InvoiceSettingsSection({
                     value={settings.invoice_address.country || ''}
                     onChange={(e) => updateAddress('country', e.target.value)}
                     placeholder={t('settings.invoice.country') || 'Country'}
-                    className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                 </div>
@@ -551,7 +570,7 @@ export function InvoiceSettingsSection({
                     setSettings((prev) => ({ ...prev, invoice_bank_name: e.target.value }))
                   }
                   placeholder={t('settings.invoice.bank_name') || 'Bank name'}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                  className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
 
@@ -563,7 +582,7 @@ export function InvoiceSettingsSection({
                       setSettings((prev) => ({ ...prev, invoice_bank_account: e.target.value }))
                     }
                     placeholder={t('settings.invoice.bank_account') || 'Account number'}
-                    className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                   <input
@@ -573,7 +592,7 @@ export function InvoiceSettingsSection({
                       setSettings((prev) => ({ ...prev, invoice_bank_routing: e.target.value }))
                     }
                     placeholder={t('settings.invoice.bank_routing') || 'Routing number'}
-                    className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)]"
+                    className={`w-full px-3 py-2.5 text-sm ${FIELD}`}
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   />
                 </div>
@@ -598,7 +617,7 @@ export function InvoiceSettingsSection({
                     'Payment due within 30 days. Please include invoice number in payment reference.'
                   }
                   rows={3}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)] resize-none"
+                  className={`w-full px-3 py-2.5 text-sm ${FIELD} resize-none`}
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
               </div>
@@ -618,18 +637,40 @@ export function InvoiceSettingsSection({
                     'Thank you for your business!'
                   }
                   rows={2}
-                  className="w-full px-3 py-2.5 text-sm border border-gray-200 dark:border-gray-700 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--v2-primary)] resize-none"
+                  className={`w-full px-3 py-2.5 text-sm ${FIELD} resize-none`}
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 />
               </div>
 
-              {/* Save Button */}
-              <div className="flex justify-end pt-2">
+              {/* Save and its answer. In the dialog this lands in the frozen
+                  bar; on the onboarding build screen, where there is no slot to
+                  render into, it stays inline as it always did. */}
+              <TabFooter
+                message={
+                  (successMessage && (
+                    <p className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
+                      <Check className="w-4 h-4 flex-shrink-0 text-green-600" />
+                      {successMessage}
+                    </p>
+                  )) ||
+                  (errorMessage && (
+                    <p className="flex items-center gap-2 text-sm text-red-700 dark:text-red-400">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-600" />
+                      {errorMessage}
+                    </p>
+                  )) ||
+                  null
+                }
+              >
                 <button
                   onClick={saveSettings}
                   disabled={saving}
-                  className="px-4 py-2 text-sm bg-[var(--v2-primary)] text-white font-medium disabled:opacity-50 flex items-center gap-2"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  className={`text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${
+                    chrome
+                      ? 'px-4 py-2 bg-[var(--v2-primary)] text-white'
+                      : 'px-6 py-2.5 border transition-all'
+                  }`}
+                  style={chrome ? { borderRadius: 'var(--v2-radius-button)' } : configAccentButton}
                 >
                   {saving ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -638,7 +679,7 @@ export function InvoiceSettingsSection({
                   )}
                   {t('common.save') || 'Save'}
                 </button>
-              </div>
+              </TabFooter>
             </>
           )}
         </div>

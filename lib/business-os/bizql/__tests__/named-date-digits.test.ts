@@ -64,7 +64,7 @@ describe('a day the user named, with no number', () => {
           data: { due_date: { $date: '2026-09-14' } },
         },
       ],
-    } as Plan;
+    } as unknown as Plan;
 
     expect(complaint(write, 'שנה תאריך יעד ליום רביעי')).toBeDefined();
   });
@@ -93,7 +93,7 @@ describe('what the rule deliberately leaves alone', () => {
         },
       ],
       answer: { text: 'You have {s1.count}.' },
-    } as Plan;
+    } as unknown as Plan;
 
     expect(complaint(anchored, 'כמה פגישות יש לי ביום רביעי?')).toBeUndefined();
   });

@@ -26,9 +26,10 @@ import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
+import { anchorizeInventedDates } from '../dates';
 import type { ComputeQuery, FindQuery, Query } from '../types';
-import { normalizePlan, validatePlan } from './validatePlan';
-import { buildPlanTool, PLANNER_SYSTEM_PROMPT } from './planTool';
+import { isSoftProblem, normalizePlan, validatePlan } from './validatePlan';
+import { buildPlanTool, plannerSystemPrompt } from './planTool';
 import {
   guessRelevantEntities,
   renderCatalogForPrompt,
@@ -303,8 +304,23 @@ export class BizQLPlanner {
 
     const conversation = request.context ? renderContextForPrompt(request.context) : '';
 
+    /*
+     * The action rules are sent only when an action is reachable.
+     *
+     * Rules 12, 13, 16 and 17 and ~920 tokens of tool schema describe naming a
+     * target, acting on many rows and performing a write. If nothing offered to
+     * this turn declares an action, none of it can be used — and it was going
+     * out on every call regardless, on top of a prompt that is already 69% of
+     * what a question costs.
+     */
+    // `undefined` means the whole catalog was shipped, which certainly includes
+    // entities with actions.
+    const canAct = (entities ?? Object.keys(CATALOG.entities)).some(
+      (key) => Object.keys(CATALOG.entities[key]?.actions ?? {}).length > 0
+    );
+
     const system =
-      `${PLANNER_SYSTEM_PROMPT}\n\nCATALOG\n${catalogText}` +
+      `${plannerSystemPrompt({ actions: canAct })}\n\nCATALOG\n${catalogText}` +
       (vocabulary ? `\n\nTHIS USER'S CONFIGURED VALUES\n${vocabulary}` : '') +
       (conversation ? `\n\nCONVERSATION SO FAR\n${conversation}` : '');
     /*
@@ -508,6 +524,22 @@ export class BizQLPlanner {
       // Canonicalise unambiguous variations (`>` -> `gt`) before judging the
       // plan, so a repair pass is spent on real problems only.
       normalizePlan(plan);
+
+      /*
+       * Put back the anchor behind a date the model worked out for itself.
+       *
+       * Runs BEFORE validation, not as a repair of it: the digit rule would
+       * reject "2026-09-01" for a request that says only "this month", and two
+       * repair rounds do not change the model's mind — 18 of 40 measured
+       * failures, and two wasted calls each. The date is `start_of_month` on
+       * today's clock, which is a fact rather than an opinion, so we substitute
+       * it and spend the repairs on problems we cannot solve ourselves.
+       */
+      const anchored = anchorizeInventedDates(plan, request.message, request.timezone);
+      if (anchored > 0) {
+        logger.info({ anchored, userId: request.userId }, 'Restored date anchors in a plan');
+      }
+
       const problems = validatePlan(plan, request.message);
 
       if (problems.length === 0) {
@@ -572,6 +604,33 @@ export class BizQLPlanner {
             `Fix these problems and call emit_plan again. Use only catalog names.`,
         });
         continue;
+      }
+
+      /*
+       * Repairs are spent. If everything still outstanding is SOFT, ship it.
+       *
+       * The only soft problem today is a missing answer sentence, and the
+       * renderer already has a fallback for exactly that. Refusing here would
+       * replace a thin answer with no answer — measured, that was 31 turns of
+       * 297 turning into "I didn't quite follow that" where they had shown a
+       * bare count. The rule is there to push the model, not to punish the user
+       * when it will not move.
+       */
+      if (problems.every(isSoftProblem)) {
+        logger.warn({ problems }, 'Accepting a plan with soft problems after repairs');
+
+        return {
+          ok: true,
+          plan,
+          diagnostics: this.diagnostics({
+            model,
+            entities,
+            repairAttempted,
+            started,
+            promptTokens,
+            completionTokens,
+          }),
+        };
       }
 
       return this.fail(`Plan failed validation: ${problems.join('; ')}`, {

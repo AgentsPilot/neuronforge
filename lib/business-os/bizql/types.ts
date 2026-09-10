@@ -405,7 +405,30 @@ export interface ForEachQuery {
   max?: number;
 }
 
-export type Query = FindQuery | ComputeQuery | MutateQuery | ForEachQuery;
+/**
+ * "Now say something about those numbers."
+ *
+ * Carries no entity, no filter and no aggregate, because it fetches nothing —
+ * it marks the turn as one whose answer is a RELATIONSHIP between the figures
+ * the other steps produced, not a report of them.
+ *
+ * It exists because some wording cannot be chosen before the values are known.
+ * Asked "how much did my revenue drop", the planner writes its sentence before
+ * anything is fetched, so "dropped" is a guess about which way the numbers
+ * went — and it guessed differently on consecutive runs, producing "ירדו ב-8.33$"
+ * and then "ירדו ב--8.33$". Dropped by minus eight is not a sentence anyone
+ * means. After execution that is a fact rather than a guess.
+ *
+ * A flag on the plan would have done the same job; a step does it better,
+ * because the planner is already deciding step by step and because "at most
+ * one, and last" is then something the validator can check.
+ */
+export interface AnalyseQuery {
+  id?: string;
+  op: 'analyse';
+}
+
+export type Query = FindQuery | ComputeQuery | MutateQuery | ForEachQuery | AnalyseQuery;
 
 /** `{"$item":"email"}` — a field of the row currently being processed. */
 export interface ItemRef {

@@ -198,6 +198,10 @@ export interface BusinessProfile {
   show_logo_on_smart_links: boolean;
   theme: Record<string, unknown> | null;
 
+  // Notification preferences. NOT NULL DEFAULT false, so not nullable.
+  // (20260911_daily_briefing)
+  daily_briefing_email_enabled: boolean;
+
   // Payment collection method (20260831_collection_method)
   collection_method: string | null;
 
@@ -292,6 +296,7 @@ export interface BusinessProfileInsert {
   user_code?: string | null;
   show_logo_on_smart_links?: boolean;
   theme?: Record<string, unknown> | null;
+  daily_briefing_email_enabled?: boolean;
   collection_method?: string | null;
   template_id?: string | null;
   subdomain?: string | null;
@@ -821,6 +826,47 @@ export class BusinessProfileRepository {
       return { data: true, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to update business branding');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * What the platform is allowed to send the owner, unprompted.
+   *
+   * Its own method for the same reason as the two beside it — one save must not
+   * be able to blank another — and because these are the owner's preferences
+   * about being contacted, not facts about the business.
+   *
+   * Only fields explicitly supplied are written, so a caller that knows about
+   * one preference cannot clear another it has never heard of.
+   */
+  async updateNotificationPreferences(
+    userId: string,
+    preferences: { daily_briefing_email_enabled?: boolean }
+  ): Promise<BusinessProfileRepositoryResult<true>> {
+    try {
+      const updateData: Record<string, unknown> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (preferences.daily_briefing_email_enabled !== undefined) {
+        updateData.daily_briefing_email_enabled = preferences.daily_briefing_email_enabled;
+      }
+
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update(updateData)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info(
+        { userId, fields: Object.keys(preferences) },
+        'Notification preferences updated'
+      );
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update notification preferences');
       return { data: null, error: error as Error };
     }
   }

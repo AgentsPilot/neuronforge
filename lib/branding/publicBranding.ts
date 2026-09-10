@@ -33,6 +33,7 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { verifyBookingToken } from '@/lib/services/BookingEmailService';
+import { verifyProposalToken } from '@/lib/business-os/proposalToken';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { resolveBusinessTheme } from '@/lib/branding/resolveTheme';
 import { completeTheme, DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
@@ -54,7 +55,9 @@ export type PublicBrandRef =
   /** A signed booking-management link, as sent to a client by email. */
   | { by: 'bookingToken'; token: string }
   /** A public invoice link. The id is the unguessable part. */
-  | { by: 'invoiceId'; invoiceId: string };
+  | { by: 'invoiceId'; invoiceId: string }
+  /** A signed quote link, as sent to a client by email. */
+  | { by: 'proposalToken'; token: string };
 
 /** One day's opening hours, Sunday first. */
 export interface BusinessDayHours {
@@ -184,6 +187,30 @@ async function resolveUserId(ref: PublicBrandRef): Promise<{ userId: string; pro
       .from('scheduling_bookings')
       .select('user_id')
       .eq('id', decoded.bookingId)
+      .maybeSingle();
+
+    if (!data?.user_id) return null;
+    return { userId: data.user_id };
+  }
+
+  if (ref.by === 'proposalToken') {
+    /*
+     * Same reasoning as the booking token above: the reader is the client being
+     * quoted, who has no session. The signature is the authorization, and this
+     * returns only the business's public identity — never the quote.
+     *
+     * Resolved in the LAYOUT rather than the page so the theme is emitted with
+     * the first byte of HTML. A page that fetches its own brand renders once
+     * unstyled and then repaints, which on the screen where a business is
+     * asking to be trusted with money is the worst place for it.
+     */
+    const decoded = verifyProposalToken(ref.token);
+    if (!decoded?.proposalId) return null;
+
+    const { data } = await supabaseServer
+      .from('proposals')
+      .select('user_id')
+      .eq('id', decoded.proposalId)
       .maybeSingle();
 
     if (!data?.user_id) return null;

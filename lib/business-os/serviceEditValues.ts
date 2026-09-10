@@ -20,12 +20,14 @@
 export interface ServiceShapeSource {
   is_scheduled?: boolean | null;
   collection?: 'online' | 'invoice' | null;
+  sale_mode?: 'direct' | 'proposal' | null;
   price?: number | null;
 }
 
 export interface ServiceShapeValues {
   is_scheduled: boolean;
   collection: 'online' | 'invoice';
+  sale_mode: 'direct' | 'proposal';
 }
 
 /**
@@ -47,6 +49,16 @@ export function serviceShapeValues(service: ServiceShapeSource): ServiceShapeVal
     // said", and only an explicit false makes it a product.
     is_scheduled: service.is_scheduled !== false,
     collection: service.collection ?? 'invoice',
+    /*
+     * Direct unless the row says otherwise — the same "stored value wins,
+     * fallback only for rows that predate the column" rule as the two above.
+     *
+     * The fallback direction matters for the same reason `collection` defaults
+     * to invoice: assuming a service is quoted would strip its price and its
+     * payment step from every public surface, which is a far louder wrong than
+     * leaving a quoted service looking buyable until its owner says so.
+     */
+    sale_mode: service.sale_mode ?? 'direct',
   };
 }
 

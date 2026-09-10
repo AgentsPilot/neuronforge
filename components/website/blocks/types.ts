@@ -79,7 +79,14 @@ export interface PageTheme {
  * Legacy step (deprecated, for backward compatibility):
  * - 'booking' = Maps to ['scheduling', 'client_info']
  */
-export type FlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+export type FlowStep =
+  | 'scheduling'
+  | 'client_info'
+  | 'booking'
+  | 'request'
+  | 'payment'
+  | 'intake'
+  | 'confirmation';
 
 /**
  * Normalizes a client flow array by expanding legacy 'booking' step
@@ -118,6 +125,13 @@ export interface JourneyServiceFacts {
   is_scheduled?: boolean | null;
   /** How the money arrives, or null where the service is free. */
   collection?: 'online' | 'invoice' | null;
+  /**
+   * Bought outright, or quoted per job.
+   *
+   * `proposal` ends the journey at a request — there is no price to publish
+   * and no card to take until the owner has quoted the work.
+   */
+  sale_mode?: 'direct' | 'proposal' | null;
   priceRaw?: number | null;
   hidden?: boolean;
 }
@@ -189,6 +203,14 @@ export interface SelectedServiceData {
    */
   is_scheduled?: boolean | null;
   collection?: 'online' | 'invoice' | null;
+  /**
+   * Bought outright, or quoted per job.
+   *
+   * The third of the same kind. `proposal` ends this client's journey at a
+   * request: there is no price to charge and no date to agree until the owner
+   * has quoted the work.
+   */
+  sale_mode?: 'direct' | 'proposal' | null;
   /**
    * How this service may be paid over time.
    *

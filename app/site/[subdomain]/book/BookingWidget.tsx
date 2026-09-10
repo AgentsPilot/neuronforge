@@ -12,6 +12,7 @@ import { Calendar, Clock, User, Mail, ArrowLeft, ArrowRight, Check, Loader2, Cli
 import PhoneInput from 'react-phone-number-input';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import { journeySteps } from '@/lib/business-os/clientJourney';
+import type { BookingStep } from '@/lib/business-os/clientJourney';
 import type { CountryCode } from 'libphonenumber-js/core';
 import { isValidPhoneNumber } from 'react-phone-number-input';
 import { WebsiteCountrySelect } from '@/components/website/blocks/WebsiteCountrySelect';
@@ -84,7 +85,14 @@ interface BookingWidgetProps {
   processorReady?: boolean;
 }
 
-type Step = 'service' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
+/*
+ * The resolver's union, not a copy of it.
+ *
+ * This was spelled out here again, one member short, and adding `request` to
+ * the journey broke every `setStep(activeSteps[i])` — the compiler caught what
+ * a re-declared union always hides until it doesn't.
+ */
+type Step = BookingStep;
 
 // Map ClientFlowStep to internal Step
 // The journey comes from `journeySteps` in lib/business-os/clientJourney.
@@ -119,6 +127,13 @@ const translations = {
     total: 'Total',
     pay: 'Pay',
     processing: 'Processing...',
+    // The quoted journey. It ends in a request, so it needs its own words —
+    // "Booking Confirmed" would be a lie on a page where nothing was booked.
+    request_quote: 'Request a Quote',
+    request_sent: 'Request Received',
+    request_sent_body: "We've received your request and will send you a quote by email.",
+    request_sent_meeting: "We've received your request. Your consultation is confirmed, and a quote will follow by email.",
+    error_generic: 'Something went wrong. Please try again.',
     booking_confirmed: 'Booking Confirmed!',
     confirmation_email: "We've sent a confirmation email to",
     booking_details: 'Booking Details',
@@ -162,6 +177,11 @@ const translations = {
     total: 'Total',
     pay: 'Pagar',
     processing: 'Procesando...',
+    request_quote: 'Solicitar Presupuesto',
+    request_sent: 'Solicitud Recibida',
+    request_sent_body: 'Hemos recibido tu solicitud y te enviaremos un presupuesto por correo.',
+    request_sent_meeting: 'Hemos recibido tu solicitud. Tu consulta está confirmada y el presupuesto llegará por correo.',
+    error_generic: 'Algo salió mal. Inténtalo de nuevo.',
     booking_confirmed: '¡Reserva Confirmada!',
     confirmation_email: 'Hemos enviado un correo de confirmación a',
     booking_details: 'Detalles de la Reserva',
@@ -205,6 +225,11 @@ const translations = {
     total: 'סה"כ',
     pay: 'שלם',
     processing: 'מעבד...',
+    request_quote: 'בקשת הצעת מחיר',
+    request_sent: 'הבקשה התקבלה',
+    request_sent_body: 'קיבלנו את הבקשה שלך ונשלח לך הצעת מחיר במייל.',
+    request_sent_meeting: 'קיבלנו את הבקשה שלך. הפגישה נקבעה, והצעת המחיר תישלח במייל.',
+    error_generic: 'משהו השתבש. אנא נסו שוב.',
     booking_confirmed: 'ההזמנה אושרה!',
     confirmation_email: 'שלחנו אימייל אישור אל',
     booking_details: 'פרטי ההזמנה',
@@ -480,6 +505,49 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
 
     setSubmitting(true);
     setError(null);
+
+    /*
+     * A quoted service ends here, at a request rather than a booking.
+     *
+     * Different endpoint on purpose: nobody has said what this work costs, so
+     * there is no price to confirm and no payment to take. What the client is
+     * doing is asking, and what the owner receives is something to answer.
+     *
+     * The chosen slot still travels — a quoted service that books a time is
+     * booking the CONSULTATION where the work gets scoped, and dropping it here
+     * would leave the client believing they had an appointment they did not.
+     */
+    if (activeSteps.includes('request')) {
+      try {
+        const response = await fetch('/api/website/proposal-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subdomain,
+            service_id: selectedService.id,
+            name,
+            email,
+            phone: phone || undefined,
+            note: notes || undefined,
+            start_time: selectedSlot?.start,
+            end_time: selectedSlot?.end,
+            timezone,
+          }),
+        });
+
+        const data = await response.json();
+        if (data.success) {
+          setStep('request');
+        } else {
+          setError(data.error || t.error_generic);
+        }
+      } catch {
+        setError(t.error_generic);
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
 
     // The journey already decided this. It used to be re-derived here from
     // price alone, which is a different question and gave a different answer:
@@ -950,7 +1018,9 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
               </>
             ) : (
               <>
-                {t.confirm_booking}
+                {/* The button says what the click does. On a quoted service
+                    it does not confirm a booking — it asks for a price. */}
+                {activeSteps.includes('request') ? t.request_quote : t.confirm_booking}
                 {isRTL ? <ArrowLeft className="w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
               </>
             )}
@@ -1304,6 +1374,60 @@ export function BookingWidget({ subdomain, services, timezone, primaryColor, loc
   }
 
   // Step 6: Confirmation
+  if (step === 'request') {
+    /*
+     * What a quoted journey ends on.
+     *
+     * Deliberately not the confirmation screen: nothing was booked and nothing
+     * was paid. The two variants matter — a client who also picked a
+     * consultation time has an appointment to keep, and telling them only "a
+     * quote will follow" would lose it.
+     */
+    return (
+      <div className="text-center py-12" dir={isRTL ? 'rtl' : 'ltr'}>
+        <div
+          className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6"
+          style={{ backgroundColor: `${primaryColor}15` }}
+        >
+          <Check className="w-8 h-8" style={{ color: primaryColor }} />
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">{t.request_sent}</h2>
+        <p className="text-gray-600 mb-6 max-w-sm mx-auto">
+          {selectedSlot ? t.request_sent_meeting : t.request_sent_body}
+        </p>
+
+        <div className={`bg-white border border-gray-200 rounded-xl p-6 max-w-sm mx-auto ${isRTL ? 'text-right' : 'text-left'}`}>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">{t.service}</span>
+              <span className="font-medium text-gray-900">{selectedService?.name}</span>
+            </div>
+            {selectedSlot && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">{t.date}</span>
+                  <span className="font-medium text-gray-900">
+                    {formatFullDate(selectedSlot.start)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">{t.time}</span>
+                  <span className="font-medium text-gray-900">
+                    {formatTime(selectedSlot.start)}
+                  </span>
+                </div>
+              </>
+            )}
+            <div className="flex justify-between">
+              <span className="text-gray-500">{t.email}</span>
+              <span className="font-medium text-gray-900">{email}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (step === 'confirmation') {
     return (
       <div className="text-center py-12" dir={isRTL ? 'rtl' : 'ltr'}>

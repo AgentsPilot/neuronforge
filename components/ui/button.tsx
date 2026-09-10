@@ -7,7 +7,7 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'default', size = 'default', ...props }, ref) => {
+  ({ className, variant = 'default', size = 'default', type = 'button', ...props }, ref) => {
     const baseClasses = 'inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none'
     
     const variantClasses = {
@@ -26,7 +26,21 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     }
 
     return (
+      /*
+       * `type="button"` by default, not the HTML default of "submit".
+       *
+       * A bare <button> inside a <form> submits it, so every Button that meant
+       * "do this thing" also meant "submit and navigate" the moment someone
+       * wrapped it in a form. That is a bug waiting on an unrelated edit — and
+       * it fails as a full page reload, which looks nothing like its cause.
+       *
+       * Explicitly passing `type="submit"` still works: the prop overrides the
+       * default. Verified before changing this that no <Button> in the codebase
+       * relies on the implicit submit — every form that submits does so from a
+       * control with an explicit type.
+       */
       <button
+        type={type}
         ref={ref}
         className={cn(
           baseClasses,

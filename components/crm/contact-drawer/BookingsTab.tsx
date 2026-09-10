@@ -5,7 +5,7 @@ import {
   Calendar, Clock, CreditCard, ClipboardList, Mail, CheckCircle2,
   XCircle, AlertCircle, ChevronDown, ChevronUp, Plus, Edit2,
   Loader2, ShoppingBag, Package, Truck, Gift, User, MapPin,
-  Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban,
+  Phone, AtSign, Eye, ExternalLink, Save, X, RotateCcw, Ban, FileText, Paperclip,
   type LucideIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -37,6 +37,24 @@ interface BookingsTabProps {
   onManagePayment?: (session: SessionCardData) => void;
   onIntakeSaved?: (bookingId: string) => void;
   onSendIntake?: (bookingId: string) => Promise<void>;
+  /**
+   * Open the quote builder for this booking.
+   *
+   * Carries the declined proposal's id and reason, because a revision is a new
+   * proposal that SUPERSEDES a named one — and the owner is pricing against
+   * an objection they should be able to read while they do it.
+   */
+  /**
+   * Mark a milestone done, which bills it.
+   *
+   * One action, not two: an owner who could mark stages complete without
+   * billing them would leave a client owing money nobody had invoiced.
+   */
+  onCompleteStage?: (stageId: string, label: string, amount: string) => void;
+  onOpenProposalBuilder?: (
+    bookingId: string,
+    context: { supersedesId: string | null; declineReason: string | null; declineNote: string | null }
+  ) => void;
   onSendInvoice?: (invoiceId: string, bookingId: string) => Promise<void>;
   /**
    * Send the confirmation email again — the "reminder" action on the journey.
@@ -106,6 +124,41 @@ const STATUS_COLORS: Record<StepStatus, { bg: string; border: string; icon: stri
 };
 
 // Map step keys to icons
+/** One version of a quote, as the journey step hands it over. */
+interface ProposalVersion {
+  id: string;
+  total: number;
+  /** Already formatted in the quote's own currency. */
+  amount: string;
+  status: string;
+  /** When this version stopped — decided, or sent and still open. */
+  at: string | null;
+  isCurrent: boolean;
+  /** The document sent with this version, if any. */
+  documentName: string | null;
+  /** Why the client declined THIS version, in their own words and ours. */
+  declineReason: string | null;
+  declineNote: string | null;
+}
+
+/**
+ * How each outcome reads.
+ *
+ * Semantic, not decorative: green is money agreed, red is a lost quote, amber
+ * is still open, and a replaced version is grey because it is history rather
+ * than an outcome. Only the word is coloured — colouring the amount too would
+ * make the column look like a status bar instead of a list of prices.
+ */
+const VERSION_TONES: Record<string, { dot: string; text: string }> = {
+  accepted: { dot: '#22C58B', text: '#15864F' },
+  declined: { dot: '#F04438', text: '#B42318' },
+  expired: { dot: '#F79009', text: '#B54708' },
+  withdrawn: { dot: '#9AA1B2', text: 'var(--v2-text-muted)' },
+  superseded: { dot: '#9AA1B2', text: 'var(--v2-text-muted)' },
+  viewed: { dot: '#4F6EF7', text: '#3450C7' },
+  sent: { dot: '#9AA1B2', text: 'var(--v2-text-muted)' },
+};
+
 const STEP_ICONS: Record<string, LucideIcon> = {
   // Service/Product steps
   service: Calendar,
@@ -118,6 +171,8 @@ const STEP_ICONS: Record<string, LucideIcon> = {
   client: User,
   // Payment
   payment: CreditCard,
+  // Quote
+  proposal: FileText,
   // Intake
   intake: ClipboardList,
   // Confirmation
@@ -149,6 +204,8 @@ export function BookingsTab({
   onManagePayment,
   onIntakeSaved,
   onSendIntake,
+  onCompleteStage,
+  onOpenProposalBuilder,
   onSendInvoice,
   onResendConfirmation,
   onSetBookingStatus,
@@ -281,6 +338,55 @@ export function BookingsTab({
    * mean the same thing either way, and giving them separate wording would be
    * inventing a difference to be consistent about.
    */
+  /**
+   * What a QUOTED booking's card says.
+   *
+   * Not `booking.status`, which describes the consultation. A job whose meeting
+   * happened this morning is not finished — it has not even been priced — and a
+   * green "Completed" badge on it retires a live opportunity from the owner's
+   * view. The badge tracks the JOB: who owes whom the next move.
+   *
+   * Cancelled is the exception and passes straight through: it is the one mark
+   * that genuinely ends a quoted job.
+   */
+  const getQuotedStatusLabel = (
+    bookingStatus: string,
+    quoteState: string,
+    paid: boolean,
+    /*
+     * Whether the consultation is still ahead — taken from the journey step,
+     * which already weighed the booking's start time against now. Re-deriving
+     * it from `status === 'confirmed'` here would call a meeting that finished
+     * this morning "upcoming", because nothing marks a booking past.
+     */
+    meetingAhead: boolean
+  ) => {
+    const amber = { color: 'text-amber-600 dark:text-amber-400', bgColor: 'bg-amber-500/10' };
+    const blue = { color: 'text-blue-600 dark:text-blue-400', bgColor: 'bg-blue-500/10' };
+    const green = { color: 'text-green-600 dark:text-green-400', bgColor: 'bg-green-500/10' };
+    const red = { color: 'text-red-600 dark:text-red-400', bgColor: 'bg-red-500/10' };
+
+    if (bookingStatus === 'cancelled') {
+      return { text: t('crm.booking.quoted.lost'), ...red };
+    }
+    if (quoteState === 'accepted') {
+      return paid
+        ? { text: t('crm.booking.status.completed') || 'Completed', ...green }
+        : { text: t('crm.booking.quoted.won_unpaid'), ...green };
+    }
+    if (quoteState === 'declined' || quoteState === 'expired') {
+      return { text: t('crm.booking.quoted.declined'), ...amber };
+    }
+    if (quoteState === 'sent' || quoteState === 'viewed') {
+      return { text: t('crm.booking.quoted.sent'), ...blue };
+    }
+    // No quote yet. Before the meeting it is simply upcoming; after it, the
+    // owner owes the client a price, and that is the whole point of the badge.
+    return meetingAhead
+      ? { text: t('crm.booking.status.confirmed') || 'Upcoming', ...amber }
+      : { text: t('crm.booking.quoted.awaiting_quote'), ...amber };
+  };
+
   const getBookingStatusLabel = (status: string, hasSchedule = true) => {
     const labels: Record<string, { text: string; color: string; bgColor: string }> = {
       confirmed: {
@@ -769,7 +875,31 @@ export function BookingsTab({
               const isExpanded = expandedBookings.has(booking.id);
               // Declared first: the badge's wording depends on it.
               const isProduct = isProductBooking(booking);
-              const statusInfo = getBookingStatusLabel(booking.status, !isProduct);
+
+              /*
+               * A quoted booking is a CONSULTATION inside a longer job.
+               *
+               * Everything below that reads `booking.status` as "is this over"
+               * has to ask a different question here: the appointment reaching
+               * its end is step two of six, not the finish.
+               */
+              const isQuoted = booking.service?.sale_mode === 'proposal';
+              const proposalStep = isQuoted
+                ? session.journeySteps?.find(s => s.key === 'proposal')
+                : undefined;
+              const quoteState = (proposalStep?.metadata?.proposalStatus as string) ?? 'none';
+              const quotePaid = session.journeySteps?.some(
+                s => s.key === 'payment' && s.status === 'completed'
+              );
+
+              const statusInfo = isQuoted
+                ? getQuotedStatusLabel(
+                    booking.status,
+                    quoteState,
+                    Boolean(quotePaid),
+                    proposalStep?.metadata?.waitingOn === 'meeting'
+                  )
+                : getBookingStatusLabel(booking.status, !isProduct);
               const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
               const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
               const isPendingProduct = isProduct && booking.status !== 'completed' && booking.status !== 'cancelled';
@@ -871,8 +1001,17 @@ export function BookingsTab({
                           className="px-3 py-1 rounded-full text-[12px] font-medium border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-500/10 transition-colors"
                         >
                           {/* "Completed" for a session that was held; the same
-                              word serves an order that was delivered. */}
-                          {t('crm.booking.status.completed') || 'Completed'}
+                              word serves an order that was delivered.
+
+                              On a quoted booking it means neither — the
+                              consultation happened and the job has barely
+                              started — so the button says what the click
+                              actually records. The stored value is still
+                              `completed`, which is true of the APPOINTMENT;
+                              only the word changes. */}
+                          {isQuoted
+                            ? t('crm.booking.quoted.meeting_held')
+                            : t('crm.booking.status.completed') || 'Completed'}
                         </button>
 
                         {/* The one that needs a time to mean anything. */}
@@ -960,6 +1099,17 @@ export function BookingsTab({
 
                                   const stepTitle = step.label || t(`crm.booking.step.${step.key}`) || step.key;
                                   const isIntakeStep = step.key === 'intake';
+                                  const isProposalStep = step.key === 'proposal';
+
+                                  // Read once and typed here rather than cast at
+                                  // the point of use: `metadata` is a bag of
+                                  // unknowns, and narrowing it inside JSX reads
+                                  // as three casts of the same value.
+                                  const proposalVersions: ProposalVersion[] = Array.isArray(
+                                    step.metadata?.versions
+                                  )
+                                    ? (step.metadata?.versions as ProposalVersion[])
+                                    : [];
                                   const isPaymentStep = step.key === 'payment';
                                   const isConfirmationStep = step.key === 'confirmation';
                                   const isScheduleStep = step.key === 'session' || step.key === 'schedule';
@@ -968,6 +1118,23 @@ export function BookingsTab({
                                   const isSectionExpanded = expandedSections.has(sectionKey);
 
                                   const payment = session.payment;
+                                  /*
+                                   * Does each stage carry its own send button?
+                                   *
+                                   * When it does, the summary-level one is not
+                                   * just redundant but WRONG: a job billed in
+                                   * three parts has three documents, and a
+                                   * single button can only ever reach the
+                                   * latest. Two controls that look alike and
+                                   * send different things is worse than one
+                                   * that is honest about its scope.
+                                   *
+                                   * A single-payment booking has no stage rows,
+                                   * so the summary button stays its only route.
+                                   */
+                                  const hasStageDocuments = Boolean(
+                                    payment?.plan?.stages?.some(s => s.invoiceId)
+                                  );
                                   const refunded = payment?.refundedAmount ?? 0;
 
                                   /*
@@ -1086,18 +1253,59 @@ export function BookingsTab({
                                    * put a dead appointment back in the client's
                                    * diary.
                                    */
-                                  const settledStatus =
+                                  /*
+                                   * "Is this over?" — which is NOT the same as
+                                   * "did the appointment reach its end".
+                                   *
+                                   * For a regular booking the two coincide and
+                                   * this is unchanged. For a quoted one they do
+                                   * not: marking the consultation completed
+                                   * retired a card whose job had not been
+                                   * priced, let alone paid. Only cancelling
+                                   * ends a quoted job — and payment in full
+                                   * finishes it.
+                                   */
+                                  /*
+                                   * Is the MEETING over?
+                                   *
+                                   * The appointment's own question, and the
+                                   * original meaning of this flag. Everything
+                                   * about the appointment reads it: whether it
+                                   * was held, whether it can still be moved,
+                                   * whether a confirmation is worth resending.
+                                   */
+                                  const meetingSettled =
                                     booking.status === 'completed' ||
                                     booking.status === 'cancelled' ||
                                     booking.status === 'no_show';
+
+                                  /*
+                                   * Is the JOB over?
+                                   *
+                                   * A different question, and for a quoted
+                                   * booking a different answer: the
+                                   * consultation being held ends the meeting
+                                   * and starts the work. Only the card-level
+                                   * state reads this.
+                                   */
+                                  const settledStatus = isQuoted
+                                    ? booking.status === 'cancelled' || Boolean(quotePaid)
+                                    : meetingSettled;
 
                                   const scheduleDetail =
                                     isScheduleStep && booking.start_time
                                       ? [
                                           new Intl.DateTimeFormat(language, { weekday: 'long' })
                                             .format(new Date(booking.start_time)),
-                                          settledStatus
-                                            ? getBookingStatusLabel(booking.status, !isProduct).text
+                                          meetingSettled
+                                            ? // The same word the button used.
+                                              // Pressing "הפגישה התקיימה" and
+                                              // being told "הושלם" reads as a
+                                              // different outcome than the one
+                                              // just recorded.
+                                              isQuoted && booking.status === 'completed'
+                                              ? t('crm.booking.quoted.meeting_held')
+                                              : getBookingStatusLabel(booking.status, !isProduct).text
                                             : new Date(booking.start_time) > new Date()
                                               ? t('crm.journey.not_yet_held') || 'Not yet held'
                                               : t('crm.journey.awaiting_outcome') || 'Awaiting an outcome'
@@ -1131,7 +1339,7 @@ export function BookingsTab({
                                   const onNodeClick =
                                     isIntakeStep && !hasIntake && onSendIntake && booking.status !== 'cancelled'
                                       ? () => handleSendIntake(booking.id)
-                                      : isPaymentStep && step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled'
+                                      : isPaymentStep && !hasStageDocuments && step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled'
                                         ? () => handleSendInvoice(step.metadata?.invoiceId as string, booking.id)
                                         : undefined;
 
@@ -1261,16 +1469,209 @@ export function BookingsTab({
                                             className="text-[14.5px] font-medium leading-[1.5] text-[var(--v2-text-primary)] break-words"
                                             style={{ gridColumn: 3, gridRow: 1, paddingInlineEnd: '46px' }}
                                           >
-                                            {step.details ||
+                                            {/* A quote shows BOTH: the amount is
+                                                what was offered, and the state is
+                                                what is happening to it. Falling
+                                                back one to the other meant a sent
+                                                quote displayed "₪10,000" and
+                                                nothing else — the owner could not
+                                                tell an unanswered offer from an
+                                                accepted one. */}
+                                            {/* The amount is the FACT — what was
+                                                offered. Its state is supporting
+                                                detail and reads on the line below,
+                                                where the payment step already puts
+                                                a plan's terms. */}
+                                            {isProposalStep ? (
+                                              <span className="tabular-nums">{step.details || ''}</span>
+                                            ) : (
+                                              step.details ||
                                               scheduleFact ||
                                               (isConfirmationStep && step.status === 'completed'
                                                 ? t('crm.booking.email_sent')
-                                                : '')}
+                                                : '')
+                                            )}
                                           </span>
                                         )}
 
                                         {/* Supporting detail — a plan's terms,
                                             the answer count — under the fact. */}
+
+                                        {/* What is happening to the quote. Always
+                                            rendered: a quote with no state is a
+                                            row the owner cannot act on, and before
+                                            one exists this line IS the content. */}
+                                        {isProposalStep && (
+                                          <span
+                                            className="text-[12.5px] leading-[1.5] text-[var(--v2-text-muted)] break-words"
+                                            style={{ gridColumn: 3 }}
+                                          >
+                                            {step.metadata?.waitingOn === 'closed'
+                                              ? t('crm.proposal.closed')
+                                              : step.metadata?.waitingOn === 'meeting'
+                                              ? `${t('crm.proposal.after_meeting')} ${step.metadata?.meetingAt ?? ''}`.trim()
+                                              : step.metadata?.proposalStatus === 'accepted'
+                                                ? t('crm.proposal.accepted')
+                                                : step.metadata?.proposalStatus === 'declined'
+                                                  ? /* Why, not just that.
+                                                       "The quote was declined"
+                                                       is a dead end; "they said
+                                                       the price was too high" is
+                                                       the sentence the next
+                                                       quote is written against,
+                                                       and it is the only thing
+                                                       the client actually told
+                                                       you. */
+                                                    [
+                                                      t('crm.proposal.declined'),
+                                                      step.metadata?.declineReason
+                                                        ? t(`proposal.decline.reason.${step.metadata.declineReason}`)
+                                                        : null,
+                                                    ]
+                                                      .filter(Boolean)
+                                                      .join(' — ')
+                                                  : step.metadata?.proposalStatus === 'expired'
+                                                    ? t('crm.proposal.expired')
+                                                    : step.metadata?.proposalStatus === 'viewed'
+                                                      ? t('crm.proposal.viewed')
+                                                      : step.metadata?.waitingOn === 'owner'
+                                                        ? t('crm.proposal.waiting_on_you')
+                                                        : t('crm.proposal.waiting_on_client')}
+                                          </span>
+                                        )}
+
+                                        {/*
+                                          The negotiation, when there was one.
+                                          ─────────────────────────────────────
+                                          Only from the second version onwards.
+                                          A single quote is already fully
+                                          described by the two lines above it,
+                                          and listing it again under itself is
+                                          noise; two or more versions is a
+                                          NEGOTIATION, and then the first number
+                                          is the reason the second one exists.
+
+                                          Read newest-first, matching the strip
+                                          above, and each row is one sentence:
+                                          how much, what happened, when.
+                                        */}
+                                        {isProposalStep &&
+                                          proposalVersions.length > 1 && (
+                                            <div
+                                              className="mt-2 flex flex-col gap-px overflow-hidden"
+                                              style={{
+                                                gridColumn: 3,
+                                                borderRadius: '10px',
+                                                border: '1px solid var(--v2-border)',
+                                              }}
+                                            >
+                                              {proposalVersions.map(version => {
+                                                const tone = VERSION_TONES[version.status] ?? VERSION_TONES.sent;
+
+                                                return (
+                                                  <div
+                                                    key={version.id}
+                                                    className="px-2.5 py-2"
+                                                    style={{
+                                                      background: version.isCurrent
+                                                        ? 'var(--v2-surface-hover, rgba(127,127,127,0.06))'
+                                                        : 'transparent',
+                                                    }}
+                                                  >
+                                                  <div className="flex items-center gap-2">
+                                                    {/* A dot, not a coloured pill per row —
+                                                        five stacked pills read as an alert
+                                                        panel rather than a history. */}
+                                                    <span
+                                                      className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                      style={{ background: tone.dot }}
+                                                      aria-hidden="true"
+                                                    />
+
+                                                    <span
+                                                      className="text-[12.5px] font-medium tabular-nums"
+                                                      style={{
+                                                        color: 'var(--v2-text-primary)',
+                                                        // A replaced price is struck through: it
+                                                        // is the clearest way to say "this number
+                                                        // is no longer on the table".
+                                                        textDecoration:
+                                                          version.status === 'superseded'
+                                                            ? 'line-through'
+                                                            : undefined,
+                                                        opacity: version.status === 'superseded' ? 0.65 : 1,
+                                                      }}
+                                                    >
+                                                      {version.amount}
+                                                    </span>
+
+                                                    <span
+                                                      className="text-[12px]"
+                                                      style={{ color: tone.text }}
+                                                    >
+                                                      {t(`crm.proposal.hist.${version.status}`)}
+                                                    </span>
+
+                                                    {/* The document this version
+                                                        was sent with. Named, not
+                                                        just flagged — a revision
+                                                        usually carries a different
+                                                        file, and "which one did
+                                                        they agree to" is the whole
+                                                        question later. */}
+                                                    {version.documentName && (
+                                                      <span
+                                                        className="flex min-w-0 items-center gap-1 text-[11.5px]"
+                                                        style={{ color: 'var(--v2-text-muted)' }}
+                                                        title={version.documentName}
+                                                      >
+                                                        <Paperclip className="h-3 w-3 shrink-0" />
+                                                        <span className="truncate max-w-[110px]">
+                                                          {version.documentName}
+                                                        </span>
+                                                      </span>
+                                                    )}
+
+                                                    <span
+                                                      className="ms-auto shrink-0 text-[11.5px] tabular-nums"
+                                                      style={{ color: 'var(--v2-text-muted)' }}
+                                                    >
+                                                      {version.at ? formatShortDate(version.at) : ''}
+                                                    </span>
+                                                  </div>
+
+                                                  {/* What the client said, under
+                                                      the version they said it
+                                                      about. Their typed note
+                                                      wins over the category:
+                                                      "we only have 8k budget"
+                                                      is worth more than "too
+                                                      expensive". */}
+                                                  {version.status === 'declined' &&
+                                                    (version.declineReason || version.declineNote) && (
+                                                      <p
+                                                        className="mt-1 ps-3.5 text-[11.5px] leading-[1.45]"
+                                                        style={{ color: 'var(--v2-text-muted)' }}
+                                                      >
+                                                        {version.declineReason
+                                                          ? t(`proposal.decline.reason.${version.declineReason}`)
+                                                          : null}
+                                                        {version.declineNote ? (
+                                                          <span
+                                                            className="block italic"
+                                                            style={{ color: 'var(--v2-text-secondary)' }}
+                                                          >
+                                                            “{version.declineNote}”
+                                                          </span>
+                                                        ) : null}
+                                                      </p>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          )}
+
                                         {/* Only a PLAN's terms — "₪333.33 · 1 of 3 ·
                                             monthly" — which the receipt above cannot
                                             express. For an ordinary payment
@@ -1285,6 +1686,164 @@ export function BookingsTab({
                                             {step.details}
                                           </span>
                                         )}
+
+                                        {/*
+                                          The milestones, and the one action
+                                          that moves them.
+                                          ─────────────────────────────────────
+                                          A uniform instalment plan needs no
+                                          list — "1 of 3 · monthly" says
+                                          everything. Milestones are the
+                                          opposite: each has its own name, its
+                                          own amount, and most wait on the owner
+                                          to say the work happened. That last
+                                          part is the whole reason this renders.
+                                        */}
+                                        {isPaymentStep && payment?.plan?.stages?.length ? (
+                                          <div
+                                            className="mt-2 flex flex-col gap-px overflow-hidden"
+                                            style={{
+                                              gridColumn: 3,
+                                              borderRadius: '10px',
+                                              border: '1px solid var(--v2-border)',
+                                            }}
+                                          >
+                                            {payment.plan.stages.map((stage, i) => {
+                                              const paid = stage.status === 'paid';
+                                              const billed = Boolean(stage.invoiceId) && !paid;
+                                              // Only a manual stage that has not
+                                              // been billed can be completed. A
+                                              // dated one bills itself.
+                                              const canComplete =
+                                                !paid &&
+                                                !billed &&
+                                                stage.trigger === 'manual' &&
+                                                Boolean(onCompleteStage) &&
+                                                !settledStatus;
+
+                                              const amountText = new Intl.NumberFormat(
+                                                isRTL ? 'he-IL' : 'en-US',
+                                                {
+                                                  style: 'currency',
+                                                  currency: payment.currency,
+                                                  maximumFractionDigits: stage.amount % 1 === 0 ? 0 : 2,
+                                                }
+                                              ).format(stage.amount);
+
+                                              return (
+                                                <div
+                                                  key={stage.id}
+                                                  className="flex items-center gap-2 px-2.5 py-2"
+                                                >
+                                                  <span
+                                                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                                    style={{
+                                                      background: paid
+                                                        ? '#22C58B'
+                                                        : billed
+                                                          ? '#F79009'
+                                                          : 'var(--v2-border)',
+                                                    }}
+                                                    aria-hidden="true"
+                                                  />
+
+                                                  <span
+                                                    className="text-[12.5px] truncate"
+                                                    style={{ color: 'var(--v2-text-primary)' }}
+                                                  >
+                                                    {stage.label || `${i + 1}`}
+                                                  </span>
+
+                                                  <span
+                                                    className="text-[12.5px] font-medium tabular-nums"
+                                                    style={{ color: 'var(--v2-text-secondary)' }}
+                                                  >
+                                                    {amountText}
+                                                  </span>
+
+                                                  {/*
+                                                    The document for THIS stage.
+                                                    ───────────────────────────
+                                                    A job billed in three parts
+                                                    has three invoices and three
+                                                    receipts. The single button
+                                                    above can only ever reach one
+                                                    of them — the latest — so a
+                                                    client asking for the deposit
+                                                    invoice could not be served
+                                                    at all.
+
+                                                    One action per row, and the
+                                                    send route decides which
+                                                    document it is: invoice while
+                                                    the stage is owed, receipt
+                                                    once it is paid.
+                                                  */}
+                                                  {stage.invoiceId && onSendInvoice && (
+                                                    <button
+                                                      type="button"
+                                                      title={paid ? t('crm.invoice.send_receipt') : t('crm.invoice.resend')}
+                                                      disabled={sendingInvoiceBookingId === booking.id}
+                                                      onClick={e => {
+                                                        e.stopPropagation();
+                                                        handleSendInvoice(stage.invoiceId as string, booking.id);
+                                                      }}
+                                                      className="flex shrink-0 items-center gap-1 rounded-full border border-[var(--v2-border)] px-2 py-0.5 text-[11px] font-medium text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] disabled:opacity-50"
+                                                    >
+                                                      <Mail className="h-3 w-3" />
+                                                      {/* Named, not just iconised: on a row that
+                                                          may sit beside two others, "send" does
+                                                          not say WHICH document — and invoice and
+                                                          receipt are different pieces of paper to
+                                                          the person asking for one. */}
+                                                      {paid ? t('crm.stage.receipt') : t('crm.stage.invoice')}
+                                                    </button>
+                                                  )}
+
+                                                  <span className="ms-auto shrink-0">
+                                                    {paid ? (
+                                                      <span
+                                                        className="text-[11.5px]"
+                                                        style={{ color: '#15864F' }}
+                                                      >
+                                                        {t('crm.stage.paid')}
+                                                      </span>
+                                                    ) : billed ? (
+                                                      <span
+                                                        className="text-[11.5px]"
+                                                        style={{ color: '#B54708' }}
+                                                      >
+                                                        {t('crm.stage.awaiting_payment')}
+                                                      </span>
+                                                    ) : canComplete ? (
+                                                      <button
+                                                        type="button"
+                                                        onClick={e => {
+                                                          e.stopPropagation();
+                                                          onCompleteStage?.(
+                                                            stage.id,
+                                                            stage.label || `${i + 1}`,
+                                                            amountText
+                                                          );
+                                                        }}
+                                                        className="rounded-full border border-[var(--v2-border)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--v2-text-secondary)] transition-colors hover:border-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+                                                      >
+                                                        {t('crm.stage.mark_done')}
+                                                      </button>
+                                                    ) : (
+                                                      <span
+                                                        className="text-[11.5px]"
+                                                        style={{ color: 'var(--v2-text-muted)' }}
+                                                      >
+                                                        {t('crm.stage.scheduled')}
+                                                      </span>
+                                                    )}
+                                                  </span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        ) : null}
 
                                         {/* A plan that is no longer running.
                                             Only when it has actually ended: an
@@ -1379,7 +1938,18 @@ export function BookingsTab({
                                             </button>
                                           )}
 
-                                          {isPaymentStep && payment && payment.status !== 'free' && onManagePayment && (
+                                          {/* Manage / refund.
+                                              Gated on the PAYMENT for a normal
+                                              booking, which is right — but a
+                                              quoted job's booking carries the
+                                              `free` placeholder (its price was
+                                              always the quote), so the money is
+                                              real and the button was hidden.
+                                              A payment step that exists at all
+                                              on a quoted booking means an
+                                              invoice was raised. */}
+                                          {isPaymentStep && onManagePayment &&
+                                            (isQuoted ? true : payment && payment.status !== 'free') && (
                                             <button
                                               type="button"
                                               onClick={e => {
@@ -1388,11 +1958,20 @@ export function BookingsTab({
                                               }}
                                               className="px-3 py-1 rounded-full text-[12px] font-medium border border-[#8B5CF6] text-[#8B5CF6] hover:bg-[#8B5CF6] hover:text-white transition-colors"
                                             >
+                                              {/* One word, every booking type.
+                                                  A quoted job's money is still
+                                                  a payment, and a second name
+                                                  for the same button on some
+                                                  cards and not others makes the
+                                                  drawer read as two products.
+                                                  What differs is what the dialog
+                                                  does, not what the button is
+                                                  called. */}
                                               {t('crm.payment.manage') || 'Manage payment'}
                                             </button>
                                           )}
 
-                                          {isPaymentStep && !!step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled' && (
+                                          {isPaymentStep && !hasStageDocuments && !!step.metadata?.canResend && onSendInvoice && booking.status !== 'cancelled' && (
                                             <button
                                               type="button"
                                               disabled={sendingInvoiceBookingId === booking.id}
@@ -1402,7 +1981,46 @@ export function BookingsTab({
                                               }}
                                               className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors disabled:opacity-50"
                                             >
-                                              {t('crm.invoice.resend') || 'Resend invoice'}
+                                              {/* Names the document, not the
+                                                  action. "Resend invoice" on a
+                                                  settled one promises the wrong
+                                                  paperwork. */}
+                                              {step.metadata?.invoiceSettled
+                                                ? t('crm.invoice.send_receipt')
+                                                : t('crm.invoice.resend') || 'Resend invoice'}
+                                            </button>
+                                          )}
+
+                                          {/* The quote.
+                                              The only journey action whose
+                                              subject is the OWNER: everywhere
+                                              else the business is nudging the
+                                              client, and here the client has
+                                              asked and is waiting.
+                                              After a decline the same button
+                                              returns as "Send a new quote" —
+                                              a rejected price is the start of
+                                              a negotiation, not the end of
+                                              the job. */}
+                                          {isProposalStep
+                                            && onOpenProposalBuilder
+                                            && step.metadata?.waitingOn === 'owner'
+                                            && booking.status !== 'cancelled' && (
+                                            <button
+                                              type="button"
+                                              onClick={e => {
+                                                e.stopPropagation();
+                                                onOpenProposalBuilder(booking.id, {
+                                                  supersedesId: (step.metadata?.proposalId as string) ?? null,
+                                                  declineReason: (step.metadata?.declineReason as string) ?? null,
+                                                  declineNote: (step.metadata?.declineNote as string) ?? null,
+                                                });
+                                              }}
+                                              className="px-3 py-1 rounded-full text-[12px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:border-[var(--v2-text-muted)] transition-colors"
+                                            >
+                                              {step.metadata?.proposalStatus === 'declined'
+                                                ? t('crm.proposal.send_revised') || 'Send a new quote'
+                                                : t('crm.proposal.send') || 'Send a quote'}
                                             </button>
                                           )}
 
@@ -1428,7 +2046,7 @@ export function BookingsTab({
                                               without one elsewhere, and a button
                                               that silently does nothing is worse
                                               than one that shows it cannot. */}
-                                          {isConfirmationStep && step.status === 'completed' && !settledStatus && (
+                                          {isConfirmationStep && step.status === 'completed' && !meetingSettled && (
                                             <button
                                               type="button"
                                               disabled={!onResendConfirmation}
@@ -1452,7 +2070,7 @@ export function BookingsTab({
                                               a no-show is a record of what happened
                                               — offering to reschedule it invites an
                                               edit that contradicts the outcome. */}
-                                          {isScheduleStep && onEditSession && !isProduct && !settledStatus && (
+                                          {isScheduleStep && onEditSession && !isProduct && !meetingSettled && (
                                             <button
                                               type="button"
                                               onClick={e => {

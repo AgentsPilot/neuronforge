@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
-import { StoryBeat, SummaryData } from '@/components/business-os/MyDaySection';
 import { LiveDashboard, SetupItem, FunnelStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { CHANNELS_CARD_ID } from '@/components/business-os/insight/ChannelsOverviewCard';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
@@ -20,11 +20,23 @@ import type { DialogAction } from '@/lib/business-os/DraftManagerTypes';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 
+export interface DayBriefing {
+  narrative: string;
+  /** The business's own local date, 'YYYY-MM-DD'. */
+  date: string;
+  /** Undefined when the business has not set one — the email cannot be enabled. */
+  timezone?: string;
+  isQuiet: boolean;
+  source: 'llm' | 'fallback';
+  /** Whether the briefing is also emailed each morning. */
+  emailEnabled: boolean;
+}
+
 interface MyDayData {
   userName: string;
   greeting: 'morning' | 'afternoon' | 'evening';
-  summaryData: SummaryData;
-  storyBeats: StoryBeat[];
+  /** Null until loaded, and on any day the briefing could not be produced. */
+  briefing: DayBriefing | null;
 }
 
 // Calculate greeting based on current time
@@ -41,6 +53,11 @@ function BusinessOSContent() {
   const { t, language } = useLanguage();
   const chatPanelRef = useRef<ChatCommandPanelRef>(null);
   const [loading, setLoading] = useState(true);
+  // The dashboard keeps its OWN dialog instance for the chat-driven flows
+  // (prefilled services, single visible tab, callbacks into the conversation).
+  // The readiness chips want none of that, so they open the layout-level one
+  // through the provider instead of borrowing this state.
+  const { openConfiguration } = useConfigurationDialog();
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [configInitialTab, setConfigInitialTab] = useState<'services' | 'availability' | 'intake' | 'payments'>('services');
   const [configVisibleTabs, setConfigVisibleTabs] = useState<('services' | 'availability' | 'intake' | 'payments')[] | undefined>(undefined);
@@ -80,8 +97,7 @@ function BusinessOSContent() {
   const [myDay, setMyDay] = useState<MyDayData>(() => ({
     userName: '', // Empty until loaded from API
     greeting: getGreetingFromTime(),
-    summaryData: { key: 'myday.summary.default' },
-    storyBeats: []
+    briefing: null
   }));
 
 
@@ -1113,6 +1129,7 @@ function BusinessOSContent() {
           <LiveDashboard
             userName={myDay.userName}
             greeting={myDay.greeting}
+            briefing={myDay.briefing}
             setupItems={setupItems}
             setupShape={setupShape}
             channelPerformance={channelPerformance}
@@ -1181,9 +1198,13 @@ function BusinessOSContent() {
                   window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
                 }
               } else if (action === 'complete_profile') {
-                router.push('/business-os/settings?section=business');
+                // Both of these used to be sections on the account settings
+                // page. They are dialog tabs now, so the chip opens the dialog
+                // in place rather than navigating the reader off the dashboard
+                // they were measuring their readiness on.
+                openConfiguration('business');
               } else if (action === 'setup_invoicing') {
-                router.push('/business-os/settings?section=invoice');
+                openConfiguration('invoice');
               } else if (action === 'customize_design') {
                 router.push('/business-os/website?view=design');
               } else if (action === 'view_funnel') {

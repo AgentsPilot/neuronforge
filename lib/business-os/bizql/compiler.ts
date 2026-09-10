@@ -558,7 +558,10 @@ async function prefetchEnumSources(
 
       const orphans = [
         ...new Set(
-          ((inUse ?? []) as QueryRow[])
+          // PostgREST types a `.select()` result as rows OR an error object, so
+          // the narrowing has to go through `unknown`. Nothing is being
+          // asserted about the shape that the `String()` below does not handle.
+          ((inUse ?? []) as unknown as QueryRow[])
             .map((row) => String(row[ownerField.column]))
             .filter((value) => value && !configured.has(value))
         ),
@@ -1809,6 +1812,16 @@ export async function runQuery(
     // guard: bulk opt-in, fan-out caps, idempotency and the daily quota.
     throw new BizQLValidationError([
       `'${query.op}' steps must be executed via their own executor, not the query compiler.`,
+    ]);
+  }
+
+  if (query.op === 'analyse') {
+    // Fetches nothing: it marks the turn as one whose answer relates the other
+    // steps' figures, and the route reads it after execution. Reaching here
+    // means a caller passed the whole plan rather than its read steps, which
+    // would also have misaligned every result with the wrong step.
+    throw new BizQLValidationError([
+      `'analyse' steps produce no result and must be filtered out before execution.`,
     ]);
   }
 

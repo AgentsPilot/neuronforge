@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Clock, ChevronRight, Pause, Sparkles, Check, Loader2, Pencil, Trash2, AlertCircle, Tag, CreditCard, FileText, X, Plus, Power } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { createLogger } from '@/lib/logger';
-import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency, ServiceCollection } from '@/lib/repositories/SchedulingRepository';
+import type { SchedulingService, PaymentType, InstallmentFrequency, FirstPaymentDue, ServiceCurrency, ServiceCollection, ServiceSaleMode } from '@/lib/repositories/SchedulingRepository';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 
 const logger = createLogger({ module: 'SchedulingServicesList' });
@@ -49,6 +49,17 @@ interface SchedulingServicesListProps {
 }
 
 
+/**
+ * Column widths, declared once.
+ *
+ * The list scrolls and the new-service line is pinned beneath it, which makes
+ * them two separate <table> elements — and two tables only look like one if
+ * their columns are pinned to the same widths. `table-fixed` plus a shared
+ * colgroup is what keeps the pinned line's fields under the headers they
+ * belong to.
+ */
+const COLUMN_WIDTHS = ['19%', '13%', '12%', '14%', '12%', '12%', '8%', '10%'] as const;
+
 export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false, processorReady = false }: SchedulingServicesListProps) {
   const { t, formatCurrency, currencyCode } = useLanguage();
   const [publishingId, setPublishingId] = useState<string | null>(null);
@@ -84,12 +95,22 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   };
   const [editRowValues, setEditRowValues] = useState<{
     name: string;
+    /**
+     * The one-line description, edited in place.
+     *
+     * It used to be a button that opened a dialog of its own — a second surface
+     * for one text field, in a panel that has room for it. The dialog survives
+     * only for the case that opens it by itself: publishing a service that has
+     * no description yet.
+     */
+    description: string;
     duration: string;
     buffer: string;
     price: string;
     currency: ServiceCurrency;
     is_scheduled: boolean;
     collection: ServiceCollection;
+    sale_mode: ServiceSaleMode;
     payment_type: PaymentType;
     installment_count: number;
     installment_frequency: InstallmentFrequency;
@@ -97,12 +118,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     first_payment_days: number;
   }>({
     name: '',
+    description: '',
     duration: '',
     buffer: '',
     price: '',
     currency: 'ILS',
     is_scheduled: true,
     collection: 'invoice' as ServiceCollection,
+    sale_mode: 'direct' as ServiceSaleMode,
     payment_type: 'full',
     installment_count: 1,
     installment_frequency: 'monthly',
@@ -110,8 +133,6 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     first_payment_days: 0
   });
   const [savingRow, setSavingRow] = useState(false);
-  const [editRowPaymentDialogOpen, setEditRowPaymentDialogOpen] = useState(false);
-  const editRowPaymentDialogRef = useRef<HTMLDivElement>(null);
 
   // Valid currencies for services
   const validCurrencies: ServiceCurrency[] = ['USD', 'EUR', 'ILS', 'GBP'];
@@ -138,12 +159,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const [isAddingNewRow, setIsAddingNewRow] = useState(false);
   const [newRowValues, setNewRowValues] = useState({
     name: '',
+    description: '',
     duration: '60',
     buffer: '0',
     price: '0',
     currency: 'ILS' as ServiceCurrency,
     is_scheduled: true,
     collection: 'invoice' as ServiceCollection,
+    sale_mode: 'direct' as ServiceSaleMode,
     payment_type: 'full' as PaymentType,
     installment_count: 1,
     installment_frequency: 'monthly' as InstallmentFrequency,
@@ -151,8 +174,6 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     first_payment_days: 0
   });
   const [savingNewRow, setSavingNewRow] = useState(false);
-  const [newRowPaymentDialogOpen, setNewRowPaymentDialogOpen] = useState(false);
-  const newRowPaymentDialogRef = useRef<HTMLDivElement>(null);
   const [newRowFromChat, setNewRowFromChat] = useState(false); // Track if new row was started from chat
   // Optimistic updates - local overrides for immediate UI feedback
   const [optimisticUpdates, setOptimisticUpdates] = useState<Record<string, Partial<SchedulingService>>>({});
@@ -174,22 +195,6 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const descriptionDialogRef = useRef<HTMLDivElement>(null);
 
   // Payment plan popup state
-  const [paymentDialogId, setPaymentDialogId] = useState<string | null>(null);
-  const [paymentValues, setPaymentValues] = useState<{
-    payment_type: PaymentType;
-    installment_count: number;
-    installment_frequency: InstallmentFrequency;
-    first_payment_due: FirstPaymentDue;
-    first_payment_days: number;
-  }>({
-    payment_type: 'full',
-    installment_count: 1,
-    installment_frequency: 'monthly',
-    first_payment_due: 'on_booking',
-    first_payment_days: 0
-  });
-  const [savingPayment, setSavingPayment] = useState(false);
-  const paymentDialogRef = useRef<HTMLDivElement>(null);
 
   // Currency helper
   const getCurrencySymbol = (code?: ServiceCurrency) => {
@@ -217,19 +222,12 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       const isInRadixPortal = (target as Element).closest?.('[data-radix-popper-content-wrapper]');
       if (isInRadixPortal) return;
 
+      // The description dialog is the only one left: it opens by itself when a
+      // service is published without one. The three payment modals it used to
+      // sit beside are gone — the plan is edited in the panel now.
       if (descriptionDialogRef.current && !descriptionDialogRef.current.contains(target)) {
         setDescriptionDialogId(null);
-    setDescriptionRequiredFor(null);
         setDescriptionRequiredFor(null);
-      }
-      if (paymentDialogRef.current && !paymentDialogRef.current.contains(target)) {
-        setPaymentDialogId(null);
-      }
-      if (newRowPaymentDialogRef.current && !newRowPaymentDialogRef.current.contains(target)) {
-        setNewRowPaymentDialogOpen(false);
-      }
-      if (editRowPaymentDialogRef.current && !editRowPaymentDialogRef.current.contains(target)) {
-        setEditRowPaymentDialogOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -261,12 +259,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       setNewRowFromChat(true); // Mark this as from chat for callback
       setNewRowValues({
         name: newRowPrefill?.service_name || '',
+        description: newRowPrefill?.description || '',
         duration: (newRowPrefill?.duration_minutes || 60).toString(),
         buffer: (newRowPrefill?.buffer_minutes || 0).toString(),
         price: (newRowPrefill?.price || 0).toString(),
         currency: (newRowPrefill?.currency as ServiceCurrency) || defaultCurrency,
         is_scheduled: true,
         collection: 'invoice' as ServiceCollection,
+        sale_mode: 'direct' as ServiceSaleMode,
         payment_type: (newRowPrefill?.payment_type as PaymentType) || 'full',
         installment_count: newRowPrefill?.installment_count || 1,
         installment_frequency: (newRowPrefill?.installment_frequency as InstallmentFrequency) || 'monthly',
@@ -300,6 +300,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         setEditingRowId(serviceToEdit.id);
         setEditRowValues({
           name: serviceToEdit.service_name,
+          description: optimisticUpdates[serviceToEdit.id]?.description ?? serviceToEdit.description ?? '',
           duration: serviceToEdit.duration_minutes?.toString() || '60',
           buffer: serviceToEdit.buffer_minutes?.toString() || '0',
           price: serviceToEdit.price?.toString() || '0',
@@ -608,79 +609,21 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   };
 
   // Payment plan dialog handlers
-  const openPaymentDialog = (service: SchedulingService, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setPaymentValues({
-      payment_type: service.payment_type || 'full',
-      installment_count: service.installment_count || 1,
-      installment_frequency: service.installment_frequency || 'monthly',
-      first_payment_due: service.first_payment_due || 'on_booking',
-      first_payment_days: service.first_payment_days || 0
-    });
-    setPaymentDialogId(service.id);
-  };
 
-  const savePaymentPlan = async (serviceId: string) => {
-    if (savingPayment) return;
-
-    setSavingPayment(true);
-
-    // Optimistic update
-    setOptimisticUpdates(prev => ({
-      ...prev,
-      [serviceId]: { ...prev[serviceId], ...paymentValues }
-    }));
-
-    setPaymentDialogId(null);
-
-    try {
-      const response = await fetch(`/api/scheduling/services/${serviceId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(paymentValues)
-      });
-
-      if (response.ok) {
-        // Success - clear optimistic update and do silent refresh
-        setOptimisticUpdates(prev => {
-          const updated = { ...prev };
-          delete updated[serviceId];
-          return updated;
-        });
-        onSilentRefresh?.();
-      } else {
-        // Revert optimistic update on failure
-        setOptimisticUpdates(prev => {
-          const updated = { ...prev };
-          delete updated[serviceId];
-          return updated;
-        });
-        onSilentRefresh?.();
-      }
-    } catch {
-      // Revert on error
-      setOptimisticUpdates(prev => {
-        const updated = { ...prev };
-        delete updated[serviceId];
-        return updated;
-      });
-      onSilentRefresh?.();
-    } finally {
-      setSavingPayment(false);
-    }
-  };
 
   // New row handlers
   const startAddNewRow = () => {
     setIsAddingNewRow(true);
     setNewRowValues({
       name: '',
+      description: '',
       duration: '60',
       buffer: '0',
       price: '0',
       currency: getValidCurrency(currencyCode),
       is_scheduled: true,
       collection: 'invoice' as ServiceCollection,
+      sale_mode: 'direct' as ServiceSaleMode,
       payment_type: 'full',
       installment_count: 1,
       installment_frequency: 'monthly',
@@ -693,12 +636,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     setIsAddingNewRow(false);
     setNewRowValues({
       name: '',
+      description: '',
       duration: '60',
       buffer: '0',
       price: '0',
       currency: getValidCurrency(currencyCode),
       is_scheduled: true,
       collection: 'invoice' as ServiceCollection,
+      sale_mode: 'direct' as ServiceSaleMode,
       payment_type: 'full',
       installment_count: 1,
       installment_frequency: 'monthly',
@@ -718,9 +663,15 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           service_name: newRowValues.name,
+          description: newRowValues.description.trim() || null,
           duration_minutes: newRowValues.duration.trim() !== '' ? (parseInt(newRowValues.duration) || null) : null,
           is_scheduled: newRowValues.is_scheduled,
-          collection: parseFloat(newRowValues.price) > 0 ? newRowValues.collection : null,
+          sale_mode: newRowValues.sale_mode,
+          // A quoted service publishes no collection — the price, and so the
+          // method, belong to a proposal that does not exist yet.
+          collection: newRowValues.sale_mode === 'proposal'
+            ? null
+            : (parseFloat(newRowValues.price) > 0 ? newRowValues.collection : null),
           buffer_minutes: parseInt(newRowValues.buffer) || 0,
           price: parseFloat(newRowValues.price) || 0,
           currency: newRowValues.currency,
@@ -758,12 +709,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         setIsAddingNewRow(false);
         setNewRowValues({
           name: '',
+          description: '',
           duration: '60',
           buffer: '0',
           price: '0',
           currency: getValidCurrency(currencyCode),
           is_scheduled: true,
           collection: 'invoice' as ServiceCollection,
+          sale_mode: 'direct' as ServiceSaleMode,
           payment_type: 'full',
           installment_count: 1,
           installment_frequency: 'monthly',
@@ -783,6 +736,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     setEditingRowId(service.id);
     setEditRowValues({
       name: service.service_name,
+      // The optimistic copy wins: a description saved a moment ago from the
+      // publish prompt is the one the owner just wrote.
+      description: optimisticUpdates[service.id]?.description ?? service.description ?? '',
       duration: service.duration_minutes?.toString() || '60',
       buffer: service.buffer_minutes?.toString() || '0',
       price: service.price?.toString() || '0',
@@ -803,15 +759,16 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
   const cancelRowEdit = () => {
     setEditingRowId(null);
-    setEditRowPaymentDialogOpen(false);
     setEditRowValues({
       name: '',
+      description: '',
       duration: '',
       buffer: '',
       price: '',
       currency: 'ILS',
       is_scheduled: true,
       collection: 'invoice' as ServiceCollection,
+      sale_mode: 'direct' as ServiceSaleMode,
       payment_type: 'full',
       installment_count: 1,
       installment_frequency: 'monthly',
@@ -820,6 +777,24 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     });
   };
 
+  /*
+   * What the row's other columns are allowed to say, given how it is sold.
+   *
+   * A quoted service has no price — that is decided per job, in the proposal —
+   * so price, collection and payment plan describe money that does not exist
+   * yet. Leaving them editable invites an owner to set a price that no public
+   * surface will ever show, and then wonder why.
+   *
+   * The columns stay in place rather than disappearing: a row whose cells move
+   * as you change a toggle is harder to read than one whose cells grey out.
+   */
+  const rowMoneyDisabled = editRowValues.sale_mode === 'proposal';
+  /** The same two rules for the new-service line, which has its own state. */
+  const newMoneyDisabled = newRowValues.sale_mode === 'proposal';
+  const newTimeDisabled = !newRowValues.is_scheduled;
+  /** A service nobody books against a slot has no length to run for. */
+  const rowTimeDisabled = !editRowValues.is_scheduled;
+
   const saveRowEdit = async (serviceId: string) => {
     if (savingRow) return;
 
@@ -827,12 +802,20 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
     const updateData = {
       service_name: editRowValues.name,
+      description: editRowValues.description.trim() || null,
       // A product is not booked against a time, and a free service is not
       // collected at all — storing either would describe something that never
       // happens to a client.
       duration_minutes: editRowValues.duration.trim() !== '' ? (parseInt(editRowValues.duration) || null) : null,
       is_scheduled: editRowValues.is_scheduled,
-      collection: collectionToPersist(editRowValues.collection, priced ? 1 : 0),
+      sale_mode: editRowValues.sale_mode,
+      /*
+       * A quoted service publishes no collection: the price, and therefore the
+       * method, belong to the proposal that has not been written yet.
+       */
+      collection: editRowValues.sale_mode === 'proposal'
+        ? null
+        : collectionToPersist(editRowValues.collection, priced ? 1 : 0),
       buffer_minutes: parseInt(editRowValues.buffer) || 0,
       price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
       currency: editRowValues.currency,
@@ -850,22 +833,18 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       [serviceId]: { ...prev[serviceId], ...updateData }
     }));
 
-    setEditingRowId(null);
-    setEditRowPaymentDialogOpen(false);
-    setEditRowValues({
-      name: '',
-      duration: '',
-      buffer: '',
-      price: '',
-      currency: 'ILS',
-      is_scheduled: true,
-      collection: 'invoice' as ServiceCollection,
-      payment_type: 'full',
-      installment_count: 1,
-      installment_frequency: 'monthly',
-      first_payment_due: 'on_booking',
-      first_payment_days: 0
-    });
+    /*
+     * The service stays open.
+     *
+     * Saving used to close the panel and empty the form — which read as "done",
+     * when saving is only half of it: an edited service goes back to DRAFT and
+     * reaches nobody until it is published. Closing the panel took away the
+     * publish button at the exact moment it mattered, and the owner walked away
+     * believing clients could see the change.
+     *
+     * So the panel keeps the service, `recentlyEditedId` pulses Publish, and a
+     * line above the fields says what is still missing.
+     */
 
     // Background API call
     fetch(`/api/scheduling/services/${serviceId}`, {
@@ -958,457 +937,619 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     );
   };
 
-  const renderServiceRow = (service: SchedulingService) => {
-    const effectiveService = getEffectiveService(service);
-    const isDraft = service.status === 'draft';
-    const isPublishing = publishingId === service.id;
-    const isEditing = editingRowId === service.id;
-    const isRecentlyEdited = recentlyEditedId === service.id;
-    const isJourneyOpen = openJourneyIds.has(service.id);
+  /**
+   * The service that is open in the panel.
+   *
+   * Selection and editing are the same act now. There is no row that turns
+   * into inputs and back, so `editingRowId` IS the selection — a service is
+   * either open in the panel, being edited, or it is not open at all.
+   */
+  const selectedService = editingRowId
+    ? services.find(s => s.id === editingRowId) ?? null
+    : null;
+
+  /**
+   * One service, as three questions and their consequence.
+   *
+   * `null` means the new one being added, which asks exactly the same questions
+   * against `newRowValues` instead of `editRowValues`. Writing it once is the
+   * point: the old table had the new-service line as a second copy of the edit
+   * row in a second <table>, and the two drifted.
+   */
+  const renderServicePanel = (service: SchedulingService | null) => {
+    const isNew = service === null;
+    const values = isNew ? newRowValues : editRowValues;
+    const setValues = (isNew ? setNewRowValues : setEditRowValues) as React.Dispatch<
+      React.SetStateAction<typeof values>
+    >;
+    const saving = isNew ? savingNewRow : savingRow;
+
+    // The same two derivations the table row made, kept verbatim: a quoted
+    // service has no price of its own, and an unscheduled one has no length.
+    const moneyDisabled = values.sale_mode === 'proposal';
+    const timeDisabled = values.is_scheduled === false;
+    const price = parseFloat(values.price);
+
+    const effective = service ? { ...service, ...(optimisticUpdates[service.id] || {}) } : null;
+    const isDraft = effective ? effective.status === 'draft' : true;
+
+    /*
+     * No width here.
+     *
+     * This carried `w-full`, and a `w-28` added at the call site does not beat
+     * it — both are single-class utilities, so the winner is whichever Tailwind
+     * emits later in the stylesheet, which is `w-full`. Every "narrower" field
+     * in this panel was silently full width, however small the number it held.
+     *
+     * Width belongs to the field, so each one states its own.
+     */
+    const field = 'px-3 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:border-transparent';
+    const fieldStyle = { borderRadius: 'var(--v2-radius-button)', ['--tw-ring-color' as string]: CONFIG_COLOR };
 
     /**
-     * A service and its open journey are two <tr>s, and they were painting
-     * themselves differently.
+     * A choice of two, drawn as a segment rather than as two buttons.
      *
-     * The settings row carried `hover:bg-...` and the journey row carried
-     * nothing, so the moment you clicked to open one your cursor was still on
-     * the settings row — it tinted, the strip beneath it did not, and the pair
-     * came apart into two colours. Every row did this; it was obvious on the
-     * LAST one, where there is no row underneath to make the change read as
-     * ordinary striping and the mismatch sits against the card's bottom edge.
-     *
-     * So the background is decided once and both rows are given the same one.
-     * Exclusive branches rather than stacked classes: `bg-amber-500/5` and
-     * `bg-[var(--v2-bg)]` are the same kind of utility, and which of them won
-     * would come down to stylesheet order.
+     * The pair is one control with one answer, and a pill-inside-a-pill says so
+     * — the selected half lifts onto the surface, the other stays on the track.
+     * Two separately-bordered buttons read as two independent switches, which
+     * is what the old table row had and what made "אופן מכירה" and "דורש תור?"
+     * look like unrelated settings that happened to be adjacent.
      */
-    const rowBackground = isJourneyOpen
-      // Already tinted, so hovering must not change it again.
-      ? (isDraft ? 'bg-amber-500/10' : 'bg-[var(--v2-bg)]')
-      : (isDraft ? 'bg-amber-500/5 hover:bg-amber-500/10' : 'hover:bg-[var(--v2-bg)]');
-
-    if (isEditing) {
-      return (
-        <tr key={service.id} className="bg-[#D14E97]/5">
-          {/* Service Name */}
-          <td className="px-4 py-3">
-            <input
-              type="text"
-              value={editRowValues.name}
-              onChange={(e) => setEditRowValues(prev => ({ ...prev, name: e.target.value }))}
-              className="w-full px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-              autoFocus
-            />
-          </td>
-          {/* Needs a time? Decides whether the client journey has a date step,
-              and whether working hours are asked of this business at all. */}
-          <td className="px-4 py-3">
-            <div className="flex gap-1">
-              {([true, false] as const).map(value => (
-                <button
-                  key={String(value)}
-                  type="button"
-                  onClick={() => setEditRowValues(prev => ({ ...prev, is_scheduled: value }))}
-                  className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors ${
-                    editRowValues.is_scheduled === value
-                      ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
-                      : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                  }`}
-                >
-                  {value ? t('config.services.needs_time.yes') : t('config.services.needs_time.no')}
-                </button>
-              ))}
-            </div>
-          </td>
-          {/* Duration */}
-          <td className="px-4 py-3">
-            <div className="flex items-center gap-1">
-              <input
-                type="number"
-                value={editRowValues.duration}
-                onChange={(e) => setEditRowValues(prev => ({ ...prev, duration: e.target.value }))}
-                className="w-16 px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-              />
-              <span className="text-xs text-[var(--v2-text-muted)]">{t('scheduling.service.minutes')}</span>
-            </div>
-          </td>
-          {/* Buffer */}
-          <td className="px-4 py-3">
-            <div className="flex items-center gap-1">
-              <input
-                type="number"
-                value={editRowValues.buffer}
-                onChange={(e) => setEditRowValues(prev => ({ ...prev, buffer: e.target.value }))}
-                className="w-16 px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-              />
-              <span className="text-xs text-[var(--v2-text-muted)]">{t('scheduling.service.min_buffer')}</span>
-            </div>
-          </td>
-          {/* Price with Currency */}
-          <td className="px-4 py-3">
-            <div className="flex items-center gap-1">
-              <Select
-                value={editRowValues.currency}
-                onValueChange={(value) => setEditRowValues(prev => ({ ...prev, currency: value as ServiceCurrency }))}
-              >
-                <SelectTrigger
-                  className="w-14 h-8 px-1.5 text-xs bg-[var(--v2-bg)] border-[#D14E97]/30 text-[var(--v2-text-primary)] focus:border-[#D14E97] focus:ring-[#D14E97]/20"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
-                  <SelectItem value="USD" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">$</SelectItem>
-                  <SelectItem value="EUR" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">€</SelectItem>
-                  <SelectItem value="ILS" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">₪</SelectItem>
-                  <SelectItem value="GBP" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">£</SelectItem>
-                </SelectContent>
-              </Select>
-              <input
-                type="number"
-                value={editRowValues.price}
-                onChange={(e) => setEditRowValues(prev => ({ ...prev, price: e.target.value }))}
-                className="w-16 px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-              />
-            </div>
-          </td>
-          {/* How the money arrives. This is what replaced asking the business,
-              once, whether it needs a card processor — a question nobody could
-              answer about everything they sell at the same time. */}
-          <td className="px-4 py-3">
-            {parseFloat(editRowValues.price) > 0 ? (
-              <div className="flex gap-1">
-                {(['online', 'invoice'] as const).map(value => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setEditRowValues(prev => ({ ...prev, collection: value }))}
-                    className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors truncate ${
-                      editRowValues.collection === value
-                        ? 'border-[#22C58B] bg-[#22C58B]/10 text-[#22C58B] font-semibold'
-                        : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                    }`}
-                  >
-                    {value === 'online'
-                      ? t('config.services.collection.online')
-                      : t('config.services.collection.invoice')}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <span className="text-xs text-[var(--v2-text-muted)]">{t('journey.pay.free')}</span>
-            )}
-          </td>
-          {/* Payment Plan */}
-          <td className="px-4 py-3 text-xs text-[var(--v2-text-secondary)]">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditRowPaymentDialogOpen(true);
-              }}
-              className={`flex items-center gap-1.5 px-2 py-1 transition-all hover:bg-[#D14E97]/10 whitespace-nowrap ${
-                editRowValues.payment_type === 'installments' ? 'text-[#D14E97]' : 'text-[var(--v2-text-muted)]'
-              }`}
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('scheduling.modal.payment_options')}
-            >
-              <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
-              {parseFloat(editRowValues.price) > 0 ? (
-                editRowValues.payment_type === 'installments' && editRowValues.installment_count > 1 ? (
-                  <span>{editRowValues.installment_count}x {getFrequencyShortLabel(editRowValues.installment_frequency)}</span>
-                ) : (
-                  <span>{t('scheduling.modal.payment_full')}</span>
-                )
-              ) : (
-                /* Nothing to pay, so nothing to plan. "Full Payment" against a
-                   price of zero describes a payment that never happens — and
-                   this is the same word the price column already uses for the
-                   same service, in whichever language. */
-                <span>{t('journey.pay.free')}</span>
-              )}
-            </button>
-          </td>
-          {/* Status */}
-          <td className="px-4 py-3">{getStatusBadge(service)}</td>
-          {/* Actions */}
-          <td className="px-4 py-3">
-            <div className="flex items-center gap-1 justify-end">
-              <button
-                onClick={() => saveRowEdit(service.id)}
-                disabled={savingRow}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#D14E97] hover:bg-[#D14E97]/90 transition-all disabled:opacity-50"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {savingRow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                {t('button.save')}
-              </button>
-              <button
-                onClick={cancelRowEdit}
-                className="px-3 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {t('button.cancel')}
-              </button>
-            </div>
-          </td>
-        </tr>
-      );
-    }
+    const segment = (
+      options: { value: string; label: string; active: boolean; onClick: () => void }[]
+    ) => (
+      <div
+        role="group"
+        className="inline-flex p-0.5 border border-[var(--v2-border)] bg-[var(--v2-bg)] self-start"
+        style={{ borderRadius: '999px' }}
+      >
+        {options.map(option => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={option.onClick}
+            aria-pressed={option.active}
+            className={`px-3.5 py-1.5 text-[12.5px] transition-colors ${
+              option.active
+                ? 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] font-medium shadow-sm'
+                : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+            }`}
+            style={{ borderRadius: '999px' }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    );
 
     return (
       <>
-      <tr
-        key={service.id}
-        onClick={(e) => {
-          // The row is the control, but it is full of other controls — publish,
-          // activate, edit, delete, the description and payment dialogs. Anything
-          // that lands on one of those is that control's click, not the row's.
-          // Guarding here rather than adding stopPropagation to a dozen buttons
-          // means a button added later cannot forget to opt out.
-          if ((e.target as HTMLElement).closest('button, input, select, a, [role="combobox"]')) return;
-          toggleJourney(service.id);
-        }}
-        className={`transition-colors group cursor-pointer ${rowBackground} ${
-          // No dividing line while the journey is open, so the strip reads as
-          // part of this service rather than as the next row down.
-          isJourneyOpen ? '' : 'border-b border-[var(--v2-border)] last:border-b-0'
-        } ${isRecentlyEdited ? 'recently-edited-row' : ''}`}
-      >
-        {/* Service Name */}
-        <td className="px-4 py-3">
-          <div className="flex items-center gap-3">
-            {/* A real button, not a decorative caret: the row's own click
-                handler is mouse-only, and this is what makes the journey
-                reachable from the keyboard and nameable to a screen reader. */}
-            <button
-              type="button"
-              onClick={() => toggleJourney(service.id)}
-              aria-expanded={isJourneyOpen}
-              aria-controls={`journey-${service.id}`}
-              className="p-0.5 -m-0.5 text-[var(--v2-text-muted)] hover:text-[#D14E97] transition-colors flex-shrink-0"
-              title={t('journey.label')}
-            >
-              <ChevronRight
-                // Closed points along the reading direction — right in English,
-                // left in Hebrew. Open points down in both. Exactly one rotate
-                // class applies at a time, so they cannot fight each other.
-                className={`h-4 w-4 transition-transform ${isJourneyOpen ? 'rotate-90' : 'rtl:rotate-180'}`}
-              />
-            </button>
+        {/* Header: what this is, and what can be done to it. The four actions
+            used to be hover-revealed buttons sharing a 9% cell with the status
+            badge — they landed on top of it, and Publish could not be clicked
+            reliably. Here they have room and are visible without hovering. */}
+        <div className="flex items-start gap-3 px-5 py-4 border-b border-[var(--v2-border)] flex-shrink-0">
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-semibold text-[var(--v2-text-primary)] truncate">
+              {isNew
+                ? t('scheduling.new_service') || 'Add a service'
+                : values.name || effective?.service_name}
+            </h3>
+            {/* Published · active · saved a moment ago — one line, because
+                the three are one answer to "where does this stand". A single
+                word could only ever say one of them. */}
+            <p className="text-[12px] text-[var(--v2-text-secondary)] mt-0.5">
+              {isNew
+                ? t('config.services.new_hint')
+                : [
+                    isDraft ? t('scheduling.service.draft') : t('config.services.published'),
+                    effective?.is_active
+                      ? t('scheduling.service.active')
+                      : t('scheduling.service.inactive'),
+                    recentlyEditedId === service?.id ? t('config.services.saved_just_now') : null,
+                  ].filter(Boolean).join(' · ')}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 ms-auto flex-shrink-0">
+            {!isNew && service && (
+              <>
+                {isDraft && (
+                  <button
+                    onClick={(e) => handlePublish(service.id, e)}
+                    disabled={publishingId === service.id}
+                    title={t('scheduling.service.publish')}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 ${recentlyEditedId === service.id ? 'publish-pulse' : ''}`}
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    {publishingId === service.id
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <Check className="h-3.5 w-3.5" />}
+                    {t('scheduling.service.publish')}
+                  </button>
+                )}
+                <button
+                  onClick={(e) => handleToggleActive(e, service)}
+                  disabled={togglingId === service.id}
+                  title={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
+                  aria-label={effective?.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
+                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all disabled:opacity-50"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  {togglingId === service.id
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : effective?.is_active ? <Pause className="h-4 w-4" /> : <Power className="h-4 w-4" />}
+                </button>
+                <button
+                  onClick={(e) => handleDeleteClick(e, service)}
+                  title={t('button.delete')}
+                  aria-label={t('button.delete')}
+                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-all"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* The three questions */}
+        <div className="flex-1 overflow-y-auto min-h-0 px-5 py-4 flex flex-col gap-5">
+
+          {/* Saved is not live.
+              An edited service returns to draft, so the owner has done half of
+              the act and the half that reaches clients is still waiting. Said
+              here, next to the button that finishes it. */}
+          {!isNew && service && recentlyEditedId === service.id && isDraft && (
             <div
-              className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0 border ${
-                isDraft
-                  ? 'text-amber-600 border-amber-500 bg-amber-500/10'
-                  : 'text-[#D14E97] border-[#D14E97] bg-[#D14E97]/10'
-              }`}
-            >
-              {getServiceInitials(effectiveService.service_name)}
-            </div>
-            <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-              {effectiveService.service_name}
-            </span>
-            {/* Description button */}
-            <button
-              onClick={(e) => openDescriptionDialog(service, e)}
-              className={`p-1 transition-all ${
-                effectiveService.description
-                  ? 'text-[#D14E97] hover:bg-[#D14E97]/10'
-                  : 'text-[var(--v2-text-muted)] hover:text-[#D14E97] hover:bg-[#D14E97]/10'
-              }`}
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('scheduling.modal.description')}
-            >
-              <FileText className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </td>
-        {/* Needs a time? */}
-        <td className="px-4 py-3">
-          {effectiveService.is_scheduled === false ? (
-            <span className="text-xs px-2 py-1 rounded-full border border-[var(--v2-border)] text-[var(--v2-text-muted)]">
-              {t('config.services.needs_time.no')}
-            </span>
-          ) : (
-            <span className="text-xs px-2 py-1 rounded-full border border-[#14B8A6]/40 text-[#14B8A6] bg-[#14B8A6]/10">
-              {t('config.services.needs_time.yes')}
-            </span>
-          )}
-        </td>
-        {/* Duration — shown whatever the answer to "needs a time", because a
-            service can run two hours and still not be booked against a slot. An
-            em dash only where there genuinely is no length. */}
-        <td className="px-4 py-3">
-          {effectiveService.duration_minutes == null ? (
-            <span className="text-sm text-[var(--v2-text-muted)]">—</span>
-          ) : (
-            <div className="flex items-center gap-1.5 text-sm text-[var(--v2-text-secondary)]">
-              <Clock className="h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
-              <span>{effectiveService.duration_minutes}</span>
-              <span className="text-[var(--v2-text-muted)]">{t('scheduling.service.minutes')}</span>
-            </div>
-          )}
-        </td>
-        {/* Buffer */}
-        <td className="px-4 py-3">
-          <div className="flex items-center gap-1.5 text-sm text-[var(--v2-text-secondary)]">
-            <Pause className="h-3.5 w-3.5 text-[var(--v2-text-muted)]" />
-            <span>{effectiveService.buffer_minutes || 0}</span>
-            <span className="text-[var(--v2-text-muted)]">{t('scheduling.service.min_buffer')}</span>
-          </div>
-        </td>
-        {/* Price */}
-        <td className="px-4 py-3">
-          <div className="flex items-center gap-1.5 text-sm font-medium text-[#0D9488]">
-            <Tag className="h-3.5 w-3.5" />
-            <span>{formatCurrency(effectiveService.price, { currencyOverride: service.currency })}</span>
-          </div>
-        </td>
-        {/* How it is paid — what decides whether this business is ever asked
-            to connect a card processor. */}
-        <td className="px-4 py-3">
-          {(effectiveService.price || 0) <= 0 ? (
-            <span className="text-xs text-[var(--v2-text-muted)]">{t('journey.pay.free')}</span>
-          ) : effectiveService.collection === 'online' ? (
-            <span className="text-xs px-2 py-1 rounded-full border border-[#22C58B]/40 text-[#22C58B] bg-[#22C58B]/10">
-              {t('config.services.collection.online')}
-            </span>
-          ) : (
-            <span className="text-xs px-2 py-1 rounded-full border border-[#8B5CF6]/40 text-[#8B5CF6] bg-[#8B5CF6]/10">
-              {t('config.services.collection.invoice')}
-            </span>
-          )}
-        </td>
-        {/* Payment Plan */}
-        <td className="px-4 py-3 text-xs text-[var(--v2-text-secondary)]">
-          <button
-            onClick={(e) => openPaymentDialog(service, e)}
-            className={`flex items-center gap-1.5 px-2 py-1 transition-all hover:bg-[#D14E97]/10 whitespace-nowrap ${
-              effectiveService.payment_type === 'installments' ? 'text-[#D14E97]' : 'text-[var(--v2-text-muted)]'
-            }`}
-            style={{ borderRadius: 'var(--v2-radius-button)' }}
-            title={t('scheduling.modal.payment_options')}
-          >
-            <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
-            {(effectiveService.price || 0) > 0 ? (
-              effectiveService.payment_type === 'installments' && effectiveService.installment_count ? (
-                <span>{effectiveService.installment_count}x {getFrequencyShortLabel(effectiveService.installment_frequency)}</span>
-              ) : (
-                <span>{t('scheduling.modal.payment_full')}</span>
-              )
-            ) : (
-              <span>{t('journey.pay.free')}</span>
-            )}
-          </button>
-        </td>
-        {/* Status */}
-        <td className="px-4 py-3">
-          {getStatusBadge(service)}
-        </td>
-        {/* Actions */}
-        <td className="px-4 py-3">
-          <div className={`flex items-center gap-1 justify-end transition-opacity ${isRecentlyEdited ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-            {isDraft && (
-              <button
-                onClick={(e) => handlePublish(service.id, e)}
-                disabled={isPublishing}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 ${isRecentlyEdited ? 'publish-pulse' : ''}`}
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                title={t('scheduling.service.publish')}
-              >
-                {isPublishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              </button>
-            )}
-            {/* Toggle Active/Inactive */}
-            <button
-              onClick={(e) => handleToggleActive(e, service)}
-              disabled={togglingId === service.id}
-              className={`p-1.5 transition-all ${
-                effectiveService.is_active
-                  ? 'text-[#14B8A6] hover:text-[#0D9488] hover:bg-[#14B8A6]/10'
-                  : 'text-[var(--v2-text-muted)] hover:text-[#14B8A6] hover:bg-[#14B8A6]/10'
-              }`}
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={effectiveService.is_active ? t('scheduling.service.deactivate') : t('scheduling.service.activate')}
-            >
-              {togglingId === service.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Power className="h-4 w-4" />
-              )}
-            </button>
-            <button
-              onClick={() => startRowEdit(service)}
-              className="p-1.5 text-[var(--v2-text-muted)] hover:text-[#D14E97] hover:bg-[#D14E97]/10 transition-all"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('scheduling.service.edit')}
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
-            <button
-              onClick={(e) => handleDeleteClick(e, service)}
-              className="p-1.5 text-[var(--v2-text-muted)] hover:text-red-500 hover:bg-red-500/10 transition-all"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('scheduling.service.delete')}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        </td>
-      </tr>
-
-      {/* What your client walks through for this service.
-          The columns above are the settings; this is what they add up to —
-          and the two were never on screen together, which is how a business
-          discovered its booking link led nowhere from a client's email.
-
-          Now folded away until asked for. `pt-0` and the missing divider above
-          keep it flush against its own row: the settings and what they add up
-          to are one block, not two rows that happen to be adjacent. */}
-      {/* `last:border-b-0` matters here and not only on the settings row: when
-          the LAST service is open THIS row becomes the table's last child, and
-          without the exemption it drew a rule directly on top of the card's own
-          bottom border. `recently-edited-row` too, so the highlight covers the
-          pair rather than half of it. */}
-      {isJourneyOpen && (
-      <tr
-        key={`${service.id}-journey`}
-        id={`journey-${service.id}`}
-        className={`border-b border-[var(--v2-border)] last:border-b-0 ${rowBackground} ${isRecentlyEdited ? 'recently-edited-row' : ''}`}
-      >
-        {/* Indented past the chevron and the initials badge, so the strip sits
-            under its own service rather than starting at the table edge — and
-            with room above the label instead of butting against the row. `ps-`
-            not `pl-`, so Hebrew indents from the right. */}
-        <td colSpan={9} className="ps-14 pe-4 pt-2 pb-3">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <span className="text-[10px] font-semibold tracking-wide text-[var(--v2-text-muted)]">
-              {t('journey.label')}
-            </span>
-            <ClientJourneyStrip
-              compact
-              editable
-              saving={journeySavingId === service.id}
-              onChange={(patch) => saveJourneyPatch(service, patch)}
-              intakeEnabled={intakeEnabled}
-              // Without this the strip assumed a processor and drew a payment
-              // step the client could never complete.
-              processorReady={processorReady}
-              service={{
-                scheduled: effectiveService.is_scheduled !== false,
-                collection: (effectiveService.collection as ServiceCollection | null) ?? null,
-                price: effectiveService.price,
+              className="flex items-start gap-2.5 px-3.5 py-3 text-[12.5px]"
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                backgroundColor: 'rgba(245, 158, 11, 0.10)',
+                border: '1px solid rgba(245, 158, 11, 0.35)',
+                color: 'var(--v2-text-primary)',
               }}
-            />
-          </div>
-        </td>
-      </tr>
-      )}
+              role="status"
+            >
+              <AlertCircle className="h-4 w-4 flex-shrink-0 mt-px text-amber-500" />
+              <span>{t('config.services.saved_publish_prompt')}</span>
+            </div>
+          )}
+
+          <section>
+            <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
+              {t('config.services.q.what')}
+            </h4>
+            <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
+              {t('config.services.q.what_hint')}
+            </p>
+            <div className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                  {t('config.services.column.service')}
+                </span>
+                <input
+                  type="text"
+                  value={values.name}
+                  onChange={(e) => setValues(prev => ({ ...prev, name: e.target.value }))}
+                  className={`${field} w-full`}
+                  style={fieldStyle}
+                  autoFocus
+                />
+              </label>
+
+              {/* In place. This was a button that opened a dialog for one text
+                  field; the panel has room for the field itself. The dialog is
+                  still there for the case that opens it by itself — publishing
+                  a service that has no description yet. */}
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                  {t('config.services.short_description')}
+                </span>
+                {/* A textarea, because a description is prose. A single-line
+                    input hid everything past the first line behind a cursor,
+                    for the one field on this panel whose whole job is to be
+                    read. `resize-y` so an owner who writes more can see more. */}
+                <textarea
+                  value={values.description}
+                  onChange={(e) => setValues(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder={t('config.services.short_description_placeholder')}
+                  rows={3}
+                  className={`${field} w-full resize-y leading-relaxed`}
+                  style={fieldStyle}
+                />
+              </label>
+            </div>
+          </section>
+
+          <section className="border-t border-[var(--v2-border)] pt-4">
+            <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
+              {t('config.services.q.sold')}
+            </h4>
+            <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
+              {t('config.services.q.sold_hint')}
+            </p>
+            {/* One line, in order: what kind of sale, then whether it needs a
+                slot, then — only if it does — how long it runs. */}
+            <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                  {t('config.services.column.sale_mode')}
+                </span>
+                {segment([
+                  {
+                    value: 'direct',
+                    label: t('config.services.sale_mode.direct'),
+                    active: values.sale_mode === 'direct',
+                    onClick: () => setValues(prev => ({ ...prev, sale_mode: 'direct' })),
+                  },
+                  {
+                    value: 'proposal',
+                    label: t('config.services.sale_mode.proposal'),
+                    active: values.sale_mode === 'proposal',
+                    onClick: () => setValues(prev => ({ ...prev, sale_mode: 'proposal' })),
+                  },
+                ])}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                  {t('config.services.column.needs_time')}
+                </span>
+                {segment([
+                  {
+                    value: 'yes',
+                    label: t('config.services.needs_time.yes'),
+                    active: values.is_scheduled === true,
+                    onClick: () => setValues(prev => ({ ...prev, is_scheduled: true })),
+                  },
+                  {
+                    value: 'no',
+                    label: t('config.services.needs_time.no'),
+                    active: values.is_scheduled === false,
+                    onClick: () => setValues(prev => ({ ...prev, is_scheduled: false })),
+                  },
+                ])}
+              </div>
+
+              {/* Absent, not disabled.
+                  A service nobody books against a slot has no length and no gap
+                  after it — those are facts about an appointment. Two greyed
+                  fields showing "—" put a question on screen that has already
+                  been answered, and invited the owner to wonder what they had
+                  done wrong. Answer "לא" and they simply are not asked.
+
+                  The values behind them are untouched: turning scheduling back
+                  on brings the same numbers back rather than defaults. */}
+              {!timeDisabled && (
+                <>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                      {t('config.services.column.duration')}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={values.duration}
+                        onChange={(e) => setValues(prev => ({ ...prev, duration: e.target.value }))}
+                        className={`${field} w-20 tabular-nums`}
+                        style={fieldStyle}
+                      />
+                      <span className="text-[12px] text-[var(--v2-text-muted)]">
+                        {t('scheduling.service.minutes')}
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                      {t('scheduling.service.min_buffer')}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={values.buffer}
+                        onChange={(e) => setValues(prev => ({ ...prev, buffer: e.target.value }))}
+                        className={`${field} w-20 tabular-nums`}
+                        style={fieldStyle}
+                      />
+                      <span className="text-[12px] text-[var(--v2-text-muted)]">
+                        {t('scheduling.service.minutes')}
+                      </span>
+                    </div>
+                  </label>
+                </>
+              )}
+            </div>
+          </section>
+
+          <section className="border-t border-[var(--v2-border)] pt-4">
+            <h4 className="text-[13.5px] font-semibold text-[var(--v2-text-primary)]">
+              {t('config.services.q.paid')}
+            </h4>
+            <p className="text-[12px] text-[var(--v2-text-muted)] mt-0.5 mb-3">
+              {t('config.services.q.paid_hint')}
+            </p>
+
+            {moneyDisabled ? (
+              /* Quoted: the amount and how it arrives are settled in the
+                 proposal, per job. Saying so beats three disabled controls. */
+              <p className="text-[12.5px] text-[var(--v2-text-muted)]">
+                {t('config.services.sale_mode.by_proposal')}
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* The price is the number being decided; the currency is
+                    picked once and rarely changed. The old row gave the two
+                    equal room and then some — a 56px dropdown beside a 56px
+                    number field — so the amount, which is the point, was the
+                    smallest thing in the group.
+
+                    Four currencies is a choice, not a list to open: shown as
+                    the same segment the questions above use, so picking one is
+                    a single click instead of open-scan-select. */}
+                <label className="flex flex-col gap-1.5 sm:col-span-2">
+                  <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                    {t('config.services.column.price')}
+                  </span>
+                  {/* One line: how much, in what, and when it is taken.
+                      They are one sentence about the money — splitting "מתי
+                      נגבה" onto a row of its own made it read as a separate
+                      setting rather than as the end of the price. */}
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <input
+                      type="number"
+                      value={values.price}
+                      onChange={(e) => setValues(prev => ({ ...prev, price: e.target.value }))}
+                      // Sized to the number it holds, not to the row it sits
+                      // in. `flex-1` made it swallow whatever the currency and
+                      // the collection segment left over — a field for four
+                      // digits stretched across half the panel.
+                      className={`${field} w-32 text-[15px] py-2.5 tabular-nums`}
+                      style={fieldStyle}
+                    />
+                    {segment(
+                      ([
+                        ['ILS', '₪'],
+                        ['USD', '$'],
+                        ['EUR', '€'],
+                        ['GBP', '£'],
+                      ] as const).map(([code, symbol]) => ({
+                        value: code,
+                        label: symbol,
+                        active: values.currency === code,
+                        onClick: () => setValues(prev => ({ ...prev, currency: code as ServiceCurrency })),
+                      }))
+                    )}
+
+                    {/* Nothing to collect when nothing is charged, so the
+                        question simply does not appear. */}
+                    {price > 0 && (
+                      <span className="flex items-center gap-2">
+                        <span className="text-[12px] text-[var(--v2-text-secondary)] whitespace-nowrap">
+                          {t('config.services.when_collected')}
+                        </span>
+                        {segment([
+                          {
+                            value: 'online',
+                            label: t('config.services.collection.online'),
+                            active: values.collection === 'online',
+                            onClick: () => setValues(prev => ({ ...prev, collection: 'online' })),
+                          },
+                          {
+                            value: 'invoice',
+                            label: t('config.services.collection.invoice'),
+                            active: values.collection === 'invoice',
+                            onClick: () => setValues(prev => ({ ...prev, collection: 'invoice' })),
+                          },
+                        ])}
+                      </span>
+                    )}
+                  </div>
+                </label>
+
+                {/* The plan, in place.
+                    This was a button that opened a modal holding four fields —
+                    for a question that belongs directly under the price it
+                    splits. The extra fields appear only when there is a plan to
+                    describe, so a service paid in one go still shows one line. */}
+                <div className="flex flex-col gap-2.5 sm:col-span-2">
+                  <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                    {t('config.services.column.payment')}
+                  </span>
+
+                  {price > 0 ? (
+                    <>
+                      {segment([
+                        {
+                          value: 'full',
+                          label: t('scheduling.modal.payment_full'),
+                          active: values.payment_type !== 'installments',
+                          onClick: () => setValues(prev => ({
+                            ...prev, payment_type: 'full', installment_count: 1,
+                          })),
+                        },
+                        {
+                          value: 'installments',
+                          label: t('scheduling.modal.payment_installments'),
+                          active: values.payment_type === 'installments',
+                          onClick: () => setValues(prev => ({
+                            ...prev,
+                            payment_type: 'installments',
+                            installment_count: prev.installment_count > 1 ? prev.installment_count : 2,
+                          })),
+                        },
+                      ])}
+
+                      {values.payment_type === 'installments' && (
+                        <div className="flex flex-wrap items-end gap-x-4 gap-y-3 ps-0.5">
+                          {/* One line, read in order: how many, how often, and
+                              when the first one is taken. They describe a single
+                              arrangement, so they sit together rather than being
+                              spread to the edges of the panel. */}
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                              {t('scheduling.modal.installment_count')}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              {/* Two digits at most — 24 is the ceiling — so the
+                                  field is sized for two, leaving the split
+                                  beside it room to stay on one line. */}
+                              <input
+                                type="number"
+                                min={2}
+                                max={24}
+                                value={values.installment_count}
+                                onChange={(e) => setValues(prev => ({
+                                  ...prev,
+                                  installment_count: Math.max(2, Math.min(24, parseInt(e.target.value) || 2)),
+                                }))}
+                                className={`${field} w-14 tabular-nums`}
+                                style={fieldStyle}
+                              />
+                              {/* What one period actually costs. The owner is
+                                  splitting a total; the split is the answer. */}
+                              <span className="text-[12px] text-[var(--v2-text-muted)] tabular-nums whitespace-nowrap">
+                                {values.installment_count >= 2
+                                  ? `${getCurrencySymbol(values.currency)}${(price / values.installment_count).toFixed(2)} ${t('scheduling.modal.per_installment')}`
+                                  : ''}
+                              </span>
+                            </div>
+                          </label>
+                          <label className="flex flex-col gap-1.5">
+                            <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                              {t('scheduling.modal.installment_frequency')}
+                            </span>
+                            <Select
+                              value={values.installment_frequency}
+                              onValueChange={(value) => setValues(prev => ({
+                                ...prev, installment_frequency: value as InstallmentFrequency,
+                              }))}
+                            >
+                              <SelectTrigger
+                                className="h-9 px-3 text-[13px] bg-[var(--v2-bg)] border-[var(--v2-border)] text-[var(--v2-text-primary)]"
+                                style={{ borderRadius: 'var(--v2-radius-button)' }}
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
+                                <SelectItem value="weekly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_weekly')}</SelectItem>
+                                <SelectItem value="biweekly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_biweekly')}</SelectItem>
+                                <SelectItem value="monthly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_monthly')}</SelectItem>
+                                <SelectItem value="quarterly" className="text-[var(--v2-text-primary)]">{t('scheduling.modal.frequency_quarterly')}</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </label>
+
+                          <div className="flex flex-col gap-1.5">
+                            <span className="text-[12px] text-[var(--v2-text-secondary)]">
+                              {t('scheduling.modal.first_payment_due')}
+                            </span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {segment([
+                                {
+                                  value: 'on_booking',
+                                  label: t('scheduling.modal.payment_on_booking'),
+                                  active: values.first_payment_due === 'on_booking',
+                                  onClick: () => setValues(prev => ({
+                                    ...prev, first_payment_due: 'on_booking', first_payment_days: 0,
+                                  })),
+                                },
+                                {
+                                  value: 'days_after',
+                                  label: t('scheduling.modal.payment_days_after'),
+                                  active: values.first_payment_due === 'days_after',
+                                  onClick: () => setValues(prev => ({
+                                    ...prev,
+                                    first_payment_due: 'days_after',
+                                    first_payment_days: prev.first_payment_days || 7,
+                                  })),
+                                },
+                              ])}
+                              {values.first_payment_due === 'days_after' && (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={365}
+                                    value={values.first_payment_days}
+                                    onChange={(e) => setValues(prev => ({
+                                      ...prev,
+                                      first_payment_days: Math.max(1, Math.min(365, parseInt(e.target.value) || 1)),
+                                    }))}
+                                    className={`${field} w-20`}
+                                    style={fieldStyle}
+                                  />
+                                  <span className="text-[12px] text-[var(--v2-text-muted)]">
+                                    {t('scheduling.modal.days_after_booking')}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-[12.5px] text-[var(--v2-text-muted)]">
+                      {t('journey.pay.free')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+
+        {/* The consequence, on screen with the settings that produce it.
+            This was folded behind a chevron, which is how a business discovered
+            its booking link led nowhere — from a client's email. Turn off
+            "needs a time" above and the date step disappears while you watch. */}
+        <div className="flex-shrink-0 border-t border-[var(--v2-border)] bg-[var(--v2-bg)] px-5 py-3">
+          <span className="block text-[10.5px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)] mb-2">
+            {t('journey.label')}
+          </span>
+          <ClientJourneyStrip
+            compact
+            intakeEnabled={intakeEnabled}
+            processorReady={processorReady}
+            service={{
+              scheduled: values.is_scheduled !== false,
+              collection: (values.collection as ServiceCollection | null) ?? null,
+              price: moneyDisabled ? null : (Number.isFinite(price) ? price : null),
+              saleMode: (values.sale_mode as ServiceSaleMode | null) ?? 'direct',
+            }}
+          />
+        </div>
+
+        {/* Save and cancel */}
+        <div className="flex-shrink-0 border-t border-[var(--v2-border)] px-5 py-3 flex items-center justify-end gap-2">
+          <button
+            onClick={isNew ? cancelNewRow : cancelRowEdit}
+            className="px-3.5 py-2 text-[13px] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+          >
+            {t('button.cancel')}
+          </button>
+          <button
+            onClick={() => (isNew ? saveNewRow() : saveRowEdit(service!.id))}
+            disabled={saving}
+            className="inline-flex items-center gap-2 px-4 py-2 text-[13px] font-medium text-white transition-all disabled:opacity-50"
+            style={{ borderRadius: 'var(--v2-radius-button)', backgroundColor: CONFIG_COLOR }}
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            {t('button.save')}
+          </button>
+        </div>
       </>
     );
   };
 
   return (
-    <div className="space-y-4">
+    // A column, so the table can take the free space and the new-service line
+    // can be pinned beneath it rather than scrolling away with the list.
+    <div className="flex flex-col min-h-0 flex-1 gap-4">
       {/* CSS animation for recently edited service highlight */}
       <style>{`
         @keyframes publish-pulse-animation {
@@ -1426,226 +1567,174 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           background-color: rgba(20, 184, 166, 0.08) !important;
         }
       `}</style>
-      {/* Services Table - also show when adding new row to display the inline form */}
-      {(services.length > 0 || isAddingNewRow) && (
-        <div
-          className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden"
-          style={{ borderRadius: 'var(--v2-radius-card)' }}
-        >
-          <table className="w-full">
-            <thead>
-              <tr className="bg-[var(--v2-bg)] border-b border-[var(--v2-border)] text-xs font-medium text-[var(--v2-text-muted)] uppercase tracking-wide">
-                <th className="px-4 py-2.5 text-start w-[20%]">{t('config.services.column.service')}</th>
-                {/* The two facts that decide this service's client journey. */}
-                <th className="px-4 py-2.5 text-start w-[11%]">{t('config.services.column.needs_time')}</th>
-                <th className="px-4 py-2.5 text-start w-[10%]">{t('config.services.column.duration')}</th>
-                <th className="px-4 py-2.5 text-start w-[9%]">{t('config.services.column.buffer')}</th>
-                <th className="px-4 py-2.5 text-start w-[11%]">{t('config.services.column.price')}</th>
-                <th className="px-4 py-2.5 text-start w-[12%]">{t('config.services.column.collection')}</th>
-                <th className="px-4 py-2.5 text-start w-[9%]">{t('config.services.column.payment')}</th>
-                <th className="px-4 py-2.5 text-start w-[8%]">{t('config.services.column.status')}</th>
-                <th className="px-4 py-2.5 text-end w-[10%]">{t('config.services.column.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...services].sort((a, b) => {
-                // Active published services first, then draft, then inactive
-                const aActive = a.status !== 'draft' && a.is_active;
-                const bActive = b.status !== 'draft' && b.is_active;
-                if (aActive && !bActive) return -1;
-                if (!aActive && bActive) return 1;
-                // Then draft services
-                const aDraft = a.status === 'draft';
-                const bDraft = b.status === 'draft';
-                if (aDraft && !bDraft) return -1;
-                if (!aDraft && bDraft) return 1;
-                return 0;
-              }).map(renderServiceRow)}
-              {/* New Row for adding service */}
-              {isAddingNewRow && (
-                <tr className="bg-[#D14E97]/5 border-t border-[var(--v2-border)]">
-                  {/* Service Name */}
-                  <td className="px-4 py-3">
-                    <input
-                      type="text"
-                      value={newRowValues.name}
-                      onChange={(e) => setNewRowValues(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder={t('scheduling.modal.service_name_placeholder')}
-                      className="w-full px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-                      autoFocus
-                    />
-                  </td>
-                  {/* Needs a time? */}
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      {([true, false] as const).map(value => (
-                        <button
-                          key={String(value)}
-                          type="button"
-                          onClick={() => setNewRowValues(prev => ({ ...prev, is_scheduled: value }))}
-                          className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors ${
-                            newRowValues.is_scheduled === value
-                              ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
-                              : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                          }`}
-                        >
-                          {value ? t('config.services.needs_time.yes') : t('config.services.needs_time.no')}
-                        </button>
-                      ))}
-                    </div>
-                  </td>
-                  {/* Duration */}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        value={newRowValues.duration}
-                        onChange={(e) => setNewRowValues(prev => ({ ...prev, duration: e.target.value }))}
-                        className="w-16 px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-                      />
-                      <span className="text-xs text-[var(--v2-text-muted)]">{t('scheduling.service.minutes')}</span>
-                    </div>
-                  </td>
-                  {/* Buffer */}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        value={newRowValues.buffer}
-                        onChange={(e) => setNewRowValues(prev => ({ ...prev, buffer: e.target.value }))}
-                        className="w-16 px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-                      />
-                      <span className="text-xs text-[var(--v2-text-muted)]">{t('scheduling.service.min_buffer')}</span>
-                    </div>
-                  </td>
-                  {/* Price with Currency */}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      <Select
-                        value={newRowValues.currency}
-                        onValueChange={(value) => setNewRowValues(prev => ({ ...prev, currency: value as ServiceCurrency }))}
-                      >
-                        <SelectTrigger
-                          className="w-14 h-8 px-1.5 text-xs bg-[var(--v2-bg)] border-[#D14E97]/30 text-[var(--v2-text-primary)] focus:border-[#D14E97] focus:ring-[#D14E97]/20"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
-                          <SelectItem value="USD" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">$</SelectItem>
-                          <SelectItem value="EUR" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">€</SelectItem>
-                          <SelectItem value="ILS" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">₪</SelectItem>
-                          <SelectItem value="GBP" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">£</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <input
-                        type="number"
-                        value={newRowValues.price}
-                        onChange={(e) => setNewRowValues(prev => ({ ...prev, price: e.target.value }))}
-                        className="w-16 px-2 py-1.5 text-sm bg-[var(--v2-bg)] border border-[#D14E97]/30 rounded text-[var(--v2-text-primary)] focus:outline-none focus:ring-1 focus:ring-[#D14E97]"
-                      />
-                    </div>
-                  </td>
-                  {/* How it is paid */}
-                  <td className="px-4 py-3">
-                    {parseFloat(newRowValues.price) > 0 ? (
-                      <div className="flex gap-1">
-                        {(['online', 'invoice'] as const).map(value => (
-                          <button
-                            key={value}
-                            type="button"
-                            onClick={() => setNewRowValues(prev => ({ ...prev, collection: value }))}
-                            className={`flex-1 px-2 py-1.5 text-[11px] rounded border transition-colors truncate ${
-                              newRowValues.collection === value
-                                ? 'border-[#22C58B] bg-[#22C58B]/10 text-[#22C58B] font-semibold'
-                                : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
-                            }`}
-                          >
-                            {value === 'online'
-                              ? t('config.services.collection.online')
-                              : t('config.services.collection.invoice')}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-[var(--v2-text-muted)]">{t('journey.pay.free')}</span>
-                    )}
-                  </td>
-                  {/* Payment Plan */}
-                  <td className="px-4 py-3 text-xs text-[var(--v2-text-secondary)]">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setNewRowPaymentDialogOpen(true);
-                      }}
-                      className={`flex items-center gap-1.5 px-2 py-1 transition-all hover:bg-[#D14E97]/10 whitespace-nowrap ${
-                        newRowValues.payment_type === 'installments' ? 'text-[#D14E97]' : 'text-[var(--v2-text-muted)]'
-                      }`}
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      title={t('scheduling.modal.payment_options')}
-                    >
-                      <CreditCard className="h-3.5 w-3.5 flex-shrink-0" />
-                      {parseFloat(newRowValues.price) > 0 ? (
-                        newRowValues.payment_type === 'installments' && newRowValues.installment_count > 1 ? (
-                          <span>{newRowValues.installment_count}x {getFrequencyShortLabel(newRowValues.installment_frequency)}</span>
-                        ) : (
-                          <span>{t('scheduling.modal.payment_full')}</span>
-                        )
-                      ) : (
-                        <span>{t('journey.pay.free')}</span>
-                      )}
-                    </button>
-                  </td>
-                  {/* Status - draft by default */}
-                  <td className="px-4 py-3">
-                    <Badge
-                      variant="outline"
-                      className="text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
-                    >
-                      <Sparkles className="h-3 w-3 me-1" />
-                      {t('scheduling.service.draft')}
-                    </Badge>
-                  </td>
-                  {/* Actions */}
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1 justify-end">
-                      <button
-                        onClick={saveNewRow}
-                        disabled={savingNewRow || !newRowValues.name.trim()}
-                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#D14E97] hover:bg-[#D14E97]/90 transition-all disabled:opacity-50"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        {savingNewRow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                        {t('button.save')}
-                      </button>
-                      <button
-                        onClick={cancelNewRow}
-                        className="px-3 py-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        {t('button.cancel')}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-
+      {/* The action, above the list.
+          It used to sit under the table, which put it below the fold for any
+          business with more than a screenful of services — and moved further
+          away with every service they added. */}
+      {showAddButton && !isAddingNewRow && services.length > 0 && (
+        <div className="flex-shrink-0 flex justify-end mb-3">
+          <button
+            onClick={startAddNewRow}
+            className="inline-flex items-center gap-2 px-3.5 py-2 text-sm font-medium border border-dashed transition-all"
+            style={{
+              borderRadius: 'var(--v2-radius-button)',
+              // The tab's own colour. Orange belonged to nothing in this dialog.
+              color: CONFIG_COLOR,
+              borderColor: `${CONFIG_COLOR}70`,
+              backgroundColor: `${CONFIG_COLOR}08`,
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            {t('scheduling.new_service') || 'Add a service'}
+          </button>
         </div>
       )}
 
-      {/* Add Button - shown when showAddButton is true and not already adding */}
-      {showAddButton && !isAddingNewRow && services.length > 0 && (
-        <button
-          onClick={startAddNewRow}
-          className="w-full flex items-center justify-center gap-2 py-3 text-sm font-medium border border-dashed border-gray-300 dark:border-gray-600 bg-transparent transition-all hover:border-[#F97316]/50 hover:bg-[#F97316]/5"
-          style={{ borderRadius: 'var(--v2-radius-card)', color: '#F97316' }}
-        >
-          <Plus className="h-4 w-4" />
-          {t('scheduling.new_service') || 'Add a service'}
-        </button>
+      {/* ── Two panes ──────────────────────────────────────────────────────
+          The list carries identity; the panel carries meaning.
+
+          This was an eight-column table — שירות · אופן מכירה · דורש תור? · משך ·
+          מחיר · איך משלמים · תוכנית תשלום · סטטוס — inside a dialog about 700px
+          wide, with every cell at its minimum and editing done IN the cells. A
+          number input and its unit could not sit side by side without wrapping.
+
+          Three of those columns are one question. Sale mode, "needs a time" and
+          how the money arrives together decide what the client actually walks
+          through, and they sat far apart with the price wedged between them —
+          while the thing they add up to was folded away behind a chevron.
+
+          So: the list keeps only what tells one service from another, and the
+          panel asks the three questions in the order an owner answers them,
+          with the journey strip pinned beneath as the consequence.
+
+          Direction is never hardcoded. The list is FIRST in the DOM, so it sits
+          on the right in Hebrew and on the left in English, with no `isRTL`
+          branch anywhere. */}
+      {(services.length > 0 || isAddingNewRow) && (
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)] gap-3">
+
+          {/* ── The list ─────────────────────────────────────────────────── */}
+          <div
+            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden flex flex-col min-h-0"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[var(--v2-border)] flex-shrink-0">
+              <span className="text-[11px] font-semibold tracking-wide uppercase text-[var(--v2-text-muted)]">
+                {t('config.tab.services')}
+              </span>
+              <span className="text-[11px] text-[var(--v2-text-muted)] tabular-nums">{services.length}</span>
+            </div>
+
+            <div className="overflow-y-auto min-h-0 flex-1">
+              {[...services].sort((a, b) => {
+                const aActive = a.status !== 'draft' && a.is_active;
+                const bActive = b.status !== 'draft' && b.is_active;
+                if (aActive !== bActive) return aActive ? -1 : 1;
+                if ((a.status === 'draft') !== (b.status === 'draft')) return a.status === 'draft' ? -1 : 1;
+                return (a.service_name || '').localeCompare(b.service_name || '');
+              }).map(service => {
+                const effective = { ...service, ...(optimisticUpdates[service.id] || {}) };
+                const isDraft = effective.status === 'draft';
+                const isSelected = editingRowId === service.id;
+                const scheduled = effective.is_scheduled !== false;
+
+                return (
+                  <button
+                    key={service.id}
+                    type="button"
+                    onClick={() => startRowEdit(service)}
+                    aria-current={isSelected}
+                    className={`w-full text-start px-3.5 py-3 border-b border-[var(--v2-border)] last:border-b-0 transition-colors ${
+                      isSelected
+                        ? 'bg-[var(--v2-bg)]'
+                        : 'hover:bg-[var(--v2-bg)]'
+                    } ${recentlyEditedId === service.id ? 'recently-edited-row' : ''}`}
+                    style={isSelected ? { boxShadow: `inset 3px 0 0 ${CONFIG_COLOR}` } : undefined}
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      {/* State as a dot, not a column. Published-and-live,
+                          draft, and switched-off are three states and this is
+                          the only place the list needs to say which. */}
+                      <i
+                        className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                        style={{
+                          backgroundColor: isDraft
+                            ? '#F59E0B'
+                            : effective.is_active
+                              ? '#22C58B'
+                              : 'var(--v2-text-muted)',
+                        }}
+                        aria-hidden="true"
+                      />
+                      <span className="text-sm font-medium text-[var(--v2-text-primary)] truncate">
+                        {effective.service_name}
+                      </span>
+                    </span>
+                    {/* The four facts that tell services apart, on one line. */}
+                    <span className="mt-1 block text-[12px] text-[var(--v2-text-secondary)] tabular-nums truncate">
+                      {[
+                        effective.sale_mode === 'proposal'
+                          ? t('config.services.sale_mode.by_proposal')
+                          : (effective.price ?? 0) > 0
+                            ? `${getCurrencySymbol(effective.currency)}${effective.price}`
+                            : t('journey.pay.free'),
+                        effective.payment_type === 'installments' && (effective.installment_count ?? 0) > 1
+                          ? `${effective.installment_count}x ${getFrequencyShortLabel(effective.installment_frequency)}`
+                          : null,
+                        scheduled && effective.duration_minutes
+                          ? `${effective.duration_minutes} ${t('scheduling.service.minutes')}`
+                          : null,
+                      ].filter(Boolean).join(' · ')}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {showAddButton && (
+              <div className="flex-shrink-0 border-t border-[var(--v2-border)] p-2">
+                <button
+                  onClick={startAddNewRow}
+                  disabled={isAddingNewRow}
+                  className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium border border-dashed transition-all disabled:opacity-50"
+                  style={{
+                    borderRadius: 'var(--v2-radius-button)',
+                    color: CONFIG_COLOR,
+                    borderColor: `${CONFIG_COLOR}70`,
+                    backgroundColor: `${CONFIG_COLOR}08`,
+                  }}
+                >
+                  <Plus className="h-4 w-4" />
+                  {t('scheduling.new_service') || 'Add a service'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* ── The panel ────────────────────────────────────────────────── */}
+          <div
+            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden flex flex-col min-h-0"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            {isAddingNewRow
+              ? renderServicePanel(null)
+              : selectedService
+                ? renderServicePanel(selectedService)
+                : (
+                  /* Nothing chosen. Said plainly rather than left blank — an
+                     empty half of a dialog reads as something that failed to
+                     load. */
+                  <div className="flex-1 flex flex-col items-center justify-center gap-2 p-10 text-center">
+                    <Tag className="h-7 w-7 text-[var(--v2-text-muted)]" />
+                    <p className="text-sm text-[var(--v2-text-secondary)]">
+                      {t('config.services.pick_one')}
+                    </p>
+                  </div>
+                )}
+          </div>
+        </div>
       )}
+
 
       {/* Empty State - show Add button here when no services */}
       {services.length === 0 && !isAddingNewRow && (
@@ -1847,665 +1936,10 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       )}
 
       {/* Payment Plan Dialog */}
-      {paymentDialogId && (() => {
-        const service = services.find(s => s.id === paymentDialogId);
-        const servicePrice = service?.price || 0;
-        const serviceCurrency = service?.currency;
-
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-            <div
-              ref={paymentDialogRef}
-              className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-lg w-full mx-4 shadow-xl"
-              style={{ borderRadius: 'var(--v2-radius-card)' }}
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: `${CONFIG_COLOR}20` }}
-                  >
-                    <CreditCard className="h-5 w-5" style={{ color: CONFIG_COLOR }} />
-                  </div>
-                  <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                    {t('scheduling.modal.payment_options')}
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setPaymentDialogId(null)}
-                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="space-y-4">
-                {/* Payment Type Toggle */}
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setPaymentValues(prev => ({ ...prev, payment_type: 'full', installment_count: 1 }))}
-                    className={`p-4 text-start border transition-all ${
-                      paymentValues.payment_type === 'full'
-                        ? 'border-[#D14E97] bg-[#D14E97]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                        paymentValues.payment_type === 'full' ? 'border-[#D14E97]' : 'border-[var(--v2-text-muted)]'
-                      }`}>
-                        {paymentValues.payment_type === 'full' && <div className="w-2 h-2 rounded-full bg-[#D14E97]" />}
-                      </div>
-                      <span className={`text-sm font-medium ${paymentValues.payment_type === 'full' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_full')}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                      {t('scheduling.modal.payment_full_desc')}
-                    </p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setPaymentValues(prev => ({ ...prev, payment_type: 'installments', installment_count: prev.installment_count > 1 ? prev.installment_count : 2 }))}
-                    className={`p-4 text-start border transition-all ${
-                      paymentValues.payment_type === 'installments'
-                        ? 'border-[#D14E97] bg-[#D14E97]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                        paymentValues.payment_type === 'installments' ? 'border-[#D14E97]' : 'border-[var(--v2-text-muted)]'
-                      }`}>
-                        {paymentValues.payment_type === 'installments' && <div className="w-2 h-2 rounded-full bg-[#D14E97]" />}
-                      </div>
-                      <span className={`text-sm font-medium ${paymentValues.payment_type === 'installments' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_installments')}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                      {t('scheduling.modal.payment_installments_desc')}
-                    </p>
-                  </button>
-                </div>
-
-                {/* Installment Details - only show when installments selected */}
-                {paymentValues.payment_type === 'installments' && (
-                  <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                    <div>
-                      <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                        {t('scheduling.modal.installment_count')}
-                      </label>
-                      <input
-                        type="number"
-                        min="2"
-                        max="24"
-                        value={paymentValues.installment_count}
-                        onChange={(e) => setPaymentValues(prev => ({ ...prev, installment_count: Math.max(2, Math.min(24, parseInt(e.target.value) || 2)) }))}
-                        className="w-full px-4 py-2.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#D14E97] focus:ring-2 focus:ring-[#D14E97]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                      <p className="text-xs text-[var(--v2-text-muted)] mt-1.5">
-                        {servicePrice > 0 && paymentValues.installment_count >= 2
-                          ? `${getCurrencySymbol(serviceCurrency)}${(servicePrice / paymentValues.installment_count).toFixed(2)} ${t('scheduling.modal.per_installment')}`
-                          : ''
-                        }
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                        {t('scheduling.modal.installment_frequency')}
-                      </label>
-                      <Select
-                        value={paymentValues.installment_frequency}
-                        onValueChange={(value) => setPaymentValues(prev => ({ ...prev, installment_frequency: value as InstallmentFrequency }))}
-                      >
-                        <SelectTrigger
-                          className="w-full bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:border-[#D14E97] focus:ring-[#D14E97]/20"
-                          style={{ borderRadius: 'var(--v2-radius-button)' }}
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
-                          <SelectItem value="weekly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                            {t('scheduling.modal.frequency_weekly')}
-                          </SelectItem>
-                          <SelectItem value="biweekly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                            {t('scheduling.modal.frequency_biweekly')}
-                          </SelectItem>
-                          <SelectItem value="monthly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                            {t('scheduling.modal.frequency_monthly')}
-                          </SelectItem>
-                          <SelectItem value="quarterly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                            {t('scheduling.modal.frequency_quarterly')}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                )}
-
-                {/* First Payment Due */}
-                <div className="space-y-3">
-                  <label className="block text-sm font-medium text-[var(--v2-text-primary)]">
-                    {t('scheduling.modal.first_payment_due')}
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentValues(prev => ({ ...prev, first_payment_due: 'on_booking', first_payment_days: 0 }))}
-                      className={`p-3 text-start border transition-all ${
-                        paymentValues.first_payment_due === 'on_booking'
-                          ? 'border-[#D14E97] bg-[#D14E97]/10'
-                          : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                      }`}
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <span className={`text-sm font-medium ${paymentValues.first_payment_due === 'on_booking' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_on_booking')}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentValues(prev => ({ ...prev, first_payment_due: 'days_after', first_payment_days: prev.first_payment_days || 7 }))}
-                      className={`p-3 text-start border transition-all ${
-                        paymentValues.first_payment_due === 'days_after'
-                          ? 'border-[#D14E97] bg-[#D14E97]/10'
-                          : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                      }`}
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    >
-                      <span className={`text-sm font-medium ${paymentValues.first_payment_due === 'days_after' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                        {t('scheduling.modal.payment_days_after')}
-                      </span>
-                    </button>
-                  </div>
-
-                  {paymentValues.first_payment_due === 'days_after' && (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="365"
-                        value={paymentValues.first_payment_days}
-                        onChange={(e) => setPaymentValues(prev => ({ ...prev, first_payment_days: Math.max(1, Math.min(365, parseInt(e.target.value) || 1)) }))}
-                        className="w-20 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#D14E97] focus:ring-2 focus:ring-[#D14E97]/20 transition-all"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      />
-                      <span className="text-sm text-[var(--v2-text-secondary)]">
-                        {t('scheduling.modal.days_after_booking')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  onClick={() => setPaymentDialogId(null)}
-                  className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  {t('button.cancel')}
-                </button>
-                <button
-                  onClick={() => savePaymentPlan(paymentDialogId)}
-                  disabled={savingPayment}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all disabled:opacity-50"
-                  style={{
-                    borderRadius: 'var(--v2-radius-button)',
-                    backgroundColor: CONFIG_COLOR
-                  }}
-                >
-                  {savingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  {t('button.save')}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* New Row Payment Plan Dialog */}
-      {newRowPaymentDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div
-            ref={newRowPaymentDialogRef}
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-lg w-full mx-4 shadow-xl"
-            style={{ borderRadius: 'var(--v2-radius-card)' }}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center"
-                  style={{ backgroundColor: `${CONFIG_COLOR}20` }}
-                >
-                  <CreditCard className="h-5 w-5" style={{ color: CONFIG_COLOR }} />
-                </div>
-                <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                  {t('scheduling.modal.payment_options')}
-                </h3>
-              </div>
-              <button
-                onClick={() => setNewRowPaymentDialogOpen(false)}
-                className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {/* Payment Type Toggle */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setNewRowValues(prev => ({ ...prev, payment_type: 'full', installment_count: 1 }))}
-                  className={`p-4 text-start border transition-all ${
-                    newRowValues.payment_type === 'full'
-                      ? 'border-[#D14E97] bg-[#D14E97]/10'
-                      : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      newRowValues.payment_type === 'full' ? 'border-[#D14E97]' : 'border-[var(--v2-text-muted)]'
-                    }`}>
-                      {newRowValues.payment_type === 'full' && <div className="w-2 h-2 rounded-full bg-[#D14E97]" />}
-                    </div>
-                    <span className={`text-sm font-medium ${newRowValues.payment_type === 'full' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_full')}
-                    </span>
-                  </div>
-                  <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                    {t('scheduling.modal.payment_full_desc')}
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setNewRowValues(prev => ({ ...prev, payment_type: 'installments', installment_count: prev.installment_count > 1 ? prev.installment_count : 2 }))}
-                  className={`p-4 text-start border transition-all ${
-                    newRowValues.payment_type === 'installments'
-                      ? 'border-[#D14E97] bg-[#D14E97]/10'
-                      : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      newRowValues.payment_type === 'installments' ? 'border-[#D14E97]' : 'border-[var(--v2-text-muted)]'
-                    }`}>
-                      {newRowValues.payment_type === 'installments' && <div className="w-2 h-2 rounded-full bg-[#D14E97]" />}
-                    </div>
-                    <span className={`text-sm font-medium ${newRowValues.payment_type === 'installments' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_installments')}
-                    </span>
-                  </div>
-                  <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                    {t('scheduling.modal.payment_installments_desc')}
-                  </p>
-                </button>
-              </div>
-
-              {/* Installment Details */}
-              {newRowValues.payment_type === 'installments' && (
-                <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                      {t('scheduling.modal.installment_count')}
-                    </label>
-                    <input
-                      type="number"
-                      min="2"
-                      max="24"
-                      value={newRowValues.installment_count}
-                      onChange={(e) => setNewRowValues(prev => ({ ...prev, installment_count: Math.max(2, Math.min(24, parseInt(e.target.value) || 2)) }))}
-                      className="w-full px-4 py-2.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#D14E97] focus:ring-2 focus:ring-[#D14E97]/20 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    />
-                    <p className="text-xs text-[var(--v2-text-muted)] mt-1.5">
-                      {parseFloat(newRowValues.price) > 0 && newRowValues.installment_count >= 2
-                        ? `${getCurrencySymbol(newRowValues.currency)}${(parseFloat(newRowValues.price) / newRowValues.installment_count).toFixed(2)} ${t('scheduling.modal.per_installment')}`
-                        : ''
-                      }
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                      {t('scheduling.modal.installment_frequency')}
-                    </label>
-                    <Select
-                      value={newRowValues.installment_frequency}
-                      onValueChange={(value) => setNewRowValues(prev => ({ ...prev, installment_frequency: value as InstallmentFrequency }))}
-                    >
-                      <SelectTrigger
-                        className="w-full bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:border-[#D14E97] focus:ring-[#D14E97]/20"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
-                        <SelectItem value="weekly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_weekly')}
-                        </SelectItem>
-                        <SelectItem value="biweekly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_biweekly')}
-                        </SelectItem>
-                        <SelectItem value="monthly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_monthly')}
-                        </SelectItem>
-                        <SelectItem value="quarterly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_quarterly')}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              )}
-
-              {/* First Payment Due */}
-              <div className="space-y-3">
-                <label className="block text-sm font-medium text-[var(--v2-text-primary)]">
-                  {t('scheduling.modal.first_payment_due')}
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setNewRowValues(prev => ({ ...prev, first_payment_due: 'on_booking', first_payment_days: 0 }))}
-                    className={`p-3 text-start border transition-all ${
-                      newRowValues.first_payment_due === 'on_booking'
-                        ? 'border-[#D14E97] bg-[#D14E97]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <span className={`text-sm font-medium ${newRowValues.first_payment_due === 'on_booking' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_on_booking')}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewRowValues(prev => ({ ...prev, first_payment_due: 'days_after', first_payment_days: prev.first_payment_days || 7 }))}
-                    className={`p-3 text-start border transition-all ${
-                      newRowValues.first_payment_due === 'days_after'
-                        ? 'border-[#D14E97] bg-[#D14E97]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <span className={`text-sm font-medium ${newRowValues.first_payment_due === 'days_after' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_days_after')}
-                    </span>
-                  </button>
-                </div>
-
-                {newRowValues.first_payment_due === 'days_after' && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={newRowValues.first_payment_days}
-                      onChange={(e) => setNewRowValues(prev => ({ ...prev, first_payment_days: Math.max(1, Math.min(365, parseInt(e.target.value) || 1)) }))}
-                      className="w-20 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#D14E97] focus:ring-2 focus:ring-[#D14E97]/20 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    />
-                    <span className="text-sm text-[var(--v2-text-secondary)]">
-                      {t('scheduling.modal.days_after_booking')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setNewRowPaymentDialogOpen(false)}
-                className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {t('button.cancel')}
-              </button>
-              <button
-                onClick={() => setNewRowPaymentDialogOpen(false)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all"
-                style={{
-                  borderRadius: 'var(--v2-radius-button)',
-                  backgroundColor: CONFIG_COLOR
-                }}
-              >
-                <Check className="h-4 w-4" />
-                {t('button.save')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Edit Row Payment Plan Dialog */}
-      {editRowPaymentDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div
-            ref={editRowPaymentDialogRef}
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-lg w-full mx-4 shadow-xl"
-            style={{ borderRadius: 'var(--v2-radius-card)' }}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center"
-                  style={{ backgroundColor: `${CONFIG_COLOR}20` }}
-                >
-                  <CreditCard className="h-5 w-5" style={{ color: CONFIG_COLOR }} />
-                </div>
-                <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                  {t('scheduling.modal.payment_options')}
-                </h3>
-              </div>
-              <button
-                onClick={() => setEditRowPaymentDialogOpen(false)}
-                className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {/* Payment Type Toggle */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setEditRowValues(prev => ({ ...prev, payment_type: 'full', installment_count: 1 }))}
-                  className={`p-4 text-start border transition-all ${
-                    editRowValues.payment_type === 'full'
-                      ? 'border-[#D14E97] bg-[#D14E97]/10'
-                      : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      editRowValues.payment_type === 'full' ? 'border-[#D14E97]' : 'border-[var(--v2-text-muted)]'
-                    }`}>
-                      {editRowValues.payment_type === 'full' && <div className="w-2 h-2 rounded-full bg-[#D14E97]" />}
-                    </div>
-                    <span className={`text-sm font-medium ${editRowValues.payment_type === 'full' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_full')}
-                    </span>
-                  </div>
-                  <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                    {t('scheduling.modal.payment_full_desc')}
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setEditRowValues(prev => ({ ...prev, payment_type: 'installments', installment_count: prev.installment_count > 1 ? prev.installment_count : 2 }))}
-                  className={`p-4 text-start border transition-all ${
-                    editRowValues.payment_type === 'installments'
-                      ? 'border-[#D14E97] bg-[#D14E97]/10'
-                      : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                  }`}
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      editRowValues.payment_type === 'installments' ? 'border-[#D14E97]' : 'border-[var(--v2-text-muted)]'
-                    }`}>
-                      {editRowValues.payment_type === 'installments' && <div className="w-2 h-2 rounded-full bg-[#D14E97]" />}
-                    </div>
-                    <span className={`text-sm font-medium ${editRowValues.payment_type === 'installments' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_installments')}
-                    </span>
-                  </div>
-                  <p className="text-xs text-[var(--v2-text-muted)] mt-1.5 ms-6">
-                    {t('scheduling.modal.payment_installments_desc')}
-                  </p>
-                </button>
-              </div>
-
-              {/* Installment Details */}
-              {editRowValues.payment_type === 'installments' && (
-                <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                      {t('scheduling.modal.installment_count')}
-                    </label>
-                    <input
-                      type="number"
-                      min="2"
-                      max="24"
-                      value={editRowValues.installment_count}
-                      onChange={(e) => setEditRowValues(prev => ({ ...prev, installment_count: Math.max(2, Math.min(24, parseInt(e.target.value) || 2)) }))}
-                      className="w-full px-4 py-2.5 bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#D14E97] focus:ring-2 focus:ring-[#D14E97]/20 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    />
-                    <p className="text-xs text-[var(--v2-text-muted)] mt-1.5">
-                      {parseFloat(editRowValues.price) > 0 && editRowValues.installment_count >= 2
-                        ? `${getCurrencySymbol(editRowValues.currency)}${(parseFloat(editRowValues.price) / editRowValues.installment_count).toFixed(2)} ${t('scheduling.modal.per_installment')}`
-                        : ''
-                      }
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                      {t('scheduling.modal.installment_frequency')}
-                    </label>
-                    <Select
-                      value={editRowValues.installment_frequency}
-                      onValueChange={(value) => setEditRowValues(prev => ({ ...prev, installment_frequency: value as InstallmentFrequency }))}
-                    >
-                      <SelectTrigger
-                        className="w-full bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-primary)] focus:border-[#D14E97] focus:ring-[#D14E97]/20"
-                        style={{ borderRadius: 'var(--v2-radius-button)' }}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)]">
-                        <SelectItem value="weekly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_weekly')}
-                        </SelectItem>
-                        <SelectItem value="biweekly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_biweekly')}
-                        </SelectItem>
-                        <SelectItem value="monthly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_monthly')}
-                        </SelectItem>
-                        <SelectItem value="quarterly" className="text-[var(--v2-text-primary)] focus:bg-[#D14E97]/10 focus:text-[#D14E97]">
-                          {t('scheduling.modal.frequency_quarterly')}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              )}
-
-              {/* First Payment Due */}
-              <div className="space-y-3">
-                <label className="block text-sm font-medium text-[var(--v2-text-primary)]">
-                  {t('scheduling.modal.first_payment_due')}
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setEditRowValues(prev => ({ ...prev, first_payment_due: 'on_booking', first_payment_days: 0 }))}
-                    className={`p-3 text-start border transition-all ${
-                      editRowValues.first_payment_due === 'on_booking'
-                        ? 'border-[#D14E97] bg-[#D14E97]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <span className={`text-sm font-medium ${editRowValues.first_payment_due === 'on_booking' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_on_booking')}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditRowValues(prev => ({ ...prev, first_payment_due: 'days_after', first_payment_days: prev.first_payment_days || 7 }))}
-                    className={`p-3 text-start border transition-all ${
-                      editRowValues.first_payment_due === 'days_after'
-                        ? 'border-[#D14E97] bg-[#D14E97]/10'
-                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
-                    }`}
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    <span className={`text-sm font-medium ${editRowValues.first_payment_due === 'days_after' ? 'text-[#D14E97]' : 'text-[var(--v2-text-primary)]'}`}>
-                      {t('scheduling.modal.payment_days_after')}
-                    </span>
-                  </button>
-                </div>
-
-                {editRowValues.first_payment_due === 'days_after' && (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      max="365"
-                      value={editRowValues.first_payment_days}
-                      onChange={(e) => setEditRowValues(prev => ({ ...prev, first_payment_days: Math.max(1, Math.min(365, parseInt(e.target.value) || 1)) }))}
-                      className="w-20 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#D14E97] focus:ring-2 focus:ring-[#D14E97]/20 transition-all"
-                      style={{ borderRadius: 'var(--v2-radius-button)' }}
-                    />
-                    <span className="text-sm text-[var(--v2-text-secondary)]">
-                      {t('scheduling.modal.days_after_booking')}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={() => setEditRowPaymentDialogOpen(false)}
-                className="px-4 py-2 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {t('button.cancel')}
-              </button>
-              <button
-                onClick={() => setEditRowPaymentDialogOpen(false)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white transition-all"
-                style={{
-                  borderRadius: 'var(--v2-radius-button)',
-                  backgroundColor: CONFIG_COLOR
-                }}
-              >
-                <Check className="h-4 w-4" />
-                {t('button.save')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

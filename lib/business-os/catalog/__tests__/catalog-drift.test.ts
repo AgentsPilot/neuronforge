@@ -225,13 +225,17 @@ describe('Business Catalog', () => {
       const derived = SEMANTIC_CATALOG.contacts.derived?.has_completed_intake;
       expect(derived).toBeDefined();
 
-      const relation = SEMANTIC_CATALOG.contacts.relations?.[derived!.expand.relation];
+      // `expand` may declare one hop or several; this field declares one, and
+      // narrowing says so rather than reaching through a union.
+      const expand = derived!.expand as { relation: string; where?: Array<{ field: string }> };
+
+      const relation = SEMANTIC_CATALOG.contacts.relations?.[expand.relation];
       expect(relation).toBeDefined();
       expect(relation!.target).toBe('bookings');
 
       // The predicate must reference a column that genuinely exists on bookings.
       const targetTable = PHYSICAL_CATALOG.tables[SEMANTIC_CATALOG.bookings.table];
-      for (const predicate of derived!.expand.where ?? []) {
+      for (const predicate of expand.where ?? []) {
         const field = SEMANTIC_CATALOG.bookings.fields[predicate.field];
         expect(field).toBeDefined();
         expect(targetTable.columns.some((c) => c.name === field.column)).toBe(true);

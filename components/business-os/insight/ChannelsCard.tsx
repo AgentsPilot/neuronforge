@@ -306,7 +306,7 @@ function Mark({ tint, children }: { tint?: string; children: React.ReactNode }) 
         flexShrink: 0,
         display: 'grid',
         placeItems: 'center',
-        background: tint ? `${tint}1F` : '#F1F3F8',
+        background: tint ? `${tint}1F` : 'var(--v2-bg)',
       }}
     >
       {children}
@@ -656,7 +656,7 @@ export function ChannelsCard({
     addable.push({
       key: 'website',
       logos: [],
-      icon: <Globe className="w-3.5 h-3.5" style={{ color: '#8A93A6' }} />,
+      icon: <Globe className="w-3.5 h-3.5" style={{ color: 'var(--v2-text-muted)' }} />,
       label: `${t('surfaceWebsite')} · ${hasDraft ? t('publishWebsite') : t('createLanding')}`,
       title: hasDraft ? t('draftWaiting') : undefined,
       run: () => onAction?.(hasDraft ? 'publish_website' : 'open_website'),
@@ -667,7 +667,7 @@ export function ChannelsCard({
     addable.push({
       key: 'landing',
       logos: [],
-      icon: <FileText className="w-3.5 h-3.5" style={{ color: '#8A93A6' }} />,
+      icon: <FileText className="w-3.5 h-3.5" style={{ color: 'var(--v2-text-muted)' }} />,
       label: `${t('surfaceLanding')} · ${hasDraft ? t('publishWebsite') : t('createLanding')}`,
       title: hasDraft ? t('draftWaiting') : undefined,
       // Always the builder, never a direct publish: a landing page is one of
@@ -679,7 +679,7 @@ export function ChannelsCard({
     addable.push({
       key: 'smart-links',
       logos: [],
-      icon: <Link2 className="w-3.5 h-3.5" style={{ color: '#8A93A6' }} />,
+      icon: <Link2 className="w-3.5 h-3.5" style={{ color: 'var(--v2-text-muted)' }} />,
       label: `${t('surfaceSmartLinks')} · ${t('createSmartLink')}`,
       run: () => onAction?.('create_booking_link'),
     });
@@ -705,8 +705,8 @@ export function ChannelsCard({
           : {
               padding: '13px',
               borderRadius: '14px',
-              background: '#FFFFFF',
-              border: '1px solid #E7E9F1',
+              background: 'var(--v2-surface)',
+              border: '1px solid var(--v2-border)',
             }),
       }}
     >
@@ -716,7 +716,7 @@ export function ChannelsCard({
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif',
             fontSize: '13.5px',
             fontWeight: 600,
-            color: '#131A2B',
+            color: 'var(--v2-text-primary)',
           }}
         >
           {t('title')}
@@ -731,7 +731,7 @@ export function ChannelsCard({
               gap: '4px',
               fontSize: '10.5px',
               fontWeight: 600,
-              color: '#8A93A6',
+              color: 'var(--v2-text-muted)',
               background: 'none',
               border: 'none',
               cursor: syncing ? 'default' : 'pointer',
@@ -749,17 +749,17 @@ export function ChannelsCard({
           nothing else to say; with live rows beneath it, it was telling a
           business to do something it had already done. */}
       {liveRows.length > 0 ? (
-        <p style={{ fontSize: '11px', color: '#8A93A6', margin: '3px 0 10px', lineHeight: 1.4 }}>
-          <b style={{ color: '#212838', fontWeight: 600 }}>{liveRows.length}</b> {t('activeCount')}
+        <p style={{ fontSize: '11px', color: 'var(--v2-text-muted)', margin: '3px 0 10px', lineHeight: 1.4 }}>
+          <b style={{ color: 'var(--v2-text-primary)', fontWeight: 600 }}>{liveRows.length}</b> {t('activeCount')}
           {addable.length > 0 && (
             <>
               {' · '}
-              <b style={{ color: '#212838', fontWeight: 600 }}>{addable.length}</b> {t('addableCount')}
+              <b style={{ color: 'var(--v2-text-primary)', fontWeight: 600 }}>{addable.length}</b> {t('addableCount')}
             </>
           )}
         </p>
       ) : (
-        <p style={{ fontSize: '11px', color: '#8A93A6', margin: '3px 0 10px', lineHeight: 1.4 }}>
+        <p style={{ fontSize: '11px', color: 'var(--v2-text-muted)', margin: '3px 0 10px', lineHeight: 1.4 }}>
           {t('subtitle')}
         </p>
       )}
@@ -786,9 +786,9 @@ export function ChannelsCard({
                 {row.state === 'alert' ? (
                   <Mark tint="#D97706"><AlertCircle className="w-[15px] h-[15px]" style={{ color: '#B45309' }} /></Mark>
                 ) : row.connection?.is_backfilling ? (
-                  <Mark tint="#8A93A6"><Loader2 className="w-[15px] h-[15px] animate-spin" style={{ color: '#6B7285' }} /></Mark>
+                  <Mark tint="#8A93A6"><Loader2 className="w-[15px] h-[15px] animate-spin" style={{ color: 'var(--v2-text-secondary)' }} /></Mark>
                 ) : row.state === 'paused' ? (
-                  <Mark tint="#8A93A6"><X className="w-[15px] h-[15px]" style={{ color: '#8A93A6' }} /></Mark>
+                  <Mark tint="#8A93A6"><X className="w-[15px] h-[15px]" style={{ color: 'var(--v2-text-muted)' }} /></Mark>
                 ) : (
                   row.icon
                 )}
@@ -803,7 +803,7 @@ export function ChannelsCard({
                     fontSize: '12px',
                     fontWeight: 500,
                     lineHeight: 1.25,
-                    color: row.state === 'paused' ? '#8A93A6' : '#212838',
+                    color: row.state === 'paused' ? 'var(--v2-text-muted)' : 'var(--v2-text-primary)',
                   }}
                 >
                   {row.state === 'live' && (
@@ -820,7 +820,7 @@ export function ChannelsCard({
                     fontSize: '10.5px',
                     lineHeight: 1.35,
                     marginTop: '1px',
-                    color: row.state === 'alert' ? '#A9700F' : '#8A93A6',
+                    color: row.state === 'alert' ? '#A9700F' : 'var(--v2-text-muted)',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -869,7 +869,7 @@ export function ChannelsCard({
                     border: 'none',
                     cursor: 'pointer',
                     padding: '2px',
-                    color: '#A2A9B8',
+                    color: 'var(--v2-text-muted)',
                     opacity: open ? 1 : undefined,
                     transition: 'opacity 140ms ease',
                   }}
@@ -896,18 +896,18 @@ export function ChannelsCard({
                     <button
                       onClick={() => remove(row.connection!)}
                       disabled={busy}
-                      style={{ fontWeight: 700, color: '#B4442E', background: 'none', border: 'none', cursor: 'pointer' }}
+                      style={{ fontWeight: 700, color: '#F97316', background: 'none', border: 'none', cursor: 'pointer' }}
                     >
                       {busy ? '…' : t('removeYes')}
                     </button>
                     <button
                       onClick={() => { setConfirmingId(null); setRemoveError(null); }}
                       disabled={busy}
-                      style={{ fontWeight: 600, color: '#8A93A6', background: 'none', border: 'none', cursor: 'pointer' }}
+                      style={{ fontWeight: 600, color: 'var(--v2-text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}
                     >
                       {t('removeCancel')}
                     </button>
-                    <span style={{ color: '#8A93A6', lineHeight: 1.4 }}>{t('removeNote')}</span>
+                    <span style={{ color: 'var(--v2-text-muted)', lineHeight: 1.4 }}>{t('removeNote')}</span>
                   </>
                 ) : (
                   <>
@@ -916,7 +916,7 @@ export function ChannelsCard({
                       disabled={busy}
                       style={{
                         fontWeight: 600,
-                        color: row.connection.insights_enabled ? '#8A93A6' : '#1F7A55',
+                        color: row.connection.insights_enabled ? 'var(--v2-text-muted)' : '#1F7A55',
                         background: 'none',
                         border: 'none',
                         cursor: 'pointer',
@@ -927,7 +927,7 @@ export function ChannelsCard({
                     <button
                       onClick={() => setConfirmingId(row.connection!.id)}
                       disabled={busy}
-                      style={{ fontWeight: 600, color: '#B4442E', background: 'none', border: 'none', cursor: 'pointer' }}
+                      style={{ fontWeight: 600, color: '#F97316', background: 'none', border: 'none', cursor: 'pointer' }}
                     >
                       {t('remove')}
                     </button>
@@ -937,7 +937,7 @@ export function ChannelsCard({
             )}
 
             {removeError && confirming && (
-              <p style={{ padding: '0 8px 6px', fontSize: '10.5px', color: '#B4442E', lineHeight: 1.4 }}>
+              <p style={{ padding: '0 8px 6px', fontSize: '10.5px', color: '#F97316', lineHeight: 1.4 }}>
                 {removeError}
               </p>
             )}
@@ -953,7 +953,7 @@ export function ChannelsCard({
           style={{
             marginTop: liveRows.length > 0 ? '10px' : 0,
             paddingTop: liveRows.length > 0 ? '9px' : 0,
-            borderTop: liveRows.length > 0 ? '1px solid #F1F3F8' : 'none',
+            borderTop: liveRows.length > 0 ? '1px solid var(--v2-bg)' : 'none',
           }}
         >
           <p
@@ -962,7 +962,7 @@ export function ChannelsCard({
               fontWeight: 600,
               letterSpacing: '0.07em',
               textTransform: 'uppercase',
-              color: '#A2A9B8',
+              color: 'var(--v2-text-muted)',
               marginBottom: '6px',
             }}
           >
@@ -986,8 +986,8 @@ export function ChannelsCard({
                     borderRadius: '99px',
                     padding: '4px 10px',
                     fontSize: '11px',
-                    color: '#4A5165',
-                    background: '#FFFFFF',
+                    color: 'var(--v2-text-secondary)',
+                    background: 'var(--v2-surface)',
                     cursor: isConnecting ? 'default' : 'pointer',
                     transition: 'border-color 0.15s, color 0.15s',
                   }}
@@ -998,7 +998,7 @@ export function ChannelsCard({
                   }}
                   onMouseLeave={e => {
                     e.currentTarget.style.borderColor = '#DDE3ED';
-                    e.currentTarget.style.color = '#4A5165';
+                    e.currentTarget.style.color = 'var(--v2-text-secondary)';
                   }}
                 >
                   {isConnecting ? (
@@ -1023,8 +1023,8 @@ export function ChannelsCard({
 
       {/* The multi-account chooser, when the provider returns more than one. */}
       {connect.phase === 'selecting' && connect.accounts.length > 0 && (
-        <div style={{ marginTop: '9px', borderTop: '1px solid #E7E9F1', paddingTop: '9px' }}>
-          <p style={{ fontSize: '11px', fontWeight: 600, color: '#131A2B', marginBottom: '6px' }}>
+        <div style={{ marginTop: '9px', borderTop: '1px solid var(--v2-border)', paddingTop: '9px' }}>
+          <p style={{ fontSize: '11px', fontWeight: 600, color: 'var(--v2-text-primary)', marginBottom: '6px' }}>
             {t('choose')}
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -1038,8 +1038,8 @@ export function ChannelsCard({
                   gap: '7px',
                   padding: '6px 8px',
                   borderRadius: '8px',
-                  border: '1px solid #E7E9F1',
-                  background: '#FFFFFF',
+                  border: '1px solid var(--v2-border)',
+                  background: 'var(--v2-surface)',
                   cursor: 'pointer',
                   textAlign: isRTL ? 'right' : 'left',
                 }}
@@ -1051,11 +1051,11 @@ export function ChannelsCard({
                   <span style={{ width: 22, height: 22, borderRadius: '99px', background: '#EDF0F7' }} />
                 )}
                 <span style={{ minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: '11.5px', lineHeight: 1.3, color: '#131A2B' }}>
+                  <span style={{ display: 'block', fontSize: '11.5px', lineHeight: 1.3, color: 'var(--v2-text-primary)' }}>
                     {account.name}
                   </span>
                   {account.detail && (
-                    <span style={{ display: 'block', fontSize: '9.5px', lineHeight: 1.3, color: '#8A93A6' }}>
+                    <span style={{ display: 'block', fontSize: '9.5px', lineHeight: 1.3, color: 'var(--v2-text-muted)' }}>
                       {account.detail}
                     </span>
                   )}
@@ -1067,7 +1067,7 @@ export function ChannelsCard({
       )}
 
       {connect.phase === 'error' && connect.error && (
-        <p style={{ marginTop: '8px', fontSize: '11px', color: '#B4442E', lineHeight: 1.4 }}>
+        <p style={{ marginTop: '8px', fontSize: '11px', color: '#F97316', lineHeight: 1.4 }}>
           {connectErrorText(connect.error, connect.provider)}
         </p>
       )}
@@ -1079,9 +1079,9 @@ export function ChannelsCard({
           style={{
             marginTop: '10px',
             paddingTop: '8px',
-            borderTop: '1px solid #F1F3F8',
+            borderTop: '1px solid var(--v2-bg)',
             fontSize: '10px',
-            color: '#A2A9B8',
+            color: 'var(--v2-text-muted)',
             lineHeight: 1.4,
           }}
         >

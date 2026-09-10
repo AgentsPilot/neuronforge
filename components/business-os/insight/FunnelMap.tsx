@@ -183,8 +183,8 @@ export function FunnelMap({
       className="lv-map"
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         borderRadius: '18px',
         padding: '26px 20px 20px',
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
@@ -212,8 +212,8 @@ export function FunnelMap({
                 padding: '14px 6px 12px',
                 borderRadius: '15px',
                 background: station.off
-                  ? 'repeating-linear-gradient(135deg, #FBFCFE 0 7px, #F5F6FA 7px 8px)'
-                  : '#fff',
+                  ? 'repeating-linear-gradient(135deg, var(--v2-bg) 0 7px, var(--v2-surface-hover) 7px 8px)'
+                  : 'var(--v2-surface)',
                 // Longhand only. This carried `border` as well, and React warns
                 // on every rerender that mixing the shorthand with borderStyle
                 // and borderColor for the same value leads to styling bugs —
@@ -223,7 +223,7 @@ export function FunnelMap({
                 // station rerenders, so the warning repeated for every click.
                 borderWidth: '1.5px',
                 borderStyle: station.off ? 'dashed' : 'solid',
-                borderColor: station.off ? '#D8DCE8' : (selectedKey === station.k ? '#F97316' : '#E7E9F1'),
+                borderColor: station.off ? 'var(--v2-border)' : (selectedKey === station.k ? '#F97316' : 'var(--v2-border)'),
                 boxShadow: selectedKey === station.k ? '0 0 0 3px rgba(249,115,22,0.11)' : 'none',
                 transition: '0.3s',
                 cursor: 'pointer',
@@ -237,7 +237,7 @@ export function FunnelMap({
                   height: '34px',
                   borderRadius: '11px',
                   background: station.off
-                    ? '#EDEFF5'
+                    ? 'var(--v2-border)'
                     : station.color
                     ? station.color
                     : 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
@@ -260,7 +260,7 @@ export function FunnelMap({
                     style={{
                       width: '17px',
                       height: '17px',
-                      stroke: station.off ? '#A8AEBF' : '#fff',
+                      stroke: station.off ? 'var(--v2-text-muted)' : '#fff',
                       fill: 'none',
                       strokeWidth: 2,
                       strokeLinecap: 'round',
@@ -282,7 +282,7 @@ export function FunnelMap({
                   letterSpacing: '-0.03em',
                   fontVariantNumeric: 'tabular-nums',
                   lineHeight: 1.1,
-                  color: station.off ? '#B4BAC8' : '#131A2B',
+                  color: station.off ? 'var(--v2-text-muted)' : 'var(--v2-text-primary)',
                   display: 'block',
                 }}
               >
@@ -294,7 +294,7 @@ export function FunnelMap({
                 className="lv-lb"
                 style={{
                   fontSize: '12px',
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   marginTop: '3px',
                   lineHeight: 1.3,
                   display: 'block',
@@ -424,7 +424,7 @@ export function FunnelMap({
                       fontWeight: 600,
                       textAlign: 'center',
                       lineHeight: 1.25,
-                      color: gaps[index].state === 'leak' ? '#C0392B' : '#697187',
+                      color: gaps[index].state === 'leak' ? '#F26B6B' : 'var(--v2-text-secondary)',
                       textDecoration: selectedKey === gaps[index].k ? 'underline' : 'none',
                       textUnderlineOffset: '3px',
                       fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -471,8 +471,8 @@ export function FunnelMap({
           className="lv-ghost"
           style={{
             marginTop: '18px',
-            border: '1.5px dashed #E3D6C6',
-            background: '#FEFAF5',
+            border: '1.5px dashed rgba(245, 158, 11, 0.35)',
+            background: 'rgba(245, 158, 11, 0.08)',
             borderRadius: '13px',
             padding: '12px 14px',
             display: 'flex',
@@ -509,7 +509,7 @@ export function FunnelMap({
                 display: 'block',
                 lineHeight: 1.4,
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                color: '#131A2B',
+                color: 'var(--v2-text-primary)',
               }}
             >
               {ghost.t}
@@ -553,9 +553,9 @@ export function FunnelMap({
           gap: '16px',
           marginTop: '20px',
           paddingTop: '15px',
-          borderTop: '1px solid #E7E9F1',
+          borderTop: '1px solid var(--v2-border)',
           fontSize: '12px',
-          color: '#697187',
+          color: 'var(--v2-text-secondary)',
           fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
         }}
       >

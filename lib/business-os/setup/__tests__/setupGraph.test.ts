@@ -295,8 +295,10 @@ describe('[smoke] setup graph — shape', () => {
       for (const requirement of node.requires) {
         expect(known.has(requirement)).toBe(true);
       }
-      if (typeof node.mandatory === 'object') {
-        expect(known.has(node.mandatory.once)).toBe(true);
+      if (node.mandatory && typeof node.mandatory === 'object') {
+        // Narrowed explicitly: `mandatory` is a boolean OR a { once } object,
+        // and the boolean arm leaves nothing to look up.
+        expect(known.has((node.mandatory as { once: StepId }).once)).toBe(true);
       }
       if (node.belongsTo) expect(known.has(node.belongsTo)).toBe(true);
     }

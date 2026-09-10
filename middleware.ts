@@ -64,6 +64,7 @@ const V2_REWRITE_EXEMPT = [
   '/c',
   '/go',
   '/site',
+  '/proposal',
   '/payments/success',
   '/payments/cancelled',
 ] as const;
@@ -136,6 +137,10 @@ export async function middleware(request: NextRequest) {
     pathname === '/book' ||
     pathname.startsWith('/book/') ||
     pathname.startsWith('/invoice/') || // Public invoice pages
+    // The quote a client opens from their email. Unauthenticated by design —
+    // the signed token in the URL is the authorisation — so it must never be
+    // rewritten under /v2, where it 404s.
+    pathname.startsWith('/proposal/') ||
     // The two generic post-Stripe screens. Matched exactly, because the
     // owner-facing `/payments` dashboard lives under the same first segment and
     // must keep its auth and onboarding checks.

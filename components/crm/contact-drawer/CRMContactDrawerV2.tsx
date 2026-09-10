@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { businessCollectsIntake } from '@/lib/business-os/intakeReach';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -29,6 +29,7 @@ import { FilesTab } from './FilesTab';
 import { BookingsTab } from './BookingsTab';
 import { FormSubmissionsSection } from './FormSubmissionsSection';
 import { PaymentManagementModal } from './PaymentManagementModal';
+import { ProposalBuilderModal } from './ProposalBuilderModal';
 import { PaymentsSection } from './PaymentsSection';
 import { InvoiceModal } from '@/components/payments/InvoiceModal';
 
@@ -63,6 +64,213 @@ interface ExtendedBookingData {
     openedAt?: string;
     subject?: string;  // Email subject line
   };
+  /**
+   * The quote attached to this booking, when the service is sold by quotation.
+   *
+   * Present even when there is no proposal yet — that is the important state.
+   * A client who asked for a price and has not been sent one is waiting on the
+   * OWNER, and a journey that showed nothing there would leave the request
+   * invisible in the one place the owner looks at that client.
+   */
+  proposal?: DrawerProposal | null;
+  /** Every version sent to this client for this service, newest first. */
+  proposalHistory?: DrawerProposal[];
+}
+
+/** The half of a proposal the drawer needs. */
+export interface DrawerProposal {
+  id: string;
+  status: 'draft' | 'sent' | 'viewed' | 'accepted' | 'declined' | 'expired' | 'withdrawn' | 'superseded';
+  title: string;
+  /** Kept so a revision can open on the last version rather than on a blank form. */
+  description: string | null;
+  total: number;
+  currency: string;
+  /** The stage split, so a revision inherits the schedule that was negotiated. */
+  payment_shape: {
+    kind: 'single' | 'installments' | 'milestones';
+    count?: number;
+    frequency?: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
+    stages?: Array<{ label: string; percent: number }>;
+  };
+  service_id: string | null;
+  valid_until: string | null;
+  decline_reason: string | null;
+  decline_note: string | null;
+  sent_at: string | null;
+  viewed_at: string | null;
+  decided_at: string | null;
+  created_at: string;
+  /** The request this quote answers. Null for rows predating the link. */
+  booking_id: string | null;
+  /** The proposal document sent with THIS version, when there was one. */
+  document: { name: string; size: number | null } | null;
+  created_invoice_id: string | null;
+  /** The invoice acceptance raised, when this quote has been accepted. */
+  invoice: {
+    status: string;
+    amount: number;
+    currency: string;
+    due_date: string | null;
+  } | null;
+  /** Every stage of the agreed plan. Empty for a single payment. */
+  stages: Array<{
+    id: string;
+    installment_number: number | null;
+    amount: number;
+    currency: string;
+    status: string;
+    label: string | null;
+    trigger: 'date' | 'manual' | null;
+    due_date: string | null;
+    invoice_id: string | null;
+    completed_at: string | null;
+    paid_at: string | null;
+  }>;
+}
+
+/**
+ * The quote that belongs to a booking.
+ *
+ * Matched on the service, because that is the only link the two share — a
+ * proposal names what is being quoted for, and the booking names what was
+ * requested. Superseded versions are skipped: after a revision the journey
+ * should show the offer that stands, not the one it replaced.
+ *
+ * Newest first, so a second quote for the same service wins over the first.
+ */
+function proposalsFor(bookingId: string, proposals: DrawerProposal[]): DrawerProposal[] {
+  /*
+   * Matched on the BOOKING, not the service.
+   *
+   * Matching on `service_id` was wrong in a way that only showed up on the
+   * second request: every quote ever sent for a service attached itself to
+   * every booking of that service, so a brand-new enquiry opened already
+   * showing the previous job accepted — the client's history, replayed against
+   * a request that had nothing to do with it.
+   *
+   * A quote answers ONE request. `booking_id` says which.
+   *
+   * Quotes with a null `booking_id` attach to nothing. They predate the column
+   * (or were raised outside a booking), and the alternative — falling back to
+   * the service — is exactly the bug this replaces. They remain readable
+   * everywhere the contact's quotes are listed; they simply do not claim a
+   * booking they cannot prove they belong to.
+   *
+   * Superseded versions ARE kept: a quote declined at 12,000 and re-sent at
+   * 10,000 is a negotiation, and the first number is the reason the second one
+   * exists. Drafts are not — an unsent revision is not part of the client's
+   * history.
+   */
+  return proposals
+    .filter(p => p.status !== 'draft' && p.booking_id === bookingId)
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+}
+
+/**
+ * A quoted job's money, in the shape every other booking uses.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A quoted service is priced 0 — its price IS the quote, which does not exist
+ * when the service is created — so the drawer built `{ status: 'free' }` for it
+ * and every piece of money machinery downstream believed it. "Manage payment"
+ * opened on ₪0.00 / חינם / "no payment required" for a job with a paid ₪1,250
+ * deposit against it, and refunds were unreachable.
+ *
+ * The fix is not another parallel payment step. It is to answer the question
+ * the rest of the drawer is already asking — what is owed, what is paid, what
+ * plan is it on — with the quote's numbers instead of the service's.
+ *
+ * ONE builder, called from both load paths. The comment further down this file
+ * records what happened last time the two built a payment object separately:
+ * the refund fields were added to one and not the other.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function quotedPayment(
+  proposal: DrawerProposal | null,
+  currency: string
+): SessionPayment | null {
+  if (!proposal || proposal.status !== 'accepted' || !proposal.invoice) return null;
+
+  const stages = proposal.stages ?? [];
+  const paidStages = stages.filter(s => s.status === 'paid');
+  const agreed = stages.length
+    ? stages.reduce((sum, s) => sum + Number(s.amount), 0)
+    : proposal.invoice.amount;
+
+  /*
+   * Which payment this object describes.
+   *
+   * `amount` and `status` mean "this payment", never the agreement — the plan
+   * below carries the totals. So once money has landed, this describes the
+   * money that LANDED; before that, the money next due.
+   *
+   * Two bugs turned on getting that wrong:
+   *
+   *   `status` was 'paid' only when every stage was settled. But "is the plan
+   *   finished" is what `planIncomplete` answers, from `periodsPaid` below.
+   *   `status` answers "has money been collected", and the refund UI reads it —
+   *   so a real, refundable deposit was invisible to Manage Payment, which
+   *   offered to mark it paid a second time.
+   *
+   *   `amount` pointed at the next UNPAID stage even after a payment. On a
+   *   uniform instalment plan every stage is the same size, so it never showed.
+   *   On milestones of 705 / 940 / 705 it displayed 940 for a 705 payment — and
+   *   a refund taken from that figure would return money never collected.
+   */
+  const lastPaid = paidStages.length ? paidStages[paidStages.length - 1] : null;
+  const nextDue = stages.find(s => s.status !== 'paid') ?? null;
+  const subject = lastPaid ?? nextDue ?? null;
+
+  const anyMoneyCollected =
+    paidStages.length > 0 || (stages.length === 0 && proposal.invoice.status === 'paid');
+
+  return {
+    amount: subject ? Number(subject.amount) : proposal.invoice.amount,
+    currency,
+    status: anyMoneyCollected ? 'paid' : 'pending',
+    // The invoice behind the payment being DESCRIBED, so a refund finds that
+    // transaction rather than the deposit's by default.
+    invoiceId: subject?.invoiceId ?? proposal.created_invoice_id ?? undefined,
+    /*
+     * What is owed right now: the earliest unpaid stage that has actually been
+     * billed. A milestone nobody has marked done has no invoice to resend, and
+     * offering to resend one would be offering to send nothing.
+     */
+    outstandingInvoiceId:
+      stages.find(s => s.status !== 'paid' && s.invoiceId)?.invoiceId ??
+      (proposal.invoice.status !== 'paid' ? proposal.created_invoice_id ?? undefined : undefined),
+    invoiceDueDate: proposal.invoice.due_date ?? undefined,
+    plan: stages.length > 1
+      ? {
+          installmentCount: stages.length,
+          // The period the plan is ON — the next one due, or the last if the
+          // plan is finished. Not `subject`, which describes the payment just
+          // taken; the plan's own "current period" is a different question.
+          installmentAmount: Number((nextDue ?? stages[stages.length - 1])?.amount ?? 0),
+          totalAmount: agreed,
+          // Milestones have no cadence — they fall due when work is done. The
+          // field is required by the shared type, so it carries the least wrong
+          // answer and `stages` below is what actually describes the schedule.
+          frequency: 'monthly',
+          periodsPaid: paidStages.length,
+          stages: stages.map(s => ({
+            id: s.id,
+            label: s.label,
+            amount: Number(s.amount),
+            status: s.status,
+            trigger: s.trigger,
+            invoiceId: s.invoice_id,
+            dueDate: s.due_date,
+          })),
+        }
+      : undefined,
+  };
+}
+
+/** The offer that stands — the newest that has not been replaced. */
+function pickProposal(bookingId: string, proposals: DrawerProposal[]): DrawerProposal | null {
+  return proposalsFor(bookingId, proposals).find(p => p.status !== 'superseded') ?? null;
 }
 
 // Build journey steps based on booking data
@@ -86,10 +294,18 @@ function buildJourneySteps(
   const isProduct = !booking.start_time || booking.service?.is_product;
   const hasIntake = booking.intake_responses && Object.keys(booking.intake_responses.responses || {}).length > 0;
   const bookingDate = booking.start_time ? new Date(booking.start_time) : null;
-  const endDate = booking.end_time ? new Date(booking.end_time) : null;
   const isUpcoming = booking.status === 'confirmed' && bookingDate && bookingDate > new Date();
   const isCompleted = booking.status === 'completed';
   const isCancelled = booking.status === 'cancelled' || booking.status === 'no_show';
+  /*
+   * A booking that began as a quote request.
+   *
+   * Read from the service rather than the booking, because a consultation
+   * booked on the way to a quote is an ordinary confirmed booking in every
+   * other respect — what makes it part of a quoted journey is what is being
+   * sold, not how the row was created.
+   */
+  const isQuotedBooking = booking.service?.sale_mode === 'proposal';
 
   // Helper to format date and time
   const formatDateTime = (date: Date) => date.toLocaleString(language, {
@@ -99,8 +315,6 @@ function buildJourneySteps(
     minute: '2-digit'
   });
 
-  // Helper to format time only
-  const formatTime = (date: Date) => date.toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' });
 
   // Helper to format currency
   const formatAmount = (amount: number, currency: string) => {
@@ -118,11 +332,30 @@ function buildJourneySteps(
 
   // Step 2: Client Info (captured at booking time)
   const clientName = [booking.client_first_name, booking.client_last_name].filter(Boolean).join(' ');
+  /*
+   * Each field isolated, so the separators stay put in Hebrew.
+   *
+   * An email and a phone number are LTR runs sitting in an RTL line. The bidi
+   * algorithm reorders each run on its own and the neutral "•" between them
+   * takes its direction from whatever is adjacent — so the two separators drift
+   * together and the line reads as "name • • email phone".
+   *
+   * U+2068 FIRST STRONG ISOLATE ... U+2069 POP DIRECTIONAL ISOLATE wraps each
+   * value in its own bidi context: the run is laid out internally by its own
+   * direction and treated as a single neutral object by the line around it.
+   * The same thing `<bdi>` does, in a plain string — which is what `details`
+   * is, so markup is not available here.
+   */
+  const isolate = (value: string) => `\u2068${value}\u2069`;
+
   const clientDetails = [
     clientName,
     booking.client_email,
     booking.client_phone
-  ].filter(Boolean).join(' • ');
+  ]
+    .filter(Boolean)
+    .map(v => isolate(String(v)))
+    .join(' • ');
 
   steps.push({
     id: `${booking.id}-client`,
@@ -132,20 +365,156 @@ function buildJourneySteps(
     timestamp: booking.created_at
   });
 
-  // Step 3: Schedule (only for services with time slot) - include full date and time
-  if (!isProduct && booking.start_time && bookingDate) {
-    const timeRange = endDate
-      ? `${formatTime(bookingDate)} - ${formatTime(endDate)}`
-      : formatTime(bookingDate);
+  /*
+   * There is no separate `schedule` step. The appointment is drawn ONCE.
+   *
+   * There was one, and it drew the same appointment as `session` further down:
+   * same `start_time`, same status, and `isScheduleStep` in BookingsTab treats
+   * BOTH keys as the schedule step — so each got the identical "09:00 – 10:00 ·
+   * יום ראשון · הפגישה התקיימה" line. The wait marker before it was drawn twice
+   * too, and the day grouping bounced 10 → 13 → 10 → 13 → 10 for a booking that
+   * happened on two days.
+   *
+   * `session` is the one that survives: it is the terminal node, it already
+   * carries the appointment's time, and its key becomes `fulfillment` for a
+   * product — so removing it instead would leave products with no final step.
+   * Its time range is supplied by `scheduleFact`, which fills exactly this gap
+   * for a schedule step that carries no `details` of its own.
+   *
+   * This affects EVERY scheduled booking, not only quoted ones.
+   */
+
+  /*
+   * Quote — where a quoted service waits.
+   *
+   * This is the first step in the drawer whose ACTIVE side is the owner's. Every
+   * other step waits on the client: they pay, they fill in the form, they turn
+   * up. Here the client has asked and the business owes them an answer, and a
+   * journey that did not say so would leave a live request sitting silently
+   * behind a contact nobody had a reason to open.
+   *
+   * It sits before payment because nothing is owed until a price is agreed.
+   */
+  if (data.proposal !== undefined && (data.proposal || isQuotedBooking)) {
+    const proposal = data.proposal;
+
+    /*
+     * The consultation has to happen before the quote can.
+     *
+     * A site visit booked for Thursday is where the work gets scoped, and on
+     * Monday there is nothing to price. The step said "waiting on you" anyway —
+     * which is simply false: nobody is waiting on the owner, the journey is
+     * waiting on the meeting. It read as an overdue task in the one list an
+     * owner uses to decide what to do today.
+     *
+     * The gate opens when the meeting STARTS rather than when it is marked
+     * complete. Owners quote from the van on the way back, and few of them mark
+     * an appointment done before they do — a gate on the status flag would have
+     * held the button shut for the whole population it was meant to serve.
+     */
+    const awaitingMeeting = Boolean(
+      !proposal && !isProduct && bookingDate && !isCompleted && !isCancelled && bookingDate > new Date()
+    );
+
+    /*
+     * Cancelling ends a quoted job — it is the only mark that does.
+     *
+     * "Completed" and "no-show" describe the MEETING and leave the journey
+     * running: the consultation happened, or they missed it, and either way
+     * there is still a price to send. Cancelling means the business is not
+     * doing this work, so the quote action disappears and any live quote has
+     * already been withdrawn server-side by `cancelBooking`.
+     *
+     * This reverses the earlier behaviour, where a cancelled booking OPENED the
+     * quote button on the reasoning that the meeting was behind us. It is not
+     * the same question: "the meeting is over" and "the job is off" only looked
+     * alike while nothing could say the second one.
+     */
+    const jobClosed = isCancelled;
+
+    const status: BookingJourneyStep['status'] = jobClosed
+      ? 'failed'
+      : !proposal
+        ? awaitingMeeting
+          ? 'pending'
+          : 'active'
+        : proposal.status === 'accepted'
+          ? 'completed'
+          : proposal.status === 'declined' || proposal.status === 'expired'
+            ? 'failed'
+            : 'active';
 
     steps.push({
-      id: `${booking.id}-schedule`,
-      key: 'schedule',
-      status: isCompleted ? 'completed' : isCancelled ? 'failed' : 'active',
-      details: timeRange,  // Show actual time range
-      timestamp: booking.start_time
+      id: `${booking.id}-proposal`,
+      key: 'proposal',
+      status,
+      details: proposal
+        ? `${formatAmount(proposal.total, proposal.currency)}`
+        : undefined,
+      timestamp: proposal?.decided_at || proposal?.sent_at || proposal?.created_at,
+      metadata: {
+        proposalId: proposal?.id ?? null,
+        proposalStatus: proposal?.status ?? 'none',
+        /*
+         * Which side the ball is on — the one fact both the label and the
+         * button read, so the strip cannot say "waiting on the meeting" beside
+         * a button inviting you to skip it.
+         */
+        waitingOn: jobClosed
+          ? 'closed'
+          : awaitingMeeting
+            ? 'meeting'
+            : !proposal || proposal.status === 'declined'
+              ? 'owner'
+              : 'client',
+        meetingAt: awaitingMeeting && bookingDate ? formatDateTime(bookingDate) : null,
+        declineReason: proposal?.decline_reason ?? null,
+        declineNote: proposal?.decline_note ?? null,
+        total: proposal?.total ?? null,
+        currency: proposal?.currency ?? null,
+        /*
+         * Every version, for the row to list beneath itself.
+         *
+         * Flattened to primitives here rather than passed as rows: the step's
+         * metadata crosses into a presentational component, and handing it live
+         * records invites that component to start deciding things about them.
+         * It renders what it is given.
+         */
+        versions: (data.proposalHistory ?? []).map(v => ({
+          id: v.id,
+          total: v.total,
+          amount: formatAmount(v.total, v.currency),
+          status: v.status,
+          // The date that matters is the one the version STOPPED on: decided if
+          // it was answered, sent if it is still open. `created_at` would date a
+          // revision to when the owner started typing it.
+          at: v.decided_at || v.sent_at || v.created_at,
+          isCurrent: v.id === proposal?.id,
+          documentName: v.document?.name ?? null,
+          // Per version, because each revision was declined for its own reason
+          // — and "too expensive" against 12,000 then "wrong timing" against
+          // 10,000 is a different story from the same objection twice.
+          declineReason: v.decline_reason,
+          declineNote: v.decline_note,
+        })),
+      },
     });
   }
+
+  /*
+   * There is no separate payment step for a quoted job any more.
+   *
+   * There was: a parallel block that built its own step from the proposal's
+   * deposit invoice. It duplicated the ordinary step's logic badly — it read
+   * one invoice instead of the plan, so a two-stage job went green on the first
+   * payment — and it had none of the ordinary step's affordances, so refunds
+   * and "manage payment" were unreachable.
+   *
+   * `quotedPayment` now supplies a real `payment` object for these bookings, so
+   * the block below renders them exactly as it renders every other booking. The
+   * only thing quoted-specific left is the plan's named stages, which ride
+   * along inside `payment.plan.stages`.
+   */
 
   // Step 3: Payment (if applicable) - format amount properly with status
   // For free services, skip payment step entirely
@@ -197,13 +566,26 @@ function buildJourneySteps(
       const periodsPaid = payment.plan.periodsPaid ?? (payment.status === 'paid' ? 1 : 0);
       planIncomplete = periodsPaid < payment.plan.installmentCount;
 
-      // "₪333.33 · 1 of 3 · monthly · ₪1,000.00 total"
+      /*
+       * "₪333.33 · 1 of 3 · monthly · ₪1,000.00 total"
+       *
+       * The cadence is dropped for a MILESTONE plan. Its stages fall due when
+       * the work is done, not on a schedule, so `frequency` there is a
+       * placeholder the shared type requires — printing it would tell the owner
+       * their milestones are billed monthly, which is precisely what they are
+       * not.
+       */
+      // Isolated for the same reason the client line is: amounts are LTR runs
+      // in an RTL sentence, and the neutral separators between them drift.
       paymentDetails = [
         formatAmount(payment.plan.installmentAmount, payment.currency),
         `${periodsPaid} ${planPeriodText[lang]} ${payment.plan.installmentCount}`,
-        planEveryText[lang][payment.plan.frequency],
+        payment.plan.stages?.length ? null : planEveryText[lang][payment.plan.frequency],
         `${formatAmount(payment.plan.totalAmount, payment.currency)} ${planTotalText[lang]}`
-      ].join(' • ');
+      ]
+        .filter(Boolean)
+        .map(v => isolate(String(v)))
+        .join(' • ');
     }
 
     if (payment.status === 'refunded') {
@@ -245,12 +627,30 @@ function buildJourneySteps(
       details: paymentDetails,
       timestamp: payment.refundedAt || payment.paidAt,  // Show refund time if available
       // Pass invoice data for resend functionality
-      metadata: payment.invoiceId ? {
-        invoiceId: payment.invoiceId,
+      /*
+       * `invoiceId` here is the RESEND target, and resending only ever means
+       * the invoice still owed. On a plan that is not the same as the invoice
+       * the payment describes: after a deposit clears, `payment.invoiceId` is
+       * the settled one, and resending it asks a client to pay twice — which
+       * `sendInvoice` refuses anyway, so the button did nothing at all.
+       */
+      metadata: (payment.outstandingInvoiceId ?? payment.invoiceId) ? {
+        invoiceId: payment.outstandingInvoiceId ?? payment.invoiceId,
         invoiceDueDate: payment.invoiceDueDate,
         invoiceSentAt: payment.invoiceSentAt,
         isOverdue,
-        canResend: payment.status === 'pending' && payment.invoiceId
+        /*
+         * Sendable whenever an invoice EXISTS, not only while it is owed.
+         *
+         * The gate used to be "is this unpaid", which answers a different
+         * question: a client who rings up asking for their paperwork needs it
+         * whether or not they have paid, and the owner was left forwarding
+         * emails by hand. The send route decides which document that is —
+         * invoice while owed, receipt once settled.
+         */
+        canResend: Boolean(payment.outstandingInvoiceId || payment.invoiceId),
+        // Which document the button will send, so it can say so.
+        invoiceSettled: !payment.outstandingInvoiceId && payment.status === 'paid'
       } : undefined
     });
   }
@@ -311,6 +711,48 @@ function buildJourneySteps(
      */
     timestamp: booking.start_time || undefined
   });
+
+  /*
+   * A quoted job runs PAST the meeting, so its last two steps move to the end.
+   *
+   * The step order above is built for a booking where the appointment is the
+   * job: you pick a date, you pay, you get a confirmation, you attend. The
+   * quote was slotted in beside `payment`, which reads correctly against
+   * `schedule` — but `schedule` is the date being CHOSEN. The meeting itself is
+   * `session`, pushed last. So the quote appeared before the consultation it
+   * exists to follow, and the deposit before the quote that sets it.
+   *
+   * Reordering here rather than branching every push above: the sequence is one
+   * fact about quoted work — the price follows the visit, the money follows the
+   * price — and it belongs in one place. A booking that is not quoted has no
+   * proposal step, so `filter` leaves it exactly as built.
+   */
+  if (isQuotedBooking || data.proposal) {
+    const deferred = steps.filter(s => s.key === 'proposal' || s.key === 'payment');
+    const rest = steps.filter(s => !deferred.includes(s));
+    const meetingAt = rest.findIndex(s => s.key === 'session' || s.key === 'fulfillment');
+
+    if (deferred.length > 0 && meetingAt !== -1) {
+      /*
+       * Inserted directly AFTER the meeting, not appended to the end.
+       *
+       * They coincide today, because `session` happens to be the last step
+       * pushed — but the two are different instructions, and the one that
+       * survives someone adding a step below is "follows the meeting". The
+       * quote follows the visit; appending to whatever happens to be last is
+       * only accidentally the same thing.
+       */
+      return [
+        ...rest.slice(0, meetingAt + 1),
+        ...deferred,
+        ...rest.slice(meetingAt + 1),
+      ];
+    }
+
+    // No meeting to follow — a quoted product, or a request with no
+    // consultation. The quote is then simply the next thing that happens.
+    if (deferred.length > 0) return [...rest, ...deferred];
+  }
 
   return steps;
 }
@@ -584,6 +1026,23 @@ export function CRMContactDrawerV2({
 
   // Data states
   const [sessions, setSessions] = useState<SessionCardData[]>([]);
+  /** The contact's quotes. Empty for every business that does not quote. */
+  const [proposals, setProposals] = useState<DrawerProposal[]>([]);
+  /** A milestone awaiting confirmation before it bills the client. */
+  const [pendingStage, setPendingStage] = useState<{
+    id: string;
+    label: string;
+    amount: string;
+  } | null>(null);
+  const [completingStage, setCompletingStage] = useState(false);
+
+  /** The quote builder, and the booking it was opened from. */
+  const [proposalBuilder, setProposalBuilder] = useState<{
+    bookingId: string;
+    supersedesId: string | null;
+    declineReason: string | null;
+    declineNote: string | null;
+  } | null>(null);
   const [activities, setActivities] = useState<CRMActivity[]>([]);
   const [emails, setEmails] = useState<ContactEmail[]>([]);
   const [tasks, setTasks] = useState<ContactTask[]>([]);
@@ -737,6 +1196,30 @@ export function CRMContactDrawerV2({
   const [showInvoiceConfirm, setShowInvoiceConfirm] = useState(false);
   const [pendingInvoiceId, setPendingInvoiceId] = useState<string | null>(null);
   const [pendingInvoiceBookingId, setPendingInvoiceBookingId] = useState<string | null>(null);
+
+  /*
+   * Whether the invoice about to be sent is already settled.
+   *
+   * The dialog promised "a new email with the payment link" for every send. On
+   * a paid invoice that is two lies in one sentence: what goes out is a receipt,
+   * and it carries no payment link precisely so nobody is asked to pay twice.
+   *
+   * Derived from the sessions already in hand rather than threaded through the
+   * callback — the stage rows and the summary button both call the same handler,
+   * and neither should have to explain the document to it.
+   */
+  const pendingInvoiceIsPaid = useMemo(() => {
+    if (!pendingInvoiceId) return false;
+
+    for (const session of sessions) {
+      const stage = session.payment?.plan?.stages?.find(s => s.invoiceId === pendingInvoiceId);
+      if (stage) return stage.status === 'paid';
+      if (session.payment?.invoiceId === pendingInvoiceId) {
+        return session.payment.status === 'paid';
+      }
+    }
+    return false;
+  }, [pendingInvoiceId, sessions]);
   const [sendingInvoice, setSendingInvoice] = useState(false);
 
   // UI states
@@ -771,7 +1254,7 @@ export function CRMContactDrawerV2({
   }
 
   // Process bookings data into session cards (extracted for reuse)
-  const processBookingsData = (bookingsData: { bookings: SchedulingBooking[] }, emailsData: { emails?: EmailRecord[] }) => {
+  const processBookingsData = (bookingsData: { bookings: SchedulingBooking[] }, emailsData: { emails?: EmailRecord[] }, proposalsList: DrawerProposal[] = []) => {
     const emails: EmailRecord[] = emailsData.emails || [];
 
     // Helper to find confirmation email for a booking
@@ -826,6 +1309,7 @@ export function CRMContactDrawerV2({
           payment_type?: string | null;
           installment_count?: number | null;
           installment_frequency?: string | null;
+          sale_mode?: 'direct' | 'proposal' | null;
         };
       };
       const servicePrice = bookingWithService.service?.price ?? 0;
@@ -886,7 +1370,21 @@ export function CRMContactDrawerV2({
       };
       const invoiceData = bookingWithInvoice.invoice;
 
-      const paymentData: SessionPayment | null = isFreeService ? {
+      /*
+       * A quoted job's money comes from the QUOTE, not the service.
+       *
+       * Checked before `isFreeService`, because a quoted service is priced 0 and
+       * would otherwise be declared free — which is how "Manage payment" ended
+       * up showing ₪0.00 and "no payment required" for a job with a paid deposit.
+       */
+      const quotedMoney = quotedPayment(
+        bookingWithService.service?.sale_mode === 'proposal'
+          ? pickProposal(booking.id, proposalsList)
+          : null,
+        serviceCurrency
+      );
+
+      const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : isFreeService ? {
         amount: 0,
         currency: serviceCurrency,
         status: 'free' as const
@@ -929,7 +1427,13 @@ export function CRMContactDrawerV2({
               sentAt: confirmationEmail.sent_at || confirmationEmail.created_at,
               openedAt: confirmationEmail.opened_at || undefined,
               subject: confirmationEmail.subject
-            } : undefined
+            } : undefined,
+            proposal: bookingWithService.service?.sale_mode === 'proposal'
+              ? pickProposal(booking.id, proposalsList)
+              : undefined,
+            proposalHistory: bookingWithService.service?.sale_mode === 'proposal'
+              ? proposalsFor(booking.id, proposalsList)
+              : undefined
           },
           language,
           collectsIntake
@@ -994,6 +1498,25 @@ export function CRMContactDrawerV2({
             return { success: false };
           });
 
+        /*
+         * Quotes, in parallel with the bookings rather than after them.
+         *
+         * A failed proposals request must not cost the drawer its bookings —
+         * the journey renders without the quote step, which is the same thing
+         * it does for every business that does not quote at all.
+         */
+        const proposalsPromise = fetch(`/api/business-os/proposals?contact_id=${contactId}`)
+          .then(response => (response.ok ? response.json() : { proposals: [] }))
+          .catch(error => {
+            logger.warn({ err: error, contactId }, 'Could not load proposals');
+            return { proposals: [] };
+          })
+          .then(data => {
+            const list: DrawerProposal[] = data.proposals || [];
+            setProposals(list);
+            return list;
+          });
+
         const emailsPromise = fetch(`/api/crm/contacts/${contactId}/emails?limit=100`)
           .then(response => (response.ok ? response.json() : { emails: [] }))
           .catch(error => {
@@ -1006,11 +1529,15 @@ export function CRMContactDrawerV2({
             return data;
           });
 
-        const [bookingsData, emailsData] = await Promise.all([bookingsPromise, emailsPromise]);
+        const [bookingsData, emailsData, proposalsList] = await Promise.all([
+          bookingsPromise,
+          emailsPromise,
+          proposalsPromise,
+        ]);
 
         // Sessions need both: the cards carry the confirmation email.
         if (bookingsData.success && bookingsData.bookings) {
-          processBookingsData(bookingsData, emailsData);
+          processBookingsData(bookingsData, emailsData, proposalsList);
         }
         setLoadingSessions(false);
       } catch (error) {
@@ -1169,15 +1696,36 @@ export function CRMContactDrawerV2({
    * URLs that were fetched moments ago, and a cached answer would refresh the
    * journey to exactly what it already showed.
    */
+  /**
+   * Reload the client's bookings.
+   *
+   * `silent` is what every in-drawer action should pass. Without it the whole
+   * bookings list is replaced by a spinner and rebuilds — so marking a meeting
+   * held, sending a quote or recording a payment made the card the owner was
+   * looking at disappear and come back, losing their scroll position and any
+   * section they had expanded. The data is being refreshed, not fetched for the
+   * first time; there is nothing to wait for.
+   *
+   * The loading flag is only for opening the drawer.
+   */
   const fetchSessions = async (contactId: string, { silent = false }: { silent?: boolean } = {}) => {
     try {
       if (!silent) setLoadingSessions(true);
 
       // Fetch bookings and emails in parallel
-      const [bookingsResponse, emailsResponse] = await Promise.all([
+      const [bookingsResponse, emailsResponse, proposalsResponse] = await Promise.all([
         fetch(`/api/scheduling/bookings?contact_id=${contactId}&limit=50`, { cache: 'no-store' }),
-        fetch(`/api/crm/contacts/${contactId}/emails?limit=100`, { cache: 'no-store' })
+        fetch(`/api/crm/contacts/${contactId}/emails?limit=100`, { cache: 'no-store' }),
+        fetch(`/api/business-os/proposals?contact_id=${contactId}`, { cache: 'no-store' })
       ]);
+
+      // Refreshed here too: this is the path a just-sent quote comes back
+      // through, and a stale list would show the owner the button they had
+      // already pressed.
+      const freshProposals: DrawerProposal[] = proposalsResponse.ok
+        ? (await proposalsResponse.json()).proposals || []
+        : [];
+      setProposals(freshProposals);
 
       if (!bookingsResponse.ok) {
         return;
@@ -1261,7 +1809,16 @@ export function CRMContactDrawerV2({
             };
           }).invoice;
 
-          const paymentData: SessionPayment | null = isFreeService ? {
+          // Same rule as the primary path: the quote decides, not the service.
+          const quotedMoney = quotedPayment(
+            (booking as SchedulingBooking & { service?: { sale_mode?: string | null } })
+              .service?.sale_mode === 'proposal'
+              ? pickProposal(booking.id, freshProposals)
+              : null,
+            serviceCurrency
+          );
+
+          const paymentData: SessionPayment | null = quotedMoney ? quotedMoney : isFreeService ? {
             amount: 0,
             currency: serviceCurrency,
             status: 'free' as const
@@ -1311,7 +1868,15 @@ export function CRMContactDrawerV2({
                   sentAt: confirmationEmail.sent_at || confirmationEmail.created_at,
                   openedAt: confirmationEmail.opened_at || undefined,
                   subject: confirmationEmail.subject
-                } : undefined
+                } : undefined,
+                proposal: (booking as SchedulingBooking & { service?: { sale_mode?: string | null } })
+                  .service?.sale_mode === 'proposal'
+                  ? pickProposal(booking.id, freshProposals)
+                  : undefined,
+                proposalHistory: (booking as SchedulingBooking & { service?: { sale_mode?: string | null } })
+                  .service?.sale_mode === 'proposal'
+                  ? proposalsFor(booking.id, freshProposals)
+                  : undefined
               },
               language,
               collectsIntake
@@ -1345,9 +1910,20 @@ export function CRMContactDrawerV2({
     }
   };
 
-  const fetchActivities = async (contactId: string) => {
+  /**
+   * Reload the contact's activity timeline.
+   *
+   * `silent` for the same reason `fetchSessions` has it: an action taken INSIDE
+   * the drawer is refreshing data already on screen, not fetching it for the
+   * first time. Without it every send, every status change and every saved note
+   * blanked the timeline to a spinner and rebuilt it — which reads as the whole
+   * drawer reloading, because the timeline is most of what is visible.
+   *
+   * The flag is for opening the drawer, and nothing else.
+   */
+  const fetchActivities = async (contactId: string, { silent = false }: { silent?: boolean } = {}) => {
     try {
-      setLoadingActivities(true);
+      if (!silent) setLoadingActivities(true);
       const response = await fetch(`/api/crm/activities?contact_id=${contactId}&limit=50`);
       const data = await response.json();
 
@@ -1357,7 +1933,7 @@ export function CRMContactDrawerV2({
     } catch (error) {
       console.error('Failed to fetch activities:', error);
     } finally {
-      setLoadingActivities(false);
+      if (!silent) setLoadingActivities(false);
     }
   };
 
@@ -1580,7 +2156,7 @@ export function CRMContactDrawerV2({
 
       const data = await response.json();
       if (data.success) {
-        fetchActivities(contact.id);
+        fetchActivities(contact.id, { silent: true });
       }
     } catch (error) {
       console.error('Failed to add activity:', error);
@@ -1651,8 +2227,8 @@ export function CRMContactDrawerV2({
   const handleBookingSaved = () => {
     setShowBookingModal(false);
     setEditingBooking(undefined);
-    fetchSessions(contact.id);
-    fetchActivities(contact.id);
+    fetchSessions(contact.id, { silent: true });
+    fetchActivities(contact.id, { silent: true });
     onContactUpdated();
   };
 
@@ -1899,14 +2475,23 @@ export function CRMContactDrawerV2({
                   setShowPaymentModal(true);
                 }}
                 onIntakeSaved={() => {
-                  fetchSessions(contact.id);
-                  fetchActivities(contact.id);
+                  fetchSessions(contact.id, { silent: true });
+                  fetchActivities(contact.id, { silent: true });
                 }}
                 onSendIntake={async (bookingId) => {
                   // Show confirmation dialog instead of sending directly
                   setPendingIntakeBookingId(bookingId);
                   setShowIntakeConfirm(true);
                 }}
+                onOpenProposalBuilder={(bookingId, context) =>
+                  setProposalBuilder({ bookingId, ...context })
+                }
+                /* Confirmed, not fired from the row.
+                   It bills the client — an accidental tap sends someone a real
+                   invoice, and there is no undo that unsends an email. */
+                onCompleteStage={(stageId, label, amount) =>
+                  setPendingStage({ id: stageId, label, amount })
+                }
                 /* Record how the appointment went, from the card header.
                    Each outcome has its own endpoint — they are not interchangeable
                    writes to a status column: completing may settle money, a
@@ -1935,8 +2520,8 @@ export function CRMContactDrawerV2({
                       throw new Error(data.error || 'Failed to update the booking');
                     }
                     toast.success(t('crm.booking.status_updated') || 'Booking updated');
-                    fetchSessions(contact.id);
-                    fetchActivities(contact.id);
+                    fetchSessions(contact.id, { silent: true });
+                    fetchActivities(contact.id, { silent: true });
                   } catch (err) {
                     toast.error(err instanceof Error ? err.message : 'Failed to update the booking');
                   }
@@ -2172,8 +2757,8 @@ export function CRMContactDrawerV2({
           setEditingBooking(undefined);
         }}
         onBookingUpdated={() => {
-          fetchSessions(contact.id);
-          fetchActivities(contact.id);
+          fetchSessions(contact.id, { silent: true });
+          fetchActivities(contact.id, { silent: true });
           fetchAllBookings(); // Refresh all bookings for availability
           setShowBookingModal(false);
           setEditingBooking(undefined);
@@ -2216,6 +2801,73 @@ export function CRMContactDrawerV2({
       />
 
       {/* Intake Send Confirmation Dialog */}
+      {/*
+        Billing a milestone, confirmed.
+        ─────────────────────────────────────────────────────────────────────
+        The one action in this drawer that sends a client a bill. It cannot be
+        undone from here — the invoice exists and the email has left — so the
+        amount is named in the question rather than left to the row the owner
+        happened to tap.
+      */}
+      <Dialog open={Boolean(pendingStage)} onOpenChange={open => !open && setPendingStage(null)}>
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle>{t('crm.stage.confirm_title')}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              {t('crm.stage.confirm_body')
+                .replace('{stage}', pendingStage?.label ?? '')
+                .replace('{amount}', pendingStage?.amount ?? '')
+                .replace('{name}', contact.first_name)}
+            </p>
+          </div>
+          <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <Button
+              variant="outline"
+              onClick={() => setPendingStage(null)}
+              disabled={completingStage}
+            >
+              {t('common.cancel') || 'Cancel'}
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={completingStage}
+              onClick={async () => {
+                if (!pendingStage) return;
+                setCompletingStage(true);
+                try {
+                  const response = await fetch(
+                    `/api/business-os/payment-stages/${pendingStage.id}/complete`,
+                    { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+                  );
+                  const data = await response.json();
+                  if (!data.success) {
+                    // 'already_done' is not a failure the owner caused — another
+                    // tab, or a second tap, got there first.
+                    throw new Error(
+                      data.code === 'already_done'
+                        ? t('crm.stage.already_done')
+                        : data.error || t('crm.stage.error')
+                    );
+                  }
+                  toast.success(t('crm.stage.invoiced'));
+                  setPendingStage(null);
+                  fetchSessions(contact.id, { silent: true });
+                  fetchActivities(contact.id, { silent: true });
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : t('crm.stage.error'));
+                } finally {
+                  setCompletingStage(false);
+                }
+              }}
+            >
+              {completingStage ? '...' : t('crm.stage.confirm_action')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={showIntakeConfirm} onOpenChange={setShowIntakeConfirm}>
         <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
           <DialogHeader>
@@ -2255,7 +2907,7 @@ export function CRMContactDrawerV2({
                     throw new Error(data.error || 'Failed to send intake form');
                   }
                   toast.success(t('crm.intake.email_sent') || 'Intake form email sent');
-                  fetchActivities(contact.id);
+                  fetchActivities(contact.id, { silent: true });
                   setShowIntakeConfirm(false);
                   setPendingIntakeBookingId(null);
                 } catch (err) {
@@ -2280,6 +2932,45 @@ export function CRMContactDrawerV2({
         </DialogContent>
       </Dialog>
 
+      {/* The quote builder.
+          Mounted beside the payment modal rather than inside the tab, so it
+          survives the accordion closing under it — an owner who collapses the
+          section mid-quote does not lose what they typed. */}
+      {proposalBuilder && (() => {
+        const session = sessions.find(s => s.booking.id === proposalBuilder.bookingId);
+        return (
+          <ProposalBuilderModal
+            isOpen
+            onClose={() => setProposalBuilder(null)}
+            contactId={contact.id}
+            contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
+            serviceId={session?.booking.service_id ?? null}
+            bookingId={proposalBuilder.bookingId}
+            defaultTitle={session?.booking.service?.service_name || ''}
+            /* The SERVICE's currency first. A quote request has no payment
+               row to inherit one from, so reading the payment meant every
+               quote from a business outside the US defaulted to dollars. */
+            currency={session?.booking.service?.currency || session?.payment?.currency || 'USD'}
+            supersedesId={proposalBuilder.supersedesId}
+            /* The version being revised, so the form opens on it.
+               Re-typing a paragraph and a payment schedule to change one number
+               is how an owner decides not to bother re-quoting at all. */
+            basedOn={proposals.find(p => p.id === proposalBuilder.supersedesId) ?? null}
+            declineReason={proposalBuilder.declineReason}
+            declineNote={proposalBuilder.declineNote}
+            onSent={() => {
+              // The journey has to move the moment it is sent: the step flips
+              // from waiting-on-you to waiting-on-them, and the activity
+              // timeline gains the send.
+              fetchSessions(contact.id, { silent: true });
+              fetchActivities(contact.id, { silent: true });
+            }}
+            t={t}
+            isRTL={isRTL}
+          />
+        );
+      })()}
+
       {/* Payment Management Modal */}
       <PaymentManagementModal
         isOpen={showPaymentModal}
@@ -2290,12 +2981,12 @@ export function CRMContactDrawerV2({
         booking={selectedBookingForPayment}
         contactName={`${contact.first_name} ${contact.last_name || ''}`.trim()}
         onPaymentUpdated={() => {
-          fetchSessions(contact.id);
-          fetchActivities(contact.id);
+          fetchSessions(contact.id, { silent: true });
+          fetchActivities(contact.id, { silent: true });
         }}
         onBookingDeleted={(bookingId) => {
-          fetchSessions(contact.id);
-          fetchActivities(contact.id);
+          fetchSessions(contact.id, { silent: true });
+          fetchActivities(contact.id, { silent: true });
           setShowPaymentModal(false);
           setSelectedBookingForPayment(null);
         }}
@@ -2363,8 +3054,8 @@ export function CRMContactDrawerV2({
                     throw new Error(data.error || 'Failed to cancel the booking');
                   }
                   toast.success(t('crm.booking.status_updated') || 'Booking updated');
-                  fetchSessions(contact.id);
-                  fetchActivities(contact.id);
+                  fetchSessions(contact.id, { silent: true });
+                  fetchActivities(contact.id, { silent: true });
                   setPendingCancelBookingId(null);
                 } catch (err) {
                   toast.error(err instanceof Error ? err.message : 'Failed to cancel the booking');
@@ -2428,7 +3119,7 @@ export function CRMContactDrawerV2({
                   }
                   toast.success(t('crm.booking.confirmation_sent') || 'Confirmation sent');
                   // The send lands on the timeline, so the drawer reflects it.
-                  fetchActivities(contact.id);
+                  fetchActivities(contact.id, { silent: true });
                   setShowConfirmationResend(false);
                   setPendingConfirmationBookingId(null);
                 } catch (err) {
@@ -2457,13 +3148,18 @@ export function CRMContactDrawerV2({
         <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
           <DialogHeader>
             <DialogTitle>
-              {t('crm.invoice.resend_confirmation_title') || 'Resend Invoice'}
+              {pendingInvoiceIsPaid
+                ? t('crm.invoice.send_receipt_confirmation_title')
+                : t('crm.invoice.resend_confirmation_title') || 'Resend Invoice'}
             </DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <p className="text-sm text-[var(--v2-text-secondary)]">
-              {(t('crm.invoice.resend_confirmation_message') || 'Resend invoice to {name}? They will receive a new email with the payment link.')
-                .replace('{name}', contact.first_name)}
+              {(pendingInvoiceIsPaid
+                ? t('crm.invoice.send_receipt_confirmation_message')
+                : t('crm.invoice.resend_confirmation_message') ||
+                  'Resend invoice to {name}? They will receive a new email with the payment link.'
+              ).replace('{name}', contact.first_name)}
             </p>
           </div>
           <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
@@ -2492,9 +3188,20 @@ export function CRMContactDrawerV2({
                   if (!response.ok || !data.success) {
                     throw new Error(data.error || 'Failed to send invoice');
                   }
-                  toast.success(t('crm.invoice.email_sent') || 'Invoice email sent');
-                  fetchActivities(contact.id);
-                  fetchSessions(contact.id);
+                  /*
+                   * The SERVER says which document went, not this component.
+                   * It decides by the invoice's status at send time, and that
+                   * can differ from what the dialog assumed — a payment landing
+                   * in the seconds between opening and confirming turns an
+                   * invoice into a receipt.
+                   */
+                  toast.success(
+                    data.sentAs === 'receipt'
+                      ? t('crm.invoice.receipt_sent')
+                      : t('crm.invoice.email_sent') || 'Invoice email sent'
+                  );
+                  fetchActivities(contact.id, { silent: true });
+                  fetchSessions(contact.id, { silent: true });
                   setShowInvoiceConfirm(false);
                   setPendingInvoiceId(null);
                   setPendingInvoiceBookingId(null);
@@ -2513,7 +3220,12 @@ export function CRMContactDrawerV2({
                   {t('common.sending') || 'Sending...'}
                 </span>
               ) : (
-                t('crm.invoice.resend') || 'Resend'
+                /* Follows the same fact as the title and the body above. A
+                   receipt dialog with a "resend invoice" button asks the owner
+                   to press something other than what they read. */
+                pendingInvoiceIsPaid
+                  ? t('crm.invoice.send_receipt')
+                  : t('crm.invoice.resend') || 'Resend'
               )}
             </Button>
           </div>

@@ -1,28 +1,34 @@
+/**
+ * The dashboard's opening card: who the owner is, and what their day looks like.
+ *
+ * This route used to build four `storyBeats` from five hand-rolled queries and
+ * hand them to the client, which forwarded only `userName` and `greeting` to
+ * the dashboard and dropped the rest on the floor. The beats are gone; the
+ * queries they needed now live behind BriefingFactsService, which serves a
+ * narrative the dashboard actually renders.
+ *
+ * Two correctness notes carried over deliberately:
+ *  - "Today" is the BUSINESS's today. The old code used `setHours(0,0,0,0)`,
+ *    which on Vercel is UTC midnight and gives a Jerusalem business a day that
+ *    began at 03:00 local.
+ *  - The greeting followed the server clock for the same reason. It now follows
+ *    the business's wall clock.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { businessDayFor, resolveBusinessTimezone } from '@/lib/business-os/businessDay';
+import { buildBriefingFacts } from '@/lib/business-os/briefing/BriefingFactsService';
+import { getBriefing } from '@/lib/business-os/briefing/BriefingStore';
+import type { BriefingLanguage } from '@/lib/business-os/briefing/BriefingNarrator';
 
 const logger = createLogger({ module: 'MyDayAPI' });
 
-interface StoryBeat {
-  type: 'done' | 'next' | 'run';
-  titleKey: string;
-  titleParams?: Record<string, string | number>;
-  subtitleKey: string;
-  subtitleParams?: Record<string, string | number>;
-}
-
-interface SummaryData {
-  key: string;
-  params?: Record<string, string | number>;
-  parts?: Array<{ key: string; params?: Record<string, string | number> }>;
-}
-
-function getGreeting(): 'morning' | 'afternoon' | 'evening' {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'morning';
-  if (hour < 17) return 'afternoon';
+function greetingFor(localHour: number): 'morning' | 'afternoon' | 'evening' {
+  if (localHour < 12) return 'morning';
+  if (localHour < 17) return 'afternoon';
   return 'evening';
 }
 
@@ -33,191 +39,95 @@ export async function GET(request: NextRequest) {
   try {
     const user = await getUser();
     if (!user) {
-      return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
-        { status: 401 }
-      );
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    requestLogger.info({ userId: user.id }, 'Fetching My Day data');
+    /*
+     * Profile and preferences in one pass.
+     *
+     * The timezone is on user_preferences, NOT business_profiles — that column
+     * has never existed there, and reading it from the profile is a live bug
+     * elsewhere in this codebase (chat-v4 resolves every date in UTC because
+     * of it). Both reads are tolerant: a missing preferences row is normal.
+     */
+    const [profileResult, briefingPrefResult, preferencesResult] = await Promise.all([
+      supabaseServer
+        .from('business_profiles')
+        .select('business_name, owner_name, language')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      /*
+       * The email opt-in, read on its own.
+       *
+       * Deliberately not added to the select above: Postgres rejects the whole
+       * select for one unknown column, and folding a freshly-migrated column in
+       * would take the entire dashboard header down anywhere the migration has
+       * not run. Its own read fails alone and the switch shows as off.
+       */
+      supabaseServer
+        .from('business_profiles')
+        .select('daily_briefing_email_enabled')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabaseServer
+        .from('user_preferences')
+        .select('timezone, preferred_language')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+    ]);
 
-    // Fetch user profile for name
-    const { data: profile } = await supabaseServer
-      .from('business_profiles')
-      .select('business_name, owner_name')
-      .eq('user_id', user.id)
-      .single();
+    const profile = profileResult.data as
+      | { business_name?: string | null; owner_name?: string | null; language?: string | null }
+      | null;
+    const preferences = preferencesResult.data as
+      | { timezone?: string | null; preferred_language?: string | null }
+      | null;
 
-    // Get user's first name from profile or auth metadata
-    const userName = profile?.owner_name?.split(' ')[0] ||
-                     user.user_metadata?.full_name?.split(' ')[0] ||
-                     user.email?.split('@')[0] ||
-                     'there';
+    const userName =
+      profile?.owner_name?.split(' ')[0] ||
+      user.user_metadata?.full_name?.split(' ')[0] ||
+      user.email?.split('@')[0] ||
+      'there';
 
-    // Fetch recent successful agent executions (done tasks)
-    const { data: recentExecutions } = await supabaseServer
-      .from('agent_executions')
-      .select('id, agent_id, created_at, status')
-      .eq('user_id', user.id)
-      .eq('status', 'success')
-      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(5);
+    const { timezone } = resolveBusinessTimezone({ preferencesTimezone: preferences?.timezone });
+    const day = businessDayFor(new Date(), timezone);
 
-    // Fetch today's upcoming bookings
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    const language = normaliseLanguage(preferences?.preferred_language ?? profile?.language);
 
-    // Note: client_* fields removed from scheduling_bookings - now JOINed from crm_contacts
-    const { data: todaysBookings } = await supabaseServer
-      .from('scheduling_bookings')
-      .select(`
-        id,
-        start_time,
-        status,
-        contact:crm_contacts(first_name)
-      `)
-      .eq('user_id', user.id)
-      .gte('start_time', today.toISOString())
-      .lt('start_time', tomorrow.toISOString())
-      .eq('status', 'confirmed')
-      .order('start_time', { ascending: true })
-      .limit(5);
-
-    // Fetch running automations (active agent executions)
-    const { data: runningExecutions } = await supabaseServer
-      .from('agent_executions')
-      .select('id, agent_id')
-      .eq('user_id', user.id)
-      .eq('status', 'running')
-      .limit(10);
-
-    // Fetch pending invoices
-    const { data: pendingInvoices } = await supabaseServer
-      .from('payment_invoices')
-      .select('id, amount, status')
-      .eq('user_id', user.id)
-      .in('status', ['pending', 'overdue'])
-      .limit(10);
-
-    // Fetch new contacts from the last 24 hours
-    const { data: newContacts } = await supabaseServer
-      .from('crm_contacts')
-      .select('id')
-      .eq('user_id', user.id)
-      .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
-
-    // Build story beats with translation keys
-    const storyBeats: StoryBeat[] = [];
-
-    // Done beat - recent completions
-    const completedCount = recentExecutions?.length || 0;
-    const newContactCount = newContacts?.length || 0;
-    if (completedCount > 0 || newContactCount > 0) {
-      storyBeats.push({
-        type: 'done',
-        titleKey: newContactCount > 0
-          ? 'myday.beat.replied_enquiries'
-          : 'myday.beat.completed_tasks',
-        titleParams: { count: newContactCount > 0 ? newContactCount : completedCount },
-        subtitleKey: 'myday.beat.overnight_subtitle'
-      });
-    } else {
-      storyBeats.push({
-        type: 'done',
-        titleKey: 'myday.beat.all_caught_up',
-        subtitleKey: 'myday.beat.no_tasks_subtitle'
-      });
+    /*
+     * The briefing is best-effort. It involves a model call and a cache table
+     * that may not be migrated yet, and neither is worth failing the whole
+     * dashboard header over — the greeting alone is still useful.
+     */
+    let briefing = null;
+    try {
+      const facts = await buildBriefingFacts(user.id, day);
+      briefing = await getBriefing(user.id, facts, language);
+    } catch (briefingError) {
+      requestLogger.warn({ err: briefingError, userId: user.id }, 'Briefing unavailable');
     }
-
-    // Next beat - upcoming sessions
-    const upcomingCount = todaysBookings?.length || 0;
-    if (upcomingCount > 0) {
-      const nextBooking = todaysBookings![0];
-      // Get contact name from JOIN
-      const contact = Array.isArray(nextBooking.contact) ? nextBooking.contact[0] : nextBooking.contact;
-      const clientName = contact?.first_name || 'Client';
-      const time = new Date(nextBooking.start_time).toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
-      storyBeats.push({
-        type: 'next',
-        titleKey: upcomingCount === 1
-          ? 'myday.beat.session_at'
-          : 'myday.beat.session_at_more',
-        titleParams: { name: clientName, time, count: upcomingCount - 1 },
-        subtitleKey: upcomingCount > 1 ? 'myday.beat.sessions_today_plural' : 'myday.beat.sessions_today',
-        subtitleParams: { count: upcomingCount }
-      });
-    } else {
-      storyBeats.push({
-        type: 'next',
-        titleKey: 'myday.beat.no_sessions',
-        subtitleKey: 'myday.beat.calendar_clear'
-      });
-    }
-
-    // Running beat 1 - follow-ups
-    const runningCount = runningExecutions?.length || 0;
-    storyBeats.push({
-      type: 'run',
-      titleKey: runningCount > 0
-        ? 'myday.beat.following_up'
-        : 'myday.beat.monitoring',
-      titleParams: runningCount > 0 ? { count: runningCount } : undefined,
-      subtitleKey: runningCount > 0
-        ? 'myday.beat.following_subtitle'
-        : 'myday.beat.monitoring_subtitle'
-    });
-
-    // Running beat 2 - invoice chasing
-    const pendingAmount = pendingInvoices?.reduce((sum, inv) => sum + (inv.amount || 0), 0) || 0;
-    const pendingCount = pendingInvoices?.length || 0;
-    storyBeats.push({
-      type: 'run',
-      titleKey: pendingAmount > 0
-        ? 'myday.beat.chasing_invoices'
-        : 'myday.beat.all_paid',
-      titleParams: pendingAmount > 0 ? { amount: `$${pendingAmount.toLocaleString()}` } : undefined,
-      subtitleKey: pendingCount > 0
-        ? (pendingCount > 1 ? 'myday.beat.clients_reminded_plural' : 'myday.beat.clients_reminded')
-        : 'myday.beat.no_outstanding',
-      subtitleParams: pendingCount > 0 ? { count: pendingCount } : undefined
-    });
-
-    // Build summary data with translation keys
-    const summaryParts: Array<{ key: string; params?: Record<string, string | number> }> = [];
-    if (newContactCount > 0) {
-      summaryParts.push({ key: 'myday.summary.new_people', params: { count: newContactCount } });
-    }
-    if (upcomingCount > 0) {
-      summaryParts.push({
-        key: upcomingCount > 1 ? 'myday.summary.sessions_today_plural' : 'myday.summary.sessions_today',
-        params: { count: upcomingCount }
-      });
-    }
-    if (pendingAmount > 0) {
-      summaryParts.push({ key: 'myday.summary.chasing_owed' });
-    }
-
-    const summaryData: SummaryData = summaryParts.length > 0
-      ? { key: 'myday.summary.composite', parts: summaryParts }
-      : { key: 'myday.summary.default' };
 
     return NextResponse.json({
       success: true,
       data: {
         userName,
-        greeting: getGreeting(),
-        summaryData,
-        storyBeats
-      }
+        greeting: greetingFor(day.localHour),
+        briefing: briefing && {
+          narrative: briefing.narrative,
+          date: day.date,
+          // Undefined rather than 'UTC' when nothing is stored, so the card can
+          // tell "no timezone set" from "the timezone is UTC" and gate the
+          // morning email on the difference.
+          timezone: preferences?.timezone ? day.timezone : undefined,
+          isQuiet: briefing.isQuiet,
+          source: briefing.source,
+          emailEnabled: Boolean(
+            (briefingPrefResult.data as { daily_briefing_email_enabled?: boolean } | null)
+              ?.daily_briefing_email_enabled
+          ),
+        },
+      },
     });
-
   } catch (error) {
     requestLogger.error({ err: error }, 'Failed to fetch My Day data');
     return NextResponse.json(
@@ -225,4 +135,9 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function normaliseLanguage(value: string | null | undefined): BriefingLanguage {
+  const code = value?.toLowerCase().slice(0, 2);
+  return code === 'he' || code === 'es' ? code : 'en';
 }

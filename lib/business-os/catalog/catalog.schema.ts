@@ -286,6 +286,23 @@ export interface ActionDef {
   risk: RiskLevel;
   requiresConfirmation: boolean;
   /**
+   * What a READ action gives back, so the answer can quote it.
+   *
+   * Every other result in this system is addressable — `{sN.count}` for a find,
+   * `{sN.value}` for an aggregate — and an action's was not. `open_time` returns
+   * free minutes, booked minutes and how many appointments still fit, and the
+   * planner had no way to name any of it: asked "כמה שעות פתוחות מחר" it
+   * invented `{s1.first.hours}`, validation rejected it, and the question could
+   * not be answered however well it was planned.
+   *
+   * Declared here rather than inferred, for the same reason every field is: the
+   * planner writes its sentence before anything runs, so it can only reference
+   * what the catalog promised would exist.
+   *
+   * Read actions only. A write's outcome is its confirmation line.
+   */
+  returns?: Record<string, { labels: Labels; format?: FormatHint }>;
+  /**
    * Do this action's declared fields name COLUMNS, or parameters?
    *
    * Almost every action writes to the row it names, so its `requiredFields` and

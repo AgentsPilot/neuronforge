@@ -322,13 +322,24 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       }
     },
 
-    update: async (q, data, ctx) =>
-      paymentInvoiceRepository.update(requireTargetId(q), ctx.userId, data) as Promise<
-        RepoResult<unknown>
-      >,
-
-    // Both go through invoiceLifecycle, which refuses a paid invoice and stops
-    // the Stripe hosted page being payable before the local row changes.
+    /*
+     * There is deliberately no `update` here.
+     *
+     * One existed, undeclared in the catalog and therefore unreachable — dead
+     * code with a live edge. It passed `data` straight to the repository, so
+     * reaching it would have allowed `status: 'paid'` with no settlement, or an
+     * `amount` change on an invoice a client is already looking at through a
+     * Stripe hosted page.
+     *
+     * `mark_paid`, `void` and `send` exist precisely because those transitions
+     * are not field writes. If editing a draft's notes or due date is wanted
+     * later, it should be a declared action scoped to those fields and refused
+     * on a paid invoice — not a passthrough that happens to work.
+     *
+     * Both of the following go through invoiceLifecycle, which refuses a paid
+     * invoice and stops the Stripe hosted page being payable before the local
+     * row changes.
+     */
     void: async (q, _data, ctx) => {
       const { voidInvoice } = await import('@/lib/payments/invoiceLifecycle');
       const result = await voidInvoice({ invoiceId: requireTargetId(q), userId: ctx.userId });
@@ -997,9 +1008,31 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
     open_time: async (_q, data, ctx) => {
       const { computeOpenTime } = await import('@/lib/scheduling/openTime');
 
-      const date = String(data.date ?? '').slice(0, 10);
+      /*
+       * A date parameter takes the SAME form as a date anywhere else.
+       *
+       * This accepted only a literal YYYY-MM-DD, while the planner — correctly,
+       * following the grammar it is taught everywhere else — sends
+       * {"$date":"wednesday"} or {"$date":"tomorrow"}. String() turned that into
+       * "[object Object]" and the user was told "'[object Object]' is not a
+       * date", so a well-formed plan failed at the last step.
+       *
+       * Resolving through `resolveDateExpr` also means "tomorrow" and "wednesday"
+       * are worked out server-side against the business's own timezone, which is
+       * the whole reason anchors exist.
+       */
+      const raw = data.date;
+      const date = isDateExpr(raw)
+        ? resolveDateExpr(raw, ctx.timezone, 'date').slice(0, 10)
+        : String(raw ?? '').slice(0, 10);
+
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        return { data: null, error: new Error(`'${String(data.date)}' is not a date.`) };
+        return {
+          data: null,
+          error: new Error(
+            `I could not read '${String(raw)}' as a day. Try "tomorrow", "Wednesday", or a date.`
+          ),
+        };
       }
 
       const { data: profile, error: profileError } = await supabaseServer
@@ -1130,7 +1163,16 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         skipInvoice: true,
       });
 
-      if (!result?.success) {
+      /*
+       * `sent`, not `success` — and this was not merely a type error.
+       *
+       * `EmailResult` has no `success` field, so `!result?.success` was ALWAYS
+       * true: every resend reported "the confirmation could not be sent" to the
+       * user, including the ones that had just gone out. The only reason it was
+       * never chased is that `next.config.js` ignores type errors at build time,
+       * which is exactly the failure mode that argues for fixing them anyway.
+       */
+      if (!result?.sent) {
         return {
           data: null,
           error: new Error(result?.error || 'The confirmation could not be sent'),

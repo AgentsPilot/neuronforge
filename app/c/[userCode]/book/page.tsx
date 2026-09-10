@@ -56,6 +56,14 @@ interface BusinessData {
     /** How the money arrives, or null where the service is free. */
     collection?: 'online' | 'invoice' | null;
     /**
+     * Bought outright, or quoted first.
+     *
+     * Same reason as `paymentPlan` below — the endpoint returns it and the
+     * modal acts on it, and a type that omitted it here would let a quoted
+     * service reach the widget looking like a direct sale.
+     */
+    sale_mode?: 'direct' | 'proposal';
+    /**
      * How this service may be paid over time.
      *
      * Declared here because the type was the narrowest point in the chain: the

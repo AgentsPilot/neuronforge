@@ -63,6 +63,14 @@ export interface Service {
   is_scheduled: boolean;
   /** How the money arrives. Null while the service is free. */
   collection: 'online' | 'invoice' | null;
+  /**
+   * Can a client buy this outright, or does the business quote each job?
+   *
+   * 'proposal' is the only way a service priced per job can exist: it has no
+   * published price and no card taken at booking, because neither is knowable
+   * until the work has been quoted.
+   */
+  sale_mode: 'direct' | 'proposal';
   /** Paying over time, where they said so. Carried through to the build. */
   payment_plan?: {
     installment_count: number;
@@ -198,6 +206,14 @@ From their response, extract:
      null when they did not say, or the service is free.
      Do NOT guess "online" — defaulting to it would force them to connect a card
      processor they may never want.
+   - sale_mode: "direct" when a client can book and pay for this immediately.
+     "proposal" when the business quotes each job before there is a price —
+     they price after seeing the site, the scope varies per client, or they
+     describe sending an offer, estimate or treatment plan first.
+     A "proposal" service legitimately has price: null; that is the one case
+     where a missing price is an answer rather than a gap, so do NOT set
+     needs_more_details for it on price alone.
+     Default to "direct" — most businesses sell a fixed thing at a fixed price.
 
 IMPORTANT about price:
 - If user ONLY provides service name without price (e.g., "ייעוץ אישי", "personal consultation"), set price: null
@@ -268,12 +284,16 @@ Examples:
 - "ייעוץ 200" = currency: null (a bare number says nothing)
 - "ליווי שנתי 6000 ש"ח, אפשר ב-12 תשלומים" = price: 6000, currency: ILS, payment_plan: { installment_count: 12, installment_frequency: "monthly" }
 - "Programme is $1200, or 3 monthly payments" = price: 1200, currency: USD, payment_plan: { installment_count: 3, installment_frequency: "monthly" }
+- "שיפוצי מטבחים, אני מתמחר כל עבודה אחרי שאני רואה את הבית" = sale_mode: "proposal", price: null, is_scheduled: false
+- "I quote each project after a site visit" = sale_mode: "proposal", price: null
+- "תוכנית טיפול של 6 מפגשים, 2700 ש"ח, אפשר ב-3 תשלומים" = sale_mode: "proposal", price: 2700, currency: ILS, payment_plan: { installment_count: 3, installment_frequency: "monthly" }
+- "250 ש"ח לפגישה" = sale_mode: "direct" (a fixed price they can just book)
 - "50 an hour, cash when they come" = collection_method: "in_person"
 - "120 per session" (nothing about HOW) = collection_method: null
 
 Return ONLY valid JSON:
 {
-  "services": [{ "name": string, "duration_minutes": number | null, "price": number | null, "currency": "USD" | "ILS" | "EUR" | "GBP" | null, "payment_plan": { "installment_count": number, "installment_frequency": "weekly" | "biweekly" | "monthly" } | null, "is_scheduled": boolean, "collection": "online" | "invoice" | null }],
+  "services": [{ "name": string, "duration_minutes": number | null, "price": number | null, "currency": "USD" | "ILS" | "EUR" | "GBP" | null, "payment_plan": { "installment_count": number, "installment_frequency": "weekly" | "biweekly" | "monthly" } | null, "is_scheduled": boolean, "collection": "online" | "invoice" | null, "sale_mode": "direct" | "proposal" }],
   "pricing_model": "fixed" | "custom" | "free" | "mixed",
   "needs_intake": boolean | null,
   "payment_timing": "before" | "after" | "installments" | "none",

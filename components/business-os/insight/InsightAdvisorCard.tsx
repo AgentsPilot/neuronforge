@@ -293,8 +293,8 @@ export function InsightAdvisorCard({
       className="adv"
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         borderRadius: '22px',
         boxShadow: '0 26px 60px -32px rgba(20,26,44,0.3)',
         overflow: 'hidden',
@@ -342,7 +342,7 @@ export function InsightAdvisorCard({
                 style={{
                   display: 'block',
                   fontWeight: 400,
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   fontSize: '11.5px',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
@@ -362,8 +362,8 @@ export function InsightAdvisorCard({
               fontWeight: 600,
               letterSpacing: '0.05em',
               textTransform: 'uppercase',
-              background: '#F1F3F8',
-              color: '#697187',
+              background: 'var(--v2-bg)',
+              color: 'var(--v2-text-secondary)',
               padding: '5px 11px',
               borderRadius: '20px',
               whiteSpace: 'nowrap',
@@ -383,7 +383,7 @@ export function InsightAdvisorCard({
                 style={{
                   fontSize: '11.5px',
                   fontWeight: 500,
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   whiteSpace: 'nowrap',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
@@ -426,7 +426,7 @@ export function InsightAdvisorCard({
             letterSpacing: '-0.025em',
             marginBottom: '7px',
             lineHeight: 1.25,
-            color: '#131A2B',
+            color: 'var(--v2-text-primary)',
           }}
         >
           {displayTitle}
@@ -437,7 +437,7 @@ export function InsightAdvisorCard({
           className="adv-p"
           style={{
             fontSize: '14.5px',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             maxWidth: '46rem',
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
             lineHeight: 1.5,
@@ -486,13 +486,13 @@ export function InsightAdvisorCard({
               onClick={handleDismiss}
               className="adv-lite"
               style={{
-                border: '1.5px solid #E7E9F1',
-                background: '#FFFFFF',
+                border: '1.5px solid var(--v2-border)',
+                background: 'var(--v2-surface)',
                 borderRadius: '12px',
                 padding: '11px 18px',
                 fontSize: '14px',
                 fontWeight: 600,
-                color: '#697187',
+                color: 'var(--v2-text-secondary)',
                 cursor: 'pointer',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
@@ -506,7 +506,7 @@ export function InsightAdvisorCard({
                 className="adv-seen"
                 style={{
                   fontSize: '12.5px',
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '7px',
@@ -519,7 +519,7 @@ export function InsightAdvisorCard({
                   style={{
                     width: '14px',
                     height: '14px',
-                    stroke: '#697187',
+                    stroke: 'var(--v2-text-secondary)',
                     fill: 'none',
                     strokeWidth: 2,
                   }}
@@ -538,7 +538,7 @@ export function InsightAdvisorCard({
               padding: '16px',
               borderRadius: '14px',
               background: '#F8F9FC',
-              border: '1px solid #E7E9F1',
+              border: '1px solid var(--v2-border)',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
@@ -547,7 +547,7 @@ export function InsightAdvisorCard({
                 style={{
                   fontSize: '15px',
                   fontWeight: 600,
-                  color: '#131A2B',
+                  color: 'var(--v2-text-primary)',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
               >
@@ -594,12 +594,12 @@ export function InsightAdvisorCard({
                         width: '20px',
                         height: '20px',
                         borderRadius: '50%',
-                        border: '2px solid #E7E9F1',
+                        border: '2px solid var(--v2-border)',
                         flexShrink: 0,
                       }}
                     />
                   )}
-                  <span style={{ color: i <= runningStep ? '#131A2B' : '#697187', fontWeight: i <= runningStep ? 500 : 400 }}>
+                  <span style={{ color: i <= runningStep ? 'var(--v2-text-primary)' : 'var(--v2-text-secondary)', fontWeight: i <= runningStep ? 500 : 400 }}>
                     {step}
                   </span>
                 </div>
@@ -644,7 +644,7 @@ export function InsightAdvisorCard({
                   fontWeight: 600,
                   display: 'block',
                   marginBottom: '3px',
-                  color: '#131A2B',
+                  color: 'var(--v2-text-primary)',
                 }}
               >
                 {t('insight.completed.title') || 'Done'}
@@ -652,7 +652,7 @@ export function InsightAdvisorCard({
               <p
                 style={{
                   fontSize: '13.5px',
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   margin: 0,
                 }}
@@ -669,8 +669,8 @@ export function InsightAdvisorCard({
             className="auto-offer"
             style={{
               marginTop: '18px',
-              border: '1.5px solid #FBDCC0',
-              background: 'linear-gradient(180deg, #FFF8F2, #FFFDFB)',
+              border: '1.5px solid rgba(249, 115, 22, 0.30)',
+              background: 'linear-gradient(180deg, rgba(249, 115, 22, 0.10), rgba(249, 115, 22, 0.03))',
               borderRadius: '16px',
               padding: '17px 18px',
             }}
@@ -699,7 +699,7 @@ export function InsightAdvisorCard({
                 fontWeight: 600,
                 letterSpacing: '-0.02em',
                 marginBottom: '6px',
-                color: '#131A2B',
+                color: 'var(--v2-text-primary)',
               }}
             >
               {t('insight.automate.title') || 'Want me to just handle this from now on?'}
@@ -709,7 +709,7 @@ export function InsightAdvisorCard({
               className="auto-p"
               style={{
                 fontSize: '13.5px',
-                color: '#697187',
+                color: 'var(--v2-text-secondary)',
                 marginBottom: '14px',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
@@ -724,7 +724,7 @@ export function InsightAdvisorCard({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '12px',
-                background: '#FFFFFF',
+                background: 'var(--v2-surface)',
                 border: '1px solid #F3D2B4',
                 borderRadius: '12px',
                 padding: '11px 14px',
@@ -751,7 +751,7 @@ export function InsightAdvisorCard({
                   display: 'flex',
                   alignItems: 'center',
                   gap: '2px',
-                  border: '1.5px solid #E7E9F1',
+                  border: '1.5px solid var(--v2-border)',
                   borderRadius: '10px',
                   overflow: 'hidden',
                 }}
@@ -766,7 +766,7 @@ export function InsightAdvisorCard({
                     fontSize: '17px',
                     fontWeight: 600,
                     color: '#F97316',
-                    background: '#FFF6EE',
+                    background: 'rgba(249, 115, 22, 0.10)',
                     border: 'none',
                     cursor: 'pointer',
                   }}
@@ -797,7 +797,7 @@ export function InsightAdvisorCard({
                     fontSize: '17px',
                     fontWeight: 600,
                     color: '#F97316',
-                    background: '#FFF6EE',
+                    background: 'rgba(249, 115, 22, 0.10)',
                     border: 'none',
                     cursor: 'pointer',
                   }}
@@ -839,13 +839,13 @@ export function InsightAdvisorCard({
                 className="adv-lite"
                 onClick={handleDeclineAutomate}
                 style={{
-                  border: '1.5px solid #E7E9F1',
-                  background: '#FFFFFF',
+                  border: '1.5px solid var(--v2-border)',
+                  background: 'var(--v2-surface)',
                   borderRadius: '12px',
                   padding: '11px 18px',
                   fontSize: '14px',
                   fontWeight: 600,
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   cursor: 'pointer',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
@@ -895,7 +895,7 @@ export function InsightAdvisorCard({
                   fontWeight: 600,
                   display: 'block',
                   marginBottom: '3px',
-                  color: '#131A2B',
+                  color: 'var(--v2-text-primary)',
                 }}
               >
                 {t('insight.automated.title') || 'Done — I\'ll chase them from now on'}
@@ -903,7 +903,7 @@ export function InsightAdvisorCard({
               <p
                 style={{
                   fontSize: '13.5px',
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   margin: 0,
                 }}

@@ -38,6 +38,14 @@ export interface JourneyService {
   collection: ServiceCollection | null;
   /** Null means the fee is agreed per client; zero means free. */
   price: number | null | undefined;
+  /**
+   * Bought outright, or quoted first.
+   *
+   * `proposal` ends the journey at a request: the client leaves their details
+   * and the owner quotes. Absent means `direct`, so every service drawn before
+   * this existed is unchanged.
+   */
+  saleMode?: 'direct' | 'proposal' | null;
 }
 
 interface ClientJourneyStripProps {
@@ -83,7 +91,7 @@ interface ClientJourneyStripProps {
   saving?: boolean;
 }
 
-type StepKind = 'service' | 'booking' | 'details' | 'payment' | 'intake';
+type StepKind = 'service' | 'booking' | 'details' | 'request' | 'payment' | 'intake';
 
 /**
  * A step that happens AFTER the booking is confirmed, not inside it.
@@ -97,6 +105,9 @@ const STEP_COLOR: Record<StepKind, string> = {
   service: '#D14E97',
   booking: '#14B8A6',
   details: '#4F6EF7',
+  // Amber, alone among these: every other step is something the client
+  // completes, and this one is where they stop and wait for the business.
+  request: '#F0A02A',
   payment: '#22C58B',
   intake: '#8B5CF6',
 };
@@ -153,9 +164,28 @@ export function ClientJourneyStrip({
    * "off" one is what you press to turn on. Read-only keeps the old behaviour
    * exactly: absent means absent.
    */
+  const quoted = service.saleMode === 'proposal';
+
   const steps: Array<{ kind: StepKind; ready: boolean; on: boolean } & AfterBooking> = [
     { kind: 'service', ready: true, on: true },
   ];
+
+  /*
+   * A quoted service ends at the request — but can book a meeting on the way.
+   *
+   * The booking step stays available and editable: "book a free site visit,
+   * then I'll quote you" is how most contractors sell, and the owner has to be
+   * able to turn that on. The PAYMENT step does not appear at all, because
+   * there is no price yet for a card form to charge — offering it as a toggle
+   * would invite switching on a step the client can never complete.
+   */
+  if (quoted) {
+    if (service.scheduled || editable) {
+      steps.push({ kind: 'booking', ready: hoursReady, on: service.scheduled });
+    }
+    steps.push({ kind: 'details', ready: true, on: true });
+    steps.push({ kind: 'request', ready: true, on: true });
+  } else {
   if (service.scheduled || editable) {
     steps.push({ kind: 'booking', ready: hoursReady, on: service.scheduled });
   }
@@ -165,6 +195,7 @@ export function ClientJourneyStrip({
   // is still the place to say so, as long as there is money involved at all.
   if (online || (editable && priced)) {
     steps.push({ kind: 'payment', ready: processorReady, on: online });
+  }
   }
   /*
    * Intake, shown as what follows the booking rather than a step within it.

@@ -337,7 +337,12 @@ export class PlanCache {
         logger.warn({ err }, 'Could not embed plan; storing without semantic search');
       }
 
-      const entities = [...new Set((plan.steps ?? []).map((s) => s.entity))];
+      // An analyse step names no entity — it describes the others.
+      const entities = [
+        ...new Set(
+          (plan.steps ?? []).filter((s) => s.op !== 'analyse').map((s) => s.entity)
+        ),
+      ];
 
       const hash = cacheKey(normalized, language, cacheVersion());
       const scope = portable ? null : userId;

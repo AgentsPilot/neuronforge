@@ -120,7 +120,10 @@ describe('business_profile.export_ledger, standalone', () => {
     const now = new Date();
     const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    expect(String(row.from)).toStartWith?.(month) ?? expect(String(row.from).slice(0, 7)).toBe(month);
+    // Was written as `.toStartWith?.(month) ?? <fallback>` — a matcher jest does
+    // not have, made harmless by optional chaining, so the line always fell
+    // through to the fallback and the first half asserted nothing.
+    expect(String(row.from).slice(0, 7)).toBe(month);
   });
 
   it('accepts explicit dates instead of a named period', async () => {
