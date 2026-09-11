@@ -286,6 +286,23 @@ export interface ActionDef {
   risk: RiskLevel;
   requiresConfirmation: boolean;
   /**
+   * What a READ action gives back, so the answer can quote it.
+   *
+   * Every other result in this system is addressable — `{sN.count}` for a find,
+   * `{sN.value}` for an aggregate — and an action's was not. `open_time` returns
+   * free minutes, booked minutes and how many appointments still fit, and the
+   * planner had no way to name any of it: asked "כמה שעות פתוחות מחר" it
+   * invented `{s1.first.hours}`, validation rejected it, and the question could
+   * not be answered however well it was planned.
+   *
+   * Declared here rather than inferred, for the same reason every field is: the
+   * planner writes its sentence before anything runs, so it can only reference
+   * what the catalog promised would exist.
+   *
+   * Read actions only. A write's outcome is its confirmation line.
+   */
+  returns?: Record<string, { labels: Labels; format?: FormatHint }>;
+  /**
    * Do this action's declared fields name COLUMNS, or parameters?
    *
    * Almost every action writes to the row it names, so its `requiredFields` and
@@ -378,6 +395,24 @@ export interface EntityDef {
    * a count of another.
    */
   aliases?: string[];
+  /**
+   * Whether this entity can be READ with find/compute. Default true.
+   *
+   * False for a configuration singleton: one row, a couple of columns, and
+   * nothing anyone would query. Its purpose in the catalog is its ACTIONS.
+   *
+   * `business_profile` is the case that needed it. Asked "how many hours are
+   * still open on Wednesday" the planner reliably emitted `find
+   * business_profile` — which returns company_name and vertical, cannot answer
+   * the question, and looks like an answer. Wording the action's label more
+   * invitingly moved the rate around and never fixed it, because a plausible
+   * wrong option stays available however the right one is described.
+   *
+   * So the wrong option is removed. A flag on the entity is the honest place
+   * for it: "this is not a queryable collection" is a fact about the entity,
+   * not a rule about one question, and the validator can state it generically.
+   */
+  queryable?: boolean;
   /** Column used when naming a row in prose or a card title. */
   labelField: string | string[];
   /** Columns shown by default in a result card. */

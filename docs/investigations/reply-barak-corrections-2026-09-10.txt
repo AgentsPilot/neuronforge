@@ -1,0 +1,275 @@
+Subject: Re: Blocked — consolidating everything open (you were right about the tree)
+
+Thanks for taking the corrections the way you did, and for putting the causes in a register
+rather than editing them out — that register is what let me check this round properly.
+
+Headline: you're right about the tree and I was wrong, and it's worse on main than either of us
+wrote. Two of your three self-corrections hold. One of them I'd like you to un-concede, because
+the number you conceded to was mine and it was measured wrong. One item I did not check at all,
+deliberately, and I say which below. And I owe you two corrections on my own last email.
+
+
+THE TREE — YOU'RE RIGHT, AND MY LAST NOTE WAS BACKWARDS
+
+You're right, it's the other way round. My process note said your items described an older tree.
+It's origin/main that's behind, and origin/main is what ships.
+
+    git ls-remote origin
+      b83b359   refs/heads/main
+      dda5c51f  refs/heads/feature/business-os-reports-and-readiness
+
+    git branch -a --contains dda5c51f
+      feature/business-os-reports-and-readiness
+      remotes/origin/feature/business-os-reports-and-readiness      (main not listed)
+
+    git log --oneline origin/main..HEAD          ->  dda5c51f, one commit
+    git show --numstat --format="" dda5c51f | wc -l  ->  64
+
+All three of your numbers check out: one commit ahead, 64 files, unmerged.
+
+The reason it happened is worth recording. origin/main IS a merge of this branch — PR #35,
+7 Sep 12:29. dda5c51f was committed at 23:49 the same day. Main took the branch, eleven hours
+short of the commit that matters. So we were both looking at "the merged branch" and meaning
+different things by it.
+
+Worse than you wrote: it isn't three detectors on main, it's seven.
+
+    CrmEngagementDecayDetector:121       .select('client_email, start_time')
+    OpsLastMinuteCancelsDetector:72      .select('id, start_time, updated_at, payment_amount, client_email, cancellation_reason')
+    PricingIntroOfferStuckDetector:90    .select('id, client_email, service_id, payment_amount, created_at, status')
+    RetCancellationSpikeDetector:63      .select('id, client_email, service_id, cancellation_reason, updated_at')
+    RetRepeatBookingLowDetector:72       .select('client_email, id, start_time, payment_amount')
+    WebMobileIssuesDetector:130          .select('id, metadata, client_email')
+    WebPageUnderperformDetector:115      .select('source_url, client_email')
+
+On the branch, all seven are contact_id or the column is dropped, and the only two surviving
+mentions of client_email are comments recording the removal. Against the live schema:
+
+    scheduling_bookings select=client_email   42703 column ... does not exist
+    scheduling_bookings select=contact_id     OK
+
+One qualification on the win. dda5c51f takes five of the seven from dead to green. It does not
+fix the other two — they fail on different columns, and still fail after it:
+
+    scheduling_bookings select=id,metadata    42703 column scheduling_bookings.metadata does not exist
+    scheduling_bookings select=source_url     42703 column scheduling_bookings.source_url does not exist
+
+Those two are the ones from my item 3 that still need the retire-or-rebuild decision.
+
+
+AND A SECOND CORRECTION I OWE YOU, ON THE SAME ITEM
+
+I told you the contact_id work shipped on 26 Aug in commit 3390050, and that I'd confirmed it
+was an ancestor of origin/main. The ancestry was right. The role was exactly inverted.
+
+    git show 3390050 -- .../detectors/catalog/ | grep '^[+-].*client_email'
+      +++ b/.../CrmEngagementDecayDetector.ts        (created from /dev/null)
+      +      .select('client_email, start_time')
+      +++ b/.../OpsLastMinuteCancelsDetector.ts      (created from /dev/null)
+      +      .select('id, start_time, updated_at, payment_amount, client_email, ...')
+
+3390050 created those files WITH client_email. It's the commit that introduced the bug, not the
+one that fixed it. I named the right commit and gave it the opposite job, then used it to tell
+you your item had already shipped. That's the substantive error in my last email.
+
+
+YOUR THREE SELF-CORRECTIONS — TWO HOLD, ONE I'D LIKE YOU TO TAKE BACK
+
+allow_online_payment. Confirmed, and your account of the cause is exactly right:
+
+    payment_invoices select=id,allow_online_payment      OK
+    payment_invoices select=id,online_payment_enabled    42703 column ... does not exist
+
+    ls supabase/migrations | grep online_payment  ->  20260909_invoice_online_payment.sql
+    grep -l allow_online_payment supabase/migrations  ->  same file
+
+The filename really does say one thing and the column another.
+
+@/types/database. Confirmed imported nowhere, and the TS2307 is genuinely gone —
+BusinessProfileRepository.ts line 9 is now the supabaseServer import. You're also right that you
+removed it yourself:
+
+    git log -S"@/types/database" -- lib/repositories/BusinessProfileRepository.ts
+      8054d8c  2026-08-12  Barak Meiri  refactor(repositories): ... (drop missing @/types/database)
+      a670353  2026-07-28  offiromer    feat(business-os): implement AI Business OS phases 1-3
+
+One small thing: that was 12 Aug, a standalone refactor, three weeks before the merge — not
+during it. The merge doc separately records a second removal at merge time (D27, 2 Sep, on the
+grounds that your side of the merge reintroduced it). Those look like two different events and
+I can't tell which you meant. Which one were you thinking of?
+
+Now the one I'd like you to un-concede. tsc is NOT at 0 errors, and the 0 was mine:
+
+    npx tsc --noEmit -p tsconfig.json | grep -c "error TS"
+      0
+
+    ...but the run above ends:
+      FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+
+    NODE_OPTIONS="--max-old-space-size=8192" npx tsc --noEmit -p tsconfig.json
+      exit=2
+      error TS count: 2116
+
+My 0 was a grep counting an out-of-memory crash. tsc died before emitting a single diagnostic.
+So you conceded to a number that didn't exist, and I'm the one who handed it to you.
+
+The real figure is 2,116, and the breakdown doesn't match your explanation either:
+
+    .next/ generated types      4
+    tests / __tests__ / *.spec  219
+    app, lib, components, hooks, scripts (non-test)   1885
+
+.next/ is four errors, not the bulk. Your ~4,400 was measured mid-merge so I can't reconstruct
+it, but your instinct that the number was inflated by generated and test files doesn't survive
+the breakdown — the errors are overwhelmingly in real source.
+
+This changes the shape of the CI-gate item rather than killing it. I said last time the gate was
+"available now" because the tree was clean. It isn't clean, so turning ignoreBuildErrors off
+today would red the build. That makes it a baseline-and-ratchet job, not a switch. I still think
+it's the item that prevents the next round of these — I just described the cost wrong.
+
+
+THE MERGE-CLEAN CLAIM — I DID NOT CHECK IT
+
+You said it merges clean with no conflicts. I did not verify that, and I'm not asserting it
+either way. I deliberately ran no merge check of any kind this pass — no trial merge on a
+throwaway branch, no read-only merge-tree simulation, nothing. Treat it as unchecked, not as
+agreed.
+
+One adjacent fact I could see without simulating anything, offered as data and not as a verdict:
+your 88c3265 edits the same two lines in OpsLastMinuteCancelsDetector and RetCancellationSpike
+that dda5c51f edits. Same functional change, yours with an explanatory comment above it.
+
+
+THE .in('email', <uuids>) BUG — CONFIRMED IN dda5c51f
+
+Read straight out of the commit's tree, no checkout:
+
+    git show dda5c51f:.../PricingIntroOfferStuckDetector.ts
+      143:  const email = booking.contact_id;
+      235:  .in('email', [...stuckEmails].slice(0, 50));
+
+Reproduced live:
+
+    .in('email', [<contact uuid>])  ->  200, rows=0
+    .in('id',    [<contact uuid>])  ->  200, rows=1
+
+One thing worth knowing that I'd got slightly wrong myself: this bug is not live today. On main,
+line 90 fails on client_email and the detector returns before it ever reaches line 235. It goes
+live the moment dda5c51f lands. On main, line 143 still reads booking.client_email, which is
+type-consistent with the filter below it.
+
+And to be clear about what exists: neither one-liner is written anywhere. Not on my branch, not
+in my working tree, not on yours.
+
+    git diff --stat HEAD -- lib/business-os/insight/detectors/    (empty)
+    git log --all --oneline -- .../OpsPeakUnutilizedDetector.ts   ->  3390050 only
+
+OpsPeakUnutilizedDetector is byte-identical on both branches — .select('price') and the : 75
+default, unchanged since it was created.
+
+
+SCHEMA-CHECK — BRANCH CONFIRMED, SCRIPT NOT CHECKED
+
+The branch is real:
+
+    git ls-remote origin refs/heads/fix/business-os-detector-dead-selects
+      7e432f5b21fae88adc73f521db771e34cf1dcd75
+
+But my local copy of that ref is stale at 312b930 and 7e432f5 isn't in my object store:
+
+    git cat-file -t 7e432f5   ->  fatal: could not get object info
+
+Reaching it needs a fetch, which was outside the read-only remit for this pass. So I have not
+checked any of it: not the script's existence, not the npm wiring, not the read-only claim, not
+the exit code, not the blind-spot list, not 48 of 530. And I did not run it — I couldn't read
+the source to prove it doesn't write, and I won't run a script against this database on the
+strength of a description.
+
+What I could see at 312b930 is two commits and no schema:check entry in package.json, so the
+script is in the part I can't reach.
+
+One thing I'd ask about rather than assert. My rough denominator from the working tree:
+
+    grep -rn "\.select('" lib app components  ->  1445
+    grep -rn "\.from('"   lib app components  ->  2185
+
+against your 530. Your stated blind spots plus non-Supabase .select() calls could account for
+that, but it's a wide enough gap that I'd want to know the script isn't silently skipping a
+directory. Where does 530 come from?
+
+Separately: the idea is right and I'd want it regardless of the count. A mechanical check that
+prints the branch and SHA it measured is precisely what would have stopped this round-trip.
+
+
+ON YOUR ORDERING
+
+Mostly right, with one dependency that isn't there and one caveat.
+
+Right: dda5c51f has to precede the .in('email') fix. That one-liner is a no-op until the select
+above it works, so applying it first would change nothing and look like it had.
+
+Not right: dda5c51f does not need to precede the $75 fix. OpsPeakUnutilizedDetector isn't in
+dda5c51f's 64 files and is identical on both branches. That fix has no dependency on anything
+and could go today, on main, on its own.
+
+Right, and for your reason: $75 ahead of .in('email'). $75 is live on main right now, putting an
+invented revenue number in front of users. The other one isn't live until the merge happens.
+
+Caveat: the ordering as written rests on the merge being clean, which per the section above I
+did not check.
+
+And one gap: the ordering doesn't cover WebMobileIssues and WebPageUnderperform. dda5c51f
+doesn't fix them and they stay dead after it.
+
+
+WHERE I'D START
+
+1. The $75 one-liner — price -> payment_amount in OpsPeakUnutilizedDetector. It needs no merge,
+   no decision and nothing to land first. It's one line, it's live on main, and it's the only
+   item here actively showing users a fabricated number. It can go while the merge question is
+   still open, which is exactly why I'd take it first now rather than second.
+
+2. dda5c51f — see the merge section below before moving on this. Five detectors dead-to-green,
+   and it's the thing everything else is measured against, as you said.
+
+3. The .in('email') one-liner, straight on top of it. Not before — it does nothing before.
+
+4. Your schema-check landing, once I can read it. If the count is right it reframes items 5 and 6
+   entirely.
+
+5. The typecheck gate — but as a baseline-and-ratchet against 2,116, not a switch to flip.
+
+6. WebMobileIssues / WebPageUnderperform — still needs the retire-or-rebuild call before code.
+
+Q2 is still open, still needs psql. Confirmed on both counts:
+
+    docs/.../BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md:633  Q2 ... Open, answer blank
+    pg_trigger                   42P01 relation "public.pg_trigger" does not exist
+    information_schema.triggers  42P01 relation "public.information_schema.triggers" does not exist
+
+Same wall as last time. Agreed it stays explicitly unanswered.
+
+
+ON MERGING dda5c51f
+
+Leave it where it is for now — I'll come back to you on this separately.
+
+I'd rather answer properly than off the cuff, and nothing in this email should be read as the
+merge being cleared. Please don't move it in the meantime. Everything above stands on its own
+regardless of which way that goes, and item 1 in the list above needs nothing from this decision.
+
+
+A PROCESS NOTE, AND IT'S MINE THIS TIME
+
+Both of my errors this round came from the same place: I ran the right commands against the
+wrong tree and never printed which tree. You did the same thing in the other direction, but I'm
+the one who then used it to tell you an item had already shipped. Your instinct to make the
+script print branch and SHA is the correct fix, and I'd add the same discipline to the prose —
+every claim in one of these should say what it was measured against.
+
+My own reference notes for these audits have the same problem — they still cite that TS2307 at
+BusinessProfileRepository.ts:9 as a live example. It's been gone since your 12 Aug commit. I've
+flagged it rather than edited it; it wants fixing in its own change.
+
+The list was worth assembling, and so was the pushback.

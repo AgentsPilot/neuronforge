@@ -168,3 +168,62 @@ export function visibleQuestions(
     return answers[question.showIf.questionId] === question.showIf.equals;
   });
 }
+
+/**
+ * What a client may attach to an intake answer.
+ *
+ * Declared here because two places need it and they must not drift: the upload
+ * route enforces it, and the file picker on the public page uses it so someone
+ * learns their file is unwelcome BEFORE waiting for an upload to fail.
+ *
+ * The server is still the authority — `accept` is a hint the browser may ignore
+ * and a caller can bypass entirely.
+ */
+export const INTAKE_UPLOAD_MIME_TYPES = [
+  // Images
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'image/gif',
+  'image/tiff',
+  'image/bmp',
+  // Documents
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.oasis.opendocument.text',
+  'application/vnd.oasis.opendocument.spreadsheet',
+  'application/rtf',
+  'text/plain',
+  'text/csv',
+] as const;
+
+/** 10MB. Generous for a photograph or a scan, mean enough that a video is refused. */
+export const INTAKE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
+/**
+ * For the picker's `accept`. Extensions are included alongside the mime types
+ * because some systems report an empty or wrong type for Office files, and an
+ * `accept` list of mime types alone then hides the very file being asked for.
+ */
+export const INTAKE_UPLOAD_ACCEPT = [
+  ...INTAKE_UPLOAD_MIME_TYPES,
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.odt',
+  '.ods',
+  '.rtf',
+  '.csv',
+  '.txt',
+  '.heic',
+].join(',');

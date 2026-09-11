@@ -1,13 +1,17 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/components/UserProvider';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
-import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, ClipboardList, Sparkles } from 'lucide-react';
+import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, ClipboardList, Sparkles, Building2, FileText } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
 import { AvailabilityEditor, DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
 import { IntakeSettingsPanel } from '@/components/scheduling/IntakeSettingsPanel';
 import { CalendarSyncSettings } from '@/components/scheduling/CalendarSyncSettings';
+import { BusinessProfileSection } from '@/components/business-os/settings/BusinessProfileSection';
+import { InvoiceSettingsSection } from '@/components/business-os/settings/InvoiceSettingsSection';
+import { TabFooter, TabFooterSlot, TabFooterSlotProvider } from '@/components/business-os/settings/TabFooter';
 import { StripeConnectWizard } from '@/components/payments/StripeConnectWizard';
 import { StripeEmbeddedOnboarding } from '@/components/payments/StripeEmbeddedOnboarding';
 import { createLogger } from '@/lib/logger';
@@ -25,7 +29,19 @@ const logger = createLogger({ module: 'ConfigurationDialog' });
 // Configuration theme color: Pink (#D14E97)
 const CONFIG_COLOR = '#D14E97';
 
-type ConfigTab = 'services' | 'availability' | 'intake' | 'payments';
+/*
+ * `business` and `invoice` moved here from `/business-os/settings`.
+ *
+ * That page is the ACCOUNT screen — the person's profile, their password,
+ * their data. The business's own name, trade and published contact details,
+ * and the details printed on its invoices, are business configuration, and
+ * belong beside services, availability and payments.
+ *
+ * It also removes a split the dashboard had to live with: the readiness chips
+ * opened a page for two items and this dialog for the rest, so one list of
+ * unfinished work led to two different kinds of screen.
+ */
+type ConfigTab = 'services' | 'availability' | 'intake' | 'payments' | 'business' | 'invoice';
 
 interface ConfigurationDialogProps {
   isOpen: boolean;
@@ -51,6 +67,10 @@ interface ConfigurationDialogProps {
 
 export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit, visibleTabs, servicePrefill, availabilityDaysToAdd, onServiceCreated, onCloseWithUnpublished, onServicePublished, onServiceEdited }: ConfigurationDialogProps) {
   const { t, isRTL } = useLanguage();
+  // The invoice panel is user-scoped and this dialog had no user of its own.
+  const { user } = useAuth();
+  const currentUserId = user?.id || '';
+
   const [activeTab, setActiveTab] = useState<ConfigTab>(initialTab || 'services');
 
   /**
@@ -127,6 +147,14 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   const [stripeOnboardingPending, setStripeOnboardingPending] = useState(false); // Has account but onboarding incomplete
   const [stripeDisconnected, setStripeDisconnected] = useState(false); // Account exists but is disconnected (charges_enabled=false)
   const [stripeLoading, setStripeLoading] = useState(true);
+  /*
+   * The element tab action bars are rendered into.
+   *
+   * State, not a ref: on the render that mounts a tab the ref would still be
+   * null and the bar would never appear.
+   */
+  const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null);
+
   const [showStripeWizard, setShowStripeWizard] = useState(false);
   const [showEmbeddedOnboarding, setShowEmbeddedOnboarding] = useState(false); // Embedded onboarding for continue flow
   const [stripeContinueMode, setStripeContinueMode] = useState(false); // Whether wizard is in continue mode
@@ -219,8 +247,13 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     if (editedServiceId === serviceId) {
       setEditedServiceId(undefined);
     }
-    // Refresh services list to get updated status
-    fetchServices();
+    /*
+     * Silent. `fetchServices` sets `loadingServices`, which replaces the whole
+     * tab with a spinner — so publishing one service tore down the list, the
+     * panel and the owner's place in it, to change one word in one row. The
+     * silent variant reads the same endpoint and swaps the data underneath.
+     */
+    silentRefreshServices();
   }, [editedServiceId, services, onServicePublished]);
 
   const fetchServices = async () => {
@@ -503,10 +536,12 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   if (!isOpen) return null;
 
   const allTabs = [
+    { key: 'business' as ConfigTab, label: t('config.tab.business'), icon: Building2 },
     { key: 'services' as ConfigTab, label: t('config.tab.services') || 'Services', icon: Settings },
     { key: 'availability' as ConfigTab, label: t('config.tab.availability') || 'Availability', icon: Clock },
     { key: 'intake' as ConfigTab, label: t('config.tab.intake') || 'Intake Forms', icon: ClipboardList },
     { key: 'payments' as ConfigTab, label: t('config.tab.payments') || 'Payments', icon: CreditCard },
+    { key: 'invoice' as ConfigTab, label: t('config.tab.invoice'), icon: FileText },
   ];
 
   // Filter tabs if visibleTabs is specified
@@ -589,9 +624,28 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
             </div>
           )}
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6">
+          {/* Content.
+              `overflow-hidden` for services: that tab manages its own scroll so
+              the new-service line can stay pinned below the list. Every other
+              tab keeps scrolling here as before. */}
+          <TabFooterSlotProvider value={footerSlot}>
+          <div
+            className={`flex-1 p-3 sm:p-4 md:p-6 ${
+              activeTab === 'services' ? 'overflow-hidden flex flex-col min-h-0' : 'overflow-y-auto'
+            }`}
+          >
             {/* Services Tab */}
+            {activeTab === 'business' && <BusinessProfileSection />}
+
+            {activeTab === 'invoice' && (
+              /*
+               * `chrome={false}`: the tab bar already names this, and the
+               * component's own accordion header would be a second title for
+               * the same panel.
+               */
+              <InvoiceSettingsSection userId={currentUserId} chrome={false} />
+            )}
+
             {activeTab === 'services' && (
               loadingServices ? (
                 <div className="flex items-center justify-center py-16">
@@ -644,13 +698,14 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                   onChange={setAvailability}
                   daysToAdd={availabilityDaysToAdd}
                 />
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-[var(--v2-border)]">
-                  {availabilitySaved && (
+                <TabFooter
+                  message={availabilitySaved && (
                     <span className="text-sm font-medium flex items-center gap-1.5" style={{ color: CONFIG_COLOR }}>
                       <Check className="h-4 w-4" />
                       {t('scheduling.availability.saved') || 'Saved'}
                     </span>
                   )}
+                >
                   <button
                     onClick={saveAvailability}
                     disabled={savingAvailability}
@@ -671,7 +726,7 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                       t('scheduling.availability.save') || 'Save Availability'
                     )}
                   </button>
-                </div>
+                </TabFooter>
               </div>
             )}
 
@@ -909,6 +964,10 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
               </div>
             )}
           </div>
+
+          <TabFooterSlot hostRef={setFooterSlot} />
+          </TabFooterSlotProvider>
+
         </div>
       </div>
 

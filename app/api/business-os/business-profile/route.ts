@@ -79,6 +79,15 @@ const brandingSchema = z.object({
     .max(300, 'Address is too long')
     .nullable()
     .optional(),
+
+  /**
+   * Send the morning briefing by email as well as showing it on the dashboard.
+   *
+   * Off unless the owner turns it on. Meaningful only once a timezone is set on
+   * user_preferences — without one "morning" resolves to UTC, and the settings
+   * form gates the switch on that rather than sending at the wrong hour.
+   */
+  daily_briefing_email_enabled: z.boolean().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -112,9 +121,37 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /*
+     * The briefing opt-in, read separately and tolerantly.
+     *
+     * Deliberately NOT added to the select above. Postgres rejects the entire
+     * select for one unknown column, so naming a freshly-migrated column there
+     * takes the whole settings page down on any environment where
+     * 20260911_daily_briefing.sql has not been applied yet — and this repo has
+     * carried an unapplied migration for over a week before now. Its own query
+     * fails alone, and the switch reads as off until the column exists.
+     */
+    let dailyBriefingEmailEnabled = false;
+    try {
+      const { data: briefingPref, error: briefingError } = await supabaseServer
+        .from('business_profiles')
+        .select('daily_briefing_email_enabled')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (briefingError) throw briefingError;
+      dailyBriefingEmailEnabled = Boolean(briefingPref?.daily_briefing_email_enabled);
+    } catch (briefingError) {
+      requestLogger.warn(
+        { err: briefingError, userId: user.id },
+        'Daily briefing preference unreadable; reporting it as off'
+      );
+    }
+
     // 3. Return profile context
     return NextResponse.json({
       success: true,
+      daily_briefing_email_enabled: dailyBriefingEmailEnabled,
       vertical: profile?.vertical || null,
       sub_vertical: profile?.sub_vertical || null,
       language: profile?.language || 'en',
@@ -169,7 +206,7 @@ export async function PUT(request: NextRequest) {
      * methods, so saving one cannot blank the other. The request may carry
      * either or both.
      */
-    const { phone, email, address, ...branding } = validated;
+    const { phone, email, address, daily_briefing_email_enabled, ...branding } = validated;
     const contact = { phone, email, address };
     const hasContact = Object.values(contact).some(value => value !== undefined);
 
@@ -181,6 +218,19 @@ export async function PUT(request: NextRequest) {
 
     if (!error && hasContact) {
       ({ error } = await businessProfileRepository.updateContactDetails(user.id, contact));
+    }
+
+    /*
+     * Notification preferences get their own write for the same reason as the
+     * two above, and one more: `updateBranding` takes a field allow-list, so
+     * letting this ride along in the rest-spread would have it silently
+     * dropped — a switch that flips in the UI, reports success, and is off
+     * again on the next reload.
+     */
+    if (!error && daily_briefing_email_enabled !== undefined) {
+      ({ error } = await businessProfileRepository.updateNotificationPreferences(user.id, {
+        daily_briefing_email_enabled,
+      }));
     }
 
     if (error) {

@@ -41,6 +41,8 @@ interface Service {
   is_scheduled: boolean;
   /** How the money arrives. Decides the payment step. */
   collection: 'online' | 'invoice' | null;
+  /** Whether this is bought outright or quoted first. Decides where the journey ends. */
+  sale_mode: 'direct' | 'proposal';
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -104,7 +106,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       //
       // The sibling route /api/conversion/[userCode] already selected both. The
       // page happens to take its services from THIS one.
-      .select('id, service_name, description, duration_minutes, price, currency, is_scheduled, collection')
+      .select('id, service_name, description, duration_minutes, price, currency, is_scheduled, collection, sale_mode')
       .eq('user_id', ownerId)
       .eq('status', 'active')
       .eq('is_active', true)
@@ -132,6 +134,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // predates the column, and those were appointments.
       is_scheduled: s.is_scheduled !== false,
       collection: s.collection ?? null,
+      /*
+       * Selected but never returned, until now.
+       *
+       * The exact shape of the `paymentPlan` bug described below: the column
+       * was in the SELECT, so it looked handled, and the mapper dropped it —
+       * which meant a service the business sells by quotation was presented on
+       * a smart link as a direct booking. The client would be walked to a
+       * confirmation for work whose price nobody had stated.
+       */
+      sale_mode: s.sale_mode === 'proposal' ? 'proposal' : 'direct',
       // How this service may be paid over time.
       //
       // The config endpoint beside this one already returned it, and this one

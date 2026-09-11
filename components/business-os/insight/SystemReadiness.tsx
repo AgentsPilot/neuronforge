@@ -52,9 +52,9 @@ interface SystemReadinessProps {
   shape?: BusinessShape;
 }
 
-const INK = '#131A2B';
-const MUTED = '#697187';
-const TODO = '#C2410C';
+const INK = 'var(--v2-text-primary)';
+const MUTED = 'var(--v2-text-secondary)';
+const TODO = '#F97316';
 
 export function SystemReadiness({
   items,
@@ -250,8 +250,8 @@ export function SystemReadiness({
         // tinted ground behind them fights every one of them and turns the
         // whole card into one green (or one orange) mood. State is on the
         // nodes, so the card is simply a surface.
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         // Fills the grid track so this card and the usage card end level.
         height: '100%',
         display: 'flex',
@@ -387,7 +387,7 @@ export function SystemReadiness({
                   style={{
                     marginInlineStart: '13px',
                     paddingInlineStart: '11px',
-                    borderInlineStart: '1.5px solid #EDEFF5',
+                    borderInlineStart: '1.5px solid var(--v2-border)',
                   }}
                 >
                   {kids.map(kid => renderStep(kid, true))}
@@ -414,7 +414,7 @@ export function SystemReadiness({
               padding: '8px 6px 2px',
               background: 'none',
               border: 'none',
-              borderTop: '1px solid #EDEFF5',
+              borderTop: '1px solid var(--v2-border)',
               textAlign: isRTL ? 'right' : 'left',
               fontFamily: bodyFont,
               fontSize: '11.5px',
@@ -441,7 +441,7 @@ export function SystemReadiness({
           style={{
             marginTop: '9px',
             fontSize: '12px',
-            color: '#B4442E',
+            color: '#F97316',
             fontFamily: bodyFont,
             lineHeight: 1.45,
           }}

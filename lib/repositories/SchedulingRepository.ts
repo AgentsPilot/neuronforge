@@ -29,6 +29,16 @@ export type FirstPaymentDue = 'on_booking' | 'days_after';
  */
 export type ServiceCollection = 'online' | 'invoice';
 
+/**
+ * Whether a client can buy this outright, or has to be quoted first.
+ *
+ * The third fact that decides a service's client journey, beside
+ * `is_scheduled` and `collection`. `proposal` means the journey stops after
+ * the client leaves their details: there is no price to show and no card to
+ * take until the owner has quoted the job.
+ */
+export type ServiceSaleMode = 'direct' | 'proposal';
+
 export interface ServiceAISuggestions {
   reasoning: string;
   confidence: number;
@@ -48,6 +58,8 @@ export interface SchedulingService {
   is_scheduled: boolean;
   /** How the money arrives. Null while the service is free. */
   collection: ServiceCollection | null;
+  /** Bought outright, or quoted first. NOT NULL DEFAULT 'direct'. */
+  sale_mode: ServiceSaleMode;
   buffer_minutes: number;
   max_bookings_per_day: number | null;
   advance_booking_days: number;
@@ -76,6 +88,7 @@ export interface SchedulingServiceInsert {
   currency?: ServiceCurrency;
   is_scheduled?: boolean;
   collection?: ServiceCollection | null;
+  sale_mode?: ServiceSaleMode;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -101,6 +114,7 @@ export interface SchedulingServiceUpdate {
   currency?: ServiceCurrency;
   is_scheduled?: boolean;
   collection?: ServiceCollection | null;
+  sale_mode?: ServiceSaleMode;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -734,6 +748,16 @@ export class SchedulingBookingRepository {
       status?: string | string[];
       startDate?: string;
       endDate?: string;
+      /**
+       * Exclusive upper bound on start_time.
+       *
+       * `endDate` is inclusive (`lte`), which is right for a date but wrong for
+       * a day window: a booking at exactly tomorrow's midnight belongs to
+       * tomorrow, and an inclusive bound counts it in both days. Callers
+       * working in half-open [start, end) windows — anything derived from
+       * businessDayFor — want this instead.
+       */
+      endBefore?: string;
       search?: string;
       limit?: number;
       offset?: number;
@@ -746,6 +770,7 @@ export class SchedulingBookingRepository {
         status,
         startDate,
         endDate,
+        endBefore,
         search,
         limit = 50,
         offset = 0
@@ -758,7 +783,7 @@ export class SchedulingBookingRepository {
         .select(`
           *,
           contact:crm_contacts(first_name, last_name, email, phone),
-          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency),
+          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
           payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
         `)
@@ -782,6 +807,10 @@ export class SchedulingBookingRepository {
 
       if (endDate) {
         query = query.lte('start_time', endDate);
+      }
+
+      if (endBefore) {
+        query = query.lt('start_time', endBefore);
       }
 
       // Client name search - search in JOINed crm_contacts table

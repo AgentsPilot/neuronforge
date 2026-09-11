@@ -1,12 +1,38 @@
 /**
  * Insight Detection Cron Job
  *
- * This endpoint is called by Vercel Cron to run all detectors and generate insights.
- * It runs every 15 minutes to:
- * 1. Run all detectors for active users
- * 2. Run correlation engine to connect related signals
- * 3. Prioritize and store insights
- * 4. Generate business health summary with LLM narrative
+ * Runs every detector for every active user, correlates what they return,
+ * prioritises it, and stores the top insights plus a health summary.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DAILY, AT 03:30 — AND WHY IT IS NOT EVERY 15 MINUTES
+ *
+ * It was `*​/15`: 96 runs a day, 31 detectors per user per run, roughly 64
+ * database queries each. At a hundred businesses that is on the order of
+ * 600,000 queries a day.
+ *
+ * Nothing those detectors measure can change in fifteen minutes. They compare
+ * this week against last week, look back thirty days, ask for ninety days and
+ * ten clients. `RetCancellationSpike` is a week-over-week ratio;
+ * `CrmEngagementDecay` looks back a month. Re-asking a week-over-week question
+ * ninety-six times a day returns the same answer ninety-five of those times,
+ * and when it does change, the repository's dedup means the same insight row
+ * comes back anyway.
+ *
+ * 03:30 rather than any other hour: `insight-metrics` rebuilds the metrics at
+ * 03:00, so detection reads numbers computed half an hour earlier rather than
+ * yesterday's.
+ *
+ * If something genuinely needs to be noticed within minutes — a payment that
+ * failed, a booking cancelled this morning — that is an EVENT, and it belongs
+ * on the event rail. It is not a reason to poll every business on the platform
+ * ninety-six times a day.
+ *
+ * The token cost was never the main charge here: `generateLocalizedContent`
+ * (gpt-4o-mini) is called only when an insight is genuinely NEW, because
+ * `InsightRepository` finds an existing open insight for the same detector and
+ * updates it instead. The database load was the real one.
+ * ─────────────────────────────────────────────────────────────────────────────
  *
  * Vercel Cron config: see vercel.json for schedule configuration
  *

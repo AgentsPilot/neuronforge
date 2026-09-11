@@ -80,6 +80,7 @@ const computedConfigurationSchema = z.object({
       installment_frequency: z.enum(['weekly', 'biweekly', 'monthly']),
     }).nullable().optional(),
     is_scheduled: z.boolean().optional(),
+    sale_mode: z.enum(['direct', 'proposal']).optional(),
     collection: z.enum(['online', 'invoice']).nullable().optional(),
   })),
   online_presence_mode: z.enum(['full_website', 'booking_only', 'website_only', 'none']),
@@ -131,6 +132,7 @@ const buildRequestSchema = z.object({
       installment_frequency: z.enum(['weekly', 'biweekly', 'monthly']),
     }).nullable().optional(),
     is_scheduled: z.boolean().optional(),
+    sale_mode: z.enum(['direct', 'proposal']).optional(),
     collection: z.enum(['online', 'invoice']).nullable().optional(),
   })).optional(),
 
@@ -489,6 +491,7 @@ export async function POST(request: NextRequest) {
           price: service.price,
           currency: serviceCurrency(service.currency),
           is_scheduled: scheduled,
+          sale_mode: service.sale_mode || 'direct',
           // Only a priced service is collected at all, and never 'online' by
           // default — that is the one value that makes Stripe mandatory.
           collection: (service.price || 0) > 0
@@ -542,6 +545,16 @@ export async function POST(request: NextRequest) {
           // length itself is independent of whether a time is booked.
           duration_minutes: service.duration_minutes ?? null,
           is_scheduled: service.is_scheduled !== false,
+          /*
+           * The chat's own answer, where it gave one.
+           *
+           * `quoted` above infers the same thing from a missing price, which is
+           * what this codebase had to do before the fact existed — and the
+           * comment beside it records what that cost: a service priced per
+           * client came out looking free. The inference stays as the fallback
+           * for a payload written before the chat learned to say so.
+           */
+          sale_mode: service.sale_mode || (quoted ? 'proposal' : 'direct'),
           collection: !quoted && (service.price || 0) > 0
             ? (service.collection === 'online' ? 'online' : 'invoice')
             : null,

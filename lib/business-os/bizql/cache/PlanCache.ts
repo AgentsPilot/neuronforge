@@ -29,6 +29,7 @@ import { CATALOG_VERSION } from '@/lib/business-os/catalog';
 import type { Plan } from '../planner/Planner';
 import { plannerVersion } from '../planner/planTool';
 import { catalogPromptVersion } from '../planner/catalogPrompt';
+import { containsCalendarDate } from '../dates';
 import {
   cacheKey,
   dehydratePlan,
@@ -63,6 +64,15 @@ function cacheVersion(): string {
    */
   return `${CATALOG_VERSION}.${plannerVersion()}.${catalogPromptVersion()}`;
 }
+
+/**
+ * Does this plan pin a specific calendar day anywhere inside it?
+ *
+ * Re-exported under the name this module has always used; the walk itself lives
+ * in `../dates` because the plan validator asks the same question of the same
+ * shape for a different reason.
+ */
+export { containsCalendarDate as namesACalendarDay } from '../dates';
 
 export type CacheLayer = 'exact' | 'semantic' | 'miss';
 
@@ -281,6 +291,24 @@ export class PlanCache {
 
     const { normalized, literals, language, userId, plan, model } = args;
 
+    /*
+     * A plan naming a specific day is not reusable, and caching it is a bug with
+     * a long fuse.
+     *
+     * An anchor stays correct forever because it resolves at execution — "due
+     * tomorrow" means tomorrow whenever it runs. `{"$date":"2026-10-30"}` is a
+     * literal, and the utterance it came from ("set the due date to 30 October")
+     * does not contain the year, so rehydration cannot correct it. Served again
+     * next October the same plan would quietly set a due date in the past.
+     *
+     * Same reasoning as a context-dependent turn: cheap to re-plan, expensive to
+     * be silently wrong.
+     */
+    if (containsCalendarDate(plan)) {
+      logger.debug({ normalized }, 'Not caching a plan that names a specific day');
+      return;
+    }
+
     try {
       const dehydrated = dehydratePlan(plan, literals);
 
@@ -309,7 +337,12 @@ export class PlanCache {
         logger.warn({ err }, 'Could not embed plan; storing without semantic search');
       }
 
-      const entities = [...new Set((plan.steps ?? []).map((s) => s.entity))];
+      // An analyse step names no entity — it describes the others.
+      const entities = [
+        ...new Set(
+          (plan.steps ?? []).filter((s) => s.op !== 'analyse').map((s) => s.entity)
+        ),
+      ];
 
       const hash = cacheKey(normalized, language, cacheVersion());
       const scope = portable ? null : userId;

@@ -403,6 +403,21 @@ export function SchedulingBookingModal({
   // External calendar busy slots
   const [externalBusySlots, setExternalBusySlots] = useState<ExternalBusySlot[]>([]);
 
+  /**
+   * Does the time currently in the form collide with something already booked?
+   *
+   * Uses the same predicate as the quick-pick row, so the warning and the
+   * offered slots can never disagree. The booking being edited is excluded —
+   * its own slot is not a conflict with itself.
+   */
+  const timeAlreadyBooked = (() => {
+    if (!formData.start_time || !formData.end_time) return false;
+    const start = new Date(formData.start_time);
+    const end = new Date(formData.end_time);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+    return isSlotBooked(start, end, existingBookings, booking?.id);
+  })();
+
   // Fetch user's timezone from profile (non-blocking - dialog opens immediately with browser timezone,
   // then updates to profile timezone when available)
   useEffect(() => {
@@ -511,9 +526,39 @@ export function SchedulingBookingModal({
         startTime = formatDateTimeLocal(startDate);
         endTime = formatDateTimeLocal(endDate);
       } else {
-        const defaultTimes = getDefaultTimes(availability, serviceDuration);
-        startTime = defaultTimes.start;
-        endTime = defaultTimes.end;
+        /*
+         * The first slot that is actually FREE, not the first the calendar allows.
+         *
+         * `getDefaultTimes` reads the weekly availability and nothing else, so it
+         * proposed the opening of the next working day whether or not somebody
+         * was already booked into it. The owner opened the dialog and was handed
+         * a time they had sold — and the quick-pick row underneath, which does
+         * consult the bookings, disagreed with the field above it.
+         *
+         * `getNextAvailableSlots` is that same filter, already written and
+         * already correct: it skips existing bookings (ignoring cancelled and
+         * no-show) and external busy time. Taking its first result means one
+         * definition of "free" rather than two that drift.
+         *
+         * It falls back to `getDefaultTimes` when there is no availability
+         * configured at all, which is the case that function exists for.
+         */
+        const [firstFree] = getNextAvailableSlots(
+          availability,
+          serviceDuration,
+          1,
+          existingBookings,
+          externalBusySlots
+        );
+
+        if (firstFree) {
+          startTime = formatDateTimeLocal(firstFree.start);
+          endTime = formatDateTimeLocal(firstFree.end);
+        } else {
+          const defaultTimes = getDefaultTimes(availability, serviceDuration);
+          startTime = defaultTimes.start;
+          endTime = defaultTimes.end;
+        }
       }
 
       // If prefilled contact provided, use it
@@ -925,7 +970,10 @@ export function SchedulingBookingModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-full sm:max-w-2xl h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
+      {/* Wider than a form needs, because this is not only a form: it carries the
+          quick-pick slot cards, the service summary and the intake panel, and at
+          2xl those sat in a column narrow enough to wrap every one of them. */}
+      <DialogContent className="w-full sm:max-w-3xl lg:max-w-4xl h-[100vh] sm:h-auto sm:max-h-[92vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
         {/* Sticky Header */}
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 pe-12 sm:pe-14 bg-[var(--v2-surface)]">
           <div className="flex items-center gap-3 sm:gap-4">
@@ -981,7 +1029,51 @@ export function SchedulingBookingModal({
                   }`}
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
                 >
-                  <SelectValue placeholder={t('scheduling.booking.select_service')} />
+                  {/*
+                    * The trigger says it in ONE line.
+                    *
+                    * Radix clones the chosen `SelectItem`'s children into the
+                    * trigger, and those children are a two-row block — name
+                    * above, duration and price below. That reads well in the
+                    * open list and badly in a closed field, where it doubled the
+                    * control's height and pushed the form around as soon as a
+                    * service was picked.
+                    *
+                    * Passing children to `SelectValue` overrides the clone, so
+                    * the list keeps its two rows and the field gets a summary.
+                    */}
+                  <SelectValue placeholder={t('scheduling.booking.select_service')}>
+                    {(() => {
+                      const selected = services.find(item => item.id === formData.service_id);
+                      if (!selected) return null;
+
+                      const symbol =
+                        selected.currency === 'ILS' ? '₪'
+                          : selected.currency === 'EUR' ? '€'
+                          : selected.currency === 'GBP' ? '£'
+                          : '$';
+
+                      return (
+                        <span className="flex items-center gap-2 min-w-0 rtl:flex-row-reverse">
+                          <span className="truncate">{selected.service_name}</span>
+                          {/* The meta is secondary here, so it recedes rather
+                              than competing with the name it belongs to. */}
+                          <span className="flex items-center gap-2 flex-shrink-0 text-xs text-[var(--v2-text-muted)] rtl:flex-row-reverse">
+                            {selected.duration_minutes != null && (
+                              <span>
+                                {selected.duration_minutes} {t('scheduling.service.minutes')}
+                              </span>
+                            )}
+                            {selected.price != null && selected.price > 0 && (
+                              <span className="text-[#0D9488] font-medium">
+                                <bdi>{symbol}{selected.price}</bdi>
+                              </span>
+                            )}
+                          </span>
+                        </span>
+                      );
+                    })()}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="bg-[var(--v2-surface)] border-[var(--v2-border)] p-1">
                   {/* `rtl:` variants, like every other row in this dropdown —
@@ -1499,12 +1591,27 @@ export function SchedulingBookingModal({
                   }`}
                   style={{ borderRadius: 'var(--v2-radius-button)', colorScheme: 'inherit' }}
                 />
-                {formErrors.start_time && (
+                {formErrors.start_time ? (
                   <p className="mt-1 text-xs text-red-500 flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
                     {formErrors.start_time}
                   </p>
-                )}
+                ) : timeAlreadyBooked ? (
+                  /*
+                   * Said before Save, not after.
+                   *
+                   * The server refuses an overlap with a 409, so this was never
+                   * a way to double-book — but the owner only found out once
+                   * they had filled the whole form. It also covers the case the
+                   * default cannot: the bookings list arrives from a secondary
+                   * fetch, so a dialog opened quickly may have chosen its
+                   * default before there was anything to check against.
+                   */
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {t('scheduling.booking.time_already_booked')}
+                  </p>
+                ) : null}
               </div>
               <div>
                 <label className="block text-xs sm:text-sm font-medium text-[var(--v2-text-primary)] mb-1.5 sm:mb-2">

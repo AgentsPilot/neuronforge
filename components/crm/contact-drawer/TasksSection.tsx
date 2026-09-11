@@ -185,6 +185,22 @@ export function TasksSection({
           </div>
         ) : (
           <>
+            {/*
+              * Every task done is not the same as no tasks.
+              *
+              * The empty state asked `tasks.length === 0`, so a contact whose
+              * only task was ticked off fell straight past it: the active list
+              * rendered nothing, and the completed group sat collapsed behind a
+              * muted toggle. The tab looked like it had failed to load.
+              */}
+            {sortedActiveTasks.length === 0 && (
+              <div className="text-center py-3">
+                <p className="text-sm text-[var(--v2-text-muted)]">
+                  {t('crm.drawer.no_open_tasks')}
+                </p>
+              </div>
+            )}
+
             {/* Active tasks */}
             <div className="space-y-1">
               {sortedActiveTasks.map((task) => {
@@ -255,10 +271,19 @@ export function TasksSection({
                   onClick={() => setShowCompleted(!showCompleted)}
                   className="w-full py-2 text-sm text-[var(--v2-text-muted)] hover:text-[var(--v2-text-secondary)] transition-colors"
                 >
+                  {/*
+                    * The count is substituted here, not passed to `t`.
+                    *
+                    * This section's `t` takes a key and nothing else, so the
+                    * second argument was silently dropped and the button read
+                    * "הצג {count} שהושלמו" — braces and all — in every language.
+                    */}
                   {showCompleted
-                    ? t('crm.task.hide_completed') || 'Hide completed'
-                    : t('crm.task.show_completed', { count: completedTasks.length }) || `Show ${completedTasks.length} completed`
-                  }
+                    ? t('crm.task.hide_completed')
+                    : t('crm.task.show_completed').replace(
+                        '{count}',
+                        String(completedTasks.length)
+                      )}
                 </button>
 
                 {showCompleted && (

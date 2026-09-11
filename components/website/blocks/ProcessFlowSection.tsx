@@ -76,7 +76,7 @@ interface ProcessFlowContent {
   };
 }
 
-type CurrentStep = 'services' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
+type CurrentStep = 'services' | 'datetime' | 'details' | 'request' | 'payment' | 'intake' | 'confirmation';
 
 /** The controls for the step on screen, for a host that draws its own footer. */
 export interface ProcessFlowFooterActions {
@@ -121,6 +121,11 @@ export const LABELS = {
     helpUsPrepare: 'Help us prepare for your appointment',
     completeBooking: 'Complete Booking',
     bookingConfirmed: 'Booking Confirmed!',
+    requestSent: 'Request sent',
+    requestSentBody: 'We\u2019ll send you a quote by email. Nothing to do for now.',
+    requestSentWithMeeting: 'Your meeting is booked. We\u2019ll send a quote after it.',
+    requestCta: 'Request a quote',
+    errSendRequest: 'Could not send your request. Please try again.',
     confirmationEmailSent: 'We\'ve sent a confirmation email to',
     bookingDetails: 'Booking Details',
     service: 'Service',
@@ -187,6 +192,11 @@ export const LABELS = {
     helpUsPrepare: 'Ayúdanos a preparar tu cita',
     completeBooking: 'Completar Reserva',
     bookingConfirmed: '¡Reserva Confirmada!',
+    requestSent: 'Solicitud enviada',
+    requestSentBody: 'Te enviaremos un presupuesto por correo. No tienes que hacer nada más.',
+    requestSentWithMeeting: 'Tu cita está reservada. Te enviaremos un presupuesto después.',
+    requestCta: 'Solicitar presupuesto',
+    errSendRequest: 'No pudimos enviar tu solicitud. Inténtalo de nuevo.',
     confirmationEmailSent: 'Hemos enviado un email de confirmación a',
     bookingDetails: 'Detalles de la Reserva',
     service: 'Servicio',
@@ -253,6 +263,11 @@ export const LABELS = {
     helpUsPrepare: 'עזור לנו להתכונן לפגישה שלך',
     completeBooking: 'השלם הזמנה',
     bookingConfirmed: '!ההזמנה אושרה',
+    requestSent: 'הבקשה נשלחה',
+    requestSentBody: 'נשלח לך הצעת מחיר למייל. אין צורך לעשות דבר עכשיו.',
+    requestSentWithMeeting: 'הפגישה נקבעה. נשלח הצעת מחיר לאחריה.',
+    requestCta: 'בקשת הצעת מחיר',
+    errSendRequest: 'לא הצלחנו לשלוח את הבקשה. נסו שוב.',
     confirmationEmailSent: 'שלחנו אימייל אישור אל',
     bookingDetails: 'פרטי ההזמנה',
     service: 'שירות',
@@ -352,6 +367,8 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
     services: <Calendar className="w-4 h-4" />,
     datetime: <Clock className="w-4 h-4" />,
     details: <User className="w-4 h-4" />,
+    // The request is an envelope going out, not a transaction.
+    request: <FileText className="w-4 h-4" />,
     payment: <CreditCard className="w-4 h-4" />,
     intake: <FileText className="w-4 h-4" />,
     confirmation: <Check className="w-4 h-4" />
@@ -1713,7 +1730,7 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
 // MAIN COMPONENT
 // ============================================================================
 
-type CurrentStepType = 'services' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
+type CurrentStepType = 'services' | 'datetime' | 'details' | 'request' | 'payment' | 'intake' | 'confirmation';
 
 interface ProcessFlowSectionProps extends BlockRendererProps {
   /** Callback when step changes - used by BookingModal to sync sticky header */
@@ -1750,6 +1767,15 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const hasScheduling = flowHasScheduling(flow);
   const hasClientInfo = flowHasClientInfo(flow);
   const hasPayment = flow.includes('payment');
+  /*
+   * A quoted service ends here instead of paying.
+   *
+   * Mutually exclusive with payment by construction — `journeySteps` returns
+   * one or the other, never both — but read independently so a stored flow
+   * from an older page cannot produce a screen that asks for a card and then
+   * says a quote is coming.
+   */
+  const hasRequest = flow.includes('request');
 
   // Determine initial step - skip to datetime if service is pre-selected
   const hasInitialService = !!initialService;
@@ -1823,9 +1849,15 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   const stepSequence: CurrentStep[] = ['services'];
   if (hasScheduling) stepSequence.push('datetime');
   if (hasClientInfo) stepSequence.push('details');
-  if (hasPayment) stepSequence.push('payment');
-  if (hasIntake) stepSequence.push('intake');
-  stepSequence.push('confirmation');
+  if (hasRequest) {
+    // The journey stops here. No payment, no intake, and no confirmation —
+    // there is nothing yet to confirm; the request screen IS the ending.
+    stepSequence.push('request');
+  } else {
+    if (hasPayment) stepSequence.push('payment');
+    if (hasIntake) stepSequence.push('intake');
+    stepSequence.push('confirmation');
+  }
 
   // When initialService changes, reset state to start from appropriate step with pre-selected service
   useEffect(() => {
@@ -2026,6 +2058,63 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
     }
     if (hasScheduling && !selectedSlot) {
       setError(labels.errSelectDateTime);
+      return;
+    }
+
+    /*
+     * A quoted service takes a different exit.
+     *
+     * No booking is created: there is no time to book and no price to charge,
+     * and `scheduling_bookings.start_time` is NOT NULL — a row here would need
+     * an invented date. The request endpoint records the person and what they
+     * asked for, and the owner replies with a proposal.
+     */
+    if (hasRequest) {
+      setSubmitting(true);
+      setError(null);
+
+      try {
+        const response = await fetch('/api/website/proposal-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            subdomain: isPreview ? undefined : (subdomain || undefined),
+            userCode: isPreview ? undefined : (userCode || undefined),
+            service_id: selectedService.id,
+            name: clientName,
+            email: clientEmail,
+            phone: clientPhone || undefined,
+            note: clientNotes || undefined,
+            /*
+             * The consultation slot, when this quoted service books one.
+             *
+             * Same conversion the ordinary booking path uses: the widget holds
+             * wall-clock strings, and the API wants an instant. Omitted for a
+             * service quoted without a meeting, where `selectedSlot` is null.
+             */
+            start_time: selectedSlot
+              ? (selectedSlot.start.includes('Z')
+                ? selectedSlot.start
+                : new Date(selectedSlot.start).toISOString())
+              : undefined,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            page_url: typeof window !== 'undefined' ? window.location.href : undefined,
+          }),
+        });
+
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || 'request failed');
+        }
+
+        markStepComplete('details');
+        goToStep('request', 'forward');
+      } catch (err) {
+        // The client's own words are still in the form; they can press again.
+        setError(labels.errSendRequest);
+      } finally {
+        setSubmitting(false);
+      }
       return;
     }
 
@@ -2505,6 +2594,46 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     labels={labels}
                     theme={theme}
                   />
+                )}
+
+                {/* Where a quoted service ends.
+                    Deliberately not the confirmation screen: nothing is
+                    confirmed. The client has asked, and the next thing that
+                    happens is an email from the business. */}
+                {currentStep === 'request' && selectedService && (
+                  <div className="text-center py-8 px-4">
+                    <div
+                      className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"
+                      style={{ background: `${primaryColor}1A` }}
+                    >
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={primaryColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M20 6L9 17l-5-5" />
+                      </svg>
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2" style={{ color: theme?.colors?.text || '#131A2B' }}>
+                      {labels.requestSent}
+                    </h3>
+                    <p className="text-sm mx-auto" style={{ color: theme?.colors?.textSecondary || '#697187', maxWidth: '34ch' }}>
+                      {/* When a meeting was booked, say so — the client just
+                          chose a time and needs it confirmed back to them, not
+                          a generic "we'll be in touch". */}
+                      {selectedSlot ? labels.requestSentWithMeeting : labels.requestSentBody}
+                    </p>
+                    {selectedSlot && (
+                      <p className="text-sm font-medium mt-2" style={{ color: theme?.colors?.text || '#131A2B' }}>
+                        {new Date(selectedSlot.start).toLocaleString(locale, {
+                          weekday: 'long',
+                          day: 'numeric',
+                          month: 'long',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </p>
+                    )}
+                    <p className="text-xs mt-4" style={{ color: theme?.colors?.textSecondary || '#8A91A5' }}>
+                      {selectedService.name}
+                    </p>
+                  </div>
                 )}
 
                 {currentStep === 'confirmation' && selectedService && (

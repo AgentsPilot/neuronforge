@@ -12,6 +12,7 @@ import { useOptionalPublicBrand } from '@/components/public/PublicBrandProvider'
 import {
   createPublicT,
   formatPublicDate,
+  formatPublicTime,
   localeCode as intlLocale,
   timeZoneLabel,
 } from '@/lib/i18n/public-pages';
@@ -42,9 +43,47 @@ export default function RescheduleBookingPage() {
   const [config, setConfig] = useState<RescheduleConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * When the appointment actually is.
+   *
+   * Refusing a change without saying what is being refused leaves the client
+   * to go and find the email again to work out whether the rule even applies
+   * to them. It is already fetched — the call above this one returns it — and
+   * it was simply not kept.
+   */
+  const [bookingStartTime, setBookingStartTime] = useState<string | null>(null);
 
   const locale = brand?.locale ?? 'en';
   const t = createPublicT(locale);
+
+  /**
+   * The reason a change was refused, in the reader's language.
+   *
+   * The route sends a code and the numbers behind it; the sentence belongs
+   * here, where the dictionary is. It used to send an English sentence which
+   * was printed as-is, so a Hebrew page carried a Hebrew heading, a Hebrew
+   * button, and an English reason between them.
+   *
+   * An unrecognised code falls back to the generic line rather than to the
+   * server's English — a new code added later should read as "something went
+   * wrong" in the right language, not leak an internal string.
+   */
+  const rescheduleErrorText = (data: { code?: string; hours?: number }): string => {
+    switch (data.code) {
+      case 'too_late':
+        return t('rescheduleTooLate', { hours: String(data.hours ?? 24) });
+      case 'not_found':
+        return t('bookingNotFoundDesc');
+      case 'invalid_link':
+        return t('invalidLink');
+      case 'not_reschedulable':
+        return t('notReschedulable');
+      case 'slot_taken':
+        return t('slotTaken');
+      default:
+        return t('rescheduleFailed');
+    }
+  };
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -71,15 +110,16 @@ export default function RescheduleBookingPage() {
       try {
         const bookingResponse = await fetch(`/api/book/manage/${token}`);
         const bookingData = await bookingResponse.json();
-        if (bookingData.success && bookingData.booking?.timezone) {
-          setBookingTimezone(bookingData.booking.timezone);
+        if (bookingData.success && bookingData.booking) {
+          if (bookingData.booking.timezone) setBookingTimezone(bookingData.booking.timezone);
+          if (bookingData.booking.startTime) setBookingStartTime(bookingData.booking.startTime);
         }
 
         const response = await fetch(`/api/book/manage/${token}/reschedule`);
         const data = await response.json();
 
         if (data.success) setConfig(data);
-        else setError(data.error || t('cannotReschedule'));
+        else setError(rescheduleErrorText(data));
       } catch {
         setError(t('loadFailed'));
       } finally {
@@ -136,7 +176,7 @@ export default function RescheduleBookingPage() {
         setRescheduled(true);
         setNewBookingTime(data.booking.startTime);
       } else {
-        setError(data.error || t('rescheduleFailed'));
+        setError(rescheduleErrorText(data));
       }
     } catch {
       setError(t('rescheduleFailed'));
@@ -218,9 +258,41 @@ export default function RescheduleBookingPage() {
           title={t('cannotReschedule')}
           description={error ?? t('loadFailed')}
           actions={
-            <BrandButton href={`/book/manage/${token}`} variant="ghost">
-              {t('backToBooking')}
-            </BrandButton>
+            <>
+              {/* The appointment being refused, in the business's timezone.
+                  Without it the client has to go back to the email to work out
+                  whether the notice rule even applies to them — and the time is
+                  already loaded by the call above. */}
+              {bookingStartTime && (
+                <p
+                  style={{
+                    margin: '0 0 14px',
+                    fontSize: '13px',
+                    lineHeight: 1.5,
+                    color: 'var(--ap-text-muted)',
+                  }}
+                >
+                  <span style={{ color: 'var(--ap-text)', fontWeight: 600 }}>
+                    {t('yourBookingIs')}:
+                  </span>{' '}
+                  {formatPublicDate(bookingStartTime, locale, {
+                    weekday: 'long',
+                    day: 'numeric',
+                    month: 'long',
+                    // The business's zone, not the reader's — the same instant
+                    // is a different day either side of midnight.
+                    timeZone: bookingTimezone,
+                  })}
+                  {', '}
+                  {formatPublicTime(bookingStartTime, locale, bookingTimezone)}
+                  {' · '}
+                  {timeZoneLabel(bookingTimezone, locale)}
+                </p>
+              )}
+              <BrandButton href={`/book/manage/${token}`} variant="ghost">
+                {t('backToBooking')}
+              </BrandButton>
+            </>
           }
         />
       </div>

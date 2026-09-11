@@ -66,14 +66,14 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
     const lookbackDate = new Date();
     lookbackDate.setDate(lookbackDate.getDate() - daysLookback);
 
-    // Get all completed bookings in the period, grouped by client email
+    // Get all completed bookings in the period, grouped by contact
     const { data: bookings, error } = await this.supabase
       .from('scheduling_bookings')
-      .select('client_email, id, start_time, payment_amount')
+      .select('contact_id, id, start_time, payment_amount')
       .eq('user_id', userId)
       .eq('status', 'completed')
       .gte('start_time', lookbackDate.toISOString())
-      .not('client_email', 'is', null);
+      .not('contact_id', 'is', null);
 
     if (error) {
       throw error;
@@ -87,7 +87,9 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
     // Group bookings by client
     const clientBookings: Record<string, typeof bookings> = {};
     bookings.forEach((b) => {
-      const email = b.client_email?.toLowerCase();
+      // Grouped by contact, not by email text. `client_email` was dropped
+      // with the rest of the denormalised client fields.
+      const email = b.contact_id;
       if (email) {
         if (!clientBookings[email]) {
           clientBookings[email] = [];

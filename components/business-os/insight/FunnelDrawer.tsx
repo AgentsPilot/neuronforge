@@ -87,12 +87,15 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
         marginTop: '16px',
+        /* The tint sits ON the surface rather than on white, so the wash
+           reads in both themes instead of turning the panel into a light card
+           on a dark page. */
         background: content.hero
-          ? 'linear-gradient(180deg, #FFF9F9, #fff)'
+          ? 'linear-gradient(180deg, rgba(220, 38, 38, 0.08), var(--v2-surface))'
           : checklistComplete
-            ? 'linear-gradient(180deg, #F3FDF8, #fff)'
-            : '#FFFFFF',
-        border: `1px solid ${content.hero ? '#F6C6C6' : checklistComplete ? '#BFE9D5' : '#E7E9F1'}`,
+            ? 'linear-gradient(180deg, rgba(34, 197, 139, 0.10), var(--v2-surface))'
+            : 'var(--v2-surface)',
+        border: `1px solid ${content.hero ? 'rgba(220, 38, 38, 0.30)' : checklistComplete ? 'rgba(34, 197, 139, 0.30)' : 'var(--v2-border)'}`,
         borderRadius: '18px',
         padding: '20px',
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
@@ -126,7 +129,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
           fontWeight: 600,
           letterSpacing: '-0.02em',
           marginBottom: '5px',
-          color: '#131A2B',
+          color: 'var(--v2-text-primary)',
         }}
       >
         {checklistComplete && (
@@ -167,7 +170,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
         className="lv-dr-p"
         style={{
           fontSize: '14px',
-          color: '#697187',
+          color: 'var(--v2-text-secondary)',
           marginBottom: '16px',
           maxWidth: '48rem',
           fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -193,7 +196,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               className="lv-stat"
               style={{
                 background: '#F8F9FC',
-                border: '1px solid #E7E9F1',
+                border: '1px solid var(--v2-border)',
                 borderRadius: '13px',
                 padding: '12px 13px',
                 minWidth: 0,
@@ -208,7 +211,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                   fontWeight: 600,
                   letterSpacing: '-0.02em',
                   fontVariantNumeric: 'tabular-nums',
-                  color: '#131A2B',
+                  color: 'var(--v2-text-primary)',
                 }}
               >
                 {stat.v}
@@ -218,7 +221,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 className="lvs-lb"
                 style={{
                   fontSize: '12px',
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   marginTop: '1px',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   overflow: 'hidden',
@@ -233,7 +236,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 className={`lvs-sub ${stat.good ? 'good' : ''} ${stat.bad ? 'bad' : ''}`}
                 style={{
                   fontSize: '11.5px',
-                  color: stat.good ? '#1B9A6C' : stat.bad ? '#C0392B' : '#697187',
+                  color: stat.good ? '#22C58B' : stat.bad ? '#C0392B' : 'var(--v2-text-secondary)',
                   marginTop: '5px',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   whiteSpace: 'nowrap',
@@ -273,7 +276,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               alignItems: 'center',
               gap: '7px',
               fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-              color: '#131A2B',
+              color: 'var(--v2-text-primary)',
             }}
           >
             <svg
@@ -296,7 +299,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
             className="lv-conf-p"
             style={{
               fontSize: '12.5px',
-              color: '#697187',
+              color: 'var(--v2-text-secondary)',
               marginBottom: '10px',
               fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
             }}
@@ -355,7 +358,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 gap: '11px',
                 alignItems: 'center',
                 padding: '10px 0',
-                borderBottom: index < content.people!.length - 1 ? '1px solid #E7E9F1' : 'none',
+                borderBottom: index < content.people!.length - 1 ? '1px solid var(--v2-border)' : 'none',
               }}
             >
               {/* Avatar: .lv-av */}
@@ -384,7 +387,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                     display: 'block',
                     fontWeight: 600,
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                    color: '#131A2B',
+                    color: 'var(--v2-text-primary)',
                   }}
                 >
                   {person.n}
@@ -392,7 +395,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 <small
                   style={{
                     fontSize: '12.5px',
-                    color: '#697187',
+                    color: 'var(--v2-text-secondary)',
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   }}
                 >
@@ -405,8 +408,8 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 style={{
                   fontSize: '11.5px',
                   fontWeight: 600,
-                  color: '#C2410C',
-                  background: '#FFF1E4',
+                  color: '#F97316',
+                  background: 'rgba(249, 115, 22, 0.12)',
                   padding: '4px 9px',
                   borderRadius: '20px',
                   whiteSpace: 'nowrap',
@@ -432,7 +435,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 gap: '12px',
                 alignItems: 'center',
                 padding: '13px 0',
-                borderBottom: index < content.todos!.length - 1 ? '1px solid #E7E9F1' : 'none',
+                borderBottom: index < content.todos!.length - 1 ? '1px solid var(--v2-border)' : 'none',
               }}
             >
               {/* Icon: .lv-td-ic */}
@@ -445,7 +448,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                   flexShrink: 0,
                   display: 'grid',
                   placeItems: 'center',
-                  background: todo.done ? '#E6F8F0' : '#FFF1E4',
+                  background: todo.done ? 'rgba(34, 197, 139, 0.12)' : 'rgba(249, 115, 22, 0.12)',
                 }}
               >
                 <svg
@@ -453,7 +456,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                   style={{
                     width: '15px',
                     height: '15px',
-                    stroke: todo.done ? '#1B9A6C' : '#F97316',
+                    stroke: todo.done ? '#22C58B' : '#F97316',
                     fill: 'none',
                     strokeWidth: 2,
                     strokeLinecap: 'round',
@@ -475,7 +478,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                     fontWeight: 600,
                     display: 'block',
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                    color: '#131A2B',
+                    color: 'var(--v2-text-primary)',
                   }}
                 >
                   {todo.t}
@@ -483,7 +486,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                 <small
                   style={{
                     fontSize: '12.5px',
-                    color: '#697187',
+                    color: 'var(--v2-text-secondary)',
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                   }}
                 >
@@ -516,7 +519,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
                   className="lv-td-tag"
                   style={{
                     fontSize: '12px',
-                    color: '#1B9A6C',
+                    color: '#22C58B',
                     fontWeight: 600,
                     whiteSpace: 'nowrap',
                     fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -538,8 +541,8 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
             display: 'flex',
             gap: '11px',
             alignItems: 'flex-start',
-            background: '#FFF8F2',
-            border: '1px solid #FBDCC0',
+            background: 'rgba(249, 115, 22, 0.10)',
+            border: '1px solid rgba(249, 115, 22, 0.30)',
             borderRadius: '13px',
             padding: '13px 14px',
             marginTop: '16px',
@@ -566,7 +569,7 @@ export function FunnelDrawer({ content, onAction }: FunnelDrawerProps) {
               fontSize: '13.5px',
               minWidth: 0,
               fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-              color: '#131A2B',
+              color: 'var(--v2-text-primary)',
             }}
           >
             {content.pl.tx}

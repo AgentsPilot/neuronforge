@@ -20,7 +20,15 @@ import { journeySteps } from '@/lib/business-os/clientJourney';
 import { flowHasScheduling, flowHasClientInfo } from './types';
 import type { Locale } from '@/lib/i18n/config';
 
-type CurrentStep = 'services' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
+/*
+ * A THIRD copy of this union, and the reason the compiler caught this at all.
+ *
+ * `clientJourney.ts` documents the same hazard — it was three unions once
+ * before, and adding a step to one left the others silently behind. Adding
+ * `request` to ProcessFlowSection's two and not this one made passing a step
+ * handler between them a type error, which is the union earning its keep.
+ */
+type CurrentStep = 'services' | 'datetime' | 'details' | 'request' | 'payment' | 'intake' | 'confirmation';
 
 interface BookingModalProps {
   isOpen: boolean;
@@ -66,6 +74,7 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
     services: <Calendar className="w-4 h-4" />,
     datetime: <Clock className="w-4 h-4" />,
     details: <User className="w-4 h-4" />,
+    request: <FileText className="w-4 h-4" />,
     payment: <CreditCard className="w-4 h-4" />,
     intake: <FileText className="w-4 h-4" />,
     confirmation: <Check className="w-4 h-4" />
@@ -119,6 +128,10 @@ const STEP_TO_FLOW: Record<string, FlowStep | undefined> = {
   service: undefined,
   datetime: 'scheduling',
   details: 'client_info',
+  // Where a quoted service ends: the client has asked, and the owner replies
+  // with a proposal. Not a form — the details step just before it collected
+  // everything — but the screen that says so.
+  request: 'request',
   payment: 'payment',
   intake: 'intake',
   confirmation: 'confirmation',
@@ -161,7 +174,9 @@ export function BookingModal({
   const processorReady = paymentsEnabled !== false;
 
   const serviceHasJourneyFacts =
-    initialService?.is_scheduled !== undefined || initialService?.collection !== undefined;
+    initialService?.is_scheduled !== undefined ||
+    initialService?.collection !== undefined ||
+    initialService?.sale_mode !== undefined;
 
   const effectiveFlow: FlowStep[] = serviceHasJourneyFacts
     ? (journeySteps(
@@ -169,6 +184,7 @@ export function BookingModal({
           is_scheduled: initialService?.is_scheduled,
           collection: initialService?.collection,
           price: initialService?.price,
+          sale_mode: initialService?.sale_mode,
         },
         // Whether a card can actually be charged. This was hardcoded `true`,
         // which left the payment screen to refuse — showing the visitor an error

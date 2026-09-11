@@ -26,7 +26,18 @@ export interface BookingConfirmationData {
   location?: string;
   price?: number;
   currency?: string;
-  paymentStatus?: 'pending' | 'paid' | 'not_required';
+  /**
+   * The booking's payment state, in the booking's own vocabulary.
+   *
+   * `scheduling_bookings.payment_status` is 'pending' | 'paid' | 'refunded',
+   * and this declared 'not_required' instead of 'refunded' — a value nothing in
+   * the codebase produces, against a value the table does. So a confirmation
+   * re-sent for a refunded booking would not typecheck, for a template that
+   * only ever asks whether the status is 'pending'.
+   *
+   * Only 'pending' shows the payment button; every other state simply does not.
+   */
+  paymentStatus?: 'pending' | 'paid' | 'refunded' | 'not_required';
   paymentUrl?: string;
   rescheduleUrl: string;
   cancelUrl: string;

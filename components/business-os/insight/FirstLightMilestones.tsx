@@ -34,8 +34,8 @@ export function FirstLightMilestones({ milestones }: FirstLightMilestonesProps) 
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
         marginTop: '16px',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         borderRadius: '18px',
         padding: '20px',
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
@@ -49,7 +49,7 @@ export function FirstLightMilestones({ milestones }: FirstLightMilestonesProps) 
           fontSize: '16.5px',
           fontWeight: 600,
           letterSpacing: '-0.02em',
-          color: '#131A2B',
+          color: 'var(--v2-text-primary)',
         }}
       >
         {t('insight.firstLight.title') || 'First light'}
@@ -60,7 +60,7 @@ export function FirstLightMilestones({ milestones }: FirstLightMilestonesProps) 
         className="fl-s"
         style={{
           fontSize: '13px',
-          color: '#697187',
+          color: 'var(--v2-text-secondary)',
           margin: '3px 0 16px',
           fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
         }}
@@ -78,7 +78,7 @@ export function FirstLightMilestones({ milestones }: FirstLightMilestonesProps) 
             gap: '13px',
             alignItems: 'flex-start',
             padding: '13px 0',
-            borderBottom: index < milestones.length - 1 ? '1px solid #E7E9F1' : 'none',
+            borderBottom: index < milestones.length - 1 ? '1px solid var(--v2-border)' : 'none',
             paddingBottom: index === milestones.length - 1 ? 0 : '13px',
           }}
         >
@@ -93,7 +93,7 @@ export function FirstLightMilestones({ milestones }: FirstLightMilestonesProps) 
               display: 'grid',
               placeItems: 'center',
               border: milestone.lit ? 'none' : '2px dashed #D5D9E4',
-              background: milestone.lit ? '#22C58B' : '#fff',
+              background: milestone.lit ? '#22C58B' : 'var(--v2-surface)',
               boxShadow: milestone.lit ? '0 0 0 4px rgba(34,197,139,0.16)' : 'none',
             }}
           >
@@ -122,7 +122,7 @@ export function FirstLightMilestones({ milestones }: FirstLightMilestonesProps) 
                 fontWeight: 600,
                 display: 'block',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                color: '#131A2B',
+                color: 'var(--v2-text-primary)',
               }}
             >
               {milestone.t}
@@ -130,7 +130,7 @@ export function FirstLightMilestones({ milestones }: FirstLightMilestonesProps) 
             <small
               style={{
                 fontSize: '13px',
-                color: milestone.lit ? '#1B9A6C' : '#697187',
+                color: milestone.lit ? '#22C58B' : 'var(--v2-text-secondary)',
                 display: 'block',
                 marginTop: '1px',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',

@@ -993,7 +993,7 @@
                 },
                 "status": {
                   "type": "string",
-                  "description": "status · (enum) · one of: draft, sent, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"}"
+                  "description": "status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"}"
                 },
                 "due_date": {
                   "type": "string",
@@ -1066,7 +1066,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
             "items": {
               "type": "object",
               "properties": {
@@ -1336,7 +1336,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
             "items": {
               "type": "object",
               "properties": {
@@ -7054,7 +7054,7 @@
                 },
                 "activity_type": {
                   "type": "string",
-                  "description": "type · (enum) · one of: note, email, call, meeting, booking, payment"
+                  "description": "type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed"
                 },
                 "activity_date": {
                   "type": "string",
@@ -7098,7 +7098,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -7325,7 +7325,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -7454,7 +7454,7 @@
               },
               "activity_type": {
                 "type": "string",
-                "description": "type · (enum) · one of: note, email, call, meeting, booking, payment"
+                "description": "type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed"
               },
               "activity_date": {
                 "type": "string",
@@ -7927,7 +7927,7 @@
                 },
                 "page_type": {
                   "type": "string",
-                  "description": "type · (string)"
+                  "description": "type · (enum) · one of: landing, homepage"
                 },
                 "published": {
                   "type": "boolean",
@@ -7972,7 +7972,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (string) | published — live · (boolean) | published_at — published · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (enum) · one of: landing, homepage | published — live · (boolean) | published_at — published · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -8197,7 +8197,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (string) | published — live · (boolean) | published_at — published · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (enum) · one of: landing, homepage | published — live · (boolean) | published_at — published · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -8317,7 +8317,7 @@
               },
               "page_type": {
                 "type": "string",
-                "description": "type · (string)"
+                "description": "type · (enum) · one of: landing, homepage"
               },
               "slug": {
                 "type": "string",
@@ -10615,6 +10615,74 @@
         ]
       }
     },
+    "open_time_business_profile": {
+      "description": "how many hours or slots are still open / free / available on a given day — business profile in the user's own business records",
+      "usage_context": "how many hours or slots are still open / free / available on a given day. This READS the user's business data and changes nothing. Applies to exactly ONE business profile; there is no bulk form.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "open_time",
+      "input_entity": "business_profile",
+      "output_entity": "business_profile",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "company_name",
+        "vertical"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "read",
+      "must_support": [
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The business profile after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "how many hours or slots are still open / free / available on a given day",
+        "sample_output": {
+          "applied": true,
+          "summary": "how many hours or slots are still open / free / available on a given day",
+          "row": {
+            "company_name": "<company_name>",
+            "vertical": "<vertical>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the business profile to act on. Must come from a find_business_profile result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
     "find_sections": {
       "description": "Find sections in the user's own business records",
       "usage_context": "Read the business's own sections. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
@@ -10662,7 +10730,7 @@
                 },
                 "block_type": {
                   "type": "string",
-                  "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer"
+                  "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing"
                 },
                 "position": {
                   "type": "number",
@@ -10706,7 +10774,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer | position — order on the page · (number) | enabled — shown · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing | position — order on the page · (number) | enabled — shown · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -10925,7 +10993,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer | position — order on the page · (number) | enabled — shown · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing | position — order on the page · (number) | enabled — shown · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -11120,7 +11188,7 @@
               },
               "block_type": {
                 "type": "string",
-                "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer"
+                "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing"
               }
             }
           }

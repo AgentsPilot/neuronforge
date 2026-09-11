@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { BlockRendererProps, ServiceItem, FlowStep, SelectedServiceData } from './types';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
-import { journeySteps } from '@/lib/business-os/clientJourney';
+import { journeySteps, isQuoted } from '@/lib/business-os/clientJourney';
 
 // Map icon names to Lucide components
 const ICON_REGISTRY: Record<string, LucideIcon> = {
@@ -69,6 +69,8 @@ interface ServiceItemWithRawData extends ServiceItem {
   is_scheduled?: boolean | null;
   /** How the money arrives, or null where the service is free. */
   collection?: 'online' | 'invoice' | null;
+  /** Bought outright, or quoted per job. Absent means direct. */
+  sale_mode?: 'direct' | 'proposal' | null;
   currency?: string;
   durationMinutes?: number;
   hidden?: boolean;
@@ -95,10 +97,31 @@ interface ServicesContent {
  */
 const JOURNEY_WORDS: Record<string, Record<string, string>> = {
   datetime: { en: 'Pick a time', es: 'Elige un horario', he: 'בחירת מועד' },
+  request: { en: 'We send you a quote', es: 'Te enviamos un presupuesto', he: 'נשלח לך הצעת מחיר' },
   details: { en: 'Your details', es: 'Tus datos', he: 'הפרטים שלך' },
   payment: { en: 'Pay online', es: 'Paga en línea', he: 'תשלום מקוון' },
   intake: { en: 'Short form', es: 'Formulario breve', he: 'טופס קצר' },
   confirmation: { en: 'Confirmation', es: 'Confirmación', he: 'אישור' },
+};
+
+/**
+ * What a quoted service shows where a price would be.
+ *
+ * The card cannot say "from ₪X" — nobody has priced the job. An empty space
+ * where every other card has a number reads as a page that failed to load, so
+ * the absence is stated rather than left blank.
+ */
+const PRICE_ON_REQUEST: Record<string, string> = {
+  en: 'Price on request',
+  es: 'Precio a consultar',
+  he: 'מחיר לפי הצעה',
+};
+
+/** The card's action, when the service is quoted rather than sold. */
+const REQUEST_CTA: Record<string, string> = {
+  en: 'Request a quote',
+  es: 'Solicitar presupuesto',
+  he: 'בקשת הצעת מחיר',
 };
 
 /** Said after the steps, because it is not something the client does here. */
@@ -119,7 +142,12 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
     if (service.is_scheduled === undefined && service.collection === undefined) return null;
 
     const words = journeySteps(
-      { is_scheduled: service.is_scheduled, collection: service.collection, price: service.priceRaw },
+      {
+        is_scheduled: service.is_scheduled,
+        collection: service.collection,
+        price: service.priceRaw,
+        sale_mode: service.sale_mode,
+      },
       { processorReady: true }
     )
       // 'service' is choosing this card, which the client has already done.
@@ -129,10 +157,36 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
     if (words.length === 0) return null;
 
-    const invoiced = (service.priceRaw || 0) > 0 && service.collection === 'invoice';
     const line = words.join(' · ');
+
+    /*
+     * The invoice tail is about how an agreed price is collected, which a
+     * quoted service has not reached — its own last step already says a quote
+     * is coming. Appending "invoice to follow" there would promise a bill for
+     * work nobody has agreed to yet.
+     */
+    if (isQuoted(service.sale_mode)) return line;
+
+    const invoiced = (service.priceRaw || 0) > 0 && service.collection === 'invoice';
     return invoiced ? `${line} · ${INVOICE_TAIL[locale] || INVOICE_TAIL.en}` : line;
   };
+
+  /**
+   * The action, per service.
+   *
+   * `ctaText` below is one label for the whole block, taken from the flow's
+   * first step. That is right while every card is bought the same way — and
+   * wrong the moment one of them is quoted, because "Book now" on a card with
+   * no price promises something the next screen will not do.
+   */
+  const ctaFor = (service: ServiceItemWithRawData): string =>
+    isQuoted(service.sale_mode) ? (REQUEST_CTA[locale] || REQUEST_CTA.en) : ctaText;
+
+  /** What stands in for a price the business has not set. */
+  const priceFor = (service: ServiceItemWithRawData): string | null =>
+    isQuoted(service.sale_mode)
+      ? (PRICE_ON_REQUEST[locale] || PRICE_ON_REQUEST.en)
+      : (service.price || null);
 
   // Format duration with translation
   const formatDuration = (service: ServiceItemWithRawData): string | null => {
@@ -166,6 +220,9 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
     scheduling: 'bookNow',
     client_info: 'getStarted',
     booking: 'bookNow',  // legacy
+    // A quoted service's first step IS the request, and its CTA is resolved
+    // per service by `ctaFor` — this entry only keeps the record total.
+    request: 'getStarted',
     payment: 'buyNow',
     intake: 'getStarted',
     confirmation: 'learnMore'
@@ -445,7 +502,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 {/* Price and duration */}
                 {(service.price || service.duration) && (
                   <div className="flex items-center justify-between pt-6 border-t" style={{ borderColor: isDark ? 'rgba(75, 85, 99, 0.4)' : 'rgba(229, 231, 235, 0.8)' }}>
-                    {service.price && (
+                    {priceFor(service) && (
                       <span
                         className="text-2xl font-bold"
                         style={{
@@ -455,7 +512,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                           backgroundClip: 'text'
                         }}
                       >
-                        {service.price}
+                        {priceFor(service)}
                       </span>
                     )}
                     {formatDuration(service) && (
@@ -512,7 +569,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         />
                         <span className="relative flex items-center gap-2">
                           {firstStep === 'booking' && <Calendar className="w-4 h-4" />}
-                          {ctaText}
+                          {ctaFor(service)}
                           <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
                         </span>
                       </button>
@@ -536,7 +593,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         />
                         <span className="relative flex items-center gap-2">
                           {firstStep === 'booking' && <Calendar className="w-4 h-4" />}
-                          {ctaText}
+                          {ctaFor(service)}
                           <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
                         </span>
                       </a>
@@ -552,7 +609,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         disabled
                       >
                         {firstStep === 'booking' && <Calendar className="w-4 h-4" />}
-                        {ctaText}
+                        {ctaFor(service)}
                         <ArrowRight className="w-4 h-4" />
                       </button>
                     )}
@@ -616,9 +673,9 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 </div>
 
                 <div className="flex-shrink-0 flex items-center gap-4">
-                  {service.price && (
+                  {priceFor(service) && (
                     <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
-                      {service.price}
+                      {priceFor(service)}
                     </span>
                   )}
                   {hasBookingFlow && (
@@ -631,7 +688,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                           background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
                         }}
                       >
-                        {ctaText}
+                        {ctaFor(service)}
                         <ArrowRight className="w-4 h-4" />
                       </button>
                     ) : bookingUrl ? (
@@ -642,7 +699,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                           background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
                         }}
                       >
-                        {ctaText}
+                        {ctaFor(service)}
                         <ArrowRight className="w-4 h-4" />
                       </a>
                     ) : (
@@ -652,7 +709,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         style={{ backgroundColor: primaryColor }}
                         disabled
                       >
-                        {ctaText}
+                        {ctaFor(service)}
                         <ArrowRight className="w-4 h-4" />
                       </button>
                     )
@@ -717,7 +774,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     {service.description}
                   </p>
 
-                  {service.price && (
+                  {priceFor(service) && (
                     <div className="flex items-baseline gap-1 mb-6">
                       <span
                         className="text-3xl font-bold"
@@ -727,7 +784,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                           WebkitTextFillColor: 'transparent'
                         }}
                       >
-                        {service.price}
+                        {priceFor(service)}
                       </span>
                       {formatDuration(service) && (
                         <span className="text-sm" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>
@@ -749,7 +806,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         }}
                       >
                         {firstStep === 'booking' && <Calendar className="w-4 h-4" />}
-                        {ctaText}
+                        {ctaFor(service)}
                         <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                       </button>
                     ) : bookingUrl ? (
@@ -761,7 +818,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         }}
                       >
                         {firstStep === 'booking' && <Calendar className="w-4 h-4" />}
-                        {ctaText}
+                        {ctaFor(service)}
                         <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
                       </a>
                     ) : (
@@ -772,7 +829,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                         disabled
                       >
                         {firstStep === 'booking' && <Calendar className="w-4 h-4" />}
-                        {ctaText}
+                        {ctaFor(service)}
                         <ArrowRight className="w-4 h-4" />
                       </button>
                     )
@@ -859,7 +916,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 </div>
 
                 <div className="flex flex-col justify-center items-center md:items-end">
-                  {services[0].price && (
+                  {priceFor(services[0]) && (
                     <div className="text-center md:text-right mb-8">
                       <span
                         className="text-5xl font-bold"
@@ -869,7 +926,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                           WebkitTextFillColor: 'transparent'
                         }}
                       >
-                        {services[0].price}
+                        {priceFor(services[0])}
                       </span>
                       {formatDuration(services[0]) && (
                         <p className="mt-2 text-sm" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>
@@ -888,7 +945,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       }}
                     >
                       {firstStep === 'booking' && <Calendar className="w-5 h-5" />}
-                      {ctaText}
+                      {ctaFor(services[0])}
                       <ArrowRight className="w-5 h-5" />
                     </a>
                   )}
@@ -936,9 +993,9 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     >
                       {service.description}
                     </p>
-                    {service.price && (
+                    {priceFor(service) && (
                       <span className="font-bold" style={{ color: primaryColor }}>
-                        {service.price}
+                        {priceFor(service)}
                       </span>
                     )}
                   </motion.div>

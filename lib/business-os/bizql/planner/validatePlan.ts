@@ -16,10 +16,17 @@
  */
 
 import { CATALOG, type ResolvedEntity } from '@/lib/business-os/catalog';
-import { VALUELESS_OPS, isSemanticValue, type Predicate, type Query } from '../types';
+import {
+  VALUELESS_OPS,
+  isSemanticValue,
+  isIsoCalendarDate,
+  type Predicate,
+  type Query,
+} from '../types';
 import type { Plan } from './Planner';
 import { relationPredicateProblem } from '../predicateRules';
 import { parseGroupBy } from '../groupBy';
+import { containsCalendarDate } from '../dates';
 
 /** The four step operations. Anything else is a slip, not a step. */
 const KNOWN_OPS_SET = new Set(['find', 'compute', 'mutate', 'for_each']);
@@ -804,6 +811,13 @@ const DATE_ANCHORS = new Set([
   'end_of_week',
   'start_of_month',
   'end_of_month',
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
 ]);
 
 /**
@@ -821,10 +835,19 @@ function validateDateExpr(value: unknown, path: string, problems: string[]): voi
     if (typeof candidate !== 'object' || candidate === null || !('$date' in candidate)) continue;
 
     const anchor = (candidate as { $date: unknown }).$date;
+
+    // A day the user named is not an anchor and never will be — anchors are
+    // relative to now. Accepted here as well as in the resolver: validating a
+    // plan more strictly than the resolver executes it rejects writes that
+    // would have worked, which is what happened to "change the due date to 30
+    // October" — the value was legal by the time it reached the resolver, but
+    // the plan never got that far.
+    if (isIsoCalendarDate(anchor)) continue;
+
     if (typeof anchor !== 'string' || !DATE_ANCHORS.has(anchor)) {
       problems.push(
         `${path}: '${String(anchor)}' is not a valid $date anchor. ` +
-          `Use one of: ${[...DATE_ANCHORS].join(', ')}.`
+          `Use one of: ${[...DATE_ANCHORS].join(', ')} — or a specific day as YYYY-MM-DD.`
       );
     }
   }
@@ -896,7 +919,7 @@ function validateLiteralAgainstEnum(
 }
 
 /** Step kinds. Distinct from KNOWN_OPS above, which is the comparison operators. */
-const KNOWN_STEP_OPS = new Set(['find', 'compute', 'mutate', 'for_each']);
+const KNOWN_STEP_OPS = new Set(['find', 'compute', 'mutate', 'for_each', 'analyse']);
 
 function validateStep(
   step: Query,
@@ -922,12 +945,44 @@ function validateStep(
     return;
   }
 
+  /*
+   * `analyse` names no entity — it fetches nothing. Everything below this point
+   * is about a query against a table, so it stops here rather than reporting a
+   * missing entity for a step that is not supposed to have one.
+   */
+  if (step.op === 'analyse') return;
+
   const entity = CATALOG.entities[step.entity];
 
   if (!entity) {
     problems.push(
       `${path}: unknown entity '${step.entity}'. ` +
         `Known entities: ${Object.keys(CATALOG.entities).join(', ')}.`
+    );
+    return;
+  }
+
+  /*
+   * A configuration singleton cannot be queried, only acted on.
+   *
+   * Generic: the catalog says which entities these are, and this states the
+   * consequence. Without it the planner had a plausible wrong option — `find
+   * business_profile` returns a company name and a vertical, answers nothing,
+   * and reads like an answer — and reliably took it for "how many hours are
+   * still open on Wednesday". Making the action's label more inviting moved the
+   * rate around without fixing it, because a wrong option that remains
+   * available eventually gets picked.
+   *
+   * Naming the actions matters as much as the refusal: the repair round can act
+   * on "use one of these", and cannot act on "no".
+   */
+  if ((step.op === 'find' || step.op === 'compute') && entity.queryable === false) {
+    const actions = Object.keys(entity.actions ?? {});
+    problems.push(
+      `${path}: '${entity.key}' holds one row of configuration and cannot be read with ` +
+        `${step.op}. Everything it knows is exposed as an action — use ` +
+        `{"op":"mutate","entity":"${entity.key}","action":"..."} with one of: ` +
+        `${actions.join(', ')}.`
     );
     return;
   }
@@ -1275,8 +1330,39 @@ function validateStep(
 
     if (step.group_by) {
       const parsed = parseGroupBy(entity, step.group_by);
+      /*
+       * Grouping by a raw id shows the user a uuid.
+       *
+       * The prompt has always said not to, and asking was not enough: a
+       * compound question grouped by `service_id`, so the group's key WAS the
+       * uuid and the sentence read "the service with the most refund cases is
+       * c700c2f0-1810-4ff5-9dbe-de78aa86345b". The renderer is not at fault —
+       * it printed the label it was given, and the label was an id.
+       *
+       * Caught here because the fix is mechanical: a relation with the same
+       * name minus `_id` groups by what the thing is CALLED, which is what the
+       * question meant.
+       */
+      const groupedField =
+        typeof step.group_by === 'string' ? entity.fields[step.group_by] : undefined;
+
+      if (groupedField && (groupedField.type === 'uuid' || groupedField.references)) {
+        const viaRelation = Object.entries(entity.relations ?? {}).find(
+          ([, relation]) => relation.via?.column === groupedField.column
+        );
+
+        problems.push(
+          `${path}.group_by: '${entity.key}.${step.group_by}' is an id, so every group would ` +
+            `be named by a uuid the user cannot read.` +
+            (viaRelation
+              ? ` Group by the relation '${viaRelation[0]}' instead — it groups by what the ` +
+                `thing is called.`
+              : ` Group by a relation, or by a field that holds a name.`)
+        );
+      }
+
       if (parsed.problem) {
-        problems.push(`${path}.group_by: ${parsed.problem}`);
+        problems.push(`${path}.group_by: ${parsed.problem}${inversionHint(entity, step.group_by)}`);
       }
     }
   }
@@ -1379,8 +1465,237 @@ function countSubjectProblem(
  * data. This is the guardrail that makes "answer text lives in the plan" safe
  * enough to replace ~120 hand-written response templates.
  */
+/**
+ * A calendar date the user never gave a number for.
+ *
+ * "ביום רביעי" — on Wednesday — has no expressible date, so the planner used to
+ * work one out itself and get it wrong: told it was Monday 7 September it
+ * filtered on the 14th, which is a Monday; another run picked the 7th, which is
+ * yesterday and not a Wednesday either. English resolved the weekday anchor
+ * reliably; Hebrew reached for YYYY-MM-DD every time.
+ *
+ * The signal that separates the two cases needs no vocabulary, which is the
+ * point — a per-language weekday table would be the first hardcoded word list
+ * in a system built to avoid them, and every new language would then need one.
+ *
+ *   a day the user NUMBERED   "30 October", "‏30 באוקטובר", "on 3 March"   has a digit
+ *   a day the user NAMED      "Wednesday", "ביום רביעי", "el miércoles"    has none
+ *
+ * So: an absolute date is only legitimate when the message carries a digit it
+ * could have come from. The same technique `validateAnswer` already uses below
+ * to catch an invented figure — compare against the user's own message rather
+ * than banning digits outright.
+ *
+ * Fails toward permissive. An unrelated digit ("for בדיקה 1") lets an absolute
+ * date through, which is a missed catch rather than a false rejection — and a
+ * spelled-out "the thirtieth of October" costs one clarifying round trip, not a
+ * wrong answer.
+ */
+/**
+ * Problems worth one repair round, but not worth losing the answer over.
+ *
+ * A missing answer sentence is the case this exists for. Requiring one took
+ * measured coverage from 69% to 81% — and pushed `valid` from 293/297 down to
+ * 262, because a plan the model would not re-write became a hard failure. The
+ * user then sees "I didn't quite follow that" where they used to see a bare
+ * count: a different bad outcome, not an improvement.
+ *
+ * So the validator still says it, the repair round still acts on it, and if the
+ * model will not comply the plan runs anyway and the renderer's fallback
+ * carries the answer. Pressure without a cliff.
+ *
+ * Kept as a prefix match on the message rather than a separate return channel:
+ * `validatePlan` has one contract — a list of strings — and four callers.
+ */
+const SOFT_PROBLEMS = ['answer.text is required.'];
+
+/**
+ * Matched as a PREFIX, which is what keeps the two-read case hard.
+ *
+ * Both missing-sentence messages contain the words "answer.text is required",
+ * but only one of them is safe to ship without. A one-read plan with no
+ * sentence renders "contacts: 1" — thin, and still about the thing that was
+ * asked. A two-read plan with no sentence renders ONE of the two numbers under
+ * its own label, which is a confident answer to a question nobody asked; that
+ * is the `מי חייב לי כסף וכמה` → `איש קשר: 1` failure, and an error is better
+ * than it. The multi-read message opens with "this plan reads N things", so a
+ * prefix match leaves it fatal on purpose.
+ */
+export function isSoftProblem(problem: string): boolean {
+  return SOFT_PROBLEMS.some((prefix) => problem.startsWith(prefix));
+}
+
+/**
+ * Where an `analyse` step may appear, and how many.
+ *
+ * Last, because it speaks about results that do not exist until the steps
+ * before it have run. At most one, because two sentences about the same figures
+ * is two answers to one question.
+ *
+ * And never alone: interpretation needs something to interpret, and a plan that
+ * is only an analyse step would send an empty payload to a model and get back a
+ * sentence about nothing.
+ */
+/**
+ * "Group these by something they cannot reach — try it from the other side."
+ *
+ * "Which service has the most refund cases" is a fair question with no direct
+ * expression: `refunds` relates to `transaction` and `invoice`, the service
+ * hangs off `transactions`, and relations are single-hop, so grouping refunds by
+ * service is simply not available.
+ *
+ * It IS answerable by inverting the question — count transactions that have a
+ * refund, grouped by service — and the planner has to think of that unaided,
+ * which it will not do reliably. So the catalog is asked instead: is there an
+ * entity that can see BOTH the thing being grouped and the thing being grouped
+ * by? If there is, name it and the shape.
+ *
+ * Generic on purpose. Nothing here knows about refunds or services; it is a
+ * search over declared relations, so a catalog change fixes the hint for free
+ * and a new pair of entities gets the same help without anyone writing it.
+ */
+function inversionHint(entity: ResolvedEntity, groupBy: unknown): string {
+  if (typeof groupBy !== 'string' || entity.relations?.[groupBy]) return '';
+
+  /*
+   * The entity's OWN relations first, in the order it declares them.
+   *
+   * A plain scan of the catalog picks whoever comes first alphabetically, which
+   * offered `invoices` for a refund when `refunds.transaction` is the path the
+   * data actually takes — a refund attaches to a transaction, and the invoice is
+   * a step further out. Following the declared relations keeps the suggestion on
+   * the join the schema itself describes.
+   */
+  const ownTargets = Object.values(entity.relations ?? {}).map((relation) => relation.target);
+  const ordered = [
+    ...ownTargets,
+    ...Object.keys(CATALOG.entities).filter((key) => !ownTargets.includes(key)),
+  ];
+
+  for (const key of ordered) {
+    if (key === entity.key) continue;
+    const candidate = CATALOG.entities[key];
+    if (!candidate) continue;
+
+    const reachesTarget = Boolean(candidate.relations?.[groupBy]);
+    const reachesUs = Object.values(candidate.relations ?? {}).some(
+      (relation) => relation.target === entity.key
+    );
+
+    if (reachesTarget && reachesUs) {
+      return (
+        ` '${entity.key}' cannot reach '${groupBy}', but '${key}' can see both — ` +
+        `ask it instead: {"op":"compute","entity":"${key}","group_by":"${groupBy}",` +
+        `"where":[{"relation":"${entity.key}","quantifier":"any"}]}.`
+      );
+    }
+  }
+
+  return '';
+}
+
+function validateAnalyseStep(plan: Plan, problems: string[]): void {
+  const indexes = plan.steps
+    .map((step, index) => ((step as { op?: string }).op === 'analyse' ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (indexes.length === 0) return;
+
+  if (indexes.length > 1) {
+    problems.push(
+      `a plan may hold at most one "analyse" step; this one has ${indexes.length}. ` +
+        `One question gets one answer.`
+    );
+  }
+
+  if (indexes[indexes.length - 1] !== plan.steps.length - 1) {
+    problems.push(
+      `the "analyse" step must be LAST — it describes what the other steps found, ` +
+        `so it cannot run before them.`
+    );
+  }
+
+  if (plan.steps.length === 1) {
+    problems.push(
+      `an "analyse" step needs something to analyse. Add the find or compute steps ` +
+        `whose figures the answer is about.`
+    );
+  }
+}
+
+function validateNamedDateHasDigits(
+  plan: Plan,
+  problems: string[],
+  userMessage?: string
+): void {
+  // No message to compare against — this is the eval harness or a stored plan
+  // being re-validated, and there is nothing to be suspicious of.
+  if (userMessage === undefined) return;
+  if (/\d/.test(userMessage)) return;
+
+  plan.steps.forEach((step, index) => {
+    if (!containsCalendarDate(step)) return;
+
+    problems.push(
+      `steps[${index}]: this uses an absolute YYYY-MM-DD date, but the request names no ` +
+        `number to take one from — so it was worked out rather than read, and that has ` +
+        `produced the wrong day. If the user named a WEEKDAY use that anchor ` +
+        `({"$date":"wednesday"}, which resolves to the next one); if they described a day ` +
+        `relative to now use today/tomorrow/start_of_week and an offset.`
+    );
+  });
+}
+
 function validateAnswer(plan: Plan, problems: string[], userMessage?: string): void {
   const text = plan.answer?.text;
+
+  /*
+   * A plan that reads more than one thing MUST say how they relate.
+   *
+   * With no sentence the renderer falls back to labelling the primary step, and
+   * for a single read that is fine — "invoices: 3" answers "how many invoices".
+   * Across two it silently drops the question. Asked "כמה אחוז זה מההכנסות"
+   * the planner correctly computed refunds AND revenue, wrote no sentence, and
+   * the user was shown "סכום שחויב: 931.33 $" — one of the two numbers, labelled
+   * as something they had not asked about. A confident non-answer.
+   *
+   * Writes are exempt: a mutate describes itself on the confirmation card, and
+   * demanding prose for "mark it paid" would reject a perfectly good plan.
+   */
+  const reads = plan.steps.filter((step) => {
+    const op = (step as unknown as { op?: string }).op;
+    return op === 'find' || op === 'compute';
+  });
+
+  /*
+   * A read without a sentence is not an answer.
+   *
+   * The renderer falls back to labelling the primary step — "איש קשר: 1",
+   * "תשלומים: 2" — which is a category and a count, not a reply to anything.
+   * Measured over a catalog-generated corpus this was **30 of 39 failures**:
+   * one defect causing three quarters of everything wrong, across every entity
+   * and all three languages. The plans were right; there was nothing to say
+   * them with.
+   *
+   * Gated on `userMessage` because that is what distinguishes a live turn from
+   * a stored plan being re-validated. A saved plan has no question in hand, so
+   * demanding a sentence for it would reject something that was already
+   * answered once — and it is why the fixtures that call `validatePlan(plan)`
+   * with no message are unaffected.
+   */
+  if (!text && reads.length > 0 && userMessage !== undefined) {
+    problems.push(
+      reads.length > 1
+        ? `this plan reads ${reads.length} things, so answer.text is required — it is the ` +
+          `only place their relationship is expressed. Without it only the first is shown ` +
+          `and the question goes unanswered. Cite each step, e.g. ` +
+          `"{s1.value} of {s2.value}, which is {s1.percent_of.s2}".`
+        : `answer.text is required. Without it the reply is a bare label and a count — ` +
+          `"contacts: 1" — which answers nothing. Write the sentence the user should read, ` +
+          `using {s1.count}, {s1.value} or {s1.rows} for what this step found.`
+    );
+  }
+
   if (!text) return;
 
   const withoutPlaceholders = text.replace(/\{[^}]*\}/g, '');
@@ -1421,6 +1736,70 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
     }
 
     if (KNOWN_PATHS.has(path)) continue;
+
+    /*
+     * `{sN.result.FIELD}` — a value a READ ACTION gave back.
+     *
+     * Missing from the known paths, so the correct placeholder was rejected and
+     * the error listed only row-shaped ones — which taught the planner to write
+     * {sN.first.freeMinutes} instead, then rejected that too. The syntax existed
+     * in the prompt and the renderer; the validator sat between them refusing
+     * it, which is why no amount of prompting moved this.
+     *
+     * Checked against what the action DECLARED it returns, so a typo is still
+     * caught by name.
+     */
+    /*
+     * `{sN.groups.gK.label}` / `.value` — naming one group of a grouped result.
+     *
+     * The renderer resolves these; the validator did not, so the correct
+     * placeholder was rejected. That is the SECOND instance of this class in a
+     * day: the first, `{sN.result.…}`, defeated three prompt attempts because
+     * the validator was refusing the right answer while its error message
+     * taught the model to write the wrong one. The parity test added alongside
+     * this is what makes a third impossible.
+     */
+    const groupMatch = /^groups\.g(\d+)\.(label|value)$/.exec(path);
+    if (groupMatch) {
+      const step = plan.steps.find(
+        (candidate) => (candidate as { id?: string }).id === stepId
+      ) as { op?: string; group_by?: unknown } | undefined;
+
+      if (step?.op !== 'compute' || !step.group_by) {
+        problems.push(
+          `answer.text uses {${stepId}.groups.g${groupMatch[1]}.${groupMatch[2]}}, but step ` +
+            `'${stepId}' is not grouped — only a compute with group_by has groups.`
+        );
+      }
+
+      continue;
+    }
+
+    const resultMatch = /^result\.(\w+)$/.exec(path);
+    if (resultMatch) {
+      const step = plan.steps.find(
+        (candidate) => (candidate as { id?: string }).id === stepId
+      ) as { op?: string; entity?: string; action?: string } | undefined;
+
+      const declared =
+        step?.op === 'mutate' && step.entity && step.action
+          ? CATALOG.entities[step.entity]?.actions?.[step.action]?.returns
+          : undefined;
+
+      if (!declared) {
+        problems.push(
+          `answer.text uses {${stepId}.result.${resultMatch[1]}}, but step '${stepId}' is ` +
+            `not a read action that returns values.`
+        );
+      } else if (!declared[resultMatch[1]]) {
+        problems.push(
+          `answer.text uses {${stepId}.result.${resultMatch[1]}}, which that action does ` +
+            `not return. It returns: ${Object.keys(declared).join(', ')}.`
+        );
+      }
+
+      continue;
+    }
 
     // `{sN.percent_of.sM}` — one number as a percentage of another.
     const percentMatch = /^percent_of\.(\w+)$/.exec(path);
@@ -1588,7 +1967,9 @@ function validateNotAScattergun(plan: Plan, problems: string[]): void {
     return !Array.isArray(where) || where.length === 0;
   });
 
-  const entities = new Set(unfiltered.map((step) => step.entity));
+  const entities = new Set(
+    unfiltered.filter((step) => step.op !== 'analyse').map((step) => step.entity)
+  );
 
   if (entities.size >= 3) {
     problems.push(
@@ -1743,6 +2124,8 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
   validateSendAddress(plan, problems);
   validateNoFabricatedThreshold(plan, problems);
   validateNotAScattergun(plan, problems);
+  validateAnalyseStep(plan, problems);
+  validateNamedDateHasDigits(plan, problems, userMessage);
   validateAnswer(plan, problems, userMessage);
 
   return problems;

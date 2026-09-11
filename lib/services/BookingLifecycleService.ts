@@ -40,6 +40,8 @@ import {
   type SchedulingService,
   type SchedulingRepositoryResult,
 } from '@/lib/repositories/SchedulingRepository';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { OPEN_PROPOSAL_STATUSES } from '@/lib/repositories/ProposalRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { CalendarSyncService } from '@/lib/services/CalendarSyncService';
@@ -154,8 +156,62 @@ export async function cancelBooking(
     }
   }
 
-  let clientNotified = false;
+  /*
+   * Cancelling a QUOTED booking ends the whole job, not just the meeting.
+   *
+   * On a quoted service the appointment is the consultation and the journey
+   * runs on past it — so "completed" and "no-show" describe the meeting, and
+   * cancelling is the one mark that means "we are not doing this". That has to
+   * reach the QUOTE as well: a client still holding a live link could accept
+   * next week a job the business had already written off, and the acceptance
+   * would raise an invoice for work nobody intends to do.
+   *
+   * Withdrawn, not deleted — the quote and its price stay in the client's
+   * history, which is the record of why this did not happen.
+   */
+  let quotesWithdrawn = 0;
   try {
+    const { data: service } = await supabaseServer
+      .from('scheduling_services')
+      .select('sale_mode')
+      .eq('id', booking.service_id)
+      .maybeSingle();
+
+    if (service?.sale_mode === 'proposal') {
+      const { data: withdrawn } = await supabaseServer
+        .from('proposals')
+        .update({ status: 'withdrawn' })
+        .eq('user_id', userId)
+        .eq('booking_id', bookingId)
+        .in('status', OPEN_PROPOSAL_STATUSES)
+        .select('id');
+
+      quotesWithdrawn = withdrawn?.length ?? 0;
+      if (quotesWithdrawn > 0) {
+        log.info({ bookingId, quotesWithdrawn }, 'Withdrew the outstanding quotes with the booking');
+      }
+    }
+  } catch (err) {
+    // The booking is already cancelled. A quote left standing is a real problem
+    // but not one worth failing the cancellation over — it is logged loudly so
+    // it can be seen rather than swallowed.
+    log.error({ err, bookingId }, 'Could not withdraw the quotes for a cancelled booking');
+  }
+
+  /*
+   * The email, only while there is still an appointment to cancel.
+   *
+   * "Your appointment has been cancelled" is right for a meeting that has not
+   * happened yet. Sent about a consultation that took place last Tuesday — the
+   * case where the owner is closing a lost job — it is simply false, and it
+   * lands with a client who has already been told a price they declined.
+   */
+  const meetingStillAhead = !booking.start_time || new Date(booking.start_time) > new Date();
+
+  let clientNotified = false;
+  if (!meetingStillAhead) {
+    log.info({ bookingId }, 'Cancellation email skipped — the meeting had already passed');
+  } else try {
     const email = await BookingEmailService.sendCancellationEmail(bookingId, userId, reason);
     clientNotified = email.sent;
     if (!email.sent) {
@@ -371,7 +427,20 @@ export async function createBooking(
       const sync = await CalendarSyncService.syncBookingToCalendar(booking, service, userId);
       calendarSynced = sync.success;
       if (!sync.success) {
-        log.warn({ bookingId: booking.id, error: sync.error }, 'Calendar sync failed');
+        /*
+         * "Not connected" is not a failure.
+         *
+         * Most businesses have never linked a calendar, so every booking they
+         * made logged a warning saying calendar sync had failed — for a feature
+         * they never switched on. A warning that fires on the normal path stops
+         * being read, and takes the real ones with it.
+         */
+        const notConfigured = sync.error === 'Calendar sync not enabled';
+        if (notConfigured) {
+          log.debug({ bookingId: booking.id }, 'No calendar connected; skipping sync');
+        } else {
+          log.warn({ bookingId: booking.id, error: sync.error }, 'Calendar sync failed');
+        }
       }
     } catch (err) {
       log.warn({ err, bookingId: booking.id }, 'Calendar sync threw');

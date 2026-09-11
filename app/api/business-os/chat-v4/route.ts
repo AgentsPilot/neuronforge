@@ -32,6 +32,7 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { getBizQLPlanner } from '@/lib/business-os/bizql/planner/Planner';
 import { loadUserEnumLabels } from '@/lib/business-os/bizql/planner/catalogPrompt';
 import { recipientSummary } from '@/lib/business-os/bizql/mutate/previewSummary';
+import { parseSpokenDate } from '@/lib/business-os/bizql/mutate/spokenDate';
 import { runBusinessQuery } from '@/lib/business-os/bizql';
 import {
   BizQLValidationError,
@@ -43,6 +44,12 @@ import {
   renderAnswer,
   type RenderedAnswer,
 } from '@/lib/business-os/bizql/render/AnswerRenderer';
+import {
+  describePlan,
+  type Alternative,
+  type Understanding,
+} from '@/lib/business-os/bizql/render/describePlan';
+import { applyAlternative } from '@/lib/business-os/bizql/render/applyAlternative';
 import { getPlanCache, type CacheLayer } from '@/lib/business-os/bizql/cache/PlanCache';
 import {
   getConversationMemory,
@@ -55,6 +62,11 @@ import {
   getConfirmationStore,
   readConfirmationReply,
 } from '@/lib/business-os/bizql/mutate/ConfirmationStore';
+import {
+  getPendingFillStore,
+  isCancelMessage,
+} from '@/lib/business-os/bizql/mutate/PendingFillStore';
+import { analyse } from '@/lib/business-os/bizql/analyse/AnalysisService';
 import { executeForEach } from '@/lib/business-os/bizql/mutate/ForEachExecutor';
 import { applyFrozenWrites } from '@/lib/business-os/bizql/mutate/applyWrites';
 import { resolveEmailBranding } from '@/lib/email/branding';
@@ -102,6 +114,27 @@ function writeDone(language: string): string {
 
 function writeCancelled(language: string): string {
   return WRITE_CANCELLED[language] ?? WRITE_CANCELLED.en;
+}
+
+/**
+ * Name the fields a write is still missing, in the reader's language.
+ *
+ * The label is what the user is shown; the column is where the answer is
+ * written. Both come from the catalog, so neither is spelled out here — asking
+ * for "title" and then writing to `title` are the same fact, and keeping them
+ * together is what stops a rename from silently breaking the fill.
+ */
+function describeFields(
+  entityKey: string,
+  keys: string[],
+  language: string
+): Array<{ key: string; label: string }> {
+  const entity = CATALOG.entities[entityKey];
+
+  return keys.map((key) => ({
+    key,
+    label: entity?.fields[key]?.labels[language as 'en'] ?? entity?.fields[key]?.labels.en ?? key,
+  }));
 }
 
 /**
@@ -169,6 +202,23 @@ const RequestSchema = z.object({
   message: z.string().min(1).max(2000),
   /** Optional override; otherwise taken from the user's business profile. */
   language: z.enum(['en', 'he', 'es']).optional(),
+  /**
+   * A tap on one of the alternatives offered beside the last answer.
+   *
+   * Deliberately tiny: which step, which field, which value. The PLAN it
+   * applies to is the one this server stored for this user — never one posted
+   * by the client — and every field here is checked against the catalog before
+   * anything runs. See applyAlternative.
+   */
+  alternative: z
+    .object({
+      stepId: z.string().min(1).max(8),
+      field: z.string().min(1).max(64),
+      value: z.string().min(1).max(64),
+      kind: z.enum(['enum', 'aggregate_field']),
+      label: z.string().max(120).optional(),
+    })
+    .optional(),
 });
 
 interface ChatV4Response {
@@ -178,6 +228,14 @@ interface ChatV4Response {
   confirmation?: { id: string; message: string; preview: string[] };
   /** Set when the request was too ambiguous to plan — ask, never guess. */
   clarification?: string;
+  /**
+   * What the query actually did, and how to correct it in one tap.
+   *
+   * Present only when it earns its place — there is something to correct, the
+   * answer came back empty, or this turn WAS a correction. On a plainly
+   * successful turn it would be noise beside an answer nobody doubts.
+   */
+  understood?: Understanding;
   /**
    * Set when a write named a row that resolved to none, or to more than one.
    *
@@ -268,7 +326,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
         { status: 400 }
       );
     }
-    const { message } = parsed.data;
+    const { message, alternative } = parsed.data;
 
     // 3. Load presentation preferences. Language, currency and timezone drive
     //    the renderer, so no formatting is hardcoded per locale.
@@ -297,12 +355,241 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       resetsAt: budget.resetsAt,
     };
 
+    const confirmations = getConfirmationStore();
+
+    /*
+     * 4a. A write already under way takes precedence over EVERYTHING, planning
+     *     included. While one is parked, the next message is a value — not a
+     *     request to be interpreted.
+     *
+     * This is the difference between a state machine and a guess, and the guess
+     * lost: "הוסף משימה לדויד המלך" -> "which title?" -> "לוודא שהוחזר הכסף"
+     * used to come back as a list of refunds, because that reply is also a
+     * perfectly good question about refunds. Carrying the pending question into
+     * the prompt and asking the model to combine the two was tried first and
+     * failed every one of nine runs across three phrasings.
+     *
+     * So nothing is inferred here. Mid-write, a reply fills the field; the only
+     * way out is to cancel, which is a thing the user does on purpose.
+     */
+    const fills = getPendingFillStore();
+    const inProgress = await fills.take(user.id);
+
+    if (inProgress) {
+      if (isCancelMessage(message)) {
+        await fills.clear(user.id);
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: writeCancelled(language),
+            rows: [],
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          budget: budgetPayload,
+        });
+      }
+
+      const [answering, ...rest] = inProgress.remaining;
+      const spoken = message.trim();
+
+      /*
+       * A date field takes a DATE, not the sentence someone answered with.
+       *
+       * "when is it due?" -> "9 בספטמבר" was stored as those five characters and
+       * rejected by the column, so the same question was asked again for an
+       * answer that could not have been clearer. `parseSpokenDate` reads it with
+       * `Intl` month and weekday names in the reader's own language, and returns
+       * null on anything ambiguous — where the old behaviour stands and the user
+       * is asked again, which is the right outcome for a date nobody is sure of.
+       */
+      const answeringField =
+        CATALOG.entities[inProgress.step.entity]?.fields[answering.key];
+      const wantsDate =
+        answeringField?.type === 'datetime' || answeringField?.format === 'date';
+
+      const value: unknown =
+        (wantsDate ? parseSpokenDate(spoken, language, timezone) : null) ?? spoken;
+
+      /*
+       * Keyed by FIELD KEY, not column.
+       *
+       * `executeMutate` runs `mapWritableData` over `data`, which looks every
+       * key up in `entity.fields` and throws `unknown field` on a miss. A value
+       * written under its column would therefore be rejected outright for any
+       * field whose column differs from its key — invisible on `title`, where
+       * the two match, and broken on the first field where they do not.
+       */
+      const filled = {
+        ...inProgress.step,
+        data: { ...(inProgress.step.data ?? {}), [answering.key]: value },
+      } as MutateQuery;
+
+      /*
+       * The utterance ACCUMULATES, and it has to.
+       *
+       * `executeMutate` checks that a required text value is traceable to what
+       * the user actually said — the guard that stops a model inventing a task
+       * called "new task". Validating the completed write against only the
+       * original request would find the title ungrounded, report it missing
+       * again, and ask for the same field forever.
+       *
+       * The parked utterance is therefore the request as assembled so far, which
+       * is also the honest thing to record in the audit trail.
+       */
+      // The words the user SAID, not the parsed value — this is what grounds a
+      // written text field, and what the audit trail should read back as.
+      const utterance = `${inProgress.utterance} ${spoken}`.trim();
+
+      // Still more to ask for. Park the progress and ask for the next one by
+      // name rather than trying to split one free-text answer across two fields.
+      if (rest.length > 0) {
+        await fills.park({
+          userId: user.id,
+          step: filled,
+          remaining: rest,
+          utterance,
+          language,
+          targetName: inProgress.targetName,
+          referenceNames: inProgress.referenceNames,
+        });
+
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: '',
+            rows: [],
+            entity: filled.entity,
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          needs: {
+            entity: filled.entity,
+            action: filled.action,
+            fields: rest.map((f) => ({ key: f.key, label: f.label })),
+          },
+          budget: budgetPayload,
+        });
+      }
+
+      // Complete, as far as we know. Validate before claiming so.
+      try {
+        const dry = await executeMutate(
+          filled,
+          { userId: user.id, timezone, consumer: 'chat' },
+          {
+            dryRun: true,
+            language,
+            targetName: inProgress.targetName,
+            referenceNames: inProgress.referenceNames,
+            utterance,
+          }
+        );
+
+        // A completed write still obeys the action's own confirmation policy.
+        // Finishing a sentence is not the same as approving what it now says.
+        if (requiresConfirmation(filled)) {
+          await fills.clear(user.id);
+          const parked = await confirmations.park({
+            userId: user.id,
+            steps: [filled],
+            preview: [dry.preview ?? `${filled.entity}.${filled.action}`],
+            utterance,
+            language,
+            names: [
+              {
+                targetName: inProgress.targetName,
+                referenceNames: inProgress.referenceNames,
+              },
+            ],
+          });
+
+          return NextResponse.json({
+            success: true,
+            confirmation: {
+              id: parked.confirmationId,
+              // Deliberately blank, NOT the preview. The card renders the
+              // message AND the preview list, so passing the same string to
+              // both printed the change twice. The client supplies the asking
+              // sentence from its own dictionary, which is also the only way it
+              // comes out in the reader's language.
+              message: '',
+              preview: [dry.preview ?? `${filled.entity}.${filled.action}`],
+            },
+            budget: budgetPayload,
+          });
+        }
+
+        await fills.clear(user.id);
+        const result = await executeMutate(
+          filled,
+          { userId: user.id, timezone, consumer: 'chat' },
+          {
+            language,
+            targetName: inProgress.targetName,
+            referenceNames: inProgress.referenceNames,
+            utterance,
+          }
+        );
+
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: `${writeDone(language)} — ${result.preview ?? `${filled.entity}.${filled.action}`}.`,
+            rows: [],
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          budget: budgetPayload,
+        });
+      } catch (err) {
+        // Another field turned out to be missing — a value can be supplied and
+        // still leave the write incomplete. Ask for that one; do not fall
+        // through to the planner, which would drop the write on the floor.
+        if (!(err instanceof MissingFieldsError)) {
+          await fills.clear(user.id);
+          throw err;
+        }
+
+        const next = describeFields(err.entity, err.fields, language);
+        await fills.park({
+          userId: user.id,
+          step: filled,
+          remaining: next,
+          utterance,
+          language,
+          targetName: inProgress.targetName,
+          referenceNames: inProgress.referenceNames,
+        });
+
+        return NextResponse.json({
+          success: true,
+          answer: {
+            text: '',
+            rows: [],
+            entity: err.entity,
+            truncated: false,
+            approximate: false,
+            collapsed: 0,
+          },
+          needs: {
+            entity: err.entity,
+            action: err.action,
+            fields: next.map((f) => ({ key: f.key, label: f.label })),
+          },
+          budget: budgetPayload,
+        });
+      }
+    }
+
     // 4. A pending write takes precedence over planning.
     //
     // Checked first, and ONLY when something is actually parked, so a bare "yes"
     // can never be interpreted in isolation. An unrecognised reply falls through
     // to the planner rather than being read as approval.
-    const confirmations = getConfirmationStore();
     const pending = await confirmations.take(user.id);
 
     if (pending) {
@@ -338,6 +625,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           planId: pending.confirmationId,
           timezone,
           language,
+          // Frozen at preview time. Re-rendering without them reports the id.
+          names: pending.names,
         });
 
         auditTrail
@@ -414,17 +703,50 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     const conversation = getConversationMemory();
     const context = await conversation.load(user.id);
 
+    /*
+     * 5a. A tapped correction re-runs the stored plan. No model call at all.
+     *
+     * Falls through to normal planning on any mismatch — an expired context, a
+     * value the catalog does not declare, a plan that no longer validates —
+     * because answering the question again is always better than answering a
+     * half-substituted one.
+     */
+    const corrected = alternative
+      ? applyAlternative(context.lastPlan?.steps, alternative as Alternative)
+      : null;
+
+    if (alternative && !corrected) {
+      requestLogger.warn(
+        { userId: user.id, alternative },
+        'Could not apply the tapped alternative; planning the turn instead'
+      );
+    }
+
     const planningStart = Date.now();
-    const outcome = await getBizQLPlanner().plan({
-      message,
-      userId: user.id,
-      language,
-      timezone,
-      context,
-      // Groups every usage row for this one question — the planner call, any
-      // repair, and the zero-cost row written when the cache serves it.
-      turnId,
-    });
+    const outcome = corrected
+      ? {
+          ok: true as const,
+          plan: corrected.plan,
+          clarification: undefined,
+          diagnostics: {
+            model: 'none (corrected)',
+            catalogVersion: CATALOG_VERSION,
+            entitiesOffered: [],
+            repairAttempted: false,
+            durationMs: 0,
+            cache: 'miss' as CacheLayer,
+          },
+        }
+      : await getBizQLPlanner().plan({
+          message,
+          userId: user.id,
+          language,
+          timezone,
+          context,
+          // Groups every usage row for this one question — the planner call, any
+          // repair, and the zero-cost row written when the cache serves it.
+          turnId,
+        });
 
     /** Roll the window forward, keeping what the next turn will need. */
     const remember = (summary: string, extra: Partial<ConversationContext> = {}) => {
@@ -688,7 +1010,39 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           // every time instead of most of the time.
           if (!(err instanceof MissingFieldsError)) throw err;
 
-          const entity = CATALOG.entities[err.entity];
+          // Labelled from the catalog, in the user's language, so the client
+          // needs one framing sentence rather than a string per field.
+          const wanted = describeFields(err.entity, err.fields, language);
+
+          /*
+           * Park the write. This branch used to return `needs` and keep NOTHING
+           * — not the question, not even the turn — which is the whole bug: the
+           * user's answer came back as a fresh request and was planned instead
+           * of filled. See PendingFillStore for why context in the prompt was
+           * not enough to fix it.
+           *
+           * `step` is the right thing to park rather than the planner's original:
+           * its target and references are already resolved, so finishing the
+           * write later cannot re-resolve "דויד המלך" onto a different contact.
+           */
+          if (step.op === 'mutate') {
+            await fills.park({
+              userId: user.id,
+              step,
+              remaining: wanted,
+              utterance: message,
+              language,
+              targetName,
+              referenceNames,
+            });
+          }
+
+          // Recorded for the same reason the `clarification` branch does it:
+          // the transcript should show that a question was asked. The fill above
+          // is what actually resolves the next turn.
+          remember(`asked for: ${wanted.map((f) => f.label).join(', ')}`, {
+            pendingQuestion: wanted.map((f) => f.label).join(', '),
+          });
 
           return NextResponse.json({
             success: true,
@@ -703,15 +1057,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
             needs: {
               entity: err.entity,
               action: err.action,
-              // Labelled from the catalog, in the user's language, so the client
-              // needs one framing sentence rather than a string per field.
-              fields: err.fields.map((key) => ({
-                key,
-                label:
-                  entity?.fields[key]?.labels[language as 'en'] ??
-                  entity?.fields[key]?.labels.en ??
-                  key,
-              })),
+              fields: wanted,
             },
             budget: budgetPayload,
         debug,
@@ -733,13 +1079,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           utterance: message,
           language,
           frozenRows,
+          // Positionally aligned with `steps` above — same array, same order.
+          names: resolved.map((r) => ({
+            targetName: r.targetName,
+            referenceNames: r.referenceNames,
+          })),
         });
 
         return NextResponse.json({
           success: true,
           confirmation: {
             id: parked.confirmationId,
-            message: plan.answer?.text || 'Confirm this change?',
+            // Empty rather than an English fallback: the client asks in the
+            // reader's language. A hardcoded sentence here is how a Hebrew
+            // conversation ended with "Confirm this change?" in it.
+            message: plan.answer?.text || '',
             preview: previews,
           },
           budget: budgetPayload,
@@ -755,6 +1109,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       // unresolved, so every low-risk update naming its row — "change Yael's
       // phone number" — would have thrown after the preview had just succeeded.
       const applied: string[] = [];
+      const actionResults: QueryResult[] = [];
+      const actionSteps: Array<{ id?: string }> = [];
+
       for (const { step, targetName, referenceNames } of resolved) {
         if (step.op === 'for_each') continue;
         const result = await executeMutate(
@@ -763,6 +1120,45 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           { language, targetName, referenceNames, utterance: message }
         );
         applied.push(result.preview ?? `${step.entity}.${step.action}`);
+        actionResults.push(result as QueryResult);
+        actionSteps.push({ id: step.id });
+      }
+
+      /*
+       * A READ action answers a question; it does not confirm a change.
+       *
+       * Everything here previously ended as "בוצע — <the parameters it was
+       * given>", which for `open_time` meant the user asked how many hours were
+       * free tomorrow and was told, in effect, that a date had been supplied.
+       * The figures were fetched and then thrown away.
+       *
+       * So when nothing was actually changed, the planner's own sentence is
+       * rendered against the action's result — `{s1.result.freeMinutes}` and its
+       * siblings, declared in the catalog under `returns`. Falls back to the
+       * confirmation line if the sentence does not resolve, which is the same
+       * rule every other answer follows.
+       */
+      const isReadOnly = resolved.every(
+        ({ step }) =>
+          step.op === 'mutate' &&
+          CATALOG.entities[step.entity]?.actions?.[step.action]?.risk === 'read'
+      );
+
+      if (isReadOnly && plan.answer?.text) {
+        const rendered = renderAnswer(plan.answer.text, actionSteps, actionResults, {
+          language,
+          currency,
+          timezone,
+        });
+
+        if (rendered.text) {
+          return NextResponse.json({
+            success: true,
+            answer: rendered,
+            budget: budgetPayload,
+            debug,
+          });
+        }
       }
 
       return NextResponse.json({
@@ -783,8 +1179,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     const executionStart = Date.now();
     const results: QueryResult[] = [];
 
+    /*
+     * ONE list, used for both executing and rendering.
+     *
+     * `results` was built from the steps minus mutates while `renderAnswer` was
+     * handed the full list, so it paired result[i] with step[i] across two
+     * different arrays: any plan with a write before a read mapped a result onto
+     * the wrong step's id, and the sentence would quote the wrong number without
+     * anything failing. Only the rule against mixing writes with unrelated reads
+     * kept it from biting. An `analyse` step, which produces no result at all,
+     * would have made the same misalignment ordinary.
+     */
+    const readSteps = plan.steps.filter((s) => s.op !== 'mutate' && s.op !== 'analyse');
+
     try {
-      for (const step of plan.steps.filter((s) => s.op !== 'mutate')) {
+      for (const step of readSteps) {
         results.push(
           await runBusinessQuery(step, { userId: user.id, timezone, consumer: 'chat' })
         );
@@ -815,15 +1224,86 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     const enumLabels = await loadUserEnumLabels(
       user.id,
       supabaseServer,
-      [...new Set(plan.steps.map((step) => step.entity))]
+      [...new Set(readSteps.map((step) => step.entity))]
     );
 
-    const answer = renderAnswer(plan.answer?.text, plan.steps, results, {
+    /*
+     * 7.5. Say something about the numbers, now that the numbers exist.
+     *
+     * The planner writes its sentence BEFORE anything is fetched, which is fine
+     * for stating a figure and impossible for describing one. Asked "how much
+     * did my revenue drop", it has to guess which way the numbers went — and it
+     * showed, producing "ירדו ב-8.33$" on one run and "ירדו ב--8.33$" on the
+     * next. Dropped by minus eight is not a sentence anyone means.
+     *
+     * This layer sees the values, so a direction is something it can check. It
+     * still never computes: it composes `{= ... }` and the server evaluates,
+     * which is why a figure here can only be wrong if our arithmetic is.
+     *
+     * Returns null on any failure, and the planner's sentence stands. An
+     * improvement to an answer that already exists must never be able to remove
+     * one.
+     */
+    /*
+     * ONLY when the planner asked for it.
+     *
+     * It briefly triggered on any plan containing an aggregate, which meant
+     * "how many bookings do I have" — a question whose answer is one number and
+     * needs no interpretation — paid for a second model call on every turn.
+     * The planner knows whether a question needs relating or merely reporting;
+     * that judgement belongs in the plan, not in a guess made here.
+     */
+    const wantsAnalysis = plan.steps.some((step) => step.op === 'analyse');
+
+    const analysed = wantsAnalysis
+      ? await analyse({
+          question: message,
+          language,
+          currency,
+          userId: user.id,
+          steps: readSteps,
+          results,
+          turnId: correlationId,
+        })
+      : null;
+
+    const answer = renderAnswer(analysed ?? plan.answer?.text, readSteps, results, {
       language,
       currency,
       timezone,
       enumLabels,
     });
+
+    /*
+     * 8a. Say what the query DID, and offer the one-tap corrections.
+     *
+     * Deterministic, free, and the only defence this system has against its
+     * worst failure: a valid plan that answers a question nobody asked. See
+     * describePlan for the argument.
+     *
+     * Shown only when it earns its place:
+     *   - there is something to correct (a sibling status, a rival total)
+     *   - the answer came back EMPTY, where "why zero" is the actual question.
+     *     "עמודים: 0" for "show me my website" is technically true and reads as
+     *     a bug; naming the filter that produced the zero answers it.
+     *   - this turn WAS a correction, where the sentence is deliberately absent
+     *     and this line is what says which query the number belongs to.
+     */
+    const understanding = describePlan(readSteps, { language, enumLabels });
+
+    const emptyResult =
+      answer.rows.length === 0 &&
+      results.every(
+        (r) =>
+          (r.op === 'find' && (r.rows?.length ?? 0) === 0) ||
+          (r.op === 'compute' && !r.groups?.length && !r.value)
+      );
+
+    const understood =
+      understanding &&
+      (understanding.alternatives.length > 0 || emptyResult || Boolean(corrected))
+        ? understanding
+        : undefined;
 
     // Remember what was shown, so "it" / "him" / "the second one" resolve next
     // turn. Ids and labels only — this is context, not a copy of the data.
@@ -854,16 +1334,38 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
 
     const groupedEntity = (() => {
       if (!groupedSubject) return undefined;
-      const step = plan.steps.find((s) => s.entity === groupedSubject.entity && s.op === 'compute');
+      const step = plan.steps.find(
+        (s) => s.op === 'compute' && s.entity === groupedSubject.entity
+      );
       const relationKey = (step as { group_by?: unknown } | undefined)?.group_by;
       if (typeof relationKey !== 'string') return undefined;
       return CATALOG.entities[groupedSubject.entity]?.relations?.[relationKey]?.target;
     })();
 
     remember(
-      plan.steps.map((step) => `${step.op} ${step.entity}`).join(', '),
+      // An analyse step has no entity — it describes the others.
+      plan.steps
+        .map((step) => (step.op === 'analyse' ? step.op : `${step.op} ${step.entity}`))
+        .join(', '),
       {
         pendingQuestion: undefined,
+        /*
+         * The plan behind this answer, so a tapped correction costs no model
+         * call. Reads only — ConversationMemory strips writes on the way in,
+         * and applyAlternative refuses them again on the way out.
+         */
+        lastPlan: { steps: readSteps, answer: plan.answer, at: new Date().toISOString() },
+        /*
+         * A choice the user made by tapping, kept for the conversation.
+         *
+         * "When I say revenue I mean net" is a standing fact, and asking again
+         * next turn would be the same ambiguity with extra steps. A status swap
+         * establishes nothing of the kind, so only the aggregate choice is
+         * remembered — see applyAlternative.
+         */
+        preferences: corrected?.preference
+          ? { ...context.preferences, [corrected.preference.key]: corrected.preference.value }
+          : context.preferences,
         lastRows:
           primary?.op === 'find' && answer.rows.length > 0
             ? {
@@ -919,6 +1421,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     return NextResponse.json({
       success: true,
       answer,
+      understood,
       // The turn just consumed one, so report the state INCLUDING it rather
       // than the stale pre-turn count — otherwise the last question before the
       // limit still shows one remaining.

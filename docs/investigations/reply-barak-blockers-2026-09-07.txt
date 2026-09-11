@@ -1,0 +1,284 @@
+Subject: Re: Blocked — consolidating everything open
+
+Thanks for putting this in one place — having the six of them side by side is what made it
+possible to check them properly, and two of the items turned up bugs neither of us had written
+down.
+
+I ran each one against the live schema and the current tree rather than reading the code, since
+the failure mode here is that the code reads fine. Summary: three hold up, one holds up in a
+different form than described, one has already shipped, and two of the impact statements don't
+survive contact with the database. Detail below in your numbering.
+
+
+1. THE TWO MIGRATIONS — one of them, not both
+
+business_subdomain is genuinely unapplied. Confirmed:
+
+    business_profiles select=id,subdomain
+    42703 column business_profiles.subdomain does not exist
+
+invoice_online_payment is already applied:
+
+    payment_invoices select=id,allow_online_payment  -> OK, rows=1
+
+The column is there and the flow is wired end to end — PaymentRepository, the invoices route's
+Zod schema, InvoiceDeliveryService at send time, and the client pay page all read it. Nothing to
+do on that one.
+
+On the first one I'd refine the impact rather than the fact. One place does read the column —
+resolveBusinessSubdomain, businessSubdomain.ts:41-45:
+
+    .from('business_profiles').select('subdomain, user_code')
+
+and that select does fail, 42703, every call. But it fails softly. The error is destructured away
+(`const { data: profile } = await ...`, no error binding), so nothing throws, profile is null, and
+execution falls through to the second query against website_pages.subdomain — which exists and
+works. That is where every real address actually comes from, via WebsitePageRepository
+.findBySubdomain / .findBySubdomainAny and the check_subdomain_available / generate_subdomain RPCs.
+
+So resolution is not broken. What IS dead is the last fallback on line 65:
+
+    return profile?.user_code || null;
+
+profile is always null, so a business with no subdomain on any page can never reach its user_code
+and WebsitePublishService:130 refuses the publish with "This page has no web address yet." That is
+a genuine publish-blocking path — it just needs a business in that state to bite, and right now
+there isn't one:
+
+    users with website_pages: 1
+    of those, with no subdomain on any page: 0
+
+So: worth applying, and it closes a real trap that the first business to publish a page without a
+subdomain would fall into. Not a live outage today. I'd not rank it first, but I would not leave it
+either — it is one migration away from being someone's silent bug.
+
+
+2. THE THREE client_email DETECTORS — this shipped on 26 Aug
+
+All three already group by contact_id. It's commit 3390050, 2026-08-26, and I confirmed it's an
+ancestor of origin/main.
+
+    CrmEngagementDecayDetector        .select('contact_id, start_time')     no client_email anywhere
+    PricingIntroOfferStuckDetector    .select('id, contact_id, ...')        comment only
+    RetRepeatBookingLowDetector       .select('contact_id, id, ...')        comment only
+
+In the two that still contain the string, it survives only inside a comment recording its removal
+— RetRepeatBookingLowDetector line 90 reads "Grouped by contact, not by email text. `client_email`
+was dropped". CrmEngagementDecayDetector doesn't contain it at all. So your approach was right; it
+is the approach that's already in the tree.
+
+Worth knowing if you grep for this again: client_email IS still a live column on payment_invoices.
+Different table, unaffected.
+
+BUT — and this is the part worth your time — your instinct that PricingIntroOfferStuckDetector had
+a client_email problem was right, and there's a real bug there the migration missed. Line 147
+assigns a contact UUID to a variable still named `email`:
+
+    const email = booking.contact_id;
+
+That flows into stuckEmails, which is then used at line 235 as an email filter:
+
+    .in('email', [...stuckEmails].slice(0, 50))
+
+It matches contact UUIDs against the email column. I probed it with a real booking's contact_id:
+
+    AS-WRITTEN  .in(email,[uuid]) -> err= none  rows= 0
+    CORRECTED   .in(id,[uuid])    -> err= none  rows= 1
+
+No error — Postgres compares the UUID as text and matches nothing, so stuckContacts is always
+empty. The insight still fires with a correct conversion rate and severity, but names nobody,
+which is the only actionable part of it. The stale variable name is what hides it in review.
+
+If you still have that branch open, this is the one-line change actually worth pushing.
+
+
+3. THE FOUR SCHEMA-BROKEN DETECTORS — three confirmed, and two are worse than you wrote
+
+I executed every query in each file rather than just the one quoted, which changed two of the
+answers.
+
+WebMobileIssuesDetector — confirmed, and it's all four queries, not just `websites`:
+
+    websites             42P01 relation "public.websites" does not exist
+    website_page_views   42703 column website_page_views.visitor_id does not exist
+    scheduling_bookings  42703 column scheduling_bookings.metadata does not exist
+    scheduling_bookings  42703 column scheduling_bookings.price does not exist
+
+It fails silently — the first query is guarded by `if (websiteError || !website) return null`, so
+it reports "nothing detected" for every user on every run.
+
+WebPageUnderperformDetector — confirmed, four of five fail. Only the crm_contacts query is sound.
+website_pages has `slug`, not `path`, and website_page_views has no `page_path`.
+
+PricingDiscountAbuseDetector — confirmed. One precision worth recording: metadata DOES exist on
+payment_transactions, so its first query is fine. Only the scheduling_bookings half is wrong. Real
+column name, wrong table — that's the shape that keeps getting through review.
+
+OpsPeakUnutilizedDetector — this one I'd class differently. Its detection logic is fine:
+
+    scheduling_bookings select=start_time, status  -> OK, rows=1
+
+Both queries that decide whether to fire work. Only the third query, the one that prices the
+finding, fails on `price` (the column is payment_amount). And because it's destructured as
+`{ data: avgValue }` with the error discarded, avgValue is null and it falls through to a
+hardcoded default at line 176:
+
+    : 75; // Default estimate
+
+So it isn't broken in the sense the others are. It fires correctly and reports a fabricated
+missed-revenue number built from $75 a booking. I'd argue that's worse than dead, because the
+number looks real and someone will act on it. It also needs a much smaller fix than a rebuild —
+swap `price` for `payment_amount`.
+
+On your proposal: both replacement columns are real, I checked.
+
+    scheduling_bookings select=id, booking_source        -> OK
+    crm_contacts select=id, source_metadata              -> OK
+
+So rebuilding the two web ones against those is viable. Given both are silently dead today, is
+anyone actually reading their output? If not, retiring them is the cheaper answer and I'd support
+it — but that's a product call, not mine.
+
+
+4. GENERATED TYPES — the conclusion is right, the evidence isn't, and the real problem is bigger
+
+@/types/database doesn't exist — confirmed. /types/ has only analytics, pdf-parse, pdfjs-dist,
+settings and system-health.
+
+But BusinessProfileRepository.ts doesn't import it. Line 9 is:
+
+    import { supabaseServer } from '@/lib/supabaseServer';
+
+Nothing in the repo imports @/types/database. The only two matches anywhere are comments noting
+its absence. And the project typechecks clean:
+
+    npx tsc --noEmit -p tsconfig.json | grep -c "error TS"
+    0
+
+Zero errors, no TS2307. I'd want to know where that line reference came from — if it's from an
+older checkout, it'd be useful to know which, because it would tell us how stale the rest of the
+audit base was.
+
+That said, your actual diagnosis is correct and I'd go further: generating the types would not, on
+its own, close the hole. next.config.js has
+
+    typescript: {
+      ignoreBuildErrors: true,
+    }
+
+so the build discards TypeScript errors regardless. Generated types plus a typecheck gate that
+actually fails CI is the fix; generated types alone would give us the feeling of coverage without
+the coverage. That's a change I think is clearly worth making, and it's the only item on this list
+that prevents the next four of these rather than cleaning up the last four.
+
+
+5. THE MERGE ITEMS
+
+Two capability paths — confirmed. Both exist: verifyCapabilityAccess local to ChatCommandExecutor
+(defined line 82, called line 1096), and CapabilityEngine used by ChatOrchestrator,
+ResponseRenderer, PaymentRepository and the payments blocks/execute route. The file documents the
+duplication itself at lines 32-41 and notes the local one queries user_capabilities directly via
+supabaseServer, which also breaks the repository rule. It's tracked as D11/C3 in the merge
+requirement doc. Still genuinely open — I can't tell you which survives, that's a design call.
+
+One plugin or five — confirmed, they do ship side by side: business-os-plugin-v2.json plus crm,
+payments, scheduling and website. The intake plugin was retired in 84614f0.
+
+MutateExecutor and triggers T2/T3/T4/T8 — I could not verify this and I'm not going to imply
+otherwise. Enumerating pg_trigger needs SQL the REST interface won't give me read-only, and I
+wasn't willing to add an RPC to a database I'm auditing. It's still logged as open Q2 in the merge
+requirement doc, so you're right that it's outstanding. The only signal I have is weak and I'd not
+lean on it: MutateExecutor has two activity_type literals and no direct crm_activities insert on
+the booking/payment paths the triggers own. Suggestive, not proof. This needs someone with psql.
+
+Intake completion advancing the CRM stage — this looks refuted at the application layer. The stage
+advance was deliberately removed. app/api/website/forms/intake/route.ts lines 214-215:
+
+    // NOTE: `stage` is deliberately NOT written here — pipeline stage vocabulary is
+    // per-tenant (crm_pipeline_stages) and completing an intake is not a promotion
+
+New contacts are created as stage 'lead', existing contacts are never touched, and there are tests
+asserting the patch has no stage property. The other three intake routes contain no stage
+reference at all. Caveat: that's the app layer only — if a trigger is doing it, I'd hit the same
+wall as above. Were you seeing an actual stage change in data, or reading it from the code? If it's
+data, that's a trigger and it changes the answer.
+
+
+6. saved-plans.test.ts
+
+You're right that it reaches the real database. The mechanism isn't the one described, and the
+difference matters for the fix.
+
+There are mocks — makeFakeClient() at lines 22-48, injected via new SavedPlanStore(client), and the
+docblock says so. The injected client is fine. What escapes it is three un-injected module-level
+call sites reached from the applyFrozenWrites test at line 199:
+
+    BusinessProfileRepository.findByUserId   via applyWrites.ts:78 -> lib/email/branding.ts:74
+    SystemConfigService.get(...)             via ForEachExecutor.ts:236
+    ActionLog.countToday                     via ForEachExecutor.ts:237
+
+All three logged "TypeError: fetch failed" — which is the proof they made a real outbound call.
+
+The reason this is more serious than it looks: tests/plugins/jest-setup.ts stubs the Supabase env
+only when it isn't already set —
+
+    process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://test.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-role-key';
+
+In my run it hit the placeholder host and failed. On any machine or CI job with real Supabase env
+exported, those three calls resolve against the real database with the service-role key. I did not
+run that variant deliberately — the same test drives a send fan-out and I was keeping this audit
+read-only.
+
+Separately, and this is a different defect: the test passes 8/8 in 3.4s but Jest won't exit. I
+timed one run out at 6m40s before checking with --detectOpenHandles:
+
+    ●  Timeout
+        at AuditTrailService.startFlushTimer (lib/services/AuditTrailService.ts:231)
+        at AuditTrailService.getInstance (lib/services/AuditTrailService.ts:63)
+        at BookingLifecycleService.ts:35
+        at MutateExecutor.ts:39
+        at applyWrites.ts:27
+
+A module-level getInstance() starts a setInterval flush timer that's never cleared. Mocking
+Supabase would not fix that — it needs the timer disposed or the singleton injected. Worth
+treating as two items, not one.
+
+
+WHERE I'D START
+
+1. types/database plus a real typecheck gate (your #4). It's the only item that stops the next
+   round of these instead of cleaning up the last. It needs ignoreBuildErrors turned off to mean
+   anything, which is the part I'd want agreement on before starting.
+
+2. PricingIntroOfferStuckDetector's .in('email', <uuids>). One line, and it's currently returning
+   an empty contact list on every insight it produces.
+
+3. OpsPeakUnutilizedDetector's price -> payment_amount. Also one line, and it's putting invented
+   revenue numbers in front of users right now. I'd take this ahead of the dead detectors
+   precisely because it isn't dead.
+
+4. saved-plans.test.ts — the un-injected call sites first, the audit-timer handle second.
+
+5. The two web detectors — but decide retire-or-rebuild before anyone writes code, since they've
+   been silently dead long enough that nobody noticed.
+
+6. business_subdomain migration. Correct to apply, no live impact, so it can go with the next
+   batch.
+
+Q2 (the triggers) needs someone with psql access. I'd rather leave it explicitly unanswered than
+guess.
+
+One unrelated thing I tripped over: SystemConfigService.ts has 14 console.* calls, one of which
+surfaced in the test output. Per CLAUDE.md that wants converting to createLogger. I didn't touch
+it.
+
+
+A process note, offered gently: items 2 and 4 both describe a tree older than current main — the
+client_email work landed on 26 Aug and origin/main took the merged branch fairly recently in PR
+#35, so it's an easy thing to be behind on. If it's useful, I'm happy to do this schema pass as a
+scripted check we can run before an audit rather than during one — most of what I did here was
+mechanical and would have caught #1b and #2 before they reached your list.
+
+The three you found in #3 are real and two of them are worse than you wrote, so the list was
+worth assembling.

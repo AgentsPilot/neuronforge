@@ -39,6 +39,9 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // CONTACTS
   // ===========================================================================
   contacts: {
+    meaning:
+      'the people this business deals with — clients, leads, enquiries, customers, everyone ' +
+      'on the list whether they have ever bought anything or not',
     table: 'crm_contacts',
     labels: {
       one: { en: 'contact', he: 'איש קשר', es: 'contacto' },
@@ -383,13 +386,24 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // INVOICES
   // ===========================================================================
   invoices: {
-    meaning: 'money BILLED to clients — raised, whether or not it has been paid',
+    /*
+     * The second clause is what makes "how much does he owe" answerable.
+     *
+     * `contacts.owes_money` carries the label "חייב כסף", so "who owes me money"
+     * correctly finds the PEOPLE. The amount lives here, and nothing said so —
+     * asked "כמה הוא חייב" the planner had no entity for a debt and reached for
+     * transactions, which is money RECEIVED: the opposite of what was asked.
+     */
+    meaning:
+      'money BILLED to clients — raised, whether or not it has been paid. ' +
+      'The unpaid ones ARE what a client owes: "how much does X owe" is the total of ' +
+      'their unpaid invoices.',
     table: 'payment_invoices',
     labels: {
       one: { en: 'invoice', he: 'חשבונית', es: 'factura' },
       many: { en: 'invoices', he: 'חשבוניות', es: 'facturas' },
     },
-    aliases: ['bills', 'חשבונות', 'cuentas'],
+    aliases: ['bills', 'debt', 'owed', 'חשבונות', 'חוב', 'חובות', 'cuentas', 'deuda'],
     userScope: { kind: 'column', column: 'user_id' },
     labelField: 'invoice_number',
     // No `currency`: the amount is formatted with its own symbol, so a separate
@@ -473,15 +487,21 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         format: 'enum',
         labels: { en: 'status', he: 'סטטוס', es: 'estado' },
         writable: true,
-        enumValues: ['draft', 'sent', 'paid', 'overdue', 'cancelled'],
+        // `refunded` is a real, reachable status that was never declared: a
+        // refunded invoice was invisible to any status filter and rendered its
+        // raw value with no label.
+        enumValues: ['draft', 'sent', 'paid', 'overdue', 'cancelled', 'refunded'],
         enumLabels: {
           draft: { en: 'draft', he: 'טיוטה', es: 'borrador' },
           sent: { en: 'sent', he: 'נשלחה', es: 'enviada' },
           paid: { en: 'paid', he: 'שולמה', es: 'pagada' },
           overdue: { en: 'overdue', he: 'באיחור', es: 'vencida' },
           cancelled: { en: 'cancelled', he: 'בוטלה', es: 'anulada' },
+          refunded: { en: 'refunded', he: 'הוחזרה', es: 'reembolsada' },
         },
         semanticTerms: {
+          // Deliberately excludes `refunded`: money that was paid and returned
+          // is not money still owed.
           unpaid: ['sent', 'overdue'],
         },
       },
@@ -673,11 +693,28 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   installments: {
     meaning: 'money owed under a payment plan — one row per scheduled period, whether or not it has been collected',
     table: 'payment_plan_installments',
+    /*
+     * The Hebrew names both entities and one alias apart.
+     *
+     * `תשלום`/`תשלומים` is what a Hebrew speaker calls a PAYMENT, and it was
+     * the label here as well as on `transactions` — so "כמה תשלומים יש לי"
+     * named two different entities and was answered by whichever the model
+     * picked. Measured, that was five failures in one sweep, in both
+     * directions, and in production it is a silent wrong-entity answer with a
+     * plausible number attached.
+     *
+     * The aliases had the same problem against `plans`: "payment plan" is the
+     * OFFER (`plans`), not one scheduled row of it, and claiming it here made
+     * "what is the total of my payment plans" resolve to installments.
+     *
+     * A collision test in __tests__ now fails if any label or alias is claimed
+     * by two entities in the same language.
+     */
     labels: {
-      one: { en: 'installment', he: 'תשלום', es: 'cuota' },
-      many: { en: 'installments', he: 'תשלומים', es: 'cuotas' },
+      one: { en: 'installment', he: 'תשלום בתוכנית', es: 'cuota' },
+      many: { en: 'installments', he: 'תשלומי תוכנית', es: 'cuotas' },
     },
-    aliases: ['payment plan', 'תוכנית תשלומים', 'plan de pagos'],
+    aliases: ['scheduled payments', 'תשלומים בתוכנית', 'pagos programados'],
     userScope: { kind: 'column', column: 'user_id' },
     labelField: 'installment_number',
     displayFields: ['installment_number', 'amount', 'due_date', 'status'],
@@ -761,7 +798,17 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
       one: { en: 'booking', he: 'פגישה', es: 'reserva' },
       many: { en: 'bookings', he: 'פגישות', es: 'reservas' },
     },
-    aliases: ['appointments', 'sessions', 'פגישות', 'תורים', 'citas'],
+    /*
+     * "הזמנות" — what a client BOOKS, and the word half of them use for it.
+     *
+     * Its absence did not read as a missing word; it read as a wrong answer.
+     * Asked "הצג הזמנות שבוטלו" — show cancelled bookings — the planner could
+     * not place the noun, reached for the one semantic term the status field
+     * offers, and filtered on {"$semantic":"upcoming"}: two CONFIRMED bookings
+     * returned under a heading asking for cancelled ones. The same sentence
+     * with "פגישות" was correct, which is how a missing alias hides.
+     */
+    aliases: ['appointments', 'sessions', 'reservations', 'פגישות', 'תורים', 'הזמנות', 'citas'],
     userScope: { kind: 'column', column: 'user_id' },
     // A booking has no name, so its time is the only useful label. Combined with
     // the embedded contact the renderer produces "Ofir Omer (Aug 26, 1:00 PM)".
@@ -1011,6 +1058,9 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // TASKS
   // ===========================================================================
   tasks: {
+    meaning:
+      "the business's own to-do list — reminders, follow-ups, things to do, work the owner " +
+      'set for themselves rather than anything a client sees',
     table: 'crm_tasks',
     labels: {
       one: { en: 'task', he: 'משימה', es: 'tarea' },
@@ -1151,6 +1201,9 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // SERVICES
   // ===========================================================================
   services: {
+    meaning:
+      'what this business SELLS — its treatments, sessions, classes, packages; the menu of ' +
+      'offers, not any individual booking or payment of one',
     table: 'scheduling_services',
     labels: {
       one: { en: 'service', he: 'שירות', es: 'servicio' },
@@ -1991,6 +2044,10 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // ACTIVITIES — the timeline of what happened with a client
   // ===========================================================================
   activities: {
+    meaning:
+      'the diary of what has HAPPENED — a log the system writes as things occur (a payment ' +
+      'arrived, an invoice went out, a booking moved), so "what happened this week" and ' +
+      '"recent activity" are answered from here',
     table: 'crm_activities',
     labels: {
       one: { en: 'activity', he: 'פעילות', es: 'actividad' },
@@ -2031,7 +2088,52 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         type: 'enum',
         format: 'enum',
         labels: { en: 'type', he: 'סוג', es: 'tipo' },
-        enumValues: ['note', 'email', 'call', 'meeting', 'booking', 'payment'],
+        /*
+         * Six were declared and nine more were already in the data.
+         *
+         * Everything the system logs about itself — a payment arriving, an
+         * invoice going out, a refund, a booking moving — was undeclared, so a
+         * filter on any of them matched nothing and the answer was a confident
+         * `0`. Only the half a human types by hand was visible to the chat.
+         *
+         * Taken from the rows themselves, not from a check constraint: this
+         * column has none, which is exactly why it drifted. The drift test
+         * added alongside this is what stops it happening again.
+         */
+        enumValues: [
+          'note',
+          'email',
+          'call',
+          'meeting',
+          'booking',
+          'payment',
+          'payment_received',
+          'invoice_sent',
+          'refund_issued',
+          'booking_rescheduled',
+          'booking_confirmation_sent',
+          'intake_form_sent',
+          'contact_updated',
+          'document_uploaded',
+          'task_completed',
+        ],
+        enumLabels: {
+          note: { en: 'note', he: 'הערה', es: 'nota' },
+          email: { en: 'email', he: 'אימייל', es: 'correo' },
+          call: { en: 'call', he: 'שיחה', es: 'llamada' },
+          meeting: { en: 'meeting', he: 'פגישה', es: 'reunión' },
+          booking: { en: 'booking', he: 'הזמנה', es: 'reserva' },
+          payment: { en: 'payment', he: 'תשלום', es: 'pago' },
+          payment_received: { en: 'payment received', he: 'תשלום התקבל', es: 'pago recibido' },
+          invoice_sent: { en: 'invoice sent', he: 'חשבונית נשלחה', es: 'factura enviada' },
+          refund_issued: { en: 'refund issued', he: 'הוחזר תשלום', es: 'reembolso emitido' },
+          booking_rescheduled: { en: 'booking rescheduled', he: 'פגישה נדחתה', es: 'reserva reprogramada' },
+          booking_confirmation_sent: { en: 'booking confirmation sent', he: 'אישור פגישה נשלח', es: 'confirmación enviada' },
+          intake_form_sent: { en: 'intake form sent', he: 'טופס קליטה נשלח', es: 'formulario enviado' },
+          contact_updated: { en: 'contact updated', he: 'איש קשר עודכן', es: 'contacto actualizado' },
+          document_uploaded: { en: 'document uploaded', he: 'מסמך הועלה', es: 'documento subido' },
+          task_completed: { en: 'task completed', he: 'משימה הושלמה', es: 'tarea completada' },
+        },
         writable: true,
       },
       activity_date: {
@@ -2091,6 +2193,10 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // 47 physical columns; only the ones an owner would ask about are exposed.
   // Detector internals (baselines, thresholds, correlation ids) are noise here.
   insights: {
+    meaning:
+      'what the system has NOTICED about the business and flagged — leaks, gaps, ' +
+      'opportunities, warnings; findings it raised on its own rather than anything the ' +
+      'owner recorded',
     table: 'insights',
     labels: {
       one: { en: 'insight', he: 'תובנה', es: 'hallazgo' },
@@ -2178,12 +2284,35 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // WEBSITE
   // ===========================================================================
   pages: {
+    meaning:
+      "the pages of this business's website — the landing page, the home page, whatever a " +
+      'visitor actually lands on',
     table: 'website_pages',
     labels: {
       one: { en: 'page', he: 'עמוד', es: 'página' },
       many: { en: 'pages', he: 'עמודים', es: 'páginas' },
     },
-    aliases: ['website', 'site', 'אתר', 'עמודים', 'sitio'],
+    /*
+     * "דף נחיתה" — a landing page — is a page, and nothing said so.
+     *
+     * Asked "הצג דף נחיתה" the planner could not place the noun and answered
+     * "אין משימה בשם 'דף נחיתה'": no TASK by that name. True, irrelevant, and
+     * confident. The same failure as bookings missing "הזמנות" — an unplaced
+     * noun does not produce "I don't know that word", it produces a fluent
+     * answer about the wrong thing.
+     */
+    aliases: [
+      'website',
+      'site',
+      'landing page',
+      'landing pages',
+      'אתר',
+      'עמודים',
+      'דף נחיתה',
+      'דפי נחיתה',
+      'sitio',
+      'página de destino',
+    ],
     userScope: { kind: 'column', column: 'user_id' },
     labelField: 'title',
     displayFields: ['title', 'slug', 'published', 'page_type'],
@@ -2201,8 +2330,22 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
       slug: { column: 'slug', type: 'string', labels: { en: 'address', he: 'כתובת', es: 'dirección' } },
       page_type: {
         column: 'page_type',
-        type: 'string',
+        type: 'enum',
         labels: { en: 'type', he: 'סוג', es: 'tipo' },
+        /*
+         * Declared, so "show my landing page" can become a FILTER rather than a
+         * guess. Left as an undeclared string, the planner had no way to know
+         * `landing` was a value it could match on — the distinction existed in
+         * the data and nowhere the planner could see it.
+         *
+         * Both values are taken from the code that writes them; there is no
+         * check constraint to read them from.
+         */
+        enumValues: ['landing', 'homepage'],
+        enumLabels: {
+          landing: { en: 'landing page', he: 'דף נחיתה', es: 'página de destino' },
+          homepage: { en: 'homepage', he: 'דף הבית', es: 'página de inicio' },
+        },
       },
       published: {
         column: 'published',
@@ -2298,6 +2441,9 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   },
 
   page_views: {
+    meaning:
+      'individual visits to a website page — one row per view, so traffic, visits and "how ' +
+      'many people saw it" are counted here',
     table: 'website_page_views',
     labels: {
       one: { en: 'visit', he: 'צפייה', es: 'visita' },
@@ -2342,6 +2488,9 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // LEAD CAPTURE LINKS
   // ===========================================================================
   links: {
+    meaning:
+      'the short tracking links this business shares — one row per link, carrying its ' +
+      'running click total',
     table: 'smart_links',
     labels: {
       one: { en: 'link', he: 'קישור', es: 'enlace' },
@@ -2531,10 +2680,40 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   business_profile: {
     table: 'business_profiles',
     meaning: 'this business itself — its name, its trade, and the weekly hours clients can book',
+    /*
+     * One row of configuration, not a collection. Reading it returns a company
+     * name and a vertical, which answers nothing anyone asks — while looking
+     * like an answer. Everything worth knowing here comes from the actions.
+     */
+    queryable: false,
     labels: {
       one: { en: 'business profile', he: 'פרופיל העסק', es: 'perfil del negocio' },
       many: { en: 'business profile', he: 'פרופיל העסק', es: 'perfil del negocio' },
     },
+    /*
+     * Nobody calls this their "business profile" — they call it their hours,
+     * their availability, their schedule. The formal label is the one word a
+     * user will never type, so without these the entity is unreachable by the
+     * questions it exists to answer.
+     */
+    aliases: [
+      // Matching is substring-based, so short stems beat exact phrases: "open
+      // hours" never appears inside "how many hours are still open", while
+      // "hours" does. Over-matching only widens the catalog that gets shown —
+      // it costs tokens, never correctness — so the stem is the safer choice.
+      'availability',
+      'hours',
+      'slots',
+      'free time',
+      'schedule',
+      'זמינות',
+      'שעות',
+      'פנוי',
+      'לוח זמנים',
+      'disponibilidad',
+      'horas',
+      'horario',
+    ],
     userScope: { kind: 'column', column: 'user_id' },
     labelField: 'company_name',
     displayFields: ['company_name', 'vertical'],
@@ -2665,6 +2844,53 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         needsTarget: false,
         requiredFields: ['day'],
       },
+      /**
+       * "How much of Wednesday is still free?"
+       *
+       * READS. Availability was write-only: the owner could set their hours and
+       * close a day, and could not ask what was left of one. Asked "מה הזמינות
+       * שלי ביום רביעי?" the planner did the only thing the catalog allowed and
+       * listed BOOKINGS — two of them, one completed and one cancelled, neither
+       * of which says whether Wednesday is free. Pressed for hours it answered
+       * "0 שעות פתוחות היום": the wrong day, and a number nothing could supply.
+       *
+       * Working hours minus what is actually booked. `service` is optional and
+       * changes the question from "how long" to "how many": free minutes are one
+       * answer, appointments that still fit are another, and only the caller
+       * knows which was meant.
+       *
+       * No confirmation and no risk — it changes nothing.
+       */
+      open_time: {
+        labels: {
+          // Worded with the words people use. "free" alone lost every English
+          // phrasing built on "open" — "how many hours are still open on
+          // Wednesday" read as a field lookup on the profile, which has three
+          // columns and cannot answer anything.
+          en: 'how many hours or slots are still open / free / available on a given day',
+          he: 'כמה שעות או פגישות פנויות/פתוחות נשארו ביום מסוים',
+          es: 'cuántas horas o huecos quedan libres / disponibles en un día',
+        },
+        risk: 'read',
+        requiresConfirmation: false,
+        writesRow: false,
+        // One profile per user: there is nothing to point at.
+        needsTarget: false,
+        requiredFields: ['date'],
+        optionalFields: ['service'],
+        /*
+         * Named in the same shape the handler returns, so a placeholder maps
+         * straight onto a property with nothing in between to drift.
+         */
+        returns: {
+          date: { labels: { en: 'date', he: 'תאריך', es: 'fecha' }, format: 'date' },
+          weekday: { labels: { en: 'weekday', he: 'יום בשבוע', es: 'día' } },
+          isWorkingDay: { labels: { en: 'is a working day', he: 'יום עבודה', es: 'día laborable' } },
+          freeMinutes: { labels: { en: 'free minutes', he: 'דקות פנויות', es: 'minutos libres' } },
+          bookedMinutes: { labels: { en: 'booked minutes', he: 'דקות תפוסות', es: 'minutos ocupados' } },
+          slots: { labels: { en: 'appointments that still fit', he: 'פגישות שעוד נכנסות', es: 'citas que caben' } },
+        },
+      },
     },
   },
 
@@ -2721,10 +2947,14 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           'contact_form',
           'booking_widget',
           'footer',
+          'features',
+          'pricing',
         ],
         enumLabels: {
           header: { en: 'header', he: 'כותרת עליונה', es: 'encabezado' },
           hero: { en: 'hero banner', he: 'באנר ראשי', es: 'banner principal' },
+          features: { en: 'features', he: 'תכונות', es: 'características' },
+          pricing: { en: 'pricing', he: 'מחירים', es: 'precios' },
           about: { en: 'about', he: 'אודות', es: 'sobre nosotros' },
           services: { en: 'services', he: 'שירותים', es: 'servicios' },
           process: { en: 'how it works', he: 'איך זה עובד', es: 'cómo funciona' },
@@ -3230,6 +3460,9 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   // EMAIL DELIVERY
   // ===========================================================================
   emails: {
+    meaning:
+      'the messages this business has sent to its clients, and what became of them — ' +
+      'delivered, opened, bounced',
     table: 'email_sends',
     labels: {
       one: { en: 'email', he: 'אימייל', es: 'correo' },

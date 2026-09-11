@@ -77,9 +77,9 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
       className="vecs-wrap"
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
-        background: '#FBFCFE',
-        borderTop: standalone ? 'none' : '1px solid #E7E9F1',
-        border: standalone ? '1px solid #E7E9F1' : undefined,
+        background: 'var(--v2-bg)',
+        borderTop: standalone ? 'none' : '1px solid var(--v2-border)',
+        border: standalone ? '1px solid var(--v2-border)' : undefined,
         borderRadius: standalone ? '18px' : undefined,
         padding: '15px 22px 17px',
       }}
@@ -92,7 +92,7 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
           fontWeight: 600,
           letterSpacing: '0.09em',
           textTransform: 'uppercase',
-          color: '#697187',
+          color: 'var(--v2-text-secondary)',
           marginBottom: '11px',
           fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
         }}
@@ -120,7 +120,7 @@ export function VectorsStrip({ vectorMaturity, standalone = false }: VectorsStri
           className="vec-note"
           style={{
             fontSize: '12.5px',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             marginTop: '11px',
             lineHeight: 1.45,
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -157,9 +157,9 @@ function VectorPill({ vector, isRTL, t }: VectorPillProps) {
       case 'lit':
         // .vec.lit{color:var(--text);font-weight:600;border-color:#CFEDDF;background:#F5FCF9}
         return {
-          bg: '#F5FCF9',
-          border: '#CFEDDF',
-          color: '#131A2B',
+          bg: 'rgba(34, 197, 139, 0.08)',
+          border: 'rgba(34, 197, 139, 0.30)',
+          color: 'var(--v2-text-primary)',
           fontWeight: 600,
           dotBg: '#22C58B', // var(--green)
           dotSize: 8,
@@ -170,11 +170,11 @@ function VectorPill({ vector, isRTL, t }: VectorPillProps) {
         // .vec.learn{color:#8A7A5E;border-color:#F0E2CC;background:#FFFCF7}
         // .vec.learn .vec-dot{background:#fff;border:2px dotted var(--amber);width:10px;height:10px}
         return {
-          bg: '#FFFCF7',
-          border: '#F0E2CC',
-          color: '#8A7A5E',
+          bg: 'rgba(245, 158, 11, 0.08)',
+          border: 'rgba(245, 158, 11, 0.30)',
+          color: 'var(--v2-text-secondary)',
           fontWeight: 400,
-          dotBg: '#FFFFFF',
+          dotBg: 'var(--v2-surface)',
           dotSize: 10,
           dotBorder: '2px dotted #FFB24D',
           dotShadow: 'none',
@@ -183,11 +183,11 @@ function VectorPill({ vector, isRTL, t }: VectorPillProps) {
         // .vec{...border:1px solid var(--line);background:#fff;...color:#9AA1B2}
         // .vec-dot{...background:#DDE1EA}
         return {
-          bg: '#FFFFFF',
-          border: '#E7E9F1',
-          color: '#9AA1B2',
+          bg: 'var(--v2-surface)',
+          border: 'var(--v2-border)',
+          color: 'var(--v2-text-muted)',
           fontWeight: 400,
-          dotBg: '#DDE1EA',
+          dotBg: 'var(--v2-border)',
           dotSize: 8,
           dotBorder: 'none',
           dotShadow: 'none',

@@ -29,7 +29,7 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
 
-type ConfigTab = 'services' | 'availability' | 'intake' | 'payments';
+type ConfigTab = 'services' | 'availability' | 'intake' | 'payments' | 'business' | 'invoice';
 
 interface ConfigurationDialogContextValue {
   /** Open the configuration dialog, optionally on a specific tab. */

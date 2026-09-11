@@ -152,6 +152,14 @@ export interface VectorStatus {
   dataPoints: number;
   threshold: number;
   note?: string;
+  /**
+   * The volume condition behind a time-based vector, with where it stands.
+   *
+   * Carried out of here so the journey timeline can tell the two apart: days
+   * are arithmetic and can be stated as a date, volume cannot. Absent on the
+   * vectors that have only one condition.
+   */
+  also?: { metric: string; current: number; threshold: number };
 }
 
 /**
@@ -222,14 +230,52 @@ export interface VectorMaturityData {
 }
 
 // Thresholds for each vector to become "lit" (active)
-const VECTOR_THRESHOLDS: Record<VectorKey, { threshold: number; metric: string; note: string }> = {
+interface VectorThreshold {
+  threshold: number;
+  metric: string;
+  note: string;
+  /**
+   * A second condition that must ALSO hold before the vector lights.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `price` and `ret` are the only vectors measured in elapsed time, and time
+   * on its own is not evidence. `days_with_bookings` is `Date.now()` minus the
+   * first booking — nothing about how many bookings there have been. So a
+   * business that took ONE booking in January had "42 days of pricing data" by
+   * mid-February, and pricing insights unlocked on a sample of one.
+   *
+   * The detectors never believed this. `pricing_discount_abuse` wants 20
+   * transactions, `ret_cancellation_spike` wants 20 bookings — so the vector
+   * said "lit, start reasoning" and the detector then declined on sample size.
+   * The gate and the detector disagreed about what readiness means, and the
+   * journey map showed the gate's answer.
+   *
+   * Time still matters for these two — a client cannot be LAPSED until enough
+   * time has passed for lapsing to mean anything, however many you have. It is
+   * necessary and it is not sufficient. Both conditions, or the vector waits.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  also?: { metric: string; threshold: number };
+}
+
+const VECTOR_THRESHOLDS: Record<VectorKey, VectorThreshold> = {
   wins: { threshold: 1, metric: 'positive_events', note: 'Lights immediately on any good news' },
   conv: { threshold: 25, metric: 'total_visitors', note: 'Need about 25 visitors before I\'d trust what the conversion rate is telling me' },
   ops: { threshold: 1, metric: 'total_bookings', note: 'Need at least one booking to understand your calendar' },
   cash: { threshold: 1, metric: 'total_invoices', note: 'Starts watching when you have invoices to track' },
   leads: { threshold: 10, metric: 'total_contacts', note: 'Need some leads to spot patterns' },
-  ret: { threshold: 60, metric: 'days_with_clients', note: 'Retention needs clients old enough to lapse — about two months' },
-  price: { threshold: 42, metric: 'days_with_bookings', note: 'Pricing needs six weeks of your calendar before I\'d say anything' },
+  ret: {
+    threshold: 60,
+    metric: 'days_with_clients',
+    note: 'Retention needs clients old enough to lapse — about two months — and enough of them for a lapse to be a rate',
+    also: { metric: 'total_clients', threshold: 10 },
+  },
+  price: {
+    threshold: 42,
+    metric: 'days_with_bookings',
+    note: 'Pricing needs six weeks of your calendar, and enough bookings in it to say anything about price',
+    also: { metric: 'total_bookings', threshold: 20 },
+  },
 };
 
 /**
@@ -2322,6 +2368,19 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         .maybeSingle();
 
       /*
+       * How many clients, not just when the first one arrived.
+       *
+       * The retention vector needs both: two months of elapsed time so a lapse
+       * is possible, and enough clients for a lapse rate to be a rate rather
+       * than an anecdote about one person.
+       */
+      const { count: clientCount } = await this.supabase
+        .from('crm_contacts')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('lifecycle_stage', 'client');
+
+      /*
        * The first job the owner handed over, for the journey's last node.
        *
        * A standing automation rather than a one-off kernel run: `run` is the
@@ -2362,6 +2421,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         total_contacts: contactsResult.count || 0,
         days_with_clients: daysWithClients,
         days_with_bookings: daysWithBookings,
+        total_clients: clientCount || 0,
       };
 
       // Calculate state for each vector
@@ -2370,8 +2430,18 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         const dataPoints = metrics[config.metric] || 0;
         const threshold = config.threshold;
 
+        /*
+         * Both conditions, where there are two.
+         *
+         * A vector with an `also` clause is one measured in elapsed time, and
+         * the clause is the volume behind it. Lighting on the clock alone let
+         * `price` unlock on six weeks and a single booking.
+         */
+        const alsoPoints = config.also ? metrics[config.also.metric] || 0 : null;
+        const alsoMet = config.also ? alsoPoints! >= config.also.threshold : true;
+
         let state: VectorState;
-        if (dataPoints >= threshold) {
+        if (dataPoints >= threshold && alsoMet) {
           state = 'lit';
         } else if (dataPoints > 0) {
           state = 'learn';
@@ -2386,6 +2456,13 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           dataPoints,
           threshold,
           note: state !== 'lit' ? config.note : undefined,
+          also: config.also
+            ? {
+                metric: config.also.metric,
+                current: alsoPoints ?? 0,
+                threshold: config.also.threshold,
+              }
+            : undefined,
         };
       });
 

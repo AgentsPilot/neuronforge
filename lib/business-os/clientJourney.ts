@@ -99,8 +99,38 @@ export function collectsOnline(method: ServiceCollectionLike): boolean {
  * belongs to the service and the link carries none.
  */
 
-/** The steps a public booking widget walks a client through, in order. */
-export type BookingStep = 'service' | 'datetime' | 'details' | 'payment' | 'intake' | 'confirmation';
+/**
+ * The steps a public booking widget walks a client through, in order.
+ *
+ * `request` is where a quoted service stops. It is not a form the client fills
+ * in — by then they have already given their details — it is the end of the
+ * first half of the journey, and what the widget shows instead of a payment
+ * screen it has no price for.
+ */
+export type BookingStep =
+  | 'service'
+  | 'datetime'
+  | 'details'
+  | 'request'
+  | 'payment'
+  | 'intake'
+  | 'confirmation';
+
+/**
+ * How a service is sold.
+ *
+ * `direct` — the client books and pays in one sitting.
+ * `proposal` — they ask, the owner quotes, and the journey resumes on acceptance.
+ *
+ * Loose in the same way as `ServiceCollectionLike`: this arrives from public
+ * JSON on pages that were published before the column existed.
+ */
+export type ServiceSaleModeLike = 'direct' | 'proposal' | null | undefined;
+
+/** Does this service stop at a request rather than running through to payment? */
+export function isQuoted(saleMode: ServiceSaleModeLike): boolean {
+  return saleMode === 'proposal';
+}
 
 /**
  * The journey for one service, on every surface.
@@ -115,9 +145,37 @@ export type BookingStep = 'service' | 'datetime' | 'details' | 'payment' | 'inta
  * business that can make a step impossible rather than unwanted.
  */
 export function journeySteps(
-  service: { is_scheduled?: boolean | null; collection?: ServiceCollectionLike; price?: number | null },
+  service: {
+    is_scheduled?: boolean | null;
+    collection?: ServiceCollectionLike;
+    price?: number | null;
+    sale_mode?: ServiceSaleModeLike;
+  },
   options: { processorReady?: boolean; intakeEnabled?: boolean } = {}
 ): BookingStep[] {
+  /*
+   * A quoted service stops at the request — but may book a time on the way.
+   *
+   * There is no payment step: nobody has said what the work costs, so a card
+   * form would have nothing behind it. That much is certain.
+   *
+   * The DATE is a different question, and getting it wrong was the first
+   * version of this branch. "Book a free site visit, then I'll quote you" is
+   * how most contractors sell, and a therapist offering a free intake call
+   * before proposing a treatment plan is the same shape. In both, the client
+   * picks a time for the CONSULTATION, and the quote follows it.
+   *
+   * So `is_scheduled` is honoured here exactly as it is below: it says whether
+   * this service involves picking a time, and a quoted service that does is
+   * booking the meeting where the work gets scoped.
+   */
+  if (isQuoted(service.sale_mode)) {
+    const steps: BookingStep[] = ['service'];
+    if (service.is_scheduled !== false) steps.push('datetime');
+    steps.push('details', 'request');
+    return steps;
+  }
+
   const steps: BookingStep[] = ['service'];
 
   // A product is not booked against a time, so there is no date to pick.

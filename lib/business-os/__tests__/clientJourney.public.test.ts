@@ -128,3 +128,75 @@ describe('intake is never a step in the booking flow', () => {
     ]);
   });
 });
+
+/**
+ * A quoted service — the seam.
+ *
+ * The journey stops at a request instead of running to payment, because nobody
+ * has said what the work costs yet. Both halves use the same step vocabulary;
+ * the second half resumes once a proposal is accepted.
+ */
+describe('journeySteps — a service that is quoted, not bought', () => {
+  const QUOTED_JOB = { is_scheduled: false, collection: null, price: null, sale_mode: 'proposal' as const };
+
+  it('stops at the request', () => {
+    expect(journeySteps(QUOTED_JOB, READY)).toEqual(['service', 'details', 'request']);
+  });
+
+  it('never asks for payment, however ready the processor is', () => {
+    // The client cannot pay: there is no price. A card form here would be a
+    // form with nothing behind it.
+    for (const options of [{ processorReady: true }, { processorReady: false }]) {
+      expect(journeySteps(QUOTED_JOB, options)).not.toContain('payment');
+    }
+  });
+
+  it('books a consultation first when the service is scheduled', () => {
+    /*
+     * CORRECTION. This test used to assert the opposite, on the reasoning that
+     * the date belongs after acceptance. That is true for the WORK — but not
+     * for the meeting where the work gets scoped.
+     *
+     * "Book a free site visit and I'll quote you" is how most contractors
+     * sell, and a therapist's free intake call before proposing a treatment
+     * plan is the same shape. In both the client picks a time, and the quote
+     * follows the meeting. Blocking the date step made that flow impossible.
+     */
+    const consultationFirst = { ...QUOTED_JOB, is_scheduled: true };
+    expect(journeySteps(consultationFirst, READY)).toEqual([
+      'service', 'datetime', 'details', 'request',
+    ]);
+  });
+
+  it('skips the date for a quoted job that has no meeting to book', () => {
+    // A refit quoted from photographs. Same ending, one step shorter.
+    expect(journeySteps({ ...QUOTED_JOB, is_scheduled: false }, READY)).toEqual([
+      'service', 'details', 'request',
+    ]);
+  });
+
+  it('is unaffected by collection, which describes the half that has not happened', () => {
+    // QUOTED_JOB is unscheduled, so three steps is the whole journey here. What
+    // is being asserted is that `collection` changes nothing — there is no
+    // payment step to configure until a price exists.
+    for (const collection of ['online', 'invoice', null] as const) {
+      expect(journeySteps({ ...QUOTED_JOB, collection }, READY))
+        .toEqual(['service', 'details', 'request']);
+    }
+  });
+
+  it('carries a price without becoming buyable', () => {
+    // A therapist's plan has a known total and is still quoted: the client is
+    // shown the plan and accepts it, rather than paying for it off a page.
+    expect(journeySteps({ ...QUOTED_JOB, price: 2700 }, READY))
+      .toEqual(['service', 'details', 'request']);
+  });
+
+  it('leaves every direct service exactly as it was', () => {
+    // The column defaults to 'direct', and an older page sends nothing at all.
+    for (const saleMode of ['direct', null, undefined] as const) {
+      expect(journeySteps({ ...PAID_PRODUCT, sale_mode: saleMode }, READY))
+        .toEqual(journeySteps(PAID_PRODUCT, READY));
+    }
+  });
+});

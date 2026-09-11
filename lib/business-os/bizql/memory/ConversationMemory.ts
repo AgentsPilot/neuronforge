@@ -63,6 +63,34 @@ export interface ConversationContext {
   lastRows?: RememberedRows;
   /** Set when the previous turn asked something and is awaiting an answer. */
   pendingQuestion?: string;
+  /**
+   * The plan behind the last answer, so a correction costs no model call.
+   *
+   * The answer line offers one-tap alternatives ("no-show?", "net?"). Re-running
+   * with one substituted must not go back to the planner: that would be a second
+   * charge for a question already understood, and the model might plan it
+   * differently the second time — the user would tap "no-show" and get a
+   * different query, not the same query about no-shows.
+   *
+   * Server-side rather than round-tripped through the client, because a plan
+   * arriving from a browser is a plan we did not write.
+   */
+  lastPlan?: RememberedPlan;
+  /**
+   * Choices the user has made, so the same question is asked once.
+   *
+   * Keyed `entity.field` -> the field to aggregate. The gross/net question is
+   * the one that has bitten: `transactions.amount` has two defensible totals,
+   * and asking on every turn would be as bad as guessing on every turn.
+   */
+  preferences?: Record<string, string>;
+}
+
+export interface RememberedPlan {
+  /** The steps as planned. Reads only — a write is never re-run from a tap. */
+  steps: unknown[];
+  answer?: { text: string; primary_step?: string };
+  at: string;
 }
 
 const EMPTY: ConversationContext = { turns: [] };
@@ -117,6 +145,17 @@ export class ConversationMemory {
           ? { ...context.lastRows, items: context.lastRows.items.slice(0, MAX_ROWS) }
           : undefined,
         pendingQuestion: context.pendingQuestion,
+        // Only a read plan is worth keeping: an alternative re-runs a query,
+        // never a write, and a stored mutate would be a loaded gun.
+        lastPlan: context.lastPlan
+          ? {
+              ...context.lastPlan,
+              steps: context.lastPlan.steps.filter(
+                (step) => (step as { op?: string }).op !== 'mutate'
+              ),
+            }
+          : undefined,
+        preferences: context.preferences,
       };
 
       const { error } = await supabaseServer.from(TABLE).upsert(
@@ -191,6 +230,31 @@ export function renderContextForPrompt(context: ConversationContext): string {
           `earlier list.`
       );
     }
+
+    /*
+     * A question that RELATED two figures leaves the relationship as the thing
+     * being referred to, not just the entities.
+     *
+     * "חשב לי את האחוז" — work out the percentage — followed a turn that had
+     * just compared refunds with revenue, and the planner ignored it entirely:
+     * three runs out of three it invented a different percentage, clients out of
+     * leads, over an entity nobody had mentioned. Not confusion — a confident
+     * answer to a question that was never asked.
+     *
+     * "The percentage" is a definite reference exactly as "them" is. The subject
+     * line above resolves a NOUN back to its entity; this resolves a
+     * relationship back to the pair of figures it was between.
+     */
+    const measures = [...last.summary.matchAll(/\b(?:find|compute)\s+(\w+)/g)].map((m) => m[1]);
+
+    if (measures.length >= 2) {
+      parts.push(
+        `That question compared ${measures.join(' with ')}. A bare "the percentage", ` +
+          `"the ratio", "the difference" or "work it out" with no other subject means ` +
+          `THAT comparison — fetch the same figures again and relate them. Do not pick a ` +
+          `different pair to compare.`
+      );
+    }
   }
 
   if (context.lastRows && context.lastRows.items.length > 0) {
@@ -216,8 +280,50 @@ export function renderContextForPrompt(context: ConversationContext): string {
         `"that one", "the second one". If the new message does not refer back to these ` +
         `rows, IGNORE this list completely and treat the request as new; re-showing the ` +
         `same rows because they happen to be in context is wrong.\n` +
+        (context.lastRows.items.length === 1
+          ? /*
+             * An instruction to CHANGE something refers back even with no pronoun
+             * in it, and saying so is the difference between doing the work and
+             * searching for it.
+             *
+             * The rule above is written for questions, where "does not refer back"
+             * means "answer something new". Read literally by a command it says the
+             * opposite of what is wanted: "set the priority to urgent" and "סמן את
+             * המשימה כבוטלה" contain no "it" and no "that one", so the planner
+             * treated them as fresh requests, and a fresh request with nothing to
+             * act on becomes a `find`. The user, looking at the one task they just
+             * asked about, got it listed back instead of changed.
+             *
+             * Only when exactly ONE row is remembered. With several, which one is a
+             * real question and asking is the correct outcome — that is what the
+             * target resolver already does.
+             */
+            `A command to change, update, mark, set, cancel or delete something, ` +
+            `naming no other row, refers to the single row above — act on it by id ` +
+            `rather than searching for it again.\n`
+          : '') +
         `When you do use an id, copy it CHARACTER FOR CHARACTER — a dropped character ` +
         `makes it invalid.`
+    );
+  }
+
+  /*
+   * A choice the user already made, stated as a fact rather than a question.
+   *
+   * The gross/net ambiguity is the one that produced 56% on one run and 128% on
+   * the next. Once they have tapped "net", asking again — or guessing again —
+   * is the same failure with extra steps. Two short lines, only present for a
+   * user who has actually chosen something, so the common turn pays nothing.
+   */
+  const preferences = Object.entries(context.preferences ?? {});
+
+  if (preferences.length > 0) {
+    parts.push(
+      `This user has already settled these:\n` +
+        preferences.map(([key, value]) => `  ${key} -> use ${value}`).join('\n') +
+        `\nUse that field when the question is about ${preferences
+          .map(([key]) => key.split('.')[0])
+          .join(', ')} — do not ask again and do not pick the other one.`
     );
   }
 

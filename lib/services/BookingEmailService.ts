@@ -28,6 +28,7 @@ import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-recei
 import { generateRefundConfirmationEmail } from '@/lib/email/templates/refund-confirmation';
 import { generateWelcomeEmail, generateReturningContactEmail } from '@/lib/email/templates/welcome-email';
 import { generateIntakeRequestEmail } from '@/lib/email/templates/intake-request';
+import { generateIntakeReceivedEmail } from '@/lib/email/templates/intake-received';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
@@ -260,7 +261,17 @@ export class BookingEmailService {
       const booking = bookingResult.data;
 
       // Validate client email exists
-      if (!booking.client_email) {
+      /*
+       * Resolved once, and narrowed.
+       *
+       * `client_email` comes from the joined contact and is normalised to `''`
+       * when that contact has no address, so its type is `string | undefined`
+       * and its value can be empty. Every use below wants a real address —
+       * including `generateBookingToken`, which would otherwise mint a token
+       * for nobody.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
         requestLogger.error({ bookingId, contactId: booking.contact_id }, 'Booking contact has no email address');
         return { sent: false, error: 'Client email is missing' };
       }
@@ -278,7 +289,7 @@ export class BookingEmailService {
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
-      const token = generateBookingToken(bookingId, booking.client_email);
+      const token = generateBookingToken(bookingId, clientEmail);
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
 
@@ -323,7 +334,7 @@ export class BookingEmailService {
 
       const emailData = {
         clientName,
-        clientEmail: booking.client_email,
+        clientEmail,
         serviceName: service.service_name,
         dateTime: startTime,
         endTime,
@@ -432,7 +443,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId,
@@ -442,7 +453,7 @@ export class BookingEmailService {
       if (result.sent) {
         requestLogger.info({
           provider: result.provider,
-          clientEmail: booking.client_email,
+          clientEmail,
           invoiceAttached: attachments.length > 0
         }, 'Booking confirmation sent');
       } else {
@@ -453,7 +464,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -683,6 +694,23 @@ export class BookingEmailService {
       }
       const booking = bookingResult.data;
 
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
+
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
       if (serviceResult.error || !serviceResult.data) {
@@ -722,7 +750,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
@@ -738,7 +766,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -774,6 +802,23 @@ export class BookingEmailService {
       }
       const booking = bookingResult.data;
 
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
+
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
       if (serviceResult.error || !serviceResult.data) {
@@ -787,7 +832,7 @@ export class BookingEmailService {
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
-      const token = generateBookingToken(bookingId, booking.client_email);
+      const token = generateBookingToken(bookingId, clientEmail);
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
 
@@ -802,7 +847,7 @@ export class BookingEmailService {
       // Generate email
       const { subject, html } = generateBookingRescheduledEmail({
         clientName,
-        clientEmail: booking.client_email,
+        clientEmail,
         serviceName: service.service_name,
         oldDateTime: previousDateTime,
         newDateTime,
@@ -818,7 +863,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
@@ -834,7 +879,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -1056,6 +1101,23 @@ export class BookingEmailService {
       }
       const booking = bookingResult.data;
 
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
+
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
       if (serviceResult.error || !serviceResult.data) {
@@ -1123,7 +1185,7 @@ export class BookingEmailService {
       }
 
       // Generate booking management token and URLs
-      const token = generateBookingToken(bookingId, booking.client_email);
+      const token = generateBookingToken(bookingId, clientEmail);
       const intakeFormUrl = `${APP_URL}/book/manage/${token}/intake`;
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
@@ -1153,7 +1215,7 @@ export class BookingEmailService {
       // Generate email
       const { subject, html } = generateIntakeRequestEmail({
         clientName,
-        clientEmail: booking.client_email,
+        clientEmail,
         serviceName: service.service_name,
         dateTime: startTime,
         duration: durationMinutes,
@@ -1169,7 +1231,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
@@ -1185,7 +1247,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -1214,6 +1276,128 @@ export class BookingEmailService {
       return { sent: result.sent, error: result.error };
     } catch (error) {
       requestLogger.error({ err: error }, 'Error sending intake form request');
+      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
+   * Tell the client their intake arrived.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The one email in this flow the client had no way to get. They answered
+   * personal questions on a page they had never seen, pressed Submit, and the
+   * only acknowledgement lived on a screen they were about to close. Nothing in
+   * their inbox said it landed, and a submission that failed on the way looked
+   * exactly the same.
+   *
+   * Deliberately NOT gated on `intakeReach`. Those predicates answer "may we
+   * ASK this client for an intake" — a question about whether the business
+   * collects intake and has published a form. This is the receipt for something
+   * that already happened, and refusing to send it because the owner
+   * unpublished the form ten minutes later would leave a real submission
+   * unacknowledged.
+   *
+   * Non-blocking at the call site: a submission is saved whether or not this
+   * sends. The answers are the thing that matters; the receipt is a courtesy.
+   * ───────────────────────────────────────────────────────────────────────────
+   *
+   * Called from: /api/book/manage/[token]/intake (POST)
+   */
+  static async sendIntakeReceivedConfirmation(
+    bookingId: string,
+    userId: string
+  ): Promise<EmailResult> {
+    const requestLogger = logger.child({
+      bookingId,
+      userId,
+      action: 'sendIntakeReceivedConfirmation'
+    });
+
+    try {
+      // Client-facing, so it speaks the business's language like the rest.
+      const locale = await getBusinessLocale(userId);
+
+      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
+      if (bookingResult.error || !bookingResult.data) {
+        requestLogger.error({ err: bookingResult.error }, 'Booking not found');
+        return { sent: false, error: 'Booking not found' };
+      }
+      const booking = bookingResult.data;
+
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        // Nowhere to send it. Not an error worth surfacing — the answers saved.
+        return { sent: false, error: 'No client email' };
+      }
+
+      const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
+      if (serviceResult.error || !serviceResult.data) {
+        requestLogger.error({ err: serviceResult.error }, 'Service not found');
+        return { sent: false, error: 'Service not found' };
+      }
+      const service = serviceResult.data;
+
+      const profileResult = await businessProfileRepository.findByUserId(userId);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
+
+      /*
+       * A fresh token rather than the one they arrived with.
+       *
+       * The link in their hand may be minutes from expiring, and this email
+       * outlives the session that produced it.
+       */
+      const token = generateBookingToken(bookingId, clientEmail);
+
+      const clientName = [booking.client_first_name, booking.client_last_name]
+        .filter(Boolean)
+        .join(' ');
+
+      /*
+       * `start_time` is null for a product or a service sold without a slot.
+       * Passed through as null so the template says "your order" and omits the
+       * date, rather than dating the email 1 January 1970 — the trap the receipt
+       * and intake-request emails both fell into.
+       */
+      const { subject, html } = generateIntakeReceivedEmail({
+        clientName,
+        serviceName: service.service_name,
+        dateTime: booking.start_time ? new Date(booking.start_time) : null,
+        timezone: booking.timezone || 'UTC',
+        completedAt: booking.intake_completed_at
+          ? new Date(booking.intake_completed_at)
+          : new Date(),
+        rescheduleUrl: `${APP_URL}/book/manage/${token}/reschedule`,
+        cancelUrl: `${APP_URL}/book/manage/${token}/cancel`,
+        branding,
+        locale
+      });
+
+      const result = await sendEmail({
+        to: [clientEmail],
+        subject,
+        html,
+        ownerUserId: userId
+      });
+
+      if (result.sent) {
+        requestLogger.info({ provider: result.provider }, 'Intake received confirmation sent');
+      } else {
+        requestLogger.warn({ error: result.error }, 'Failed to send intake received confirmation');
+      }
+
+      // Log email to email_sends table (non-blocking)
+      logEmailSend({
+        userId,
+        contactId: booking.contact_id,
+        toEmail: clientEmail,
+        subject,
+        bodyHtml: html,
+        result
+      }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+
+      return { sent: result.sent, error: result.error };
+    } catch (error) {
+      requestLogger.error({ err: error }, 'Error sending intake received confirmation');
       return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
@@ -1248,6 +1432,23 @@ export class BookingEmailService {
       }
       const booking = bookingResult.data;
 
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
+
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
       const service = serviceResult.data;
@@ -1281,7 +1482,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
@@ -1297,7 +1498,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result

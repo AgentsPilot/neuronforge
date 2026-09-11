@@ -17,12 +17,25 @@ const auditTrail = AuditTrailService.getInstance();
 // Validation schema
 const createServiceSchema = z.object({
   service_name: z.string().min(1),
-  description: z.string().optional(),
+  /*
+   * Nullable, because clearing a description has to be expressible.
+   *
+   * `.optional()` alone accepts a string or nothing at all, and rejects `null`
+   * — so an owner who emptied the field sent `description: null`, Zod threw,
+   * and the WHOLE request was refused. The visible symptom was that the service
+   * NAME would not save: nothing in the payload saved, and the one field that
+   * failed was not the one being blamed.
+   */
+  description: z.string().nullable().optional(),
   duration_minutes: z.number().min(5).max(10080).nullable().optional(), // Null for a product; up to 7 days for multi-day courses
   // Two facts that decide this service's client journey. A product has no
   // duration, and a free service is not collected at all — both arrive null.
   is_scheduled: z.boolean().optional(),
   collection: z.enum(['online', 'invoice']).nullable().optional(),
+  // The third: can a client buy this outright, or is it quoted per job?
+  // Absent means 'direct', matching the column default, so an older
+  // client that does not send it leaves the service unchanged.
+  sale_mode: z.enum(['direct', 'proposal']).optional(),
   price: z.number().min(0).optional(),
   currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
   buffer_minutes: z.number().min(0).max(120).optional(),

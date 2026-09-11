@@ -380,7 +380,7 @@ export function ChannelSourcesSection({
               : '"Space Grotesk", system-ui, sans-serif',
             fontSize: '13.5px',
             fontWeight: 600,
-            color: '#131A2B',
+            color: 'var(--v2-text-primary)',
           }}
         >
           {t('title')}
@@ -388,7 +388,7 @@ export function ChannelSourcesSection({
       </div>
       {/* Matched to the sibling column's subtitle for the same reason as the
           heading above it. */}
-      <p style={{ fontSize: '11px', color: '#8A93A6', lineHeight: 1.4, marginBottom: '10px' }}>
+      <p style={{ fontSize: '11px', color: 'var(--v2-text-muted)', lineHeight: 1.4, marginBottom: '10px' }}>
         {t('basis')}
       </p>
 

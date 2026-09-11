@@ -146,11 +146,24 @@ export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): stri
       lines.push(`  m: ${entity.meaning}`);
     }
 
-    const fields = Object.keys(entity.fields)
-      .map((f) => renderField(f, entity))
-      .filter((f): f is string => f !== null);
+    /*
+     * A non-queryable entity does not advertise fields it cannot be asked about.
+     *
+     * Listing `f: id company_name vertical` under something that only answers
+     * through actions is an invitation to `find` it — and that find compiles,
+     * returns two useless columns, and reads like an answer. The validator
+     * refuses it, but the cheaper fix is not to offer it: a repair round costs a
+     * whole extra model call.
+     */
+    if (entity.queryable === false) {
+      lines.push('  f: (not queryable — one configuration row; use the actions below)');
+    } else {
+      const fields = Object.keys(entity.fields)
+        .map((f) => renderField(f, entity))
+        .filter((f): f is string => f !== null);
 
-    lines.push(`  f: ${fields.join(' ')}`);
+      lines.push(`  f: ${fields.join(' ')}`);
+    }
 
     /*
      * Derived fields are advertised exactly like real ones. The planner does not
@@ -211,7 +224,19 @@ export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): stri
               const optional = a.optionalFields?.length
                 ? `,opt=${a.optionalFields.join('+')}`
                 : '';
-              return `${k}(${flags.join(',')}${required}${optional})`;
+              /*
+               * What it gives back, for a read action.
+               *
+               * Without this the planner knows an action exists and what to send
+               * it, and nothing about what comes out — so it cannot write the
+               * sentence that reports the answer. It invented {s1.first.hours}
+               * for open_time, which validation rightly refused.
+               */
+              const returns = a.returns
+                ? `,ret=${Object.keys(a.returns).join('+')}`
+                : '';
+
+              return `${k}(${flags.join(',')}${required}${optional}${returns})`;
             })
             .join(' ')}`
         );
@@ -423,17 +448,60 @@ export function catalogPromptVersion(): string {
 }
 
 /**
+ * Does this message actually SAY this word?
+ *
+ * `includes` was matching inside other words, which is how a name becomes a
+ * false hit: "plan" is inside "planning", "link" inside "linked", and every one
+ * of those narrows the catalog to an entity the user never mentioned.
+ *
+ * The boundary is applied only where a boundary means something. `\b` is
+ * defined against Latin word characters, so in Hebrew and Arabic it would
+ * either never match or match everywhere; those scripts fall back to a
+ * substring test, which is what they had before and is correct for a language
+ * that glues prefixes onto nouns ("ההזמנות" contains "הזמנות").
+ */
+function mentions(haystack: string, needle: string): boolean {
+  if (!/[a-z]/.test(needle)) return haystack.includes(needle);
+
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i').test(haystack);
+}
+
+/**
  * Guess which entities a message concerns, to shrink the prompt further.
  *
  * Matching is derived from catalog labels and semantic terms — NOT from a
  * hand-written keyword table — so it extends automatically and works in every
- * language the labels are translated into. It is a pure optimisation: on no
- * match we fall back to the full catalog, so a miss costs tokens, never
- * correctness.
+ * language the labels are translated into.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IT FAILS OPEN, AND THAT IS THE WHOLE DESIGN
+ *
+ * Scoping has two failure modes and they are not equally bad:
+ *
+ *   a MISS is safe    — no hits ships the whole catalog. It costs ~2,600 tokens
+ *                       and the answer is still right.
+ *   a WRONG HIT is not — "set the priority to urgent" scoped to ["insights"],
+ *                       which EXCLUDED tasks, so the model could not plan the
+ *                       thing it had understood perfectly. No error, no
+ *                       recovery: the capability simply was not in the prompt.
+ *
+ * So a narrow prompt is only shipped on a STRONG signal — the user said an
+ * entity's name or one of its aliases. A semantic term ("urgent", "overdue") is
+ * a weak signal: those words belong to a field, they are shared across
+ * entities, and on their own they are exactly how a wrong hit happens. Weak
+ * hits are added to a set that already has a strong one; they never create the
+ * set.
+ *
+ * Correctness ahead of about $0.0004 a turn — and the repair rounds saved by
+ * not mis-scoping cost more than the tokens do.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function guessRelevantEntities(message: string): string[] {
   const haystack = message.toLowerCase();
   const hits = new Set<string>();
+  /** Entities the user NAMED, as opposed to ones a field's vocabulary suggests. */
+  const named = new Set<string>();
 
   for (const entity of Object.values(CATALOG.entities)) {
     const needles: string[] = [];
@@ -444,14 +512,38 @@ export function guessRelevantEntities(message: string): string[] {
       }
     }
 
-    for (const field of Object.values(entity.fields)) {
-      for (const term of Object.keys(field.semanticTerms ?? {})) {
-        if (term.length >= 4) needles.push(term.toLowerCase());
-      }
+    /*
+     * Aliases count as names, because that is what an alias IS.
+     *
+     * They were declared and then never consulted here, so scoping recognised
+     * an entity only by its formal label. Nobody says "business profile" when
+     * they mean their working hours, so "how many hours are open on Wednesday"
+     * scoped to tasks — `open` is a task status — and the availability action
+     * was not in the prompt at all. The planner could not pick a capability it
+     * had never been shown.
+     */
+    for (const alias of entity.aliases ?? []) {
+      if (alias.length >= 3) needles.push(alias.toLowerCase());
     }
 
-    if (needles.some((n) => haystack.includes(n))) hits.add(entity.key);
+    // Names — strong. Saying "invoices" is saying which entity you mean.
+    if (needles.some((n) => mentions(haystack, n))) {
+      hits.add(entity.key);
+      named.add(entity.key);
+    }
+
+    // Field vocabulary — weak. "urgent" is a priority, an insight severity and
+    // an ordinary English word.
+    for (const field of Object.values(entity.fields)) {
+      for (const term of Object.keys(field.semanticTerms ?? {})) {
+        if (term.length >= 4 && mentions(haystack, term.toLowerCase())) hits.add(entity.key);
+      }
+    }
   }
+
+  // Nothing was NAMED: every hit is a weak one, or there are none. Ship
+  // everything rather than a guess.
+  if (named.size === 0) return [];
 
   // Pull in entities reachable by relation, so "contacts who owe me" still has
   // invoices available.

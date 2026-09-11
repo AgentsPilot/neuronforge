@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardRef } from 'react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
-import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power, Calendar, Clock, AlertCircle, X, RefreshCw, DollarSign, FileText, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Send, CheckCircle2, Bot, User, Phone, Mail, ExternalLink, Edit3, Trash2, Power, Calendar, Clock, AlertCircle, X, RefreshCw, DollarSign, FileText, ToggleLeft, ToggleRight, Info } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { createLogger } from '@/lib/logger';
 import type { DialogAction, PendingContext } from '@/lib/business-os/DraftManagerTypes';
@@ -29,6 +29,33 @@ interface V4Answer {
   truncated: boolean;
   approximate: boolean;
   collapsed?: number;
+}
+
+/**
+ * One correction the server can apply without asking the model anything.
+ *
+ * Sent straight back in the next request; the plan it applies to is held
+ * server-side, so this carries only which step, which field and which value.
+ */
+interface V4Alternative {
+  label: string;
+  stepId: string;
+  field: string;
+  value: string;
+  kind: 'enum' | 'aggregate_field';
+}
+
+/**
+ * What the query actually did, said plainly, with the corrections available.
+ *
+ * The whole point of showing it: every wrong answer this chat has given was a
+ * VALID plan, so a wrong answer looks exactly like a right one. A user who
+ * asked about no-shows can see "cancelled" sitting next to the number and fix
+ * it in one tap instead of acting on it.
+ */
+interface V4Understood {
+  text: string;
+  alternatives: V4Alternative[];
 }
 
 /**
@@ -120,9 +147,17 @@ interface ChatMessage {
     | 'choices'
     | 'confirmation'
     | 'result_list'
+    | 'understood'
     | 'pending_write';
   content: string;
   resultRows?: V4Row[];
+  /**
+   * One-tap corrections offered beside "this is what I understood".
+   *
+   * Tapping re-runs the SAME query with one value swapped, server-side, with no
+   * model call — so the two numbers a user is comparing stay comparable.
+   */
+  alternatives?: V4Alternative[];
   pendingWrite?: V4Confirmation;
   entityCard?: EntityCard;
   bookingList?: BookingListItem[];
@@ -226,7 +261,7 @@ function EntityCardMessage({
         {/* Entity Details - varies by entity type */}
         <div className="px-3 sm:px-4 py-2 sm:py-3 space-y-1.5 sm:space-y-2">
           {/* Contact fields */}
-          {entityCard.entity.email && (
+          {Boolean(entityCard.entity.email) && (
             <div className="flex items-center gap-2 text-sm">
               <Mail className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
               <span className="text-[var(--v2-text-secondary)] truncate">
@@ -234,7 +269,7 @@ function EntityCardMessage({
               </span>
             </div>
           )}
-          {entityCard.entity.phone && (
+          {Boolean(entityCard.entity.phone) && (
             <div className="flex items-center gap-2 text-sm">
               <Phone className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
               <span className="text-[var(--v2-text-secondary)]">
@@ -246,7 +281,7 @@ function EntityCardMessage({
           {/* Task fields */}
           {entityCard.entityType === 'tasks' && (
             <>
-              {entityCard.entity.due_date && (
+              {Boolean(entityCard.entity.due_date) && (
                 <div className="flex items-center gap-2 text-sm">
                   <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className="text-[var(--v2-text-secondary)]">
@@ -259,7 +294,7 @@ function EntityCardMessage({
                   </span>
                 </div>
               )}
-              {entityCard.entity.status && (
+              {Boolean(entityCard.entity.status) && (
                 <div className="flex items-center gap-2 text-sm">
                   <Clock className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className={`capitalize ${
@@ -271,12 +306,12 @@ function EntityCardMessage({
                       entityCard.entity.status === 'pending' ? 'ממתין' :
                       entityCard.entity.status === 'in_progress' ? 'בתהליך' :
                       entityCard.entity.status === 'completed' ? 'הושלם' :
-                      entityCard.entity.status
-                    ) : entityCard.entity.status as string}
+                      String(entityCard.entity.status)
+                    ) : String(entityCard.entity.status)}
                   </span>
                 </div>
               )}
-              {entityCard.entity.priority && entityCard.entity.priority !== 'medium' && (
+              {Boolean(entityCard.entity.priority) && entityCard.entity.priority !== 'medium' && (
                 <div className="flex items-center gap-2 text-sm">
                   <AlertCircle className={`w-3.5 h-3.5 ${
                     entityCard.entity.priority === 'high' ? 'text-red-500 dark:text-red-400' :
@@ -290,8 +325,8 @@ function EntityCardMessage({
                     {isHebrew ? (
                       entityCard.entity.priority === 'high' ? 'עדיפות גבוהה' :
                       entityCard.entity.priority === 'low' ? 'עדיפות נמוכה' :
-                      entityCard.entity.priority
-                    ) : `${entityCard.entity.priority} priority`}
+                      String(entityCard.entity.priority)
+                    ) : `${String(entityCard.entity.priority)} priority`}
                   </span>
                 </div>
               )}
@@ -309,11 +344,11 @@ function EntityCardMessage({
                   </span>
                 </div>
               )}
-              {entityCard.entity.duration_minutes && (
+              {Boolean(entityCard.entity.duration_minutes) && (
                 <div className="flex items-center gap-2 text-sm">
                   <Clock className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className="text-[var(--v2-text-secondary)]">
-                    {entityCard.entity.duration_minutes} {isHebrew ? 'דקות' : 'minutes'}
+                    {String(entityCard.entity.duration_minutes)} {isHebrew ? 'דקות' : 'minutes'}
                   </span>
                 </div>
               )}
@@ -321,7 +356,7 @@ function EntityCardMessage({
           )}
 
           {/* Booking fields */}
-          {entityCard.entityType === 'bookings' && entityCard.entity.start_time && (
+          {entityCard.entityType === 'bookings' && Boolean(entityCard.entity.start_time) && (
             <div className="flex items-center gap-2 text-sm">
               <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
               <span className="text-[var(--v2-text-secondary)]">
@@ -342,14 +377,14 @@ function EntityCardMessage({
               {/* Amount */}
               {(entityCard.entity.amount !== undefined || entityCard.entity.total_amount !== undefined) && (
                 <div className="flex items-center gap-2 text-sm">
-                  <span className="text-[var(--v2-text-muted)]">{entityCard.entity.currency || userCurrency.symbol}</span>
+                  <span className="text-[var(--v2-text-muted)]">{String(entityCard.entity.currency || userCurrency.symbol)}</span>
                   <span className="text-[var(--v2-text-secondary)] font-medium">
                     {(entityCard.entity.amount ?? entityCard.entity.total_amount) as number}
                   </span>
                 </div>
               )}
               {/* Status */}
-              {entityCard.entity.status && (
+              {Boolean(entityCard.entity.status) && (
                 <div className="flex items-center gap-2 text-sm">
                   <Clock className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className={`capitalize ${
@@ -365,13 +400,13 @@ function EntityCardMessage({
                       entityCard.entity.status === 'paid' ? 'שולמה' :
                       entityCard.entity.status === 'overdue' ? 'באיחור' :
                       entityCard.entity.status === 'cancelled' ? 'בוטלה' :
-                      entityCard.entity.status
-                    ) : entityCard.entity.status as string}
+                      String(entityCard.entity.status)
+                    ) : String(entityCard.entity.status)}
                   </span>
                 </div>
               )}
               {/* Due date */}
-              {entityCard.entity.due_date && (
+              {Boolean(entityCard.entity.due_date) && (
                 <div className="flex items-center gap-2 text-sm">
                   <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className="text-[var(--v2-text-secondary)]">
@@ -385,7 +420,7 @@ function EntityCardMessage({
                 </div>
               )}
               {/* Contact name */}
-              {entityCard.entity.contact_name && (
+              {Boolean(entityCard.entity.contact_name) && (
                 <div className="flex items-center gap-2 text-sm">
                   <User className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className="text-[var(--v2-text-secondary)]">
@@ -397,7 +432,7 @@ function EntityCardMessage({
           )}
 
           {/* Notes (for all entity types) */}
-          {entityCard.entity.notes && (
+          {Boolean(entityCard.entity.notes) && (
             <div className="text-xs text-[var(--v2-text-muted)] mt-2 line-clamp-2">
               {entityCard.entity.notes as string}
             </div>
@@ -437,9 +472,9 @@ function EntityCardMessage({
                       }
                       router.push(url.pathname + url.search);
                     } else if (action.type === 'call' && entityCard.entity.phone) {
-                      window.open(`tel:${entityCard.entity.phone}`);
+                      window.open(`tel:${String(entityCard.entity.phone)}`);
                     } else if (action.type === 'email' && entityCard.entity.email) {
-                      window.open(`mailto:${entityCard.entity.email}`);
+                      window.open(`mailto:${String(entityCard.entity.email)}`);
                     } else if (action.type === 'complete' && entityCard.entity.id && onCompleteTask) {
                       await onCompleteTask(entityCard.entity.id as string);
                     } else if (action.type === 'edit' && entityCard.entity.id && onEditEntity) {
@@ -587,16 +622,22 @@ function BookingListMessage({
 
 export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanelProps>(
   function ChatCommandPanel({ onCommand, onAction, onPublishDraft, onConfirmUpdate, onCancelUpdate, expanded = false }, ref) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const router = useRouter();
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  /*
+   * The greeting is seeded here and re-resolved below.
+   *
+   * `useState`'s initial value is evaluated once, on the first render — and on
+   * that render the language context has not resolved the user's language yet.
+   * So this bubble was written in whatever the default happened to be and then
+   * frozen: switching to English left it in Hebrew forever, because state is
+   * not recomputed when `t` changes.
+   */
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      type: 'ai',
-      content: t('chat.welcome') || "Morning! I'm watching over everything. Want to change something? Just tell me in plain words — a price, your hours, a post, anything — and I'll make it happen across the right place."
-    }
+    { type: 'ai', content: t('chat.welcome') }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -669,6 +710,31 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     }
   }), []);
 
+  /*
+   * Keep the greeting in the language currently being read.
+   *
+   * Only the opening bubble is rewritten, and only while it is still the one
+   * this component wrote — anything the assistant has since said was produced
+   * in the language of the conversation it belongs to, and retranslating a
+   * transcript after the fact would misquote it.
+   */
+  useEffect(() => {
+    setMessages(prev => {
+      if (prev.length === 0 || prev[0].type !== 'ai') return prev;
+
+      const greeting = t('chat.welcome');
+      if (prev[0].content === greeting) return prev;
+
+      const next = [...prev];
+      next[0] = { ...next[0], content: greeting };
+      return next;
+    });
+    // `t` is deliberately not a dependency: LanguageContext rebuilds it on
+    // every render, so listing it would run this effect on every render. It is
+    // a pure function of `language`, which is the real trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
+
   // Scroll to bottom when messages change
   useEffect(() => {
     if (scrollRef.current) {
@@ -702,7 +768,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
   // For other entities: navigate to the appropriate page
   const handleEditEntity = useCallback((entityType: string, entityId: string, entity: Record<string, unknown>) => {
     // Check if user's language is Hebrew
-    const isHebrew = /[\u0590-\u05FF]/.test(messages[0]?.content || '');
+    const isHebrew = language === 'he';
 
     // Hardcoded fallback messages (translation keys may not exist)
     const editTaskPrompt = isHebrew
@@ -756,7 +822,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
 
   // Handle sending an invoice
   const handleSendInvoice = useCallback(async (invoiceId: string) => {
-    const isHebrew = /[\u0590-\u05FF]/.test(messages[0]?.content || '');
+    const isHebrew = language === 'he';
     try {
       const response = await fetch(`/api/payments/invoices/${invoiceId}/send`, {
         method: 'POST',
@@ -786,7 +852,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
 
   // Handle marking invoice as paid
   const handleMarkInvoicePaid = useCallback(async (invoiceId: string) => {
-    const isHebrew = /[\u0590-\u05FF]/.test(messages[0]?.content || '');
+    const isHebrew = language === 'he';
     try {
       const response = await fetch(`/api/payments/invoices/${invoiceId}`, {
         method: 'PUT',
@@ -823,11 +889,24 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
   // server-side in the AnswerRenderer, driven by the Business Catalog, so there
   // is nothing to translate or special-case per entity here.
   // ===========================================================================
-  const handleV4Send = useCallback(async (command: string) => {
+  /*
+   * The last question the user actually asked, as opposed to the last thing
+   * they tapped.
+   *
+   * A correction re-sends the original question with a substitution, and it
+   * appends a user bubble showing which alternative was chosen. Reading the
+   * question back off the transcript would therefore pick up "no-show" as the
+   * question on the SECOND correction, and re-plan that as a fresh request.
+   */
+  const lastQuestionRef = useRef<string | null>(null);
+
+  const handleV4Send = useCallback(async (command: string, alternative?: V4Alternative) => {
+    if (!alternative) lastQuestionRef.current = command;
+
     const response = await fetch('/api/business-os/chat-v4', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: command }),
+      body: JSON.stringify({ message: command, alternative }),
     });
 
     const result = await response.json();
@@ -863,9 +942,16 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     // no prompt, no way to approve, and the action silently never happened.
     if (result.confirmation) {
       const pending = result.confirmation as V4Confirmation;
+      // The server sends the preview and leaves the asking sentence to us — it
+      // is the only side with the translations, and duplicating the preview into
+      // the heading printed the same line twice on the card.
+      const asked: V4Confirmation = {
+        ...pending,
+        message: pending.message || t('chat.confirm.default'),
+      };
       setMessages(prev => [
         ...prev,
-        { type: 'pending_write', content: pending.message, pendingWrite: pending },
+        { type: 'pending_write', content: asked.message, pendingWrite: asked },
       ]);
       // Chips give a one-tap answer; typing "yes" works just as well, since the
       // server decides based on what is parked rather than on this UI state.
@@ -881,7 +967,13 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       const wanted = needs.fields.map(f => f.label).join(', ');
       setMessages(prev => [
         ...prev,
-        { type: 'ai', content: `${t('chat.need_fields')} ${wanted}` },
+        {
+          type: 'ai',
+          // The cancel hint is not decoration. The write stays parked until it is
+          // finished or dropped, so from here the next message is read as the
+          // answer — and a user who has changed their mind needs to see the exit.
+          content: `${t('chat.need_fields')} ${wanted}\n${t('chat.need_fields_cancel')}`,
+        },
       ]);
       return;
     }
@@ -919,12 +1011,46 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       setMessages(prev => [...prev, { type: 'result_list', content: '', resultRows: answer.rows }]);
     }
 
+    /*
+     * What the query actually did — shown only when the server says it earns
+     * its place: something to correct, an empty result, or a turn that was
+     * itself a correction.
+     *
+     * Placed AFTER the answer deliberately. It is a check on the answer, not a
+     * preamble to it; leading with it would make every reply read as hedged.
+     */
+    const understood = result.understood as V4Understood | undefined;
+    if (understood) {
+      setMessages(prev => [
+        ...prev,
+        { type: 'understood', content: understood.text, alternatives: understood.alternatives },
+      ]);
+    }
+
     // Never let a capped result read as a complete one.
     if (answer.truncated) {
       setMessages(prev => [...prev, {
         type: 'ai',
         content: isHebrewText(command) ? 'מוצגות רק התוצאות הראשונות.' : 'Showing the first results only.',
       }]);
+    }
+
+    /*
+     * A total computed over a capped scan is NOT the total.
+     *
+     * `compiler.ts` aggregates at most AGGREGATE_SCAN_CAP rows and sets
+     * `approximate`. The flag has always reached this component — it is on the
+     * answer type at the top of this file — and was never rendered, while its
+     * two siblings `truncated` and `collapsed` both warn. So a business past
+     * the cap was shown a partial sum with nothing marking it partial: a wrong
+     * number that looks exactly like a right one, and the only one here nobody
+     * could catch by reading the answer.
+     *
+     * `types.ts` states the contract in words — "Callers MUST surface this
+     * rather than presenting a wrong total". This is that caller.
+     */
+    if (answer.approximate) {
+      setMessages(prev => [...prev, { type: 'ai', content: t('chat.partial_total') }]);
     }
 
     // Repeated records were collapsed. Say so — the duplicates are themselves a
@@ -1252,6 +1378,41 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     [loading, handleV4Send]
   );
 
+  /**
+   * Tap a correction: re-ask the same question with one value swapped.
+   *
+   * The last real QUESTION is resent unchanged — not the last user bubble,
+   * which after one correction is the chip that was tapped — and the
+   * substitution rides alongside it. The server applies it to the plan it
+   * already has, so this costs no model call and cannot come back as a
+   * differently-planned query: the two numbers being compared stay comparable.
+   */
+  const applyCorrection = useCallback(
+    async (alternative: V4Alternative) => {
+      if (loading) return;
+
+      const lastAsked = lastQuestionRef.current;
+      if (!lastAsked) return;
+
+      setMessages(prev => [...prev, { type: 'user', content: alternative.label }]);
+      setSuggestions([]);
+      setLoading(true);
+
+      try {
+        await handleV4Send(lastAsked, alternative);
+      } catch (err) {
+        logger.error({ err }, 'Correction failed');
+        setMessages(prev => [
+          ...prev,
+          { type: 'ai', content: "Sorry, I couldn't process that. Please try again." },
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loading, handleV4Send]
+  );
+
   // Calculate height based on expanded state
   const panelHeight = expanded ? '640px' : '460px';
 
@@ -1329,7 +1490,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
         className="flex-1 min-h-0 overflow-y-scroll flex flex-col gap-2 sm:gap-3 scrollbar-thin px-3 sm:px-4 py-3 sm:py-4"
         style={{
           scrollbarWidth: 'thin',
-          scrollbarColor: 'rgba(209, 213, 219, 0.5) transparent'
+          scrollbarColor: 'var(--v2-border) transparent'
         }}
       >
         {messages.map((msg, index) => (
@@ -1390,7 +1551,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
               <EntityCardMessage
                 entityCard={msg.entityCard}
                 router={router}
-                isHebrew={/[\u0590-\u05FF]/.test(messages[0]?.content || '')}
+                isHebrew={language === 'he'}
                 onCompleteTask={msg.entityCard.entityType === 'tasks' ? handleCompleteTask : undefined}
                 onEditEntity={handleEditEntity}
                 onOpenBooking={msg.entityCard.entityType === 'bookings' ? (id) => onAction?.({ type: 'open_booking', bookingId: id }) : undefined}
@@ -1401,10 +1562,18 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             {msg.type === 'result_list' && msg.resultRows && (
               <ResultListMessage rows={msg.resultRows} />
             )}
+            {msg.type === 'understood' && (
+              <UnderstoodMessage
+                text={msg.content}
+                alternatives={msg.alternatives ?? []}
+                isHebrew={language === 'he'}
+                onPick={(alternative) => void applyCorrection(alternative)}
+              />
+            )}
             {msg.type === 'pending_write' && msg.pendingWrite && (
               <PendingWriteMessage
                 pending={msg.pendingWrite}
-                isHebrew={isHebrewText(messages[0]?.content || '')}
+                isHebrew={language === 'he'}
                 onRespond={(reply) => {
                   // Send the answer as an ordinary message. The server decides
                   // from what it has parked, so the outcome never depends on
@@ -1416,7 +1585,7 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
             {msg.type === 'booking_list' && msg.bookingList && (
               <BookingListMessage
                 bookings={msg.bookingList}
-                isHebrew={/[\u0590-\u05FF]/.test(messages[0]?.content || '')}
+                isHebrew={language === 'he'}
                 onOpenBooking={(bookingId) => {
                   onAction?.({ type: 'open_booking', bookingId });
                 }}
@@ -1513,6 +1682,53 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
 });
 
 /**
+ * "This is what I understood" — and one tap to put it right.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Deliberately quiet. It sits UNDER the answer, in secondary text, at a smaller
+ * size: it is a check on the answer, not a hedge about it, and a chat that
+ * loudly explains itself after every reply reads as unsure of itself.
+ *
+ * The chips are the half that matters. Seeing that the system read "cancelled"
+ * when you asked about no-shows only helps if fixing it is one tap — a user who
+ * has to work out which word to change usually gives up and takes the number.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function UnderstoodMessage({
+  text,
+  alternatives,
+  isHebrew,
+  onPick,
+}: {
+  text: string;
+  alternatives: V4Alternative[];
+  isHebrew: boolean;
+  onPick: (alternative: V4Alternative) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5 max-w-[85%]" dir={isHebrew ? 'rtl' : 'ltr'}>
+      <div className="flex items-start gap-1.5 text-[11px] sm:text-xs text-[var(--v2-text-secondary)]">
+        <Info className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-70" strokeWidth={2} />
+        <span>{text}</span>
+      </div>
+      {alternatives.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {alternatives.map((alternative) => (
+            <button
+              key={`${alternative.stepId}.${alternative.field}.${alternative.value}`}
+              onClick={() => onPick(alternative)}
+              className="text-[11px] sm:text-xs px-2 py-1 rounded-full border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[#F97316] hover:border-[#F97316] transition-colors"
+            >
+              {alternative.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * Renders BizQL result rows.
  *
  * Entity-agnostic on purpose. Every value arrives pre-formatted by the server's
@@ -1533,17 +1749,17 @@ function ResultListMessage({ rows }: { rows: V4Row[] }) {
       {shown.map((row) => (
         <div
           key={row.id}
-          className="bg-[var(--v2-bg)] border border-[var(--v2-border)] w-full"
+          className="bg-[var(--v2-surface-hover)] border border-[var(--v2-border)] w-full"
           style={{ borderRadius: '10px', padding: '10px 12px' }}
         >
-          <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text)] mb-1 break-words">
+          <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text-primary)] mb-1 break-words">
             {row.label}
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-0.5">
             {row.fields.map((field) => (
               <span key={field.key} className="text-[11px] text-[var(--v2-text-muted)]">
                 {field.label}:{' '}
-                <span className="text-[var(--v2-text)]">{field.value}</span>
+                <span className="text-[var(--v2-text-primary)]">{field.value}</span>
               </span>
             ))}
           </div>
@@ -1609,7 +1825,7 @@ function PendingWriteMessage({
           style={{ color: '#F97316' }}
           strokeWidth={2}
         />
-        <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text)]">
+        <div className="text-xs sm:text-sm font-semibold text-[var(--v2-text-primary)]">
           {pending.message}
         </div>
       </div>
@@ -1641,7 +1857,7 @@ function PendingWriteMessage({
           <button
             type="button"
             onClick={() => respond(isHebrew ? 'לא' : 'Cancel')}
-            className="text-xs font-medium text-[var(--v2-text)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-colors hover:border-[var(--v2-text-muted)]"
+            className="text-xs font-medium text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-colors hover:border-[var(--v2-text-muted)]"
             style={{ borderRadius: '10px', padding: '6px 14px' }}
           >
             {isHebrew ? 'ביטול' : 'Cancel'}

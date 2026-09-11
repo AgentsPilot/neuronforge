@@ -50,6 +50,8 @@ interface Service {
   currency: string;
   is_scheduled?: boolean | null;
   collection?: 'online' | 'invoice' | null;
+  /** Bought outright, or quoted first. The modal's resolver reads it. */
+  sale_mode?: 'direct' | 'proposal';
   /** How this service may be paid over time, when the business offers one. */
   paymentPlan?: ServicePaymentPlan;
 }

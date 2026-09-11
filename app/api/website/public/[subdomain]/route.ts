@@ -117,8 +117,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       id: string; name: string; description: string; icon: string;
       price?: string; priceRaw?: number; currency?: string;
       duration?: string; durationMinutes?: number | null;
-      /** The two facts a booking journey is built from. */
+      /** The three facts a booking journey is built from. */
       is_scheduled?: boolean; collection?: 'online' | 'invoice' | null;
+      sale_mode?: 'direct' | 'proposal';
       /** How this service may be paid over time, when the business offers it. */
       paymentPlan?: ServicePaymentPlan;
       hidden?: boolean;
@@ -152,6 +153,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             // invoiced client for a card.
             is_scheduled: s.is_scheduled !== false,
             collection: s.collection ?? null,
+            // The third: whether a client can buy this at all, or has to be
+            // quoted. Without it the page offers "Book now" on a service with
+            // no price and walks the client to a payment screen for nothing.
+            sale_mode: s.sale_mode || 'direct',
             // Undefined where the business offers no plan, which is most of
             // them — the widgets then show a single price as they always have.
             paymentPlan: plansByService[s.id],

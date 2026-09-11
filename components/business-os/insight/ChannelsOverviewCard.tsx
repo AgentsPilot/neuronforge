@@ -122,8 +122,8 @@ export function ChannelsOverviewCard({ performance, onChanged, owned, onAction }
         marginTop: '20px',
         marginBottom: '20px',
         borderRadius: '18px',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         overflow: 'hidden',
       }}
     >
@@ -149,7 +149,7 @@ export function ChannelsOverviewCard({ performance, onChanged, owned, onAction }
           type="button"
           onClick={toggleConnections}
           aria-expanded={showConnections}
-          className="ms-auto inline-flex items-center gap-1.5 text-xs font-medium text-[#6B7280] hover:text-[#111827] transition-colors"
+          className="ms-auto inline-flex items-center gap-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors"
         >
           {showConnections
             ? <PanelLeftClose className="w-3.5 h-3.5" />

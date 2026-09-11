@@ -69,7 +69,7 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
     // Get cancelled bookings from last week (use updated_at since cancelled_at doesn't exist)
     const { data: cancelledBookings, error } = await this.supabase
       .from('scheduling_bookings')
-      .select('id, start_time, updated_at, payment_amount, client_email, cancellation_reason')
+      .select('id, start_time, updated_at, payment_amount, cancellation_reason')
       .eq('user_id', userId)
       .eq('status', 'cancelled')
       .gte('updated_at', weekAgo.toISOString())

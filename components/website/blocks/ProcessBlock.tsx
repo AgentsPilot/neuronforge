@@ -10,7 +10,7 @@ import { journeySteps, type BookingStep } from '@/lib/business-os/clientJourney'
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
 // Client flow step types
-type ClientFlowStepKey = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+type ClientFlowStepKey = 'scheduling' | 'client_info' | 'booking' | 'quote_request' | 'payment' | 'intake' | 'confirmation';
 
 interface ProcessContent {
   title?: string;
@@ -36,6 +36,19 @@ const CLIENT_FLOW_STEPS: Record<ClientFlowStepKey, Record<string, { title: strin
     en: { title: 'Book Your Session', description: 'Select a time and provide your details', icon: 'calendar' },
     es: { title: 'Reserva Tu Sesión', description: 'Selecciona un horario y proporciona tus datos', icon: 'calendar' },
     he: { title: 'קבע את הפגישה', description: 'בחר זמן ומלא את הפרטים שלך', icon: 'calendar' },
+  },
+  /*
+   * Where a quoted service ends.
+   *
+   * This section is the honest answer to "what happens if I hire you", so a
+   * business that quotes has to be able to say so. Without this entry the
+   * resolver's `request` step mapped to nothing and the section stopped at
+   * "Your Details" — describing a journey that silently ended mid-sentence.
+   */
+  quote_request: {
+    en: { title: 'Get Your Quote', description: "We'll review your request and send you a price", icon: 'filetext' },
+    es: { title: 'Recibe Tu Presupuesto', description: 'Revisaremos tu solicitud y te enviaremos un precio', icon: 'filetext' },
+    he: { title: 'קבלת הצעת מחיר', description: 'נבחן את הבקשה ונשלח לך הצעת מחיר', icon: 'filetext' },
   },
   payment: {
     en: { title: 'Secure Payment', description: 'Complete your payment safely online', icon: 'creditcard' },
@@ -143,7 +156,12 @@ function flowFromServices(services: JourneyServiceFacts[] | undefined): ClientFl
 
   const journeys = services.map(service =>
     journeySteps(
-      { is_scheduled: service.is_scheduled, collection: service.collection, price: service.priceRaw },
+      {
+        is_scheduled: service.is_scheduled,
+        collection: service.collection,
+        price: service.priceRaw,
+        sale_mode: service.sale_mode,
+      },
       // Not gated on the processor here: the section describes what buying
       // this service involves, and an unconnected Stripe is a gap the owner
       // has to close, not a step the client should stop being told about.
@@ -198,6 +216,7 @@ const STEP_TO_FLOW_KEY: Record<string, ClientFlowStepKey | undefined> = {
   service: undefined,
   datetime: 'scheduling',
   details: 'client_info',
+  request: 'quote_request',
   payment: 'payment',
   intake: 'intake',
   confirmation: 'confirmation',

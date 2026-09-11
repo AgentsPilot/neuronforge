@@ -59,6 +59,26 @@ export const DATE_ANCHORS = [
   'end_of_week',
   'start_of_month',
   'end_of_month',
+  /*
+   * A weekday the user named. Resolves to the next one — today if today is it.
+   *
+   * "כמה פגישות יש לי ביום רביעי?" had no way to be expressed, so the model did
+   * the arithmetic itself: told the date was Monday 7 September it filtered on
+   * the 14th, which is a Monday. Another run emitted no filter at all and
+   * counted every booking the business had ever taken, then reported the total
+   * as Wednesday's.
+   *
+   * Anchors exist so the model never computes a date. A weekday is exactly that
+   * kind of date — spoken relative to now, resolved by the server against a real
+   * calendar — and "last Wednesday" composes from it with an offset.
+   */
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
 ] as const;
 
 export type DateAnchor = (typeof DATE_ANCHORS)[number];
@@ -67,8 +87,48 @@ export function isDateAnchor(value: unknown): value is DateAnchor {
   return typeof value === 'string' && (DATE_ANCHORS as readonly string[]).includes(value);
 }
 
+/**
+ * A specific calendar day, `YYYY-MM-DD`.
+ *
+ * The anchors above express every date that is relative to now, which is most
+ * of what a question asks for. They cannot express a date the user simply
+ * NAMES — "set the due date to 30 October" — and a due date is very often a
+ * named day rather than an offset from today.
+ *
+ * Asked exactly that, the planner emitted `{"$date":"2023-10-30"}`: it broke the
+ * rule telling it never to hardcode a calendar date, because the alternative was
+ * being unable to answer at all. The write failed validation and the user got a
+ * grammar error. The year it chose was also three years in the past — it was
+ * never told what today is, which is fixed alongside this.
+ *
+ * So the shape it reached for is the shape that is now supported. Anchors stay
+ * the way to say anything relative; this is only for a day the user named.
+ */
+export type IsoCalendarDate = `${number}-${number}-${number}`;
+
+/**
+ * Strict, because a near-miss must fail loudly rather than resolve to something
+ * plausible. `2026-13-45` parses in JavaScript by rolling over into the next
+ * year; a due date silently landing in a different month is the kind of wrong
+ * nobody notices until it matters.
+ */
+export function isIsoCalendarDate(value: unknown): value is IsoCalendarDate {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+
+  const [year, month, day] = value.split('-').map(Number);
+  if (month < 1 || month > 12 || day < 1) return false;
+
+  // Round-trip through UTC: the only reliable way to reject 31 February.
+  const asDate = new Date(Date.UTC(year, month - 1, day));
+  return (
+    asDate.getUTCFullYear() === year &&
+    asDate.getUTCMonth() === month - 1 &&
+    asDate.getUTCDate() === day
+  );
+}
+
 export interface DateExpr {
-  $date: DateAnchor;
+  $date: DateAnchor | IsoCalendarDate;
   offset?: { days?: number; weeks?: number; months?: number };
 }
 
@@ -345,7 +405,30 @@ export interface ForEachQuery {
   max?: number;
 }
 
-export type Query = FindQuery | ComputeQuery | MutateQuery | ForEachQuery;
+/**
+ * "Now say something about those numbers."
+ *
+ * Carries no entity, no filter and no aggregate, because it fetches nothing —
+ * it marks the turn as one whose answer is a RELATIONSHIP between the figures
+ * the other steps produced, not a report of them.
+ *
+ * It exists because some wording cannot be chosen before the values are known.
+ * Asked "how much did my revenue drop", the planner writes its sentence before
+ * anything is fetched, so "dropped" is a guess about which way the numbers
+ * went — and it guessed differently on consecutive runs, producing "ירדו ב-8.33$"
+ * and then "ירדו ב--8.33$". Dropped by minus eight is not a sentence anyone
+ * means. After execution that is a fact rather than a guess.
+ *
+ * A flag on the plan would have done the same job; a step does it better,
+ * because the planner is already deciding step by step and because "at most
+ * one, and last" is then something the validator can check.
+ */
+export interface AnalyseQuery {
+  id?: string;
+  op: 'analyse';
+}
+
+export type Query = FindQuery | ComputeQuery | MutateQuery | ForEachQuery | AnalyseQuery;
 
 /** `{"$item":"email"}` — a field of the row currently being processed. */
 export interface ItemRef {

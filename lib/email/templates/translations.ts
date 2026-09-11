@@ -152,6 +152,77 @@ export const emailTranslations = {
   // ==========================================
   // INTAKE FORM REQUEST EMAIL
   // ==========================================
+  /**
+   * The receipt for an intake, sent once the client has answered.
+   *
+   * Its job is to close a loop, not to open one: the client filled in a form
+   * about themselves and had no way of knowing it arrived. Everything here is
+   * past tense and there is no call to action — the next move belongs to the
+   * business.
+   */
+  intakeReceived: {
+    subject: {
+      en: (serviceName: string) => `We've received your form - ${serviceName}`,
+      es: (serviceName: string) => `Hemos recibido tu formulario - ${serviceName}`,
+      he: (serviceName: string) => `קיבלנו את הטופס שלך - ${serviceName}`
+    },
+    greeting: {
+      en: 'Thank you — we have your answers',
+      es: 'Gracias: ya tenemos tus respuestas',
+      he: 'תודה — קיבלנו את התשובות שלך'
+    },
+    introScheduled: {
+      en: (firstName: string, businessName: string) =>
+        `Hi ${firstName}, thanks for taking the time. ${businessName} will read through your answers before your appointment, so there is nothing else you need to do.`,
+      es: (firstName: string, businessName: string) =>
+        `Hola ${firstName}, gracias por tomarte el tiempo. ${businessName} leerá tus respuestas antes de tu cita, así que no tienes que hacer nada más.`,
+      he: (firstName: string, businessName: string) =>
+        `שלום ${firstName}, תודה שהקדשת מזמנך. ב-${businessName} יעברו על התשובות שלך לפני הפגישה, ואין עוד משהו שצריך לעשות.`
+    },
+    /** No appointment to prepare for — a product or a service without a slot. */
+    introUnscheduled: {
+      en: (firstName: string, businessName: string) =>
+        `Hi ${firstName}, thanks for taking the time. ${businessName} will read through your answers and be in touch if anything else is needed.`,
+      es: (firstName: string, businessName: string) =>
+        `Hola ${firstName}, gracias por tomarte el tiempo. ${businessName} leerá tus respuestas y se pondrá en contacto si hace falta algo más.`,
+      he: (firstName: string, businessName: string) =>
+        `שלום ${firstName}, תודה שהקדשת מזמנך. ב-${businessName} יעברו על התשובות שלך ויחזרו אליך אם יידרש משהו נוסף.`
+    },
+    receivedNotice: {
+      en: '<strong>Your form was received</strong><br/>Your answers are only visible to the people you booked with.',
+      es: '<strong>Tu formulario fue recibido</strong><br/>Tus respuestas solo son visibles para las personas con quienes reservaste.',
+      he: '<strong>הטופס שלך התקבל</strong><br/>התשובות שלך גלויות רק לעסק שאצלו הזמנת.'
+    },
+    appointmentDetails: {
+      en: 'Your appointment',
+      es: 'Tu cita',
+      he: 'הפגישה שלך'
+    },
+    orderDetails: {
+      en: 'Your order',
+      es: 'Tu pedido',
+      he: 'ההזמנה שלך'
+    },
+    dateLabel: { en: '📅 Date', es: '📅 Fecha', he: '📅 תאריך' },
+    timeLabel: { en: '🕐 Time', es: '🕐 Hora', he: '🕐 שעה' },
+    submittedLabel: { en: '✅ Completed', es: '✅ Completado', he: '✅ הושלם' },
+    needChanges: {
+      en: 'Need to make a change?',
+      es: '¿Necesitas hacer un cambio?',
+      he: 'צריך לשנות משהו?'
+    },
+    reschedule: { en: 'Reschedule', es: 'Reprogramar', he: 'שינוי מועד' },
+    cancel: { en: 'Cancel', es: 'Cancelar', he: 'ביטול' },
+    questionsHelp: {
+      en: (businessName: string) =>
+        `If you remembered something after sending the form, just reply to this email and ${businessName} will see it.`,
+      es: (businessName: string) =>
+        `Si recordaste algo después de enviar el formulario, responde a este correo y ${businessName} lo verá.`,
+      he: (businessName: string) =>
+        `אם נזכרת במשהו אחרי ששלחת את הטופס, אפשר פשוט להשיב למייל הזה וב-${businessName} יראו את זה.`
+    }
+  },
+
   intake: {
     subject: {
       en: (serviceName: string) => `Please complete your intake form - ${serviceName}`,
@@ -496,6 +567,127 @@ export const emailTranslations = {
   // ==========================================
   // PAYMENT RECEIPT EMAIL
   // ==========================================
+  /**
+   * The morning briefing email.
+   *
+   * The briefing's own sentences are narrated upstream and arrive already in
+   * the recipient's language; these strings are only the wrapper around them.
+   */
+  dailyBriefing: {
+    subject: {
+      en: 'Your morning briefing - {date}',
+      es: 'Tu resumen de la mañana - {date}',
+      he: 'סיכום הבוקר שלך - {date}'
+    },
+    greeting: {
+      en: 'Good morning',
+      es: 'Buenos días',
+      he: 'בוקר טוב'
+    },
+    greetingNamed: {
+      en: 'Good morning, {name}',
+      es: 'Buenos días, {name}',
+      he: 'בוקר טוב, {name}'
+    },
+    viewDashboard: {
+      en: 'Open my dashboard',
+      es: 'Abrir mi panel',
+      he: 'פתיחת לוח הבקרה'
+    },
+    unsubscribeHint: {
+      en: 'You are getting this because the morning briefing is switched on.',
+      es: 'Recibes esto porque el resumen de la mañana está activado.',
+      he: 'קיבלת את המייל הזה כי סיכום הבוקר מופעל.'
+    },
+    unsubscribeLink: {
+      en: 'Turn it off',
+      es: 'Desactivarlo',
+      he: 'לכיבוי'
+    }
+  },
+
+  /**
+   * The proposal a client is asked to accept, and the two notes to the owner
+   * that follow their answer.
+   */
+  proposal: {
+    attachmentNote: {
+      en: 'The full proposal is attached to this email:',
+      es: 'El presupuesto completo está adjunto a este correo:',
+      he: 'הצעת המחיר המלאה מצורפת למייל הזה:',
+    },
+    subject: {
+      en: 'Your quote — {title}',
+      es: 'Tu presupuesto — {title}',
+      he: 'הצעת מחיר — {title}'
+    },
+    subjectRevised: {
+      en: 'Updated quote — {title}',
+      es: 'Presupuesto actualizado — {title}',
+      he: 'הצעת מחיר מעודכנת — {title}'
+    },
+    greeting: { en: 'Your quote', es: 'Tu presupuesto', he: 'הצעת המחיר שלך' },
+    greetingNamed: {
+      en: 'Hello {name},',
+      es: 'Hola {name},',
+      he: 'שלום {name},'
+    },
+    intro: {
+      en: 'Here is the quote for the work we discussed.',
+      es: 'Aquí tienes el presupuesto del trabajo que hablamos.',
+      he: 'מצורפת הצעת מחיר לעבודה שדיברנו עליה.'
+    },
+    revisedIntro: {
+      en: 'Here is an updated quote. It replaces the one sent before.',
+      es: 'Aquí tienes un presupuesto actualizado. Reemplaza al anterior.',
+      he: 'מצורפת הצעה מעודכנת. היא מחליפה את זו שנשלחה קודם.'
+    },
+    totalLabel: { en: 'Total', es: 'Total', he: 'סה״כ' },
+    dueOnAcceptLabel: {
+      en: 'Due on acceptance',
+      es: 'A pagar al aceptar',
+      he: 'לתשלום עם האישור'
+    },
+    validUntilLabel: { en: 'Valid until', es: 'Válido hasta', he: 'בתוקף עד' },
+    stagesTitle: {
+      en: 'How it is paid',
+      es: 'Cómo se paga',
+      he: 'אופן התשלום'
+    },
+    viewCta: { en: 'View and respond', es: 'Ver y responder', he: 'צפייה ומענה' },
+    footerNote: {
+      en: 'You can accept or decline from that page — no account needed.',
+      es: 'Puedes aceptar o rechazar desde esa página — sin necesidad de cuenta.',
+      he: 'אפשר לאשר או לדחות מהעמוד הזה — בלי צורך בחשבון.'
+    }
+  },
+
+  proposalDecision: {
+    subjectAccepted: {
+      en: '{name} accepted your quote',
+      es: '{name} aceptó tu presupuesto',
+      he: '{name} אישר את ההצעה'
+    },
+    subjectDeclined: {
+      en: '{name} declined your quote',
+      es: '{name} rechazó tu presupuesto',
+      he: '{name} דחה את ההצעה'
+    },
+    acceptedIntro: {
+      en: 'The quote was accepted and the first invoice has been raised.',
+      es: 'El presupuesto fue aceptado y se ha emitido la primera factura.',
+      he: 'ההצעה אושרה והחשבונית הראשונה הופקה.'
+    },
+    declinedIntro: {
+      en: 'The quote was declined. The reason is below, in case it is worth another version.',
+      es: 'El presupuesto fue rechazado. El motivo está abajo, por si vale otra versión.',
+      he: 'ההצעה נדחתה. הסיבה מופיעה למטה — אולי שווה גרסה נוספת.'
+    },
+    reasonLabel: { en: 'Reason', es: 'Motivo', he: 'סיבה' },
+    amountLabel: { en: 'Amount', es: 'Importe', he: 'סכום' },
+    openCta: { en: 'Open in your dashboard', es: 'Abrir en tu panel', he: 'פתיחה בלוח הבקרה' }
+  },
+
   paymentReceipt: {
     subject: {
       en: (businessName: string) => `Payment receipt - ${businessName}`,
