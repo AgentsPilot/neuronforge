@@ -1,3 +1,9 @@
+> ⚠️ **ARCHIVED 2026-09-11 — this is NOT the Business OS Insights module.**
+>
+> This document describes the **agent shadow insight** system (`execution_insight_runs`, `lib/pilot/insight/**`, `lib/repositories/InsightRepository.ts`, `/api/v6/insights`), which measures an **agent execution's** quality.
+>
+> If you are working on **Business OS Insights** — the advisory layer over the owner's *business* (`lib/business-os/insight/**`, `/api/business-os/insights`, `/api/cron/insight-*`) — read **[BUSINESS_OS_INSIGHTS_MODULE.md](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md)** instead and use the `business-os-insights` skill. The two systems share a name and nothing else.
+
 # Phase 1 - Debugging Insight Linking Issue
 
 > **Date:** 2026-06-01
