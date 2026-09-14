@@ -128,8 +128,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
     backgroundColor: isDark ? 'rgba(31, 41, 55, 0.6)' : 'rgba(255, 255, 255, 0.9)',
     backdropFilter: 'blur(20px)',
     WebkitBackdropFilter: 'blur(20px)',
-    borderColor: isDark ? 'rgba(75, 85, 99, 0.3)' : 'rgba(229, 231, 235, 0.8)',
-    borderRadius: theme?.borderRadius || '1.5rem'
+    borderColor: isDark ? 'rgba(75, 85, 99, 0.3)' : 'rgba(229, 231, 235, 0.8)'
   });
 
   const TestimonialCard = ({ testimonial, index, featured = false }: { testimonial: TestimonialItem; index: number; featured?: boolean }) => (
@@ -169,7 +168,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
         <p
           className={`leading-relaxed mb-8 ${featured ? 'text-xl lg:text-2xl' : 'text-base lg:text-lg'}`}
           style={{
-            fontFamily: 'var(--website-font-body)',
+            fontFamily: 'var(--ap-font-body)',
             color: isDark ? '#e5e7eb' : '#374151'
           }}
         >
@@ -196,7 +195,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
             </div>
           ) : (
             <div
-              className="w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold"
+              className="apc-icon w-14 h-14 rounded-full flex items-center justify-center text-white text-xl font-bold"
               style={{
                 background: `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})`
               }}
@@ -208,7 +207,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
             <p
               className="font-bold text-lg"
               style={{
-                fontFamily: 'var(--website-font-heading)',
+                fontFamily: 'var(--ap-font-heading)',
                 color: isDark ? '#ffffff' : textColor
               }}
             >
@@ -240,20 +239,29 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
     <section
       id="testimonials"
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-12 sm:py-16 lg:py-20'} ${className || ''}`}
+      className={`apc-sec relative overflow-hidden ${styles?.padding || ''} ${className || ''}`}
+      /*
+       * Vertical rhythm from the archetype, not a fixed Tailwind ramp.
+       *
+       * `--ap-space-8` is scaled by theme.spacing (compact | normal |
+       * spacious) in PublicThemeStyle, so a spacious archetype finally breathes
+       * differently from a compact one. Only applied when the page has not set
+       * its own padding class.
+       */
       style={{
-        backgroundColor: isDark ? backgroundColor : '#f8fafc'
+        backgroundColor: isDark ? backgroundColor : '#f8fafc',
+        ...(styles?.padding ? {} : { paddingBlock: 'var(--ap-space-8)' }),
       }}
     >
       {/* Decorative background */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="apc-decor absolute inset-0 overflow-hidden">
         {/* Gradient orbs - smaller for compact layout */}
         <div
-          className="absolute top-0 left-1/4 w-[350px] h-[350px] rounded-full opacity-15 blur-3xl"
+          className="apc-decor absolute top-0 left-1/4 w-[350px] h-[350px] rounded-full opacity-15 blur-3xl"
           style={{ backgroundColor: primaryColor }}
         />
         <div
-          className="absolute bottom-0 right-1/4 w-[300px] h-[300px] rounded-full opacity-10 blur-3xl"
+          className="apc-decor absolute bottom-0 right-1/4 w-[300px] h-[300px] rounded-full opacity-10 blur-3xl"
           style={{ backgroundColor: secondaryColor }}
         />
 
@@ -270,18 +278,20 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         {(title || subtitle) && (
-          <div className="text-center mb-10 sm:mb-12">
+          <div className="apc-sec-head text-center mb-10 sm:mb-12">
             {/* Badge */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-6"
-              style={{
-                backgroundColor: `${primaryColor}10`,
-                color: primaryColor,
-                border: `1px solid ${primaryColor}20`
-              }}
+              className="apc-eyebrow inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-6"
+              /*
+               * Colour only. The pill's fill, border and radius were inline, so
+               * a composition that draws its eyebrow as plain lettered text —
+               * which all three do — could not reach them, and the reset left a
+               * full-width bordered strip across the top of the section.
+               */
+              style={{ color: primaryColor }}
             >
               <Sparkles className="w-4 h-4" />
               <span>{t('clientStories')}</span>
@@ -295,7 +305,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                 transition={{ delay: 0.1 }}
                 className="text-2xl sm:text-3xl lg:text-4xl font-bold"
                 style={{
-                  fontFamily: 'var(--website-font-heading)',
+                  fontFamily: 'var(--ap-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -310,7 +320,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                 transition={{ delay: 0.2 }}
                 className="mt-4 text-lg sm:text-xl max-w-2xl mx-auto"
                 style={{
-                  fontFamily: 'var(--website-font-body)',
+                  fontFamily: 'var(--ap-font-body)',
                   color: isDark ? '#9ca3af' : '#6b7280'
                 }}
               >
@@ -324,7 +334,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
               whileInView={{ scaleX: 1 }}
               viewport={{ once: true }}
               transition={{ delay: 0.3, duration: 0.8 }}
-              className="mt-8 mx-auto w-24 h-1 rounded-full"
+              className="apc-decor mt-8 mx-auto w-24 h-1 rounded-full"
               style={{
                 background: `linear-gradient(90deg, transparent, ${primaryColor}, transparent)`
               }}
@@ -369,9 +379,9 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                   )}
 
                   <p
-                    className="text-xl sm:text-2xl lg:text-3xl leading-relaxed mb-10"
+                    className="apc-quote text-xl sm:text-2xl lg:text-3xl leading-relaxed mb-10"
                     style={{
-                      fontFamily: 'var(--website-font-body)',
+                      fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#e5e7eb' : '#374151'
                     }}
                   >
@@ -398,7 +408,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                       </div>
                     ) : (
                       <div
-                        className="w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold"
+                        className="apc-icon w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold"
                         style={{
                           background: `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})`
                         }}
@@ -410,7 +420,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                       <p
                         className="font-bold text-xl"
                         style={{
-                          fontFamily: 'var(--website-font-heading)',
+                          fontFamily: 'var(--ap-font-heading)',
                           color: isDark ? '#ffffff' : textColor
                         }}
                       >
@@ -434,7 +444,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
               <>
                 <button
                   onClick={prev}
-                  className="absolute start-0 top-1/2 -translate-y-1/2 -translate-x-4 sm:-translate-x-16 w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
+                  className="apc-icon absolute start-0 top-1/2 -translate-y-1/2 -translate-x-4 sm:-translate-x-16 w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
                   style={{
                     backgroundColor: isDark ? 'rgba(31, 41, 55, 0.9)' : 'rgba(255, 255, 255, 0.95)',
                     boxShadow: `0 10px 40px ${primaryColor}20`,
@@ -446,7 +456,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                 </button>
                 <button
                   onClick={next}
-                  className="absolute end-0 top-1/2 -translate-y-1/2 translate-x-4 sm:translate-x-16 w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
+                  className="apc-icon absolute end-0 top-1/2 -translate-y-1/2 translate-x-4 sm:translate-x-16 w-12 h-12 rounded-full flex items-center justify-center transition-all hover:scale-110"
                   style={{
                     backgroundColor: isDark ? 'rgba(31, 41, 55, 0.9)' : 'rgba(255, 255, 255, 0.95)',
                     boxShadow: `0 10px 40px ${primaryColor}20`,
@@ -492,7 +502,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
 
         {/* Grid Layout */}
         {layout === 'grid' && (
-          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-${columns} gap-6 sm:gap-8`}>
+          <div className={`apc-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-${columns} gap-6 sm:gap-8`}>
             {testimonials.map((testimonial, index) => (
               <TestimonialCard key={index} testimonial={testimonial} index={index} />
             ))}
@@ -544,7 +554,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                 }}
               />
 
-              <div className="relative grid lg:grid-cols-3 gap-10 items-center">
+              <div className="apc-grid relative grid lg:grid-cols-3 gap-10 items-center">
                 {/* Author - left side */}
                 <div className="lg:col-span-1 text-center lg:text-left">
                   {testimonials[0].image ? (
@@ -576,7 +586,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                   <h3
                     className="text-2xl font-bold mb-2"
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -601,7 +611,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
                   <p
                     className="text-2xl lg:text-3xl leading-relaxed"
                     style={{
-                      fontFamily: 'var(--website-font-body)',
+                      fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#e5e7eb' : '#374151'
                     }}
                   >
@@ -613,7 +623,7 @@ export function TestimonialsBlock({ content, styles, theme, isRTL, className, lo
 
             {/* Other testimonials */}
             {testimonials.length > 1 && (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="apc-grid grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {testimonials.slice(1).map((testimonial, index) => (
                   <TestimonialCard key={index} testimonial={testimonial} index={index} />
                 ))}

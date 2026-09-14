@@ -64,14 +64,21 @@ export function VideoBlock({ content, styles, theme, isRTL, className }: BlockRe
       return `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
     }
 
-    // Default placeholder
-    return '/placeholder-video.jpg';
+    /*
+     * No thumbnail rather than a broken one.
+     *
+     * `/public/placeholder-video.jpg` has never existed, so this rendered a
+     * broken image on any video the provider gave no poster for. An empty
+     * poster lets the player draw its own first frame, which is what it does
+     * without one anyway.
+     */
+    return '';
   };
 
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
+      className={`apc-sec ${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'ap-bg'} ${className || ''}`}
     >
       <div className="max-w-5xl mx-auto px-4 sm:px-6">
         {/* Header */}
@@ -82,8 +89,8 @@ export function VideoBlock({ content, styles, theme, isRTL, className }: BlockRe
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: 'var(--website-font-heading)' }}
+                className="text-3xl sm:text-4xl font-bold ap-ink"
+                style={{ fontFamily: 'var(--ap-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -94,8 +101,8 @@ export function VideoBlock({ content, styles, theme, isRTL, className }: BlockRe
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="mt-4 text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto"
-                style={{ fontFamily: 'var(--website-font-body)' }}
+                className="mt-4 text-lg ap-ink-2 max-w-2xl mx-auto"
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
                 {description}
               </motion.p>
@@ -144,7 +151,7 @@ export function VideoBlock({ content, styles, theme, isRTL, className }: BlockRe
                 <motion.div
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
-                  className="w-20 h-20 rounded-full flex items-center justify-center shadow-2xl"
+                  className="apc-icon w-20 h-20 rounded-full flex items-center justify-center shadow-2xl"
                   style={{ backgroundColor: primaryColor }}
                 >
                   <Play className="w-8 h-8 text-white ms-1" fill="white" />

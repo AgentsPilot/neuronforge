@@ -77,6 +77,17 @@ export interface ConversationContext {
    */
   lastPlan?: RememberedPlan;
   /**
+   * The plan BEFORE that one.
+   *
+   * Kept for a single purpose: a question that names its entity but adds no
+   * filter, right after a filtered answer about the same entity, is ambiguous —
+   * "מה הסך הכולל של ההצעות" after listing four accepted quotes means those
+   * four to the person asking and all seven to the planner. Both readings are
+   * defensible, so the turn offers the other one as a chip, and applying it
+   * needs the filters from the turn before this one.
+   */
+  priorPlan?: RememberedPlan;
+  /**
    * Choices the user has made, so the same question is asked once.
    *
    * Keyed `entity.field` -> the field to aggregate. The gross/net question is
@@ -155,6 +166,14 @@ export class ConversationMemory {
               ),
             }
           : undefined,
+        priorPlan: context.priorPlan
+          ? {
+              ...context.priorPlan,
+              steps: context.priorPlan.steps.filter(
+                (step) => (step as { op?: string }).op !== 'mutate'
+              ),
+            }
+          : undefined,
         preferences: context.preferences,
       };
 
@@ -198,6 +217,53 @@ export function renderContextForPrompt(context: ConversationContext): string {
         `into one complete request and plan it — do not ask the same thing again.\n` +
         `(Unless they clearly changed the subject, in which case answer the new request.)`
     );
+  }
+
+  /*
+   * The QUERY behind the last answer, stated exactly.
+   *
+   * The turn summary says "compute proposals" — the entity and the operation,
+   * and nothing about the filter. So a follow-up inherited nothing: asked "how
+   * many quotes were accepted" and then "what is their total", the planner
+   * summed every current quote (₪45,850) and threw in the service list (₪1,300)
+   * for good measure, against a true answer of ₪15,850. "Them" had a precise
+   * referent one line earlier and the prompt did not carry it.
+   *
+   * Rendered by `describePlan`, which is the same sentence shown to the USER
+   * next to that answer — so the model and the reader are told the same thing,
+   * and there is one implementation of "what did that query do".
+   */
+  const lastSteps = (context.lastPlan?.steps ?? []) as Array<Record<string, unknown>>;
+
+  if (lastSteps.length > 0) {
+    /*
+     * The rows the last answer was about, AS JSON to copy.
+     *
+     * The prose version said "repeat those filters exactly" — and the model
+     * repeated the SHAPE instead. Asked for "the total of them" after a
+     * two-step "4 of 7, 57%", it produced another two-step X-of-Y: summed every
+     * quote, compared it to an unrelated payments figure, and reported 2,042%.
+     * It copied the pattern and dropped the filter, which is the opposite of
+     * what was asked.
+     *
+     * So it is handed the thing to copy, in the form it will be copied into.
+     * Entity and `where` only — the aggregate is what the new message changes,
+     * and including it invites the old one back.
+     */
+    const rows = lastSteps
+      .filter((step) => step.op === 'find' || step.op === 'compute')
+      .map((step) => JSON.stringify({ entity: step.entity, where: step.where ?? [] }))
+      .join('\n  ');
+
+    if (rows) {
+      parts.push(
+        `Your last answer was about these rows:\n  ${rows}\n` +
+          `A follow-up with no subject of its own — "their total", "and the sum", "how ` +
+          `many of those", "show them" — is about THOSE rows: copy the entity and the ` +
+          `where VERBATIM and change only the aggregate. Never drop a filter, and never ` +
+          `add a step the new message did not ask for.`
+      );
+    }
   }
 
   if (context.turns.length > 0) {

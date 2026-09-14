@@ -180,7 +180,7 @@ async function dispatchOne(
   const [profile, preferences, authUser] = await Promise.all([
     supabaseServer
       .from('business_profiles')
-      .select('owner_name, language')
+      .select('owner_name, language, business_name, vertical, sub_vertical')
       .eq('user_id', userId)
       .maybeSingle(),
     supabaseServer
@@ -204,7 +204,17 @@ async function dispatchOne(
       (profile.data?.language as string | null)
   );
 
-  const briefing = await getBriefing(userId, facts, language);
+  /*
+   * The same business type the dashboard passes. Both callers must agree: the
+   * type is part of the cache fingerprint, so a dispatcher that omitted it
+   * would compute a different hash from the same facts, miss the row the
+   * dashboard just wrote, and pay for a second narration of the same day.
+   */
+  const briefing = await getBriefing(userId, facts, language, {
+    vertical: profile.data?.vertical as string | null,
+    subVertical: profile.data?.sub_vertical as string | null,
+    name: profile.data?.business_name as string | null,
+  });
   const lines = briefingLines(briefing.narrative);
   if (lines.length === 0) return { sent: false, reason: 'nothing_to_say' };
 

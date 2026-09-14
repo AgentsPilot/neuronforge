@@ -151,41 +151,72 @@ function VectorPill({ vector, isRTL, t }: VectorPillProps) {
     return translated !== key ? translated : vector.name;
   };
 
-  // State-specific styles matching mockup exactly
+  /*
+   * State-specific styles.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY EVERY TINT IS MIXED AGAINST `--v2-surface`
+   *
+   * The mockup this came from was light-only, so the lit and learning states
+   * were translucent washes (`rgba(34,197,139,.08)`) while the unlit state was
+   * an opaque `--v2-surface`. Over a light page those land in the same place and
+   * the hierarchy reads correctly.
+   *
+   * In dark mode they came apart: `--v2-surface` (#1E293B) is LIGHTER than the
+   * strip behind it (#0F172A), while an 8% wash over that strip stays darker
+   * than both. The vectors being actively read receded and the dead ones popped
+   * — the ranking inverted, which is the opposite of what this strip exists to
+   * say.
+   *
+   * Mixing each tint into `--v2-surface` puts all three states on one base, so
+   * they differ by hue and strength only and the order holds in either theme.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
   const getStyles = () => {
     switch (vector.state) {
       case 'lit':
-        // .vec.lit{color:var(--text);font-weight:600;border-color:#CFEDDF;background:#F5FCF9}
         return {
-          bg: 'rgba(34, 197, 139, 0.08)',
-          border: 'rgba(34, 197, 139, 0.30)',
+          bg: 'color-mix(in srgb, #22C58B 14%, var(--v2-surface))',
+          border: 'color-mix(in srgb, #22C58B 45%, var(--v2-surface))',
           color: 'var(--v2-text-primary)',
           fontWeight: 600,
-          dotBg: '#22C58B', // var(--green)
+          dotBg: '#22C58B',
           dotSize: 8,
           dotBorder: 'none',
-          dotShadow: '0 0 0 3px rgba(34,197,139,0.16)',
+          // Mixed too: a fixed rgba halo sat as a dark smudge on a dark pill.
+          dotShadow: '0 0 0 3px color-mix(in srgb, #22C58B 28%, transparent)',
         };
       case 'learn':
-        // .vec.learn{color:#8A7A5E;border-color:#F0E2CC;background:#FFFCF7}
-        // .vec.learn .vec-dot{background:#fff;border:2px dotted var(--amber);width:10px;height:10px}
         return {
-          bg: 'rgba(245, 158, 11, 0.08)',
-          border: 'rgba(245, 158, 11, 0.30)',
+          bg: 'color-mix(in srgb, #F59E0B 9%, var(--v2-surface))',
+          border: 'color-mix(in srgb, #F59E0B 40%, var(--v2-surface))',
           color: 'var(--v2-text-secondary)',
           fontWeight: 400,
-          dotBg: 'var(--v2-surface)',
+          // The dot is a hollow ring, so it takes the pill's own background
+          // rather than the card's — otherwise it reads as a hole in dark mode.
+          dotBg: 'color-mix(in srgb, #F59E0B 9%, var(--v2-surface))',
           dotSize: 10,
-          dotBorder: '2px dotted #FFB24D',
+          dotBorder: '2px dotted #F59E0B',
           dotShadow: 'none',
         };
-      default: // dark
-        // .vec{...border:1px solid var(--line);background:#fff;...color:#9AA1B2}
-        // .vec-dot{...background:#DDE1EA}
+      default:
+        /*
+         * Not yet reading this one: the quietest of the three, but still a word
+         * the reader has to be able to read.
+         *
+         * This was `--v2-text-muted`, which is #9CA3AF in light and #94A3B8 in
+         * dark. On the pill's white surface that is 2.5:1 — well under WCAG AA
+         * — so the four unlit vector names were a pale smudge. The same token
+         * on the dark surface is 5.7:1 and looks fine, which is why the strip
+         * read correctly in dark mode and washed out in light.
+         *
+         * `--v2-text-secondary` is 4.8:1 light and 9.9:1 dark, and stays
+         * plainly quieter than the lit state, which is near-black and bold.
+         */
         return {
           bg: 'var(--v2-surface)',
           border: 'var(--v2-border)',
-          color: 'var(--v2-text-muted)',
+          color: 'var(--v2-text-secondary)',
           fontWeight: 400,
           dotBg: 'var(--v2-border)',
           dotSize: 8,
@@ -199,7 +230,22 @@ function VectorPill({ vector, isRTL, t }: VectorPillProps) {
 
   return (
     <span
-      className={`vec ${vector.state}`}
+      /*
+       * Namespaced, and it has to stay that way.
+       *
+       * `VectorState` is `'dark' | 'learn' | 'lit'`, so interpolating it raw
+       * put `class="vec dark"` on every vector this business is not reading
+       * yet — and `globals-v2.css` defines the whole dark palette on a bare
+       * `.dark` selector, for Radix portals that render outside the themed
+       * container. Each unlit pill therefore redefined `--v2-surface`,
+       * `--v2-text-secondary` and the rest ON ITSELF and painted navy with
+       * pale text, in the middle of a light page. Dark mode looked correct
+       * because there the override happened to agree with the theme.
+       *
+       * The state is presentational here anyway — every colour comes from
+       * `getStyles()` below, and nothing selects on these class names.
+       */
+      className={`vec vec--${vector.state}`}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -207,7 +253,11 @@ function VectorPill({ vector, isRTL, t }: VectorPillProps) {
         border: `1px solid ${styles.border}`,
         background: styles.bg,
         borderRadius: '20px',
-        padding: '6px 12px 6px 10px',
+        // Logical, not physical: the tight side belongs next to the dot, and
+        // the dot leads in both directions.
+        paddingBlock: '6px',
+        paddingInlineStart: '10px',
+        paddingInlineEnd: '12px',
         fontSize: '12.5px',
         color: styles.color,
         fontWeight: styles.fontWeight,

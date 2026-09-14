@@ -227,7 +227,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
     return (
       <section
         dir={isRTL ? 'rtl' : 'ltr'}
-        className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+        className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'ap-card-2'} ${className || ''}`}
       >
         <div className="max-w-xl mx-auto px-4 sm:px-6 text-center">
           <motion.div
@@ -243,8 +243,8 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
           <motion.p
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-lg text-gray-700 dark:text-gray-300"
-            style={{ fontFamily: 'var(--website-font-body)' }}
+            className="text-lg ap-ink-2"
+            style={{ fontFamily: 'var(--ap-font-body)' }}
           >
             {labels.success}
           </motion.p>
@@ -257,7 +257,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
       id="contact"
-      className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+      className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'ap-card-2'} ${className || ''}`}
     >
       <div className="max-w-4xl mx-auto px-4 sm:px-6">
         {/* Header */}
@@ -266,8 +266,8 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white"
-            style={{ fontFamily: 'var(--website-font-heading)' }}
+            className="text-2xl sm:text-3xl font-bold ap-ink"
+            style={{ fontFamily: 'var(--ap-font-heading)' }}
           >
             {labels.getInTouch}
           </motion.h2>
@@ -277,36 +277,47 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: 0.1 }}
-              className="mt-2 text-gray-600 dark:text-gray-300"
-              style={{ fontFamily: 'var(--website-font-body)' }}
+              className="mt-2 ap-ink-2"
+              style={{ fontFamily: 'var(--ap-font-body)' }}
             >
               {subtitle}
             </motion.p>
           )}
         </div>
 
-        {/* Two-column layout: Contact Info + Form */}
-        {/* In RTL: sidebar on right (start), form on left (end) */}
-        {/* In LTR: form on left (start), sidebar on right (end) */}
+        {/*
+          Two columns: the form, then the details.
+
+          Plain `lg:flex-row` — the section already carries `dir`, so a row runs
+          start-to-end on its own and the two columns mirror for free: form at
+          the start, details at the end, which is left/right in English and
+          right/left in Hebrew.
+
+          This was `isRTL ? 'lg:flex-row-reverse' : 'lg:flex-row'`, which
+          reversed a row that `dir` had already reversed — so the form sat on
+          the LEFT in both directions and a Hebrew page opened its contact
+          section on the wrong side. Setting `dir` and then reversing by hand is
+          always one correction too many.
+        */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ delay: 0.2 }}
-          className={`flex flex-col ${hasContactInfo ? (isRTL ? 'lg:flex-row-reverse' : 'lg:flex-row') : ''} gap-6 lg:gap-8`}
+          className={`flex flex-col ${hasContactInfo ? 'lg:flex-row' : ''} gap-6 lg:gap-8`}
         >
           {/* Form - First in DOM, displays on start side */}
           <div className={`${hasContactInfo ? 'lg:w-3/5' : 'w-full'}`}>
             <form
               onSubmit={handleSubmit}
               noValidate
-              className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm"
+              className="ap-card p-6 rounded-xl shadow-sm"
               style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
             >
               {hasContactInfo && (
                 <h3
-                  className="text-lg font-semibold text-gray-900 dark:text-white mb-5"
-                  style={{ fontFamily: 'var(--website-font-heading)' }}
+                  className="text-lg font-semibold ap-ink mb-5"
+                  style={{ fontFamily: 'var(--ap-font-heading)' }}
                 >
                   {labels.sendUsMessage}
                 </h3>
@@ -317,7 +328,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                   <div key={field.name}>
                     <label
                       htmlFor={field.name}
-                      className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5"
+                      className="block text-sm font-medium ap-ink-2 mb-1.5"
                     >
                       {getFieldLabel(field)}
                       {field.required && <span className="text-red-500 ms-1">*</span>}
@@ -336,14 +347,14 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                             setErrors({ ...errors, [field.name]: '' });
                           }
                         }}
-                        className={`w-full px-3 py-2.5 bg-gray-50 dark:bg-slate-700 border text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 transition-all text-sm ${
+                        className={`w-full px-3 py-2.5 ap-card-2 border ap-ink ap-placeholder focus:outline-none focus:ring-2 transition-all text-sm ${
                           errors[field.name]
                             ? 'border-red-500 focus:ring-red-200'
-                            : 'border-gray-200 dark:border-gray-600 focus:ring-blue-200'
+                            : 'ap-line focus:ring-blue-200'
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
-                          fontFamily: 'var(--website-font-body)'
+                          fontFamily: 'var(--ap-font-body)'
                         }}
                       />
                     ) : field.type === 'tel' ? (
@@ -382,14 +393,14 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                             setErrors({ ...errors, [field.name]: '' });
                           }
                         }}
-                        className={`w-full px-3 py-2.5 bg-gray-50 dark:bg-slate-700 border text-gray-900 dark:text-white focus:outline-none focus:ring-2 transition-all text-sm ${
+                        className={`w-full px-3 py-2.5 ap-card-2 border ap-ink focus:outline-none focus:ring-2 transition-all text-sm ${
                           errors[field.name]
                             ? 'border-red-500 focus:ring-red-200'
-                            : 'border-gray-200 dark:border-gray-600 focus:ring-blue-200'
+                            : 'ap-line focus:ring-blue-200'
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
-                          fontFamily: 'var(--website-font-body)'
+                          fontFamily: 'var(--ap-font-body)'
                         }}
                       >
                         <option value="">{field.placeholder || `Select ${getFieldLabel(field)}`}</option>
@@ -410,14 +421,14 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
                             setErrors({ ...errors, [field.name]: '' });
                           }
                         }}
-                        className={`w-full px-3 py-2.5 bg-gray-50 dark:bg-slate-700 border text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 transition-all text-sm ${
+                        className={`w-full px-3 py-2.5 ap-card-2 border ap-ink ap-placeholder focus:outline-none focus:ring-2 transition-all text-sm ${
                           errors[field.name]
                             ? 'border-red-500 focus:ring-red-200'
-                            : 'border-gray-200 dark:border-gray-600 focus:ring-blue-200'
+                            : 'ap-line focus:ring-blue-200'
                         }`}
                         style={{
                           borderRadius: theme?.borderRadius || '0.5rem',
-                          fontFamily: 'var(--website-font-body)'
+                          fontFamily: 'var(--ap-font-body)'
                         }}
                       />
                     )}
@@ -466,7 +477,7 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
               >
                 <h3
                   className="text-lg font-semibold text-white mb-6"
-                  style={{ fontFamily: 'var(--website-font-heading)' }}
+                  style={{ fontFamily: 'var(--ap-font-heading)' }}
                 >
                   {labels.contactInfo}
                 </h3>
@@ -551,27 +562,41 @@ export function ContactFormBlock({ content, styles, theme, locale, isRTL, classN
           display: none !important;
         }
 
+        /*
+         * The third-party phone field, on the business's own colours.
+         *
+         * These were hardcoded light greys with !important — a near-white
+         * fill and near-black text — so on a dark template the phone row was a
+         * white box in the middle of a column of dark ones. It is the single
+         * most obvious "this part is not ours" element on the page, and it sits
+         * in the form a visitor is being asked to trust.
+         *
+         * The !important flags are kept only where they were already needed to
+         * beat the library's own stylesheet, now carrying the template's tokens
+         * instead of somebody's greys.
+         */
         .phone-input-contact .PhoneInputInput {
           flex: 1;
           width: 100%;
           padding: 10px 12px;
-          background: rgb(249, 250, 251) !important;
-          border: 1px solid rgb(229, 231, 235) !important;
-          border-radius: 0.5rem;
+          background: var(--ap-surface) !important;
+          border: 1px solid var(--ap-border) !important;
+          border-radius: var(--ap-radius-md);
+          font-family: var(--ap-font-body);
           font-size: 14px;
-          color: rgb(17, 24, 39) !important;
+          color: var(--ap-text) !important;
           outline: none;
           transition: all 0.2s ease;
           min-height: 42px;
         }
 
         .phone-input-contact .PhoneInputInput:focus {
-          border-color: #3b82f6 !important;
-          box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+          border-color: var(--ap-brand) !important;
+          box-shadow: 0 0 0 2px var(--ap-brand-ring);
         }
 
         .phone-input-contact .PhoneInputInput::placeholder {
-          color: rgb(156, 163, 175);
+          color: var(--ap-text-muted);
         }
 
         .phone-input-contact.has-error .PhoneInputCountry,

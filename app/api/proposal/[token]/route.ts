@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { verifyProposalToken } from '@/lib/business-os/proposalToken';
+import { resolveTermsDays } from '@/lib/payments/paymentTerms';
 import { proposalRepository } from '@/lib/repositories/ProposalRepository';
 import { applyAcceptance, splitTotal } from '@/lib/services/ProposalAcceptanceService';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
@@ -102,11 +103,19 @@ async function present(proposal: Proposal) {
    * brand on the server and the page reads it from context, so this endpoint
    * answers only for the quote itself.
    */
-  const { data: contact } = await supabaseServer
-    .from('crm_contacts')
-    .select('first_name')
-    .eq('id', proposal.contact_id)
-    .maybeSingle();
+  const [{ data: contact }, { data: profile }] = await Promise.all([
+    supabaseServer
+      .from('crm_contacts')
+      .select('first_name')
+      .eq('id', proposal.contact_id)
+      .maybeSingle(),
+    // Only for the default terms, when this quote does not name its own.
+    supabaseServer
+      .from('business_profiles')
+      .select('invoice_payment_terms_days')
+      .eq('user_id', proposal.user_id)
+      .maybeSingle(),
+  ]);
 
   const shape = proposal.payment_shape;
   let stages: Array<{ label: string; amount: number }> = [];
@@ -131,6 +140,14 @@ async function present(proposal: Proposal) {
     stages,
     dueOnAccept: stages.length ? stages[0].amount : proposal.total,
     clientFirstName: contact?.first_name ?? null,
+    /*
+     * The terms, on the page as well as in the email.
+     *
+     * The page is where they press accept and the copy they come back to — an
+     * offer whose payment date lives only in an email they may have lost is an
+     * offer they cannot fully read.
+     */
+    termsDays: resolveTermsDays(proposal.payment_terms_days, profile?.invoice_payment_terms_days),
     /*
      * The proposal document, as a short-lived signed link.
      *
@@ -341,6 +358,9 @@ export async function POST(
         total: proposal.total,
         currency: proposal.currency,
         payment_shape: proposal.payment_shape,
+        // Frozen with the rest: changing the business default next month must
+        // not retroactively shorten terms somebody already agreed to.
+        payment_terms_days: proposal.payment_terms_days,
         tax_rate: proposal.tax_rate,
         tax_label: proposal.tax_label,
         prices_include_tax: proposal.prices_include_tax,
@@ -381,6 +401,34 @@ export async function POST(
      * the same page, not a second one.
      */
     const willRedirect = Boolean(created.invoiceId) && created.dueNow > 0;
+
+    /*
+     * Redirecting IS issuing.
+     *
+     * `sendInvoice` is what normally moves an invoice out of `draft`, and this
+     * path deliberately does not call it — so the client was being sent to an
+     * invoice the pay route refuses with "this invoice has not been sent yet".
+     * From the client's side it plainly has been issued: they are looking at it.
+     *
+     * `sent_at` stays NULL on purpose. It records when the invoice was EMAILED,
+     * and it is the key the abandonment sweep uses to find quotes nobody
+     * followed through on. Setting it here would mark this one as already
+     * chased and the client who wandered off would never hear from us again.
+     */
+    if (created.invoiceId && willRedirect) {
+      const { error: issueError } = await supabaseServer
+        .from('payment_invoices')
+        .update({ status: 'sent' })
+        .eq('id', created.invoiceId)
+        .eq('status', 'draft');
+
+      if (issueError) {
+        requestLogger.error(
+          { err: issueError, invoiceId: created.invoiceId },
+          'Accepted but the invoice could not be marked issued — the client cannot pay it'
+        );
+      }
+    }
 
     if (created.invoiceId && !willRedirect) {
       sendInvoice({ invoiceId: created.invoiceId, userId: proposal.user_id, request })

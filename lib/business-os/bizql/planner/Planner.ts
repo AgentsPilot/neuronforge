@@ -29,6 +29,11 @@ import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
 import { anchorizeInventedDates } from '../dates';
 import type { ComputeQuery, FindQuery, Query } from '../types';
 import { isSoftProblem, normalizePlan, validatePlan } from './validatePlan';
+import { resolveSameRows } from './resolveSameRows';
+import {
+  getVerifiedQuestions,
+  renderExamplesForPrompt,
+} from './VerifiedQuestions';
 import { buildPlanTool, plannerSystemPrompt } from './planTool';
 import {
   guessRelevantEntities,
@@ -192,14 +197,35 @@ export class BizQLPlanner {
   async plan(request: PlanRequest): Promise<PlanOutcome> {
     const started = Date.now();
 
-    // Cache first. This belongs in the planner rather than the route because
-    // caching IS the planner's job — avoiding an LLM call — and putting it here
-    // means every caller benefits and the eval harness measures it.
-    // A context-dependent turn is deliberately NOT cached, in either direction.
-    // "show him" means something different in every conversation, so serving a
-    // cached plan for it would apply one user's referent to another's question.
+    /*
+     * Cache first — but never for a turn the conversation could have shaped.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This test used to be "is there a pending question, or rows on screen",
+     * and it let the worst cache entry this system has produced through.
+     *
+     * "מה הסך הכולל שלהם" — what is THEIR total — was planned once during a
+     * window when the previous turn's context had not finished saving, so it
+     * resolved "them" against a bookings question from two turns earlier. The
+     * previous turn had been a COUNT, which leaves no rows on screen, so by the
+     * old test the turn was not contextual: the wrong plan was stored under the
+     * bare words, and served four more times without the conversation ever
+     * being consulted again. Every later fix appeared not to work, because
+     * nothing was being planned at all.
+     *
+     * The honest rule is that a plan is a function of everything in its prompt.
+     * The conversation goes into that prompt, so a turn with ANY history behind
+     * it cannot be keyed on its words alone. That costs cache hits on
+     * follow-ups — which are exactly the turns where a stale plan is a wrong
+     * answer rather than a saved call.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const context = request.context;
     const contextual = Boolean(
-      request.context?.pendingQuestion || request.context?.lastRows?.items.length
+      context?.pendingQuestion ||
+        context?.lastRows?.items.length ||
+        context?.lastPlan ||
+        context?.turns?.length
     );
 
     const cache = getPlanCache();
@@ -289,7 +315,13 @@ export class BizQLPlanner {
 
     // Writes are now expressible, so the planner must see which actions exist
     // and which of them require confirmation.
-    const catalogText = renderCatalogForPrompt({ entities, includeActions: true });
+    // In the reader's language: the enum values carry the words they actually
+    // type, so "אושרו" matches `accepted=אושרה` instead of being translated.
+    const catalogText = renderCatalogForPrompt({
+      entities,
+      includeActions: true,
+      language: request.language,
+    });
     const tool = buildPlanTool(entities);
 
     // Read this user's own configured values for any data-driven field, so the
@@ -303,6 +335,24 @@ export class BizQLPlanner {
     ]);
 
     const conversation = request.context ? renderContextForPrompt(request.context) : '';
+
+    /*
+     * What this business has already had answered correctly, in their words.
+     *
+     * The only mechanism here that generalises to phrasings nobody wrote down:
+     * a tenant who once corrected "תלוי באוויר" into the open-quote filter has
+     * taught it, and "ממתינות להחלטה" arrives at the same plan without a label
+     * for either. Costs one embedding, and only for a business that has
+     * verified something — see VerifiedQuestions.has.
+     */
+    const examples = renderExamplesForPrompt(
+      await getVerifiedQuestions().similar({
+        userId: request.userId,
+        question: request.message,
+        language: request.language ?? 'he',
+        turnId: request.turnId,
+      })
+    );
 
     /*
      * The action rules are sent only when an action is reachable.
@@ -322,6 +372,7 @@ export class BizQLPlanner {
     const system =
       `${plannerSystemPrompt({ actions: canAct })}\n\nCATALOG\n${catalogText}` +
       (vocabulary ? `\n\nTHIS USER'S CONFIGURED VALUES\n${vocabulary}` : '') +
+      (examples ? `\n\n${examples}` : '') +
       (conversation ? `\n\nCONVERSATION SO FAR\n${conversation}` : '');
     /*
      * Today, in the business's own timezone.
@@ -351,6 +402,21 @@ export class BizQLPlanner {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ];
+
+    /*
+     * The exact prompt, on demand.
+     *
+     * Added after an afternoon of a reproduction disagreeing with the product:
+     * a hand-built copy of this prompt planned `pages.publish` every time while
+     * the real one planned `pages.update`, and there is no way to settle that by
+     * reading two files side by side. Off unless asked for, and it writes the
+     * whole thing rather than a summary — the difference that mattered was
+     * never going to be in the summary.
+     */
+    if (process.env.BIZQL_DUMP_PROMPT) {
+      const { writeFileSync } = await import('fs');
+      writeFileSync(process.env.BIZQL_DUMP_PROMPT, `${system}\n\n=== USER ===\n${user}`);
+    }
 
     let repairAttempted = false;
     let promptTokens: number | undefined;
@@ -526,6 +592,18 @@ export class BizQLPlanner {
       normalizePlan(plan);
 
       /*
+       * "The same rows as last time", filled in from the stored plan.
+       *
+       * Before validation, because an inherited step arrives without an entity
+       * — the model was told not to repeat one — and validation would refuse it
+       * on the way past.
+       */
+      const inherited = resolveSameRows(plan, request.context);
+      if (inherited > 0) {
+        logger.info({ inherited, userId: request.userId }, 'Steps inherited the previous rows');
+      }
+
+      /*
        * Put back the anchor behind a date the model worked out for itself.
        *
        * Runs BEFORE validation, not as a repair of it: the digit rule would
@@ -609,14 +687,29 @@ export class BizQLPlanner {
       /*
        * Repairs are spent. If everything still outstanding is SOFT, ship it.
        *
-       * The only soft problem today is a missing answer sentence, and the
-       * renderer already has a fallback for exactly that. Refusing here would
-       * replace a thin answer with no answer — measured, that was 31 turns of
-       * 297 turning into "I didn't quite follow that" where they had shown a
-       * bare count. The rule is there to push the model, not to punish the user
-       * when it will not move.
+       * Soft problems are all about the answer SENTENCE, and the renderer has a
+       * fallback for having none. Refusing here would replace a thin answer
+       * with no answer — measured, that was 31 turns of 297 turning into "I
+       * didn't quite follow that" where they had shown a bare count. The rule
+       * is there to push the model, not to punish the user when it will not
+       * move.
+       *
+       * One of them is not survivable as written, though: a sentence on a
+       * read-only plan that cites no step is a claim about data nobody read,
+       * and "הוספת סקשן של המלצות" — a section was added — shipped to the user
+       * over a plan that added nothing. A MISSING sentence costs detail; a
+       * FALSE one costs trust. So that sentence is dropped rather than shown,
+       * and the renderer's fallback answers from what the plan really found.
        */
       if (problems.every(isSoftProblem)) {
+        if (problems.some((p) => p.startsWith('answer.text cites no step.')) && plan.answer) {
+          logger.warn(
+            { text: plan.answer.text },
+            'Dropped an answer sentence that cited no step — it could only assert what was never read'
+          );
+          delete (plan as { answer?: unknown }).answer;
+        }
+
         logger.warn({ problems }, 'Accepting a plan with soft problems after repairs');
 
         return {

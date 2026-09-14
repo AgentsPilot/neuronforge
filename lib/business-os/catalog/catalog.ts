@@ -239,6 +239,21 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         via: { column: 'contact_id', side: 'remote' },
         labels: { en: 'plan payments', he: 'תשלומים בתוכנית', es: 'pagos del plan' },
       },
+      /**
+       * The quotes this client has been sent.
+       *
+       * Missing, and the effect was a question that could not be asked from the
+       * side it is naturally asked from: "לאילו לקוחות שלחתי הצעות" — which
+       * CLIENTS did I send quotes to — has no route from contacts to quotes, so
+       * the planner did the only thing left and listed the quotes, naming the
+       * same person three times. The reverse hop existed all along.
+       */
+      proposals: {
+        target: 'proposals',
+        cardinality: 'many',
+        via: { column: 'contact_id', side: 'remote' },
+        labels: { en: 'quotes', he: 'הצעות מחיר', es: 'presupuestos' },
+      },
     },
 
     /**
@@ -259,6 +274,28 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           relation: 'bookings',
           quantifier: 'any',
           where: [{ field: 'intake_completed_at', op: 'is_not_null' }],
+        },
+      },
+      /**
+       * Whether the intake form was ever SENT to this client.
+       *
+       * Distinct from `has_completed_intake`, and the distinction is the whole
+       * point: one is waiting on the client, the other is waiting on the owner.
+       * "Who never got the form" is the owner's own to-do list, and it was
+       * inexpressible — the planner had to answer it with "never completed",
+       * which counts every client who was asked and has not replied.
+       */
+      was_sent_intake: {
+        type: 'boolean',
+        labels: {
+          en: 'was sent the intake form',
+          he: 'נשלח אליו טופס קליטה',
+          es: 'se le envió el formulario de admisión',
+        },
+        expand: {
+          relation: 'bookings',
+          quantifier: 'any',
+          where: [{ field: 'intake_sent_at', op: 'is_not_null' }],
         },
       },
       has_bookings: {
@@ -396,8 +433,10 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
      */
     meaning:
       'money BILLED to clients — raised, whether or not it has been paid. ' +
-      'The unpaid ones ARE what a client owes: "how much does X owe" is the total of ' +
-      'their unpaid invoices.',
+      'The unpaid ones are ONE of the two things a client owes: the other is their unpaid ' +
+      'plan payments (installments), which are never invoiced. "How much do they owe" is ' +
+      'both totalled together — sum each and add them with {= s1.value + s2.value } — and ' +
+      'a business that sells in instalments has nothing at all on this route.',
     table: 'payment_invoices',
     labels: {
       one: { en: 'invoice', he: 'חשבונית', es: 'factura' },
@@ -672,6 +711,574 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
   },
 
   /**
+   * QUOTES — the seam between "interested" and "owes money".
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * A quoted service ends its client journey at a REQUEST. A proposal is what
+   * the owner sends back, and what the client accepts; acceptance is what turns
+   * it into an invoice or a payment plan.
+   *
+   * Until then it is deliberately NOT an invoice — an unaccepted offer is not
+   * payable, and conflating the two would put speculative money into the
+   * revenue figures. Which is exactly why the chat could not see a single quote
+   * before this entry existed: "what am I waiting on", "how much is out in
+   * quotes", "who never answered" and "why do people say no" had no entity to
+   * resolve against, and the closest one — invoices — answers a different
+   * question with a number that looks just as convincing.
+   *
+   * ONE TOTAL AND A DESCRIPTION. No line items: the platform does not hold what
+   * the work cost, and modelling that is the first step toward becoming a
+   * project-management tool.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  proposals: {
+    meaning:
+      'QUOTES sent to clients — a price offered for work, before anyone owes anything. ' +
+      'Not revenue and not a debt: an open quote is money still in play. Accepting one is ' +
+      'what creates the invoice or the payment plan, so "how much is out in quotes" and ' +
+      '"how much did I bill" are different questions with different answers. ' +
+      'A quote is REVISED by writing a new row: the old one becomes status superseded, so ' +
+      'one negotiation is several rows. Counting or listing quotes means the CURRENT ' +
+      'version of each — filter is_current_version true — unless the user asks for history. ' +
+      'OPEN — "פתוחה", "עוד פתוחות", not yet answered — is the open term: draft, sent or ' +
+      'viewed. An ACCEPTED quote is agreed work and is NOT an open quote; asked what is ' +
+      'still open, answering with the accepted ones reports won work as pending. ' +
+      'A quote EXISTS from the moment it is drafted and is SENT later, so "how many did ' +
+      'I send" — "כמה שלחתי", "ששלחתי" — is was_sent true, never the number of quotes. ' +
+      'The quote value is what was AGREED, never what is owed or what was collected: the ' +
+      'money lives on its milestones (installments), one row per stage with its own ' +
+      'status — so "how much is unpaid on accepted quotes" totals the unpaid ones and ' +
+      '"how much have I been paid" totals the paid ones. Neither question sums this field.',
+    table: 'proposals',
+    /*
+     * An old version is not a quote — it is a draft of one that is also here.
+     *
+     * "How many open quotes and what do they come to" answered "11, ₪75,850"
+     * for a business with four live quotes worth ₪15,850, because four of those
+     * rows were superseded versions of quotes it had already counted. Stating
+     * the rule in `meaning` was not enough; the model has to remember to apply
+     * it on every single question, and one miss is a wrong total presented as a
+     * fact.
+     *
+     * So the exclusion is structural, and it is SAID — the answer line reads
+     * "current versions only" — and it stands aside the moment the question
+     * mentions status or the version itself, which is what keeps "show me the
+     * history of that quote" working.
+     */
+    defaultScope: {
+      unless: ['status', 'is_current_version'],
+      where: [{ field: 'status', op: 'neq', value: 'superseded' }],
+      labels: {
+        en: 'current versions only',
+        he: 'רק הגרסאות העדכניות',
+        es: 'solo las versiones actuales',
+      },
+    },
+    labels: {
+      one: { en: 'quote', he: 'הצעת מחיר', es: 'presupuesto' },
+      many: { en: 'quotes', he: 'הצעות מחיר', es: 'presupuestos' },
+    },
+    /*
+     * Both names, because the product uses one and people use the other. The
+     * table is `proposals`, the UI calls it a quote, and a Hebrew speaker says
+     * "הצעה" more often than the full "הצעת מחיר".
+     */
+    aliases: [
+      'proposals',
+      'proposal',
+      'estimates',
+      'offers',
+      'הצעות',
+      'הצעה',
+      'cotizaciones',
+      'ofertas',
+    ],
+    userScope: { kind: 'column', column: 'user_id' },
+    labelField: 'title',
+    displayFields: ['title', 'total', 'status', 'valid_until'],
+    displayRelations: ['contact'],
+    searchableFields: ['title'],
+    defaultLimit: 50,
+    maxLimit: 500,
+
+    fields: {
+      id: { column: 'id', type: 'uuid', labels: { en: 'ID' } },
+      title: {
+        column: 'title',
+        type: 'string',
+        labels: { en: 'title', he: 'כותרת', es: 'título' },
+        writable: true,
+      },
+      description: {
+        column: 'description',
+        type: 'string',
+        labels: { en: 'description', he: 'תיאור', es: 'descripción' },
+        writable: true,
+      },
+      // Writable so a quote can be raised FOR someone named in the request. The
+      // executor checks the referenced row belongs to the caller before writing.
+      contact_id: {
+        column: 'contact_id',
+        type: 'uuid',
+        labels: { en: 'contact', he: 'איש קשר', es: 'contacto' },
+        writable: true,
+        references: 'contacts',
+      },
+      service_id: {
+        column: 'service_id',
+        type: 'uuid',
+        labels: { en: 'service', he: 'שירות', es: 'servicio' },
+        writable: true,
+        references: 'services',
+      },
+      /**
+       * The request this quote answers.
+       *
+       * Matching quotes to bookings by SERVICE attached every quote for a
+       * service to every booking of it, so a second request from the same
+       * client opened showing the first job already accepted.
+       */
+      /**
+       * The request this quote answers.
+       *
+       * Writable, because the flow that matters is "the consultation is over,
+       * send them a price": the quote belongs to that appointment, and one
+       * raised from the chat with no booking loses the thread the drawer reads.
+       * The executor checks the referenced booking belongs to the caller.
+       */
+      booking_id: {
+        column: 'booking_id',
+        type: 'uuid',
+        labels: { en: 'booking', he: 'פגישה', es: 'reserva' },
+        writable: true,
+        references: 'bookings',
+      },
+      /**
+       * What was AGREED, which is not what is owed.
+       *
+       * Labelled plainly "total" / "סכום", it read as the answer to "how much
+       * is still unpaid on my accepted quotes" — and summing it gave ₪15,850,
+       * the full value of four jobs, most of which had been collected. The
+       * money still to come lives on the quote's milestones, one row per stage,
+       * with its own status.
+       *
+       * Named for what it is, so the wrong sum stops looking like the right
+       * one, and the meaning above points at where the outstanding figure
+       * actually lives.
+       */
+      total: {
+        column: 'total',
+        type: 'money',
+        format: 'money',
+        labels: { en: 'quote value', he: 'סכום ההצעה', es: 'valor del presupuesto' },
+        writable: true,
+      },
+      currency: {
+        column: 'currency',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'currency', he: 'מטבע', es: 'moneda' },
+        enumValues: ['USD', 'EUR', 'ILS', 'GBP'],
+        writable: true,
+      },
+      /**
+       * draft → sent → viewed → accepted | declined | expired | withdrawn | superseded
+       *
+       * `declined` is NOT terminal, and that is a business fact worth knowing:
+       * most rejections are "too expensive", which the owner can answer with a
+       * revision. `withdrawn` and `superseded` are the terminal ends.
+       *
+       * Two semantic terms, both genuine RULES rather than vocabulary:
+       *
+       *   open           what is still live — the owner's "what is out there".
+       *                  Mirrors OPEN_PROPOSAL_STATUSES in ProposalRepository,
+       *                  which is the same rule the drawer and the expiry sweep
+       *                  use. A draft counts: it is work in progress, not lost.
+       *   awaiting_reply what is with the CLIENT. A draft is with the owner, so
+       *                  "who hasn't answered me" must exclude it — the
+       *                  difference between chasing a client and chasing
+       *                  yourself.
+       */
+      status: {
+        column: 'status',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'status', he: 'סטטוס', es: 'estado' },
+        enumValues: [
+          'draft',
+          'sent',
+          'viewed',
+          'accepted',
+          'declined',
+          'expired',
+          'withdrawn',
+          'superseded',
+        ],
+        enumLabels: {
+          draft: { en: 'draft', he: 'טיוטה', es: 'borrador' },
+          /*
+           * "sent, no answer yet" rather than "sent".
+           *
+           * A quote that was sent and then accepted is no longer in this
+           * status, so labelling it plainly "sent" invites exactly the wrong
+           * filter for "how many did I send" — which would answer zero for a
+           * business whose quotes have all been answered. The fact people mean
+           * by that question is `was_sent` below.
+           */
+          sent: { en: 'sent, no answer yet', he: 'נשלחה וממתינה לתשובה', es: 'enviado, sin respuesta' },
+          viewed: { en: 'opened by the client', he: 'נצפתה', es: 'visto' },
+          accepted: { en: 'accepted', he: 'אושרה', es: 'aceptado' },
+          declined: { en: 'declined', he: 'נדחתה', es: 'rechazado' },
+          expired: { en: 'expired', he: 'פגה', es: 'caducado' },
+          withdrawn: { en: 'withdrawn', he: 'בוטלה', es: 'retirado' },
+          superseded: { en: 'replaced by a newer version', he: 'הוחלפה בגרסה חדשה', es: 'reemplazado' },
+        },
+        /*
+         * KEPT, on evidence rather than instinct.
+         *
+         * These were declared when the planner saw enum values as bare English
+         * tokens, and once the Hebrew labels started rendering it looked as
+         * though the terms might be competing with them — "פתוחות" was
+         * resolving to `accepted` while the question `awaiting_reply` exists
+         * for was answered correctly from a plain value.
+         *
+         * So they were removed and the same twenty Hebrew questions were run
+         * again: the score went from 14/18 to 12/18, and "how many quotes does
+         * David have" lost its client filter along the way. The terms are not
+         * what is wrong. Restored, and the note left here so the next person
+         * does not spend the same twenty calls proving it twice.
+         */
+        semanticTerms: {
+          open: ['draft', 'sent', 'viewed'],
+          awaiting_reply: ['sent', 'viewed'],
+        },
+      },
+      /**
+       * How long the price stands.
+       *
+       * Note that nothing SETS the `expired` status today — no sweep runs — so
+       * "expired quotes" is answered by this date, not by that value:
+       * `valid_until` before today AND status open. Filtering on the status
+       * alone returns zero for a business with a stack of stale quotes, which
+       * is the quietest kind of wrong answer.
+       */
+      /**
+       * The proposal document the client reads before deciding.
+       *
+       * READ-ONLY here, and that is a deliberate refusal rather than an
+       * oversight. A writable foreign key must declare what it references so
+       * the executor can verify the caller owns the row being pointed at, and
+       * `contact_documents` is not a catalog entity — the build rejects the
+       * combination, which is exactly the guard working.
+       *
+       * A document is a file, not a sentence, so there is nothing for the
+       * planner to fill this from anyway. The chat attaches one through the
+       * attach endpoint, which carries the id in the step's `params` — outside
+       * the writable-column mapping the planner can reach — and the handler
+       * checks that the document belongs to this user AND to this client before
+       * using it.
+       */
+      document_id: {
+        column: 'document_id',
+        type: 'uuid',
+        labels: { en: 'document', he: 'מסמך', es: 'documento' },
+      },
+      /**
+       * How acceptance turns into money.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * The one part of the quote builder that is not a number or a sentence,
+       * and leaving it out meant a quote dictated into the chat was always a
+       * single payment — so "send them a quote, 30% on signing, 40% mid-way,
+       * 30% on completion" produced a demand for the whole amount at once.
+       * That is not a smaller version of what was asked for; it is a different
+       * agreement.
+       *
+       * Three shapes, and the handler validates against the SAME schema the
+       * quote builder posts through, so a dictated split cannot be one the
+       * form would have refused. A shape whose stages do not add up is a quote
+       * that is agreed and then unbillable.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      payment_shape: {
+        column: 'payment_shape',
+        type: 'json',
+        labels: { en: 'how it is paid', he: 'אופן התשלום', es: 'forma de pago' },
+        writable: true,
+      },
+      valid_until: {
+        column: 'valid_until',
+        type: 'date',
+        format: 'date',
+        labels: { en: 'valid until', he: 'בתוקף עד', es: 'válido hasta' },
+        writable: true,
+      },
+      /**
+       * Why the client said no — one of five, chosen from a list on the accept
+       * page rather than typed, which is what makes "why do people say no" a
+       * question with a real answer instead of a folder of free text.
+       */
+      decline_reason: {
+        column: 'decline_reason',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'reason for declining', he: 'סיבת הדחייה', es: 'motivo del rechazo' },
+        enumValues: ['too_expensive', 'timing', 'scope', 'chose_other', 'other'],
+        enumLabels: {
+          too_expensive: { en: 'too expensive', he: 'יקר מדי', es: 'demasiado caro' },
+          timing: { en: 'wrong timing', he: 'לא מתאים בזמן', es: 'no es el momento' },
+          scope: { en: 'wrong scope', he: 'לא מתאים בהיקף', es: 'alcance incorrecto' },
+          chose_other: { en: 'chose someone else', he: 'בחר בספק אחר', es: 'eligió a otro' },
+          other: { en: 'other', he: 'אחר', es: 'otro' },
+        },
+      },
+      sent_at: {
+        column: 'sent_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'sent at', he: 'נשלחה בתאריך', es: 'enviado el' },
+      },
+      viewed_at: {
+        column: 'viewed_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'opened at', he: 'נצפתה בתאריך', es: 'visto el' },
+      },
+      decided_at: {
+        column: 'decided_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'answered at', he: 'הוכרעה בתאריך', es: 'respondido el' },
+      },
+      created_at: {
+        column: 'created_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'created at', he: 'נוצרה בתאריך', es: 'creado el' },
+      },
+    },
+
+    /**
+     * Whether the quote ever actually left.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * Asked "כמה הצעות שלחתי" — how many quotes did I send — the chat answered
+     * 11. Eleven is how many EXIST; eight had been sent, and three were drafts
+     * that never went anywhere. Nothing in the query was wrong, and the number
+     * was wrong.
+     *
+     * The trap is that both plausible plans fail: counting the entity gives
+     * eleven, and filtering `status = sent` gives the ones sent AND still
+     * unanswered, which for this business is zero. The fact people mean is
+     * neither — it is `sent_at is not null`, a column whose name carries no
+     * business word at all.
+     *
+     * So it is declared, and the planner composes it like any other boolean:
+     * negatable, combinable with a date, usable in a count.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    derived: {
+      /**
+       * The live version of a quote, as opposed to a superseded draft of it.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * A revision does not edit the quote — it writes a NEW row and retires
+       * the old one, which is what makes the terms the client agreed to
+       * un-rewritable. The cost is that one negotiation is several rows, and
+       * asked to show the quotes that had been sent, the chat listed the same
+       * job three times at three prices.
+       *
+       * `superseded` is set at the moment a replacement is sent, so it is the
+       * exact marker: a row carrying it is an old version of a quote that still
+       * exists elsewhere.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      is_current_version: {
+        type: 'boolean',
+        labels: {
+          en: 'is the current version',
+          he: 'הגרסה העדכנית',
+          es: 'es la versión actual',
+        },
+        expand: { quantifier: 'any', where: [{ field: 'status', op: 'neq', value: 'superseded' }] },
+      },
+      /**
+       * A quote with money still to collect.
+       *
+       * The question that exposed the gap was "which of my live quotes still
+       * have open milestones, and what do they come to" — a question about two
+       * entities at once, which the grammar can only express by starting from
+       * one of them. Declared here, it starts from the quote and every operator
+       * composes with it: combine with `is_current_version`, count it, list it.
+       *
+       * `unpaid` is the same rule invoices and plan periods use — money owed
+       * and still collectable, which excludes a cancelled stage.
+       */
+      has_open_payments: {
+        type: 'boolean',
+        labels: {
+          en: 'has payments still to collect',
+          he: 'יש חיובים שטרם נגבו',
+          es: 'tiene cobros pendientes',
+        },
+        expand: {
+          relation: 'milestones',
+          quantifier: 'any',
+          where: [{ field: 'status', op: 'in', value: { $semantic: 'unpaid' } }],
+        },
+      },
+      was_sent: {
+        type: 'boolean',
+        /*
+         * The Hebrew carries the ACTIVE form as well, because that is how the
+         * question is asked.
+         *
+         * Measured: "how many quotes did I send" plans `was_sent eq true` in
+         * English and no filter at all in Hebrew. The label was the passive
+         * "נשלחה ללקוח" and the user says "שלחתי" — a different binyan, and the
+         * model did not bridge it.
+         */
+        labels: {
+          en: 'was sent to the client',
+          he: 'נשלחה ללקוח (שלחתי)',
+          es: 'fue enviado al cliente',
+        },
+        expand: { quantifier: 'any', where: [{ field: 'sent_at', op: 'is_not_null' }] },
+      },
+    },
+
+    relations: {
+      contact: {
+        target: 'contacts',
+        cardinality: 'one',
+        via: { column: 'contact_id', side: 'local' },
+        labels: { en: 'contact', he: 'איש קשר', es: 'contacto' },
+      },
+      service: {
+        target: 'services',
+        cardinality: 'one',
+        via: { column: 'service_id', side: 'local' },
+        labels: { en: 'service', he: 'שירות', es: 'servicio' },
+      },
+      booking: {
+        target: 'bookings',
+        cardinality: 'one',
+        via: { column: 'booking_id', side: 'local' },
+        labels: { en: 'request', he: 'בקשה', es: 'solicitud' },
+      },
+      /*
+       * What acceptance PRODUCED. Declared so "which quotes turned into money"
+       * is one hop rather than a guess, and so the answer can name the invoice.
+       */
+      invoice: {
+        target: 'invoices',
+        cardinality: 'one',
+        via: { column: 'created_invoice_id', side: 'local' },
+        labels: { en: 'invoice', he: 'חשבונית', es: 'factura' },
+      },
+      plan: {
+        target: 'plans',
+        cardinality: 'one',
+        via: { column: 'created_plan_id', side: 'local' },
+        labels: { en: 'payment plan', he: 'תוכנית תשלומים', es: 'plan de pagos' },
+      },
+      /* The stages a milestone quote was split into, once it was accepted. */
+      milestones: {
+        target: 'installments',
+        cardinality: 'many',
+        via: { column: 'proposal_id', side: 'remote' },
+        labels: { en: 'milestones', he: 'אבני דרך', es: 'hitos' },
+      },
+    },
+
+    actions: {
+      /**
+       * Draft a quote. Deliberately does NOT send it.
+       *
+       * Sending is a separate action because it is irreversible in the way that
+       * matters: the number leaves the building and the client holds it. A
+       * chat that drafts and sends in one breath removes the moment where the
+       * owner reads back what they just dictated.
+       */
+      create: {
+        labels: { en: 'draft a quote', he: 'הכן הצעת מחיר', es: 'crear un presupuesto' },
+        risk: 'create',
+        requiresConfirmation: true,
+        requiredFields: ['contact_id', 'title', 'total'],
+        /*
+         * Status starts at draft, the currency falls back to the business's own,
+         * and the payment shape defaults to a single payment. None of the three
+         * is ever asked for — "how would you like to be paid" is a question for
+         * the quote builder, not for someone dictating a price into a chat.
+         */
+        handlerSupplies: ['status', 'currency', 'payment_shape'],
+        optionalFields: ['description', 'service_id', 'booking_id', 'valid_until', 'currency', 'payment_shape'],
+      },
+      /**
+       * Draft it AND send it, in one instruction.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * The flow this exists for: the consultation just ended and the owner
+       * says "send David a quote for 12,000 for the kitchen" instead of opening
+       * the booking, opening the drawer and filling in the builder.
+       *
+       * It cannot be composed from the two actions beside it. A plan that
+       * created the row in one step and sent it in the next would have to point
+       * the second step at an id that does not exist until the first has run,
+       * and `target.id` must be a literal row id — deliberately, because a
+       * fabricated reference sails through confirmation and then acts on
+       * something nobody was shown. So the two halves live in one handler.
+       *
+       * The moment where the owner reads back what they dictated is NOT lost:
+       * this confirms like every other write, and the preview names the client,
+       * the title and the amount before anything is created or sent.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      create_and_send: {
+        labels: {
+          en: 'draft a quote and send it',
+          he: 'הכן ושלח הצעת מחיר',
+          es: 'crear y enviar un presupuesto',
+        },
+        risk: 'send',
+        requiresConfirmation: true,
+        // It makes the row, so there is nothing to point at.
+        needsTarget: false,
+        requiredFields: ['contact_id', 'title', 'total'],
+        handlerSupplies: ['status', 'currency', 'payment_shape'],
+        optionalFields: ['description', 'service_id', 'booking_id', 'valid_until', 'currency', 'payment_shape'],
+      },
+      /**
+       * Send it, and freeze its terms.
+       *
+       * A conditional update from `draft`, so sending twice sends one email.
+       * After this, edits create a new VERSION rather than changing what the
+       * client was shown — the whole point of a quote is that the number does
+       * not move after it leaves.
+       */
+      send: {
+        labels: { en: 'send a quote', he: 'שלח הצעת מחיר', es: 'enviar un presupuesto' },
+        risk: 'send',
+        requiresConfirmation: true,
+      },
+      /**
+       * Take it off the table.
+       *
+       * Not a delete: the quote stands as a record of what was offered, and the
+       * client may still have the email. What it stops is ACCEPTANCE — the
+       * accept page only claims a proposal that is `sent` or `viewed` — so this
+       * is the honest way to answer "cancel that quote, we agreed something
+       * else".
+       */
+      withdraw: {
+        labels: { en: 'withdraw a quote', he: 'בטל הצעת מחיר', es: 'retirar un presupuesto' },
+        risk: 'update',
+        requiresConfirmation: true,
+      },
+    },
+  },
+
+  /**
    * Money owed under a PAYMENT PLAN — one row per scheduled period.
    *
    * ─────────────────────────────────────────────────────────────────────────
@@ -691,7 +1298,11 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
    * ─────────────────────────────────────────────────────────────────────────
    */
   installments: {
-    meaning: 'money owed under a payment plan — one row per scheduled period, whether or not it has been collected',
+    meaning:
+      'money owed under a payment plan — one row per scheduled period, whether or not it ' +
+      'has been collected. The OTHER half of what a client owes: nothing is invoiced for ' +
+      'these, so an unpaid period appears on no invoice. "How much do they owe" sums the ' +
+      'unpaid ones here AND the unpaid invoices, added together.',
     table: 'payment_plan_installments',
     /*
      * The Hebrew names both entities and one alias apart.
@@ -714,7 +1325,34 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
       one: { en: 'installment', he: 'תשלום בתוכנית', es: 'cuota' },
       many: { en: 'installments', he: 'תשלומי תוכנית', es: 'cuotas' },
     },
-    aliases: ['scheduled payments', 'תשלומים בתוכנית', 'pagos programados'],
+    /*
+     * "חיובים" and "milestones" — the two words this entity is actually called,
+     * and neither was here.
+     *
+     * Asked "כמה חיובים נותרו ומה הסך הכולל" — how many charges are left and
+     * what do they come to — the planner had no entity for a charge at all, so
+     * it reached for the one noun it recognised in the sentence (הצעות) and
+     * answered 11 charges of ₪30,000: the count of every quote row, and the
+     * total of three drafts. Two confident numbers, neither of them about
+     * charges.
+     *
+     * `milestone` is in the trigger's enum LABEL, which is where it belongs for
+     * a reader — but entity choice is made from entity names, and a label does
+     * not participate in that.
+     */
+    aliases: [
+      'scheduled payments',
+      'charges',
+      'milestones',
+      'תשלומים בתוכנית',
+      'חיובים',
+      'חיוב',
+      'אבני דרך',
+      'אבן דרך',
+      'pagos programados',
+      'cargos',
+      'hitos',
+    ],
     userScope: { kind: 'column', column: 'user_id' },
     labelField: 'installment_number',
     displayFields: ['installment_number', 'amount', 'due_date', 'status'],
@@ -784,6 +1422,110 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         type: 'datetime',
         format: 'date',
         labels: { en: 'paid at', he: 'שולם בתאריך', es: 'pagado el' },
+      },
+      /**
+       * MILESTONES.
+       *
+       * A milestone quote is stored here, not in a table of its own: a period
+       * already had an amount, a due date and a status, and what was missing
+       * was a NAME for the stage and the ability to have no date until the work
+       * is done.
+       *
+       * Undeclared, a milestone was indistinguishable from an instalment —
+       * "which stages are still outstanding" listed periods by number, and the
+       * ones waiting on the OWNER (nothing bills until they mark the stage
+       * complete) looked identical to the ones waiting on the client's bank.
+       */
+      label: {
+        column: 'label',
+        type: 'string',
+        labels: { en: 'stage', he: 'שלב', es: 'etapa' },
+      },
+      trigger: {
+        column: 'trigger',
+        type: 'enum',
+        format: 'enum',
+        labels: { en: 'billed by', he: 'מתי מחויב', es: 'facturado por' },
+        enumValues: ['date', 'manual'],
+        /*
+         * The word "milestone" lives in the LABEL, not in a semantic term.
+         *
+         * A term mapping `milestone -> manual` would be a synonym with extra
+         * steps, and this file's rule is to declare facts and let the model map
+         * vocabulary from them. Saying what the value MEANS — billed when the
+         * stage is done, which is precisely what a milestone is — does that
+         * without spending a term, and it reads correctly on a result card too.
+         */
+        enumLabels: {
+          date: { en: 'instalment, billed on its due date', he: 'תשלום בתאריך היעד', es: 'cuota, en su fecha' },
+          manual: {
+            en: 'milestone, billed when the stage is marked done',
+            he: 'אבן דרך, מחויבת בסיום השלב',
+            es: 'hito, se factura al completar la etapa',
+          },
+        },
+      },
+      completed_at: {
+        column: 'completed_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'stage completed at', he: 'השלב הושלם בתאריך', es: 'etapa completada el' },
+      },
+      proposal_id: {
+        column: 'proposal_id',
+        type: 'uuid',
+        labels: { en: 'quote', he: 'הצעת מחיר', es: 'presupuesto' },
+        references: 'proposals',
+      },
+    },
+
+    relations: {
+      /**
+       * WHOSE payment this is.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * This entity had no relations at all, and the effect was not a missing
+       * convenience — it was three questions in a row answered with "I didn't
+       * understand": "כמה תשלומים נשארו לדויד המלך" and both its rephrasings.
+       *
+       * The route from a CONTACT to their instalments has always existed
+       * (`contacts.installments`), which is what makes "who owes me money"
+       * work. The route back did not, so a question that starts from the person
+       * and counts their payments could not be expressed at all. The planner
+       * emitted the obvious plan, validation rejected it with "known relations:
+       * proposal", and the repair round had nowhere to go.
+       *
+       * `displayRelations` on this entity has named `contact` all along, so the
+       * client was silently missing from every instalment row as well — a
+       * dangling reference reads as nothing rather than as an error.
+       * ─────────────────────────────────────────────────────────────────────
+       */
+      contact: {
+        target: 'contacts',
+        cardinality: 'one',
+        via: { column: 'contact_id', side: 'local' },
+        labels: { en: 'contact', he: 'איש קשר', es: 'contacto' },
+      },
+      /* The offer this schedule was written from — 3 monthly payments of X. */
+      plan: {
+        target: 'plans',
+        cardinality: 'one',
+        via: { column: 'payment_plan_id', side: 'local' },
+        labels: { en: 'payment plan', he: 'תוכנית תשלומים', es: 'plan de pagos' },
+      },
+      /* One client's sale under that offer. */
+      subscription: {
+        target: 'plan_subscriptions',
+        cardinality: 'one',
+        via: { column: 'subscription_id', side: 'local' },
+        labels: { en: 'plan subscription', he: 'מנוי לתוכנית', es: 'suscripción al plan' },
+      },
+      /* The quote these stages were split out of. */
+      proposal: {
+        target: 'proposals',
+        cardinality: 'one',
+        via: { column: 'proposal_id', side: 'local' },
+        labels: { en: 'quote', he: 'הצעת מחיר', es: 'presupuesto' },
       },
     },
   },
@@ -912,6 +1654,23 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         type: 'datetime',
         format: 'date',
         labels: { en: 'intake completed at', he: 'טופס קליטה הושלם', es: 'admisión completada' },
+      },
+      /**
+       * When the form was ASKED FOR, which is a different fact from when it
+       * came back — and the one that was missing.
+       *
+       * "האם יש איש קשר עם טופס קליטה שלא נשלח?" — is there a client whose
+       * intake form was never sent — had nothing to resolve against: the
+       * catalog declared only `intake_completed_at`, so the closest expressible
+       * question was "never COMPLETED", which is a different set. The chat
+       * answered "3 contacts" and listed every contact it had, and the number
+       * was right only because nothing had been sent to anyone.
+       */
+      intake_sent_at: {
+        column: 'intake_sent_at',
+        type: 'datetime',
+        format: 'date',
+        labels: { en: 'intake form sent at', he: 'טופס קליטה נשלח', es: 'admisión enviada' },
       },
       notes: {
         column: 'notes',
@@ -2116,6 +2875,16 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           'contact_updated',
           'document_uploaded',
           'task_completed',
+          /*
+           * The quote events. Written by the send service and by the client's
+           * own accept page, and declared nowhere until now — so "what happened
+           * this week" silently omitted every quote a business sent, and a
+           * filter for them returned zero with no error. Same class as the nine
+           * `payment_*` values this list was missing before.
+           */
+          'proposal_sent',
+          'proposal_accepted',
+          'proposal_declined',
         ],
         enumLabels: {
           note: { en: 'note', he: 'הערה', es: 'nota' },
@@ -2133,6 +2902,9 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
           contact_updated: { en: 'contact updated', he: 'איש קשר עודכן', es: 'contacto actualizado' },
           document_uploaded: { en: 'document uploaded', he: 'מסמך הועלה', es: 'documento subido' },
           task_completed: { en: 'task completed', he: 'משימה הושלמה', es: 'tarea completada' },
+          proposal_sent: { en: 'quote sent', he: 'הצעת מחיר נשלחה', es: 'presupuesto enviado' },
+          proposal_accepted: { en: 'quote accepted', he: 'הצעת מחיר אושרה', es: 'presupuesto aceptado' },
+          proposal_declined: { en: 'quote declined', he: 'הצעת מחיר נדחתה', es: 'presupuesto rechazado' },
         },
         writable: true,
       },
@@ -2397,10 +3169,24 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         risk: 'create',
         requiresConfirmation: true,
         writesRow: false,
-        // A title is the one thing that cannot be derived; the slug is built
-        // from it and the type defaults to a landing page.
+        /*
+         * A title is the one thing that cannot be derived — the slug is built
+         * from it and the type defaults to a landing page.
+         *
+         * `description` is what the page is SELLING, and it is the difference
+         * between a landing page and a second homepage: the generator writes
+         * every section about it, taking only the voice and the trade from the
+         * business profile. Optional, because "build me a landing page for the
+         * summer course" is already a subject.
+         */
         requiredFields: ['title'],
-        optionalFields: ['page_type', 'slug', 'template_id', 'website_language'],
+        optionalFields: [
+          'description',
+          'page_type',
+          'slug',
+          'template_id',
+          'website_language',
+        ],
       },
       update: {
         labels: { en: 'rename a page', he: 'שנה שם עמוד', es: 'renombrar una página' },
@@ -2421,17 +3207,29 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
        * both would go live and be worse than not publishing, invisibly. See
        * WebsitePublishService.
        */
+      /**
+       * ONE PAGE, not the site — which is what the handler does and what the
+       * label said the opposite of.
+       *
+       * `publishPage({ pageId })` has always published a single page. The label
+       * read "put the WEBSITE live", so "תפרסם את דף הנחיתה" — publish the
+       * landing page — matched nothing here and landed on `update`, whose label
+       * ("rename a page") was the only one that mentioned a page at all. The
+       * chat then offered to RENAME the page the user asked to publish, and the
+       * only thing standing between that and the data was the confirmation
+       * card.
+       */
       publish: {
-        labels: { en: 'put the website live', he: 'העלה את האתר לאוויר', es: 'publicar el sitio' },
+        labels: { en: 'publish a page', he: 'פרסם עמוד', es: 'publicar una página' },
         risk: 'update',
         requiresConfirmation: true,
       },
       /** Take it off the web. The content stays; only its visibility changes. */
       unpublish: {
         labels: {
-          en: 'take the website offline',
-          he: 'הורד את האתר מהאוויר',
-          es: 'retirar el sitio',
+          en: 'unpublish a page',
+          he: 'הסר עמוד מהפרסום',
+          es: 'retirar una página',
         },
         risk: 'update',
         requiresConfirmation: true,
@@ -3019,6 +3817,17 @@ export const SEMANTIC_CATALOG: SemanticCatalog = {
         risk: 'create',
         requiresConfirmation: true,
         writesRow: false,
+        /*
+         * There is no section to point at — this one MAKES it. Every sibling
+         * here acts on a row and calls `requireTargetId`; `add` alone takes
+         * `_q` and reads only `data`, so demanding a target asked the planner
+         * to describe something that does not exist yet. It answered by
+         * inventing filters ("block_type = testimonials"), failed validation
+         * twice, and "תוסיף לדף הנחיתה סקשן של המלצות" spent both repair rounds
+         * before giving up. The page it belongs to travels in `page_id`, which
+         * is already required.
+         */
+        needsTarget: false,
         requiredFields: ['page_id', 'block_type'],
         optionalFields: ['heading', 'text'],
       },

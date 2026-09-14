@@ -26,6 +26,11 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import {
+  dueDateFromTerms,
+  resolveTermsDays,
+  termsValueForDays,
+} from '@/lib/payments/paymentTerms';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import type { Proposal, PaymentShape } from '@/lib/repositories/ProposalRepository';
@@ -105,7 +110,13 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
   }
 
   const isMilestones = shape.kind === 'milestones';
-  const firstDue = new Date().toISOString().slice(0, 10);
+
+  /*
+   * The first stage is due after the agreed terms, and the cadence steps from
+   * there. Terms and cadence answer different questions — "how long to pay"
+   * versus "how far apart" — and the first period needs both.
+   */
+  const firstDue = dueDateFromTerms(await termsDaysFor(proposal));
 
   const rows = stages.map((stage, index) => ({
     user_id: proposal.user_id,
@@ -194,6 +205,23 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
 
 /* ------------------------------------------------------------------ helpers */
 
+/**
+ * How many days this proposal's client gets to pay.
+ *
+ * The quote's own terms win over the business default, because the quote is
+ * what the client agreed to — changing the default next month must not shorten
+ * terms somebody already signed.
+ */
+async function termsDaysFor(proposal: Proposal): Promise<number> {
+  const { data: profile } = await supabaseServer
+    .from('business_profiles')
+    .select('invoice_payment_terms_days')
+    .eq('user_id', proposal.user_id)
+    .maybeSingle();
+
+  return resolveTermsDays(proposal.payment_terms_days, profile?.invoice_payment_terms_days);
+}
+
 function dueDateFor(shape: PaymentShape, index: number, from: string): string {
   if (index === 0 || shape.kind !== 'installments') return from;
 
@@ -249,6 +277,8 @@ async function raiseInvoice(
   description: string
 ): Promise<string | null> {
   try {
+    // The terms this client agreed to, falling back to the business's default.
+    const termsDays = await termsDaysFor(proposal);
     const { data: contact } = await supabaseServer
       .from('crm_contacts')
       .select('first_name, last_name, email')
@@ -276,8 +306,15 @@ async function raiseInvoice(
        */
       status: 'draft',
       line_items: [{ description, quantity: 1, unit_price: amount, amount }],
-      due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-      payment_terms: null,
+      /*
+       * From the agreed terms, not a hardcoded fortnight.
+       *
+       * `due_date` decides when this turns overdue and when the reminder
+       * service starts chasing — so a wrong one has the business dunning a
+       * client who is paying exactly as agreed.
+       */
+      due_date: dueDateFromTerms(termsDays),
+      payment_terms: termsValueForDays(termsDays),
       notes: null,
       internal_notes: null,
       sent_at: null,

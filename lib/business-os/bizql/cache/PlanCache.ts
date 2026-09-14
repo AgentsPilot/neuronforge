@@ -47,7 +47,7 @@ const TABLE = 'business_chat_plan_cache';
  * Everything a cached plan depends on: the schema/vocabulary it was built
  * against AND the instructions that produced it.
  */
-function cacheVersion(): string {
+function cacheVersion(language?: string): string {
   /*
    * Three inputs, because a plan depends on three things.
    *
@@ -62,7 +62,7 @@ function cacheVersion(): string {
    * Over-invalidating costs one round of re-planning. Under-invalidating serves
    * a plan nobody would produce today.
    */
-  return `${CATALOG_VERSION}.${plannerVersion()}.${catalogPromptVersion()}`;
+  return `${CATALOG_VERSION}.${plannerVersion()}.${catalogPromptVersion(language)}`;
 }
 
 /**
@@ -171,7 +171,7 @@ export class PlanCache {
 
     if (cacheUnavailable) return miss;
 
-    const key = cacheKey(normalized, language, cacheVersion());
+    const key = cacheKey(normalized, language, cacheVersion(language));
 
     // ---- L1: exact ---------------------------------------------------------
     try {
@@ -344,7 +344,7 @@ export class PlanCache {
         ),
       ];
 
-      const hash = cacheKey(normalized, language, cacheVersion());
+      const hash = cacheKey(normalized, language, cacheVersion(language));
       const scope = portable ? null : userId;
 
       const row = {

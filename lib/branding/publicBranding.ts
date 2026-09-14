@@ -40,6 +40,7 @@ import { completeTheme, DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
 import { cleanPublicContact } from '@/lib/branding/placeholderContact';
 import { whatsappLink } from '@/lib/branding/phone';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
+import { resolvePlatformWebsiteUrl } from '@/lib/branding/platformSite';
 import { isDarkColor } from '@/lib/branding/color';
 import { DAY_NAMES, windowsForDay, hasAnyAvailability, type AvailabilityWindow } from '@/lib/scheduling/availabilityWindows';
 import { isValidLocale, getDirection, defaultLocale, type Locale } from '@/lib/i18n/config';
@@ -345,14 +346,28 @@ async function loadPublicBranding(
 
   const hours = includeInfo ? readHours(profile?.scheduling_availability) : null;
   /*
-   * Parsed, not trusted.
+   * Ours first, then theirs — the same order the emails resolve in.
    *
-   * This becomes an `href` on a public page (`BusinessInfoPanel`), and the
-   * column is owner-supplied text. It has been null on every account so far
-   * only because nothing can write it yet — the guard belongs here before that
-   * changes, not after.
+   * ───────────────────────────────────────────────────────────────────────────
+   * A public page carries a "website" link the same way a booking email carries
+   * one, and until now the two disagreed. `resolveEmailBranding` asks
+   * `resolvePlatformWebsiteUrl` first, so a business whose site we host gets
+   * ITS OWN address in every email footer. This asked only for
+   * `business_profiles.website_url` — the site the business had before us —
+   * so the same business, on the page its client actually lands on, either
+   * showed a link to somewhere else entirely or no website at all.
+   *
+   * PUBLISHED only, and the homepage only: a draft subdomain serves nothing and
+   * a landing page is one campaign, not a website. `platformSite` holds both
+   * of those rules so this file does not have to repeat them.
+   *
+   * The external address stays as the fallback and is still sanitised — it is
+   * owner-typed text on its way into an `href`, while ours is built from a
+   * subdomain we control.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  const websiteUrl = safeExternalUrl(profile?.website_url);
+  const websiteUrl =
+    (await resolvePlatformWebsiteUrl(userId)) ?? safeExternalUrl(profile?.website_url);
   const userCode = profile?.user_code ?? null;
   const bookingUrl = userCode ? `/c/${userCode}/book` : null;
 

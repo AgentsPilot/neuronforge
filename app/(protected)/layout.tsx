@@ -7,6 +7,7 @@ import Link from 'next/link'
 import clsx from 'clsx'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
 import { 
   LayoutDashboard, 
   Bot, 
@@ -341,13 +342,14 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       setIsMobileOpen(false)
       setProfile(null)
       
-      // Use window.location.href for a clean redirect
-      window.location.href = '/login'
-      
+      // A full page load: the sign-in form is on the marketing site, a
+      // different app on a different origin.
+      window.location.href = marketingLoginUrl()
+
     } catch (error) {
       console.error('Unexpected logout error:', error)
       // Force redirect even if there's an error
-      window.location.href = '/login'
+      window.location.href = marketingLoginUrl()
     }
   }, [])
 
@@ -426,9 +428,11 @@ export default function ProtectedLayout({ children }: { children: React.ReactNod
       </div>
     )
   }
-  // Only redirect after loading is complete and we know user is not authenticated
+  // Only redirect after loading is complete and we know user is not authenticated.
+  // `redirect` takes the absolute URL across to the marketing site, which is
+  // where the sign-in form actually lives.
   if (!user) {
-    redirect('/login')
+    redirect(marketingLoginUrl())
     return null
   }
 

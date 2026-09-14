@@ -137,6 +137,44 @@ export async function syncBookingPaymentState(
     .eq('id', bookingId)
     .eq('user_id', userId);
 
+  /*
+   * Money against a pending booking confirms it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * A quote is accepted, the client pays the first milestone, and this wrote
+   * `payment_status: 'paid'` and stopped — leaving the booking `pending`
+   * forever. Nothing downstream could tell that the work had been agreed and
+   * begun, and the contact stayed a prospect on the board after paying real
+   * money, which is the case that surfaced this.
+   *
+   * The same is true of any pay-first booking: the reason it was pending is the
+   * money, and the money has arrived.
+   *
+   * Scoped to `pending`, so a cancelled or completed booking is never
+   * resurrected by a late settlement, and skipped on a refund — a refund is not
+   * a confirmation.
+   *
+   * The CRM stage follows from this and is not decided here:
+   * `promote_contact_on_confirmed_booking` moves the contact when a booking
+   * becomes confirmed, wherever that confirmation comes from.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  if (state.status !== 'refunded') {
+    const { error: confirmError } = await supabaseServer
+      .from('scheduling_bookings')
+      .update({ status: 'confirmed', updated_at: new Date().toISOString() })
+      .eq('id', bookingId)
+      .eq('user_id', userId)
+      .eq('status', 'pending');
+
+    if (confirmError) {
+      logger.warn(
+        { err: confirmError, bookingId },
+        'Could not confirm the booking after payment (non-blocking)'
+      );
+    }
+  }
+
   if (error) {
     // Not fatal, and never allowed to fail a refund: the money has already
     // moved, and the trigger will settle this the next time anything touches

@@ -15,7 +15,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
-import { getTemplateById, templateToPageTheme, getStandardHomepageBlocks, WebsiteTemplate } from '@/lib/website-builder/templates';
+import { themeForTemplateId, getStandardHomepageBlocks } from '@/lib/website-builder/templates';
 import { BuildingBlock } from '@/lib/website-builder/building-blocks';
 import { setBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { translateBlockContent } from '@/lib/i18n/website-block-translations';
@@ -101,9 +101,9 @@ export async function POST(
       );
     }
 
-    // Look up template
-    const template = getTemplateById(validated.template_id);
-    if (!template) {
+    // An archetype id or a legacy template id — both resolve to a design.
+    const templateTheme = themeForTemplateId(validated.template_id);
+    if (!templateTheme) {
       return NextResponse.json(
         { success: false, error: 'Template not found' },
         { status: 404 }
@@ -117,7 +117,7 @@ export async function POST(
     requestLogger.info({
       pageId,
       templateId: validated.template_id,
-      templateName: template.name,
+      design: templateTheme.id,
       userId: user.id,
       hasExistingBlocks,
       blockCount: existingBlocksResult.data?.length || 0
@@ -127,7 +127,7 @@ export async function POST(
     // Preserve ALL existing block content and order - templates only change visual styling
     const updateResult = await pageRepo.update(pageId, user.id, {
       template_id: validated.template_id,
-      theme: templateToPageTheme(template)
+      theme: templateTheme as PageTheme
     });
 
     if (updateResult.error) {

@@ -31,19 +31,19 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+      className={`apc-sec ${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'ap-card-2'} ${className || ''}`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Header */}
         {(title || subtitle) && (
-          <div className="text-center mb-12">
+          <div className="apc-sec-head text-center mb-12">
             {title && (
               <motion.h2
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: 'var(--website-font-heading)' }}
+                className="text-3xl sm:text-4xl font-bold ap-ink"
+                style={{ fontFamily: 'var(--ap-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -54,8 +54,8 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="mt-4 text-lg text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: 'var(--website-font-body)' }}
+                className="mt-4 text-lg ap-ink-2"
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -83,15 +83,15 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                   />
                 ) : (
                   <div
-                    className="w-32 h-32 mx-auto rounded-full flex items-center justify-center text-4xl text-white shadow-lg"
+                    className="apc-icon w-32 h-32 mx-auto rounded-full flex items-center justify-center text-4xl text-white shadow-lg"
                     style={{ backgroundColor: primaryColor }}
                   >
                     {member.name.charAt(0)}
                   </div>
                 )}
                 <h3
-                  className="mt-6 text-xl font-semibold text-gray-900 dark:text-white"
-                  style={{ fontFamily: 'var(--website-font-heading)' }}
+                  className="mt-6 text-xl font-semibold ap-ink"
+                  style={{ fontFamily: 'var(--ap-font-heading)' }}
                 >
                   {member.name}
                 </h3>
@@ -103,8 +103,8 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 </p>
                 {member.bio && (
                   <p
-                    className="mt-3 text-gray-600 dark:text-gray-400"
-                    style={{ fontFamily: 'var(--website-font-body)' }}
+                    className="mt-3 ap-ink-2"
+                    style={{ fontFamily: 'var(--ap-font-body)' }}
                   >
                     {member.bio}
                   </p>
@@ -116,7 +116,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                         href={member.social.linkedin}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-gray-400 hover:text-blue-600 transition-colors"
+                        className="ap-ink-3 hover:text-blue-600 transition-colors"
                       >
                         <Linkedin className="w-5 h-5" />
                       </a>
@@ -126,7 +126,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                         href={member.social.twitter}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-gray-400 hover:text-sky-500 transition-colors"
+                        className="ap-ink-3 hover:text-sky-500 transition-colors"
                       >
                         <Twitter className="w-5 h-5" />
                       </a>
@@ -134,7 +134,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                     {member.social.email && (
                       <a
                         href={`mailto:${member.social.email}`}
-                        className="text-gray-400 hover:text-gray-600 transition-colors"
+                        className="ap-ink-3 ap-hover-ink transition-colors"
                       >
                         <Mail className="w-5 h-5" />
                       </a>
@@ -156,8 +156,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.1 }}
-                className="bg-white dark:bg-slate-800 rounded-2xl overflow-hidden shadow-lg group"
-                style={{ borderRadius: theme?.borderRadius || '1rem' }}
+                className="apc-panel ap-card rounded-2xl overflow-hidden shadow-lg group"
               >
                 {member.image ? (
                   <div className="aspect-[4/3] overflow-hidden">
@@ -177,8 +176,8 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 )}
                 <div className="p-6">
                   <h3
-                    className="text-xl font-semibold text-gray-900 dark:text-white"
-                    style={{ fontFamily: 'var(--website-font-heading)' }}
+                    className="text-xl font-semibold ap-ink"
+                    style={{ fontFamily: 'var(--ap-font-heading)' }}
                   >
                     {member.name}
                   </h3>
@@ -190,8 +189,8 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                   </p>
                   {member.bio && (
                     <p
-                      className="mt-3 text-sm text-gray-600 dark:text-gray-400 line-clamp-3"
-                      style={{ fontFamily: 'var(--website-font-body)' }}
+                      className="mt-3 text-sm ap-ink-2 line-clamp-3"
+                      style={{ fontFamily: 'var(--ap-font-body)' }}
                     >
                       {member.bio}
                     </p>
@@ -212,7 +211,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 whileInView={{ opacity: 1, x: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.1 }}
-                className="flex gap-6 items-start p-6 bg-white dark:bg-slate-800 rounded-xl shadow-sm"
+                className="apc-panel flex gap-6 items-start p-6 ap-card rounded-xl shadow-sm"
                 style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
               >
                 {member.image ? (
@@ -223,7 +222,7 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                   />
                 ) : (
                   <div
-                    className="w-20 h-20 rounded-full flex items-center justify-center text-2xl text-white flex-shrink-0"
+                    className="apc-icon w-20 h-20 rounded-full flex items-center justify-center text-2xl text-white flex-shrink-0"
                     style={{ backgroundColor: primaryColor }}
                   >
                     {member.name.charAt(0)}
@@ -231,8 +230,8 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                 )}
                 <div className="flex-1 min-w-0">
                   <h3
-                    className="text-lg font-semibold text-gray-900 dark:text-white"
-                    style={{ fontFamily: 'var(--website-font-heading)' }}
+                    className="text-lg font-semibold ap-ink"
+                    style={{ fontFamily: 'var(--ap-font-heading)' }}
                   >
                     {member.name}
                   </h3>
@@ -244,8 +243,8 @@ export function TeamBlock({ content, styles, theme, isRTL, className }: BlockRen
                   </p>
                   {member.bio && (
                     <p
-                      className="mt-2 text-gray-600 dark:text-gray-400"
-                      style={{ fontFamily: 'var(--website-font-body)' }}
+                      className="mt-2 ap-ink-2"
+                      style={{ fontFamily: 'var(--ap-font-body)' }}
                     >
                       {member.bio}
                     </p>

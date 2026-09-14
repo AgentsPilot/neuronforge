@@ -629,7 +629,7 @@ export default async function InvoicePage({ params, searchParams }: PageProps) {
         {/* How to reach the business about this bill. */}
         {brand && (
           <div className="mt-6">
-            <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address']} />
+            <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address', 'links']} />
           </div>
         )}
       </div>

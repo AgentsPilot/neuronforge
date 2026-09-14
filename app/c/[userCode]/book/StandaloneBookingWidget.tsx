@@ -103,7 +103,16 @@ export function StandaloneBookingWidget({
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+    /*
+     * The panel the services sit on, in the business's own colours.
+     *
+     * It was `bg-white` with a `gray-200` border — a white card in the middle
+     * of a near-black smart link, which is the one surface many businesses
+     * have. `apc-panel` is the same vocabulary the website's offer list uses,
+     * so this takes the template's fill, border and corner exactly as the
+     * services section does.
+     */
+    <div className="apc-panel p-6">
       <ServicesStep
         services={services as SharedService[]}
         loading={false}

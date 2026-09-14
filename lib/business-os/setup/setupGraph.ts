@@ -115,8 +115,17 @@ export const UNKNOWN_SHAPE: BusinessShape = {
   plans: null,
 };
 
-/** Money can move, so documents about it have to be real documents. */
-function moneyMoves(shape: BusinessShape): boolean | null {
+/**
+ * Money can move, so documents about it have to be real documents.
+ *
+ * Exported because the readiness card is no longer the only surface that has to
+ * answer this. The settings dialog asks the same question to decide whether the
+ * invoice tab is anything to this business, and `/api/capabilities` asks it to
+ * decide whether the Orders tab is — and three surfaces answering "does this
+ * business need to be paid" three different ways is exactly the state this
+ * replaces.
+ */
+export function moneyMoves(shape: BusinessShape): boolean | null {
   // A payment plan is money moving on a schedule, whoever collects it — so the
   // paperwork is required even for a business that told us it takes cash.
   if (shape.plans === 'manual' || shape.plans === 'automatic') return true;
@@ -141,7 +150,7 @@ function moneyMoves(shape: BusinessShape): boolean | null {
  * automation as the feature, forced an identity check on businesses that
  * invoice for a living, and would have been wrong for most of them.
  */
-function collectsOnline(shape: BusinessShape): boolean | null {
+export function collectsOnline(shape: BusinessShape): boolean | null {
   // The per-service answer wins wherever it exists. `collection` is the older
   // business-wide summary, kept only so an account whose services predate the
   // per-service columns still resolves — and `!= null` rather than `!== null`
@@ -171,7 +180,7 @@ function needsInvoicePaperwork(shape: BusinessShape): boolean | null {
 }
 
 /** Some service is booked against a time. Unknown until somebody says. */
-function takesAppointments(shape: BusinessShape): boolean | null {
+export function takesAppointments(shape: BusinessShape): boolean | null {
   return shape.appointments != null ? shape.appointments : null;
 }
 

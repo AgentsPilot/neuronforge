@@ -28,9 +28,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import {
+  PAYMENT_TERMS_PRESETS,
+  DEFAULT_PAYMENT_TERMS_DAYS,
+} from '@/lib/payments/paymentTerms';
 import { FileText, Loader2, Paperclip, Plus, Send, Trash2, AlertTriangle, X } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 
@@ -71,6 +74,13 @@ interface ProposalBuilderModalProps {
     title: string;
     description: string | null;
     total: number;
+    /*
+     * Carried into a revision, like the title and the description.
+     *
+     * A client who negotiated 60 days does not expect them to silently reset
+     * to the business default because the price changed.
+     */
+    payment_terms_days?: number | null;
     payment_shape: {
       kind: 'single' | 'installments' | 'milestones';
       count?: number;
@@ -123,6 +133,15 @@ export function ProposalBuilderModal({
   const [kind, setKind] = useState<ShapeKind>('single');
   const [stages, setStages] = useState<Stage[]>([]);
   const [installmentCount, setInstallmentCount] = useState(3);
+  /*
+   * How long the client gets to pay, agreed on THIS quote.
+   *
+   * `null` means the business default — which is what most quotes mean, and
+   * what every quote meant before this existed. Applies to all three shapes:
+   * a single payment, each instalment, and each milestone as it is billed.
+   */
+  const [termsDays, setTermsDays] = useState<number | null>(null);
+  const [defaultTermsDays, setDefaultTermsDays] = useState(DEFAULT_PAYMENT_TERMS_DAYS);
   const [frequency, setFrequency] = useState<'weekly' | 'biweekly' | 'monthly' | 'quarterly'>(
     'monthly'
   );
@@ -222,6 +241,7 @@ export function ProposalBuilderModal({
     }
 
     setValidUntil('');
+    setTermsDays(basedOn?.payment_terms_days ?? null);
     setAttachDocument(false);
     setFile(null);
     setError(null);
@@ -249,6 +269,30 @@ export function ProposalBuilderModal({
   const sendCurrency = ACCEPTED.includes((currency || '').toUpperCase())
     ? currency.toUpperCase()
     : 'USD';
+
+  /*
+   * The business default, fetched so the control can NAME it.
+   *
+   * "Default" as a bare word tells an owner nothing — they need to see that it
+   * means 30 days before deciding this job needs 60.
+   */
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetch('/api/business-os/invoice-settings')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (cancelled || !d?.data) return;
+        setDefaultTermsDays(d.data.invoice_payment_terms_days ?? DEFAULT_PAYMENT_TERMS_DAYS);
+      })
+      .catch(() => {
+        // A failed read is not worth blocking the quote: the server resolves
+        // the same default when the invoice is raised.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   const totalNumber = Number(total.replace(/,/g, ''));
   const totalValid = total.trim() !== '' && Number.isFinite(totalNumber) && totalNumber > 0;
@@ -298,6 +342,42 @@ export function ProposalBuilderModal({
 
   const canSend =
     totalValid && title.trim().length > 0 && splitComplete && stagesNamed && documentReady && !sending;
+
+  /**
+   * A pill segmented control, matching the services list.
+   *
+   * Copied in shape from `SchedulingServicesList`, which is where the payment
+   * plan is chosen today — a fully-rounded track holding fully-rounded
+   * segments, the active one raised onto the surface colour rather than
+   * outlined. Radio cards would be a heavier answer than these questions
+   * deserve; they are short, mutually exclusive labels.
+   */
+  const segment = (
+    options: { value: string; label: string; active: boolean; onClick: () => void }[]
+  ) => (
+    <div
+      role="group"
+      className="inline-flex p-0.5 border border-[var(--v2-border)] bg-[var(--v2-bg)] self-start"
+      style={{ borderRadius: '999px' }}
+    >
+      {options.map(option => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={option.onClick}
+          aria-pressed={option.active}
+          className={`px-3.5 py-1.5 text-[12.5px] transition-colors ${
+            option.active
+              ? 'bg-[var(--v2-surface)] text-[var(--v2-text-primary)] font-medium shadow-sm'
+              : 'text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]'
+          }`}
+          style={{ borderRadius: '999px' }}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
 
   const handleSend = async () => {
     if (!canSend) return;
@@ -375,6 +455,7 @@ export function ProposalBuilderModal({
           payment_shape,
           supersedes_id: supersedesId,
           document_id: documentId,
+          payment_terms_days: termsDays,
         }),
       });
       const created = await createRes.json();
@@ -424,33 +505,51 @@ export function ProposalBuilderModal({
         It collapses on narrow screens rather than shrinking both halves into
         uselessness.
       */}
+      {/*
+        Built to the service editor's pattern — same shell, same sticky header
+        with an accent tile, same scrolling body, same footer rule. Two dialogs
+        that create the things a business sells should not look like two
+        products.
+
+        The width is still a STYLE, not a class: `DialogContent` hard-codes
+        `max-w-lg` in its own class list, and this project's `cn` is a plain
+        join with no tailwind-merge — so an overriding class would leave both on
+        the element and let CSS source order decide. An inline style beats every
+        class outright.
+      */}
       <DialogContent
-        className="max-h-[90vh] overflow-hidden flex flex-col p-0 transition-[max-width] duration-200"
-        /*
-         * Width as a STYLE, not a class.
-         *
-         * `DialogContent` hard-codes `max-w-lg` in its own class list, and this
-         * project's `cn` is a plain join with no tailwind-merge — so passing
-         * `max-w-5xl` leaves both classes on the element and lets CSS source
-         * order decide which wins. That is a coin-flip that depends on how
-         * Tailwind happens to emit its scale. An inline style beats every class
-         * outright, which is the one thing that is not in question here.
-         */
-        style={{ maxWidth: file ? '64rem' : '32rem' }}
+        className="w-full h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden transition-[max-width] duration-200"
+        style={{ maxWidth: file ? '64rem' : '42rem' }}
         dir={isRTL ? 'rtl' : 'ltr'}
       >
-        <DialogHeader className="px-5 pt-5 pb-3 rtl:text-right">
-          <DialogTitle className="flex items-center gap-2 text-lg font-semibold text-[var(--v2-text-primary)]">
-            <FileText className="w-5 h-5" />
-            {supersedesId ? t('proposal.revise_title') : t('proposal.new_title')}
-          </DialogTitle>
-          <p className="text-sm text-[var(--v2-text-secondary)]">
-            {t('proposal.for')} {contactName}
-          </p>
-        </DialogHeader>
+        {/* Sticky header — `pe-14` leaves room for the close button. */}
+        <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 pe-12 sm:pe-14 bg-[var(--v2-surface)]">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div
+              className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg sm:rounded-xl flex items-center justify-center flex-shrink-0 border"
+              style={{
+                color: 'var(--v2-primary)',
+                borderColor: 'var(--v2-primary)',
+                background: 'color-mix(in srgb, var(--v2-primary) 10%, transparent)',
+              }}
+            >
+              <FileText className="w-5 h-5 sm:w-6 sm:h-6" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <DialogHeader>
+                <DialogTitle className="text-lg sm:text-xl font-semibold text-[var(--v2-text-primary)] rtl:text-right truncate">
+                  {supersedesId ? t('proposal.revise_title') : t('proposal.new_title')}
+                </DialogTitle>
+              </DialogHeader>
+              <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mt-1 truncate">
+                {t('proposal.for')} {contactName}
+              </p>
+            </div>
+          </div>
+        </div>
 
         <div className="flex min-h-0 flex-1">
-        <div className={`overflow-y-auto px-5 pb-4 space-y-4 ${file ? 'w-full md:w-[420px] md:shrink-0' : 'flex-1'}`}>
+        <div className={`overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 ${file ? 'w-full md:w-[420px] md:shrink-0' : 'flex-1'}`}>
           {/* Why they said no, when this is a revision. The owner is quoting
               against a stated objection, and it belongs on screen while they
               set the new number — not one drawer away. */}
@@ -464,14 +563,14 @@ export function ProposalBuilderModal({
           )}
 
           <div>
-            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
+            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
               {t('proposal.field.title')}
             </label>
             <Input value={title} onChange={e => setTitle(e.target.value)} maxLength={200} />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
+            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
               {t('proposal.field.description')}
             </label>
             <textarea
@@ -489,7 +588,7 @@ export function ProposalBuilderModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
+              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
                 {t('proposal.field.total')}
               </label>
               <Input
@@ -501,47 +600,84 @@ export function ProposalBuilderModal({
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
+              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
                 {t('proposal.field.valid_until')}
               </label>
+              {/*
+                `max` is not decoration.
+
+                A native date input accepts a five-digit year — type a 6 in
+                front of 2026 and the browser submits "62026-09-10" without
+                complaint. Three quotes in this database carry exactly that, and
+                every screen that shows one reads "10 בספט׳ 62026". The API
+                refuses it now too; this stops it a step earlier, where the
+                person can still see what they typed.
+              */}
               <Input
                 type="date"
                 value={validUntil}
+                max={`${new Date().getFullYear() + 10}-12-31`}
                 onChange={e => setValidUntil(e.target.value)}
               />
             </div>
           </div>
 
+          {/*
+            When it has to be paid.
+            ───────────────────────────────────────────────────────────────────
+            Applies to whichever shape is chosen below: the single payment, each
+            instalment, and each milestone as it is billed. Sits above the shape
+            for that reason — it is a term of the whole agreement, not a
+            property of one arrangement.
+          */}
+          <div>
+            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+              {t('proposal.field.terms')}
+            </label>
+            {/* The same segmented control, so the two questions on this
+                screen read as one form rather than two. */}
+            {segment([
+              {
+                value: 'default',
+                // Names its number, so "default" is not a word the owner has to
+                // go and look up.
+                label: t('proposal.terms_default').replace('{days}', String(defaultTermsDays)),
+                active: termsDays === null,
+                onClick: () => setTermsDays(null),
+              },
+              ...PAYMENT_TERMS_PRESETS.filter(preset => preset.days >= 0).map(preset => ({
+                value: preset.value,
+                label: t(`invoice.payment_terms_values.${preset.key}`),
+                active: termsDays === preset.days,
+                onClick: () => setTermsDays(preset.days),
+              })),
+            ])}
+          </div>
+
           {/* How the money arrives. */}
           <div>
-            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
+            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
               {t('proposal.field.payment')}
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              {(['single', 'milestones', 'installments'] as ShapeKind[]).map(option => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => {
-                    setKind(option);
-                    if (option === 'milestones' && stages.length === 0) applyPreset('deposit_balance');
-                  }}
-                  className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
-                    kind === option
-                      ? 'border-[var(--v2-primary)] bg-[var(--v2-primary)]/10 text-[var(--v2-primary)] font-medium'
-                      : 'border-[var(--v2-border)] text-[var(--v2-text-secondary)]'
-                  }`}
-                >
-                  {t(`proposal.shape.${option}`)}
-                </button>
-              ))}
-            </div>
+            {segment(
+              (['single', 'milestones', 'installments'] as ShapeKind[]).map(option => ({
+                value: option,
+                label: t(`proposal.shape.${option}`),
+                active: kind === option,
+                onClick: () => {
+                  setKind(option);
+                  if (option === 'milestones' && stages.length === 0) {
+                    applyPreset('deposit_balance');
+                  }
+                },
+              }))
+            )}
           </div>
 
           {kind === 'installments' && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
+                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
                   {t('proposal.field.count')}
                 </label>
                 <Input
@@ -553,7 +689,7 @@ export function ProposalBuilderModal({
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
+                <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
                   {t('proposal.field.frequency')}
                 </label>
                 <select
@@ -577,23 +713,29 @@ export function ProposalBuilderModal({
                 <label className="text-sm font-medium text-[var(--v2-text-primary)]">
                   {t('proposal.field.stages')}
                 </label>
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => applyPreset('deposit_balance')}
-                    className="text-xs text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)]"
-                  >
-                    50/50
-                  </button>
-                  <span className="text-xs text-[var(--v2-border)]">·</span>
-                  <button
-                    type="button"
-                    onClick={() => applyPreset('thirds')}
-                    className="text-xs text-[var(--v2-text-secondary)] hover:text-[var(--v2-primary)]"
-                  >
-                    30/40/30
-                  </button>
-                </div>
+                {/*
+                  The same segmented control as the two above.
+                  ─────────────────────────────────────────────────────────────
+                  `active` is computed from the stages rather than remembered:
+                  these apply a split, and the owner can edit any percentage
+                  afterwards. A segment that stayed lit after the numbers had
+                  been changed would be claiming a split that is no longer
+                  there, so it un-lights the moment they diverge.
+                */}
+                {segment(
+                  (Object.keys(PRESETS) as Array<keyof typeof PRESETS>).map(key => {
+                    const preset = PRESETS[key];
+                    const matches =
+                      stages.length === preset.length &&
+                      preset.every((p, i) => Number(stages[i]?.percent) === p.percent);
+                    return {
+                      value: key,
+                      label: preset.map(p => p.percent).join('/'),
+                      active: matches,
+                      onClick: () => applyPreset(key),
+                    };
+                  })
+                )}
               </div>
 
               {stages.map((stage, index) => (
@@ -831,20 +973,44 @@ export function ProposalBuilderModal({
         )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-[var(--v2-border)] px-5 py-3">
-          <Button variant="ghost" onClick={onClose} disabled={sending}>
+        {/*
+          Footer to the service editor's pattern: raised bar, outlined neutral
+          cancel, outlined-and-tinted primary. Not a filled button — the same
+          reasoning the configuration dialog records, that a filled action in
+          one dialog reads as a different product from an outlined one in its
+          neighbour.
+        */}
+        <div className="flex-shrink-0 flex justify-end gap-3 p-4 sm:p-6 border-t border-[var(--v2-border)] bg-[var(--v2-surface)]">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={sending}
+            className="px-5 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+          >
             {t('proposal.cancel')}
-          </Button>
-          <Button onClick={handleSend} disabled={!canSend}>
+          </button>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={!canSend}
+            className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium border transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              borderRadius: 'var(--v2-radius-button)',
+              color: 'var(--v2-primary)',
+              borderColor: 'var(--v2-primary)',
+              background: 'color-mix(in srgb, var(--v2-primary) 10%, transparent)',
+            }}
+          >
             {sending ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
               <>
-                <Send className="w-4 h-4 me-1.5" />
+                <Send className="w-4 h-4" />
                 {t('proposal.send')}
               </>
             )}
-          </Button>
+          </button>
         </div>
       </DialogContent>
     </Dialog>

@@ -18,6 +18,11 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { sendInvoice } from '@/lib/services/InvoiceDeliveryService';
+import {
+  dueDateFromTerms,
+  resolveTermsDays,
+  termsValueForDays,
+} from '@/lib/payments/paymentTerms';
 
 const logger = createLogger({ module: 'PaymentStageCompleteAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -76,9 +81,27 @@ export async function POST(
 
     const { data: proposal } = await supabaseServer
       .from('proposals')
-      .select('title, currency')
+      .select('title, currency, payment_terms_days')
       .eq('id', stage.proposal_id)
       .maybeSingle();
+
+    /*
+     * The same terms the deposit got.
+     *
+     * A milestone billed six weeks after acceptance still belongs to the job
+     * that was agreed — so it inherits the quote's terms, not whatever the
+     * business default happens to be by then.
+     */
+    const { data: profile } = await supabaseServer
+      .from('business_profiles')
+      .select('invoice_payment_terms_days')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    const termsDays = resolveTermsDays(
+      proposal?.payment_terms_days,
+      profile?.invoice_payment_terms_days
+    );
 
     const numberResult = await paymentInvoiceRepository.getNextInvoiceNumber(user.id);
     const description = stage.label
@@ -98,8 +121,8 @@ export async function POST(
       // `sendInvoice` moves it to 'sent'.
       status: 'draft',
       line_items: [{ description, quantity: 1, unit_price: amount, amount }],
-      due_date: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-      payment_terms: null,
+      due_date: dueDateFromTerms(termsDays),
+      payment_terms: termsValueForDays(termsDays),
       notes: null,
       internal_notes: null,
       sent_at: null,

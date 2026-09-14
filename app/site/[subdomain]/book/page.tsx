@@ -8,6 +8,9 @@ import { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { BookingWidget } from './BookingWidget';
 import { isValidLocale, getDirection, type Locale } from '@/lib/i18n/config';
+import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
+import { PublicFontLinks } from '@/components/public/PublicFontLinks';
+import { DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
 
 // Flow step types - matches the wizard
 type ClientFlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
@@ -149,44 +152,57 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
     notFound();
   }
 
-  const primaryColor = websiteData?.theme?.colors?.primary || '#4F6EF7';
+  /*
+   * The business's theme, from the same place every other public surface takes
+   * it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS PAGE CHANGED
+   *
+   * This was the one public surface on none of the platform's theming. It read
+   * a single hex off the website row, fell back to a legacy `#4F6EF7`, declared
+   * its own `--booking-primary` on `:root`, loaded its own copy of Heebo and
+   * forced `body { font-family: Heebo }` — which overrode whatever typeface the
+   * business had chosen. Everything else was hardcoded Tailwind greys.
+   *
+   * So a business on a dark archetype sent a customer from a dark site to a
+   * light grey booking page in a different typeface, mid-booking. `--booking-primary`
+   * is kept as an alias because the 1,497-line widget below reads it
+   * throughout; it now derives from the theme rather than competing with it.
+   */
+  const theme = websiteData?.theme || DEFAULT_PUBLIC_THEME;
+  const primaryColor = theme.colors?.primary || DEFAULT_PUBLIC_THEME.colors.primary;
   const language = (websiteData?.language || 'en') as Locale;
   const isRTL = isValidLocale(language) && getDirection(language) === 'rtl';
   const labels = LABELS[language as keyof typeof LABELS] || LABELS.en;
 
-  // Always use Heebo font (platform standard)
-  const heeboFontLink = 'https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700&subset=hebrew,latin&display=swap';
-
   return (
     <>
-      {/* Google Fonts - Heebo (platform standard) */}
-      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
-      <link rel="stylesheet" href={heeboFontLink} />
+      <PublicFontLinks theme={theme} />
+      <PublicThemeStyle theme={theme} locale={language} scope="[data-ap-site]" />
 
-      {/* Global styles from theme */}
       <style
         dangerouslySetInnerHTML={{
           __html: `
-            :root {
-              --booking-primary: ${primaryColor};
-              --booking-primary-hover: ${primaryColor}dd;
-            }
-            body {
-              font-family: 'Heebo', sans-serif;
+            [data-ap-site] {
+              --booking-primary: var(--ap-brand);
+              --booking-primary-hover: var(--ap-brand-hover);
             }
             /* Phone input styles */
             .phone-input-booking .PhoneInputInput {
               width: 100%;
               padding: 0.625rem 1rem;
-              border: 1px solid #e5e7eb;
-              border-radius: 0.5rem;
+              border: 1px solid var(--ap-border);
+              border-radius: var(--ap-radius-md);
+              background: var(--ap-surface);
+              color: var(--ap-text);
               font-size: 1rem;
               outline: none;
               transition: all 0.2s;
             }
             .phone-input-booking .PhoneInputInput:focus {
-              border-color: ${primaryColor};
-              box-shadow: 0 0 0 2px ${primaryColor}33;
+              border-color: var(--ap-brand);
+              box-shadow: 0 0 0 2px var(--ap-brand-ring);
             }
             .phone-input-booking .PhoneInputCountry {
               display: none;
@@ -195,14 +211,22 @@ export default async function PublicBookingPage({ params, searchParams }: PagePr
         }}
       />
 
-      <main className="min-h-screen bg-gray-50" dir={isRTL ? 'rtl' : 'ltr'}>
+      <main
+        data-ap-site=""
+        className="min-h-screen"
+        dir={isRTL ? 'rtl' : 'ltr'}
+        style={{ background: 'var(--ap-bg)', color: 'var(--ap-text)' }}
+      >
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 py-6">
+        <header
+          className="apc-nav py-6"
+          style={{ background: 'var(--ap-surface)', borderBlockEnd: '1px solid var(--ap-border)' }}
+        >
           <div className="max-w-3xl mx-auto px-4">
-            <h1 className="text-2xl font-bold text-gray-900">
+            <h1 className="apc-wm text-2xl font-bold" style={{ color: 'var(--ap-text)' }}>
               {labels.bookWith} {businessData.businessName}
             </h1>
-            <p className="text-gray-600 mt-1">
+            <p className="mt-1" style={{ color: 'var(--ap-text-muted)' }}>
               {labels.selectService}
             </p>
           </div>

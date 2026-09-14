@@ -1135,9 +1135,18 @@ export default function WebsiteManagementPage() {
     }
   }, [smartLinksRefreshTrigger]);
 
-  const fetchData = async () => {
+  /**
+   * Reload everything this page shows.
+   *
+   * `silent` skips the loading state, for a refresh that follows an action the
+   * owner has already seen the result of. Applying a template is the case it
+   * was added for: the tab already shows the new choice, so tearing the editor
+   * down to a spinner and rebuilding it reads as a failure rather than as a
+   * confirmation — and it throws away the scroll position on a long page.
+   */
+  const fetchData = async ({ silent = false }: { silent?: boolean } = {}) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
 
       // Three calls that need nothing from anything above them, so they go out
       // now rather than queueing behind the profile and the pages. Their
@@ -1150,6 +1159,16 @@ export default function WebsiteManagementPage() {
       );
       const smartLinksPromise = startFetch<{ success: boolean; links?: SmartLink[] }>(
         '/api/smart-links?active=false'
+      );
+
+      // The pages and the services take no arguments and read nothing from the
+      // profile, so they go out alongside it rather than behind it. Only the
+      // TEMPLATES call needs the vertical, and that one still waits below.
+      const pagesPromise = startFetch<{ success: boolean; pages?: WebsitePage[] }>(
+        '/api/website/pages'
+      );
+      const servicesPromise = startFetch<{ success: boolean; services?: { price?: number }[] }>(
+        '/api/scheduling/services'
       );
 
       // First fetch profile to get vertical for template filtering
@@ -1185,16 +1204,16 @@ export default function WebsiteManagementPage() {
         ? `/api/website/templates?${templateParams.toString()}`
         : '/api/website/templates';
 
-      const [pagesResponse, templatesResponse, servicesResponse] = await Promise.all([
-        fetch('/api/website/pages'),
-        fetch(templatesUrl),
-        fetch('/api/scheduling/services')
-      ]);
+      // Templates alone still waits for the profile — it is the only one of the
+      // three whose URL is built from the vertical. The other two were started
+      // above and are collected here, at the line they were read before, so
+      // everything below sees the same values in the same order as always.
+      const templatesResponse = await fetch(templatesUrl);
 
       const [pagesData, templatesData, servicesData] = await Promise.all([
-        pagesResponse.json(),
+        pagesPromise.then(settled),
         templatesResponse.json(),
-        servicesResponse.json()
+        servicesPromise.then(settled)
       ]);
 
       // Check for paid services
@@ -1433,7 +1452,7 @@ export default function WebsiteManagementPage() {
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch website data');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -2973,6 +2992,37 @@ export default function WebsiteManagementPage() {
     }
   };
 
+  /**
+   * What the contact sidebar will actually show for a field left blank.
+   *
+   * The public page fills these from the business profile, so an empty field
+   * here does not mean "no phone number" — it means "use the one I already
+   * gave you". Showing that value as the placeholder is the difference between
+   * a form that looks unfilled and one that says what it will do.
+   */
+  const contactFromProfile = (column: 'email' | 'phone' | 'address'): string => {
+    const profile = businessProfile as unknown as Record<string, unknown> | null;
+    const value = profile?.[column];
+    return typeof value === 'string' && value.trim() ? value : '';
+  };
+
+  /**
+   * What this contact field shows.
+   *
+   * The business profile's value, as a real value rather than a placeholder.
+   * A greyed-out hint reads as "nothing here" — the owner cannot tell whether
+   * the page will show their phone number or nothing at all, and the obvious
+   * response is to type it in again. The value they already gave the platform
+   * belongs in the field.
+   *
+   * Anything typed here still wins, for this page only.
+   */
+  const contactValue = (field: string, column: 'email' | 'phone' | 'address'): string => {
+    const own = editingBlockContent?.[field];
+    if (typeof own === 'string' && own.trim()) return own;
+    return contactFromProfile(column);
+  };
+
   // Save design settings
   const handleSaveDesign = async () => {
     try {
@@ -3180,13 +3230,21 @@ export default function WebsiteManagementPage() {
         setPage(data.page);
         // The route applies this business-wide, so the tab's mark follows it.
         setCurrentTemplateId(templateId);
-        // Fetch updated blocks (with content from central store - content persists!)
-        const blocksResponse = await fetch(`/api/website/pages/${page.id}/blocks-with-content`);
-        const blocksData = await blocksResponse.json();
-        if (blocksData.success) {
-          setBlocks(blocksData.blocks || []);
-        }
         setViewMode('overview');
+
+        /*
+         * Everything else this page shows, refreshed without a spinner.
+         *
+         * This used to re-fetch only the open page's blocks, but the route
+         * applies the template BUSINESS-WIDE: every landing page in `allPages`
+         * is now wearing a look the list still described with the old one, and
+         * the theme behind the section previews was the old theme until
+         * something else happened to reload. Silent because the gallery has
+         * already shown the owner their new choice — dropping the editor to a
+         * spinner to confirm it reads as a failure, and loses the scroll
+         * position on a long page.
+         */
+        await fetchData({ silent: true });
       } else {
         logger.error({ error: data.error, details: data.details }, 'Failed to apply template');
       }
@@ -4575,9 +4633,30 @@ export default function WebsiteManagementPage() {
                                         {labels.hero_image}
                                       </label>
                                       <MediaUploader
-                                        value={(editingBlockContent.image as string) || ''}
-                                        onChange={(url) => updateBlockField('image', url)}
-                                        onRemove={() => updateBlockField('image', '')}
+                                        section="hero"
+                                        aspect="portrait"
+                                        /*
+                                         * `background_image`, not `image`.
+                                         *
+                                         * The editor wrote `content.image` and
+                                         * every hero renderer — the block and
+                                         * the template shape alike — reads
+                                         * `content.background_image`. So a
+                                         * picture chosen here saved correctly,
+                                         * came back in the field on reopen, and
+                                         * never once appeared on the page: it
+                                         * was written to a key nothing reads.
+                                         *
+                                         * `image` is still read first so any
+                                         * hero that already has one keeps it.
+                                         */
+                                        value={
+                                          (editingBlockContent.background_image as string)
+                                          || (editingBlockContent.image as string)
+                                          || ''
+                                        }
+                                        onChange={(url) => updateBlockField('background_image', url)}
+                                        onRemove={() => updateBlockField('background_image', '')}
                                         placeholder={language === 'he' ? 'גרור תמונה או לחץ להעלאה' : language === 'es' ? 'Arrastra imagen o haz clic' : 'Drag image or click to upload'}
                                         previewClassName="w-full h-40"
                                       />
@@ -4858,6 +4937,8 @@ export default function WebsiteManagementPage() {
                                         {labels.section_image}
                                       </label>
                                       <MediaUploader
+                                        section="about"
+                                        aspect="portrait"
                                         value={(editingBlockContent.image as string) || ''}
                                         onChange={(url) => updateBlockField('image', url)}
                                         onRemove={() => updateBlockField('image', '')}
@@ -5919,9 +6000,9 @@ export default function WebsiteManagementPage() {
                                           </label>
                                           <input
                                             type="email"
-                                            value={(editingBlockContent.business_email as string) || ''}
+                                            value={contactValue('business_email', 'email')}
                                             onChange={(e) => updateBlockField('business_email', e.target.value)}
-                                            placeholder={language === 'he' ? 'contact@example.com' : 'contact@example.com'}
+                                            placeholder="contact@example.com"
                                             className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                           />
                                         </div>
@@ -5932,8 +6013,11 @@ export default function WebsiteManagementPage() {
                                           <input
                                             type="tel"
                                             dir="ltr"
-                                            value={(editingBlockContent.business_phone as string) || ''}
+                                            value={contactValue('business_phone', 'phone')}
                                             onChange={(e) => updateBlockField('business_phone', e.target.value)}
+                                            /* The profile value, shown rather than copied: an empty field means
+                                               "use my business profile", which is what the public page does. Typing
+                                               here overrides it for this page only. */
                                             placeholder="+1 (555) 123-4567"
                                             className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                           />
@@ -5944,9 +6028,9 @@ export default function WebsiteManagementPage() {
                                           </label>
                                           <input
                                             type="text"
-                                            value={(editingBlockContent.business_address as string) || ''}
+                                            value={contactValue('business_address', 'address')}
                                             onChange={(e) => updateBlockField('business_address', e.target.value)}
-                                            placeholder={language === 'he' ? 'רחוב הראשי 123, תל אביב' : language === 'es' ? 'Calle Principal 123' : '123 Main Street, City'}
+                                            placeholder={"language === 'he' ? 'רחוב הראשי 123, תל אביב' : language === 'es' ? 'Calle Principal 123' : '123 Main Street, City'"}
                                             className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                           />
                                         </div>
@@ -6210,6 +6294,8 @@ export default function WebsiteManagementPage() {
                                               </button>
                                             </div>
                                             <MediaUploader
+                                              section="team"
+                                              aspect="square"
                                               value={member.image || ''}
                                               onChange={(url) => {
                                                 const members = [...(editingBlockContent.members as Array<{ name: string; role: string; bio?: string; image?: string }>)];
@@ -6316,6 +6402,8 @@ export default function WebsiteManagementPage() {
                                         {((editingBlockContent.images as Array<{ url: string; caption?: string }>) || []).map((image, idx) => (
                                           <div key={idx} className="space-y-1">
                                             <MediaUploader
+                                              section="gallery"
+                                              aspect="wide"
                                               value={image.url}
                                               onChange={(url) => {
                                                 const images = [...(editingBlockContent.images as Array<{ url: string; caption?: string }>)];
@@ -6467,6 +6555,8 @@ export default function WebsiteManagementPage() {
                                         {((editingBlockContent.logos as Array<{ url: string; name: string }>) || []).map((logo, idx) => (
                                           <div key={idx} className="space-y-2">
                                             <MediaUploader
+                                              section="logo_cloud"
+                                              aspect="square"
                                               value={logo.url}
                                               onChange={(url) => {
                                                 const logos = [...(editingBlockContent.logos as Array<{ url: string; name: string }>)];
@@ -7049,7 +7139,7 @@ export default function WebsiteManagementPage() {
                       {labels.current_template}
                     </p>
                     <p className="font-medium text-[var(--v2-text-primary)]">
-                      {getTranslatedTemplateName(templates.find(t => t.id === currentTemplateId)?.name || currentTemplateId || '', language)}
+                      {getTranslatedTemplateName(templates.find(t => t.id === currentTemplateId)?.name || currentTemplateId || '', language, currentTemplateId)}
                     </p>
                   </div>
                 )}
@@ -7122,7 +7212,7 @@ export default function WebsiteManagementPage() {
                         {/* Template Info */}
                         <div className="p-2.5">
                           <h3 className="text-xs font-semibold text-[var(--v2-text-primary)] mb-0.5 truncate">
-                            {getTranslatedTemplateName(template.name, language)}
+                            {getTranslatedTemplateName(template.name, language, template.id)}
                           </h3>
                           <p className="text-[10px] text-[var(--v2-text-muted)]">
                             {template.theme?.brand_voice
@@ -7277,7 +7367,7 @@ export default function WebsiteManagementPage() {
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     >
                       <p className="text-sm font-medium text-[var(--v2-text-primary)] truncate">
-                        {getTranslatedTemplateName(template.name, language)}
+                        {getTranslatedTemplateName(template.name, language, template.id)}
                       </p>
                       <p className="text-xs text-[var(--v2-text-muted)] capitalize">
                         {getTranslatedVertical(template.vertical, language)}

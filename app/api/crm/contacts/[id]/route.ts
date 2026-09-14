@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
-import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { crmContactRepository, type CRMContactUpdate } from '@/lib/repositories/CRMContactRepository';
 import { generateDiff } from '@/lib/audit/diff';
 import { z } from 'zod';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
@@ -29,7 +29,22 @@ const updateContactSchema = z.object({
   stage: z.string().min(1).max(50).optional(),
   source: z.string().min(1).max(50).optional(),
   tags: z.array(z.string()).optional(),
-  custom_fields: z.record(z.any()).optional()
+  custom_fields: z.record(z.any()).optional(),
+  /**
+   * "Deactivate this contact", from the drawer.
+   *
+   * NOT a column. `crm_contacts` has no `is_active`, and nothing else in the
+   * product has ever read one — this field was declared nowhere, so Zod stripped
+   * it, the repository ran `.update({})`, PostgREST matched zero rows and
+   * `.single()` turned that into a 500. The button had never once worked.
+   *
+   * What deactivating a contact MEANS is already modelled: the pipeline carries
+   * a stage typed `past_client` or `archived`, and moving them there is the
+   * business's own way of saying the relationship is over. So this is read as an
+   * intent and resolved into a stage below, rather than being given a column of
+   * its own that every contact query would then have to learn to filter.
+   */
+  is_active: z.literal(false).optional()
 });
 
 export async function GET(
@@ -106,11 +121,63 @@ export async function PUT(
 
     requestLogger.info({ userId: user.id, contactId: id }, 'Updating CRM contact');
 
+    /*
+     * Resolve "deactivate" into the stage that means it.
+     *
+     * By TYPE, never by key: pipelines are generated per business during
+     * onboarding, so the stage is called `inactive` for one and `closed_lost`
+     * or something Hebrew for the next. `past_client` first — the relationship
+     * ended — then `archived`, and the earliest of either by position.
+     */
+    const { is_active, ...fields } = validated;
+    const updates: CRMContactUpdate = { ...fields };
+
+    if (is_active === false) {
+      const { data: retired } = await supabaseServer
+        .from('crm_pipeline_stages')
+        .select('stage_key, stage_type, position')
+        .eq('user_id', user.id)
+        .in('stage_type', ['past_client', 'archived'])
+        .order('position', { ascending: true });
+
+      const target =
+        retired?.find(stage => stage.stage_type === 'past_client') ??
+        retired?.find(stage => stage.stage_type === 'archived');
+
+      if (!target) {
+        // Said plainly rather than failed: a business whose pipeline has no
+        // closing stage has nowhere to put this person, and that is a thing to
+        // fix in the pipeline, not an error in the request.
+        requestLogger.warn({ userId: user.id, contactId: id }, 'No past-client stage to deactivate into');
+        return NextResponse.json(
+          { success: false, error: 'Your pipeline has no stage for past clients. Add one, then try again.' },
+          { status: 400 }
+        );
+      }
+
+      updates.stage = target.stage_key;
+    }
+
+    /*
+     * Nothing to write is a BAD REQUEST, not a 500.
+     *
+     * An empty update matches no rows, and `.single()` reports that as
+     * PGRST116 — which is how a field the schema quietly dropped surfaced as
+     * "Failed to update contact" with a stack trace instead of "you sent me
+     * nothing".
+     */
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Nothing to update' },
+        { status: 400 }
+      );
+    }
+
     // 3. Update contact. The previous row is read first so the audit entry can
     // say what the value changed FROM — passing the request payload alone
     // records only where a field landed, which is the less useful half.
     const before = await crmContactRepository.findById(id, user.id);
-    const result = await crmContactRepository.update(id, user.id, validated);
+    const result = await crmContactRepository.update(id, user.id, updates);
 
     if (result.error) {
       requestLogger.error({ err: result.error, contactId: id, userId: user.id }, 'Failed to update contact');
@@ -134,7 +201,7 @@ export async function PUT(
         // and say nothing.
         changes: (before.data
           ? generateDiff(before.data, result.data!, { ignoreFields: ['updated_at'] })
-          : validated) ?? undefined,
+          : updates) ?? undefined,
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));

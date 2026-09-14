@@ -103,6 +103,8 @@ export interface DrawerProposal {
   created_at: string;
   /** The request this quote answers. Null for rows predating the link. */
   booking_id: string | null;
+  /** Days to pay agreed on this version. Null inherits the business default. */
+  payment_terms_days: number | null;
   /** The proposal document sent with THIS version, when there was one. */
   document: { name: string; size: number | null } | null;
   created_invoice_id: string | null;

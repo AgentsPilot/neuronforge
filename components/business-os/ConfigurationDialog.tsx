@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { intakeReachesClient } from '@/lib/business-os/intakeReach';
+import { configTabsForShape, shapeFromServices } from '@/lib/business-os/businessShape';
 import { X, Settings, Clock, CreditCard, Loader2, Check, AlertTriangle, ClipboardList, Sparkles, Building2, FileText } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
@@ -533,6 +534,36 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     setStripeContinueMode(false);
   };
 
+  /*
+   * What this business actually is, read off its own catalogue.
+   *
+   * The services are already loaded here for the Services tab, so this costs no
+   * request — the same rules the readiness card resolves on the server,
+   * resolved in the browser from rows already in hand.
+   */
+  const businessShape = useMemo(() => shapeFromServices(services), [services]);
+
+  /**
+   * The tabs this business has any use for.
+   *
+   * A consultancy that invoices for everything was being shown the Stripe tab
+   * and asked to hand over an ID for an account it will never open, while its
+   * own readiness card — resolving these very predicates — correctly never
+   * mentioned Stripe. One rule now answers both.
+   *
+   * `hasProcessorAccount` keeps the tab reachable for a business that connected
+   * Stripe and has since moved its whole catalogue onto invoices: the tab
+   * carrying the disconnect button must not vanish at the moment it becomes the
+   * one thing they want it for.
+   */
+  const shapeTabs = useMemo(
+    () =>
+      configTabsForShape(businessShape, {
+        hasProcessorAccount: stripeConnected || stripeOnboardingPending || stripeDisconnected,
+      }),
+    [businessShape, stripeConnected, stripeOnboardingPending, stripeDisconnected]
+  );
+
   if (!isOpen) return null;
 
   const allTabs = [
@@ -544,8 +575,24 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
     { key: 'invoice' as ConfigTab, label: t('config.tab.invoice'), icon: FileText },
   ];
 
-  // Filter tabs if visibleTabs is specified
-  const tabs = visibleTabs ? allTabs.filter(tab => visibleTabs.includes(tab.key)) : allTabs;
+  /*
+   * `visibleTabs` still wins.
+   *
+   * It is how a readiness step or a chat command opens ONE tab, and it has to
+   * be able to open a tab the shape would otherwise hide — "connect Stripe" is
+   * exactly such a step, and it is offered before there is a catalogue to read
+   * it off.
+   *
+   * Otherwise: what the shape says, plus the tab that is open. A tab must never
+   * be pulled out from under someone who is standing on it — publishing a
+   * product from the Services tab changes the shape, and the tab you are
+   * reading should not disappear as a result.
+   */
+  const tabs = visibleTabs
+    ? allTabs.filter(tab => visibleTabs.includes(tab.key))
+    : allTabs.filter(
+        tab => shapeTabs.includes(tab.key) || tab.key === activeTab || tab.key === initialTab
+      );
   const showTabBar = tabs.length > 1;
 
   // Get the edited service name for the confirmation dialog
@@ -642,8 +689,29 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                * `chrome={false}`: the tab bar already names this, and the
                * component's own accordion header would be a second title for
                * the same panel.
+               *
+               * No processor PANEL on the invoice tab.
+               *
+               * This tab is company and bank details — what goes at the top of
+               * an invoice and where the client sends the money. A "Payment
+               * Setup Required" notice inside it announced a requirement for
+               * the opposite arrangement, on the one screen a business that
+               * invoices actually needs. Connecting a card processor is the
+               * Payments tab's job, and the shape decides whether that tab is
+               * anything to this business at all.
+               *
+               * The suggestion survives, as one line with a plain no. Taking it
+               * moves to the Payments tab — which the tab filter keeps visible
+               * for the open tab, so it appears even where the shape would
+               * otherwise hide it. Dropped once Stripe is connected: there is
+               * nothing left to suggest.
                */
-              <InvoiceSettingsSection userId={currentUserId} chrome={false} />
+              <InvoiceSettingsSection
+                userId={currentUserId}
+                chrome={false}
+                showProcessor={false}
+                onConnectProcessor={stripeConnected ? undefined : () => setActiveTab('payments')}
+              />
             )}
 
             {activeTab === 'services' && (

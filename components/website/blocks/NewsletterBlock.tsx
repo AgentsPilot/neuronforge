@@ -103,33 +103,33 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
     return (
       <section
         dir={isRTL ? 'rtl' : 'ltr'}
-        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
+        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'ap-bg'} ${className || ''}`}
       >
         <div className={`mx-auto px-4 sm:px-6 ${styles?.max_width ? `max-w-${styles.max_width}` : 'max-w-lg'}`}>
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="bg-gray-50 dark:bg-slate-800 rounded-2xl p-8 text-center"
+            className="ap-card-2 rounded-2xl p-8 text-center"
             style={{ borderRadius: theme?.borderRadius || '1rem' }}
           >
             <div
-              className="w-14 h-14 mx-auto rounded-full flex items-center justify-center mb-6"
+              className="apc-icon w-14 h-14 mx-auto rounded-full flex items-center justify-center mb-6"
               style={{ backgroundColor: `${primaryColor}20` }}
             >
               <Mail className="w-7 h-7" style={{ color: primaryColor }} />
             </div>
 
             <h3
-              className="text-2xl font-bold text-gray-900 dark:text-white mb-3"
-              style={{ fontFamily: 'var(--website-font-heading)' }}
+              className="text-2xl font-bold ap-ink mb-3"
+              style={{ fontFamily: 'var(--ap-font-heading)' }}
             >
               {title || labels.title}
             </h3>
 
             <p
-              className="text-gray-600 dark:text-gray-300 mb-6"
-              style={{ fontFamily: 'var(--website-font-body)' }}
+              className="ap-ink-2 mb-6"
+              style={{ fontFamily: 'var(--ap-font-body)' }}
             >
               {description || labels.description}
             </p>
@@ -150,7 +150,7 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder={placeholder || labels.placeholder}
-                  className="w-full px-4 py-3 bg-white dark:bg-slate-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 transition-all"
+                  className="w-full px-4 py-3 ap-card border ap-line rounded-lg ap-ink ap-placeholder focus:outline-none focus:ring-2 transition-all"
                   style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
                 />
                 {error && (
@@ -196,15 +196,15 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
           className="text-center"
         >
           <h3
-            className={`text-2xl sm:text-3xl font-bold mb-3 ${isGradientBg ? 'text-white' : 'text-gray-900 dark:text-white'}`}
-            style={{ fontFamily: 'var(--website-font-heading)' }}
+            className={`text-2xl sm:text-3xl font-bold mb-3 ${isGradientBg ? 'text-white' : 'ap-ink'}`}
+            style={{ fontFamily: 'var(--ap-font-heading)' }}
           >
             {title || labels.title}
           </h3>
 
           <p
-            className={`mb-8 ${isGradientBg ? 'text-white/80' : 'text-gray-600 dark:text-gray-300'}`}
-            style={{ fontFamily: 'var(--website-font-body)' }}
+            className={`mb-8 ${isGradientBg ? 'text-white/80' : 'ap-ink-2'}`}
+            style={{ fontFamily: 'var(--ap-font-body)' }}
           >
             {description || labels.description}
           </p>
@@ -231,7 +231,7 @@ export function NewsletterBlock({ content, styles, theme, locale, isRTL, classNa
               <button
                 type="submit"
                 disabled={loading}
-                className="px-8 py-3 bg-white text-gray-900 font-semibold rounded-lg hover:bg-gray-100 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                className="px-8 py-3 ap-card ap-ink font-semibold rounded-lg ap-hover disabled:opacity-50 transition-all flex items-center justify-center gap-2"
                 style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
               >
                 {loading ? (

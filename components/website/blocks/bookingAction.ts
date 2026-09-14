@@ -50,3 +50,25 @@ export function canBook(input: {
 }): boolean {
   return Boolean((input.isPreview && input.onOpenBooking) || input.bookingUrl);
 }
+
+/**
+ * Is this section's booking control dead?
+ *
+ * True only on a landing page whose one service has been deleted or switched
+ * off: the routes stamp `serviceUnavailable` on every block that can start a
+ * booking, because a landing page is about a single thing and every button on
+ * it leads there. `resolveBookingAction` would otherwise open booking for the
+ * BUSINESS — offering a client a completely different set of services on a page
+ * written to sell one that no longer exists.
+ *
+ * A homepage's hero, header and CTA never carry the flag; their control is
+ * about the business and has no service to lose.
+ *
+ * Here rather than in each shape because all four sections ask the same
+ * question of the same two fields, and three copies of a predicate is three
+ * places for it to drift.
+ */
+export function bookingIsDead(content: unknown): boolean {
+  const c = content as { serviceId?: string; serviceUnavailable?: boolean } | null;
+  return !!c?.serviceId && c.serviceUnavailable === true;
+}

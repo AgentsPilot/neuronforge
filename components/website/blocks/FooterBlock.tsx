@@ -90,7 +90,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
   return (
     <footer
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-12 sm:py-16'} ${className || ''}`}
+      className={`apc-footer ${styles?.padding || 'py-12 sm:py-16'} ${className || ''}`}
       style={{ backgroundColor: footerBgColor }}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -104,7 +104,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
               viewport={{ once: true }}
               className="text-xl font-bold mb-3"
               style={{
-                fontFamily: 'var(--website-font-heading)',
+                fontFamily: 'var(--ap-font-heading)',
                 color: primaryColor
               }}
             >
@@ -114,7 +114,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
               <p
                 className="text-sm leading-relaxed max-w-xs"
                 style={{
-                  fontFamily: 'var(--website-font-body)',
+                  fontFamily: 'var(--ap-font-body)',
                   color: footerTextColor
                 }}
               >
@@ -202,7 +202,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
                       className="text-sm transition-colors hover:underline"
                       style={{
                         color: footerTextColor,
-                        fontFamily: 'var(--website-font-body)'
+                        fontFamily: 'var(--ap-font-body)'
                       }}
                     >
                       {item.label}
@@ -236,7 +236,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
                       className="text-sm transition-colors hover:underline"
                       style={{
                         color: footerTextColor,
-                        fontFamily: 'var(--website-font-body)'
+                        fontFamily: 'var(--ap-font-body)'
                       }}
                     >
                       {email}
@@ -256,7 +256,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
                       className="text-sm transition-colors hover:underline"
                       style={{
                         color: footerTextColor,
-                        fontFamily: 'var(--website-font-body)'
+                        fontFamily: 'var(--ap-font-body)'
                       }}
                       dir="ltr"
                     >
@@ -276,7 +276,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
                       className="text-sm"
                       style={{
                         color: footerTextColor,
-                        fontFamily: 'var(--website-font-body)'
+                        fontFamily: 'var(--ap-font-body)'
                       }}
                     >
                       {address}
@@ -297,7 +297,7 @@ export function FooterBlock({ content, styles, theme, locale, isRTL, className }
             className="text-sm"
             style={{
               color: footerTextColor,
-              fontFamily: 'var(--website-font-body)'
+              fontFamily: 'var(--ap-font-body)'
             }}
           >
             © {copyright_year} {company_name}. {labels.allRightsReserved}.

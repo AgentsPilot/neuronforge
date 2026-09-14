@@ -185,7 +185,15 @@ export class DetectorEngine {
 
     for (const detector of this.detectors) {
       const vector = CATEGORY_VECTOR[detector.definition.category];
-      if (vector && darkVectors.has(vector)) {
+      /*
+       * An absolute count can opt out of the maturity gate.
+       *
+       * The gate is right for a detector that compares against a baseline, and
+       * wrong for one that counts — "three people are waiting on you" does not
+       * need history to be true, and the businesses the gate silences are the
+       * small ones that can least afford to lose an enquiry.
+       */
+      if (vector && darkVectors.has(vector) && !detector.definition.ignoresVectorMaturity) {
         logger.debug(
           { userId, detectorId: detector.definition.id, vector },
           'Detector skipped: its vector has no data to reason from yet'

@@ -29,7 +29,8 @@ import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import { ServiceDescriptionField } from '@/components/business-os/ServiceDescriptionField';
-import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
+import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoice, getArchetypeLabel } from '@/lib/website-builder/templateLabels';
+import { ArchetypePreview, ArchetypeFontLinks } from '@/components/business-os/ArchetypePreview';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -115,7 +116,23 @@ export interface WizardTemplate {
     font_body?: string;
     font_family?: string;
     brand_voice?: string;
+    /*
+     * The archetype's own shape. `/api/website/templates` answers with designs
+     * now, and the ground, the ink and the typeface are what make one card
+     * different from the next — the three flat colours above cannot show it.
+     */
+    colors?: {
+      primary?: string;
+      secondary?: string;
+      accent?: string;
+      background?: string;
+      surface?: string;
+      text?: string;
+      textSecondary?: string;
+    };
+    fonts?: { heading?: string; body?: string };
   };
+  borderRadius?: string;
 }
 
 interface LandingPageWizardProps {
@@ -976,6 +993,21 @@ export function LandingPageWizard({
       serviceDuration: selectedService?.duration_minutes,
       serviceCurrency: selectedService?.currency || 'USD',
       theme: getSelectedTheme(),
+      /*
+       * Which design the preview is OF.
+       *
+       * `getSelectedTheme` deliberately returns only two colours and two font
+       * names — that is the shape the save endpoint takes. It cannot carry the
+       * archetype's background, type scale, layouts or composition, so without
+       * the id alongside it the preview completed from the platform default and
+       * showed white with 8px corners whichever look was selected. The owner
+       * judged a design they were never shown.
+       *
+       * Undefined when they chose to keep the business's existing look; both
+       * routes then fall back to the business's own template, which is what
+       * that choice means.
+       */
+      templateId: hasExistingTheme && useExistingTheme ? undefined : selectedTemplateId,
       generatedContent: generatedContent || {},
       clientFlow: selectedFlow,
       language,
@@ -2121,6 +2153,9 @@ export function LandingPageWizard({
       {hasExistingTheme && existingTheme && (
         <button
           onClick={() => {
+            // The only path forward when a look already exists. Kept as a
+            // button rather than made static so the step still advances the
+            // way every other step in this wizard does.
             setUseExistingTheme(true);
             goNext();
           }}
@@ -2150,12 +2185,27 @@ export function LandingPageWizard({
         </button>
       )}
 
-      {/* Style presets */}
-      {(!hasExistingTheme || !useExistingTheme) && (
+      {/*
+        The gallery, ONLY for a business that has no look yet.
+        ─────────────────────────────────────────────────────────────────────
+        A landing page does not get its own template. It is the same business
+        as the invoice that follows it and the booking confirmation after that,
+        and a client who meets a near-black page and then receives a cream
+        receipt has not met one business.
+
+        This used to show the gallery whenever the owner unchecked "use my
+        existing look", and the split it created was permanent —
+        `adoptBusinessTemplate` is adopt-only, so the page kept a template the
+        business never wore, and the only repair was to re-apply the business
+        template, which silently overwrote the page.
+
+        The exception is not an exception to that rule: a business whose FIRST
+        surface is a landing page has no template for it to differ from, so its
+        choice here establishes the look for everything built afterwards —
+        exactly as the onboarding build does when that comes first.
+      */}
+      {!hasExistingTheme && (
         <>
-          {hasExistingTheme && (
-            <p className="text-sm text-[var(--v2-text-muted)] text-center pt-2">{labels.or_choose_preset}</p>
-          )}
           {/*
             The real templates, not a private palette.
 
@@ -2168,11 +2218,21 @@ export function LandingPageWizard({
             choosing from one catalogue.
           */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Every design's typeface, in one request. */}
+            <ArchetypeFontLinks
+              families={templates.flatMap(t => [
+                t.theme.fonts?.heading,
+                t.theme.fonts?.body,
+                t.theme.font_heading,
+                t.theme.font_family,
+              ])}
+            />
             {templates.map((template) => {
               const isSelected = selectedTemplateId === template.id && !useExistingTheme;
               const primary = template.theme.primary_color || '#4F6EF7';
               const secondary = template.theme.secondary_color || '#6366F1';
               const accent = template.theme.accent_color || secondary;
+              const archetypeLabel = getArchetypeLabel(template.id, language as 'en' | 'es' | 'he');
 
               return (
                 <button
@@ -2187,24 +2247,39 @@ export function LandingPageWizard({
                       : 'border-[var(--v2-border)] hover:border-[#4F6EF7]/50'
                   }`}
                 >
-                  {/* Same swatch the Templates tab uses, so one template looks
+                  {/* The same card every other gallery shows, so a design looks
                       like itself wherever it is offered. */}
-                  <div className="h-16 rounded-lg overflow-hidden mb-2 relative">
-                    <div
-                      className="absolute inset-0"
-                      style={{
-                        background: `linear-gradient(135deg, ${primary} 0%, ${primary} 50%, ${secondary} 50%, ${secondary} 100%)`
-                      }}
+                  <div className="rounded-lg overflow-hidden mb-2">
+                    <ArchetypePreview
+                      name={archetypeLabel.name || template.name}
+                      background={template.theme.colors?.background}
+                      ink={template.theme.colors?.text}
+                      inkMuted={template.theme.colors?.textSecondary}
+                      brand={primary}
+                      accent={accent}
+                      headingFont={
+                        template.theme.fonts?.heading
+                        || template.theme.font_heading
+                        || template.theme.font_family
+                      }
+                      radius={template.borderRadius}
+                      selected={isSelected}
+                      heightClass="h-20"
                     />
-                    <div className="absolute bottom-0 left-0 right-0 h-1.5" style={{ backgroundColor: accent }} />
                   </div>
+                  {/* Named and described the same way the website wizard does
+                      it — a landing page wears the business's design, so the
+                      two galleries have to be the same gallery. */}
                   <h4 className="text-sm font-medium text-[var(--v2-text-primary)] truncate">
-                    {getTranslatedTemplateName(template.name, language as 'en' | 'es' | 'he')}
+                    {archetypeLabel.blurb
+                      ? archetypeLabel.name
+                      : getTranslatedTemplateName(template.name, language as 'en' | 'es' | 'he', template.id)}
                   </h4>
                   <p className="text-xs text-[var(--v2-text-muted)] truncate">
-                    {template.theme.brand_voice
-                      ? getTranslatedBrandVoice(template.theme.brand_voice, language as 'en' | 'es' | 'he')
-                      : getTranslatedVertical(template.vertical, language as 'en' | 'es' | 'he')}
+                    {archetypeLabel.blurb
+                      || (template.theme.brand_voice
+                        ? getTranslatedBrandVoice(template.theme.brand_voice, language as 'en' | 'es' | 'he')
+                        : getTranslatedVertical(template.vertical, language as 'en' | 'es' | 'he'))}
                   </p>
                   {isSelected && (
                     <div className="absolute top-2 right-2 w-5 h-5 bg-[#4F6EF7] rounded-full flex items-center justify-center">

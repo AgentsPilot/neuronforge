@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Download, Trash2, Tag, X, Check, ChevronLeft, ChevronRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { localizeStageLabel, type StageLanguage } from '@/lib/business-os/stageLabels';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 
@@ -35,13 +36,25 @@ export function CRMContactList({
   totalPages = 1,
   onPageChange
 }: CRMContactListProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
-  // Get stage label from stages array (uses stage_label from DB which is the source of truth)
+  /*
+   * The stored label, translated the same way the board and the funnel do it.
+   *
+   * This returned `stage_label` raw — the string onboarding wrote in the
+   * business's own language — so a Hebrew pipeline stayed Hebrew in the English
+   * list while the board beside it read English.
+   */
   const getStageLabel = (stageKey: string | undefined): string => {
     if (!stageKey) return '-';
     const stage = stages.find(s => s.stage_key === stageKey);
-    return stage?.stage_label || stageKey;
+    if (!stage) return stageKey;
+    return localizeStageLabel(
+      stage.stage_key,
+      stage.stage_label,
+      language as StageLanguage,
+      (stage as { stage_type?: string | null }).stage_type
+    );
   };
 
   // Get stage color from stages array, fall back to default colors

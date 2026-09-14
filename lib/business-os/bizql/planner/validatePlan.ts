@@ -144,7 +144,116 @@ export function normalizePlan(plan: Plan): void {
     }
 
     walk((s.where as unknown[]) ?? []);
+    unwrapEnumValuesDressedAsTerms(s);
+    collapseRepeatedEquals(s);
   }
+}
+
+/**
+ * `status eq draft AND status eq sent AND status eq viewed` — a contradiction.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `where` is a conjunction, so three equalities on one field can never all
+ * hold: the query is guaranteed to return nothing, and nothing reads as a
+ * truthful "you have none".
+ *
+ * It is exactly how gpt-4o-mini writes "quotes that are still open" in Hebrew —
+ * the same question in English comes out as `status in [draft, sent, viewed]`,
+ * which is the same intent correctly expressed. There is only one thing the
+ * model can have meant, so it is written down rather than argued with.
+ *
+ * Deliberately narrow: only `eq` predicates, only at the same level, only on
+ * one field, and only when they disagree. Two identical equalities are
+ * redundant rather than contradictory and are left alone; anything involving
+ * another operator is a real conjunction and stays untouched.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function collapseRepeatedEquals(step: Record<string, unknown>): void {
+  const where = step.where;
+  if (!Array.isArray(where)) return;
+
+  const byField = new Map<string, Array<Record<string, unknown>>>();
+
+  for (const predicate of where) {
+    if (!predicate || typeof predicate !== 'object') continue;
+    const p = predicate as Record<string, unknown>;
+    if (p.op !== 'eq' || typeof p.field !== 'string') continue;
+    if (p.value === null || typeof p.value === 'object') continue;
+
+    byField.set(p.field, [...(byField.get(p.field) ?? []), p]);
+  }
+
+  for (const [, predicates] of byField) {
+    const values = [...new Set(predicates.map((p) => p.value))];
+    if (predicates.length < 2 || values.length < 2) continue;
+
+    // The first one becomes the whole set; the rest are dropped from `where`.
+    predicates[0].op = 'in';
+    predicates[0].value = values;
+
+    step.where = (step.where as unknown[]).filter((p) => !predicates.slice(1).includes(p as never));
+  }
+}
+
+/**
+ * `{"$semantic":"accepted"}` where `accepted` is simply an enum VALUE.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The most expensive small bug of the day, and every link in it was ours.
+ *
+ * The tool schema said: "If the field shows {..} semantic terms, you MUST use
+ * {"$semantic":"..."}" — which reads as "every value of this field is a
+ * semantic term". So asked how many quotes were accepted, the model wrapped a
+ * perfectly good enum value: `{"$semantic":"accepted"}`.
+ *
+ * The validator then rejected it with "Known terms: open, awaiting_reply" — a
+ * message that never mentions the value is fine as it stands — and the repair
+ * round picked the first term it was offered. `open` is draft|sent|viewed, so
+ * "how many were accepted" answered **3**, confidently, for a business with 4.
+ *
+ * Fixed at the source (the wording) and at the message (which now names the
+ * values too), but fixed HERE first: the wrapper around a declared enum value
+ * has exactly one reading, and undoing it costs no model call at all. The same
+ * shape as putting a date anchor back — a fact we can compute rather than
+ * argue about.
+ *
+ * Only when the inner string IS a declared value of that field. An unknown term
+ * still fails validation, because that one might mean something we cannot
+ * guess.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function unwrapEnumValuesDressedAsTerms(step: Record<string, unknown>): void {
+  const entity = CATALOG.entities[String(step.entity)];
+  if (!entity) return;
+
+  const walk = (predicates: unknown[]): void => {
+    for (const predicate of predicates) {
+      if (!predicate || typeof predicate !== 'object') continue;
+      const p = predicate as Record<string, unknown>;
+
+      for (const key of ['and', 'or', 'where'] as const) {
+        if (Array.isArray(p[key])) walk(p[key] as unknown[]);
+      }
+      if (p.not) walk([p.not]);
+
+      const field = typeof p.field === 'string' ? entity.fields[p.field] : undefined;
+      if (!field?.enumValues?.length) continue;
+
+      const unwrap = (value: unknown): unknown => {
+        if (!isSemanticValue(value)) return value;
+
+        const term = value.$semantic;
+        // A real term wins: `open` is declared, and means three values.
+        if (field.semanticTerms?.[term.toLowerCase()]) return value;
+
+        return field.enumValues?.includes(term) ? term : value;
+      };
+
+      p.value = Array.isArray(p.value) ? p.value.map(unwrap) : unwrap(p.value);
+    }
+  };
+
+  walk((step.where as unknown[]) ?? []);
 }
 
 /**
@@ -305,21 +414,30 @@ function inlineStepReferencedLookups(plan: Plan): void {
   // died on a vocabulary slip while the intent was perfectly clear. Two shapes
   // are unambiguous and both are repaired here:
   //
-  //   op names a declared action     → that action, as a mutate
-  //   unknown op, but `action` set   → a mutate of the action already named
+  //   `action` already names a declared action → fix the op, keep the action
+  //   op names a declared action, none given   → that action, as a mutate
   //
   // Anything else is left to fail. Guessing WHICH write was meant is exactly the
   // inference this normaliser refuses to do.
+  //
+  // ORDER MATTERS, and the wrong order cost an afternoon. "תפרסם את דף הנחיתה"
+  // (publish the landing page) planned {"op":"update","action":"publish"} — the
+  // op a vocabulary slip, the action exactly right. Reading the op first
+  // OVERWROTE `publish` with `update`, because `pages` declares an `update`
+  // action too, so the page was renamed instead of published and the model was
+  // blamed for a rewrite this function performed. An action the planner already
+  // named is a statement of intent; an op that happens to collide with an action
+  // name is a guess about one. The statement wins.
   for (const step of plan.steps ?? []) {
     const raw = step as unknown as { op?: string; entity?: string; action?: string };
     if (!raw.op || KNOWN_OPS_SET.has(raw.op)) continue;
 
     const actions = CATALOG.entities[raw.entity ?? '']?.actions ?? {};
 
-    if (actions[raw.op]) {
-      raw.action = raw.op;
+    if (raw.action && actions[raw.action]) {
       raw.op = 'mutate';
-    } else if (raw.action && actions[raw.action]) {
+    } else if (actions[raw.op]) {
+      raw.action = raw.op;
       raw.op = 'mutate';
     }
   }
@@ -746,12 +864,28 @@ function validatePredicate(
         );
       } else if (!field.semanticTerms?.[term]) {
         const known = Object.keys(field.semanticTerms ?? {});
+        /*
+         * Name the VALUES as well as the terms.
+         *
+         * "Known terms: open, awaiting_reply" is a true message that teaches the
+         * wrong answer: asked for `accepted` — an ordinary enum value the model
+         * had merely wrapped — the repair round picked the first term it was
+         * offered, and a question about 4 accepted quotes was answered with the
+         * 3 that were open. A rejection has to say what the right shape IS, or
+         * it turns a near-miss into a confident miss.
+         */
+        const values = field.enumValues ?? [];
+
         problems.push(
           `${path}: '${candidate.$semantic}' is not a semantic term for ` +
             `'${entity.key}.${p.field}'. ` +
             (known.length
-              ? `Known terms: ${known.join(', ')}.`
-              : `That field has no semantic terms.`)
+              ? `The only terms are: ${known.join(', ')}. `
+              : `That field has no semantic terms. `) +
+            (values.length
+              ? `If you meant one of its ordinary values — ${values.join(', ')} — pass it as ` +
+                `a plain string: {"field":"${p.field}","op":"eq","value":"${candidate.$semantic}"}.`
+              : '')
         );
       }
     }
@@ -1124,10 +1258,28 @@ function validateStep(
         // Nested rather than folded into the condition: `!id` is what narrows
         // `id` to a string for the branches below, and `!id && …` does not.
         if (action?.needsTarget !== false) {
+          /*
+           * The example is built from THIS entity, not from invoices.
+           *
+           * It used to read `{"field":"invoice_number","op":"eq","value":
+           * "INV-00002"}` whatever was being written. Asked to publish a
+           * landing page, the planner emitted `pages.publish` — correctly — and
+           * the repair, shown an invoice, came back with a RENAME of a page
+           * nobody had mentioned. A rejection that demonstrates the wrong shape
+           * is how a near-miss becomes a confident miss; this is the third one
+           * today.
+           */
+          const named = Array.isArray(entity.labelField)
+            ? entity.labelField[0]
+            : entity.labelField;
+          const searchable = entity.searchableFields?.[0] ?? named;
+
           problems.push(
-            `${path}: '${mutate.action}' needs a target. Either target.id — a literal id ` +
-              `you were actually given — or target.find to describe the row, e.g. ` +
-              `{"find":{"where":[{"field":"invoice_number","op":"eq","value":"INV-00002"}]}}.`
+            `${path}: '${mutate.action}' needs a target — WHICH ${entity.key} to act on. ` +
+              `Either target.id, a literal id you were actually given, or target.find ` +
+              `describing it in the user's own words, e.g. ` +
+              `{"find":{"where":[{"field":"${searchable}","op":"contains","value":"…"}]}}. ` +
+              `Keep the action you chose: the target is what is missing, not the verb.`
           );
         }
       } else if (/^s\d+\./.test(id) || /\{|\$|rows/.test(id)) {
@@ -1507,7 +1659,7 @@ function countSubjectProblem(
  * Kept as a prefix match on the message rather than a separate return channel:
  * `validatePlan` has one contract — a list of strings — and four callers.
  */
-const SOFT_PROBLEMS = ['answer.text is required.'];
+const SOFT_PROBLEMS = ['answer.text is required.', 'answer.text cites no step.'];
 
 /**
  * Matched as a PREFIX, which is what keeps the two-read case hard.
@@ -1646,6 +1798,89 @@ function validateNamedDateHasDigits(
   });
 }
 
+/**
+ * What KIND of quantity a step will produce: rows, or an amount.
+ *
+ * Only division cares. A `find` and a `count` aggregate both answer "how many";
+ * every other aggregate answers "how much", in the unit of the field it summed.
+ * Mixing them is the one arithmetic mistake this grammar can express, so it is
+ * the one it has to refuse.
+ */
+/**
+ * Words that ASK for a ratio, in the three languages the chat speaks.
+ *
+ * A deliberate exception to this file's rule against vocabulary, and narrow in
+ * the direction that matters: it only ever ALLOWS a percentage that the
+ * structural test would have refused. Nothing is inferred from its absence
+ * except "say the two numbers plainly", which is never wrong.
+ */
+const RATIO_WORDS = [
+  '%',
+  'percent',
+  'percentage',
+  'share',
+  'ratio',
+  'rate',
+  'proportion',
+  'אחוז',
+  'שיעור',
+  'יחס',
+  'חלק',
+  'porcentaje',
+  'por ciento',
+  'proporción',
+  'tasa',
+];
+
+function asksForARatio(message?: string): boolean {
+  if (!message) return true; // A stored plan being re-validated; nothing to read.
+
+  const said = message.toLowerCase();
+  return RATIO_WORDS.some((word) => said.includes(word));
+}
+
+/**
+ * Is the part genuinely a narrower slice of the whole?
+ *
+ * The same entity, and every one of the whole's predicates also present on the
+ * part — so "accepted quotes" over "quotes" is a share, and "quotes" over
+ * "payments" is two unrelated figures with a division sign between them.
+ *
+ * Compared as serialised predicates: an inherited filter is copied verbatim, so
+ * equality is exact by construction, and anything cleverer would start guessing
+ * about predicates that only look alike.
+ */
+function isASliceOf(plan: Plan, partId: string, wholeId: string): boolean {
+  const stepOf = (id: string) =>
+    plan.steps.find((s, i) => ((s as { id?: string }).id ?? `s${i + 1}`) === id) as
+      | { entity?: string; where?: unknown[] }
+      | undefined;
+
+  const part = stepOf(partId);
+  const whole = stepOf(wholeId);
+
+  if (!part || !whole || part.entity !== whole.entity) return false;
+
+  const partPredicates = new Set((part.where ?? []).map((p) => JSON.stringify(p)));
+
+  return (
+    (whole.where ?? []).every((p) => partPredicates.has(JSON.stringify(p))) &&
+    (part.where ?? []).length > (whole.where ?? []).length
+  );
+}
+
+function quantityKind(plan: Plan, stepId: string): 'count' | 'amount' | null {
+  const step = plan.steps.find((s, i) => (s.id ?? `s${i + 1}`) === stepId) as
+    | { op?: string; agg?: { fn?: string } }
+    | undefined;
+
+  if (!step) return null;
+  if (step.op === 'find') return 'count';
+  if (step.op === 'compute') return step.agg?.fn === 'count' ? 'count' : 'amount';
+
+  return null;
+}
+
 function validateAnswer(plan: Plan, problems: string[], userMessage?: string): void {
   const text = plan.answer?.text;
 
@@ -1698,6 +1933,54 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
 
   if (!text) return;
 
+  /*
+   * A read-only plan's sentence must cite something it read.
+   *
+   * At plan time the model has seen NO data — the steps have not run — so any
+   * content-bearing claim it writes without a `{sN…}` reference is a statement
+   * about results it cannot have. That is not a style preference; it is the
+   * only moment in the pipeline where the distinction is knowable for certain.
+   *
+   * The case that found it: "תוסיף לדף הנחיתה סקשן של המלצות" (add a
+   * testimonials section to the landing page) planned a single `find` on
+   * `pages` and answered "הוספת סקשן של המלצות לדף הנחיתה." — "a testimonials
+   * section was added to the landing page." Nothing was added. Nothing could
+   * have been: the plan reads. The user was told a write had happened, the
+   * plan cache stored the sentence alongside the plan, and the same false
+   * claim was then served to that phrasing forever.
+   *
+   * Writes are exempt — "created the page" is legitimate prose for a mutate,
+   * which really will have happened by the time it is read — and so is a plan
+   * carrying an `analyse` step, whose sentence is written from results by a
+   * later model call rather than by this one.
+   *
+   * SOFT, deliberately. Measured over the live plan cache, 25 of 26 read-only
+   * plans already cite a step, and the 26th is the false claim above; so the
+   * rule costs one repair round on a shape that is essentially always wrong,
+   * and if the model will not comply the turn still answers rather than dying.
+   */
+  const hasWrite = plan.steps.some(
+    (step) => (step as unknown as { op?: string }).op === 'mutate'
+  );
+  const hasAnalyse = plan.steps.some(
+    (step) => (step as unknown as { op?: string }).op === 'analyse'
+  );
+
+  if (
+    userMessage !== undefined &&
+    reads.length > 0 &&
+    !hasWrite &&
+    !hasAnalyse &&
+    !/\{s\d/.test(text)
+  ) {
+    problems.push(
+      `answer.text cites no step. This plan only READS, and the steps have not run yet — ` +
+        `a sentence with no {s1...} reference states something you cannot know, and if it ` +
+        `describes an action it claims one that will never happen. Cite what the plan found ` +
+        `({s1.count}, {s1.value}, {s1.rows}), or plan the write that was actually asked for.`
+    );
+  }
+
   const withoutPlaceholders = text.replace(/\{[^}]*\}/g, '');
 
   // Echoing a threshold the user themselves supplied is fine and often reads
@@ -1715,6 +1998,34 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
         `not mention and you cannot know — you have not seen the data. Use a {placeholder} ` +
         `such as {s1.count}. Received: "${text}".`
     );
+  }
+
+  /*
+   * A PERCENTAGE written as an expression, `{=% s1.value / s2.value }`.
+   *
+   * The same rule as `{sN.percent_of.sM}` and, until now, not the same check —
+   * so the model simply used the other spelling: asked for a total it answered
+   * "‏34,350.00 ‏₪ מתוך ‏4,350.00 ‏₪, שזה 790%", where nobody had asked for a
+   * ratio and the two figures are not a part and its whole.
+   *
+   * Reading the two step ids out of the expression is enough: whatever
+   * arithmetic surrounds them, a `%` sigil says the result is being presented
+   * as a share, and a share needs a slice of something.
+   */
+  for (const match of text.matchAll(/\{=%\s*([^}]+)\}/g)) {
+    const referenced = [...new Set([...match[1].matchAll(/\b(s\d+)\b/g)].map((m) => m[1]))];
+    if (referenced.length !== 2) continue;
+
+    const [part, whole] = referenced;
+
+    if (!isASliceOf(plan, part, whole) && !asksForARatio(userMessage)) {
+      problems.push(
+        `answer.text presents {=% …} as a percentage, but ${part} is not a subset of ` +
+          `${whole} and the request did not ask for one. A share needs a part and the whole ` +
+          `it came out of — the same entity, with the whole's filters plus at least one ` +
+          `more. State the two figures instead.`
+      );
+    }
   }
 
   const stepIds = new Set(plan.steps.map((s) => (s as unknown as { id?: string }).id ?? ''));
@@ -1815,6 +2126,58 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
           `answer.text uses {${stepId}.percent_of.${stepId}} — a step as a percentage ` +
             `of itself is always 100%. Name the step holding the total.`
         );
+      } else {
+        /*
+         * A share is only a share of the SAME KIND of quantity.
+         *
+         * A money total divided by a row count produced "₪15,850 of 7 quotes,
+         * which is 226,429%" — a figure with no meaning, formatted to the
+         * decimal and stated as fact. Caught here rather than only at render
+         * time so the repair round is told, and the turn comes back with a
+         * sentence that says something true.
+         */
+        /*
+         * A SHARE is a part of a whole — not any two numbers divided.
+         *
+         * "₪45,850 of ₪2,245, which is 2,042%" was the third unrequested
+         * percentage in one evening: the quotes total over an unrelated
+         * payments total, dimensionally valid and completely meaningless. The
+         * user never asked for a ratio in any of the three.
+         *
+         * So one is allowed in exactly two situations, and the first is the
+         * structural one: the part must be a NARROWER slice of the whole — the
+         * same entity, with the whole's filters all present on the part. "4
+         * accepted of 7 quotes" passes; quotes over payments does not.
+         *
+         * The second is that the user asked. That check reads the message for a
+         * ratio word, which is vocabulary and therefore something this file
+         * normally refuses to hold — justified here because it only ever GRANTS
+         * permission. A missing word costs a percentage the user can ask for
+         * again; the absence of this check cost three wrong numbers stated as
+         * fact.
+         */
+        if (!isASliceOf(plan, stepId, percentMatch[1]) && !asksForARatio(userMessage)) {
+          problems.push(
+            `answer.text uses {${stepId}.percent_of.${percentMatch[1]}}, but ${stepId} is not ` +
+              `a subset of ${percentMatch[1]} and the request did not ask for a percentage. ` +
+              `A share needs a part and the whole it came out of — the same entity, with the ` +
+              `whole's filters plus at least one more. State the two figures instead.`
+          );
+          continue;
+        }
+
+        const part = quantityKind(plan, stepId);
+        const whole = quantityKind(plan, percentMatch[1]);
+
+        if (part && whole && part !== whole) {
+          problems.push(
+            `answer.text uses {${stepId}.percent_of.${percentMatch[1]}}, but ${stepId} is ` +
+              `${part === 'count' ? 'a number of rows' : 'an amount'} and ${percentMatch[1]} is ` +
+              `${whole === 'count' ? 'a number of rows' : 'an amount'} — dividing one by the ` +
+              `other is not a percentage of anything. Compare rows with rows, or amounts ` +
+              `with amounts: for "what share of my quotes were accepted", count both.`
+          );
+        }
       }
       continue;
     }

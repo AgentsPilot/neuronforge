@@ -229,6 +229,23 @@ export const emailTranslations = {
       es: (serviceName: string) => `Por favor completa tu formulario de admisión - ${serviceName}`,
       he: (serviceName: string) => `אנא השלם את טופס הקבלה שלך - ${serviceName}`
     },
+    /*
+     * The second ask, a day before.
+     *
+     * It names TOMORROW, because that is what changed since the first email and
+     * the only reason to send another one. A reminder that reads exactly like
+     * the original invites the same response as the original.
+     */
+    reminderSubject: {
+      en: (serviceName: string) => `Tomorrow: your form for ${serviceName}`,
+      es: (serviceName: string) => `Mañana: tu formulario para ${serviceName}`,
+      he: (serviceName: string) => `מחר: הטופס שלך ל${serviceName}`
+    },
+    reminderGreeting: {
+      en: 'Your appointment is tomorrow — one thing left',
+      es: 'Tu cita es mañana: falta una cosa',
+      he: 'הפגישה שלכם מחר — נשאר דבר אחד'
+    },
     greeting: {
       en: 'One more step before your appointment!',
       es: '¡Un paso más antes de tu cita!',
@@ -573,6 +590,154 @@ export const emailTranslations = {
    * The briefing's own sentences are narrated upstream and arrive already in
    * the recipient's language; these strings are only the wrapper around them.
    */
+  /**
+   * Told the owner that somebody reached them.
+   *
+   * One vocabulary, two events: an enquiry through a contact form, and a
+   * booking a client made themselves. They differ in urgency and in what the
+   * owner does next, so the subject and the lead-in differ — everything else,
+   * including the layout, is shared.
+   */
+  /**
+   * Inviting a lead to book themselves in.
+   *
+   * The verb is the whole design question. A `sale_mode: 'proposal'` service
+   * cannot be bought — its journey ends at a request — so telling that client
+   * to "book and pay" sends them to a page that will not let them, and the
+   * business looks broken at the exact moment it was trying to look organised.
+   */
+  bookingInvite: {
+    subjectBook: {
+      en: 'Book a time with {business}',
+      es: 'Reserva una cita con {business}',
+      he: 'לקביעת מועד עם {business}',
+    },
+    subjectQuote: {
+      en: 'Request a quote from {business}',
+      es: 'Solicita un presupuesto de {business}',
+      he: 'בקשת הצעת מחיר מ{business}',
+    },
+    greeting: { en: 'Hi {name},', es: 'Hola {name},', he: 'היי {name},' },
+    greetingNoName: { en: 'Hi,', es: 'Hola,', he: 'היי,' },
+    leadInBook: {
+      en: 'Thanks for getting in touch. You can pick a time that suits you here — it takes a minute.',
+      es: 'Gracias por escribirnos. Puedes elegir el horario que te venga bien aquí, en un minuto.',
+      he: 'תודה שפנית. אפשר לבחור מועד שנוח לך כאן — זה לוקח דקה.',
+    },
+    leadInQuote: {
+      en: 'Thanks for getting in touch. Tell us what you need and we will come back to you with a price.',
+      es: 'Gracias por escribirnos. Cuéntanos qué necesitas y te enviaremos un precio.',
+      he: 'תודה שפנית. ספר/י לנו מה נדרש ונחזור אליך עם הצעת מחיר.',
+    },
+    reminderPrefix: {
+      en: 'Just in case it got buried —',
+      es: 'Por si acaso se traspapeló —',
+      he: 'ליתר ביטחון, אם זה נעלם בתיבה —',
+    },
+    ctaBook: { en: 'Book a time', es: 'Reservar una cita', he: 'קביעת מועד' },
+    ctaQuote: { en: 'Request a quote', es: 'Solicitar presupuesto', he: 'בקשת הצעת מחיר' },
+    serviceLabel: { en: 'About', es: 'Sobre', he: 'לגבי' },
+    signOff: {
+      en: 'If a different time suits you better, just reply to this email.',
+      es: 'Si te viene mejor otro momento, responde a este correo.',
+      he: 'אם מועד אחר נוח יותר, אפשר פשוט להשיב למייל הזה.',
+    },
+  },
+
+  newEnquiry: {
+    subjectEnquiry: {
+      en: 'New enquiry from {name}',
+      es: 'Nueva consulta de {name}',
+      he: 'פנייה חדשה מ{name}',
+    },
+    subjectQuote: {
+      en: '{name} wants a price for {service}',
+      es: '{name} quiere un precio para {service}',
+      he: '{name} מבקש/ת הצעת מחיר ל{service}',
+    },
+    headingEnquiry: {
+      en: 'Someone got in touch',
+      es: 'Alguien te contactó',
+      he: 'מישהו יצר איתך קשר',
+    },
+    headingQuote: {
+      en: 'Someone wants a price',
+      es: 'Alguien quiere un precio',
+      he: 'מישהו מבקש הצעת מחיר',
+    },
+    leadInEnquiry: {
+      en: 'They are waiting to hear back from you.',
+      es: 'Están esperando tu respuesta.',
+      he: 'הם מחכים לתשובה ממך.',
+    },
+    leadInQuote: {
+      en: 'Only you can answer this one — they are waiting on a figure.',
+      es: 'Solo tú puedes responder a esto: esperan una cifra.',
+      he: 'רק את/ה יכול/ה לענות על זה — הם מחכים למחיר.',
+    },
+    subjectCancelled: {
+      en: '{name} cancelled {service}',
+      es: '{name} canceló {service}',
+      he: '{name} ביטל/ה {service}',
+    },
+    subjectMoved: {
+      en: '{name} moved {service}',
+      es: '{name} cambió {service}',
+      he: '{name} העביר/ה {service}',
+    },
+    headingCancelled: {
+      en: 'An appointment was cancelled',
+      es: 'Se canceló una cita',
+      he: 'פגישה בוטלה',
+    },
+    headingMoved: {
+      en: 'An appointment moved',
+      es: 'Una cita cambió de hora',
+      he: 'פגישה הועברה',
+    },
+    leadInCancelled: {
+      en: 'That time is free again, and your calendar has been updated.',
+      es: 'Ese horario vuelve a estar libre y tu calendario ya está actualizado.',
+      he: 'השעה הזו פנויה שוב, והיומן שלך עודכן.',
+    },
+    leadInMoved: {
+      en: 'Your calendar has been updated to the new time.',
+      es: 'Tu calendario ya está actualizado con el nuevo horario.',
+      he: 'היומן שלך עודכן למועד החדש.',
+    },
+    wasLabel: { en: 'Was', es: 'Antes', he: 'היה' },
+    reasonLabel: { en: 'Reason given', es: 'Motivo', he: 'סיבה' },
+    nameLabel: { en: 'Name', es: 'Nombre', he: 'שם' },
+    emailLabel: { en: 'Email', es: 'Correo', he: 'אימייל' },
+    phoneLabel: { en: 'Phone', es: 'Teléfono', he: 'טלפון' },
+    messageLabel: { en: 'Message', es: 'Mensaje', he: 'הודעה' },
+    serviceLabel: { en: 'Service', es: 'Servicio', he: 'שירות' },
+    whenLabel: { en: 'When', es: 'Cuándo', he: 'מתי' },
+    interestLabel: { en: 'Interested in', es: 'Le interesa', he: 'מתעניין/ת ב' },
+    referralLabel: { en: 'Found you via', es: 'Te encontró por', he: 'הגיע/ה דרך' },
+    pageLabel: { en: 'From page', es: 'Desde la página', he: 'מהעמוד' },
+    viewContact: {
+      en: 'Open their details',
+      es: 'Ver sus datos',
+      he: 'פתיחת הפרטים',
+    },
+    replyHint: {
+      en: 'Reply to this email to write to them directly.',
+      es: 'Responde a este correo para escribirles directamente.',
+      he: 'אפשר להשיב למייל הזה כדי לכתוב להם ישירות.',
+    },
+    unsubscribeHint: {
+      en: 'You are getting this because new enquiry alerts are switched on.',
+      es: 'Recibes esto porque las alertas de nuevas consultas están activadas.',
+      he: 'קיבלת את זה כי התראות על פניות חדשות מופעלות.',
+    },
+    unsubscribeLink: {
+      en: 'Turn them off',
+      es: 'Desactivarlas',
+      he: 'כיבוי ההתראות',
+    },
+  },
+
   dailyBriefing: {
     subject: {
       en: 'Your morning briefing - {date}',
@@ -611,6 +776,21 @@ export const emailTranslations = {
    * that follow their answer.
    */
   proposal: {
+    paymentTermsLabel: {
+      en: 'Payment terms',
+      es: 'Plazo de pago',
+      he: 'תנאי תשלום',
+    },
+    netDays: {
+      en: '{days} days from invoice',
+      es: '{days} días desde la factura',
+      he: '{days} יום מקבלת החשבונית',
+    },
+    dueOnReceipt: {
+      en: 'Due on receipt',
+      es: 'Pago al recibir',
+      he: 'לתשלום עם קבלת החשבונית',
+    },
     attachmentNote: {
       en: 'The full proposal is attached to this email:',
       es: 'El presupuesto completo está adjunto a este correo:',

@@ -174,7 +174,7 @@ export default function BookingManagePage() {
           and until now it could not tell them either. Renders nothing at all
           when the business has filled none of it in.
         */}
-        <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address', 'hours']} />
+        <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address', 'hours', 'links']} />
       </div>
     </PublicShell>
   );

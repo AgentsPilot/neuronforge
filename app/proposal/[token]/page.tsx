@@ -37,6 +37,8 @@ interface ProposalView {
   total: number;
   currency: string;
   validUntil: string | null;
+  /** Days to pay once an invoice is raised. A term of the offer, not a setting. */
+  termsDays: number | null;
   stages: Array<{ label: string; amount: number }>;
   dueOnAccept: number;
   clientFirstName: string | null;
@@ -276,6 +278,19 @@ export default function ProposalPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* When it falls due — part of what they are agreeing to, so it sits
+              with the money rather than turning up on the first invoice. */}
+          {typeof proposal.termsDays === 'number' && (
+            <div className="mt-3 flex items-baseline justify-between text-sm">
+              <span style={{ color: 'var(--ap-text-muted)' }}>{t('proposal.terms')}</span>
+              <span style={{ color: 'var(--ap-text)' }}>
+                {proposal.termsDays === 0
+                  ? t('proposal.terms_on_receipt')
+                  : t('proposal.terms_net').replace('{days}', String(proposal.termsDays))}
+              </span>
             </div>
           )}
 

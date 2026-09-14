@@ -233,6 +233,40 @@ export class WebsiteBlockRepository {
     }
   }
 
+  /**
+   * Page ids of every block that points at a given service.
+   *
+   * The landing-page generator stamps the id into three different shapes —
+   * `content.serviceId` on pricing and CTA blocks, `content.services` as a
+   * one-element array on the booking widget — and blocks configured through the
+   * editor carry it in `capability_config` instead. All four are matched,
+   * because missing one means telling an owner a page is safe when it is not.
+   *
+   * Deliberately not scoped by `user_id`: `website_blocks` has no such column,
+   * it hangs off the page. The caller scopes by user when it resolves these
+   * ids to pages, which is where the ownership check belongs.
+   */
+  async findPageIdsByServiceId(serviceId: string): Promise<RepositoryResult<string[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_blocks')
+        .select('page_id')
+        .or(
+          `content->>serviceId.eq.${serviceId},` +
+          `capability_config->>serviceId.eq.${serviceId},` +
+          `content->services.cs.["${serviceId}"]`
+        );
+
+      if (error) throw error;
+
+      const ids = [...new Set((data || []).map(b => b.page_id as string).filter(Boolean))];
+      return { data: ids, error: null };
+    } catch (error) {
+      logger.error({ err: error, serviceId }, 'Failed to find blocks referencing service');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async findByPageId(pageId: string, enabledOnly = false): Promise<RepositoryResult<WebsiteBlock[]>> {
     try {
       let query = this.supabase

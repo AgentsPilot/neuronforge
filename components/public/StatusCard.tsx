@@ -66,11 +66,10 @@ export function StatusCard({
 
   const body = (
     <div
-      className={standalone ? 'p-8 text-center' : 'p-5'}
+      className={`apc-panel ${standalone ? 'p-8 text-center' : 'p-5'}`}
       style={{
         background: 'var(--ap-surface)',
         border: '1px solid var(--ap-border)',
-        borderRadius: 'var(--ap-radius-lg)',
         boxShadow: standalone ? 'var(--ap-shadow-md)' : 'var(--ap-shadow-sm)',
       }}
     >

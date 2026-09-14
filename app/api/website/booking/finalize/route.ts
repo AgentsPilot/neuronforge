@@ -15,9 +15,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import Stripe from 'stripe';
 import { isInstallmentPlan } from '@/lib/payments/PaymentPlanService';
-import { promoteToClientStage } from '@/lib/crm/StageTypeUtils';
 import { planPhases } from '@/lib/payments/planSchedule';
 import { fromMinorUnits } from '@/lib/payments/refundMath';
 import {
@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
         user_id,
         service_id,
         start_time,
+        timezone,
         contact_id,
         status,
         payment_status,
@@ -123,26 +124,17 @@ export async function POST(request: NextRequest) {
     }
 
     /*
-     * They have paid, so move them along their own pipeline.
+     * Nothing to do here any more.
      *
-     * This used to guess the stage from its KEY — 'active_client', then
-     * 'active', then 'client', then whichever stage sits highest that is not
-     * called completed/inactive/past_client. A business whose stages are named
-     * in its own language matches none of those, and the guess fell through to
-     * "highest position", which happens to be right until a pipeline ends on
-     * something other than its client stage.
-     *
-     * `promoteToClientStage` asks the configuration instead — the stage the
-     * business marked as its client stage — and refuses to move anyone already
-     * at or past it. It is the same call the Stripe webhook and the manual
-     * mark-paid route make, so all three agree by construction rather than by
-     * three separate guesses landing on the same answer.
+     * This promoted the contact because they had paid. Payment is not the
+     * relationship — a business billing by invoice has clients who have not
+     * paid, and a free intro call is not a client at all. The rule is now "a
+     * booking was confirmed", enforced by
+     * `promote_contact_on_confirmed_booking` on `scheduling_bookings`, and this
+     * route confirms the booking a few lines below. The promotion happens
+     * there, for every path that confirms a booking rather than only for the
+     * ones that remembered to ask.
      */
-    const promotion = await promoteToClientStage(supabaseServer, ownerId, contactId);
-    requestLogger.info(
-      { contactId, stage: promotion.stageKey, moved: promotion.moved },
-      'Contact stage resolved after payment'
-    );
 
     // Get service name for activity logging
     const { data: service } = await supabaseServer
@@ -154,7 +146,7 @@ export async function POST(request: NextRequest) {
     // Get service details for payment transaction record
     const { data: serviceDetails } = await supabaseServer
       .from('scheduling_services')
-      .select('price, currency, payment_type, installment_count')
+      .select('service_name, price, currency, payment_type, installment_count')
       .eq('id', booking.service_id)
       .single();
 
@@ -316,6 +308,30 @@ export async function POST(request: NextRequest) {
     // This helps clients prepare for their appointment
     BookingEmailService.sendIntakeFormRequest(booking.id, ownerId)
       .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
+
+    /*
+     * No email to the owner for a booking, deliberately.
+     *
+     * A booking has already resolved itself: the client picked a time, paid,
+     * and got a confirmation, and the sync below puts it in the calendar the
+     * owner actually looks at — which sends its own notification. A separate
+     * platform email would be a third telling of the same news, and a practice
+     * with six appointments a day would get six messages saying things went
+     * right, then start filtering the sender. The one that matters — somebody
+     * WAITING on them — would go with it.
+     *
+     * The morning briefing counts the day's appointments; that is the right
+     * cadence for news nobody has to act on.
+     */
+    /*
+     * And put it in the owner's calendar (non-blocking).
+     *
+     * This is the route the booking widgets actually use, so it is the one that
+     * matters: every client-made booking on the platform came through here and
+     * none of them reached the calendar. See `lib/scheduling/syncBookingCalendar`.
+     */
+    syncBookingToOwnerCalendar(booking.id, ownerId, requestLogger)
+      .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Calendar sync failed'));
 
     // Send payment receipt (non-blocking) - reuse serviceDetails from earlier
     if (serviceDetails?.price && serviceDetails.price > 0 && contact?.email) {

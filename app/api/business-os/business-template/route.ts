@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { getBusinessTemplate, setBusinessTemplate, clearBusinessTemplate } from '@/lib/business-os/businessTemplate';
-import { getTemplateById } from '@/lib/website-builder/templates';
+import { isKnownDesignId } from '@/lib/website-builder/templates';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'BusinessTemplateAPI' });
@@ -60,9 +60,10 @@ export async function PUT(request: NextRequest) {
     const body = await request.json();
     const validated = SetTemplateSchema.parse(body);
 
-    // Refused here rather than inside, so an id that names no template reads
-    // back as a bad request instead of a silent no-op.
-    if (!getTemplateById(validated.template_id)) {
+    // Refused here rather than inside, so an id that names no design reads
+    // back as a bad request instead of a silent no-op. Accepts an archetype id
+    // as well as a legacy template id — the wizard sends the former.
+    if (!isKnownDesignId(validated.template_id)) {
       return NextResponse.json(
         { success: false, error: 'Unknown template' },
         { status: 400 }

@@ -7,7 +7,12 @@
  * this — intake switched on with no form chosen at all.
  */
 
-import { intakeReachesClient, businessCollectsIntake, intakeBlockReason } from '../intakeReach';
+import {
+  intakeReachesClient,
+  businessCollectsIntake,
+  intakeBlockReason,
+  intakeAppliesToService,
+} from '../intakeReach';
 
 const REACHING = {
   is_enabled: true,
@@ -24,10 +29,15 @@ describe('intakeReachesClient', () => {
     expect(intakeReachesClient({ ...REACHING, is_enabled: false })).toBe(false);
   });
 
-  it('is false when the email is switched off', () => {
-    // The reported case: the toggle was off and every service still showed
-    // "intake form" at the end of its journey.
-    expect(intakeReachesClient({ ...REACHING, send_after_booking: false })).toBe(false);
+  it('does not depend on the auto-send switch at all', () => {
+    /*
+     * `send_after_booking` used to gate this, and the column defaults to false
+     * — so every business that never found the second switch quietly stopped
+     * emailing intake to clients who booked themselves. Switching intake ON is
+     * the owner saying clients should receive it; there is no second saying.
+     */
+    expect(intakeReachesClient({ ...REACHING, send_after_booking: false })).toBe(true);
+    expect(intakeReachesClient({ ...REACHING, send_after_booking: null })).toBe(true);
   });
 
   it('is false when no form is published', () => {
@@ -74,11 +84,11 @@ describe('businessCollectsIntake', () => {
     ).toBe(false);
   });
 
-  it('differs from intakeReachesClient exactly on auto-send', () => {
-    const manualOnly = { is_enabled: true, send_after_booking: false, hasPublishedForm: true };
+  it('now agrees with intakeReachesClient — the two switches became one', () => {
+    const enabled = { is_enabled: true, send_after_booking: false, hasPublishedForm: true };
 
-    expect(businessCollectsIntake(manualOnly)).toBe(true);
-    expect(intakeReachesClient(manualOnly)).toBe(false);
+    expect(businessCollectsIntake(enabled)).toBe(true);
+    expect(intakeReachesClient(enabled)).toBe(true);
   });
 });
 
@@ -133,11 +143,18 @@ describe('intakeBlockReason', () => {
     ).toBe('disabled');
   });
 
-  it('only mentions auto-send when asked about the CLIENT path', () => {
-    const manualOnly = { is_enabled: true, send_after_booking: false, hasPublishedForm: true };
+  it('names the SERVICE when that is what is in the way', () => {
+    const enabled = { is_enabled: true, send_after_booking: false, hasPublishedForm: true };
 
-    expect(intakeBlockReason(manualOnly)).toBeNull();
-    expect(intakeBlockReason(manualOnly, { forClient: true })).toBe('not_automatic');
+    // Nothing about the business stops it any more.
+    expect(intakeBlockReason(enabled)).toBeNull();
+
+    // A quote has no occasion for a form, and a product has no appointment.
+    expect(intakeBlockReason(enabled, { service: { sale_mode: 'proposal' } })).toBe('not_applicable');
+    expect(intakeBlockReason(enabled, { service: { is_scheduled: false } })).toBe('not_applicable');
+
+    // A real appointment, free or paid, is asked.
+    expect(intakeBlockReason(enabled, { service: { sale_mode: 'direct', is_scheduled: true } })).toBeNull();
   });
 
   it('is null when nothing is in the way', () => {
@@ -147,5 +164,35 @@ describe('intakeBlockReason', () => {
         { forClient: true }
       )
     ).toBeNull();
+  });
+});
+
+/**
+ * Which services ask their client anything.
+ *
+ * The owner's rule, in their words: if intake is on, send it — unless the
+ * booking is a quote request or a product. Those two have no occasion for a
+ * form; everything else does, free consultations included.
+ */
+describe('intakeAppliesToService', () => {
+  it('asks for a paid appointment', () => {
+    expect(intakeAppliesToService({ sale_mode: 'direct', is_scheduled: true })).toBe(true);
+  });
+
+  it('asks for a FREE consultation — costing nothing is not the same as needing nothing', () => {
+    expect(intakeAppliesToService({ sale_mode: 'direct', is_scheduled: true })).toBe(true);
+  });
+
+  it('does not ask for a quote request', () => {
+    expect(intakeAppliesToService({ sale_mode: 'proposal', is_scheduled: true })).toBe(false);
+  });
+
+  it('does not ask for a product, which has no appointment to prepare for', () => {
+    expect(intakeAppliesToService({ sale_mode: 'direct', is_scheduled: false })).toBe(false);
+  });
+
+  it('asks when the service is unknown, rather than silently skipping', () => {
+    expect(intakeAppliesToService(null)).toBe(true);
+    expect(intakeAppliesToService({})).toBe(true);
   });
 });

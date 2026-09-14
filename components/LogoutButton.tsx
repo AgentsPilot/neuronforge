@@ -1,11 +1,15 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
 
 export default function LogoutButton() {
-  const router = useRouter()
-
+  /*
+   * Signing out ends on the marketing site's `/login`, which is a different
+   * application on a different origin — so `window.location.href`, not
+   * `router.push`, which cannot leave this app and would have resolved
+   * `/login` to a 404 here.
+   */
   const handleLogout = async () => {
     try {
       // Get user before signing out (for audit logging)
@@ -42,12 +46,12 @@ export default function LogoutButton() {
 
       // Sign out
       await supabase.auth.signOut()
-      router.push('/login')
+      window.location.href = marketingLoginUrl()
     } catch (error) {
       console.error('Logout error:', error)
       // Even if audit fails, proceed with logout
       await supabase.auth.signOut()
-      router.push('/login')
+      window.location.href = marketingLoginUrl()
     }
   }
 

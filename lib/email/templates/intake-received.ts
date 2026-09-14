@@ -140,7 +140,7 @@ export function generateIntakeReceivedEmail(data: IntakeReceivedData): {
             <tr>
               ${rescheduleUrl ? `
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
-                ${emailOutlineButton(t.reschedule[locale], rescheduleUrl, { color: branding.primaryColor })}
+                ${emailOutlineButton(t.reschedule[locale], rescheduleUrl, { branding: branding })}
               </td>
               ` : ''}
               ${cancelUrl ? `

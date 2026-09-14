@@ -150,7 +150,7 @@ export function generatePaymentReceiptEmail(data: PaymentReceiptData): {
       <tr>
         <td style="text-align: center;">
           ${emailButton(t.viewBooking[locale], data.bookingManageUrl, {
-            backgroundColor: data.branding.primaryColor
+            branding: data.branding
           })}
         </td>
       </tr>

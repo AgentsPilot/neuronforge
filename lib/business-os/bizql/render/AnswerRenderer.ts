@@ -270,6 +270,40 @@ function renderRow(entity: ResolvedEntity, row: QueryRow, ctx: RenderContext): R
  * aggregate over an aggregate, and the planner should not have to know which
  * shape it picked in order to divide them.
  */
+/**
+ * Does this step's figure carry a currency?
+ *
+ * A `sum`/`avg`/`min`/`max` over a field the catalog formats as money is money;
+ * a count never is, whatever the entity holds.
+ */
+function isMoneyAggregate(result: QueryResult): boolean {
+  if (result.op !== 'compute') return false;
+
+  const compute = result as ComputeResult;
+  if (compute.agg?.fn === 'count' || !compute.agg?.field) return false;
+
+  return CATALOG.entities[compute.entity]?.fields[compute.agg.field]?.format === 'money';
+}
+
+/**
+ * What KIND of quantity a step produced: a number of rows, or an amount.
+ *
+ * The distinction only matters for division. Counting is what a `find` and a
+ * `count` aggregate do; every other aggregate produces a magnitude in the
+ * field's own unit, and dividing one by the other is meaningless however
+ * cleanly it formats.
+ */
+function magnitudeKind(result: QueryResult | undefined): 'count' | 'amount' | null {
+  if (!result) return null;
+  if (result.op === 'find') return 'count';
+  if (result.op === 'compute') {
+    // `agg` is carried on the result for exactly this kind of question — see
+    // the note on ComputeResult.
+    return (result as ComputeResult).agg?.fn === 'count' ? 'count' : 'amount';
+  }
+  return null;
+}
+
 function numericValue(result: QueryResult | undefined): number | null {
   if (!result) return null;
   if (result.op === 'find') return (result as FindResult).rows.length;
@@ -309,8 +343,28 @@ function resolvePlaceholder(
    * beats returning a number.
    */
   if (expression.startsWith('=')) {
-    const sigil = expression[1] === '%' || expression[1] === '$' ? expression[1] : '';
-    const source = expression.slice(1 + sigil.length);
+    const explicit = expression[1] === '%' || expression[1] === '$' ? expression[1] : '';
+    const source = expression.slice(1 + explicit.length);
+
+    /*
+     * Money in, money out.
+     *
+     * `{= s1.value + s2.value }` over two money totals rendered "2,105" — the
+     * right number stripped of the one thing that says what it is. Asked what
+     * two clients owe, a bare figure with no ₪ is a worse answer than the sum
+     * it computed.
+     *
+     * Inferred rather than demanded: the sigil still wins when the model writes
+     * one, and adding two amounts can only produce an amount. A count anywhere
+     * in the expression makes it dimensionless again, so nothing is assumed
+     * about "3 invoices + 2 payments".
+     */
+    const referenced = [...source.matchAll(/s\d+/g)].map((m) => results.get(m[0]));
+    const allMoney =
+      referenced.length > 0 &&
+      referenced.every((step) => step && isMoneyAggregate(step));
+
+    const sigil = explicit || (allMoney ? '$' : '');
 
     const value = evaluateExpression(source, (ref: string) => {
       const [stepId, path] = ref.split('.');
@@ -427,10 +481,25 @@ function resolvePlaceholder(
 
   const percentMatch = /^percent_of\.(\w+)$/.exec(path);
   if (percentMatch) {
-    const whole = numericValue(results.get(percentMatch[1]));
+    const denominator = results.get(percentMatch[1]);
+    const whole = numericValue(denominator);
     const part = numericValue(result);
 
     if (part === null || whole === null || whole === 0) return '';
+
+    /*
+     * A share is only a share of the SAME KIND of quantity.
+     *
+     * "₪15,850 of 7 quotes, which is 226,429%" is what came out when a money
+     * total was divided by a row count — a number with no meaning at all,
+     * formatted to two decimal places and stated as a fact. Rows over rows is a
+     * share; money over money is a share; money over rows is an average at
+     * best, and never a percentage.
+     *
+     * Empty rather than wrong: the sentence then falls to the plain line, which
+     * says less and says nothing untrue.
+     */
+    if (magnitudeKind(result) !== magnitudeKind(denominator)) return '';
 
     const percent = (part / whole) * 100;
     try {

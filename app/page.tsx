@@ -28,16 +28,21 @@ import {
 } from 'lucide-react';
 import PilotCreditCalculator from '@/components/billing/PilotCreditCalculator';
 import DevelopmentVsAgentsPilotCalculator from '@/components/marketing/DevelopmentVsAgentsPilotCalculator';
-import { useRouter } from 'next/navigation';
+import { marketingSignupUrl } from '@/lib/utils/marketingUrl';
 
 export default function MarketingPage() {
-  const router = useRouter();
   const [expandedUseCase, setExpandedUseCase] = useState<number | null>(null);
   const [userInput, setUserInput] = useState('');
 
   const handleSubscribe = async (monthlyCredits: number, inputs: any) => {
-    // Redirect to signup page with pricing info
-    router.push(`/signup?credits=${monthlyCredits}&agents=${inputs.numAgents}&plugins=${inputs.avgPluginsPerAgent}`);
+    /*
+     * Sign-up is a page on the MARKETING site, not a route here — `/signup`
+     * 404s in this app, which is what the calculator's call to action used to
+     * do. The pricing the user just chose rides across in the query string.
+     */
+    window.location.href = marketingSignupUrl(
+      `?credits=${monthlyCredits}&agents=${inputs.numAgents}&plugins=${inputs.avgPluginsPerAgent}`
+    );
   };
 
   const useCases = [

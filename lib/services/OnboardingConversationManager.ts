@@ -101,6 +101,12 @@ export const ONBOARDING_STEPS = new Set<OnboardingStep>([
   // conversation when it is missing.
   'payment_collection',
   'client_acquisition',
+  // No longer asked either — CRM is not a choice. Six tables carry a NOT NULL
+  // foreign key to `crm_contacts`, so a booking cannot be written without a
+  // contact, and the pipeline is now seeded for every business. The answer
+  // decided nothing and cost a question and an LLM call. Kept in the set for
+  // the same reason as above: a conversation already standing on it resumes
+  // rather than being thrown away.
   'client_tracking',
   'preview',
   'preview_adjustment',
@@ -717,19 +723,29 @@ export class OnboardingConversationManager {
         updatedState.collectedData.clientAcquisition = clientAcquisition;
         logger.info({ clientAcquisition }, 'Client acquisition extracted');
 
-        // Proceed to client_tracking (Q5: How do you track clients?)
-        updatedState.currentStep = 'client_tracking';
+        /*
+         * The last question. Q5 — "how do you track clients today?" — used to
+         * follow, and it decided whether the business got a CRM at all.
+         *
+         * It cannot decide that any more, because CRM is structural: contacts
+         * are a NOT NULL foreign key on bookings, invoices, proposals, tasks
+         * and activities, and the pipeline is seeded for everyone. A business
+         * that answered "I already have a CRM" still got contacts — it just
+         * got them with no stages to put them in.
+         *
+         * So it is not asked. The interview ends where the answers still
+         * change something.
+         */
+        this.finalizeConfiguration(updatedState);
+        updatedState.currentStep = 'preview';
         break;
 
+      /*
+       * Retired. Reachable only by a conversation that was already standing
+       * here when the question was removed — whatever they say moves on to the
+       * plan rather than being read as an answer that decides nothing.
+       */
       case 'client_tracking':
-        // Q5: Extract how they track clients (determines CRM need)
-        // One of the four offered answers is not a matter of interpretation.
-        const clientTracking =
-          this.trackingFromChip(message) ?? (await this.extractClientTracking(message));
-        updatedState.collectedData.clientTracking = clientTracking;
-        logger.info({ clientTracking }, 'Client tracking extracted');
-
-        // Now we have all the info - finalize and show preview
         this.finalizeConfiguration(updatedState);
         updatedState.currentStep = 'preview';
         break;
@@ -782,13 +798,29 @@ export class OnboardingConversationManager {
   private finalizeConfiguration(state: OnboardingState): void {
     const clientWorkflow = state.collectedData.clientWorkflow || {};
 
-    // Merge all extracted data including new Q4 and Q5 extractions
+    // Merge all extracted data including the Q4 acquisition extraction
     const extractedData: ExtractedData = {
       ...state.collectedData.businessStory,
       ...clientWorkflow,
+      /*
+       * The TYPED name wins — the same rule the business_story step already
+       * applies, and the one place it was missing.
+       *
+       * The name is asked for outright and stored on `businessProfile`. What is
+       * spread above is `businessStory`, whose `company_name` is whatever the
+       * model could pull out of a paragraph about the business — and most
+       * paragraphs do not contain it. "I'm a private trainer, I offer training
+       * packages" names no business, so it came out undefined, and
+       * `computeConfiguration` filled the gap with its fallback: every account
+       * whose story did not happen to repeat its own name was built, invoiced
+       * and emailed as "My Business".
+       */
+      company_name:
+        state.collectedData.businessProfile?.company_name
+        || state.collectedData.businessStory?.company_name,
       // Include Q4: client acquisition data (for website decision)
       clientAcquisition: state.collectedData.clientAcquisition,
-      // Include Q5: client tracking data (for CRM decision)
+      // Retired, and read only from a conversation that still carries it.
       clientTracking: state.collectedData.clientTracking,
     };
     state.collectedData.extractedData = extractedData;
@@ -1547,13 +1579,6 @@ export class OnboardingConversationManager {
           response: responses.client_acquisition_prompt,
           suggestions: responses.client_acquisition_options,
           multiSelect: true,  // Signal to frontend that this is multi-select
-        };
-
-      case 'client_tracking':
-        // Q5: How do you track clients? (determines CRM need)
-        return {
-          response: responses.client_tracking_prompt,
-          suggestions: responses.client_tracking_options,
         };
 
       case 'preview':

@@ -28,6 +28,44 @@ export interface Narration {
 
 export type BriefingLanguage = 'en' | 'es' | 'he';
 
+/**
+ * What kind of business this is, as far as anything knows.
+ *
+ * Both fields are optional and often absent: `vertical` is 'other' for anything
+ * the onboarding chat could not place, and a business name is frequently just a
+ * person's name. The prompt is written to degrade on either — see
+ * `describeBusiness`.
+ */
+export interface BusinessType {
+  /** `business_profiles.vertical`, e.g. 'trainer'. */
+  vertical?: string | null;
+  /** `business_profiles.sub_vertical`, e.g. 'personal_training'. */
+  subVertical?: string | null;
+  /** The trading name, which sometimes says more than the vertical does. */
+  name?: string | null;
+}
+
+/**
+ * The business, in one clause the model can reason from.
+ *
+ * Machine keys are handed over as-is rather than translated: 'nail_tech' is
+ * perfectly legible to a model and needs no table of ours to become so. The
+ * name is included because it often carries the trade when the vertical does
+ * not — "Studio Pilates" places a business that stored 'other'.
+ */
+function describeBusiness(type: BusinessType): string {
+  const parts: string[] = [];
+
+  // 'other' is the chat's way of saying it could not tell, so it is worth no
+  // more to the model than an absent field — and stating it invites the model
+  // to treat "other" as the trade itself.
+  if (type.vertical && type.vertical !== 'other') parts.push(type.vertical.replace(/_/g, ' '));
+  if (type.subVertical) parts.push(`specifically ${type.subVertical.replace(/_/g, ' ')}`);
+  if (type.name) parts.push(`trading as "${type.name}"`);
+
+  return parts.length > 0 ? `a business of this kind: ${parts.join(', ')}` : 'a small service business';
+}
+
 const LANGUAGE_NAMES: Record<BriefingLanguage, string> = {
   en: 'English',
   es: 'Spanish',
@@ -43,7 +81,8 @@ const LANGUAGE_NAMES: Record<BriefingLanguage, string> = {
 export async function narrateBriefing(
   facts: BriefingFacts,
   language: BriefingLanguage = 'en',
-  userId?: string
+  userId?: string,
+  businessType: BusinessType = {}
 ): Promise<Narration> {
   if (facts.isQuiet) {
     // Nothing to phrase. Spending a model call to say "nothing today" is the
@@ -67,7 +106,7 @@ export async function narrateBriefing(
     const completion = await provider.chatCompletion(
       {
         model: OPENAI_MODELS.GPT_4O_MINI,
-        messages: [{ role: 'user', content: buildPrompt(facts, language) }],
+        messages: [{ role: 'user', content: buildPrompt(facts, language, businessType) }],
         // Low, deliberately. This is reporting, not writing — the same facts
         // should read the same way twice.
         temperature: 0.3,
@@ -113,7 +152,11 @@ export async function narrateBriefing(
 
 /* ------------------------------------------------------------------ prompt */
 
-function buildPrompt(facts: BriefingFacts, language: BriefingLanguage): string {
+function buildPrompt(
+  facts: BriefingFacts,
+  language: BriefingLanguage,
+  businessType: BusinessType
+): string {
   const target = LANGUAGE_NAMES[language];
 
   return [
@@ -135,11 +178,41 @@ function buildPrompt(facts: BriefingFacts, language: BriefingLanguage): string {
     '   your sentence — every word you write must be in the target language.',
     '',
     'WHAT THE FIELDS MEAN — read these before writing:',
-    '- payments: money a client STILL OWES the business. It has NOT been paid.',
+    '- payments: money someone STILL OWES the business. It has NOT been paid.',
     '  Never describe it as paid, received, settled or collected. The owner needs to chase it.',
-    '- awaitingIntake: these clients have NOT returned their intake form yet.',
+    '- awaitingIntake: these people have NOT returned their intake form yet.',
     '- cancelled: appointments that were cancelled, freeing that slot.',
     '- allReady: every appointment today is ready; nothing is outstanding on them.',
+    '- newLeads: people who got in touch for the first time today. `count` is how',
+    '  many there were; `people` are the ones you may name, with `note` being what',
+    '  they asked about. Name them where you can — it is the point of the line.',
+    '  NEVER invent a name, and never name anyone who is not in `people`; where',
+    '  `count` exceeds the list, account for the rest as a number.',
+    '- quotesWaiting: people owed a price — either nobody has written the quote',
+    '  or it was written and never sent. The owner is the blocker; say so plainly.',
+    '- quotesOut: quotes already sent that the client has not answered in three',
+    '  days or more. The owner has done their part — report it, never imply a',
+    '  chore. Do not confuse this with quotesWaiting; they are opposites.',
+    '',
+    /*
+     * Vocabulary is the model's job, not a lookup table's.
+     *
+     * A trainer has trainees, a clinic has patients, a tutor has students, a
+     * salon has clients — and the list does not end, which is exactly why it is
+     * not a list. Mapping every vertical to a noun in every language is a table
+     * someone has to extend for each new business type and each new language,
+     * and it is still wrong for every business whose vertical is stored as
+     * "other". The model already knows what a barber calls the people in the
+     * chair; it only needs telling what kind of business this is.
+     */
+    'WHO THIS BUSINESS SERVES:',
+    `This is ${describeBusiness(businessType)}.`,
+    'Use the words THIS owner would use for the people they serve — a personal',
+    'trainer says trainees, a clinic says patients, a tutor says students, a salon',
+    'says clients. Choose the natural word for this business and this language.',
+    'Never use CRM vocabulary: not "contacts", not "leads", not "records", not',
+    '"entries". Those are the database\'s words, never the owner\'s.',
+    'If you cannot tell what kind of business it is, say "clients" in the target language.',
     '',
     'FORMAT: a list, one fact per line, separated by newlines.',
     'Each line is a single short sentence — under about ten words — that stands on its own.',
@@ -231,6 +304,37 @@ function toPromptShape(facts: BriefingFacts) {
       amount: formatMoney(o.amount, o.currency),
       ...(o.overdue && { overdue: true }),
     }));
+  }
+
+  /*
+   * New leads, when there are any.
+   *
+   * The other half of `outlook` — the next appointment — is deliberately NOT
+   * sent. It only exists on a day with no appointments, and such a day never
+   * reaches this function: `isQuiet` short-circuits to the templates before a
+   * model is called. Sending a key that can only ever be absent here would be
+   * dead weight in the prompt.
+   */
+  if (facts.outlook.newLeads.count > 0) {
+    /*
+     * The names go to the model as FACTS, not as something to infer.
+     *
+     * `findUnsupportedFigures` catches an invented number; nothing catches an
+     * invented name, so the model must never be in a position to need one. It
+     * gets exactly the people it is allowed to mention, and the count.
+     */
+    shape.newLeads = {
+      count: facts.outlook.newLeads.count,
+      people: facts.outlook.newLeads.people,
+    };
+  }
+
+  if (facts.outlook.quotesWaiting.count > 0) {
+    shape.quotesWaiting = facts.outlook.quotesWaiting.count;
+  }
+
+  if (facts.outlook.quotesOut.count > 0) {
+    shape.quotesOut = facts.outlook.quotesOut.count;
   }
 
   return shape;
@@ -397,11 +501,72 @@ export function composeFallback(facts: BriefingFacts, language: BriefingLanguage
     lines.push(phrase.first(appointments.first.name, appointments.first.timeLocal));
   }
 
+  /*
+   * The quiet line leads, and the outlook follows it.
+   *
+   * Checked here rather than at the end, because the outlook lines below are
+   * not today: a day whose only content is next Wednesday's appointment still
+   * needs to say that today itself held nothing, or the card reads as though
+   * Wednesday were today.
+   */
   if (lines.length === 0) lines.push(phrase.quiet());
+
+  const { outlook } = facts;
+
+  if (outlook.next) {
+    lines.push(
+      phrase.next(outlook.next.name, formatDay(outlook.next.dateLocal, language), outlook.next.timeLocal)
+    );
+  }
+
+  if (outlook.newLeads.count > 0) {
+    lines.push(phrase.newLeads(outlook.newLeads.count, outlook.newLeads.people));
+  }
+
+  if (outlook.quotesWaiting.count > 0) {
+    lines.push(phrase.quotesWaiting(outlook.quotesWaiting.count));
+  }
+
+  if (outlook.quotesOut.count > 0) {
+    lines.push(phrase.quotesOut(outlook.quotesOut.count));
+  }
 
   // Newline-separated, matching the model's contract: the card renders these
   // as a list, one fact per row.
   return lines.join('\n');
+}
+
+const DAY_LOCALES: Record<BriefingLanguage, string> = {
+  en: 'en-GB',
+  es: 'es-ES',
+  he: 'he-IL',
+};
+
+/**
+ * A date the owner can act on, in their own language.
+ *
+ * Weekday AND date, not one or the other. "Wednesday" alone is ambiguous the
+ * moment the next appointment is more than a week out, and a bare date makes
+ * the reader count days to work out whether it is soon. Formatted here rather
+ * than in the facts service because it is the only part of the briefing whose
+ * wording depends on the reader — the facts layer deals in ISO strings.
+ */
+function formatDay(dateLocal: string, language: BriefingLanguage): string {
+  // Noon, so the label cannot slip a day when the runtime reads a bare date as
+  // UTC midnight and the reader sits west of it.
+  const parsed = new Date(`${dateLocal}T12:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return dateLocal;
+
+  try {
+    return new Intl.DateTimeFormat(DAY_LOCALES[language] ?? 'en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      timeZone: 'UTC',
+    }).format(parsed);
+  } catch {
+    return dateLocal;
+  }
 }
 
 /** Split a narration into the lines the card renders. */
@@ -447,6 +612,42 @@ interface FallbackPhrases {
   cancelled: () => string;
   first: (name: string, time: string) => string;
   quiet: () => string;
+  /** The next appointment beyond today. `day` arrives already localised. */
+  next: (name: string, day: string, time: string) => string;
+  /**
+   * Who got in touch, by name where we have them.
+   *
+   * Takes both: a business with more new people than the briefing prints names
+   * for gets the names it can show and the true total.
+   */
+  newLeads: (n: number, people: Array<{ name: string; note?: string }>) => string;
+  /** People owed a price — unwritten or written and unsent. The owner's move. */
+  quotesWaiting: (n: number) => string;
+  /** Quotes out with the client and unanswered. Reported, never a chore. */
+  quotesOut: (n: number) => string;
+}
+
+/**
+ * "A", "A and B", "A, B and C" — and "A, B and 4 others" once the list is
+ * longer than the names we hold.
+ *
+ * The conjunction is the only part that differs between the three languages,
+ * so it is a parameter rather than three copies of the same joining logic.
+ */
+function joinNames(
+  people: Array<{ name: string }>,
+  total: number,
+  conjunction: string,
+  others: (n: number) => string
+): string {
+  const names = people.map(p => p.name).filter(Boolean);
+  if (names.length === 0) return '';
+
+  const hidden = total - names.length;
+  const parts = hidden > 0 ? [...names, others(hidden)] : names;
+
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} ${conjunction} ${parts[parts.length - 1]}`;
 }
 
 /*
@@ -464,7 +665,22 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     cancelledAt: time => `Your ${time} appointment was cancelled, leaving an opening.`,
     cancelled: () => 'An appointment was cancelled, leaving an opening.',
     first: (name, time) => `Your first appointment is ${name} at ${time}.`,
-    quiet: () => 'Nothing is scheduled today.',
+    quiet: () => 'No activity we could see for today.',
+    next: (name, day, time) => `Your next is ${name}, ${day} at ${time}.`,
+    newLeads: (n, people) => {
+      const named = joinNames(people, n, 'and', k => `${k} more`);
+      if (!named) {
+        return n === 1 ? 'Someone new got in touch today.' : `${n} new people got in touch today.`;
+      }
+      // One person who said what they wanted gets their words; a list does not,
+      // because three notes in one line is no longer a summary.
+      const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
+      return `${named} got in touch today${note}.`;
+    },
+    quotesWaiting: n =>
+      n === 1 ? 'Someone is waiting on a price from you.' : `${n} people are waiting on a price from you.`,
+    quotesOut: n =>
+      n === 1 ? 'One quote is out and still unanswered.' : `${n} quotes are out and still unanswered.`,
   },
   es: {
     appointments: n => (n === 1 ? 'Tienes una cita hoy.' : `Tienes ${n} citas hoy.`),
@@ -475,7 +691,20 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     cancelledAt: time => `Tu cita de las ${time} se canceló y dejó un hueco libre.`,
     cancelled: () => 'Se canceló una cita y dejó un hueco libre.',
     first: (name, time) => `Tu primera cita es ${name} a las ${time}.`,
-    quiet: () => 'No hay nada agendado para hoy.',
+    quiet: () => 'No detectamos actividad para hoy.',
+    next: (name, day, time) => `Tu próxima es ${name}, el ${day} a las ${time}.`,
+    newLeads: (n, people) => {
+      const named = joinNames(people, n, 'y', k => `${k} más`);
+      if (!named) {
+        return n === 1 ? 'Alguien nuevo te contactó hoy.' : `${n} personas nuevas te contactaron hoy.`;
+      }
+      const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
+      return `${named} te ${n === 1 ? 'contactó' : 'contactaron'} hoy${note}.`;
+    },
+    quotesWaiting: n =>
+      n === 1 ? 'Alguien espera un precio tuyo.' : `${n} personas esperan un precio tuyo.`,
+    quotesOut: n =>
+      n === 1 ? 'Un presupuesto sigue sin respuesta.' : `${n} presupuestos siguen sin respuesta.`,
   },
   he: {
     appointments: n => (n === 1 ? 'יש לך פגישה אחת היום.' : `יש לך ${n} פגישות היום.`),
@@ -486,7 +715,20 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     cancelledAt: time => `הפגישה שלך ב-${time} בוטלה ונפתח חלון פנוי.`,
     cancelled: () => 'פגישה בוטלה ונפתח חלון פנוי.',
     first: (name, time) => `הפגישה הראשונה שלך היא ${name} בשעה ${time}.`,
-    quiet: () => 'אין שום דבר מתוכנן להיום.',
+    quiet: () => 'לא זיהינו פעילות להיום.',
+    next: (name, day, time) => `הפגישה הבאה שלך היא ${name}, ב${day} בשעה ${time}.`,
+    newLeads: (n, people) => {
+      const named = joinNames(people, n, 'ו-', k => `עוד ${k}`);
+      if (!named) {
+        return n === 1 ? 'מישהו חדש פנה אליך היום.' : `${n} אנשים חדשים פנו אליך היום.`;
+      }
+      const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
+      return `${named} ${n === 1 ? 'פנה/תה' : 'פנו'} אליך היום${note}.`;
+    },
+    quotesWaiting: n =>
+      n === 1 ? 'מישהו מחכה לך להצעת מחיר.' : `${n} אנשים מחכים לך להצעת מחיר.`,
+    quotesOut: n =>
+      n === 1 ? 'הצעת מחיר אחת נשלחה ועדיין ללא מענה.' : `${n} הצעות מחיר נשלחו ועדיין ללא מענה.`,
   },
 };
 

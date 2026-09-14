@@ -3,7 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 
+/*
+ * Every "please try logging in" below crosses an origin: sign-in is a page on
+ * the marketing site, not a route in this app. `router.push('/login')` used to
+ * land people on a 404 three seconds after being told what went wrong.
+ */
 export default function AuthCallbackPage() {
   const router = useRouter();
   const [status, setStatus] = useState<'verifying' | 'creating_profile' | 'redirecting' | 'error'>('verifying');
@@ -24,7 +30,7 @@ export default function AuthCallbackPage() {
           console.error('Session error:', error);
           setStatus('error');
           setErrorMessage('Failed to verify email. Please try logging in.');
-          setTimeout(() => router.push('/login?error=verification_failed'), 3000);
+          setTimeout(() => { window.location.href = marketingLoginUrl('?error=verification_failed'); }, 3000);
           return;
         }
 
@@ -34,7 +40,7 @@ export default function AuthCallbackPage() {
           console.error('No user in session');
           setStatus('error');
           setErrorMessage('No active session found. Please try logging in.');
-          setTimeout(() => router.push('/login?error=no_session'), 3000);
+          setTimeout(() => { window.location.href = marketingLoginUrl('?error=no_session'); }, 3000);
           return;
         }
 
@@ -122,15 +128,22 @@ export default function AuthCallbackPage() {
           console.log('User needs to complete onboarding, redirecting to /onboarding...');
           setTimeout(() => router.push('/onboarding-chat'), 1000);
         } else {
-          // Onboarding complete - go to dashboard
-          console.log('Onboarding already completed, redirecting to /dashboard...');
-          setTimeout(() => router.push('/dashboard'), 1000);
+          /*
+           * `/business-os`, not `/dashboard`.
+           *
+           * While the V2 rewrite was in place this landed on `/v2/dashboard` —
+           * the old interface. With the rewrite gone it would have resolved to
+           * the older one still. Business OS is the product, and it is where
+           * `/onboarding-chat` sends a business that has already onboarded.
+           */
+          console.log('Onboarding already completed, redirecting to /business-os...');
+          setTimeout(() => router.push('/business-os'), 1000);
         }
       } catch (err) {
         console.error('Unexpected error in auth callback:', err);
         setStatus('error');
         setErrorMessage('An unexpected error occurred. Please try logging in.');
-        setTimeout(() => router.push('/login'), 3000);
+        setTimeout(() => { window.location.href = marketingLoginUrl(); }, 3000);
       }
     }
 

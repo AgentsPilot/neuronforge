@@ -13,7 +13,7 @@
 import { createHash } from 'crypto';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
-import { narrateBriefing, type BriefingLanguage, type BriefingSource } from './BriefingNarrator';
+import { narrateBriefing, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
 import type { BriefingFacts } from './BriefingFactsService';
 
 const logger = createLogger({ service: 'BriefingStore' });
@@ -34,9 +34,10 @@ export interface StoredBriefing {
 export async function getBriefing(
   userId: string,
   facts: BriefingFacts,
-  language: BriefingLanguage
+  language: BriefingLanguage,
+  businessType: BusinessType = {}
 ): Promise<StoredBriefing> {
-  const hash = hashFacts(facts, language);
+  const hash = hashFacts(facts, language, businessType);
 
   const cached = await readCached(userId, facts.day.date);
   if (cached && cached.facts_hash === hash) {
@@ -47,7 +48,7 @@ export async function getBriefing(
     };
   }
 
-  const narration = await narrateBriefing(facts, language, userId);
+  const narration = await narrateBriefing(facts, language, userId, businessType);
 
   // Written after the fact so a storage outage cannot stop the card rendering.
   await writeCached(userId, facts, language, hash, narration.narrative, narration.source);
@@ -62,11 +63,21 @@ export async function getBriefing(
  * different rows' worth of text, and a user who switches language should not
  * be served the previous one from cache.
  */
-export function hashFacts(facts: BriefingFacts, language: BriefingLanguage): string {
-  const { appointments, money } = facts;
+export function hashFacts(
+  facts: BriefingFacts,
+  language: BriefingLanguage,
+  businessType: BusinessType = {}
+): string {
+  const { appointments, money, outlook } = facts;
 
   const material = JSON.stringify({
     language,
+    /*
+     * The business type is part of the fingerprint because it now decides the
+     * words. A trainer whose vertical is corrected from 'other' should not keep
+     * being served the briefing that called their trainees "clients".
+     */
+    businessType: [businessType.vertical, businessType.subVertical, businessType.name],
     date: facts.day.date,
     total: appointments.total,
     ready: appointments.ready,
@@ -76,6 +87,25 @@ export function hashFacts(facts: BriefingFacts, language: BriefingLanguage): str
       : null,
     cancelled: appointments.cancelled.map(c => [c.name, c.timeLocal, c.reason]),
     owed: money.owed.map(o => [o.name, o.amount, o.currency, o.overdue]),
+    /*
+     * The outlook is part of the fingerprint because it is part of the text.
+     * On an otherwise empty day it is the ONLY content, so leaving it out would
+     * pin the first quiet briefing of the day in place: someone books an
+     * appointment for next week, or a new person gets in touch at noon, and the
+     * card would keep showing the version written before either happened.
+     */
+    next: outlook.next
+      ? [outlook.next.name, outlook.next.dateLocal, outlook.next.timeLocal, outlook.next.serviceName]
+      : null,
+    newLeads: outlook.newLeads,
+    /*
+     * The quotes are part of the fingerprint for the same reason the leads are:
+     * they are part of the text. Without them a quote request arriving at noon
+     * leaves the card showing the version written this morning, which is the
+     * exact staleness the comment above warns about.
+     */
+    quotesWaiting: outlook.quotesWaiting,
+    quotesOut: outlook.quotesOut,
   });
 
   return createHash('sha256').update(material).digest('hex').slice(0, 32);

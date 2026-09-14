@@ -34,6 +34,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import {
   CATALOG,
+  COMPLEMENTARY_OPS,
   type ResolvedEntity,
   type ResolvedField,
 } from '@/lib/business-os/catalog';
@@ -48,6 +49,7 @@ import {
   isOrPredicate,
   isRelationPredicate,
   isSemanticValue,
+  type ComparisonOp,
   type ComputeQuery,
   type ComputeResult,
   type FindQuery,
@@ -63,6 +65,7 @@ import {
   type UnmatchedFilter,
 } from './types';
 import { resolveDateExpr } from './dates';
+import { defaultScopeFor } from './defaultScope';
 import { relationPredicateProblem } from './predicateRules';
 import { parseGroupBy, bucketKey, type GroupSpec } from './groupBy';
 
@@ -925,6 +928,37 @@ async function applyPredicate(
       const expansions = Array.isArray(derived.expand) ? derived.expand : [derived.expand];
 
       /*
+       * A SELF expansion is a fact about this row's own columns.
+       *
+       * "Quotes I actually sent" is `sent_at is not null` — a plain predicate,
+       * but not one the planner can be expected to invent: the column name
+       * carries no business word, and this entity also has a status value
+       * literally called `sent` that means sent-and-unanswered. Asked how many
+       * quotes had been sent, the planner counted all eleven, three of which
+       * were drafts that never left; filtering on the status would have
+       * returned zero. Declaring the fact removes the choice.
+       *
+       * `eq false` flips the operator rather than negating a set, which is why
+       * the catalog only permits one predicate with a complement — see
+       * COMPLEMENTARY_OPS.
+       */
+      if (expansions.every((expansion) => !expansion.relation)) {
+        const [own] = expansions[0].where ?? [];
+
+        if (!own) {
+          throw new BizQLValidationError([
+            `'${entity.key}.${predicate.field}' is declared with nothing to test.`,
+          ]);
+        }
+
+        const op = wantsTrue ? own.op : COMPLEMENTARY_OPS[own.op];
+
+        return box(
+          applyFieldPredicate(builder, entity, own.field, op as ComparisonOp, own.value as QueryValue, ctx)
+        );
+      }
+
+      /*
        * Several expansions are OR'd, by unioning the ids each one matches.
        *
        * A row satisfies "owes me money" if it is owed on an invoice OR on a
@@ -943,7 +977,9 @@ async function applyPredicate(
           supabase,
           entity,
           {
-            relation: expansion.relation,
+            // Non-null by construction: the all-self case returned above, and
+            // the catalog refuses a derived field that mixes the two shapes.
+            relation: expansion.relation!,
             quantifier: 'any',
             where: (expansion.where ?? []) as Predicate[],
           },
@@ -1191,9 +1227,18 @@ export async function compileAndRunFind(
     }
   }
 
-  await prefetchEnumSources(supabase, entity, query.where ?? [], ctx);
+  /*
+   * The entity's own default exclusion, when the question did not steer.
+   *
+   * Today that is one rule: a superseded quote is an old version of a quote the
+   * answer already includes. See defaultScope.ts — it is the one filter here
+   * that the user did not ask for, and the answer line says so out loud.
+   */
+  const findWhere = [...(query.where ?? []), ...(defaultScopeFor(entity, query.where)?.where ?? [])];
 
-  for (const predicate of query.where ?? []) {
+  await prefetchEnumSources(supabase, entity, findWhere, ctx);
+
+  for (const predicate of findWhere) {
     builder = (await applyPredicate(supabase, builder, entity, predicate, ctx)).b;
   }
 
@@ -1594,9 +1639,16 @@ export async function compileAndRunCompute(
     }
   }
 
-  await prefetchEnumSources(supabase, entity, query.where ?? [], ctx);
+  // Same rule as the find path: an aggregate over versions of the same quote
+  // is the wrong total, and it is the one people quote back at you.
+  const aggregateWhere = [
+    ...(query.where ?? []),
+    ...(defaultScopeFor(entity, query.where)?.where ?? []),
+  ];
 
-  for (const predicate of query.where ?? []) {
+  await prefetchEnumSources(supabase, entity, aggregateWhere, ctx);
+
+  for (const predicate of aggregateWhere) {
     builder = (await applyPredicate(supabase, builder, entity, predicate, ctx)).b;
   }
 
@@ -1609,7 +1661,22 @@ export async function compileAndRunCompute(
 
   const reduce = (values: number[]): number | null => {
     if (fn === 'count') return values.length;
-    if (values.length === 0) return null;
+
+    /*
+     * A SUM of nothing is zero. An average of nothing is not.
+     *
+     * Both used to be null, and null renders as an empty placeholder, which
+     * sends the whole sentence to the bare fallback: asked "כמה החזרים בוצעו"
+     * a business with no refunds was told "זיכויים: 0" — a label and a number
+     * instead of an answer, because the SUM beside the count had no value to
+     * substitute. Zero refunds totalling zero is a perfectly good answer and
+     * the arithmetic agrees.
+     *
+     * min/max/avg stay null: there is genuinely no smallest invoice when there
+     * are no invoices, and answering "0" would invent one.
+     */
+    if (values.length === 0) return fn === 'sum' ? 0 : null;
+
     switch (fn) {
       case 'sum':
         return values.reduce((a, b) => a + b, 0);

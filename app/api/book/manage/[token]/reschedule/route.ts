@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { verifyBookingToken, BookingEmailService } from '@/lib/services/BookingEmailService';
+import { updateOwnerCalendarEvent } from '@/lib/scheduling/syncBookingCalendar';
+import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import { wallClockToInstant } from '@/lib/scheduling/wallClock';
@@ -208,8 +210,8 @@ export async function POST(
         start_time,
         status,
         timezone,
-        contact:crm_contacts(email),
-        service:scheduling_services(min_notice_hours)
+        contact:crm_contacts(email, first_name, last_name),
+        service:scheduling_services(min_notice_hours, service_name)
       `)
       .eq('id', bookingId)
       .single();
@@ -394,6 +396,40 @@ export async function POST(
     // Send rescheduled email (non-blocking)
     BookingEmailService.sendRescheduledEmail(bookingId, booking.user_id, previousDateTime)
       .catch(err => requestLogger.warn({ err }, 'Rescheduled email failed (non-blocking)'));
+
+    /*
+     * Move it in the owner's own calendar (non-blocking).
+     *
+     * Nothing did this either, and a stale event here is worse than a missing
+     * one: the appointment sat at the OLD time, so the owner had a phantom
+     * meeting on one slot and no sign of the real one on another.
+     */
+    updateOwnerCalendarEvent(bookingId, booking.user_id, requestLogger)
+      .catch(err => requestLogger.warn({ err, bookingId }, 'Calendar move failed'));
+
+    /*
+     * And tell them (non-blocking), with both times.
+     *
+     * "Moved" on its own is not usable — the owner needs to know what to stop
+     * expecting as well as what to expect.
+     */
+    const movedService = Array.isArray(bookingData.service)
+      ? bookingData.service[0]
+      : bookingData.service;
+    notifyOwnerOfLead({
+      ownerId: bookingData.user_id,
+      contactId: bookingData.contact_id,
+      kind: 'moved',
+      contactName:
+        [postContact?.first_name, postContact?.last_name].filter(Boolean).join(' ') || 'Client',
+      contactEmail: postContact?.email,
+      serviceName: movedService?.service_name,
+      // `previousDateTime` was captured before the update; `bookingData` still
+      // holds the old start because it was read before it too.
+      startTime: newStartInstant,
+      previousStartTime: bookingData.start_time,
+      timezone: timeZone,
+    }).catch(err => requestLogger.warn({ err, bookingId }, 'Owner alert failed (non-blocking)'));
 
     return NextResponse.json({
       success: true,

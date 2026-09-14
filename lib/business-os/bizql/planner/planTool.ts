@@ -209,9 +209,12 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
           `of the {..} terms shown for the field; or {"$date":"ANCHOR"} where ANCHOR is ` +
           `exactly one of ${DATE_ANCHORS.join('|')}, with an optional ` +
           '{"offset":{"days":N}}; or {"$date":"YYYY-MM-DD"} for a day the user named. ' +
-          'If the field shows {..} semantic terms, you MUST use {"$semantic":"..."} — ' +
-          'passing the term name as a plain string matches nothing and silently returns ' +
-          'zero rows.',
+          'A {..} term after a field is the ONLY thing {"$semantic":"..."} may name, and ' +
+          'passing THAT as a plain string matches nothing. Every other value — including ' +
+          'every enum value listed for the field — is a plain literal: ' +
+          '{"field":"status","op":"eq","value":"accepted"}. Never invent a term: wrapping ' +
+          'a value that is not in {..} is how "how many were accepted" gets answered with ' +
+          'a different status.',
       },
       relation: { type: 'string', description: 'Relation name, when filtering on related rows.' },
       quantifier: { type: 'string', enum: ['any', 'none'] },
@@ -253,6 +256,31 @@ export function buildPlanTool(entityKeys?: string[]): ToolSchema {
                 },
                 entity: { type: 'string', enum: entities },
                 where: { type: 'array', items: predicateSchema },
+                /*
+                 * "The same rows as last time."
+                 *
+                 * Copying a filter across turns is the one thing the model has
+                 * proved it will not do reliably: asked "what is their total"
+                 * after "4 of 7 were accepted", it summed all seven — three
+                 * times, in three different ways, each answer confident and
+                 * each one out by tens of thousands.
+                 *
+                 * So it no longer has to copy anything. It says the follow-up
+                 * is about the same rows, and the SERVER substitutes the
+                 * entity and the filters from the plan it stored. Recognising a
+                 * follow-up is a language judgement, which the model is good
+                 * at; reproducing a filter verbatim is a copying task, which it
+                 * is not.
+                 */
+                same_rows: {
+                  type: 'boolean',
+                  description:
+                    'Set true INSTEAD of entity+where when the message is a follow-up about ' +
+                    'the rows the last answer was about — "their total", "and the sum", ' +
+                    '"how many of those", "show them". The server fills in the entity and the ' +
+                    'filters from the previous answer; you supply only what changed, normally ' +
+                    'the aggregate. Do not set it when the message names its own subject.',
+                },
                 select: {
                   type: 'array',
                   items: { type: 'string' },

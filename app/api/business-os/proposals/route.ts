@@ -9,6 +9,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { isIsoCalendarDate } from '@/lib/business-os/bizql/types';
+// Shared with the chat's write path — one definition of the three shapes.
+import { paymentShapeSchema } from '@/lib/business-os/proposalShape';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
@@ -19,27 +22,6 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 const logger = createLogger({ module: 'ProposalsAPI' });
 const auditTrail = AuditTrailService.getInstance();
 
-const paymentShapeSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('single') }),
-  z.object({
-    kind: z.literal('installments'),
-    count: z.number().int().min(2).max(24),
-    frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']),
-  }),
-  z.object({
-    kind: z.literal('milestones'),
-    stages: z
-      .array(
-        z.object({
-          label: z.string().min(1).max(120),
-          percent: z.number().min(0.01).max(100),
-        })
-      )
-      .min(2)
-      .max(12),
-  }),
-]);
-
 const createSchema = z.object({
   contact_id: z.string().uuid(),
   service_id: z.string().uuid().nullable().optional(),
@@ -47,11 +29,31 @@ const createSchema = z.object({
   booking_id: z.string().uuid().nullable().optional(),
   /** An uploaded proposal document, which the client must open before accepting. */
   document_id: z.string().uuid().nullable().optional(),
+  /** Days to pay for this quote. Null inherits the business default. */
+  payment_terms_days: z.coerce.number().int().min(0).max(365).nullable().optional(),
   title: z.string().min(1).max(200),
   description: z.string().max(5000).nullable().optional(),
   currency: z.enum(['USD', 'EUR', 'ILS', 'GBP']).optional(),
   total: z.number().min(0),
-  valid_until: z.string().nullable().optional(),
+  /**
+   * A real calendar day, not any string.
+   *
+   * This was `z.string()`, and a native date input will happily hand you a
+   * five-digit year if someone types one — three quotes in production carry
+   * `62026-09-10`, which Postgres accepts (DATE goes to year 5874897) and which
+   * renders as "10 בספט׳ 62026" everywhere it is shown. Nothing downstream can
+   * repair that; the only place to stop it is here.
+   */
+  valid_until: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'valid_until must be YYYY-MM-DD')
+    .refine(isIsoCalendarDate, 'valid_until is not a real date')
+    .refine(
+      (value) => Number(value.slice(0, 4)) <= new Date().getUTCFullYear() + 10,
+      'valid_until is implausibly far in the future'
+    )
+    .nullable()
+    .optional(),
   payment_shape: paymentShapeSchema.optional(),
   /** Set when this replaces a declined or sent version. */
   supersedes_id: z.string().uuid().nullable().optional(),
@@ -243,6 +245,7 @@ export async function POST(request: NextRequest) {
       service_id: validated.service_id ?? null,
       booking_id: validated.booking_id ?? null,
       document_id: validated.document_id ?? null,
+      payment_terms_days: validated.payment_terms_days ?? null,
       title: validated.title,
       description: validated.description ?? null,
       currency: validated.currency || 'USD',

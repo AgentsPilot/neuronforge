@@ -109,9 +109,11 @@ export function BusinessInfoPanel({
               borderRadius: 'var(--ap-radius-lg)',
               boxShadow: 'var(--ap-shadow-sm)',
             }
-          : variant === 'footer'
-            ? { borderTop: '1px solid var(--ap-border)' }
-            : undefined
+          : // The footer variant sits directly above the page's own footer,
+            // which already draws a rule. Two hairlines a few rows apart read
+            // as a mistake rather than as structure, and the spacing separates
+            // these details from what is above them on its own.
+            undefined
       }
     >
       <div className={variant === 'footer' ? 'grid gap-6 sm:grid-cols-2' : 'space-y-4'}>

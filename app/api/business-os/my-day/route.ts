@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
     const [profileResult, briefingPrefResult, preferencesResult] = await Promise.all([
       supabaseServer
         .from('business_profiles')
-        .select('business_name, owner_name, language')
+        .select('business_name, owner_name, language, vertical, sub_vertical')
         .eq('user_id', user.id)
         .maybeSingle(),
       /*
@@ -77,7 +77,13 @@ export async function GET(request: NextRequest) {
     ]);
 
     const profile = profileResult.data as
-      | { business_name?: string | null; owner_name?: string | null; language?: string | null }
+      | {
+          business_name?: string | null;
+          owner_name?: string | null;
+          language?: string | null;
+          vertical?: string | null;
+          sub_vertical?: string | null;
+        }
       | null;
     const preferences = preferencesResult.data as
       | { timezone?: string | null; preferred_language?: string | null }
@@ -102,7 +108,13 @@ export async function GET(request: NextRequest) {
     let briefing = null;
     try {
       const facts = await buildBriefingFacts(user.id, day);
-      briefing = await getBriefing(user.id, facts, language);
+      briefing = await getBriefing(user.id, facts, language, {
+        // What kind of business this is, so the narration uses the owner's own
+        // word for the people they serve rather than the CRM's.
+        vertical: profile?.vertical,
+        subVertical: profile?.sub_vertical,
+        name: profile?.business_name,
+      });
     } catch (briefingError) {
       requestLogger.warn({ err: briefingError, userId: user.id }, 'Briefing unavailable');
     }

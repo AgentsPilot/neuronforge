@@ -165,7 +165,7 @@ export function generateRefundConfirmationEmail(data: RefundConfirmationData): {
             ${t.bookAgainPrompt[locale]}
           </p>
           ${emailButton(t.bookAgain[locale], data.bookAgainUrl, {
-            backgroundColor: data.branding.primaryColor
+            branding: data.branding
           })}
         </td>
       </tr>

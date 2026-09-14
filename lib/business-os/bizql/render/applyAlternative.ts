@@ -58,7 +58,9 @@ export interface AppliedAlternative {
  */
 export function applyAlternative(
   storedSteps: unknown[] | undefined,
-  alternative: Alternative
+  alternative: Alternative,
+  /** The plan before the stored one — see the `previous_filters` branch. */
+  priorSteps?: unknown[]
 ): AppliedAlternative | null {
   if (!storedSteps?.length) return null;
 
@@ -82,7 +84,26 @@ export function applyAlternative(
 
   let preference: AppliedAlternative['preference'];
 
-  if (alternative.kind === 'aggregate_field') {
+  if (alternative.kind === 'previous_filters') {
+    /*
+     * "The ones we were just talking about."
+     *
+     * The filters come from the turn BEFORE this one, held server-side for
+     * exactly this: at the moment the chip is tapped, the stored plan is the
+     * unfiltered question that raised the ambiguity, and the rows the user
+     * meant are described by the turn before it.
+     *
+     * Same entity only. Carrying a filter across entities would apply a
+     * quote's status to a booking.
+     */
+    const source = (priorSteps ?? [])
+      .map((s) => s as { entity?: string; where?: Predicate[] })
+      .find((s) => s.entity === step.entity && (s.where?.length ?? 0) > 0);
+
+    if (!source) return null;
+
+    (step as FindQuery | ComputeQuery).where = JSON.parse(JSON.stringify(source.where));
+  } else if (alternative.kind === 'aggregate_field') {
     if (step.op !== 'compute') return null;
 
     // The substituted field must be one the catalog itself nominated as the

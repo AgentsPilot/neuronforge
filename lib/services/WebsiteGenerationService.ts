@@ -2,13 +2,17 @@
  * Website Generation Service
  * LLM-powered service that generates complete website content based on business profile
  *
- * Generates:
+ * Generates the WORDS:
  * - Hero section (headline, subheadline)
  * - About section
  * - Service descriptions
  * - Process flow steps
  * - SEO metadata
- * - Theme colors and fonts
+ *
+ * And nothing else. Colour, type, scale, radii and layout come from the
+ * archetype (`lib/website-builder/archetypes`); which sections appear and in
+ * what order comes from the recipe (`lib/website-builder/recipes`). This asked
+ * the model for three hex values and a font name until it stopped.
  */
 
 import { createLogger } from '@/lib/logger';
@@ -17,7 +21,10 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { getWebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { getWebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
-import { getTemplateById, templateToPageTheme } from '@/lib/website-builder/templates';
+import { themeForTemplateId } from '@/lib/website-builder/templates';
+import { DEFAULT_ARCHETYPE } from '@/lib/website-builder/archetypes';
+import { recipeFor, orderByRecipe, recommendArchetypeId } from '@/lib/website-builder/recipes';
+import { imageForSection, imagesForSection } from '@/lib/services/StockImageService';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
@@ -132,12 +139,19 @@ interface WebsiteContent {
     question: string;
     answer: string;
   }>;
-  theme: {
-    primaryColor: string;
-    secondaryColor: string;
-    accentColor: string;
-    fontFamily: string;
-  };
+  /**
+   * Removed: the model no longer picks colours.
+   *
+   * It was asked to *"choose theme colors appropriate for the vertical"* and to
+   * return three hex values and a font name — which is asking a language model
+   * to do design, with no system to do it inside. The result varied per
+   * generation, so there was no consistency, and it had no palette behind it,
+   * so there was no quality either. That is precisely why every vertical looked
+   * the same AND none of them looked good.
+   *
+   * Colour, type, scale, radii and layout now come from the archetype. The
+   * model writes words.
+   */
 }
 
 export class WebsiteGenerationService {
@@ -155,6 +169,19 @@ export class WebsiteGenerationService {
     pageId?: string;
     /** The owner's chosen template. Its theme wins over the model's. */
     templateId?: string;
+    /**
+     * What this page is FOR, when it is not the whole business.
+     *
+     * A homepage is about the business, and the profile describes that. A
+     * landing page is about one thing being promoted — a course, a package, a
+     * season — and generating it from the profile alone produces a second
+     * homepage under a different slug.
+     *
+     * Passed straight into the prompt alongside the profile, so the copy is
+     * written for the offer while the voice, the trade and the audience still
+     * come from the business.
+     */
+    focus?: { title: string; description?: string };
   } = {}): Promise<{
     success: boolean;
     homepageId?: string;
@@ -210,7 +237,7 @@ export class WebsiteGenerationService {
         Array.isArray((existingContent.data?.testimonials as { items?: unknown[] } | undefined)?.items) &&
         ((existingContent.data?.testimonials as { items?: unknown[] }).items?.length ?? 0) > 0;
 
-      const generated = await this.callLLM(profile, services, hasRealTestimonials);
+      const generated = await this.callLLM(profile, services, hasRealTestimonials, options.focus);
       const websiteContent = generated.content;
 
       // 3. Use user_code as subdomain (or generate one if missing)
@@ -229,38 +256,48 @@ export class WebsiteGenerationService {
       // 4. Create homepage
       const websitePageRepository = getWebsitePageRepository(supabaseServer);
 
-      // The owner picked a template from a gallery and watched the preview
-      // change; the model picked three hex values it will never be asked
-      // about. Where both exist, the choice that was made deliberately wins.
-      const chosenTemplate = options.templateId ? getTemplateById(options.templateId) : undefined;
-      if (options.templateId && !chosenTemplate) {
-        logger.warn({ userId, templateId: options.templateId }, 'Unknown template id — falling back to the generated theme');
+      /*
+       * The design the owner chose, whichever kind of id it is.
+       *
+       * `templateId` carries either an archetype id from the wizard or one of
+       * the legacy template ids stored before the gallery changed.
+       * `themeForTemplateId` resolves both to a complete `PageTheme`, so there
+       * is no longer a template branch and an archetype branch doing the same
+       * thing differently.
+       */
+      /*
+       * Which design this site is built in.
+       *
+       * ─────────────────────────────────────────────────────────────────────
+       * WHY THE VERTICAL GETS A VOTE
+       *
+       * This read `options.templateId` and nothing else. Onboarding passes no
+       * template — it never asks about visual style — so `designId` was null on
+       * every onboarding-generated site and every one of them came out Stone.
+       * `ARCHETYPE_BY_VERTICAL` existed and was correct the whole time; its only
+       * consumer was the templates LISTING endpoint, which used it to sort a
+       * card to the front. No generation path ever called it.
+       *
+       * An explicit choice still wins — the wizard and the templates tab both
+       * pass one. The recommendation only fills the silence, and the owner can
+       * change it afterwards from the templates tab like any other choice.
+       */
+      const designId = options.templateId ?? recommendArchetypeId(profile.vertical);
+      const chosenTheme = designId ? themeForTemplateId(designId) : null;
+
+      if (designId && !chosenTheme) {
+        logger.warn({ userId, templateId: designId }, 'Unknown design id — falling back to the default archetype');
       }
 
-      // Convert LLM theme format to PageTheme format
-      const generatedTheme = {
-        colors: {
-          primary: websiteContent.theme.primaryColor,
-          secondary: websiteContent.theme.secondaryColor,
-          accent: websiteContent.theme.accentColor,
-          background: '#ffffff',
-          surface: '#f9fafb',
-          text: '#111827',
-          textSecondary: '#6b7280',
-        },
-        fonts: {
-          heading: websiteContent.theme.fontFamily,
-          body: websiteContent.theme.fontFamily.includes('serif') ? 'Georgia, serif' : 'Inter, sans-serif',
-        },
-        borderRadius: '0.5rem',
-        spacing: 'normal' as const,
-      };
-
-      // The look belongs to the business, so it is stored there as well as on
-      // the page. Without this the template chosen during onboarding reached
-      // the website and stopped: the invoices, the emails, the landing pages
-      // and the booking links all went out in platform colours.
-      const pageTheme = chosenTemplate ? templateToPageTheme(chosenTemplate) : generatedTheme;
+      /*
+       * The default, where nothing was chosen.
+       *
+       * The model used to nominate three hex values here. With it out of the
+       * design business, a generation that named no design gets Stone — the
+       * only archetype with no accent colour, and so the hardest to make look
+       * wrong with someone else's content.
+       */
+      const pageTheme = chosenTheme ?? DEFAULT_ARCHETYPE;
 
       /*
        * Adopt, do not override.
@@ -268,15 +305,19 @@ export class WebsiteGenerationService {
        * This wrote the theme unconditionally, so a business that had already
        * published a landing page — and therefore already had a look — had it
        * silently replaced the moment a website was generated. The first surface
-       * a business publishes establishes its template; everything made after
+       * a business publishes establishes its design; everything made after
        * takes that one.
        *
-       * Asserted because `PageTheme` is an interface with no index signature,
-       * and updateBranding stores branding as free-form JSON.
+       * Adopting BY ID wherever there is one, so `business_profiles.template_id`
+       * records which design was chosen. It previously took this branch only for
+       * a legacy template, which left every archetype pick recorded as no
+       * choice at all.
        */
-      if (chosenTemplate) {
-        await adoptBusinessTemplate(userId, chosenTemplate.id);
+      if (designId && chosenTheme) {
+        await adoptBusinessTemplate(userId, designId);
       } else {
+        // Asserted because `PageTheme` is an interface with no index signature,
+        // and updateBranding stores branding as free-form JSON.
         await adoptBusinessTheme(userId, pageTheme as unknown as Record<string, unknown>);
       }
 
@@ -299,7 +340,16 @@ export class WebsiteGenerationService {
          * from one whose copy somebody has since edited, which is exactly the
          * distinction that decides whether regenerating is safe.
          */
-        template_id: chosenTemplate?.id ?? null,
+        /*
+         * Which design this page wears.
+         *
+         * Recorded so the wizard can pre-select it. This read the resolved
+         * template object rather than the id that was passed, so an archetype
+         * — where there is no template object — stored null, and the wizard
+         * fell back to whichever design happened to be first. That is the same
+         * failure this field was added to fix, reintroduced one layer up.
+         */
+        template_id: designId && chosenTheme ? designId : null,
         content_generated_at: new Date().toISOString(),
       };
 
@@ -327,7 +377,33 @@ export class WebsiteGenerationService {
       // has somewhere to go and nothing is built that was never asked for.
       const sections = this.planSections(services, hasRealTestimonials);
 
-      const blocks = this.buildBlocks(
+      /*
+       * The photographs, found while the copy is still warm.
+       *
+       * In parallel and never fatal: each answers null on any failure and the
+       * section simply has no picture, which is the state every block already
+       * renders. A stock search is a fifth of a second, so this is not worth
+       * making progressive — and a site that appears complete is a better first
+       * minute than one that fills in while the owner watches.
+       */
+      /*
+       * A gallery only where the recipe asks for one.
+       *
+       * Reading the recipe rather than the vertical keeps the decision in the
+       * one place that already makes it — a trade added to `gallery_led` later
+       * gets a gallery without anything here changing.
+       */
+      const pageRecipe = recipeFor(profile.vertical, options.focus ? 'landing' : 'homepage');
+      const wantsGallery = pageRecipe.includes('gallery' as never);
+      const wantsStats = pageRecipe.includes('stats' as never);
+
+      const [heroImage, aboutImage, galleryImages] = await Promise.all([
+        imageForSection(userId, profile.vertical, 'portrait', 'hero'),
+        imageForSection(userId, profile.vertical, 'portrait', 'about'),
+        wantsGallery ? imagesForSection(userId, profile.vertical, 'wide', 'gallery', 6) : Promise.resolve([]),
+      ]);
+
+      const builtBlocks = this.buildBlocks(
         homepage.id,
         websiteContent,
         services,
@@ -335,6 +411,36 @@ export class WebsiteGenerationService {
         profile.company_name || 'Your Business',
         (profile.extracted_data as { needs_intake?: boolean } | null)?.needs_intake === true,
         sections,
+        { hero: heroImage, about: aboutImage },
+        galleryImages,
+        wantsStats,
+      );
+
+      /*
+       * The ORDER comes from the recipe, not from `buildBlocks`.
+       *
+       * Every site got the same eleven sections in the same sequence —
+       * positions 0 to 10, hardcoded — which is half of why they all read the
+       * same. A photographer's gallery belongs third and a consultant should
+       * never have one; that was already decided in the 33 templates and was
+       * never consulted at generation time.
+       *
+       * `buildBlocks` still decides what each section SAYS. It no longer
+       * decides where it goes.
+       */
+      /*
+       * `focus` is what makes this a landing page rather than a homepage — it
+       * is the brief for one offering, and the prompt above already branches on
+       * it. The page type was hardcoded to 'homepage' here, so a landing page
+       * built through this path was ordered by the homepage recipe and
+       * `RECIPES.landing` was unreachable in production.
+       */
+      const pageType = options.focus ? 'landing' : 'homepage';
+
+      const blocks = orderByRecipe(
+        builtBlocks,
+        recipeFor(profile.vertical, pageType),
+        (pageTheme.layouts ?? DEFAULT_ARCHETYPE.layouts),
       );
       const websiteBlockRepository = getWebsiteBlockRepository(supabaseServer);
 
@@ -420,10 +526,11 @@ export class WebsiteGenerationService {
   private async callLLM(
     profile: any,
     services: any[],
-    hasRealTestimonials = false
+    hasRealTestimonials = false,
+    focus?: { title: string; description?: string }
   ): Promise<GeneratedContent> {
     const sections = this.planSections(services, hasRealTestimonials);
-    const prompt = this.buildPrompt(profile, services, sections);
+    const prompt = this.buildPrompt(profile, services, sections, focus);
     const language = profile.language || 'en';
 
     const systemPrompts: Record<string, string> = {
@@ -547,7 +654,12 @@ export class WebsiteGenerationService {
    * because nothing named button labels. Each new section is added to all
    * three lists, not just to the JSON contract.
    */
-  private buildPrompt(profile: any, services: any[], sections: ReturnType<WebsiteGenerationService['planSections']>): string {
+  private buildPrompt(
+    profile: any,
+    services: any[],
+    sections: ReturnType<WebsiteGenerationService['planSections']>,
+    focus?: { title: string; description?: string }
+  ): string {
     const vertical = profile.vertical || 'business';
     const subVertical = profile.sub_vertical || null;
     const companyName = profile.company_name || 'Business';
@@ -675,11 +787,30 @@ Todos los valores deben estar en español.
       ? `\nPayment Model: ${paymentMode === 'upfront' ? 'Clients pay when booking' : paymentMode === 'invoicing' ? 'Invoice-based billing' : 'Installment payment plans'}`
       : '';
 
+    /*
+     * A landing page is about ONE thing, and it comes first.
+     *
+     * Without this the prompt describes the business and the model writes a
+     * second homepage: the same hero, the same services, under a different
+     * slug. The offer goes at the top, where it sets what every section is
+     * about, while the profile below still supplies the voice, the trade and
+     * the audience.
+     */
+    const focusBrief = focus
+      ? `=== THIS PAGE IS PROMOTING ONE THING ===\n` +
+        `Title: ${focus.title}\n` +
+        (focus.description ? `What it is: ${focus.description}\n` : '') +
+        `Write EVERY section about this offer — the hero, the copy, the ` +
+        `call to action. The business details below are context for the voice ` +
+        `and the audience, not the subject.\n\n`
+      : '';
+
     return `
-Generate a complete website for a ${subVertical ? `${subVertical} (${vertical})` : vertical} business.
+Generate a complete ${focus ? 'landing page' : 'website'} for a ${subVertical ? `${subVertical} (${vertical})` : vertical} business.
 
 ${languageInstructions[language]}
 
+${focusBrief}
 === BUSINESS PROFILE ===
 Business Name: ${companyName}
 Business Type: ${subVertical || vertical}
@@ -699,7 +830,6 @@ Generate the following as JSON. Use the business profile information above to:
 2. Write about section paragraphs that address their challenges and showcase expertise
 3. Generate service descriptions that highlight value and outcomes
 4. Design process steps that reflect the actual client journey
-5. Choose theme colors appropriate for the ${subVertical || vertical} vertical
 
 {
   "title": "Homepage title (50-60 characters, include business name and key value)",
@@ -767,16 +897,7 @@ ${sections.services ? `  "serviceDescriptions": {
     "heroCta": "The main button under the headline: 2-4 words naming what happens when it is pressed",
     "headerCta": "The button in the header, 2-3 words"
   },
-  "theme": {
-    "primaryColor": "#hexcolor",
-    "secondaryColor": "#hexcolor",
-    "accentColor": "#hexcolor",
-    "fontFamily": "font-name"
-  }
 }
-
-=== THEME GUIDELINES ===
-${this.getThemeGuidelines(vertical, subVertical)}
 
 === CONTENT QUALITY GUIDELINES ===
 - Write in the appropriate tone for a ${subVertical || vertical} (professional but approachable)
@@ -806,35 +927,6 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
     `.trim();
   }
 
-  /**
-   * Get theme guidelines based on vertical and sub-vertical
-   */
-  private getThemeGuidelines(vertical: string, subVertical: string | null): string {
-    const guidelines: Record<string, string> = {
-      therapist: 'Calming blues/greens (#60a5fa, #10b981), serif fonts for warmth and trust',
-      psychologist: 'Calming blues/greens (#60a5fa, #10b981), serif fonts for warmth and trust',
-      counselor: 'Calming blues/greens (#60a5fa, #10b981), serif fonts for warmth and trust',
-      coach: 'Energetic oranges/blues (#f97316, #3b82f6), modern sans-serif for motivation',
-      life_coach: 'Warm oranges and teals (#f97316, #14b8a6), inspiring and uplifting',
-      business_coach: 'Professional blues/grays (#3b82f6, #6b7280), confident and results-focused',
-      parenting_coach: 'Warm family-friendly colors (#f97316, #10b981), approachable and nurturing',
-      consultant: 'Professional navy/gray (#1e40af, #6b7280), clean sans-serif',
-      lawyer: 'Authoritative dark blue/gold (#1e3a8a, #d97706), traditional serif',
-      accountant: 'Trustworthy blues/greens (#1e40af, #10b981), clean professional look',
-      teacher: 'Friendly blues/yellows (#3b82f6, #eab308), approachable and educational',
-      tutor: 'Friendly blues/yellows (#3b82f6, #eab308), approachable and educational',
-      fitness: 'Energetic reds/oranges (#ef4444, #f97316), dynamic and motivating',
-      trainer: 'Energetic reds/oranges (#ef4444, #f97316), dynamic and motivating',
-      beauty: 'Elegant pinks/purples (#ec4899, #a855f7), luxurious and stylish',
-      wellness: 'Natural greens/earth tones (#10b981, #a3a3a3), calming and organic',
-      photographer: 'Neutral blacks/whites with accent (#171717, #ffffff, #f97316), artistic',
-      designer: 'Creative purples/teals (#a855f7, #14b8a6), modern and innovative',
-      default: 'Clean blue/white (#3b82f6, #ffffff), modern sans-serif',
-    };
-
-    // Try sub-vertical first, then vertical, then default
-    return guidelines[subVertical || ''] || guidelines[vertical] || guidelines.default;
-  }
 
   /**
    * Get a default icon for a service based on its name
@@ -869,11 +961,18 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
   /**
    * Build website blocks from generated content
    */
-  private buildBlocks(pageId: string, content: WebsiteContent, services: any[], language: string = 'en', companyName: string = 'Your Business', needsIntake: boolean = false, sections?: ReturnType<WebsiteGenerationService['planSections']>): any[] {
+  /**
+   * @param images the photographs found for this site, by section. Absent or
+   *   null for any section means that section has no picture — which is what
+   *   every block already handled, because until now it was the only case.
+   */
+  private buildBlocks(pageId: string, content: WebsiteContent, services: any[], language: string = 'en', companyName: string = 'Your Business', needsIntake: boolean = false, sections?: ReturnType<WebsiteGenerationService['planSections']>, images: Partial<Record<'hero' | 'about', string | null>> = {}, gallery: string[] = [], wantsStats = false): any[] {
     const plan = sections ?? this.planSections(services);
     // Block title translations
     const blockTitles: Record<string, Record<string, string>> = {
       about: { en: 'About', he: 'אודות', es: 'Acerca de' },
+      gallery: { en: 'Work', he: 'עבודות', es: 'Trabajos' },
+      stats: { en: 'Our Impact', he: 'ההשפעה שלנו', es: 'Nuestro Impacto' },
       services: { en: 'Services', he: 'שירותים', es: 'Servicios' },
       process: { en: 'How It Works', he: 'איך זה עובד', es: 'Cómo Funciona' },
       booking: { en: 'Book Your Session', he: 'קבעו פגישה', es: 'Reserva tu Sesión' },
@@ -892,6 +991,8 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
     // Navigation menu item translations
     const menuLabels: Record<string, Record<string, string>> = {
       about: { en: 'About', he: 'אודות', es: 'Acerca de' },
+      gallery: { en: 'Work', he: 'עבודות', es: 'Trabajos' },
+      stats: { en: 'Our Impact', he: 'ההשפעה שלנו', es: 'Nuestro Impacto' },
       services: { en: 'Services', he: 'שירותים', es: 'Servicios' },
       process: { en: 'How It Works', he: 'איך זה עובד', es: 'Cómo Funciona' },
       contact: { en: 'Contact', he: 'יצירת קשר', es: 'Contacto' },
@@ -971,8 +1072,65 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
            */
           cta_text: button(content.buttons?.heroCta, t('ctaLearnMore')),
           cta_link: '#about',
+          /*
+           * The hero photograph, and the reason it matters more than it looks.
+           *
+           * `HeroBlock` reads `split = layout === 'split' && Boolean(background_image)`,
+           * so an absent picture does not merely leave a gap — it switches the
+           * layout off. Warm and Bold both declare a split hero, and because
+           * generation never set an image, every site either of them dressed
+           * rendered the stacked hero instead of the design that was chosen.
+           */
+          ...(images.hero ? { background_image: images.hero, background_type: 'image' } : {}),
         },
       },
+
+      /*
+       * Facts.
+       *
+       * Emitted empty on purpose. `WebsiteBlockEnrichmentService` fills it from
+       * the business's real client and booking counts, and `StatsSection`
+       * renders nothing while it is empty — so a new business shows no section
+       * and the same business shows one once it has something true to say.
+       *
+       * It was ordered by `proof_led` and `offer_led` and emitted by nothing, so
+       * two of the five recipes have always named a section that could not
+       * appear however many clients the business had.
+       */
+      ...(wantsStats
+        ? [
+            {
+              page_id: pageId,
+              block_type: 'stats',
+              position: 2,
+              content: { title: t('stats'), stats: [] },
+            },
+          ]
+        : []),
+
+      /*
+       * Gallery.
+       *
+       * Only when there are pictures for it. `gallery_led` — photographers,
+       * designers, beauty — has ordered a gallery since recipes existed, and
+       * `buildBlocks` never emitted one, so for those three trades the recipe
+       * has always ordered a section that does not exist. Emitting an EMPTY
+       * gallery would be worse than that, which is why this is conditional: the
+       * shape renders nothing without images, leaving a heading over a void.
+       */
+      ...(gallery.length
+        ? [
+            {
+              page_id: pageId,
+              block_type: 'gallery',
+              position: 2,
+              content: {
+                title: t('gallery'),
+                images: gallery.map(url => ({ url, alt: '' })),
+              },
+            },
+          ]
+        : []),
 
       // About block
       {
@@ -983,6 +1141,9 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
           title: heading('about', 'about'),
           // AboutBlock expects 'content' as a string, not 'paragraphs' array
           content: content.about.paragraphs.join('\n\n'),
+          // Portrait: the about section pairs prose with a tall picture in every
+          // archetype, and a wide crop in that column reads as a mistake.
+          ...(images.about ? { image: images.about } : {}),
         },
       },
 
@@ -1201,9 +1362,6 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
     const displayVertical = subVertical || vertical;
     const capitalizedVertical = displayVertical.charAt(0).toUpperCase() + displayVertical.slice(1).replace(/_/g, ' ');
 
-    // Get theme colors based on vertical
-    const themeColors = this.getFallbackThemeColors(vertical, subVertical);
-
     // Generate about paragraphs using description if available
     const aboutParagraphs = description
       ? [
@@ -1306,40 +1464,8 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
       // owner never made.
       testimonials: [],
       faq: faqTemplates[language] || faqTemplates.en,
-      theme: themeColors,
-    };
-  }
-
-  /**
-   * Get fallback theme colors based on vertical
-   */
-  private getFallbackThemeColors(vertical: string, subVertical: string | null): {
-    primaryColor: string;
-    secondaryColor: string;
-    accentColor: string;
-    fontFamily: string;
-  } {
-    const themes: Record<string, { primary: string; secondary: string; accent: string; font: string }> = {
-      therapist: { primary: '#60a5fa', secondary: '#ffffff', accent: '#10b981', font: 'Georgia, serif' },
-      coach: { primary: '#f97316', secondary: '#ffffff', accent: '#3b82f6', font: 'Inter, sans-serif' },
-      parenting_coach: { primary: '#f97316', secondary: '#ffffff', accent: '#10b981', font: 'Inter, sans-serif' },
-      life_coach: { primary: '#f97316', secondary: '#ffffff', accent: '#14b8a6', font: 'Inter, sans-serif' },
-      consultant: { primary: '#1e40af', secondary: '#ffffff', accent: '#6b7280', font: 'Inter, sans-serif' },
-      lawyer: { primary: '#1e3a8a', secondary: '#ffffff', accent: '#d97706', font: 'Georgia, serif' },
-      teacher: { primary: '#3b82f6', secondary: '#ffffff', accent: '#eab308', font: 'Inter, sans-serif' },
-      fitness: { primary: '#ef4444', secondary: '#ffffff', accent: '#f97316', font: 'Inter, sans-serif' },
-      beauty: { primary: '#ec4899', secondary: '#ffffff', accent: '#a855f7', font: 'Inter, sans-serif' },
-      wellness: { primary: '#10b981', secondary: '#ffffff', accent: '#a3a3a3', font: 'Inter, sans-serif' },
-      default: { primary: '#3b82f6', secondary: '#ffffff', accent: '#10b981', font: 'Inter, sans-serif' },
-    };
-
-    const theme = themes[subVertical || ''] || themes[vertical] || themes.default;
-
-    return {
-      primaryColor: theme.primary,
-      secondaryColor: theme.secondary,
-      accentColor: theme.accent,
-      fontFamily: theme.font,
+      // No theme. Fallback CONTENT is still content; the look is the
+      // archetype's whether the copy came from the model or from here.
     };
   }
 }

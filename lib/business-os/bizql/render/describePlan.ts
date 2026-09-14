@@ -36,8 +36,9 @@
  * @module lib/business-os/bizql/render
  */
 
-import { CATALOG, type EntityDef, type FieldDef } from '@/lib/business-os/catalog';
+import { CATALOG, resolveSemanticTerm, type EntityDef, type FieldDef } from '@/lib/business-os/catalog';
 import { isFieldPredicate, type Predicate, type Query } from '../types';
+import { defaultScopeFor } from '../defaultScope';
 // One table, both directions: this module turns an anchor into words, and the
 // pending-fill path turns words back into an anchor. Two copies would drift.
 import { ANCHOR_WORDS } from '../dates';
@@ -62,13 +63,25 @@ export interface Alternative {
   field: string;
   /** The value to substitute — an enum value, or a field name for an aggregate. */
   value: string;
-  kind: 'enum' | 'aggregate_field';
+  /**
+   * `previous_filters` re-runs this question against the rows the turn BEFORE
+   * it was about — the answer to "the total of the quotes" when the four
+   * accepted ones were just listed.
+   */
+  kind: 'enum' | 'aggregate_field' | 'previous_filters';
 }
 
 export interface Understanding {
   /** One line: "Understood: count bookings where status is cancelled, this month". */
   text: string;
   alternatives: Alternative[];
+  /**
+   * Why the answer looks the way it does, when the figure alone would mislead.
+   *
+   * Set by the caller, not by this module: it takes a query to establish (see
+   * explainEmptyTotal) and this file is deliberately data-free.
+   */
+  note?: string;
 }
 
 type Lang = string;
@@ -131,8 +144,25 @@ function valueLabel(
   if (raw === null || raw === undefined) return '';
 
   if (typeof raw === 'object' && '$semantic' in (raw as object)) {
-    // A semantic term is already a business word — "upcoming", "overdue".
-    return String((raw as { $semantic: string }).$semantic);
+    const term = String((raw as { $semantic: string }).$semantic);
+
+    /*
+     * Say what the term STANDS FOR, in the reader's language.
+     *
+     * The term key is ours and it is English: a Hebrew reader was shown
+     * "סטטוס הוא אחד מ unpaid", which is the one word in the sentence they
+     * cannot check. Resolved, it reads "ממתין או באיחור" — the actual values,
+     * with the actual labels, which is exactly what the query filtered on.
+     */
+    const values = resolveSemanticTerm(entityKey, fieldKey, term);
+
+    if (values?.length) {
+      return values
+        .map((value) => labelOf(field?.enumLabels?.[value], language) ?? value)
+        .join(` ${word('or', language)} `);
+    }
+
+    return term.replace(/_/g, ' ');
   }
 
   if (typeof raw === 'object' && '$date' in (raw as object)) {
@@ -170,10 +200,18 @@ function opPhrase(op: string, language: Lang, isDate: boolean): string {
     case 'neq': return word('isNot', language);
     case 'in': return word('isOneOf', language);
     case 'not_in': return `${word('isNot', language)} ${word('isOneOf', language)}`;
+    /*
+     * A date bound reads as before/after, not from/to.
+     *
+     * "valid until to today" is not a sentence anyone parses. Each predicate is
+     * described on its own here, so each one has to stand on its own — a range
+     * then reads "after the start of this month and before tomorrow", which is
+     * exactly what it means.
+     */
     case 'gt':
-    case 'gte': return isDate ? word('from', language) : word('atLeast', language);
+    case 'gte': return isDate ? word('after', language) : word('atLeast', language);
     case 'lt':
-    case 'lte': return isDate ? word('to', language) : word('atMost', language);
+    case 'lte': return isDate ? word('before', language) : word('atMost', language);
     case 'contains':
     case 'starts_with': return word('contains', language);
     case 'is_null': return word('isEmpty', language);
@@ -213,13 +251,55 @@ function describePredicate(
       labelOf(CATALOG.entities[relation?.target ?? '']?.labels.many, language) ??
       predicate.relation;
 
+    /*
+     * The nested condition is the whole content of the predicate.
+     *
+     * Without it, "count plan payments where it HAS a contact" is what the line
+     * said for a question about one named client — true of every row, and so a
+     * check that cannot fail. What the reader needs to see is which contact.
+     * The inner predicates run against the TARGET entity, so they are described
+     * against it.
+     */
+    const target = CATALOG.entities[relation?.target ?? ''];
+    const inner = (predicate.where ?? [])
+      .map((p) =>
+        target ? describePredicate(p, target, relation!.target, language, enumLabels) : null
+      )
+      .filter((v): v is string => Boolean(v))
+      .join(` ${word('and', language)} `);
+
+    if (inner) {
+      return predicate.quantifier === 'none'
+        ? `${word('hasNo', language)} ${name} ${word('where', language)} ${inner}`
+        : `${name}: ${inner}`;
+    }
+
     return `${predicate.quantifier === 'none' ? word('hasNo', language) : word('has', language)} ${name}`;
   }
 
   if (!isFieldPredicate(predicate)) return null;
 
+  /*
+   * A DERIVED field is a fact, and it reads as one.
+   *
+   * These are looked up separately because they are not columns — and being
+   * missed here is how the line came out as "is_current_version הוא true": an
+   * English snake_case key and a raw boolean, in the middle of a Hebrew
+   * sentence, describing the one part of the query the reader most needs to
+   * check. A boolean fact has no operator worth saying: it either holds or it
+   * is negated.
+   */
+  const derived = entity.derived?.[predicate.field];
+
+  if (derived && derived.type === 'boolean') {
+    const fact = labelOf(derived.labels, language) ?? predicate.field;
+    const negated = predicate.value === false;
+
+    return negated ? `${word('isNot', language)} ${fact}` : fact;
+  }
+
   const field = entity.fields[predicate.field];
-  const name = labelOf(field?.labels, language) ?? predicate.field;
+  const name = labelOf(field?.labels, language) ?? labelOf(derived?.labels, language) ?? predicate.field;
   const isDate = field?.type === 'datetime' || field?.format === 'date';
   const phrase = opPhrase(predicate.op, language, isDate);
 
@@ -252,9 +332,23 @@ function describeStep(
     } else {
       const field = step.agg?.field ? entity.fields[step.agg.field] : undefined;
       const fieldName = labelOf(field?.labels, language) ?? step.agg?.field ?? '';
-      // "total of amount of payments" is nobody's sentence; "total amount of
-      // payments" is. The `of` between figure and entity carries the meaning.
-      parts.push(`${word(fn, language)} ${fieldName} ${word('of', language)} ${many}`.trim());
+      const verb = word(fn, language);
+
+      /*
+       * "total total of quotes" — which is what `proposals.total` produced,
+       * because the column a business calls its total is summed by a function
+       * this sentence also calls "total". Say the word once.
+       *
+       * Otherwise the field name carries real information: "total amount of
+       * payments" is checkable in a way that "total of payments" is not.
+       */
+      const namesItself = fieldName.toLowerCase() === verb.toLowerCase();
+
+      parts.push(
+        namesItself
+          ? `${verb} ${word('of', language)} ${many}`
+          : `${verb} ${fieldName} ${word('of', language)} ${many}`.trim()
+      );
     }
 
     if (step.group_by) {
@@ -283,8 +377,22 @@ function describeStep(
     .map((p) => describePredicate(p, entity, step.entity, language, enumLabels))
     .filter((s): s is string => Boolean(s));
 
-  if (conditions.length > 0) {
-    parts.push(`${word('where', language)} ${conditions.join(` ${word('and', language)} `)}`);
+  /*
+   * The exclusion the user did NOT ask for, said out loud.
+   *
+   * This is the condition on which a default scope is defensible at all: the
+   * compiler drops superseded quote versions from a question that did not
+   * mention them, and a filter nobody is told about is indistinguishable from a
+   * bug. Read from the same function the compiler uses, so the sentence cannot
+   * describe a rule that did not run.
+   */
+  const applied = defaultScopeFor(entity as never, step.where);
+  if (applied) conditions.push(labelOf(applied.labels, language) ?? '');
+
+  const stated = conditions.filter(Boolean);
+
+  if (stated.length > 0) {
+    parts.push(`${word('where', language)} ${stated.join(` ${word('and', language)} `)}`);
   }
 
   return parts.join(' ');
@@ -358,7 +466,61 @@ function findAlternatives(steps: Query[], language: Lang, enumLabels?: Record<st
     }
   });
 
-  return out.slice(0, 6);
+  /*
+   * One chip per correction.
+   *
+   * Two steps filtering the same field produced the same alternative twice —
+   * the user was shown "אושרה" as two separate chips, which reads as two
+   * different options and is really one. Keyed by what the tap would DO.
+   */
+  const seen = new Set<string>();
+
+  return out
+    .filter((alternative) => {
+      const key = `${alternative.field}=${alternative.value}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+}
+
+/**
+ * Just the conditions of one step, with no verb in front.
+ *
+ * For a chip that means "the ones we were talking about", the aggregate is
+ * noise: "ספירת הצעות מחיר כאשר סטטוס הוא אושרה" describes the previous QUERY,
+ * where the choice on offer is only its filter. This renders "סטטוס הוא אושרה"
+ * and the caller frames it.
+ */
+export function describeFilters(
+  step: Query,
+  options: { language?: Lang; enumLabels?: Record<string, Record<string, string>> } = {}
+): string | null {
+  const language = options.language ?? 'en';
+  const read = step as unknown as { entity: string; where?: Predicate[] };
+  const entity = CATALOG.entities[read.entity];
+
+  if (!entity || !read.where?.length) return null;
+
+  const conditions = read.where
+    .map((p) => describePredicate(p, entity, read.entity, language, options.enumLabels))
+    .filter((c): c is string => Boolean(c));
+
+  return conditions.length > 0 ? conditions.join(` ${word('and', language)} `) : null;
+}
+
+/**
+ * Does this step produce a figure someone will act on?
+ *
+ * A money total is the answer people quote back at you, forward to a client, or
+ * decide against — and it is the one this system has got wrong most often, in
+ * the quietest way. Worth saying what was counted, every time.
+ */
+export function isMoneyStep(step: Query): boolean {
+  if (step.op !== 'compute' || !step.agg?.field || step.agg.fn === 'count') return false;
+
+  return CATALOG.entities[step.entity]?.fields[step.agg.field]?.format === 'money';
 }
 
 /**

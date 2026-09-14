@@ -239,7 +239,7 @@ export default function IntakeFormPage() {
           </StatusCard>
 
           {terminal.showInfo && (
-            <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address']} />
+            <BusinessInfoPanel brand={brand} variant="card" show={['contact', 'address', 'links']} />
           )}
         </div>
       </PublicShell>

@@ -24,7 +24,8 @@
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
-import { getTemplateById, templateToPageTheme } from '@/lib/website-builder/templates';
+import { themeForTemplateId } from '@/lib/website-builder/templates';
+import { archetypeRepository } from '@/lib/repositories/ArchetypeRepository';
 
 const logger = createLogger({ module: 'BusinessTemplate' });
 
@@ -107,15 +108,23 @@ export async function setBusinessTemplate(
   userId: string,
   templateId: string
 ): Promise<{ propagatedPages: number }> {
-  const template = getTemplateById(templateId);
-  if (!template) {
-    logger.warn({ userId, templateId }, 'Unknown template; business template unchanged');
+  /*
+   * The design, from the database first.
+   *
+   * This is the one path where the async repository is worth the round trip: it
+   * is what writes the business's stored theme, so an archetype added as a row
+   * — the whole point of the table — has to resolve here or a business could
+   * pick a design in the wizard and have nothing written for it.
+   */
+  const resolved = (await archetypeRepository.find(templateId)) ?? themeForTemplateId(templateId);
+  if (!resolved) {
+    logger.warn({ userId, templateId }, 'Unknown design; business template unchanged');
     return { propagatedPages: 0 };
   }
 
-  // The same converter the pages use. A business theme that is not byte-for-byte
+  // The same object the pages store. A business theme that is not byte-for-byte
   // what a page stores is a second look pretending to be the first.
-  const theme = templateToPageTheme(template) as unknown as BusinessTheme;
+  const theme = resolved as unknown as BusinessTheme;
 
   await businessProfileRepository.updateBranding(userId, {
     theme: theme as unknown as Record<string, unknown>,

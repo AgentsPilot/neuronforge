@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { BlockRendererProps, GalleryImage } from './types';
@@ -9,7 +10,7 @@ interface GalleryContent {
   title?: string;
   subtitle?: string;
   images: GalleryImage[];
-  layout?: 'grid' | 'masonry' | 'carousel' | 'featured';
+  layout?: 'grid' | 'masonry' | 'mosaic' | 'carousel' | 'featured';
 }
 
 export function GalleryBlock({ content, styles, theme, isRTL, className }: BlockRendererProps) {
@@ -17,8 +18,20 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
     title,
     subtitle,
     images = [],
-    layout = 'grid'
+    layout: contentLayout,
   } = content as GalleryContent;
+
+  /*
+   * The archetype's shape, unless the page carries its own.
+   *
+   * `mosaic` is the archetype's name for what this block has always called
+   * `masonry` — varied tile heights in flowing columns. Both names resolve to
+   * the same rendering rather than one of them being a second implementation.
+   */
+  const rawLayout = contentLayout
+    ?? (resolveBlockLayout('gallery', theme?.layouts, styles?.layout) as GalleryContent['layout'])
+    ?? 'grid';
+  const layout = rawLayout === 'mosaic' ? 'masonry' : rawLayout;
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const columns = styles?.columns || 3;
@@ -49,19 +62,19 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
     <>
       <section
         dir={isRTL ? 'rtl' : 'ltr'}
-        className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
+        className={`apc-sec ${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'ap-bg'} ${className || ''}`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           {/* Header */}
           {(title || subtitle) && (
-            <div className="text-center mb-12">
+            <div className="apc-sec-head text-center mb-12">
               {title && (
                 <motion.h2
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
-                  className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                  style={{ fontFamily: 'var(--website-font-heading)' }}
+                  className="text-3xl sm:text-4xl font-bold ap-ink"
+                  style={{ fontFamily: 'var(--ap-font-heading)' }}
                 >
                   {title}
                 </motion.h2>
@@ -72,8 +85,8 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ delay: 0.1 }}
-                  className="mt-4 text-lg text-gray-600 dark:text-gray-300"
-                  style={{ fontFamily: 'var(--website-font-body)' }}
+                  className="mt-4 text-lg ap-ink-2"
+                  style={{ fontFamily: 'var(--ap-font-body)' }}
                 >
                   {subtitle}
                 </motion.p>
@@ -92,8 +105,7 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                   viewport={{ once: true }}
                   transition={{ delay: index * 0.05 }}
                   onClick={() => openLightbox(index)}
-                  className="group relative aspect-square overflow-hidden rounded-lg"
-                  style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
+                  className="apc-shot group relative aspect-square overflow-hidden rounded-lg"
                 >
                   <img
                     src={image.url}
@@ -122,8 +134,7 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                   viewport={{ once: true }}
                   transition={{ delay: index * 0.05 }}
                   onClick={() => openLightbox(index)}
-                  className="group relative break-inside-avoid overflow-hidden rounded-lg w-full"
-                  style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
+                  className="apc-shot group relative break-inside-avoid overflow-hidden rounded-lg w-full"
                 >
                   <img
                     src={image.url}
@@ -138,15 +149,14 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
 
           {/* Featured Layout (1 large + smaller grid) */}
           {layout === 'featured' && images.length > 0 && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="apc-grid grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Featured Image */}
               <motion.button
                 initial={{ opacity: 0, x: isRTL ? 20 : -20 }}
                 whileInView={{ opacity: 1, x: 0 }}
                 viewport={{ once: true }}
                 onClick={() => openLightbox(0)}
-                className="group relative aspect-square lg:aspect-auto lg:row-span-2 overflow-hidden rounded-xl"
-                style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+                className="apc-shot apc-shot--big group relative aspect-square lg:aspect-auto lg:row-span-2 overflow-hidden rounded-xl"
               >
                 <img
                   src={images[0].url}
@@ -157,7 +167,7 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
               </motion.button>
 
               {/* Smaller Grid */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="apc-grid grid grid-cols-2 gap-4">
                 {images.slice(1, 5).map((image, index) => (
                   <motion.button
                     key={index}
@@ -166,8 +176,7 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                     viewport={{ once: true }}
                     transition={{ delay: (index + 1) * 0.1 }}
                     onClick={() => openLightbox(index + 1)}
-                    className="group relative aspect-square overflow-hidden rounded-lg"
-                    style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
+                    className="apc-shot group relative aspect-square overflow-hidden rounded-lg"
                   >
                     <img
                       src={image.url}
@@ -194,7 +203,6 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                     transition={{ delay: index * 0.1 }}
                     onClick={() => openLightbox(index)}
                     className="group relative flex-shrink-0 w-72 h-48 overflow-hidden rounded-xl"
-                    style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
                   >
                     <img
                       src={image.url}
@@ -273,7 +281,7 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
                   key={index}
                   onClick={(e) => { e.stopPropagation(); setLightboxIndex(index); }}
                   className={`w-2 h-2 rounded-full transition-all ${
-                    index === lightboxIndex ? 'w-6 bg-white' : 'bg-white/50'
+                    index === lightboxIndex ? 'w-6 ap-card' : 'bg-white/50'
                   }`}
                 />
               ))}

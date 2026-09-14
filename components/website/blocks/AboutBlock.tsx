@@ -55,8 +55,19 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-12 sm:py-16 lg:py-20'} ${className || ''}`}
-      style={{ backgroundColor: isDark ? backgroundColor : '#ffffff' }}
+      className={`apc-sec relative overflow-hidden ${styles?.padding || ''} ${className || ''}`}
+      /*
+       * Vertical rhythm from the archetype, not a fixed Tailwind ramp.
+       *
+       * `--ap-space-8` is scaled by theme.spacing (compact | normal |
+       * spacious) in PublicThemeStyle, so a spacious archetype finally breathes
+       * differently from a compact one. Only applied when the page has not set
+       * its own padding class.
+       */
+      style={{
+        backgroundColor: isDark ? backgroundColor : '#ffffff',
+        ...(styles?.padding ? {} : { paddingBlock: 'var(--ap-space-8)' }),
+      }}
     >
       {/* Enhanced decorative background */}
       {!isDark && (
@@ -85,7 +96,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute top-20 right-[5%] w-64 h-64 rounded-full opacity-[0.07] blur-3xl"
+            className="apc-decor absolute top-20 right-[5%] w-64 h-64 rounded-full opacity-[0.07] blur-3xl"
             style={{ backgroundColor: primaryColor }}
           />
           <motion.div
@@ -98,7 +109,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute bottom-20 left-[10%] w-80 h-80 rounded-full opacity-[0.05] blur-3xl"
+            className="apc-decor absolute bottom-20 left-[10%] w-80 h-80 rounded-full opacity-[0.05] blur-3xl"
             style={{ backgroundColor: secondaryColor }}
           />
 
@@ -116,7 +127,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
       <div className={`relative mx-auto px-4 sm:px-6 lg:px-8 ${styles?.max_width ? `max-w-${styles.max_width}` : 'max-w-7xl'}`}>
         {/* Side by Side Layout - Enhanced */}
         {layout === 'side-by-side' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
+          <div className="apc-grid grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 items-center">
             {/* Image with enhanced frame */}
             <motion.div
               initial={{ opacity: 0, x: isRTL ? 50 : -50 }}
@@ -197,7 +208,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                   <div className="absolute bottom-0 left-0 w-40 h-40 rounded-full opacity-15" style={{ backgroundColor: secondaryColor, transform: 'translate(-30%, 30%)' }} />
 
                   <div
-                    className="w-24 h-24 rounded-full flex items-center justify-center mb-4"
+                    className="apc-icon w-24 h-24 rounded-full flex items-center justify-center mb-4"
                     style={{
                       background: `linear-gradient(135deg, ${primaryColor}30 0%, ${secondaryColor}40 100%)`,
                       border: `2px dashed ${primaryColor}40`
@@ -226,7 +237,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 whileInView={{ scale: 1, rotate: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.3, type: "spring" }}
-                className="w-14 h-14 rounded-2xl flex items-center justify-center mb-8"
+                className="apc-icon w-14 h-14 rounded-2xl flex items-center justify-center mb-8"
                 style={{
                   background: `linear-gradient(135deg, ${primaryColor}20 0%, ${secondaryColor}30 100%)`,
                   border: `1px solid ${primaryColor}15`
@@ -257,7 +268,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <h2
                   className="text-2xl sm:text-3xl lg:text-4xl font-bold mb-4 leading-tight"
                   style={{
-                    fontFamily: 'var(--website-font-heading)',
+                    fontFamily: 'var(--ap-font-heading)',
                     color: isDark ? '#ffffff' : textColor
                   }}
                 >
@@ -268,7 +279,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <div
                 className="prose prose-lg max-w-none leading-relaxed"
                 style={{
-                  fontFamily: 'var(--website-font-body)',
+                  fontFamily: 'var(--ap-font-body)',
                   color: isDark ? '#9ca3af' : '#4b5563'
                 }}
                 dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -350,7 +361,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
             >
               <div className="relative">
                 <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                  className="apc-icon w-16 h-16 rounded-2xl flex items-center justify-center"
                   style={{
                     background: `linear-gradient(135deg, ${primaryColor}20 0%, ${secondaryColor}30 100%)`,
                     border: `1px solid ${primaryColor}15`
@@ -392,7 +403,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <h2
                 className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-8 leading-tight"
                 style={{
-                  fontFamily: 'var(--website-font-heading)',
+                  fontFamily: 'var(--ap-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -403,7 +414,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
             <div
               className="prose prose-xl max-w-none mx-auto leading-relaxed"
               style={{
-                fontFamily: 'var(--website-font-body)',
+                fontFamily: 'var(--ap-font-body)',
                 color: isDark ? '#9ca3af' : '#4b5563'
               }}
               dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -496,7 +507,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <h2
                   className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-6"
                   style={{
-                    fontFamily: 'var(--website-font-heading)',
+                    fontFamily: 'var(--ap-font-heading)',
                     color: isDark ? '#ffffff' : textColor
                   }}
                 >
@@ -507,7 +518,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <div
                 className="prose prose-lg max-w-none leading-relaxed"
                 style={{
-                  fontFamily: 'var(--website-font-body)',
+                  fontFamily: 'var(--ap-font-body)',
                   color: isDark ? '#9ca3af' : '#4b5563'
                 }}
                 dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -546,7 +557,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <h2
                   className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-8"
                   style={{
-                    fontFamily: 'var(--website-font-heading)',
+                    fontFamily: 'var(--ap-font-heading)',
                     color: image ? '#ffffff' : (isDark ? '#ffffff' : textColor)
                   }}
                 >
@@ -557,7 +568,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
               <div
                 className="prose prose-xl max-w-none"
                 style={{
-                  fontFamily: 'var(--website-font-body)',
+                  fontFamily: 'var(--ap-font-body)',
                   color: image ? 'rgba(255,255,255,0.9)' : (isDark ? '#9ca3af' : '#4b5563')
                 }}
                 dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}
@@ -599,11 +610,11 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
             >
               {/* Decorative elements */}
               <div
-                className="absolute top-0 right-0 w-32 h-32 rounded-full opacity-10 blur-2xl"
+                className="apc-decor absolute top-0 right-0 w-32 h-32 rounded-full opacity-10 blur-2xl"
                 style={{ backgroundColor: primaryColor }}
               />
               <div
-                className="absolute bottom-0 left-1/2 w-40 h-40 rounded-full opacity-5 blur-3xl"
+                className="apc-decor absolute bottom-0 left-1/2 w-40 h-40 rounded-full opacity-5 blur-3xl"
                 style={{ backgroundColor: secondaryColor }}
               />
 
@@ -641,7 +652,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                   <h2
                     className="text-3xl sm:text-4xl lg:text-5xl font-bold mb-6 leading-tight"
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -652,7 +663,7 @@ export function AboutBlock({ content, styles, theme, isRTL, className, locale = 
                 <div
                   className="prose prose-lg max-w-none leading-relaxed"
                   style={{
-                    fontFamily: 'var(--website-font-body)',
+                    fontFamily: 'var(--ap-font-body)',
                     color: isDark ? '#9ca3af' : '#4b5563'
                   }}
                   dangerouslySetInnerHTML={{ __html: aboutContent.replace(/\n/g, '<br/>') }}

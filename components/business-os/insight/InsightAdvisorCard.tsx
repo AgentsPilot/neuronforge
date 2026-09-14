@@ -21,6 +21,23 @@ export type InsightCardState = 'default' | 'running' | 'completed' | 'automate_o
 
 export type CardStage = 'setup' | 'win' | 'run' | 'automate';
 
+/**
+ * A job the platform is offering to take on, shown in this same carousel.
+ *
+ * Operational advice is still advice: the owner sees one card that sometimes
+ * reports a pattern in the numbers and sometimes asks to handle a chore. Two
+ * cards would have meant an advisor that changes costume depending on which
+ * kind of help it is offering, which reads as two products — and, for a while,
+ * meant a card offering advice above another announcing it had none.
+ */
+export interface OperationalItem {
+  id: string;
+  /** How many are waiting on this right now. Zero is offered too, quietly. */
+  waiting: number;
+  labelKey: string;
+  hintKey: string;
+}
+
 interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
   projection?: InsightProjection;
   eligible_for_automation?: boolean;
@@ -30,6 +47,15 @@ interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
 
 interface InsightAdvisorCardProps {
   insights: PendingInsight[];
+  /**
+   * Undecided automations, carouselled AFTER the insights.
+   *
+   * After rather than before: an insight is something the business did not
+   * know, and it earns the first slot. An approval is asked once and then
+   * never again, so it can wait a page.
+   */
+  operational?: OperationalItem[];
+  onOperationalDecide?: (id: string, approve: boolean) => Promise<void>;
   currentIndex: number;
   projection?: InsightProjection;
   automationConfig?: AutomationConfig;
@@ -71,6 +97,8 @@ const RUNNING_STEP_KEYS: Record<string, string[]> = {
 
 export function InsightAdvisorCard({
   insights,
+  operational = [],
+  onOperationalDecide,
   currentIndex,
   projection,
   automationConfig,
@@ -108,8 +136,21 @@ export function InsightAdvisorCard({
 
   const insight = insights[currentIndex];
 
-  // Determine effective stage - if no insights exist, force setup stage
-  const effectiveStage = !insight ? 'setup' : stage;
+  /*
+   * Past the insights, the carousel is showing an automation to approve.
+   *
+   * Indexed rather than interleaved so `onIndexChange` and the dots below stay
+   * a single running position, which is what makes this one card rather than
+   * two sharing a shell.
+   */
+  const operationalItem =
+    currentIndex >= insights.length ? operational[currentIndex - insights.length] : undefined;
+
+  const totalPages = insights.length + operational.length;
+
+  // Setup stage only when there is genuinely nothing to say — an automation
+  // waiting to be approved is something to say.
+  const effectiveStage = operationalItem ? 'run' : !insight ? 'setup' : stage;
 
   // Setup stage content (Day 1 - no insights yet)
   const setupContent = {
@@ -133,9 +174,13 @@ export function InsightAdvisorCard({
   };
 
   // Use setup content if no insight available
-  const displayTitle = insight?.title || setupContent.title;
-  const displayDescription = insight?.description || setupContent.description;
-  const displayCategory = insight?.category || setupContent.category;
+  const displayTitle = operationalItem
+    ? t(operationalItem.labelKey)
+    : insight?.title || setupContent.title;
+  const displayDescription = operationalItem
+    ? t(operationalItem.hintKey)
+    : insight?.description || setupContent.description;
+  const displayCategory = operationalItem ? 'ops' : insight?.category || setupContent.category;
 
   const categoryColor = CATEGORY_COLORS[displayCategory] || '#F97316';
   const stepKeys = insight ? (RUNNING_STEP_KEYS[insight.detector_id] || RUNNING_STEP_KEYS.default) : RUNNING_STEP_KEYS.default;
@@ -144,6 +189,16 @@ export function InsightAdvisorCard({
 
   // Get eyebrow text based on stage
   const getEyebrowText = () => {
+    /*
+     * Still "your advisor", as on every other page.
+     *
+     * Only the SUB line changes — which is how `setup`, `win` and `automate`
+     * already work. Replacing the main line too made the operational page read
+     * as a different card, which is the thing merging them was meant to stop.
+     */
+    if (operationalItem) {
+      return { main: t('insight.advisor') || 'Your advisor', sub: t('automation.eyebrow') };
+    }
     switch (effectiveStage) {
       case 'setup':
         return { main: t('insight.advisor') || 'Your advisor', sub: t('insight.stage.setup.eyebrow') || 'Nothing to advise on yet — so here\'s the only thing that matters' };
@@ -158,6 +213,7 @@ export function InsightAdvisorCard({
 
   // Get category label
   const getCategoryLabel = () => {
+    if (operationalItem) return t('automation.category');
     if (effectiveStage === 'setup') {
       return t('insight.category.setup') || 'Getting you switched on';
     }
@@ -168,6 +224,8 @@ export function InsightAdvisorCard({
 
   // Get "seen" text for first occurrence tracking
   const getSeenText = () => {
+    // An approval is a question, not an observation — nothing was "seen".
+    if (operationalItem) return null;
     // No "seen" text for setup stage
     if (effectiveStage === 'setup') {
       return null;
@@ -202,6 +260,23 @@ export function InsightAdvisorCard({
 
     await onAction('run', insight.id);
   }, [insight, onAction, steps.length, canAutomate]);
+
+  /**
+   * Approve or decline the automation on this page.
+   *
+   * Deliberately NOT routed through `cardState`: the running/completed states
+   * narrate a job being carried out, and this is a permission being granted for
+   * jobs not yet due. The page simply leaves the carousel once answered,
+   * because the parent stops sending it.
+   */
+  const handleDecide = useCallback(
+    async (approve: boolean) => {
+      if (!operationalItem || !onOperationalDecide) return;
+      await onOperationalDecide(operationalItem.id, approve);
+      onIndexChange(0);
+    },
+    [operationalItem, onOperationalDecide, onIndexChange]
+  );
 
   // Handle automate
   const handleAutomate = useCallback(async () => {
@@ -377,7 +452,7 @@ export function InsightAdvisorCard({
               The card only ever shows one at a time, so without this the rest
               are invisible — the parent has always tracked the index and passed
               onIndexChange; nothing rendered a control for it. */}
-          {insights.length > 1 && (
+          {totalPages > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
               <span
                 style={{
@@ -388,12 +463,12 @@ export function InsightAdvisorCard({
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
               >
-                {t('insight.nav.position', { current: currentIndex + 1, total: insights.length })}
+                {t('insight.nav.position', { current: currentIndex + 1, total: totalPages })}
               </span>
               <div style={{ display: 'flex', gap: '5px' }}>
-                {insights.map((entry, i) => (
+                {Array.from({ length: totalPages }, (_, i) => (
                   <button
-                    key={entry.id ?? i}
+                    key={i}
                     onClick={() => onIndexChange(i)}
                     aria-label={t('insight.nav.goTo', { number: i + 1 })}
                     aria-current={i === currentIndex}
@@ -445,8 +520,33 @@ export function InsightAdvisorCard({
           dangerouslySetInnerHTML={{ __html: displayDescription }}
         />
 
+        {/*
+          What is waiting on this right now.
+          
+          The whole reason an approval is asked HERE and not on a settings
+          screen: a count turns "enable invoice chasing" into "three invoices
+          are past due, shall I chase them" — a decision somebody can make
+          rather than a checkbox they skip.
+        */}
+        {operationalItem && operationalItem.waiting > 0 && (
+          <div
+            style={{
+              marginTop: '14px',
+              border: '1.5px solid rgba(249, 115, 22, 0.30)',
+              background: 'linear-gradient(180deg, rgba(249, 115, 22, 0.10), rgba(249, 115, 22, 0.03))',
+              borderRadius: '16px',
+              padding: '13px 16px',
+              fontSize: '14px',
+              color: 'var(--v2-text-primary)',
+              fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
+            }}
+          >
+            {t('automation.waiting_now').replace('{n}', String(operationalItem.waiting))}
+          </div>
+        )}
+
         {/* Before/After Projection (if available and in default state) */}
-        {projectionColumns && cardState === 'default' && (
+        {!operationalItem && projectionColumns && cardState === 'default' && (
           <BeforeAfterPanel left={projectionColumns.left} right={projectionColumns.right} />
         )}
 
@@ -464,7 +564,7 @@ export function InsightAdvisorCard({
           >
             {/* Primary button: .adv-btn */}
             <button
-              onClick={handleRun}
+              onClick={operationalItem ? () => handleDecide(true) : handleRun}
               className="adv-btn"
               style={{
                 background: 'linear-gradient(120deg, #FFB454 0%, #F97316 55%, #EA580C 100%)',
@@ -479,11 +579,13 @@ export function InsightAdvisorCard({
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >
-              {t('insight.action.primary') || 'Handle it for me'}
+              {operationalItem
+                ? t('automation.approve')
+                : t('insight.action.primary') || 'Handle it for me'}
             </button>
             {/* Secondary button: .adv-lite */}
             <button
-              onClick={handleDismiss}
+              onClick={operationalItem ? () => handleDecide(false) : handleDismiss}
               className="adv-lite"
               style={{
                 border: '1.5px solid var(--v2-border)',
@@ -497,7 +599,9 @@ export function InsightAdvisorCard({
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >
-              {t('insight.action.secondary') || 'Not now'}
+              {operationalItem
+                ? t('automation.decline')
+                : t('insight.action.secondary') || 'Not now'}
             </button>
 
             {/* "Seen" note: .adv-seen */}

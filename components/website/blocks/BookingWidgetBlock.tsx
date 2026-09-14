@@ -117,7 +117,39 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
           setAvailabilityConfigured(data.availabilityConfigured);
 
           if (data.services && data.services.length > 0) {
-            setServiceOptions(data.services.map((s: { id: string; name: string; duration_minutes: number; price?: number; currency?: string }) => ({
+            type ApiService = { id: string; name: string; duration_minutes: number; price?: number; currency?: string };
+            let live = data.services as ApiService[];
+
+            /*
+             * Honour the services this block was built for.
+             *
+             * The endpoint returns everything the business currently sells, and
+             * this used to render all of it — so a landing page headlined
+             * "Wedding Photography" offered the visitor the whole menu, and the
+             * one service the page was written about was just another row. The
+             * generator has always written the intended id into `content`
+             * (`services` for this block, `service_id` where a single one is
+             * pinned); nothing read it back.
+             *
+             * Filtering against the live list also handles a service that has
+             * since been deleted or switched off: it is simply absent, and the
+             * empty state below says so rather than the widget offering
+             * something that cannot be booked.
+             */
+            const wanted = services.length > 0 ? services : service_id ? [service_id] : [];
+            if (wanted.length > 0) {
+              const scoped = live.filter(s => wanted.includes(s.id));
+              /*
+               * Only narrow when something survives. A page whose pinned
+               * service is gone falls back to showing what IS bookable, which
+               * is a better outcome for the visitor than an empty widget — the
+               * page itself is taken down when a service is removed, so this
+               * only covers pages that predate that.
+               */
+              if (scoped.length > 0) live = scoped;
+            }
+
+            setServiceOptions(live.map((s: ApiService) => ({
               id: s.id,
               name: s.name,
               duration: s.duration_minutes,
@@ -134,7 +166,10 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
     };
 
     fetchAvailability();
-  }, [subdomain]);
+    // `services` is a stable array from block content, joined so a new array
+    // identity on each render does not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subdomain, services.join(','), service_id]);
 
   // Fetch slots when service and date are selected
   useEffect(() => {
@@ -232,12 +267,12 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
       <section
         dir={isRTL ? 'rtl' : 'ltr'}
         id="booking"
-        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'ap-card-2'} ${className || ''}`}
       >
         <div className="max-w-4xl mx-auto px-4 sm:px-6">
           <div className="text-center">
-            <Loader2 className="w-8 h-8 animate-spin mx-auto text-gray-400" />
-            <p className="mt-4 text-gray-500">{labels.loading}</p>
+            <Loader2 className="w-8 h-8 animate-spin mx-auto ap-ink-3" />
+            <p className="mt-4 ap-ink-3">{labels.loading}</p>
           </div>
         </div>
       </section>
@@ -250,14 +285,14 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
       <section
         dir={isRTL ? 'rtl' : 'ltr'}
         id="booking"
-        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+        className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'ap-card-2'} ${className || ''}`}
       >
         <div className="max-w-4xl mx-auto px-4 sm:px-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg p-8 sm:p-12 text-center"
+            className="ap-card rounded-2xl shadow-lg p-8 sm:p-12 text-center"
             style={{ borderRadius: theme?.borderRadius || '1rem' }}
           >
             <div
@@ -267,14 +302,14 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
               <Clock className="w-8 h-8" style={{ color: primaryColor }} />
             </div>
             <h3
-              className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-4"
-              style={{ fontFamily: 'var(--website-font-heading)' }}
+              className="text-2xl sm:text-3xl font-bold ap-ink mb-4"
+              style={{ fontFamily: 'var(--ap-font-heading)' }}
             >
               {labels.availabilityNotConfigured}
             </h3>
             <p
-              className="text-gray-600 dark:text-gray-300 max-w-md mx-auto"
-              style={{ fontFamily: 'var(--website-font-body)' }}
+              className="ap-ink-2 max-w-md mx-auto"
+              style={{ fontFamily: 'var(--ap-font-body)' }}
             >
               {labels.availabilityNotConfiguredSubtitle}
             </p>
@@ -289,7 +324,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
       id="booking"
-      className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+      className={`${styles?.padding || 'py-16 sm:py-24'} ${styles?.background || 'ap-card-2'} ${className || ''}`}
     >
       <div className="max-w-4xl mx-auto px-4 sm:px-6">
         {/* Header */}
@@ -298,8 +333,8 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
-            className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-            style={{ fontFamily: 'var(--website-font-heading)' }}
+            className="text-3xl sm:text-4xl font-bold ap-ink"
+            style={{ fontFamily: 'var(--ap-font-heading)' }}
           >
             {title || labels.title}
           </motion.h2>
@@ -308,8 +343,8 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: 0.1 }}
-            className="mt-4 text-gray-600 dark:text-gray-300"
-            style={{ fontFamily: 'var(--website-font-body)' }}
+            className="mt-4 ap-ink-2"
+            style={{ fontFamily: 'var(--ap-font-body)' }}
           >
             {subtitle || labels.subtitle}
           </motion.p>
@@ -320,13 +355,13 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ delay: 0.2 }}
-          className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg p-6 sm:p-8"
+          className="ap-card rounded-2xl shadow-lg p-6 sm:p-8"
           style={{ borderRadius: theme?.borderRadius || '1rem' }}
         >
           {/* Service Selection */}
           {serviceOptions.length > 0 && (
             <div className="mb-8">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              <label className="block text-sm font-medium ap-ink-2 mb-3">
                 {labels.selectService}
               </label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -337,15 +372,15 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
                     className={`p-4 text-start rounded-xl border-2 transition-all ${
                       selectedService === service.id
                         ? 'border-current'
-                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300'
+                        : 'ap-line ap-hover-line'
                     }`}
                     style={{
                       borderColor: selectedService === service.id ? primaryColor : undefined,
                       backgroundColor: selectedService === service.id ? `${primaryColor}10` : undefined
                     }}
                   >
-                    <p className="font-medium text-gray-900 dark:text-white">{service.name}</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    <p className="font-medium ap-ink">{service.name}</p>
+                    <p className="text-sm ap-ink-3 mt-1">
                       {service.duration} {labels.minutes} {service.price && `• ${service.price}`}
                     </p>
                   </button>
@@ -356,7 +391,7 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
 
           {/* Date Selection */}
           <div className="mb-8">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+            <label className="block text-sm font-medium ap-ink-2 mb-3">
               {labels.selectDate}
             </label>
             <div className="flex gap-2 overflow-x-auto pb-2">
@@ -367,17 +402,17 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
                   className={`flex-shrink-0 p-3 rounded-xl border-2 transition-all min-w-[80px] text-center ${
                     selectedDate?.toDateString() === date.toDateString()
                       ? 'border-current'
-                      : 'border-gray-200 dark:border-gray-600 hover:border-gray-300'
+                      : 'ap-line ap-hover-line'
                   }`}
                   style={{
                     borderColor: selectedDate?.toDateString() === date.toDateString() ? primaryColor : undefined,
                     backgroundColor: selectedDate?.toDateString() === date.toDateString() ? `${primaryColor}10` : undefined
                   }}
                 >
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                  <p className="text-xs ap-ink-3">
                     {date.toLocaleDateString(locale, { weekday: 'short' })}
                   </p>
-                  <p className="text-lg font-semibold text-gray-900 dark:text-white">
+                  <p className="text-lg font-semibold ap-ink">
                     {date.getDate()}
                   </p>
                 </button>
@@ -388,13 +423,13 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
           {/* Time Selection */}
           {selectedDate && (
             <div className="mb-8">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              <label className="block text-sm font-medium ap-ink-2 mb-3">
                 {labels.selectTime}
               </label>
               {loading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
-                  <span className="ms-2 text-gray-500">{labels.loading}</span>
+                  <Loader2 className="w-6 h-6 animate-spin ap-ink-3" />
+                  <span className="ms-2 ap-ink-3">{labels.loading}</span>
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
@@ -405,14 +440,14 @@ export function BookingWidgetBlock({ content, styles, theme, locale, isRTL, clas
                       className={`p-3 rounded-lg border-2 transition-all text-center ${
                         selectedTime === time
                           ? 'border-current'
-                          : 'border-gray-200 dark:border-gray-600 hover:border-gray-300'
+                          : 'ap-line ap-hover-line'
                       }`}
                       style={{
                         borderColor: selectedTime === time ? primaryColor : undefined,
                         backgroundColor: selectedTime === time ? `${primaryColor}10` : undefined
                       }}
                     >
-                      <span className="font-medium text-gray-900 dark:text-white">{time}</span>
+                      <span className="font-medium ap-ink">{time}</span>
                     </button>
                   ))}
                 </div>

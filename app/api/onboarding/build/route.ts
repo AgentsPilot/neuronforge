@@ -122,7 +122,14 @@ const buildRequestSchema = z.object({
   // Services from onboarding chat
   services: z.array(z.object({
     service_name: z.string(),
-    duration_minutes: z.number(),
+    /*
+     * Null is a real answer: a product is not booked against a time, so it has
+     * no length. The column is nullable and `configuration.services` above has
+     * always allowed it — this branch, which is the one the build PREFERS, did
+     * not, so a catalogue containing one product failed validation and took the
+     * whole build down with a 400.
+     */
+    duration_minutes: z.number().nullable().optional(),
     price: z.number().nullable(),
     currency: z.string().optional(),
     // This branch is preferred over `configuration.services`, so a plan absent

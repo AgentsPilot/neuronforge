@@ -116,7 +116,23 @@ export function SystemReadiness({
    * shown here: no arrow, no legend, just a step sitting under the thing it
    * serves. A step waiting on a sibling says so in words on its own row.
    */
-  const capabilities = steps.filter(step => !step.belongsTo);
+  /*
+   * A step whose parent is not here STANDS ON ITS OWN.
+   *
+   * `belongsTo` nests invoice details and company details under payments. That
+   * held while every business was shown a payments step — but a business that
+   * invoices for everything is not asked to connect a card processor, so the
+   * payments row is absent by design, and its two children were being filtered
+   * out of the top level and then never drawn as children of a row that does
+   * not exist.
+   *
+   * The card said "2 steps left — for now you cannot send invoices" and offered
+   * nothing to click: the two things standing in the way were the two things it
+   * had silently dropped. Nesting is a presentation choice, and it must never
+   * be able to remove a step from the list.
+   */
+  const present = new Set(steps.map(step => step.item.id));
+  const capabilities = steps.filter(step => !step.belongsTo || !present.has(step.belongsTo));
   const childrenOf = (id: string) => steps.filter(step => step.belongsTo === id);
 
   /** Compulsory work, and the compulsory work underneath it. */

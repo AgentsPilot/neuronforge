@@ -275,6 +275,14 @@ export interface FindQuery {
   op: 'find';
   entity: string;
   where?: Predicate[];
+  /**
+   * "The same rows as the previous answer."
+   *
+   * Resolved by the planner against the stored plan BEFORE validation, and
+   * never seen by the compiler: by then the step carries a real entity and real
+   * filters. See resolveSameRows.
+   */
+  same_rows?: boolean;
   select?: string[];
   include?: IncludeSpec[];
   order_by?: SortSpec[];
@@ -291,6 +299,8 @@ export interface ComputeQuery {
   op: 'compute';
   entity: string;
   where?: Predicate[];
+  /** "The same rows as the previous answer" — see FindQuery.same_rows. */
+  same_rows?: boolean;
   agg: {
     fn: AggregateFn;
     field?: string;
@@ -371,6 +381,20 @@ export interface MutateQuery {
   target?: { id: string } | { find: { where: Predicate[] } };
   /** Field values, keyed by catalog field name (not column name). */
   data?: Record<string, ScalarValue>;
+  /**
+   * Values that ride ALONGSIDE the write rather than into a column.
+   *
+   * Never set by a plan — the planner's schema has no way to express it for a
+   * mutate — and never mapped to columns. It exists for a value the server
+   * establishes after a write is parked and before it is approved: today, the
+   * document a user attaches to a quote on the confirmation card.
+   *
+   * That id cannot travel in `data`, because a writable foreign key must
+   * declare what it references so ownership can be verified, and
+   * `contact_documents` is not a catalog entity. So it travels here, where no
+   * plan can put it, and the handler proves ownership itself before using it.
+   */
+  params?: Record<string, unknown>;
 }
 
 /**

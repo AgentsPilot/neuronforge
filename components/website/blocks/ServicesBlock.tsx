@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
 import {
   MessageCircle, Brain, Target, Dumbbell, Hand, Flower2,
   Camera, Scale, Palette, Code, BookOpen, Music, Scissors,
@@ -82,7 +83,7 @@ interface ServicesContent {
   title?: string;
   subtitle?: string;
   services: ServiceItemWithRawData[];
-  layout?: 'grid' | 'list' | 'cards' | 'featured';
+  layout?: 'grid' | 'list' | 'cards' | 'featured' | 'rows';
 }
 
 
@@ -207,8 +208,19 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
     title,
     subtitle,
     services: staticServices = [],
-    layout = 'grid'
   } = typedContent;
+
+  /*
+   * The archetype's layout name, where the page does not carry one of its own.
+   *
+   * `content.layout` is set by hand in the builder and by the older templates,
+   * so it wins — the archetype proposes a shape, it does not overrule a choice
+   * somebody made. `rows` is the quiet one: hairline rules, no cards, no
+   * shadow, the price set beside the name rather than under it.
+   */
+  const layout = typedContent.layout
+    ?? (resolveBlockLayout('services', theme?.layouts, styles?.layout) as ServicesContent['layout'])
+    ?? 'grid';
 
   // Use translated default if no title provided
   const displayTitle = title || t('ourServices');
@@ -292,40 +304,52 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
   const textColor = theme?.colors.text || '#1a1a1a';
   const isDark = backgroundColor.startsWith('#0') || backgroundColor.startsWith('#1') || backgroundColor === '#000000';
 
-  // Card style helper - glassmorphism effect
-  const getCardStyle = (isHovered: boolean = false) => ({
-    backgroundColor: isDark
-      ? 'rgba(31, 41, 55, 0.8)'
-      : 'rgba(255, 255, 255, 0.8)',
+  /*
+   * Card style helper.
+   *
+   * Border radius and shadow deliberately absent: those two are what separate a
+   * Stone panel (a hairline rule, no fill, no shadow) from a Bold card (a tight
+   * 14px box on a raised surface), so `.ap-card` in the composition owns them.
+   * An inline declaration here would outrank the composition at any specificity
+   * and every archetype would go back to rendering the same rounded card.
+   *
+   * The hover state is likewise the composition's to describe; the argument is
+   * kept so the existing call sites and their hover wiring are unchanged.
+   */
+  const getCardStyle = (_isHovered: boolean = false) => ({
+    backgroundColor: 'var(--ap-surface)',
     backdropFilter: 'blur(20px)',
     WebkitBackdropFilter: 'blur(20px)',
-    borderColor: isDark
-      ? 'rgba(75, 85, 99, 0.4)'
-      : 'rgba(229, 231, 235, 0.8)',
-    borderRadius: theme?.borderRadius || '1.25rem',
-    boxShadow: isHovered
-      ? `0 25px 50px -12px ${primaryColor}20, 0 0 0 1px ${primaryColor}10`
-      : '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)'
+    borderColor: 'var(--ap-border)'
   });
 
   return (
     <section
       id="services"
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-12 sm:py-16 lg:py-20'} ${className || ''}`}
+      className={`apc-sec relative overflow-hidden ${styles?.padding || ''} ${className || ''}`}
+      /*
+       * Vertical rhythm from the archetype, not a fixed Tailwind ramp.
+       *
+       * `--ap-space-8` is scaled by theme.spacing (compact | normal |
+       * spacious) in PublicThemeStyle, so a spacious archetype finally breathes
+       * differently from a compact one. Only applied when the page has not set
+       * its own padding class.
+       */
       style={{
-        backgroundColor: isDark ? backgroundColor : '#fafbfc'
+        backgroundColor: isDark ? backgroundColor : '#fafbfc',
+        ...(styles?.padding ? {} : { paddingBlock: 'var(--ap-space-8)' }),
       }}
     >
       {/* Decorative background elements */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="apc-decor absolute inset-0 overflow-hidden">
         {/* Gradient orbs - smaller for compact layout */}
         <div
-          className="absolute -top-20 -right-20 w-[300px] h-[300px] rounded-full opacity-15 blur-3xl"
+          className="apc-decor absolute -top-20 -right-20 w-[300px] h-[300px] rounded-full opacity-15 blur-3xl"
           style={{ backgroundColor: primaryColor }}
         />
         <div
-          className="absolute -bottom-20 -left-20 w-[350px] h-[350px] rounded-full opacity-10 blur-3xl"
+          className="apc-decor absolute -bottom-20 -left-20 w-[350px] h-[350px] rounded-full opacity-10 blur-3xl"
           style={{ backgroundColor: secondaryColor }}
         />
 
@@ -350,18 +374,20 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header with decorative elements */}
         {(title || subtitle) && (
-          <div className="text-center mb-10 sm:mb-12">
+          <div className="apc-sec-head text-center mb-10 sm:mb-12">
             {/* Decorative badge */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-6"
-              style={{
-                backgroundColor: `${primaryColor}10`,
-                color: primaryColor,
-                border: `1px solid ${primaryColor}20`
-              }}
+              className="apc-eyebrow inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-6"
+              /*
+               * Colour only. The pill's fill, border and radius were inline, so
+               * a composition that draws its eyebrow as plain lettered text —
+               * which all three do — could not reach them, and the reset left a
+               * full-width bordered strip across the top of the section.
+               */
+              style={{ color: primaryColor }}
             >
               <Sparkles className="w-4 h-4" />
               <span>{t('ourServices')}</span>
@@ -375,7 +401,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 transition={{ delay: 0.1 }}
                 className="text-2xl sm:text-3xl lg:text-4xl font-bold"
                 style={{
-                  fontFamily: 'var(--website-font-heading)',
+                  fontFamily: 'var(--ap-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -390,7 +416,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 transition={{ delay: 0.2 }}
                 className="mt-4 text-lg sm:text-xl max-w-2xl mx-auto"
                 style={{
-                  fontFamily: 'var(--website-font-body)',
+                  fontFamily: 'var(--ap-font-body)',
                   color: isDark ? '#9ca3af' : '#6b7280'
                 }}
               >
@@ -404,7 +430,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
               whileInView={{ scaleX: 1 }}
               viewport={{ once: true }}
               transition={{ delay: 0.3, duration: 0.8 }}
-              className="mt-8 mx-auto w-24 h-1 rounded-full"
+              className="apc-decor mt-8 mx-auto w-24 h-1 rounded-full"
               style={{
                 background: `linear-gradient(90deg, transparent, ${primaryColor}, transparent)`
               }}
@@ -413,8 +439,126 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
         )}
 
         {/* Grid Layout - Enhanced with glassmorphism */}
+        {/*
+          * ROWS — the editorial list.
+          *
+          * No card, no shadow, no fill: a hairline rule between one service and
+          * the next, the price set beside the name on the same baseline, and a
+          * text link rather than a button. It is the shape that makes a quiet
+          * archetype read as considered instead of unfinished, and the one
+          * thing none of the four existing layouts could do — `list` is a
+          * bordered card laid on its side.
+          */}
+        {layout === 'rows' && (
+          <div className="apc-rows max-w-4xl mx-auto">
+            {services.map((service, index) => {
+              const price = priceFor(service);
+              const duration = formatDuration(service);
+              const booking = hasBookingFlow
+                ? (isPreview && onOpenBooking && service.id
+                    ? { kind: 'open' as const }
+                    : bookingUrl
+                      ? { kind: 'link' as const }
+                      : null)
+                : null;
+
+              return (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 12 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: Math.min(index * 0.06, 0.3) }}
+                  className="apc-row-item group grid gap-x-8 gap-y-3 py-8 sm:grid-cols-[1fr_auto] sm:items-baseline"
+                >
+                  {/*
+                    The row number. Stone numbers its sections `01 / 02 / 03` —
+                    it is the counting, not a rule or a colour, that tells the
+                    reader how many choices there are before they read any of
+                    them. Every other composition hides it, so this adds an
+                    element rather than changing what any row says.
+                  */}
+                  <span className="apc-idx" aria-hidden="true">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <div>
+                    <h3
+                      className="font-semibold"
+                      style={{
+                        fontFamily: 'var(--ap-font-heading)',
+                        fontSize: 'var(--ap-scale-h3)',
+                        color: 'var(--ap-text)',
+                      }}
+                    >
+                      {service.name}
+                    </h3>
+
+                    {service.description && (
+                      <p
+                        className="mt-2 max-w-prose"
+                        style={{
+                          fontFamily: 'var(--ap-font-body)',
+                          fontSize: 'var(--ap-scale-body)',
+                          color: 'var(--ap-text-muted)',
+                        }}
+                      >
+                        {service.description}
+                      </p>
+                    )}
+
+                    {duration && (
+                      <p
+                        className="mt-2"
+                        style={{ fontSize: 'var(--ap-scale-small)', color: 'var(--ap-text-muted)' }}
+                      >
+                        {duration}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className={`flex items-baseline gap-6 ${isRTL ? 'sm:justify-start' : 'sm:justify-end'}`}>
+                    {price && (
+                      <span
+                        className="apc-price font-semibold whitespace-nowrap"
+                        style={{
+                          fontFamily: 'var(--ap-font-heading)',
+                          fontSize: 'var(--ap-scale-h3)',
+                          color: 'var(--ap-text)',
+                        }}
+                      >
+                        {price}
+                      </span>
+                    )}
+
+                    {booking?.kind === 'open' ? (
+                      <button
+                        type="button"
+                        onClick={() => handleBookingClick(service)}
+                        className="inline-flex items-center gap-1.5 font-medium whitespace-nowrap transition-opacity hover:opacity-70"
+                        style={{ color: 'var(--ap-brand)', fontSize: 'var(--ap-scale-body)' }}
+                      >
+                        {ctaFor(service)}
+                        <ArrowRight className={`w-4 h-4 transition-transform group-hover:translate-x-0.5 ${isRTL ? 'rotate-180' : ''}`} />
+                      </button>
+                    ) : booking?.kind === 'link' ? (
+                      <a
+                        href={bookingUrl}
+                        className="inline-flex items-center gap-1.5 font-medium whitespace-nowrap transition-opacity hover:opacity-70"
+                        style={{ color: 'var(--ap-brand)', fontSize: 'var(--ap-scale-body)' }}
+                      >
+                        {ctaFor(service)}
+                        <ArrowRight className={`w-4 h-4 transition-transform group-hover:translate-x-0.5 ${isRTL ? 'rotate-180' : ''}`} />
+                      </a>
+                    ) : null}
+                  </div>
+                </motion.div>
+              );
+            })}
+          </div>
+        )}
+
         {layout === 'grid' && (
-          <div className={`grid ${gridColsClass} gap-6 sm:gap-8 ${gridContainerClass}`}>
+          <div className={`apc-grid grid ${gridColsClass} gap-6 sm:gap-8 ${gridContainerClass}`}>
             {services.map((service, index) => (
               <motion.div
                 key={index}
@@ -423,7 +567,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 viewport={{ once: true, margin: "-50px" }}
                 transition={{ delay: index * 0.1, duration: 0.5 }}
                 whileHover={{ y: -8, transition: { duration: 0.3 } }}
-                className="group relative p-8 rounded-2xl border backdrop-blur-xl"
+                className="apc-panel group relative p-8 rounded-2xl border backdrop-blur-xl"
                 style={getCardStyle()}
               >
                 {/* Popular badge */}
@@ -451,7 +595,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <motion.div
                     whileHover={{ scale: 1.1, rotate: 5 }}
                     transition={{ type: "spring", stiffness: 400 }}
-                    className="relative w-16 h-16 rounded-2xl flex items-center justify-center mb-6 overflow-hidden"
+                    className="apc-icon relative w-16 h-16 rounded-2xl flex items-center justify-center mb-6 overflow-hidden"
                     style={{
                       background: `linear-gradient(135deg, ${primaryColor}20 0%, ${secondaryColor}30 100%)`
                     }}
@@ -470,7 +614,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 <h3
                   className="text-xl font-bold mb-3 group-hover:text-opacity-100 transition-colors"
                   style={{
-                    fontFamily: 'var(--website-font-heading)',
+                    fontFamily: 'var(--ap-font-heading)',
                     color: isDark ? '#ffffff' : textColor
                   }}
                 >
@@ -480,7 +624,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 <p
                   className="text-base leading-relaxed mb-6"
                   style={{
-                    fontFamily: 'var(--website-font-body)',
+                    fontFamily: 'var(--ap-font-body)',
                     color: isDark ? '#9ca3af' : '#6b7280'
                   }}
                 >
@@ -506,10 +650,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       <span
                         className="text-2xl font-bold"
                         style={{
-                          background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`,
-                          WebkitBackgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent',
-                          backgroundClip: 'text'
+                          color: 'var(--ap-text)'
                         }}
                       >
                         {priceFor(service)}
@@ -552,8 +693,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       <button
                         type="button"
                         onClick={() => handleBookingClick(service)}
-                        className="group/btn relative w-full flex items-center justify-center gap-2 px-6 py-3.5 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300"
-                        style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+                        className="apc-btn apc-btn--solid group/btn relative w-full flex items-center justify-center gap-2 px-6 py-3.5 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300"
                       >
                         <span
                           className="absolute inset-0"
@@ -576,8 +716,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     ) : bookingUrl ? (
                       <a
                         href={bookingUrl}
-                        className="group/btn relative w-full flex items-center justify-center gap-2 px-6 py-3.5 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300"
-                        style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+                        className="apc-btn apc-btn--solid group/btn relative w-full flex items-center justify-center gap-2 px-6 py-3.5 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300"
                       >
                         <span
                           className="absolute inset-0"
@@ -600,11 +739,8 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     ) : (
                       <button
                         type="button"
-                        className="w-full flex items-center justify-center gap-2 px-6 py-3.5 text-white font-semibold rounded-xl opacity-60 cursor-not-allowed"
-                        style={{
-                          backgroundColor: primaryColor,
-                          borderRadius: theme?.borderRadius || '0.75rem'
-                        }}
+                        className="apc-btn w-full flex items-center justify-center gap-2 px-6 py-3.5 text-white font-semibold rounded-xl opacity-60 cursor-not-allowed"
+                        style={{ backgroundColor: primaryColor }}
                         title="Set a subdomain to enable booking"
                         disabled
                       >
@@ -622,7 +758,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
         {/* List Layout - Enhanced */}
         {layout === 'list' && (
-          <div className="max-w-4xl mx-auto space-y-4">
+          <div className="apc-rows max-w-4xl mx-auto space-y-4">
             {services.map((service, index) => (
               <motion.div
                 key={index}
@@ -631,7 +767,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.1 }}
                 whileHover={{ x: isRTL ? -5 : 5 }}
-                className="group relative flex items-center gap-6 p-6 rounded-2xl border backdrop-blur-sm transition-all duration-300"
+                className="apc-panel group relative flex items-center gap-6 p-6 rounded-2xl border backdrop-blur-sm transition-all duration-300"
                 style={getCardStyle()}
               >
                 {/* Left accent */}
@@ -642,7 +778,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
                 {service.icon && (
                   <div
-                    className="flex-shrink-0 w-14 h-14 rounded-xl flex items-center justify-center"
+                    className="apc-icon flex-shrink-0 w-14 h-14 rounded-xl flex items-center justify-center"
                     style={{
                       background: `linear-gradient(135deg, ${primaryColor}15 0%, ${secondaryColor}25 100%)`
                     }}
@@ -655,7 +791,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <h3
                     className="text-lg font-bold mb-1"
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -664,7 +800,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <p
                     className="text-sm leading-relaxed"
                     style={{
-                      fontFamily: 'var(--website-font-body)',
+                      fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -745,7 +881,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 <div className="p-8">
                   {service.icon && (
                     <div
-                      className="w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300"
+                      className="apc-icon w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300"
                       style={{
                         background: `linear-gradient(135deg, ${primaryColor}15 0%, ${secondaryColor}25 100%)`
                       }}
@@ -757,7 +893,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <h3
                     className="text-xl font-bold mb-3"
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -767,7 +903,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <p
                     className="text-sm leading-relaxed mb-6"
                     style={{
-                      fontFamily: 'var(--website-font-body)',
+                      fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -779,9 +915,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       <span
                         className="text-3xl font-bold"
                         style={{
-                          background: `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})`,
-                          WebkitBackgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent'
+                          color: 'var(--ap-text)'
                         }}
                       >
                         {priceFor(service)}
@@ -865,7 +999,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   background: `linear-gradient(135deg, ${primaryColor}20 0%, ${secondaryColor}10 100%)`
                 }}
               />
-              <div className="relative grid md:grid-cols-2 gap-8 p-8 md:p-12">
+              <div className="apc-grid relative grid md:grid-cols-2 gap-8 p-8 md:p-12">
                 <div>
                   <span
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold mb-6"
@@ -881,7 +1015,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <h3
                     className="text-3xl font-bold mb-4"
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -891,7 +1025,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   <p
                     className="text-lg leading-relaxed mb-6"
                     style={{
-                      fontFamily: 'var(--website-font-body)',
+                      fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -903,7 +1037,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       {services[0].features.map((feature, i) => (
                         <li key={i} className="flex items-center gap-3">
                           <div
-                            className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                            className="apc-icon w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
                             style={{ backgroundColor: `${primaryColor}20` }}
                           >
                             <Check className="w-4 h-4" style={{ color: primaryColor }} />
@@ -921,9 +1055,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       <span
                         className="text-5xl font-bold"
                         style={{
-                          background: `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})`,
-                          WebkitBackgroundClip: 'text',
-                          WebkitTextFillColor: 'transparent'
+                          color: 'var(--ap-text)'
                         }}
                       >
                         {priceFor(services[0])}
@@ -955,7 +1087,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
             {/* Other services in grid */}
             {services.length > 1 && (
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div className="apc-grid grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {services.slice(1).map((service, index) => (
                   <motion.div
                     key={index}
@@ -964,12 +1096,12 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     viewport={{ once: true }}
                     transition={{ delay: index * 0.1 }}
                     whileHover={{ y: -5 }}
-                    className="group p-6 rounded-2xl border backdrop-blur-xl transition-all"
+                    className="apc-panel group p-6 rounded-2xl border backdrop-blur-xl transition-all"
                     style={getCardStyle()}
                   >
                     {service.icon && (
                       <div
-                        className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+                        className="apc-icon w-12 h-12 rounded-xl flex items-center justify-center mb-4"
                         style={{ backgroundColor: `${primaryColor}15` }}
                       >
                         <ServiceIcon icon={service.icon} primaryColor={primaryColor} size="md" />
@@ -978,7 +1110,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     <h4
                       className="text-lg font-bold mb-2"
                       style={{
-                        fontFamily: 'var(--website-font-heading)',
+                        fontFamily: 'var(--ap-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -987,7 +1119,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     <p
                       className="text-sm mb-4"
                       style={{
-                        fontFamily: 'var(--website-font-body)',
+                        fontFamily: 'var(--ap-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >

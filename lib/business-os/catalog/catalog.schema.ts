@@ -251,11 +251,52 @@ export interface RelationDef {
  * operator then composes with it for free.
  */
 export interface DerivedExpansion {
-  relation: string;
+  /**
+   * The relation to traverse — omitted for a fact about the row ITSELF.
+   *
+   * Most derived facts reach another table: "has completed intake" is a
+   * property of a booking, not of a contact. Some are a plain column test that
+   * the planner nonetheless cannot be expected to invent, because the column
+   * name says nothing about the business word for it — `proposals.sent_at is
+   * not null` is what "quotes I actually sent" means, and asked that question
+   * the planner counted every quote including three that never left, because
+   * the entity ALSO has a status value literally called `sent` (which means
+   * sent-and-unanswered, so filtering on it would have returned the opposite
+   * error: zero).
+   *
+   * A self expansion takes exactly ONE predicate. `eq false` has to be the
+   * complement, and the complement of a conjunction is a disjunction, which
+   * this compiler cannot express — so the shape that cannot be lowered
+   * correctly is refused at build time rather than answered wrongly.
+   */
+  relation?: string;
   /** 'any' → EXISTS, 'none' → NOT EXISTS, 'count' → aggregate. */
   quantifier: 'any' | 'none' | 'count';
   where?: Array<{ field: string; op: string; value?: unknown }>;
 }
+
+/**
+ * The operators a SELF expansion may use, and what each one becomes when the
+ * derived boolean is asked for as `false`.
+ *
+ * Shared by the catalog build (which refuses anything not listed) and the
+ * compiler (which does the flipping), so the two can never disagree about what
+ * is lowerable. Null-ness is the interesting one: "was it sent" is
+ * `sent_at is_not_null`, and "was it not sent" is the same column being null —
+ * not the absence of a row.
+ */
+export const COMPLEMENTARY_OPS: Record<string, string> = {
+  is_not_null: 'is_null',
+  is_null: 'is_not_null',
+  eq: 'neq',
+  neq: 'eq',
+  in: 'not_in',
+  not_in: 'in',
+  gt: 'lte',
+  gte: 'lt',
+  lt: 'gte',
+  lte: 'gt',
+};
 
 export interface DerivedFieldDef {
   type: 'boolean' | 'number' | 'datetime';
@@ -372,9 +413,28 @@ export type UserScope =
   | { kind: 'column'; column: string }
   | { kind: 'relation'; relation: string };
 
+/**
+ * Rows this entity leaves out unless the question asks for them.
+ *
+ * Declared, never inferred, and only for a row that has been REPLACED by
+ * another row the answer already includes — a superseded quote version is the
+ * only case today. See lib/business-os/bizql/defaultScope.ts for why this is
+ * the one place a hidden filter is defensible, and for the three properties
+ * that keep it honest.
+ */
+export interface DefaultScope {
+  /** Fields whose presence in the plan means the user is steering; stand aside. */
+  unless: string[];
+  where: Array<{ field: string; op: string; value?: unknown }>;
+  /** Said out loud next to the answer, so the exclusion is never silent. */
+  labels: Labels;
+}
+
 export interface EntityDef {
   /** Physical table name. MUST exist in the physical catalog. */
   table: string;
+  /** Rows omitted unless asked for — see DefaultScope. */
+  defaultScope?: DefaultScope;
   labels: EntityLabels;
   userScope: UserScope;
   /**

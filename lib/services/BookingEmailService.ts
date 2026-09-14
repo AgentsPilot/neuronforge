@@ -15,7 +15,7 @@ import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
-import { resolvePublishedWebsiteSubdomain } from '@/lib/branding/platformSite';
+import { resolvePlatformWebsiteUrl, resolveBookingUrl } from '@/lib/branding/platformSite';
 import { emailSendRepository } from '@/lib/repositories/EmailAutomationRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 // The same source `/book/manage/[token]/intake` reads, so the email asking for
@@ -40,49 +40,6 @@ const logger = createLogger({ service: 'BookingEmailService' });
 // JWT secret for booking manage tokens
 const BOOKING_TOKEN_SECRET = process.env.BOOKING_TOKEN_SECRET || process.env.NEXTAUTH_SECRET || 'fallback-secret-change-in-prod';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
-
-/**
- * Where to send a client who wants to book.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * A "book again" link has one job, and it was the only thing the old chain did
- * not check: that the destination is somewhere you can actually book.
- *
- * The order matters and is not arbitrary:
- *
- *   1. its WEBSITE on this platform, when we host one — a booking widget
- *   2. its smart link — `/c/{user_code}/book`, which exists for EVERY account
- *      and is the whole answer for a business that never wanted a website
- *
- * A landing page is deliberately not step 1: it is a campaign surface, and the
- * smart link below is purpose-built for booking and never goes stale. The
- * business's own external site is not in the list at all — a homepage is not a
- * booking page, and a button that says "book again" has to land on one.
- *
- * Step 2 was missing entirely. Without it, a business on `booking_only` — one
- * that told onboarding it did not want a site — had no bookable link to offer,
- * so a cancelled client got no button at all. Meanwhile `user_code` was sitting
- * on the profile, populated for every account, pointing at a booking page built
- * for exactly this.
- *
- * `status = 'published'`: an unpublished page's subdomain resolves to nothing.
- * Two of the four call sites did not filter on it. `maybeSingle` rather than
- * `single` for the same reason the filter matters — a business with two pages
- * made `single()` throw, and the error was swallowed into "no link".
- * ─────────────────────────────────────────────────────────────────────────────
- */
-async function resolveBookingUrl(
-  userId: string,
-  profile: { user_code?: string | null } | null | undefined
-): Promise<string | undefined> {
-  // The same helper the email branding uses, so "do we host their website"
-  // cannot be answered one way in the footer and another in the button above it.
-  const subdomain = await resolvePublishedWebsiteSubdomain(userId);
-
-  if (subdomain) return `${APP_URL}/site/${subdomain}/book`;
-  if (profile?.user_code) return `${APP_URL}/c/${profile.user_code}/book`;
-  return undefined;
-}
 
 // Token expiry for booking management links (30 days)
 const TOKEN_EXPIRY_DAYS = 30;
@@ -125,6 +82,24 @@ export function verifyBookingToken(token: string): { bookingId: string; email: s
  * Fetch user's preferred language from user_preferences table
  * Used for business owner's internal emails
  */
+/**
+ * The OWNER's interface language. Not for anything a client reads.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `user_preferences.preferred_language` is a personal setting: which language
+ * this person wants the app in. Every client-facing email used to resolve
+ * through it, so an owner who switched their own interface to English — to read
+ * their pipeline, say — silently changed the language their Hebrew clients were
+ * written to. One booking's confirmation went out in English at 16:32 because
+ * of exactly that, while every other email that day was Hebrew.
+ *
+ * What a client should be written in is a fact about the BUSINESS, and it does
+ * not change when the owner changes their own screen. So the senders now use
+ * `getBusinessLocale`, and this is kept for anything addressed to the owner
+ * themselves.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function getUserLocale(userId: string): Promise<Locale> {
   try {
     const { data, error } = await supabaseServer
@@ -250,7 +225,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -544,7 +519,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
@@ -684,7 +659,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -792,7 +767,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking (with new time)
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -910,7 +885,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
@@ -934,7 +909,19 @@ export class BookingEmailService {
        *
        * Sanitised because it reaches an href and is owner-typed text.
        */
-      const websiteUrl = safeExternalUrl(profileResult.data?.website_url) ?? undefined;
+      /*
+       * Ours first, then theirs — the order every other branded surface uses.
+       *
+       * This read the external address alone, so a business whose website we
+       * host had its own site named in `resolveEmailBranding`'s footer and
+       * somewhere else entirely in the body of this email. `platformSite`
+       * answers published-only and homepage-only, so a draft or a landing page
+       * still falls through to the address the business had before us.
+       */
+      const websiteUrl =
+        (await resolvePlatformWebsiteUrl(userId)) ??
+        safeExternalUrl(profileResult.data?.website_url) ??
+        undefined;
       const bookingUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Generate email
@@ -998,7 +985,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
@@ -1022,7 +1009,19 @@ export class BookingEmailService {
        *
        * Sanitised because it reaches an href and is owner-typed text.
        */
-      const websiteUrl = safeExternalUrl(profileResult.data?.website_url) ?? undefined;
+      /*
+       * Ours first, then theirs — the order every other branded surface uses.
+       *
+       * This read the external address alone, so a business whose website we
+       * host had its own site named in `resolveEmailBranding`'s footer and
+       * somewhere else entirely in the body of this email. `platformSite`
+       * answers published-only and homepage-only, so a draft or a landing page
+       * still falls through to the address the business had before us.
+       */
+      const websiteUrl =
+        (await resolvePlatformWebsiteUrl(userId)) ??
+        safeExternalUrl(profileResult.data?.website_url) ??
+        undefined;
       const bookingUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Generate email
@@ -1085,6 +1084,14 @@ export class BookingEmailService {
        * and the endpoint answered 500.
        */
       manual?: boolean;
+      /**
+       * A second ask, a day before the meeting.
+       *
+       * The same form and the same link — only the subject and the opening
+       * line change, because a client who ignored the first one should not
+       * receive a message that reads as if it were the first one.
+       */
+      reminder?: boolean;
     }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendIntakeFormRequest' });
@@ -1157,9 +1164,19 @@ export class BookingEmailService {
        * `send_after_booking` here refused the act it exists to permit.
        */
       const { form, blocked } = await resolveIntakeForSending(userId, {
-        // The automatic path is the one that has to respect `send_after_booking`;
-        // the manual path IS the owner sending it themselves.
         forClient: !options?.manual,
+        /*
+         * The service decides whether there is anything to ask.
+         *
+         * A quote request has no occasion for a form — the next thing that
+         * client should receive is a price — and a product has no appointment
+         * to prepare for. Everything else is asked, free consultations
+         * included: costing nothing is not the same as needing nothing.
+         */
+        service: {
+          sale_mode: (service as { sale_mode?: string | null }).sale_mode ?? null,
+          is_scheduled: (service as { is_scheduled?: boolean | null }).is_scheduled ?? null,
+        },
       });
 
       if (!form) {
@@ -1178,8 +1195,8 @@ export class BookingEmailService {
           error:
             blocked === 'not_published'
               ? 'Your intake form has not been published yet'
-              : blocked === 'not_automatic'
-                ? 'Automatic sending is switched off for this business'
+              : blocked === 'not_applicable'
+                ? 'This service does not collect an intake form'
                 : 'No intake form configured',
         };
       }
@@ -1214,6 +1231,7 @@ export class BookingEmailService {
 
       // Generate email
       const { subject, html } = generateIntakeRequestEmail({
+        isReminder: !!options?.reminder,
         clientName,
         clientEmail,
         serviceName: service.service_name,
@@ -1238,6 +1256,20 @@ export class BookingEmailService {
       });
 
       if (result.sent) {
+        /*
+         * Record that it went, on the booking.
+         *
+         * The column was added with the intake rewrite and nothing ever wrote
+         * it — the old code marked "asked" with a sentinel inside
+         * `intake_responses` instead. Three states need three answers:
+         * never asked, asked, answered. The reminder below reads this, and so
+         * does the morning briefing, which was filtering on a column that was
+         * always null.
+         */
+        await schedulingBookingRepository
+          .update(bookingId, userId, { intake_sent_at: new Date().toISOString() })
+          .catch(err => requestLogger.warn({ err, bookingId }, 'Could not stamp intake_sent_at'));
+
         requestLogger.info({ provider: result.provider }, 'Intake form request sent');
       } else {
         requestLogger.warn({ error: result.error }, 'Failed to send intake form request');
@@ -1422,7 +1454,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);

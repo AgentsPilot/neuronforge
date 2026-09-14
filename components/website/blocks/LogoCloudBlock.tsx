@@ -29,7 +29,7 @@ export function LogoCloudBlock({ content, styles, theme, isRTL, className }: Blo
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+      className={`apc-sec ${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'ap-card-2'} ${className || ''}`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Header */}
@@ -40,7 +40,7 @@ export function LogoCloudBlock({ content, styles, theme, isRTL, className }: Blo
                 initial={{ opacity: 0, y: 10 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                className="text-sm font-semibold uppercase tracking-wider ap-ink-3"
               >
                 {title}
               </motion.p>
@@ -51,8 +51,8 @@ export function LogoCloudBlock({ content, styles, theme, isRTL, className }: Blo
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="mt-2 text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: 'var(--website-font-body)' }}
+                className="mt-2 ap-ink-2"
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -98,7 +98,7 @@ export function LogoCloudBlock({ content, styles, theme, isRTL, className }: Blo
 
         {/* Grid Layout */}
         {layout === 'grid' && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-8">
+          <div className="apc-grid grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-8">
             {logos.map((logo, index) => (
               <motion.div
                 key={index}
@@ -106,7 +106,7 @@ export function LogoCloudBlock({ content, styles, theme, isRTL, className }: Blo
                 whileInView={{ opacity: 1, scale: 1 }}
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.05 }}
-                className="flex items-center justify-center p-4 bg-white dark:bg-slate-800 rounded-lg"
+                className="flex items-center justify-center p-4 ap-card rounded-lg"
                 style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
               >
                 {logo.link ? (

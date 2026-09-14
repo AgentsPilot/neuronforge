@@ -1,6 +1,8 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
+import { compositionFor } from '@/components/public/compositions';
 import { Check, Sparkles, ArrowRight, Calendar } from 'lucide-react';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
 import type { BlockRendererProps, PricingPlan, SelectedServiceData } from './types';
@@ -23,11 +25,17 @@ interface PricingContent {
   title?: string;
   subtitle?: string;
   plans: ExtendedPricingPlan[];
-  layout?: 'cards' | 'table' | 'simple';
+  layout?: 'cards' | 'panels' | 'table' | 'simple';
   // Service info for landing pages created from a specific service
   serviceId?: string;
   serviceName?: string;
   durationMinutes?: number;
+  /**
+   * Set by the public renderer when the service this page sells no longer
+   * exists or has been switched off. Booking is withdrawn rather than offered
+   * and then refused at the API.
+   */
+  serviceUnavailable?: boolean;
 }
 
 // Default CTA text by locale
@@ -107,8 +115,30 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
     title = 'Pricing',
     subtitle,
     plans = [],
-    layout = 'cards'
+    layout: contentLayout
   } = content as PricingContent;
+
+  /*
+   * `panels` is the archetype's name for this block's `cards` — a filled,
+   * bordered column per plan. The archetype names a shape; the block already
+   * had one that matched, so it resolves to it rather than gaining a second
+   * implementation of the same thing.
+   */
+  const rawLayout = contentLayout
+    ?? (resolveBlockLayout('pricing', theme?.layouts, styles?.layout) as PricingContent['layout'])
+    ?? 'cards';
+  const layout = rawLayout === 'panels' ? 'cards' : rawLayout;
+
+  /*
+   * Which bones this section is drawn on.
+   *
+   * Stone does not have a card. Its offers are ruled rows — an index, the name,
+   * the description, the price and the control, separated by hairlines — and
+   * that is a different SHAPE, not a differently-styled card. A stylesheet can
+   * restyle a box; it cannot turn one box into four columns that were never in
+   * the markup. So the block renders it.
+   */
+  const composition = compositionFor(theme);
 
   const primaryColor = theme?.colors.primary || '#4F6EF7';
   const secondaryColor = theme?.colors.secondary || '#6366F1';
@@ -132,6 +162,19 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
     return formatPrice(plan.price, plan.currency, locale);
   };
 
+  /**
+   * Whether this offer has a number on it.
+   *
+   * Both the Warm and the Bold mockups treat "free" and "on request" as a
+   * different kind of thing from an amount: the figure is set in ink, the
+   * invitation in the accent. It reads as an opening rather than a price, which
+   * is the whole reason a business puts a free consultation first.
+   */
+  const isOpenPrice = (plan: ExtendedPricingPlan): boolean =>
+    plan.priceRaw === undefined &&
+    typeof plan.price !== 'number' &&
+    !/\d/.test(String(plan.price ?? ''));
+
   // Detect single plan - show as featured center card
   const isSinglePlan = plans.length === 1;
 
@@ -150,7 +193,16 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
   };
 
   // Check if we have a valid service for booking
+  /*
+   * A well-formed id is not the same as a service that exists.
+   *
+   * This checked the UUID shape alone, which a deleted service's id still
+   * passes — so the button rendered and the client was turned away by the
+   * booking API after filling in the whole form. The renderer now says
+   * outright when the service is gone.
+   */
   const hasValidService = (plan: ExtendedPricingPlan): boolean => {
+    if (pricingContent.serviceUnavailable) return false;
     return isValidServiceId(plan.serviceId) || isValidServiceId(defaultServiceId);
   };
 
@@ -208,19 +260,19 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
     <section
       id="pricing"
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-16 sm:py-24'} ${className || ''}`}
+      className={`apc-sec relative overflow-hidden ${styles?.padding || 'py-16 sm:py-24'} ${className || ''}`}
       style={{
         backgroundColor: theme?.colors.background || '#fafbfc'
       }}
     >
       {/* Decorative background */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="apc-decor absolute inset-0 overflow-hidden">
         <div
-          className="absolute -top-32 -right-32 w-[400px] h-[400px] rounded-full opacity-10 blur-3xl"
+          className="apc-decor absolute -top-32 -right-32 w-[400px] h-[400px] rounded-full opacity-10 blur-3xl"
           style={{ backgroundColor: primaryColor }}
         />
         <div
-          className="absolute -bottom-32 -left-32 w-[500px] h-[500px] rounded-full opacity-10 blur-3xl"
+          className="apc-decor absolute -bottom-32 -left-32 w-[500px] h-[500px] rounded-full opacity-10 blur-3xl"
           style={{ backgroundColor: secondaryColor }}
         />
       </div>
@@ -228,17 +280,19 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6">
         {/* Header */}
         {(title || subtitle) && (
-          <div className="text-center mb-12">
+          <div className="apc-sec-head text-center mb-12">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-6"
-              style={{
-                backgroundColor: `${primaryColor}10`,
-                color: primaryColor,
-                border: `1px solid ${primaryColor}20`
-              }}
+              className="apc-eyebrow inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium mb-6"
+              /*
+               * Colour only. The pill's fill, border and radius were inline, so
+               * a composition that draws its eyebrow as plain lettered text —
+               * which all three do — could not reach them, and the reset left a
+               * full-width bordered strip across the top of the section.
+               */
+              style={{ color: primaryColor }}
             >
               <Sparkles className="w-4 h-4" />
               <span>{locale === 'he' ? 'מחירון' : locale === 'es' ? 'Precios' : 'Pricing'}</span>
@@ -249,8 +303,8 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: 'var(--website-font-heading)' }}
+                className="text-3xl sm:text-4xl font-bold ap-ink"
+                style={{ fontFamily: 'var(--ap-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -261,8 +315,8 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="mt-4 text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto"
-                style={{ fontFamily: 'var(--website-font-body)' }}
+                className="mt-4 text-lg ap-ink-2 max-w-2xl mx-auto"
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -274,7 +328,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
               whileInView={{ scaleX: 1 }}
               viewport={{ once: true }}
               transition={{ delay: 0.2, duration: 0.8 }}
-              className="mt-8 mx-auto w-24 h-1 rounded-full"
+              className="apc-decor mt-8 mx-auto w-24 h-1 rounded-full"
               style={{
                 background: `linear-gradient(90deg, transparent, ${primaryColor}, transparent)`
               }}
@@ -282,9 +336,76 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
           </div>
         )}
 
+        {/* Rows layout — Stone's offer list, straight off the mockup. */}
+        {layout === 'cards' && (composition === 'stone' || composition === 'warm') && (
+          <div className="apc-rows max-w-5xl mx-auto">
+            {plans.map((plan, index) => {
+              const canBook =
+                hasValidService(plan) && ((isPreview && onOpenBooking) || hasBookingCapability);
+              const href = `${bookingUrl}${
+                plan.serviceId || defaultServiceId
+                  ? `?service=${plan.serviceId || defaultServiceId}`
+                  : ''
+              }`;
+              return (
+                <div key={index} className="apc-row-item">
+                  <span className="apc-idx" aria-hidden="true">
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+
+                  <h3
+                    className="font-semibold"
+                    style={{
+                      fontFamily: 'var(--ap-font-heading)',
+                      fontSize: 'var(--ap-scale-h3)',
+                    }}
+                  >
+                    {plan.name}
+                  </h3>
+
+                  {plan.description ? (
+                    <p style={{ margin: 0, opacity: 0.72, lineHeight: 1.65 }}>
+                      {plan.description}
+                    </p>
+                  ) : (
+                    <span />
+                  )}
+
+                  <div className="apc-row-end">
+                    <span
+                      className={`apc-price${isOpenPrice(plan) ? ' apc-price--open' : ''}`}
+                    >
+                      {getFormattedPrice(plan)}
+                    </span>
+                    {(plan.durationMinutes || defaultDurationMinutes) && (
+                      <span style={{ opacity: 0.72, fontSize: 'var(--ap-scale-small)' }}>
+                        {formatDuration(plan.durationMinutes || defaultDurationMinutes, locale)}
+                      </span>
+                    )}
+                    {canBook &&
+                      (isPreview && onOpenBooking ? (
+                        <button
+                          type="button"
+                          onClick={() => handleBookingClick(plan, index)}
+                          className="apc-btn"
+                        >
+                          {getCtaText(plan)}
+                        </button>
+                      ) : bookingUrl ? (
+                        <a href={href} className="apc-btn">
+                          {getCtaText(plan)}
+                        </a>
+                      ) : null)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Cards Layout */}
-        {layout === 'cards' && (
-          <div className={`grid grid-cols-1 ${
+        {layout === 'cards' && composition !== 'stone' && composition !== 'warm' && (
+          <div className={`apc-grid grid grid-cols-1 ${
             isSinglePlan
               ? 'max-w-lg mx-auto'
               : plans.length === 2
@@ -299,17 +420,13 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.1, duration: 0.5 }}
                 whileHover={{ y: -8, transition: { duration: 0.3 } }}
-                className={`group relative bg-white dark:bg-slate-800 rounded-2xl overflow-hidden ${
-                  plan.popular || isSinglePlan ? 'ring-2 shadow-2xl' : 'shadow-lg border border-gray-100 dark:border-gray-700'
+                className={`apc-panel ${plan.popular || isSinglePlan ? 'apc-panel--lead' : ''} group relative ap-card rounded-2xl overflow-hidden ${
+                  plan.popular || isSinglePlan ? 'ring-2 shadow-2xl' : 'shadow-lg border ap-line'
                 }`}
-                style={{
-                  borderRadius: theme?.borderRadius || '1.5rem',
-                  ringColor: (plan.popular || isSinglePlan) ? primaryColor : undefined
-                }}
               >
                 {/* Top gradient accent */}
                 <div
-                  className="h-2"
+                  className="apc-decor h-2"
                   style={{
                     background: `linear-gradient(90deg, ${primaryColor}, ${secondaryColor})`
                   }}
@@ -328,14 +445,14 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
 
                 <div className={`p-8 ${plan.popular ? 'pt-14' : ''}`}>
                   <h3
-                    className="text-xl font-bold text-gray-900 dark:text-white"
-                    style={{ fontFamily: 'var(--website-font-heading)' }}
+                    className="text-xl font-bold ap-ink"
+                    style={{ fontFamily: 'var(--ap-font-heading)' }}
                   >
                     {plan.name}
                   </h3>
 
                   {plan.description && (
-                    <p className="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+                    <p className="mt-2 text-sm ap-ink-3 leading-relaxed">
                       {plan.description}
                     </p>
                   )}
@@ -343,19 +460,23 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                   {/* Price with gradient */}
                   <div className="mt-6 flex items-baseline gap-2">
                     <span
-                      className="text-5xl font-bold"
-                      style={{
-                        background: `linear-gradient(135deg, ${primaryColor}, ${secondaryColor})`,
-                        WebkitBackgroundClip: 'text',
-                        WebkitTextFillColor: 'transparent',
-                        backgroundClip: 'text',
-                        fontFamily: 'var(--website-font-heading)'
-                      }}
+                      className="apc-price text-5xl font-bold"
+                      /*
+                       * Inherited, not stated.
+                       *
+                       * An inline `--ap-text` cannot invert. Bold's lead offer
+                       * fills its card with the ink colour and flips the text
+                       * to the page ground — so a child that names `--ap-text`
+                       * itself renders ink on ink and disappears. Letting it
+                       * inherit means the card decides, which is the only way
+                       * an inverted panel can work.
+                       */
+                      style={{ fontFamily: 'var(--ap-font-heading)' }}
                     >
                       {getFormattedPrice(plan)}
                     </span>
                     {plan.period && (
-                      <span className="text-gray-500 dark:text-gray-400 text-lg">
+                      <span className="ap-ink-3 text-lg">
                         /{plan.period}
                       </span>
                     )}
@@ -374,14 +495,14 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                   {(plan.durationMinutes || defaultDurationMinutes) && (
                     <div className="mt-8 flex items-center gap-3">
                       <div
-                        className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center"
+                        className="apc-icon flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center"
                         style={{ backgroundColor: `${primaryColor}15` }}
                       >
                         <Check className="w-4 h-4" style={{ color: primaryColor }} />
                       </div>
                       <span
-                        className="text-gray-600 dark:text-gray-300"
-                        style={{ fontFamily: 'var(--website-font-body)' }}
+                        className="ap-ink-2"
+                        style={{ fontFamily: 'var(--ap-font-body)' }}
                       >
                         {formatDuration(plan.durationMinutes || defaultDurationMinutes, locale)}
                       </span>
@@ -396,8 +517,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                       <button
                         type="button"
                         onClick={() => handleBookingClick(plan, index)}
-                        className="group/btn relative mt-8 flex items-center justify-center gap-2 w-full py-4 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl"
-                        style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+                        className="apc-btn apc-btn--solid group/btn relative mt-8 flex items-center justify-center gap-2 w-full py-4 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl"
                       >
                         <span
                           className="absolute inset-0"
@@ -420,8 +540,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                     ) : bookingUrl ? (
                       <a
                         href={`${bookingUrl}${(plan.serviceId || defaultServiceId) ? `?service=${plan.serviceId || defaultServiceId}` : ''}`}
-                        className="group/btn relative mt-8 flex items-center justify-center gap-2 w-full py-4 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl"
-                        style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+                        className="apc-btn apc-btn--solid group/btn relative mt-8 flex items-center justify-center gap-2 w-full py-4 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl"
                       >
                         <span
                           className="absolute inset-0"
@@ -447,7 +566,6 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                     <a
                       href={getCtaLink(plan)}
                       className="group/btn relative mt-8 flex items-center justify-center gap-2 w-full py-4 text-white font-semibold rounded-xl overflow-hidden transition-all duration-300 hover:shadow-xl"
-                      style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
                     >
                       <span
                         className="absolute inset-0"
@@ -491,18 +609,17 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                 whileInView={{ opacity: 1, x: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.1 }}
-                className="flex items-center justify-between p-6 bg-white dark:bg-slate-800 rounded-xl shadow-sm"
-                style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+                className="apc-panel flex items-center justify-between p-6 ap-card rounded-xl shadow-sm"
               >
                 <div>
                   <h3
-                    className="text-lg font-semibold text-gray-900 dark:text-white"
-                    style={{ fontFamily: 'var(--website-font-heading)' }}
+                    className="text-lg font-semibold ap-ink"
+                    style={{ fontFamily: 'var(--ap-font-heading)' }}
                   >
                     {plan.name}
                   </h3>
                   {plan.description && (
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    <p className="mt-1 text-sm ap-ink-3">
                       {plan.description}
                     </p>
                   )}
@@ -515,7 +632,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                     {plan.price}
                   </span>
                   {plan.period && (
-                    <span className="text-sm text-gray-500 dark:text-gray-400 ms-1">
+                    <span className="text-sm ap-ink-3 ms-1">
                       /{plan.period}
                     </span>
                   )}
@@ -528,18 +645,18 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
         {/* Table Layout */}
         {layout === 'table' && (
           <div className="overflow-x-auto">
-            <table className="w-full bg-white dark:bg-slate-800 rounded-xl shadow-lg overflow-hidden">
+            <table className="w-full ap-card rounded-xl shadow-lg overflow-hidden">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="p-4 text-start text-gray-500 dark:text-gray-400 font-medium">Plan</th>
+                <tr className="border-b ap-line">
+                  <th className="p-4 text-start ap-ink-3 font-medium">Plan</th>
                   {plans.map((plan, index) => (
                     <th
                       key={index}
                       className={`p-4 text-center ${plan.popular ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
                     >
                       <span
-                        className="text-lg font-bold text-gray-900 dark:text-white"
-                        style={{ fontFamily: 'var(--website-font-heading)' }}
+                        className="text-lg font-bold ap-ink"
+                        style={{ fontFamily: 'var(--ap-font-heading)' }}
                       >
                         {plan.name}
                       </span>
@@ -548,7 +665,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                           {plan.price}
                         </span>
                         {plan.period && (
-                          <span className="text-sm text-gray-500 ms-1">/{plan.period}</span>
+                          <span className="text-sm ap-ink-3 ms-1">/{plan.period}</span>
                         )}
                       </div>
                     </th>
@@ -565,9 +682,9 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                 {Array.from(new Set(plans.flatMap(p => p.features ?? []))).map((feature, fIndex) => (
                   <tr
                     key={fIndex}
-                    className="border-b border-gray-100 dark:border-gray-700/50"
+                    className="border-b ap-line/50"
                   >
-                    <td className="p-4 text-gray-600 dark:text-gray-300">{feature}</td>
+                    <td className="p-4 ap-ink-2">{feature}</td>
                     {plans.map((plan, pIndex) => (
                       <td
                         key={pIndex}
@@ -576,7 +693,7 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                         {plan.features?.includes(feature) ? (
                           <Check className="w-5 h-5 mx-auto" style={{ color: primaryColor }} />
                         ) : (
-                          <span className="text-gray-300 dark:text-gray-600">—</span>
+                          <span className="ap-ink-3">—</span>
                         )}
                       </td>
                     ))}
@@ -598,7 +715,6 @@ export function PricingBlock({ content, styles, theme, isRTL, className, locale 
                           backgroundColor: plan.popular ? primaryColor : 'transparent',
                           border: `2px solid ${primaryColor}`,
                           color: plan.popular ? 'white' : primaryColor,
-                          borderRadius: theme?.borderRadius || '0.5rem'
                         }}
                       >
                         {getCtaText(plan)}

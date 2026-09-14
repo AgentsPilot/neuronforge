@@ -186,6 +186,8 @@ export interface BusinessProfile {
   invoice_payment_instructions: string | null;
   invoice_footer_text: string | null;
   invoice_number_prefix: string | null;
+  /** Days to pay for invoices raised automatically. 0 = due on receipt. */
+  invoice_payment_terms_days: number | null;
   invoice_logo_url: string | null;
 
   // Conversion layer -- short public link code (20260824_add_conversion_layer)
@@ -292,6 +294,7 @@ export interface BusinessProfileInsert {
   invoice_payment_instructions?: string | null;
   invoice_footer_text?: string | null;
   invoice_number_prefix?: string | null;
+  invoice_payment_terms_days?: number | null;
   invoice_logo_url?: string | null;
   user_code?: string | null;
   show_logo_on_smart_links?: boolean;
@@ -724,7 +727,8 @@ export class BusinessProfileRepository {
           invoice_tax_rate,
           invoice_tax_label,
           invoice_document_type,
-          invoice_number_prefix
+          invoice_number_prefix,
+          invoice_payment_terms_days
         `)
         .eq('user_id', userId)
         .single();
@@ -746,7 +750,8 @@ export class BusinessProfileRepository {
               invoice_tax_rate: null,
               invoice_tax_label: null,
               invoice_document_type: null,
-              invoice_number_prefix: 'INV'
+              invoice_number_prefix: 'INV',
+              invoice_payment_terms_days: 30
             },
             error: null
           };
@@ -775,7 +780,17 @@ export class BusinessProfileRepository {
         invoice_tax_rate: data.invoice_tax_rate ?? null,
         invoice_tax_label: data.invoice_tax_label ?? null,
         invoice_document_type: (data.invoice_document_type as DocumentType) ?? null,
-        invoice_number_prefix: data.invoice_number_prefix || 'INV'
+        invoice_number_prefix: data.invoice_number_prefix || 'INV',
+        /*
+         * `??`, not `||`: zero is "due on receipt", a real setting, and `||`
+         * would swap it for the default every time the page loaded.
+         *
+         * This mapping is why the field appeared not to save — the column was
+         * added to the SELECT above but never copied out here, so the value
+         * reached the repository and was dropped on the way to the form. The
+         * write worked; the read never returned it.
+         */
+        invoice_payment_terms_days: data.invoice_payment_terms_days ?? 30
       };
 
       logger.debug({ userId }, 'Retrieved invoice settings');
@@ -842,7 +857,11 @@ export class BusinessProfileRepository {
    */
   async updateNotificationPreferences(
     userId: string,
-    preferences: { daily_briefing_email_enabled?: boolean }
+    preferences: {
+      daily_briefing_email_enabled?: boolean;
+      lead_alert_email_enabled?: boolean;
+      lead_autosend_enabled?: boolean;
+    }
   ): Promise<BusinessProfileRepositoryResult<true>> {
     try {
       const updateData: Record<string, unknown> = {
@@ -851,6 +870,14 @@ export class BusinessProfileRepository {
 
       if (preferences.daily_briefing_email_enabled !== undefined) {
         updateData.daily_briefing_email_enabled = preferences.daily_briefing_email_enabled;
+      }
+
+      if (preferences.lead_alert_email_enabled !== undefined) {
+        updateData.lead_alert_email_enabled = preferences.lead_alert_email_enabled;
+      }
+
+      if (preferences.lead_autosend_enabled !== undefined) {
+        updateData.lead_autosend_enabled = preferences.lead_autosend_enabled;
       }
 
       const { error } = await this.supabase
@@ -1000,6 +1027,9 @@ export class BusinessProfileRepository {
       }
       if (settings.invoice_number_prefix !== undefined) {
         updateData.invoice_number_prefix = settings.invoice_number_prefix;
+      }
+      if (settings.invoice_payment_terms_days !== undefined) {
+        updateData.invoice_payment_terms_days = settings.invoice_payment_terms_days;
       }
       const { error } = await this.supabase
         .from('business_profiles')

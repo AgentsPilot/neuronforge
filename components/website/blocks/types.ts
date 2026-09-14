@@ -5,29 +5,44 @@ import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
  */
 
 import type { Locale } from '@/lib/i18n/config';
+import type { PageTheme } from '@/lib/website-builder/pageTheme';
 
-export type BlockType =
-  | 'header'
-  | 'hero'
-  | 'cta'
-  | 'services'
-  | 'testimonials'
-  | 'contact_form'
-  | 'pricing'
-  | 'faq'
-  | 'about'
-  | 'features'
-  | 'stats'
-  | 'booking_widget'
-  | 'payment_button'
-  | 'team'
-  | 'process'
-  | 'process_flow'
-  | 'gallery'
-  | 'newsletter'
-  | 'logo_cloud'
-  | 'video'
-  | 'footer';
+/**
+ * Every section a page can contain — as a VALUE, not only a type.
+ *
+ * The union used to be written out by hand, which meant nothing could check a
+ * list of block types at runtime without importing the component registry. That
+ * registry reaches a stylesheet through `ContactFormBlock`, so a test asking the
+ * simple question "does this recipe name a real block" could not run at all.
+ *
+ * Declared once here and the union derived from it: the two cannot drift, and a
+ * recipe can be validated against it without loading a single component.
+ */
+export const BLOCK_TYPES = [
+  'header',
+  'hero',
+  'cta',
+  'services',
+  'testimonials',
+  'contact_form',
+  'pricing',
+  'faq',
+  'about',
+  'features',
+  'stats',
+  'booking_widget',
+  'payment_button',
+  'team',
+  'process',
+  'process_flow',
+  'gallery',
+  'newsletter',
+  'logo_cloud',
+  'video',
+  'footer',
+] as const;
+
+export type BlockType = (typeof BLOCK_TYPES)[number];
 
 // Header menu item interface
 export interface HeaderMenuItem {
@@ -48,23 +63,24 @@ export interface BlockStyles {
   layout?: string;
 }
 
-export interface PageTheme {
-  colors: {
-    primary: string;
-    secondary: string;
-    accent: string;
-    background: string;
-    surface: string;
-    text: string;
-    textSecondary: string;
-  };
-  fonts: {
-    heading: string;
-    body: string;
-  };
-  borderRadius: string;
-  spacing: 'compact' | 'normal' | 'spacious';
-}
+/*
+ * Re-exported, not redeclared.
+ *
+ * This and `WebsitePageRepository` each carried an identical copy. Identical
+ * shapes match structurally, so the duplication was invisible — right up until
+ * one of them gained a field.
+ */
+export type {
+  PageTheme,
+  ArchetypeId,
+  ThemeLayouts,
+  ThemeScale,
+  HeroLayout,
+  ServicesLayout,
+  CtaLayout,
+  GalleryLayout,
+  PricingLayout,
+} from '@/lib/website-builder/pageTheme';
 
 /**
  * Client flow steps - defines what happens when a client clicks on a service

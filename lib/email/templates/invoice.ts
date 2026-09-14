@@ -246,7 +246,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
       <tr>
         <td style="text-align: center;">
           ${emailButton(payNowLabel, options.cardUrl, {
-            backgroundColor: data.branding.primaryColor,
+            branding: data.branding,
             fullWidth: true
           })}
           <p style="margin: 12px 0 0; font-size: 12px; color: #888888;">

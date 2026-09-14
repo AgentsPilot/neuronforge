@@ -29,6 +29,14 @@ export interface IntakeRequestData {
   branding: BrandingData;
   /** Locale for email content (defaults to 'en') */
   locale?: Locale;
+  /**
+   * A reminder rather than the first ask.
+   *
+   * Only the subject and the greeting differ. The body is identical because
+   * the thing being asked for is identical — a client who lost the first email
+   * needs the same link, not a different letter.
+   */
+  isReminder?: boolean;
 }
 
 /**
@@ -49,7 +57,8 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
     rescheduleUrl,
     cancelUrl,
     branding,
-    locale = 'en'
+    locale = 'en',
+    isReminder = false
   } = data;
 
   const firstName = clientName.split(' ')[0] || clientName;
@@ -67,7 +76,7 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
   const content = `
     <!-- Greeting -->
     <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
-      ${t.greeting[locale]}
+      ${isReminder ? t.reminderGreeting[locale] : t.greeting[locale]}
     </h2>
     <p style="margin: 0 0 24px; font-size: 15px; color: #666666; line-height: 1.6;">
       ${t.intro[locale](firstName, branding.businessName)}
@@ -81,7 +90,7 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
       <tr>
         <td>
           ${emailButton(t.completeForm[locale], intakeFormUrl, {
-            backgroundColor: branding.primaryColor,
+            branding: branding,
             fullWidth: true
           })}
         </td>
@@ -138,7 +147,7 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
             <tr>
               ${rescheduleUrl ? `
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
-                ${emailOutlineButton(t.reschedule[locale], rescheduleUrl, { color: branding.primaryColor })}
+                ${emailOutlineButton(t.reschedule[locale], rescheduleUrl, { branding: branding })}
               </td>
               ` : ''}
               ${cancelUrl ? `
@@ -160,7 +169,7 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
   `;
 
   return {
-    subject: t.subject[locale](serviceName),
+    subject: isReminder ? t.reminderSubject[locale](serviceName) : t.subject[locale](serviceName),
     html: wrapInBrandedTemplate(content, brandingWithLocale)
   };
 }

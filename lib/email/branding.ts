@@ -24,6 +24,7 @@ import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { resolveBusinessTheme } from '@/lib/branding/resolveTheme';
+import { isDarkColor, mix, onColor } from '@/lib/branding/color';
 import { resolvePlatformWebsiteUrl } from '@/lib/branding/platformSite';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
 import type { Locale } from '@/lib/i18n/config';
@@ -86,16 +87,36 @@ export async function resolveEmailBranding(
      * establishes its look), and it fixes a business whose only surface is a
      * landing page silently sending platform-coloured receipts.
      *
-     * `raw` is used, not the completed theme: the fields below must stay
-     * undefined when the business has chosen nothing, so that an account with
-     * no theme sends exactly the email it sent before any of this existed.
+     * THE COMPLETED THEME, once the business has chosen anything.
+     *
+     * This used `raw` — the profile's JSONB verbatim — so that an account which
+     * had chosen nothing kept sending exactly the email it always had. The
+     * intent was right and the mechanism was wrong, because `raw` is not always
+     * a whole theme.
+     *
+     * The design tab saves only the two colours and two faces it edits. From
+     * that moment a business on Lumen has a profile theme with no `background`
+     * and no `borderRadius`, while its `template_id` still says `lumen`. Every
+     * web surface survives that — `completeTheme` restores Lumen's ground from
+     * the template — but reading `raw` here did not, so every receipt, booking
+     * confirmation and invoice silently flipped from near-black at 30px to
+     * white at 12px while the website it linked to stayed dark.
+     *
+     * So: the completed theme whenever the business has chosen a template or
+     * stored a look, and nothing at all when it has not. The original intent is
+     * preserved by the second half of that sentence, not by reading a blob that
+     * may be four fields deep.
      */
     const resolved = await resolveBusinessTheme(
       userId,
       (resolvedProfile as { theme?: unknown } | null)?.theme as never,
       (resolvedProfile as { template_id?: string | null } | null)?.template_id ?? null
     );
-    theme = resolved.raw as { colors?: Record<string, string>; fonts?: Record<string, string> } | null;
+
+    const hasChosenALook = Boolean(resolved.templateId || resolved.raw);
+    theme = hasChosenALook
+      ? (resolved.theme as unknown as { colors?: Record<string, string>; fonts?: Record<string, string> })
+      : null;
   } catch (err) {
     // Branding is decoration. A receipt with default colours is a far better
     // outcome than a receipt that never sends, so this degrades and continues.
@@ -136,5 +157,67 @@ export async function resolveEmailBranding(
     headingFont: theme?.fonts?.heading || undefined,
     bodyFont: theme?.fonts?.body || undefined,
     locale,
+    ...emailTokens(theme),
+  };
+}
+
+/**
+ * The neutrals, derived the same way the web pages derive theirs.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY AN EMAIL NEEDS THESE AT ALL
+ *
+ * The shell got the brand colour and the fonts and hardcoded everything else:
+ * `#f5f5f5` behind the card, `#ffffff` for the card, `#e5e5e5` for its borders,
+ * `#fafafa` in the footer, `#666666` for muted copy, `12px` and `8px` radii. So
+ * a business on a near-black archetype with 30px corners received a white email
+ * with 12px corners and a coloured strip at the top — its website and its
+ * receipts visibly made by different people.
+ *
+ * `mix` and `onColor` are the SAME helpers `PublicThemeStyle` uses, so a colour
+ * cannot come out one shade on the page and another in the email. Nothing here
+ * is a new decision; it is the existing derivation, evaluated on the server and
+ * written inline because an email has no custom properties to inherit.
+ *
+ * WHAT AN EMAIL CANNOT HAVE
+ *
+ * Web fonts land in Apple Mail and most webmail and are ignored by Outlook on
+ * Windows, which is why `fontStack` in the shell always ends in a real system
+ * fallback. The colours and the geometry, by contrast, arrive everywhere —
+ * which is most of what makes one business's mail look like its own.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function emailTokens(theme: { colors?: Record<string, string>; borderRadius?: string } | null) {
+  const colors = theme?.colors;
+  const brand = colors?.primary || DEFAULT_EMAIL_BRANDING.primaryColor;
+  const background = colors?.background || '#FFFFFF';
+  const text = colors?.text || '#1A1A1A';
+  const dark = isDarkColor(background);
+
+  const radius = parseFloat(theme?.borderRadius || '') || 12;
+  const radiusUnit = (theme?.borderRadius || '').replace(/[\d.]/g, '') || 'px';
+
+  return {
+    onBrand: onColor(brand),
+    /*
+     * The page behind the card. A shade off the business's own ground rather
+     * than a fixed grey, so the card reads as lifted on a light palette and as
+     * recessed on a dark one.
+     */
+    pageColor: dark ? mix(background, '#000000', 0.35) : mix(background, text, 0.05),
+    surfaceColor: dark ? mix(background, '#FFFFFF', 0.06) : background,
+    mutedSurfaceColor: colors?.surface || mix(background, text, 0.03),
+    borderColor: mix(background, text, dark ? 0.18 : 0.12),
+    textColor: text,
+    mutedTextColor: colors?.textSecondary || mix(background, text, 0.55),
+    /*
+     * The card's corners, and the button's at half.
+     *
+     * An email cannot use `clamp` or a custom property, so both are resolved
+     * here — and both come from the one radius the theme carries, which is how
+     * Lumen's 30px reaches a receipt at all.
+     */
+    radius: `${radius}${radiusUnit}`,
+    buttonRadius: `${Math.round(radius / 1.5)}${radiusUnit}`,
   };
 }

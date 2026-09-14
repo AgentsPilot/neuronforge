@@ -13,66 +13,67 @@
  * shows "call us" it stops being harmless — a customer would tap a 555 number
  * or email a domain the business does not own, and blame the business for it.
  *
- * THE DENY-LIST IS DERIVED, NOT TYPED OUT.
+ * THE SEED LIST IS HISTORICAL, AND THAT IS WHY IT IS WRITTEN OUT.
  *
- * Hardcoding the known placeholders would be correct exactly once. The next
- * template added to `templates.ts` would introduce a value nothing here knows
- * about, and the failure is silent — a plausible-looking phone number on a real
- * customer's screen. So the seeds are harvested from `WEBSITE_TEMPLATES` at
- * module load: whatever the templates seed is, by definition, a placeholder.
+ * These were harvested at module load from the thirty-three templates in
+ * `templates.ts`, on the reasoning that whatever a template seeds is by
+ * definition a placeholder. Those templates are gone — a business's copy now
+ * comes from the model and its design from an archetype, and neither seeds a
+ * contact detail.
+ *
+ * The values below still have to be denied, because they are not hypothetical:
+ * every page generated from a template before the change carries them, and
+ * `contact@therapypractice.com` is live on real accounts right now. Deriving
+ * them from a catalogue that no longer exists would silently produce an empty
+ * deny-list and put those addresses back on customers' screens.
+ *
+ * Nothing adds to this list any more. A new placeholder can only arrive from
+ * the model, and the pattern rules below — reserved 555 numbers, example
+ * domains, `123 Main Street` — are what catch those.
  *
  * @module lib/branding/placeholderContact
  */
 
-import { WEBSITE_TEMPLATES } from '@/lib/website-builder/templates';
-
 /**
- * Any key whose value is a contact detail.
+ * Every contact value the retired templates seeded, lowercased.
  *
- * Matched as a substring rather than an exact name because the block factories
- * do not agree on one: a contact-form block stores the same address under
- * `recipient_email`, `business_email` and `email` depending on which factory
- * built it. Matching the exact names would harvest none of them.
+ * Frozen as it was on the day the catalogue was removed. Published pages still
+ * carry these, so they stay denied.
  */
-const CONTACT_KEY = /(email|phone|address|tel|whatsapp)/i;
-
-/** Every contact value any template seeds, lowercased. Built once, at load. */
-const TEMPLATE_SEEDS: ReadonlySet<string> = (() => {
-  const seeds = new Set<string>();
-
-  /**
-   * Walk block content looking for contact-shaped values.
-   *
-   * Recursive because seeds sit at varying depths — top-level on a contact
-   * block, nested under `contact` or `content` elsewhere — and because the
-   * whole point of deriving this list is that it must keep working when a
-   * template is added in a shape nobody here anticipated.
-   */
-  const harvest = (node: unknown, depth = 0): void => {
-    if (!node || typeof node !== 'object' || depth > 6) return;
-
-    if (Array.isArray(node)) {
-      for (const item of node) harvest(item, depth + 1);
-      return;
-    }
-
-    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-      if (typeof value === 'string') {
-        if (CONTACT_KEY.test(key) && value.trim()) {
-          seeds.add(value.trim().toLowerCase());
-        }
-      } else {
-        harvest(value, depth + 1);
-      }
-    }
-  };
-
-  for (const template of WEBSITE_TEMPLATES) {
-    harvest(template.blocks, 0);
-  }
-
-  return seeds;
-})();
+const TEMPLATE_SEEDS: ReadonlySet<string> = new Set([
+  '+1 (555) 123-4567',
+  '+1 (555) 234-5678',
+  '+1 (555) 345-6789',
+  'appointments@clinicalpractice.com',
+  'cases@justiceadvocates.com',
+  'contact@estateluxe.com',
+  'contact@executiveedge.com',
+  'contact@financialpartners.com',
+  'contact@therapypractice.com',
+  'contact@yourbusiness.com',
+  'create@growthlab.com',
+  'defense@shielddefense.com',
+  'healing@traumarecovery.com',
+  'hello@annarosephoto.com',
+  'hello@balancedliving.com',
+  'hello@beautybar.com',
+  'hello@firsthomeguide.com',
+  'hello@glamourstudio.com',
+  'hello@mindfulliving.com',
+  'hello@moderntherapy.com',
+  'hello@naturalglow.com',
+  'hello@portraitstudio.com',
+  'hello@techforward.com',
+  'info@academicexcellence.com',
+  'info@apexcommercial.com',
+  'info@hartleyfamilylaw.com',
+  'info@homefamilyrealty.com',
+  'info@morrisonlaw.com',
+  'inquiries@strategicadvisors.com',
+  'learn@fluentfuture.com',
+  'projects@framestudios.com',
+  'studio@photographer.com',
+].map(seed => seed.toLowerCase()));
 
 /** Domains that only ever appear in examples. */
 const PLACEHOLDER_DOMAINS = [

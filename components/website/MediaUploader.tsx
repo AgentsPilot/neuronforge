@@ -7,8 +7,9 @@
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Upload, X, Loader2, ImageIcon, AlertCircle, Check } from 'lucide-react';
+import { Upload, X, Loader2, ImageIcon, AlertCircle, Check, Sparkles } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { MediaLibraryPicker } from '@/components/website/MediaLibraryPicker';
 import { createLogger } from '@/lib/logger';
 
 const logger = createLogger({ module: 'MediaUploader' });
@@ -26,6 +27,16 @@ interface MediaUploaderProps {
   previewClassName?: string;
   showUrlInput?: boolean;
   disabled?: boolean;
+  /**
+   * The slot this uploader fills — 'hero', 'about', 'team', 'gallery'.
+   *
+   * Opens the business's own pictures alongside upload and paste, with the ones
+   * chosen for this kind of section first. Omit it and the library button is
+   * hidden, which keeps every existing call site exactly as it was.
+   */
+  section?: string;
+  /** The crop this slot needs, passed through so a generated picture fits it. */
+  aspect?: 'wide' | 'portrait' | 'square';
 }
 
 type UploadStatus = 'idle' | 'uploading' | 'success' | 'error';
@@ -42,13 +53,17 @@ export function MediaUploader({
   placeholder,
   previewClassName = 'w-full h-32',
   showUrlInput = true,
-  disabled = false
+  disabled = false,
+  section,
+  aspect
 }: MediaUploaderProps) {
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [urlInput, setUrlInput] = useState('');
   const [imageLoadError, setImageLoadError] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useLanguage();
 
@@ -281,6 +296,55 @@ export function MediaUploader({
             {t('media.upload.add')}
           </button>
         </div>
+      )}
+
+      {/* The business's own pictures — a third way to fill this slot, beside
+          uploading a file and pasting a URL. Only offered when the caller said
+          which section it is filling, so the list can be ordered usefully. */}
+      {section && !disabled && (
+        /*
+         * Both ways of getting a picture without leaving the field.
+         *
+         * Generating used to live only inside the library dialog, so filling an
+         * empty slot meant opening a list of pictures you do not have yet in
+         * order to find the button that makes one. The two belong side by side:
+         * use something you already have, or make something you do not.
+         */
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setLibraryOpen(true)}
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-colors"
+          >
+            <ImageIcon className="w-4 h-4" />
+            {t('media.library.open')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setGenerateOpen(true)}
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm hover:border-[#4F6EF7] hover:text-[#4F6EF7] transition-colors"
+          >
+            <Sparkles className="w-4 h-4" />
+            {t('media.generate.action')}
+          </button>
+        </div>
+      )}
+
+      {(libraryOpen || generateOpen) && (
+        <MediaLibraryPicker
+          section={section}
+          aspect={aspect}
+          // Opened straight onto the prompt when the owner asked to generate.
+          focusGenerate={generateOpen}
+          onSelect={url => {
+            setImageLoadError(false);
+            onChange(url);
+          }}
+          onClose={() => {
+            setLibraryOpen(false);
+            setGenerateOpen(false);
+          }}
+        />
       )}
 
       {/* Current URL Display - only show for valid URLs */}

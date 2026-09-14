@@ -56,6 +56,8 @@ export interface Proposal {
    * actually sent with.
    */
   document_id: string | null;
+  /** Days to pay, agreed on this quote. Null inherits the business default. */
+  payment_terms_days: number | null;
   title: string;
   description: string | null;
   currency: string;
@@ -84,6 +86,7 @@ export interface ProposalInsert {
   contact_id: string;
   booking_id?: string | null;
   document_id?: string | null;
+  payment_terms_days?: number | null;
   service_id?: string | null;
   title: string;
   description?: string | null;
@@ -419,6 +422,39 @@ export class ProposalRepository {
   }
 
   /** The old version steps aside for a revision; its link stops accepting. */
+  /**
+   * Take a quote off the table.
+   *
+   * NOT a delete: the quote stands as the record of what was offered, and the
+   * client may still be holding the email. What this stops is ACCEPTANCE —
+   * `claimForAcceptance` only claims a proposal that is `sent` or `viewed`, so
+   * moving it to `withdrawn` makes the link inert without pretending the offer
+   * never happened.
+   *
+   * Conditional on the current status for the same reason `send` is: an already
+   * accepted quote must not be retractable, because money has been created
+   * against it. Returns null when it was not withdrawable, and the caller says
+   * so rather than reporting a success nobody got.
+   */
+  async withdraw(id: string, userId: string): Promise<RepositoryResult<Proposal>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('proposals')
+        .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
+        .eq('id', id)
+        .eq('user_id', userId)
+        .in('status', ['draft', 'sent', 'viewed'])
+        .select('*')
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data as Proposal) ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, id }, 'Failed to withdraw proposal');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async markSuperseded(id: string, userId: string): Promise<void> {
     try {
       await this.supabase

@@ -6,7 +6,8 @@
  * template's example phone number presented as the business's own.
  */
 
-import { WEBSITE_TEMPLATES } from '@/lib/website-builder/templates';
+import { LEGACY_TEMPLATE_ARCHETYPE, themeForTemplateId } from '@/lib/website-builder/templates';
+import { ARCHETYPES } from '@/lib/website-builder/archetypes';
 // From `theme`, not `resolveTheme`: the latter is `server-only`, which Next
 // resolves at build time but Jest cannot.
 import { completeTheme, DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
@@ -59,15 +60,47 @@ describe('completeTheme', () => {
     expectCompleteTheme(theme);
   });
 
-  it('fills gaps from the template before the platform defaults', () => {
-    const template = WEBSITE_TEMPLATES[0];
-    const theme = completeTheme({ colors: { primary: '#123456' } }, template.id);
+  it('fills gaps from the template\'s archetype before the platform defaults', () => {
+    const templateId = Object.keys(LEGACY_TEMPLATE_ARCHETYPE)[0];
+    const archetype = themeForTemplateId(templateId)!;
+    const theme = completeTheme({ colors: { primary: '#123456' } }, templateId);
 
     expect(theme.colors.primary).toBe('#123456');
-    // Secondary was not stored, so it must come from the template rather than
-    // from the platform default.
-    expect(theme.colors.secondary).toBe(template.theme.secondary_color);
+
+    /*
+     * Secondary was not stored, so it comes from the design the template now
+     * wears — not from the template's own hex, and not from the platform
+     * default. A template used to nominate three colours and a font name; it
+     * now nominates one of four complete archetypes, which is the whole point
+     * of the change.
+     */
+    expect(theme.colors.secondary).toBe(archetype.colors.secondary);
     expect(theme.colors.secondary).not.toBe(DEFAULT_PUBLIC_THEME.colors.secondary);
+  });
+
+  it('carries the rest of the design, not only the palette', () => {
+    // The type scale and the layout names were dropped here, so a business
+    // whose website wore an archetype got neither on its smart link, its
+    // invoice or its confirmation email — three surfaces that are supposed to
+    // look like the same business.
+    const templateId = Object.keys(LEGACY_TEMPLATE_ARCHETYPE)[0];
+    const archetype = themeForTemplateId(templateId)!;
+    const theme = completeTheme({ colors: { primary: '#123456' } }, templateId);
+
+    expect(theme.id).toBe(archetype.id);
+    expect(theme.scale).toEqual(archetype.scale);
+    expect(theme.layouts).toEqual(archetype.layouts);
+    expect(theme.fonts.heading).toBe(archetype.fonts.heading);
+  });
+
+  it('maps every template id that was ever stored', () => {
+    // Each of these is live on somebody's account. One missing would silently
+    // fall back to Stone, which is a design decision made by an omission.
+    // Thirty-three ids, every one of them live on somebody's account.
+    expect(Object.keys(LEGACY_TEMPLATE_ARCHETYPE)).toHaveLength(33);
+    Object.keys(LEGACY_TEMPLATE_ARCHETYPE).forEach(id => {
+      expect(themeForTemplateId(id)).not.toBeNull();
+    });
   });
 
   it('survives a malformed row', () => {
@@ -78,9 +111,9 @@ describe('completeTheme', () => {
     expectCompleteTheme(completeTheme({ spacing: 'enormous' }, null));
   });
 
-  it('is complete for every template in the catalogue', () => {
-    for (const template of WEBSITE_TEMPLATES) {
-      expectCompleteTheme(completeTheme(null, template.id));
+  it('is complete for every template id that was ever stored', () => {
+    for (const templateId of Object.keys(LEGACY_TEMPLATE_ARCHETYPE)) {
+      expectCompleteTheme(completeTheme(null, templateId));
     }
   });
 
@@ -90,15 +123,21 @@ describe('completeTheme', () => {
 });
 
 describe('onColor', () => {
-  it('gives readable text on every template primary', () => {
-    // The bug this exists to prevent: white text was hardcoded on the brand
-    // button, and the paler templates in the catalogue fail contrast outright.
-    for (const template of WEBSITE_TEMPLATES) {
-      const brand = template.theme.primary_color;
+  it('gives readable text on every design a business can wear', () => {
+    /*
+     * The bug this exists to prevent: white text hardcoded on the brand button.
+     * It used to run over the thirty-three template palettes; it now runs over
+     * the four archetypes, which is the whole set a business can actually get.
+     * Lumen is why it still matters — its brand colour is an acid lime that
+     * needs black on it, and three of the four CTA variants were hardcoding
+     * white.
+     */
+    for (const archetype of ARCHETYPES) {
+      const brand = archetype.colors.primary;
       const ratio = contrastRatio(brand, onColor(brand));
 
-      expect({ id: template.id, brand, ratio: Number(ratio.toFixed(2)) }).toMatchObject({
-        id: template.id,
+      expect({ id: archetype.id, brand, ratio: Number(ratio.toFixed(2)) }).toMatchObject({
+        id: archetype.id,
       });
       expect(ratio).toBeGreaterThanOrEqual(4.5);
     }

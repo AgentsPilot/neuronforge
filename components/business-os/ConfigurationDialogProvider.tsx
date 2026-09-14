@@ -26,14 +26,27 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
+import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 
 type ConfigTab = 'services' | 'availability' | 'intake' | 'payments' | 'business' | 'invoice';
 
+interface OpenConfigurationOptions {
+  /**
+   * Called once the dialog closes, so the screen that opened it can refresh.
+   *
+   * The dashboard's own dialog has always refetched on close; this one had no
+   * way to. So the two readiness steps routed through here — company details
+   * and invoice details — were saved and then still drawn as outstanding, and
+   * the only way to see them go green was to reload the page.
+   */
+  onClose?: () => void;
+}
+
 interface ConfigurationDialogContextValue {
   /** Open the configuration dialog, optionally on a specific tab. */
-  openConfiguration: (initialTab?: ConfigTab) => void;
+  openConfiguration: (initialTab?: ConfigTab, options?: OpenConfigurationOptions) => void;
 }
 
 const ConfigurationDialogContext = createContext<ConfigurationDialogContextValue | null>(null);
@@ -58,10 +71,37 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
   // when it opens.
   const [initialTab, setInitialTab] = useState<ConfigTab>('services');
 
-  const openConfiguration = useCallback((tab: ConfigTab = 'services') => {
-    setInitialTab(tab);
-    setIsOpen(true);
-  }, []);
+  /*
+   * A ref, not state: this is read once on close and must never be a render
+   * input. Held per-open and cleared as it fires, so a later open that passes
+   * no callback cannot inherit the previous caller's.
+   */
+  const onCloseRef = useRef<(() => void) | undefined>(undefined);
+
+  const openConfiguration = useCallback(
+    (tab: ConfigTab = 'services', options?: OpenConfigurationOptions) => {
+      setInitialTab(tab);
+      onCloseRef.current = options?.onClose;
+      setIsOpen(true);
+    },
+    []
+  );
+
+  /*
+   * What an account HAS follows what it sells, and this dialog is where what it
+   * sells is edited. Publishing the first priced service makes `payments` true,
+   * which is the Orders tab — so the navigation is re-asked on close rather
+   * than showing the answer from before the edit until the next full reload.
+   */
+  const { refresh: refreshCapabilities } = useCapabilities();
+
+  const handleClose = useCallback(() => {
+    setIsOpen(false);
+    refreshCapabilities();
+    const notify = onCloseRef.current;
+    onCloseRef.current = undefined;
+    notify?.();
+  }, [refreshCapabilities]);
 
   const value = useMemo(() => ({ openConfiguration }), [openConfiguration]);
 
@@ -70,7 +110,7 @@ export function ConfigurationDialogProvider({ children }: { children: React.Reac
       {children}
       <ConfigurationDialog
         isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
+        onClose={handleClose}
         initialTab={initialTab}
       />
     </ConfigurationDialogContext.Provider>

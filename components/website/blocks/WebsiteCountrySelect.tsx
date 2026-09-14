@@ -87,12 +87,12 @@ export function WebsiteCountrySelect({ value, onChange, isRTL = false, hasError 
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 px-3 py-2.5 min-w-[110px] bg-gray-50 border rounded-lg transition-all text-sm ${
+        className={`flex items-center gap-2 px-3 py-2.5 min-w-[110px] ap-card-2 border rounded-lg transition-all text-sm ${
           hasError
             ? 'border-red-500'
             : isOpen
               ? 'border-blue-500 ring-2 ring-blue-200'
-              : 'border-gray-200 hover:border-gray-300'
+              : 'ap-line ap-hover-line'
         }`}
         style={{ minHeight: '42px' }}
       >
@@ -101,30 +101,30 @@ export function WebsiteCountrySelect({ value, onChange, isRTL = false, hasError 
             {getFlagEmoji(value)}
           </span>
         )}
-        <span className="text-gray-900 font-medium">
+        <span className="ap-ink font-medium">
           {value ? `+${selectedCallingCode}` : 'Country'}
         </span>
-        <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`h-4 w-4 ap-ink-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Dropdown */}
       {isOpen && (
         <div
-          className="absolute start-0 top-full mt-1 w-[300px] bg-white border border-gray-200 shadow-xl rounded-xl z-[9999] max-h-[350px] flex flex-col overflow-hidden"
+          className="absolute start-0 top-full mt-1 w-[300px] ap-card border ap-line shadow-xl rounded-xl z-[9999] max-h-[350px] flex flex-col overflow-hidden"
           dir="ltr"
           onKeyDown={handleKeyDown}
         >
           {/* Search Input */}
-          <div className="p-3 border-b border-gray-100 sticky top-0 bg-white">
+          <div className="p-3 border-b ap-line sticky top-0 ap-card">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 ap-ink-3" />
               <input
                 ref={searchInputRef}
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search countries..."
-                className="w-full pl-10 pr-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg text-gray-900 placeholder:text-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                className="w-full pl-10 pr-3 py-2 text-sm ap-card-2 border ap-line rounded-lg ap-ink ap-placeholder focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
               />
             </div>
           </div>
@@ -143,25 +143,25 @@ export function WebsiteCountrySelect({ value, onChange, isRTL = false, hasError 
                     onClick={() => handleCountrySelect(country)}
                     className={`w-full px-3 py-2.5 flex items-center gap-3 text-left transition-colors ${
                       isSelected
-                        ? 'bg-blue-50 text-gray-900 font-medium'
-                        : 'hover:bg-gray-50 text-gray-700'
+                        ? 'bg-blue-50 ap-ink font-medium'
+                        : 'ap-hover ap-ink-2'
                     }`}
                   >
                     <span className="text-xl leading-none">
                       {getFlagEmoji(country)}
                     </span>
                     <span className="flex-1 text-sm truncate">{en[country]}</span>
-                    <span className="text-xs font-mono text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                    <span className="text-xs font-mono ap-ink-3 ap-card-2 px-1.5 py-0.5 rounded">
                       {country}
                     </span>
-                    <span className="text-sm text-gray-500 font-medium min-w-[50px] text-right">
+                    <span className="text-sm ap-ink-3 font-medium min-w-[50px] text-right">
                       +{callingCode}
                     </span>
                   </button>
                 );
               })
             ) : (
-              <div className="px-3 py-8 text-center text-sm text-gray-400">
+              <div className="px-3 py-8 text-center text-sm ap-ink-3">
                 No countries found
               </div>
             )}

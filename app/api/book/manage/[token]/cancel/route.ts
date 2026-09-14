@@ -4,6 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { verifyBookingToken, BookingEmailService } from '@/lib/services/BookingEmailService';
+import { removeOwnerCalendarEvent } from '@/lib/scheduling/syncBookingCalendar';
+import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 
@@ -60,8 +62,9 @@ export async function POST(
         contact_id,
         start_time,
         status,
-        contact:crm_contacts(email),
-        service:scheduling_services(min_notice_hours)
+        timezone,
+        contact:crm_contacts(email, first_name, last_name),
+        service:scheduling_services(min_notice_hours, service_name)
       `)
       .eq('id', bookingId)
       .single();
@@ -139,6 +142,38 @@ export async function POST(
     // Send cancellation email (non-blocking)
     BookingEmailService.sendCancellationEmail(bookingId, booking.user_id, reason)
       .catch(err => requestLogger.warn({ err }, 'Cancellation email failed (non-blocking)'));
+
+    /*
+     * Free the slot in the owner's own calendar (non-blocking).
+     *
+     * Nothing did this. The hour stayed blocked after the client said they were
+     * not coming, so the owner held it for somebody who had already cancelled —
+     * the single most expensive thing on this path, because an hour nobody can
+     * book is an hour nobody pays for.
+     */
+    removeOwnerCalendarEvent(bookingId, booking.user_id, requestLogger)
+      .catch(err => requestLogger.warn({ err, bookingId }, 'Calendar removal failed'));
+
+    /*
+     * And tell them (non-blocking).
+     *
+     * A cancellation is the most time-critical thing this platform can say. The
+     * briefing lists them, but "tomorrow at 9" learned tomorrow morning is too
+     * late to refill — which is the whole reason this one is immediate rather
+     * than batched with the rest.
+     */
+    const cancelledService = Array.isArray(booking.service) ? booking.service[0] : booking.service;
+    notifyOwnerOfLead({
+      ownerId: booking.user_id,
+      contactId: booking.contact_id,
+      kind: 'cancelled',
+      contactName: [contact?.first_name, contact?.last_name].filter(Boolean).join(' ') || 'Client',
+      contactEmail: contact?.email,
+      serviceName: cancelledService?.service_name,
+      startTime: booking.start_time,
+      timezone: booking.timezone,
+      reason,
+    }).catch(err => requestLogger.warn({ err, bookingId }, 'Owner alert failed (non-blocking)'));
 
     return NextResponse.json({
       success: true,

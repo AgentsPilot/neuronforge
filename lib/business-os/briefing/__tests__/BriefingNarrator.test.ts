@@ -29,6 +29,9 @@ function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
     },
     isQuiet: false,
     ...overrides,
+    // After the spread, so a `Partial` that names no outlook cannot widen the
+    // field to `undefined` — most cases in this file only care about today.
+    outlook: overrides.outlook ?? { newLeads: { count: 0, people: [] }, quotesWaiting: { count: 0, people: [] }, quotesOut: { count: 0, people: [] } },
   };
 }
 
@@ -193,5 +196,74 @@ describe('findUntranslatedWords', () => {
   it('does not police Spanish or English, where Latin script is expected', () => {
     expect(findUntranslatedWords('Tienes 2 citas hoy.', hebrewFacts(), 'es')).toEqual([]);
     expect(findUntranslatedWords('You have 2 appointments.', hebrewFacts(), 'en')).toEqual([]);
+  });
+});
+
+/**
+ * The briefing used to say "2 new people got in touch today" — true, and an
+ * errand rather than an answer: the owner still had to open the CRM to find out
+ * who. These cover the names it now carries instead.
+ */
+describe('naming the people who got in touch', () => {
+  const leads = (count: number, people: Array<{ name: string; note?: string }>) =>
+    facts({ outlook: { newLeads: { count, people }, quotesWaiting: { count: 0, people: [] }, quotesOut: { count: 0, people: [] } } });
+
+  it('names one person, and says what they asked about', () => {
+    const line = composeFallback(
+      leads(1, [{ name: 'Dana Levi', note: 'the intro call' }]),
+      'en'
+    );
+    expect(line).toContain('Dana Levi');
+    expect(line).toContain('the intro call');
+  });
+
+  it('joins a handful of names rather than counting them', () => {
+    const line = composeFallback(
+      leads(2, [{ name: 'Dana Levi' }, { name: 'Ben Cohen' }]),
+      'en'
+    );
+    expect(line).toContain('Dana Levi and Ben Cohen');
+    expect(line).not.toContain('2 new people');
+  });
+
+  it('drops the note once there is a list, so the line stays a summary', () => {
+    const line = composeFallback(
+      leads(2, [{ name: 'Dana Levi', note: 'a quote' }, { name: 'Ben Cohen' }]),
+      'en'
+    );
+    expect(line).not.toContain('a quote');
+  });
+
+  it('accounts for everyone when it can only name a few', () => {
+    // Three names held, six people arrived. The total must survive.
+    const line = composeFallback(
+      leads(6, [{ name: 'A' }, { name: 'B' }, { name: 'C' }]),
+      'en'
+    );
+    expect(line).toContain('3 more');
+  });
+
+  it('falls back to counting when nobody left a name', () => {
+    expect(composeFallback(leads(2, []), 'en')).toContain('2 new people');
+    expect(composeFallback(leads(1, []), 'en')).toContain('Someone new');
+  });
+
+  it('says nothing at all on a day when nobody got in touch', () => {
+    const line = composeFallback(leads(0, []), 'en');
+    expect(line).not.toContain('got in touch');
+  });
+
+  it('names them in Spanish and Hebrew too', () => {
+    const people = [{ name: 'Dana Levi' }];
+    expect(composeFallback(leads(1, people), 'es')).toContain('Dana Levi');
+    expect(composeFallback(leads(1, people), 'he')).toContain('Dana Levi');
+  });
+
+  it('lets a name through the invented-number guard', () => {
+    // The guard exists to catch figures the model made up. A person's name is
+    // not a figure, and a name that came from the facts must not trip it.
+    const withLeads = leads(1, [{ name: 'Dana Levi', note: '2 sessions a week' }]);
+    const narrative = composeFallback(withLeads, 'en');
+    expect(findUnsupportedFigures(narrative, withLeads)).toEqual([]);
   });
 });

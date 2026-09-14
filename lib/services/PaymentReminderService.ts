@@ -738,11 +738,24 @@ export class PaymentReminderService {
     logger.info('Checking for overdue items');
 
     try {
-      // Get overdue invoices that don't have a recent overdue reminder
+      /*
+       * Both statuses, and that is a fix rather than a widening.
+       *
+       * This asked for `status = 'sent'` alone, while `markOverdueInvoices`
+       * rewrites a late invoice from 'sent' to 'overdue'. Whoever ran first
+       * won: a business that opened its dashboard before this cron had its
+       * invoices restamped 'overdue', they fell out of this scan, and the
+       * client was never reminded — silently, and only for the businesses
+       * paying enough attention to check their dashboard.
+       *
+       * Reading both statuses makes the scan independent of who marked what.
+       * It cannot double-send: the `findRecentByInvoice` check below skips any
+       * invoice already reminded in the last 24 hours.
+       */
       const { data: overdueInvoices } = await this.supabase
         .from('payment_invoices')
         .select('id, user_id, contact_id, due_date')
-        .eq('status', 'sent')
+        .in('status', ['sent', 'overdue'])
         .lt('due_date', today)
         .limit(100);
 

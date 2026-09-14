@@ -11,6 +11,11 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
+import {
+  findServiceReferences,
+  deleteServiceReferences,
+  unpublishServiceReferences,
+} from '@/lib/services/ServiceReferenceService';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'SchedulingServiceAPI' });
@@ -151,6 +156,18 @@ export async function PUT(
       if (updates[key] === null) delete updates[key];
     });
 
+    /*
+     * Switching a service off removes it from the public page exactly as
+     * deleting it does: the renderer loads active services only, so a landing
+     * page whose service is merely deactivated advertises a thing that cannot
+     * be booked, with a button that fails at the API. Resolve what points at it
+     * first, while it is still findable.
+     */
+    const deactivating = validated.is_active === false;
+    const references = deactivating
+      ? await findServiceReferences(serviceId, user.id)
+      : null;
+
     const result = await schedulingServiceRepository.update(
       serviceId,
       user.id,
@@ -172,6 +189,11 @@ export async function PUT(
       );
     }
 
+    // Same treatment as a delete — see the comment above.
+    const takenDown = references
+      ? await unpublishServiceReferences(references, user.id)
+      : null;
+
     // 4. Audit log (non-blocking)
     auditTrail
       .log({
@@ -189,7 +211,8 @@ export async function PUT(
     requestLogger.info({ serviceId, userId: user.id }, 'Service updated successfully');
     return NextResponse.json({
       success: true,
-      service: result.data
+      service: result.data,
+      takenDown
     });
 
   } catch (error) {
@@ -253,7 +276,16 @@ export async function DELETE(
       );
     }
 
-    // 3. Delete service (checks for bookings first)
+    /*
+     * 3. Work out what points at this service — before it is gone.
+     *
+     * The lookup reads the service id out of website blocks, so it has to run
+     * while the service still exists to be sure of what it finds. Taking the
+     * references down happens after the delete succeeds.
+     */
+    const references = await findServiceReferences(serviceId, user.id);
+
+    // 4. Delete service (checks for bookings first)
     const result = await schedulingServiceRepository.delete(serviceId, user.id);
 
     if (result.error) {
@@ -277,6 +309,26 @@ export async function DELETE(
       );
     }
 
+    /*
+     * 5. Destroy what was written for it.
+     *
+     * A landing page is GENERATED for one service: its headline, its body, its
+     * objections and its closing section are all about that one thing. Without
+     * the service it is not a page missing a product, it is an article about
+     * something that does not exist — so it goes, rather than becoming a draft
+     * the owner can never usefully republish.
+     *
+     * This used to unpublish. The reasoning was that the owner might bring the
+     * service back and their copy was worth keeping, which is true of a service
+     * moved to DRAFT and false of one deleted. Drafting is handled in PATCH
+     * above, and still unpublishes.
+     *
+     * Smart links scoped to this service alone are switched off rather than
+     * deleted: a short code may have been written down or shared, and its
+     * content is not about the service the way a page's is.
+     */
+    const takenDown = await deleteServiceReferences(references, user.id);
+
     // 6. Audit log (non-blocking)
     auditTrail
       .log({
@@ -293,7 +345,8 @@ export async function DELETE(
     requestLogger.info({ serviceId, userId: user.id }, 'Service deleted successfully');
     return NextResponse.json({
       success: true,
-      message: 'Service deleted successfully'
+      message: 'Service deleted successfully',
+      takenDown
     });
 
   } catch (error) {

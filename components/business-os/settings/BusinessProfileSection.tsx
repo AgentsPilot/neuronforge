@@ -477,6 +477,16 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
        * use. (The rest of this save still writes directly; that predates this
        * and is flagged rather than widened.)
        */
+      /*
+       * One request, and the organisation travels with it.
+       *
+       * The four answers below used to be written straight from the browser,
+       * guarded by `if (orgId)` — and an account built by the onboarding chat
+       * has no organisation row, because nothing in that path creates one. So
+       * the write was skipped, silently, while this function went on to show
+       * "Saved". The server now creates the row if it has to, and a failure
+       * comes back as a failure.
+       */
       const contactResponse = await fetch('/api/business-os/business-profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -484,27 +494,23 @@ export function BusinessProfileSection({ onSaved }: BusinessProfileSectionProps)
           phone: businessProfile.phone.trim(),
           email: businessProfile.email.trim(),
           address: businessProfile.address.trim(),
+          organization: {
+            name: orgSettings.name,
+            // Null, not undefined: an answer the owner cleared has to be
+            // cleared on the row, and an undefined field is dropped by JSON
+            // before it ever reaches the server.
+            industry: orgSettings.industry || null,
+            company_size: orgSettings.company_size || null,
+            primary_goal: orgSettings.primary_goal || null,
+            technical_level: orgSettings.technical_level || null,
+            work_hours_per_day: orgSettings.work_hours_per_day,
+          },
         }),
       });
 
       if (!contactResponse.ok) {
         const detail = await contactResponse.json().catch(() => null);
         throw new Error(detail?.error || 'Could not save the contact details');
-      }
-
-      // Update organization if exists
-      if (orgId) {
-        await supabase.from('organizations').update({
-          name: orgSettings.name,
-          settings: {
-            industry: orgSettings.industry || undefined,
-            company_size: orgSettings.company_size || undefined,
-            primary_goal: orgSettings.primary_goal || undefined,
-            technical_level: orgSettings.technical_level || undefined,
-            work_hours_per_day: orgSettings.work_hours_per_day,
-          },
-          updated_at: new Date().toISOString(),
-        }).eq('id', orgId).eq('owner_user_id', user.id);
       }
 
       // The accordion this used to close no longer exists — the section is a

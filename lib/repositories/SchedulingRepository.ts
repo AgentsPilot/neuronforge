@@ -227,6 +227,8 @@ export interface SchedulingBookingUpdate {
     template_key: string;
     responses: Record<string, unknown>;
   } | null;
+  /** When the form was emailed. Distinct from `intake_completed_at`: asked is not answered. */
+  intake_sent_at?: string | null;
   intake_completed_at?: string | null;
 }
 
@@ -733,6 +735,45 @@ export class SchedulingBookingRepository {
       return { data: normalizedData, error: null };
     } catch (error) {
       logger.error({ err: error, bookingId: id, userId }, 'Failed to find booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The soonest booking starting at or after `afterUtc`.
+   *
+   * `list` cannot answer this: it is ordered `start_time DESC` — newest first,
+   * which is what a history table wants — so asking it for one row from a
+   * forward window returns the LAST appointment on the books, not the next one.
+   * Reversing the order there would change every caller that reads a list of
+   * recent bookings, so the forward question gets its own method.
+   *
+   * Cancelled bookings are excluded: a slot someone cancelled is not what the
+   * owner is being told to expect.
+   */
+  async findNextAfter(
+    userId: string,
+    afterUtc: string
+  ): Promise<SchedulingRepositoryResult<SchedulingBooking | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .select(`
+          *,
+          contact:crm_contacts(first_name, last_name, email, phone),
+          service:scheduling_services(service_name)
+        `)
+        .eq('user_id', userId)
+        .in('status', ['confirmed', 'completed'])
+        .gte('start_time', afterUtc)
+        .order('start_time', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data as SchedulingBooking) ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, afterUtc }, 'Failed to find next booking');
       return { data: null, error: error as Error };
     }
   }

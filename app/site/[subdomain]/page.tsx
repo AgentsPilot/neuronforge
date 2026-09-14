@@ -12,6 +12,9 @@ import type { PageTheme } from '@/components/website/blocks/types';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale, getDirection } from '@/lib/i18n/config';
 import { PageViewTracker } from '@/components/website/PageViewTracker';
+import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
+import { PublicFontLinks } from '@/components/public/PublicFontLinks';
+import { DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
 
 // Force dynamic rendering - no caching at page level
 export const dynamic = 'force-dynamic';
@@ -109,29 +112,37 @@ export default async function PublicWebsitePage({ params }: PageProps) {
 
   const isRTL = getDirection(locale) === 'rtl';
 
-  // Coming Soon page
+  /*
+   * Coming Soon page.
+   *
+   * Given the business's own theme rather than a hardcoded dark gradient. This
+   * is often the FIRST thing a visitor sees of a business — the address is
+   * live and shared before the site is finished — and it was the one public
+   * surface that looked like the platform instead of the business.
+   */
   if (data.status === 'coming_soon') {
-    return <ComingSoonPage subdomain={subdomain} locale={locale} />;
+    return (
+      <ComingSoonPage
+        subdomain={subdomain}
+        locale={locale}
+        theme={data.page?.theme || DEFAULT_PUBLIC_THEME}
+      />
+    );
   }
 
-  // Live website
-  const theme = data.page?.theme || undefined;
+  /*
+   * Live website.
+   *
+   * One theme object, used for both the CSS variables and the blocks. It used
+   * to be two: `pageTheme` fed the emitter while the raw, possibly-undefined
+   * `theme` was handed to the blocks. A page with no stored theme therefore got
+   * the default archetype's colours from the emitter but `undefined` inside
+   * every block — so `theme.layouts` was absent, `resolveBlockLayout` had
+   * nothing to read, and each section fell back to its default arrangement on a
+   * page that looked, from its variables, like it had a design.
+   */
+  const pageTheme = data.page?.theme || DEFAULT_PUBLIC_THEME;
   const blocks = (data.blocks || []) as BlockData[];
-
-  // Build font links - always use Heebo as the primary font
-  const fontFamilies = new Set<string>();
-  // Always include Heebo as the platform font
-  fontFamilies.add('Heebo');
-  // Add any additional theme fonts if specified and different from Heebo
-  if (theme?.fonts?.heading && theme.fonts.heading !== 'Heebo') fontFamilies.add(theme.fonts.heading);
-  if (theme?.fonts?.body && theme.fonts.body !== 'Heebo') fontFamilies.add(theme.fonts.body);
-
-  const fontLinks = Array.from(fontFamilies)
-    .map(font => {
-      const subsets = font === 'Heebo' ? 'hebrew,latin' : 'latin';
-      return `https://fonts.googleapis.com/css2?family=${font.replace(/ /g, '+')}:wght@400;500;600;700&subset=${subsets}&display=swap`;
-    })
-    .join(',');
 
   return (
     <>
@@ -139,60 +150,55 @@ export default async function PublicWebsitePage({ params }: PageProps) {
           headers of the internal data fetch, so every visitor looked identical. */}
       <PageViewTracker subdomain={subdomain} />
 
-      {/* Google Fonts */}
-      {fontLinks && (
-        // eslint-disable-next-line @next/next/no-page-custom-font
-        <link rel="stylesheet" href={fontLinks} />
-      )}
+      {/*
+        The theme, emitted by the one component that does this.
 
-      {/* Global styles from theme */}
-      <style>
-        {`
-          :root {
-            --website-primary: ${theme?.colors?.primary || '#4F6EF7'};
-            --website-secondary: ${theme?.colors?.secondary || '#6366F1'};
-            --website-accent: ${theme?.colors?.accent || '#EC4899'};
-            --website-background: ${theme?.colors?.background || '#FFFFFF'};
-            --website-surface: ${theme?.colors?.surface || '#F9FAFB'};
-            --website-text: ${theme?.colors?.text || '#111827'};
-            --website-text-secondary: ${theme?.colors?.textSecondary || '#6B7280'};
-            --website-border-radius: ${theme?.borderRadius || '0.5rem'};
-            --website-font-heading: Heebo, ${theme?.fonts?.heading || 'Inter'}, sans-serif;
-            --website-font-body: Heebo, ${theme?.fonts?.body || 'Inter'}, sans-serif;
-          }
+        This page carried its own copy of a `<style>` block and its own font
+        link builder, and so did `/landing-preview` and `/website-preview/[id]`
+        — three near-identical copies, each with `Heebo` hardcoded at the FRONT
+        of the font stack. Heebo covers Latin as well as Hebrew, so it always
+        won: no template's typeface has ever rendered on a website or a landing
+        page, whichever of the thirty-three was chosen.
 
-          body {
-            background-color: var(--website-background);
-            color: var(--website-text);
-            font-family: var(--website-font-body);
-          }
+        `PublicThemeStyle` puts Hebrew first only for a Hebrew page, and the
+        template's face first otherwise. It also emits the `--website-*` names
+        the blocks already read, so nothing below changes.
+      */}
+      {/* Always emitted. A page with no stored theme previously still got a full
+          set of hardcoded defaults from the deleted `<style>` block; the same
+          guarantee now comes from the one default the platform already has. */}
+      <PublicFontLinks theme={pageTheme} />
+      <PublicThemeStyle theme={pageTheme} locale={locale} scope="[data-ap-site]" />
 
-          h1, h2, h3, h4, h5, h6 {
-            font-family: var(--website-font-heading);
-          }
+      {/*
+        The document itself, painted.
 
-          @media (prefers-color-scheme: dark) {
-            :root {
-              --website-background: ${theme?.colors?.background || '#0F172A'};
-              --website-surface: ${theme?.colors?.surface || '#1E293B'};
-              --website-text: ${theme?.colors?.text || '#F9FAFB'};
-              --website-text-secondary: ${theme?.colors?.textSecondary || '#94A3B8'};
-            }
-          }
-        `}
-      </style>
+        The variables are scoped to `[data-ap-site]`, which is the `<main>`
+        below — so everything inside it is themed and the `html` and `body`
+        around it keep the browser's white. On a near-black template that shows
+        as a white frame around the page, and anywhere the main does not reach
+        (the overscroll area, a short page) it is white again.
 
+        This page owns its whole document — unlike the in-app preview, which
+        renders the same blocks inside the editor and must NOT repaint the app
+        around them. So the rule lives here rather than in the shared emitter.
+      */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `html,body{background:${pageTheme.colors.background};margin:0}`,
+        }}
+      />
+
+      {/* `data-ap-site` is what the style above hangs the variables off. Custom
+          properties inherit, so every block inside sees them. */}
       <main
+        data-ap-site=""
         dir={isRTL ? 'rtl' : 'ltr'}
         className="min-h-screen"
-        style={{
-          backgroundColor: 'var(--website-background)',
-          color: 'var(--website-text)'
-        }}
       >
         <WebsiteBlocks
           blocks={blocks}
-          theme={theme}
+          theme={pageTheme}
           locale={locale}
           bookingUrl={`/site/${subdomain}/book`}
           subdomain={subdomain}
@@ -203,7 +209,15 @@ export default async function PublicWebsitePage({ params }: PageProps) {
 }
 
 // Coming Soon Component
-function ComingSoonPage({ subdomain, locale }: { subdomain: string; locale: Locale }) {
+function ComingSoonPage({
+  subdomain,
+  locale,
+  theme,
+}: {
+  subdomain: string;
+  locale: Locale;
+  theme: PageTheme;
+}) {
   const labels = {
     en: {
       title: 'Coming Soon',
@@ -225,38 +239,61 @@ function ComingSoonPage({ subdomain, locale }: { subdomain: string; locale: Loca
   const t = labels[locale] || labels.en;
 
   return (
-    <main
-      dir={locale === 'he' ? 'rtl' : 'ltr'}
-      className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900"
-    >
-      <div className="text-center px-4">
-        {/* Animated Logo */}
-        <div className="relative mb-8">
-          <div className="w-24 h-24 mx-auto rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-2xl animate-pulse">
-            <span className="text-4xl">🚀</span>
+    <>
+      <PublicFontLinks theme={theme} />
+      <PublicThemeStyle theme={theme} locale={locale} scope="[data-ap-site]" />
+      <main
+        data-ap-site=""
+        dir={locale === 'he' ? 'rtl' : 'ltr'}
+        className="min-h-screen flex items-center justify-center"
+      >
+        <div className="text-center px-4">
+          <div className="relative mb-8">
+            <div
+              className="w-24 h-24 mx-auto flex items-center justify-center animate-pulse"
+              style={{
+                background: 'var(--ap-brand)',
+                borderRadius: 'var(--ap-radius-lg)',
+                boxShadow: 'var(--ap-shadow-lg)',
+              }}
+            >
+              <span className="text-4xl">🚀</span>
+            </div>
+          </div>
+
+          <h1
+            className="font-bold mb-4"
+            style={{ fontSize: 'var(--ap-scale-h1)', color: 'var(--ap-text)' }}
+          >
+            {t.title}
+          </h1>
+
+          <p className="mb-2" style={{ fontSize: 'var(--ap-scale-h3)', color: 'var(--ap-text)' }}>
+            {t.subtitle}
+          </p>
+
+          <p className="max-w-md mx-auto mb-8" style={{ color: 'var(--ap-text-muted)' }}>
+            {t.message}
+          </p>
+
+          <div
+            className="inline-flex items-center gap-2 px-4 py-2"
+            style={{
+              background: 'var(--ap-surface)',
+              border: '1px solid var(--ap-border)',
+              borderRadius: 'var(--ap-radius-lg)',
+            }}
+          >
+            <div
+              className="w-2 h-2 rounded-full animate-pulse"
+              style={{ background: 'var(--ap-brand)' }}
+            />
+            <span className="text-sm font-mono" style={{ color: 'var(--ap-text-muted)' }}>
+              {subdomain}.agentpilot.io
+            </span>
           </div>
         </div>
-
-        <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">
-          {t.title}
-        </h1>
-
-        <p className="text-xl text-gray-300 mb-2">
-          {t.subtitle}
-        </p>
-
-        <p className="text-gray-400 max-w-md mx-auto mb-8">
-          {t.message}
-        </p>
-
-        {/* Subdomain badge */}
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm rounded-full border border-white/20">
-          <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-          <span className="text-gray-300 text-sm font-mono">
-            {subdomain}.agentpilot.io
-          </span>
-        </div>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }

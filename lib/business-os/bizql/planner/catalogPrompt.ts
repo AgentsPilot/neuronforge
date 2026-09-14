@@ -38,7 +38,7 @@ const TYPE_TAG: Record<string, string> = {
   json: 'json',
 };
 
-function renderField(key: string, entity: ResolvedEntity): string | null {
+function renderField(key: string, entity: ResolvedEntity, language?: string): string | null {
   const field = entity.fields[key];
   if (!field || field.readable === false) return null;
 
@@ -77,9 +77,32 @@ function renderField(key: string, entity: ResolvedEntity): string | null {
     parts.push(`(net of ${field.minus}${words.length ? ` — ${words.join(', ')}` : ''})`);
   }
 
-  // Enum values matter — without them the planner guesses storage values.
+  /*
+   * Enum values, and what the BUSINESS calls them.
+   *
+   * The values are English storage tokens, and for a long time that is all the
+   * planner saw: `status:enum[draft|sent|viewed|accepted|…]`. A Hebrew speaker
+   * asking "כמה הצעות אושרו" had to have that translated by the model, against
+   * competition from a semantic term called `open` — and it went wrong in both
+   * directions in one run of twenty questions: "אושרו" answered with the open
+   * ones, and "פתוחות" answered with the accepted ones.
+   *
+   * The catalog has carried the Hebrew and Spanish labels all along; they were
+   * simply never rendered. Now they are, in the reader's language only, so the
+   * model matches the word the user typed instead of translating it:
+   *
+   *   status:enum[draft=טיוטה|accepted=אושרה|declined=נדחתה|…]
+   *
+   * Skipped where the label is the value (English), so the common case costs
+   * nothing.
+   */
   if (field.enumValues?.length) {
-    parts.push(`[${field.enumValues.join('|')}]`);
+    const rendered = field.enumValues.map((value) => {
+      const label = language ? field.enumLabels?.[value]?.[language as 'en'] : undefined;
+      return label && label !== value ? `${value}=${label}` : value;
+    });
+
+    parts.push(`[${rendered.join('|')}]`);
   } else if (field.enumSource) {
     // Values are configured by this business, so they are listed separately by
     // renderUserVocabulary() and filtered with the exact literal value.
@@ -110,6 +133,14 @@ function renderField(key: string, entity: ResolvedEntity): string | null {
 export interface CatalogPromptOptions {
   /** Restrict to these entity keys. Omit for the whole catalog. */
   entities?: string[];
+  /**
+   * The reader's language, so enum values carry the words they type.
+   *
+   * Part of the plan-cache key by way of `catalogPromptVersion(language)` — two
+   * languages produce two catalogs, and a plan built against one must never be
+   * served for the other.
+   */
+  language?: string;
   /** Include write actions. Phase 1 is read-only, so this defaults to false. */
   includeActions?: boolean;
 }
@@ -124,6 +155,7 @@ export interface CatalogPromptOptions {
  *     r: contact->contacts
  */
 export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): string {
+  const language = options.language;
   const keys = options.entities?.length
     ? options.entities.filter((k) => CATALOG.entities[k])
     : Object.keys(CATALOG.entities);
@@ -159,7 +191,7 @@ export function renderCatalogForPrompt(options: CatalogPromptOptions = {}): stri
       lines.push('  f: (not queryable — one configuration row; use the actions below)');
     } else {
       const fields = Object.keys(entity.fields)
-        .map((f) => renderField(f, entity))
+        .map((f) => renderField(f, entity, language))
         .filter((f): f is string => f !== null);
 
       lines.push(`  f: ${fields.join(' ')}`);
@@ -434,17 +466,31 @@ export async function loadUserEnumLabels(
  * consulted on every cache lookup.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-let cachedPromptVersion: string | undefined;
+const cachedPromptVersions = new Map<string, string>();
 
-export function catalogPromptVersion(): string {
-  if (!cachedPromptVersion) {
-    cachedPromptVersion = createHash('sha256')
-      .update(renderCatalogForPrompt({ includeActions: true }))
-      .digest('hex')
-      .slice(0, 12);
+export function catalogPromptVersion(language?: string): string {
+  /*
+   * Per LANGUAGE, now that the rendering depends on it.
+   *
+   * The catalog shown to a Hebrew reader carries Hebrew enum labels, so it is a
+   * different prompt — and a plan built against one must never be served from
+   * the cache for the other. Keyed and memoised per language for the same
+   * reason the version exists at all: a cached artefact has to be keyed on
+   * everything that could have produced it.
+   */
+  const key = language ?? 'en';
+
+  if (!cachedPromptVersions.has(key)) {
+    cachedPromptVersions.set(
+      key,
+      createHash('sha256')
+        .update(renderCatalogForPrompt({ includeActions: true, language }))
+        .digest('hex')
+        .slice(0, 12)
+    );
   }
 
-  return cachedPromptVersion;
+  return cachedPromptVersions.get(key)!;
 }
 
 /**

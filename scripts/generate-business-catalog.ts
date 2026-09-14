@@ -72,6 +72,16 @@ const TABLES = [
   'payment_plans',
   'payment_plan_subscriptions',
   'payment_plan_installments',
+  /*
+   * Quotes — the seam between "interested" and "owes money".
+   *
+   * A quoted service ends its client journey at a REQUEST; a proposal is what
+   * the owner sends back and what the client accepts. Until acceptance it is
+   * deliberately not an invoice, so none of it appears in `payment_invoices`
+   * and the chat could not see a single quote: "what am I waiting on" and "how
+   * much is out in quotes" had no entity to resolve against.
+   */
+  'proposals',
   'scheduling_bookings',
   'scheduling_services',
   // Backs contacts.stage — read for its values, not exposed as an entity.

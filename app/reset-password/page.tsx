@@ -1,11 +1,17 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 
+/*
+ * The recovery email now points at the marketing site's `/reset-password`,
+ * which is where `resetPasswordForEmail` sends people from the login form. This
+ * page stays for links already in inboxes that carry the app's own origin — and
+ * it can still complete them, because `SessionHandler` sets the session from
+ * the `#access_token` fragment on arrival.
+ */
 export default function ResetPasswordPage() {
-  const router = useRouter();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [message, setMessage] = useState('');
@@ -26,7 +32,8 @@ export default function ResetPasswordPage() {
     if (error) setError(error.message);
     else {
       setMessage('Password updated successfully');
-      setTimeout(() => router.push('/login'), 2000);
+      // Sign-in is on the marketing site, on its own origin.
+      setTimeout(() => { window.location.href = marketingLoginUrl(); }, 2000);
     }
   };
 

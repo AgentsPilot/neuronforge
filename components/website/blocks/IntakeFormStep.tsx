@@ -176,14 +176,14 @@ export function IntakeFormStep({
     onSubmit(responses);
   };
 
-  const inputStyles = `w-full px-4 py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 focus:outline-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors`;
+  const inputStyles = `w-full px-4 py-2.5 ap-card border-2 ap-line focus:outline-none ap-ink ap-placeholder transition-colors`;
 
   return (
     <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Back button */}
       <button
         onClick={onBack}
-        className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm"
+        className="flex items-center gap-2 ap-ink-2 ap-hover-ink text-sm"
       >
         {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
         {labels.back}
@@ -198,19 +198,19 @@ export function IntakeFormStep({
           <ClipboardList className="w-8 h-8" style={{ color: primaryColor }} />
         </div>
         <h3
-          className="text-xl font-semibold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: 'var(--website-font-heading)' }}
+          className="text-xl font-semibold ap-ink mb-2"
+          style={{ fontFamily: 'var(--ap-font-heading)' }}
         >
           {labels.aFewQuestions}
         </h3>
-        <p className="text-gray-600 dark:text-gray-300">{labels.helpUsPrepare}</p>
+        <p className="ap-ink-2">{labels.helpUsPrepare}</p>
       </div>
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
         {template.fields.map((field) => (
           <div key={field.key} className="space-y-1.5">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            <label className="block text-sm font-medium ap-ink-2">
               {getFieldLabel(field)}
               {field.required && <span className="text-red-500 ml-1">*</span>}
             </label>
@@ -304,7 +304,7 @@ export function IntakeFormStep({
                       className="w-4 h-4"
                       style={{ accentColor: primaryColor }}
                     />
-                    <span className="text-sm text-gray-700 dark:text-gray-300">
+                    <span className="text-sm ap-ink-2">
                       {getOptionLabel(option)}
                     </span>
                   </label>
@@ -322,7 +322,7 @@ export function IntakeFormStep({
                   className="w-4 h-4"
                   style={{ accentColor: primaryColor }}
                 />
-                <span className="text-sm text-gray-700 dark:text-gray-300">
+                <span className="text-sm ap-ink-2">
                   {getFieldLabel(field)}
                 </span>
               </label>

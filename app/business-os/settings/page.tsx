@@ -11,6 +11,7 @@ import {
   DollarSign,
   Clock,
   Lock,
+  Bell,
   Download,
   Trash2,
   ChevronRight,
@@ -23,7 +24,9 @@ import {
   CheckCircle,
   AlertCircle,
   Settings,
+  LogOut,
 } from 'lucide-react';
+import { LeadNotificationToggles } from '@/components/business-os/settings/LeadNotificationToggles';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { createLogger } from '@/lib/logger';
@@ -79,6 +82,8 @@ function BusinessOSSettingsContent() {
 
   // Delete account dialog state
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deleting, setDeleting] = useState(false);
 
@@ -119,7 +124,7 @@ function BusinessOSSettingsContent() {
       return;
     }
 
-    if (requested !== 'password') return;
+    if (requested !== 'password' && requested !== 'preferences') return;
 
     setExpandedSection(requested);
 
@@ -278,6 +283,109 @@ function BusinessOSSettingsContent() {
   };
 
   // Get the confirmation word based on language
+  /**
+   * Sign out, properly.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * Every `signOut` that existed in settings belonged to DELETE ACCOUNT — so
+   * the only way to leave was to destroy the account or close the tab.
+   *
+   * Three things beyond `supabase.auth.signOut()`, which is why this is more
+   * than a one-liner:
+   *
+   * 1. `scope: 'global'` ends the session on every device, not just this
+   *    browser. Somebody signing out of a shared or lost machine means it.
+   *
+   * 2. Browser storage is cleared. The app keeps onboarding progress, the
+   *    cached profile and the chosen language in localStorage keyed by nothing
+   *    at all — so without this the NEXT person to sign in on this browser
+   *    inherits the previous user's onboarding state and language. Theme is
+   *    deliberately kept: it describes the device, not the person, and it
+   *    identifies nobody.
+   *
+   * 3. `window.location.href`, not `router.push`. A client-side navigation
+   *    keeps React state, provider caches and in-flight requests alive across
+   *    what is supposed to be a boundary between two people. It also has to be
+   *    a full page load here, because the destination is a DIFFERENT APP.
+   *
+   * Where it lands: the marketing site's `/login`. Signing back in is the one
+   * thing someone is most likely to want next, and the form is not in this app
+   * — it belongs to the marketing site, on its own origin.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const handleLogout = async () => {
+    setLoggingOut(true);
+
+    // Best-effort, and before the sign-out: afterwards there is no session to
+    // attribute it to. A failed audit entry must never trap someone in a
+    // session they asked to leave.
+    try {
+      if (user?.id) {
+        await fetch('/api/audit/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
+          body: JSON.stringify({
+            action: 'USER_LOGOUT',
+            entityType: 'user',
+            entityId: user.id,
+            userId: user.id,
+            resourceName: user.email || 'User',
+            details: { method: 'settings', scope: 'global' },
+            severity: 'info',
+            complianceFlags: ['SOC2'],
+          }),
+        });
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Logout audit failed (non-blocking)');
+    }
+
+    try {
+      await supabase.auth.signOut({ scope: 'global' });
+    } catch (err) {
+      // Log it, then leave anyway. A user who pressed log out must end up
+      // logged out of this browser even if the server call failed.
+      logger.error({ err }, 'Global sign-out failed — clearing locally regardless');
+    }
+
+    try {
+      // Everything that belongs to a PERSON. `app-theme` and `v2-theme-mode`
+      // are left alone on purpose.
+      [
+        'onboarding_completed', 'onboarding_data', 'onboarding_goal',
+        'onboarding_mode', 'onboarding_build_complete', 'onboarding_build_settled',
+        'user_profile', 'user_domain',
+        'business-os-language', 'business-os-currency',
+        'agent_builder_session_key', 'agent_builder_user_view_preference',
+        'helpBotContext', 'helpBotOpen',
+        'sb-auth-token', 'supabase.auth.token',
+      ].forEach(key => {
+        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
+      });
+      sessionStorage.removeItem('onboarding_preview_data');
+    } catch {
+      // Private mode, or storage disabled. The sign-out above is what matters.
+    }
+
+    /*
+     * The marketing site is a separate application on its own origin —
+     * `localhost:3001` beside this app's 3000 in development, the apex domain
+     * in production while the app sits on `app.`.
+     *
+     * `NEXT_PUBLIC_MARKETING_URL` overrides both, for preview deployments where
+     * neither guess is right. All three are inlined at build time, so this is a
+     * plain string by the time it runs.
+     */
+    const marketingUrl =
+      process.env.NEXT_PUBLIC_MARKETING_URL ||
+      (process.env.NODE_ENV === 'development'
+        ? 'http://localhost:3001'
+        : 'https://agentspilot.com');
+
+    window.location.href = `${marketingUrl}/login`;
+  };
+
   const getDeleteConfirmWord = () => {
     if (language === 'es') return 'ELIMINAR';
     if (language === 'he') return 'מחק';
@@ -606,6 +714,32 @@ function BusinessOSSettingsContent() {
           <div className="space-y-6">
         {/* Account Actions */}
         <div className="bg-[var(--v2-surface)] shadow-[var(--v2-shadow-card)] divide-y divide-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+          {/*
+            How this business hears about a new enquiry.
+            
+            Here rather than on the dashboard card, because the card renders
+            only when somebody is waiting — and a business with no open
+            enquiries could otherwise never reach the switch that decides what
+            happens to the next one.
+          */}
+          <div id="settings-section-preferences">
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'preferences' ? null : 'preferences')}
+              className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <Bell className="w-5 h-5 text-[var(--v2-text-muted)]" />
+                <span className="text-sm text-[var(--v2-text-primary)]">{t('leads.settings_title')}</span>
+              </div>
+              <ChevronRight className={`w-4 h-4 text-[var(--v2-text-muted)] transition-transform ${expandedSection === 'preferences' ? 'rotate-90' : ''}`} />
+            </button>
+            {expandedSection === 'preferences' && (
+              <div className="px-4 pb-4 space-y-4">
+                <LeadNotificationToggles />
+              </div>
+            )}
+          </div>
+
           {/* Change Password */}
           <div>
             <button
@@ -678,6 +812,28 @@ function BusinessOSSettingsContent() {
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />}
           </button>
 
+          {/* Log out.
+              Between "export my data" and "destroy my account": the last
+              ordinary thing you can do here, before the one that cannot be
+              undone. */}
+          <button
+            onClick={() => setShowLogoutDialog(true)}
+            disabled={loggingOut}
+            className="w-full flex items-center justify-between p-4 hover:bg-[var(--v2-bg)] transition-colors disabled:opacity-50"
+          >
+            <div className="flex items-center gap-3">
+              <LogOut className="w-5 h-5 text-[var(--v2-text-muted)]" />
+              <span className="text-sm text-[var(--v2-text-primary)]">
+                {t('settings.security.logout')}
+              </span>
+            </div>
+            {loggingOut ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-[var(--v2-text-muted)]" />
+            )}
+          </button>
+
           {/* Delete Account */}
           <button
             onClick={() => setShowDeleteDialog(true)}
@@ -693,6 +849,52 @@ function BusinessOSSettingsContent() {
           </div>
         </div>
       </div>
+
+      {/*
+        Log-out confirmation.
+        ─────────────────────────────────────────────────────────────────────
+        A plain log-out would not deserve a dialog. This one ends the session
+        on EVERY device, so it says that in words — being signed out of your
+        phone by a tap on your laptop is a surprise nobody should get silently.
+      */}
+      <Dialog open={showLogoutDialog} onOpenChange={(open) => !loggingOut && setShowLogoutDialog(open)}>
+        <DialogContent className="sm:max-w-md" dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <LogOut className="w-5 h-5 text-[var(--v2-text-muted)]" />
+              {t('settings.security.logout')}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="py-4">
+            <p className="text-sm text-[var(--v2-text-secondary)]">
+              {t('settings.security.logout_confirm')}
+            </p>
+          </div>
+
+          <div className={`flex gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <button
+              type="button"
+              onClick={() => setShowLogoutDialog(false)}
+              disabled={loggingOut}
+              className="px-5 py-2.5 text-sm font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {t('common.cancel') || 'Cancel'}
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-[var(--v2-primary)] hover:opacity-90 transition-all disabled:opacity-50"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+            >
+              {loggingOut ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+              {t('settings.security.logout')}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Account Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={(open) => {

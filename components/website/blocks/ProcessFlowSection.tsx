@@ -388,7 +388,7 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
             {index > 0 && (
               <div
                 className={`w-8 h-0.5 mx-1 transition-colors ${
-                  isPast || isCompleted ? '' : 'bg-gray-200 dark:bg-gray-700'
+                  isPast || isCompleted ? '' : 'ap-card-2'
                 }`}
                 style={isPast || isCompleted ? { backgroundColor: primaryColor } : {}}
               />
@@ -399,7 +399,7 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
                   ? 'text-white shadow-lg'
                   : isCompleted || isPast
                   ? 'text-white'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500'
+                  : 'ap-card-2 ap-ink-3'
               }`}
               style={
                 isActive || isCompleted || isPast
@@ -440,14 +440,14 @@ export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL,
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+        <Loader2 className="w-8 h-8 animate-spin ap-ink-3" />
       </div>
     );
   }
 
   if (services.length === 0) {
     return (
-      <div className="text-center py-12 text-gray-500 dark:text-gray-400">
+      <div className="text-center py-12 ap-ink-3">
         <Calendar className="w-12 h-12 mx-auto mb-4 opacity-50" />
         <p>{labels.noServices}</p>
       </div>
@@ -455,37 +455,54 @@ export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL,
   }
 
   return (
+    /*
+     * The same offer list the website shows.
+     *
+     * A smart link is often the ONLY surface a business has, and this is the
+     * first thing anyone sees on it. It rendered its own bordered cards while
+     * the website beside it listed the same services as numbered ruled rows —
+     * so a client following a link from Instagram met a different design from
+     * the one they would have met on the site, for identical content.
+     *
+     * `apc-rows` / `apc-row-item` are the vocabulary the templates dress, so
+     * this now becomes rules under Stone and Warm and cards under Bold, exactly
+     * as the services section does. Nothing about the booking behaviour moves:
+     * it is the same button calling the same `onSelect`.
+     */
     <div className="space-y-3" dir={isRTL ? 'rtl' : 'ltr'}>
       <h3
-        className="text-lg font-semibold text-gray-900 dark:text-white mb-4"
-        style={{ fontFamily: 'var(--website-font-heading)' }}
+        className="text-lg font-semibold ap-ink mb-4"
+        style={{ fontFamily: 'var(--ap-font-heading)' }}
       >
         {labels.chooseService}
       </h3>
-      {services.map((service) => (
+      <div className="apc-rows">
+      {services.map((service, index) => (
         <button
           key={service.id}
           onClick={() => onSelect(service)}
-          className="w-full p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-gray-700 rounded-xl text-start hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm transition-all group"
-          style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+          className="apc-row-item w-full p-4 ap-card border ap-line rounded-xl text-start ap-hover-line hover:shadow-sm transition-all group"
         >
+          <span className="apc-idx" aria-hidden="true">
+            {String(index + 1).padStart(2, '0')}
+          </span>
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1">
               <h4
-                className="font-medium text-gray-900 dark:text-white group-hover:opacity-80"
-                style={{ fontFamily: 'var(--website-font-heading)' }}
+                className="font-medium ap-ink group-hover:opacity-80"
+                style={{ fontFamily: 'var(--ap-font-heading)' }}
               >
                 {service.name}
               </h4>
               {service.description && (
                 <p
-                  className="text-sm text-gray-600 dark:text-gray-300 mt-1 line-clamp-2"
-                  style={{ fontFamily: 'var(--website-font-body)' }}
+                  className="text-sm ap-ink-2 mt-1 line-clamp-2"
+                  style={{ fontFamily: 'var(--ap-font-body)' }}
                 >
                   {service.description}
                 </p>
               )}
-              <div className="flex items-center gap-3 mt-2 text-sm text-gray-500 dark:text-gray-400">
+              <div className="flex items-center gap-3 mt-2 text-sm ap-ink-3">
                 <span className="flex items-center gap-1">
                   <Clock className="w-4 h-4" />
                   {service.duration_minutes} {labels.minutes}
@@ -493,20 +510,21 @@ export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL,
               </div>
             </div>
             <div className="text-end flex-shrink-0">
-              <span className="font-semibold" style={{ color: primaryColor }}>
+              <span className="apc-price font-semibold" style={{ color: primaryColor }}>
                 {formatPrice(service.price, service.currency)}
               </span>
               <div className="mt-2">
                 {isRTL ? (
-                  <ChevronLeft className="w-5 h-5 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300" />
+                  <ChevronLeft className="w-5 h-5 ap-ink-3 group-ap-hover-ink" />
                 ) : (
-                  <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300" />
+                  <ChevronRight className="w-5 h-5 ap-ink-3 group-ap-hover-ink" />
                 )}
               </div>
             </div>
           </div>
         </button>
       ))}
+      </div>
     </div>
   );
 }
@@ -564,7 +582,7 @@ export function DateTimeStep({
       {onBack && (
         <button
           onClick={onBack}
-          className="flex items-center gap-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm"
+          className="flex items-center gap-2 ap-ink-2 ap-hover-ink text-sm"
         >
           {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
           {labels.backToServices}
@@ -573,7 +591,7 @@ export function DateTimeStep({
 
       {/* Selected service summary */}
       <div
-        className="p-4 bg-gray-50 dark:bg-slate-700 rounded-xl"
+        className="p-4 ap-card-2 rounded-xl"
         style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
       >
         <div className="flex items-center gap-3">
@@ -584,15 +602,15 @@ export function DateTimeStep({
             <Calendar className="w-5 h-5" style={{ color: primaryColor }} />
           </div>
           <div>
-            <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
-            <p className="text-sm text-gray-500 dark:text-gray-400">{service.duration_minutes} {labels.minutes}</p>
+            <h4 className="font-medium ap-ink">{service.name}</h4>
+            <p className="text-sm ap-ink-3">{service.duration_minutes} {labels.minutes}</p>
           </div>
         </div>
       </div>
 
       {/* Date Selection */}
       <div>
-        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{labels.selectDate}</h4>
+        <h4 className="text-sm font-medium ap-ink-2 mb-3">{labels.selectDate}</h4>
         <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
           {dates.map((date) => {
             // Parse date parts to avoid timezone issues
@@ -606,7 +624,7 @@ export function DateTimeStep({
                 className={`flex-shrink-0 px-4 py-3 rounded-lg border text-center transition-all min-w-[70px] ${
                   selectedDate === date
                     ? 'border-transparent text-white'
-                    : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-slate-700 hover:border-gray-300 dark:hover:border-gray-500'
+                    : 'ap-line ap-card ap-hover-line'
                 }`}
                 style={selectedDate === date ? { backgroundColor: primaryColor } : {}}
               >
@@ -623,13 +641,13 @@ export function DateTimeStep({
       {/* Time Slots */}
       {selectedDate && (
         <div>
-          <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{labels.selectTime}</h4>
+          <h4 className="text-sm font-medium ap-ink-2 mb-3">{labels.selectTime}</h4>
           {loadingSlots ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+              <Loader2 className="w-6 h-6 animate-spin ap-ink-3" />
             </div>
           ) : slots.length === 0 ? (
-            <p className="text-center py-8 text-gray-500 dark:text-gray-400">{labels.noSlots}</p>
+            <p className="text-center py-8 ap-ink-3">{labels.noSlots}</p>
           ) : (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
               {slots.map((slot, idx) => (
@@ -639,7 +657,7 @@ export function DateTimeStep({
                   className={`px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
                     selectedSlot?.start === slot.start
                       ? 'border-transparent text-white'
-                      : 'border-gray-200 dark:border-gray-600 bg-white dark:bg-slate-700 hover:border-gray-300 dark:hover:border-gray-500'
+                      : 'ap-line ap-card ap-hover-line'
                   }`}
                   style={selectedSlot?.start === slot.start ? { backgroundColor: primaryColor } : {}}
                 >
@@ -738,7 +756,7 @@ export function DetailsStep({
 
       {/* Service/Booking summary */}
       <div
-        className="p-4 bg-gray-50 dark:bg-slate-700 rounded-xl"
+        className="p-4 ap-card-2 rounded-xl"
         style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
       >
         <div className="flex items-center justify-between">
@@ -750,13 +768,13 @@ export function DetailsStep({
               <Calendar className="w-5 h-5" style={{ color: primaryColor }} />
             </div>
             <div>
-              <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
+              <h4 className="font-medium ap-ink">{service.name}</h4>
               {slot ? (
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <p className="text-sm ap-ink-3">
                   {formatFullDate(slot.start)} at {formatTime(slot.start)}
                 </p>
               ) : (
-                <p className="text-sm text-gray-500 dark:text-gray-400">
+                <p className="text-sm ap-ink-3">
                   {formatDuration(service.duration_minutes, labels)}
                 </p>
               )}
@@ -774,7 +792,7 @@ export function DetailsStep({
           nothing wraps and the labels line up in either direction.
         */}
         {service.price !== null && service.price > 0 && (
-          <div className="mt-3 pt-3 border-t border-gray-200 dark:border-slate-600">
+          <div className="mt-3 pt-3 border-t ap-line">
             {detailsPlan ? (
               <>
                 {/* The instalments at a glance. Filled segment = today. */}
@@ -788,22 +806,22 @@ export function DetailsStep({
                       />
                     ))}
                   </div>
-                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                  <span className="text-xs font-medium ap-ink-3">
                     {labels.paymentPlan}
                   </span>
                 </div>
 
                 {/* Today, given the weight — the only figure charged now. */}
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.dueToday}</span>
+                  <span className="text-sm ap-ink-2">{labels.dueToday}</span>
                   <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
                     {formatAmount(detailsPlan.installmentAmount, detailsPlan.currency, locale, labels.free)}
                   </span>
                 </div>
 
                 <div className="flex items-baseline justify-between gap-3 mt-1.5">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planThen}</span>
-                  <span className="text-sm text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                  <span className="text-sm ap-ink-2">{labels.planThen}</span>
+                  <span className="text-sm ap-ink-2 whitespace-nowrap">
                     {labels.planThenValue
                       .replace('{count}', String(detailsPlan.installmentCount - 1))
                       .replace('{amount}', formatAmount(detailsPlan.installmentAmount, detailsPlan.currency, locale, labels.free))
@@ -811,16 +829,16 @@ export function DetailsStep({
                   </span>
                 </div>
 
-                <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t border-gray-200/70 dark:border-slate-600/70">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
-                  <span className="text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t ap-line">
+                  <span className="text-sm ap-ink-2">{labels.planTotal}</span>
+                  <span className="text-sm font-semibold ap-ink whitespace-nowrap">
                     {formatAmount(detailsPlan.totalAmount, detailsPlan.currency, locale, labels.free)}
                   </span>
                 </div>
               </>
             ) : (
               <div className="flex items-baseline justify-between gap-3">
-                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+                <span className="text-sm ap-ink-2">{labels.planTotal}</span>
                 <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
                   {formatAmount(service.price, service.currency, locale, labels.free)}
                 </span>
@@ -833,11 +851,11 @@ export function DetailsStep({
       {/* Contact Form */}
       <form onSubmit={handleSubmit} className="space-y-4 overflow-visible">
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label className="block text-sm font-medium ap-ink-2 mb-1">
             {labels.name} *
           </label>
           <div className="relative">
-            <User className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none`} />
+            <User className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 ap-ink-3 pointer-events-none`} />
             <input
               type="text"
               value={name}
@@ -850,7 +868,7 @@ export function DetailsStep({
                 );
               }}
               onInput={(e) => e.currentTarget.setCustomValidity('')}
-              className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors`}
+              className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 ap-card border-2 ap-line rounded-lg focus:outline-none ap-ink ap-placeholder transition-colors`}
               style={{ borderRadius: theme?.borderRadius || '0.5rem', borderColor: undefined }}
               onFocus={(e) => e.target.style.borderColor = primaryColor}
               onBlur={(e) => e.target.style.borderColor = ''}
@@ -861,11 +879,11 @@ export function DetailsStep({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label className="block text-sm font-medium ap-ink-2 mb-1">
             {labels.email} *
           </label>
           <div className="relative">
-            <Mail className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none`} />
+            <Mail className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 ap-ink-3 pointer-events-none`} />
             <input
               type="email"
               value={email}
@@ -878,7 +896,7 @@ export function DetailsStep({
                 );
               }}
               onInput={(e) => e.currentTarget.setCustomValidity('')}
-              className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors`}
+              className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 ap-card border-2 ap-line rounded-lg focus:outline-none ap-ink ap-placeholder transition-colors`}
               style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
               onFocus={(e) => e.target.style.borderColor = primaryColor}
               onBlur={(e) => e.target.style.borderColor = ''}
@@ -889,11 +907,11 @@ export function DetailsStep({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label className="block text-sm font-medium ap-ink-2 mb-1">
             {labels.phone} *
           </label>
           <div className="relative">
-            <Phone className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none`} />
+            <Phone className={`absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 w-5 h-5 ap-ink-3 pointer-events-none`} />
             <input
               type="tel"
               value={phone}
@@ -906,7 +924,7 @@ export function DetailsStep({
                 );
               }}
               onInput={(e) => e.currentTarget.setCustomValidity('')}
-              className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors`}
+              className={`w-full ${isRTL ? 'pr-10 pl-4' : 'pl-10 pr-4'} py-2.5 ap-card border-2 ap-line rounded-lg focus:outline-none ap-ink ap-placeholder transition-colors`}
               style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
               onFocus={(e) => e.target.style.borderColor = primaryColor}
               onBlur={(e) => e.target.style.borderColor = ''}
@@ -917,14 +935,14 @@ export function DetailsStep({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+          <label className="block text-sm font-medium ap-ink-2 mb-1">
             {labels.notes}
           </label>
           <textarea
             value={notes}
             onChange={(e) => onNotesChange(e.target.value)}
             rows={3}
-            className="w-full px-4 py-2.5 bg-white dark:bg-slate-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none resize-none text-gray-900 dark:text-white placeholder:text-gray-400 transition-colors"
+            className="w-full px-4 py-2.5 ap-card border-2 ap-line rounded-lg focus:outline-none resize-none ap-ink ap-placeholder transition-colors"
             style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
             onFocus={(e) => e.target.style.borderColor = primaryColor}
             onBlur={(e) => e.target.style.borderColor = ''}
@@ -1280,27 +1298,27 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
           <CreditCard className="w-8 h-8" style={{ color: primaryColor }} />
         </div>
         <h3
-          className="text-xl font-semibold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: 'var(--website-font-heading)' }}
+          className="text-xl font-semibold ap-ink mb-2"
+          style={{ fontFamily: 'var(--ap-font-heading)' }}
         >
           {labels.completePayment}
         </h3>
-        <p className="text-gray-600 dark:text-gray-300">{labels.securePayment}</p>
+        <p className="ap-ink-2">{labels.securePayment}</p>
       </div>
 
       {/* Payment summary — the same shape the details step shows, so the terms
           do not change wording between the step that agrees to them and the
           step that charges for them. */}
       <div
-        className="p-4 bg-gray-50 dark:bg-slate-700 rounded-xl"
+        className="p-4 ap-card-2 rounded-xl"
         style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
       >
         <div>
-          <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
-          <p className="text-sm text-gray-500 dark:text-gray-400">{formatDuration(service.duration_minutes, labels)}</p>
+          <h4 className="font-medium ap-ink">{service.name}</h4>
+          <p className="text-sm ap-ink-3">{formatDuration(service.duration_minutes, labels)}</p>
         </div>
 
-        <div className="mt-3 pt-3 border-t border-gray-200 dark:border-slate-600">
+        <div className="mt-3 pt-3 border-t ap-line">
           {plan ? (
             <>
               <div className="flex items-center gap-2 mb-3">
@@ -1313,21 +1331,21 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
                     />
                   ))}
                 </div>
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                <span className="text-xs font-medium ap-ink-3">
                   {labels.paymentPlan}
                 </span>
               </div>
 
               <div className="flex items-baseline justify-between gap-3">
-                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.dueToday}</span>
+                <span className="text-sm ap-ink-2">{labels.dueToday}</span>
                 <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
                   {formatAmount(plan.installmentAmount, plan.currency, locale, labels.free)}
                 </span>
               </div>
 
               <div className="flex items-baseline justify-between gap-3 mt-1.5">
-                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planThen}</span>
-                <span className="text-sm text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                <span className="text-sm ap-ink-2">{labels.planThen}</span>
+                <span className="text-sm ap-ink-2 whitespace-nowrap">
                   {labels.planThenValue
                     .replace('{count}', String(plan.installmentCount - 1))
                     .replace('{amount}', formatAmount(plan.installmentAmount, plan.currency, locale, labels.free))
@@ -1335,16 +1353,16 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
                 </span>
               </div>
 
-              <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t border-gray-200/70 dark:border-slate-600/70">
-                <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
-                <span className="text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+              <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t ap-line">
+                <span className="text-sm ap-ink-2">{labels.planTotal}</span>
+                <span className="text-sm font-semibold ap-ink whitespace-nowrap">
                   {formatAmount(plan.totalAmount, plan.currency, locale, labels.free)}
                 </span>
               </div>
             </>
           ) : (
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+              <span className="text-sm ap-ink-2">{labels.planTotal}</span>
               <span className="text-xl font-bold whitespace-nowrap" style={{ color: primaryColor }}>
                 {formatAmount(service.price, service.currency, locale, labels.free)}
               </span>
@@ -1358,7 +1376,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
       {/* Payment form - show embedded Stripe Elements or fallback button */}
       {!paymentReady ? (
         <div className="flex items-center justify-center py-8">
-          <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+          <Loader2 className="w-6 h-6 animate-spin ap-ink-3" />
         </div>
       ) : paymentData ? (
         // Embedded Stripe payment form
@@ -1402,7 +1420,7 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
           </button>
 
           {/* Security badges */}
-          <div className="flex items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+          <div className="flex items-center justify-center gap-4 text-sm ap-ink-3">
             <div className="flex items-center gap-1">
               <Lock className="w-4 h-4" />
               <span>{labels.securePaymentLabel}</span>
@@ -1474,18 +1492,18 @@ function IntakeStep({
           <ClipboardList className="w-8 h-8" style={{ color: primaryColor }} />
         </div>
         <h3
-          className="text-xl font-semibold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: 'var(--website-font-heading)' }}
+          className="text-xl font-semibold ap-ink mb-2"
+          style={{ fontFamily: 'var(--ap-font-heading)' }}
         >
           {labels.aFewQuestions}
         </h3>
-        <p className="text-gray-600 dark:text-gray-300">{labels.helpUsPrepare}</p>
+        <p className="ap-ink-2">{labels.helpUsPrepare}</p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         {fields.map((field) => (
           <div key={field.name}>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium ap-ink-2 mb-1">
               {field.label} {field.required && '*'}
             </label>
             {field.type === 'textarea' ? (
@@ -1494,7 +1512,7 @@ function IntakeStep({
                 onChange={(e) => onAnswerChange(field.name, e.target.value)}
                 required={field.required}
                 rows={3}
-                className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:border-transparent resize-none text-gray-900 dark:text-white placeholder:text-gray-400"
+                className="w-full px-4 py-2.5 ap-card-2 border ap-line rounded-lg focus:outline-none focus:ring-2 focus:border-transparent resize-none ap-ink ap-placeholder"
                 style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
                 placeholder={field.placeholder}
               />
@@ -1503,7 +1521,7 @@ function IntakeStep({
                 value={answers[field.name] || ''}
                 onChange={(e) => onAnswerChange(field.name, e.target.value)}
                 required={field.required}
-                className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:border-transparent text-gray-900 dark:text-white"
+                className="w-full px-4 py-2.5 ap-card-2 border ap-line rounded-lg focus:outline-none focus:ring-2 focus:border-transparent ap-ink"
                 style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
               >
                 <option value="">Select an option</option>
@@ -1517,7 +1535,7 @@ function IntakeStep({
                 value={answers[field.name] || ''}
                 onChange={(e) => onAnswerChange(field.name, e.target.value)}
                 required={field.required}
-                className="w-full px-4 py-2.5 bg-gray-50 dark:bg-slate-700 border border-gray-200 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:border-transparent text-gray-900 dark:text-white placeholder:text-gray-400"
+                className="w-full px-4 py-2.5 ap-card-2 border ap-line rounded-lg focus:outline-none focus:ring-2 focus:border-transparent ap-ink ap-placeholder"
                 style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
                 placeholder={field.placeholder}
               />
@@ -1610,12 +1628,12 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
         transition={{ delay: 0.2 }}
       >
         <h3
-          className="text-2xl font-bold text-gray-900 dark:text-white mb-2"
-          style={{ fontFamily: 'var(--website-font-heading)' }}
+          className="text-2xl font-bold ap-ink mb-2"
+          style={{ fontFamily: 'var(--ap-font-heading)' }}
         >
           {labels.bookingConfirmed}
         </h3>
-        <p className="text-gray-600 dark:text-gray-300 mb-6">
+        <p className="ap-ink-2 mb-6">
           {labels.confirmationEmailSent} <strong>{clientEmail}</strong>
         </p>
 
@@ -1629,7 +1647,7 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
           still to come, in the layout the two steps before it already used.
         */}
         <div
-          className="p-4 bg-gray-50 dark:bg-slate-700 rounded-xl text-start mb-8"
+          className="p-4 ap-card-2 rounded-xl text-start mb-8"
           style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
         >
           <div className="flex items-center gap-3">
@@ -1640,8 +1658,8 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
               <Calendar className="w-5 h-5" style={{ color: primaryColor }} />
             </div>
             <div className="min-w-0">
-              <h4 className="font-medium text-gray-900 dark:text-white">{service.name}</h4>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <h4 className="font-medium ap-ink">{service.name}</h4>
+              <p className="text-sm ap-ink-3">
                 {slot
                   ? `${formatFullDate(slot.start)} · ${formatTime(slot.start)}`
                   : formatDuration(service.duration_minutes, labels)}
@@ -1650,7 +1668,7 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
           </div>
 
           {service.price !== null && service.price > 0 && (
-            <div className="mt-3 pt-3 border-t border-gray-200 dark:border-slate-600">
+            <div className="mt-3 pt-3 border-t ap-line">
               {confirmedPlan ? (
                 <>
                   <div className="flex items-center gap-2 mb-3">
@@ -1663,21 +1681,21 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
                         />
                       ))}
                     </div>
-                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                    <span className="text-xs font-medium ap-ink-3">
                       {labels.paymentPlan}
                     </span>
                   </div>
 
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-sm text-gray-600 dark:text-gray-300">{labels.paidToday}</span>
+                    <span className="text-sm ap-ink-2">{labels.paidToday}</span>
                     <span className="text-sm font-semibold whitespace-nowrap" style={{ color: primaryColor }}>
                       {formatAmount(confirmedPlan.installmentAmount, confirmedPlan.currency, locale, labels.free)}
                     </span>
                   </div>
 
                   <div className="flex items-baseline justify-between gap-3 mt-1.5">
-                    <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planThen}</span>
-                    <span className="text-sm text-gray-700 dark:text-gray-200 whitespace-nowrap">
+                    <span className="text-sm ap-ink-2">{labels.planThen}</span>
+                    <span className="text-sm ap-ink-2 whitespace-nowrap">
                       {labels.planThenValue
                         .replace('{count}', String(confirmedPlan.installmentCount - 1))
                         .replace('{amount}', formatAmount(confirmedPlan.installmentAmount, confirmedPlan.currency, locale, labels.free))
@@ -1685,16 +1703,16 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
                     </span>
                   </div>
 
-                  <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t border-gray-200/70 dark:border-slate-600/70">
-                    <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
-                    <span className="text-sm font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                  <div className="flex items-baseline justify-between gap-3 mt-1.5 pt-1.5 border-t ap-line">
+                    <span className="text-sm ap-ink-2">{labels.planTotal}</span>
+                    <span className="text-sm font-semibold ap-ink whitespace-nowrap">
                       {formatAmount(confirmedPlan.totalAmount, confirmedPlan.currency, locale, labels.free)}
                     </span>
                   </div>
                 </>
               ) : (
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-sm text-gray-600 dark:text-gray-300">{labels.planTotal}</span>
+                  <span className="text-sm ap-ink-2">{labels.planTotal}</span>
                   <span className="text-sm font-semibold whitespace-nowrap" style={{ color: primaryColor }}>
                     {formatAmount(service.price, service.currency, locale, labels.free)}
                   </span>
@@ -1715,7 +1733,7 @@ export function ConfirmationStep({ service, slot, clientEmail, primaryColor, onR
         {onReset && showBookAnother && (
           <button
             onClick={onReset}
-            className="px-6 py-2.5 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700 transition-all"
+            className="px-6 py-2.5 border ap-line rounded-lg ap-ink-2 ap-hover transition-all"
             style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
           >
             {labels.bookAnotherService}
@@ -2396,7 +2414,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   return (
     <section
       id="booking"
-      className={`${isInModal ? '' : styles?.padding || 'py-16 sm:py-24'} ${isInModal ? '' : styles?.background || 'bg-gray-50 dark:bg-slate-900'} ${className || ''}`}
+      className={`${isInModal ? '' : styles?.padding || 'py-16 sm:py-24'} ${isInModal ? '' : styles?.background || 'ap-card-2'} ${className || ''}`}
     >
       <div className={`${isInModal ? 'max-w-2xl' : 'max-w-xl'} mx-auto ${isInModal ? '' : 'px-4 sm:px-6'}`}>
         {/* Header - only show on services step */}
@@ -2407,8 +2425,8 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: 'var(--website-font-heading)' }}
+                className="text-2xl sm:text-3xl font-bold ap-ink"
+                style={{ fontFamily: 'var(--ap-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -2419,8 +2437,8 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="mt-2 text-gray-600 dark:text-gray-300"
-                style={{ fontFamily: 'var(--website-font-body)' }}
+                className="mt-2 ap-ink-2"
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -2459,7 +2477,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
-          className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg p-6 sm:p-8"
+          className="ap-card rounded-2xl shadow-lg p-6 sm:p-8"
           style={{ borderRadius: theme?.borderRadius || '1rem' }}
         >
           {/* Slider content */}
@@ -2667,7 +2685,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
           */}
           {footerActions && !onFooterActionsChange && (
             <div
-              className="mt-6 pt-4 border-t border-gray-100 dark:border-slate-700"
+              className="mt-6 pt-4 border-t ap-line"
               dir={isRTL ? 'rtl' : 'ltr'}
             >
               <div className="flex items-center gap-3">
@@ -2675,7 +2693,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                   <button
                     type="button"
                     onClick={footerActions.onBack}
-                    className="flex items-center gap-2 px-4 py-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm font-medium"
+                    className="flex items-center gap-2 px-4 py-3 ap-ink-2 ap-hover-ink text-sm font-medium"
                   >
                     {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
                     {footerActions.backLabel}

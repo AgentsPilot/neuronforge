@@ -5,7 +5,7 @@
  * This endpoint:
  * 1. Looks up the business by userCode
  * 2. Creates or updates a CRM contact
- * 3. Triggers email notification to the business owner
+ * 3. Alerts the business owner by email (LeadAlertService)
  *
  * This is a PUBLIC endpoint - no authentication required
  * Used by standalone conversion pages (/c/[userCode]/contact)
@@ -16,6 +16,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'ConversionContactAPI' });
@@ -189,6 +190,28 @@ export async function POST(request: NextRequest) {
       message: data.message,
       serviceInterest: data.service_interest
     };
+
+    /*
+     * Tell the OWNER. This is the step both of these routes claimed to do in
+     * their header and never did — the two sends below go to the visitor, and
+     * nothing went to the business at all, so an enquiry sat unseen until
+     * somebody happened to open the CRM.
+     *
+     * Non-blocking, like the sends below it: a visitor's form must not fail
+     * because a mail provider is slow.
+     */
+    notifyOwnerOfLead({
+      ownerId,
+      contactId,
+      kind: 'enquiry',
+      contactName: data.name,
+      contactEmail: data.email,
+      phone: data.phone,
+      message: data.message,
+      serviceInterest: data.service_interest,
+      // This route's schema carries neither a referral source nor a page url —
+      // a conversion page is the page. Nothing to pass.
+    }).catch(err => requestLogger.warn({ err, contactId }, 'Owner alert failed (non-blocking)'));
 
     if (isNewContact) {
       BookingEmailService.sendWelcomeEmail(contactId, ownerId, emailData)

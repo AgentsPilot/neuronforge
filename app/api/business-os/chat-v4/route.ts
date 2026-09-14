@@ -45,11 +45,15 @@ import {
   type RenderedAnswer,
 } from '@/lib/business-os/bizql/render/AnswerRenderer';
 import {
+  describeFilters,
   describePlan,
+  isMoneyStep,
   type Alternative,
   type Understanding,
 } from '@/lib/business-os/bizql/render/describePlan';
 import { applyAlternative } from '@/lib/business-os/bizql/render/applyAlternative';
+import { explainEmptyTotal, siblingCounts } from '@/lib/business-os/bizql/render/siblingCounts';
+import { getVerifiedQuestions } from '@/lib/business-os/bizql/planner/VerifiedQuestions';
 import { getPlanCache, type CacheLayer } from '@/lib/business-os/bizql/cache/PlanCache';
 import {
   getConversationMemory,
@@ -191,9 +195,29 @@ const CHAT_ERRORS: Record<ChatErrorKey, Record<string, string>> = {
   },
 };
 
+/**
+ * Can a document belong to this write?
+ *
+ * True for a write that CREATES a row on an entity with a document field —
+ * today, a quote. An update has whatever document it already had, and offering
+ * to attach one there would be a different feature: replacing a file the client
+ * may already be holding.
+ */
+function acceptsAttachment(steps: Array<{ entity: string; action: string }>): boolean {
+  return steps.some((step) => {
+    const entity = CATALOG.entities[step.entity];
+    if (!entity?.fields.document_id?.writable) return false;
+
+    return step.action === 'create' || step.action === 'create_and_send';
+  });
+}
+
 function chatError(key: ChatErrorKey, language: string): string {
   return CHAT_ERRORS[key][language] ?? CHAT_ERRORS[key].en;
 }
+
+/** How the narrower reading is offered, in the reader's language. */
+const ONLY: Record<string, string> = { en: 'only', he: 'רק', es: 'solo' };
 
 const logger = createLogger({ module: 'BusinessChatV4' });
 const auditTrail = AuditTrailService.getInstance();
@@ -225,7 +249,19 @@ interface ChatV4Response {
   success: boolean;
   answer?: RenderedAnswer;
   /** Set when a write is parked awaiting an explicit yes. */
-  confirmation?: { id: string; message: string; preview: string[] };
+  confirmation?: {
+    id: string;
+    message: string;
+    preview: string[];
+    /**
+     * Whether a document can be attached before approving.
+     *
+     * Decided here, from the catalog, because the client has no way to know
+     * which writes have a document field — and reading it off the preview text
+     * would break the first time the wording changed.
+     */
+    canAttach?: boolean;
+  };
   /** Set when the request was too ambiguous to plan — ask, never guess. */
   clarification?: string;
   /**
@@ -517,6 +553,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
               // comes out in the reader's language.
               message: '',
               preview: [dry.preview ?? `${filled.entity}.${filled.action}`],
+              canAttach: acceptsAttachment([filled]),
             },
             budget: budgetPayload,
           });
@@ -712,7 +749,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
      * half-substituted one.
      */
     const corrected = alternative
-      ? applyAlternative(context.lastPlan?.steps, alternative as Alternative)
+      ? applyAlternative(context.lastPlan?.steps, alternative as Alternative, context.priorPlan?.steps)
       : null;
 
     if (alternative && !corrected) {
@@ -749,14 +786,39 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
         });
 
     /** Roll the window forward, keeping what the next turn will need. */
-    const remember = (summary: string, extra: Partial<ConversationContext> = {}) => {
-      void conversation
-        .save(user.id, {
+    /**
+     * Roll the window forward, keeping what the next turn will need.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * AWAITED, and that is the fix for a race that looked like a planning bug.
+     *
+     * This used to be fire-and-forget. Asked "כמה אושרו" and then, seconds
+     * later, "מה הסך הכולל שלהם", the second turn loaded the conversation
+     * before the first had finished writing it — so "them" resolved against the
+     * plan from TWO turns earlier, and a question about quotes was answered
+     * about bookings: "‏0.00 ‏₪ על פני 3 הזמנות".
+     *
+     * Nothing was wrong with the planner or the follow-up mechanism. The
+     * context simply was not there yet, and a person types the next question
+     * far faster than a round trip to Postgres.
+     *
+     * The cost is one DB write on the response path — tens of milliseconds
+     * against a planner call measured in seconds — and it buys the guarantee
+     * the whole follow-up design rests on: the next turn sees this one.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const remember = async (summary: string, extra: Partial<ConversationContext> = {}) => {
+      try {
+        await conversation.save(user.id, {
           ...context,
           ...extra,
           turns: [...context.turns, { utterance: message, summary, at: new Date().toISOString() }],
-        })
-        .catch((err) => requestLogger.debug({ err }, 'Context save failed (non-blocking)'));
+        });
+      } catch (err) {
+        // Still not worth failing a turn over: an answer the user can read
+        // beats a 500 because the next turn's context could not be stored.
+        requestLogger.debug({ err }, 'Context save failed (non-blocking)');
+      }
     };
 
     const plannerModel = outcome.diagnostics.model;
@@ -826,7 +888,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       // Record the question. Without this the user's reply arrives as a fresh,
       // context-free request and the assistant asks the same thing again —
       // exactly the loop that made this unusable.
-      remember(`asked: ${clarification}`, { pendingQuestion: clarification });
+      await remember(`asked: ${clarification}`, { pendingQuestion: clarification });
       return NextResponse.json({ success: true, clarification, debug });
     }
 
@@ -1040,7 +1102,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           // Recorded for the same reason the `clarification` branch does it:
           // the transcript should show that a question was asked. The fill above
           // is what actually resolves the next turn.
-          remember(`asked for: ${wanted.map((f) => f.label).join(', ')}`, {
+          await remember(`asked for: ${wanted.map((f) => f.label).join(', ')}`, {
             pendingQuestion: wanted.map((f) => f.label).join(', '),
           });
 
@@ -1095,6 +1157,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
             // conversation ended with "Confirm this change?" in it.
             message: plan.answer?.text || '',
             preview: previews,
+            canAttach: acceptsAttachment(writes as Array<{ entity: string; action: string }>),
           },
           budget: budgetPayload,
         debug,
@@ -1299,9 +1362,107 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           (r.op === 'compute' && !r.groups?.length && !r.value)
       );
 
+    /*
+     * When the line earns its place.
+     *
+     * Started as "only when there is something to correct", which missed the
+     * turns that have actually gone wrong: a MONEY total, where the cost of a
+     * silently different filter is a decision made on the wrong number, and a
+     * plan that reads TWO things, where the sentence is the only place their
+     * relationship is stated. Both are now included.
+     *
+     * Still not every turn. "How many bookings tomorrow" needs no explaining,
+     * and a reply that justifies itself every time reads as unsure of itself.
+     */
+    /*
+     * A zero that says where the rows actually are.
+     *
+     * Only on an empty result, which is a turn that told the user nothing
+     * anyway — so one extra grouped count buys an answer where there was none.
+     * The chips it produces are the same ones a correction uses, so tapping
+     * "טיוטה (3)" re-runs the question against drafts with no model call.
+     */
+    /*
+     * "The total of THE quotes" — which quotes?
+     *
+     * A question that names its entity but adds no filter, arriving straight
+     * after a filtered answer about that same entity, has two honest readings:
+     * all of them, or the ones just discussed. Asked right after four accepted
+     * quotes were listed, "מה הסך הכולל של ההצעות" answered ₪45,850 — all seven
+     * — where the person meant ₪15,850.
+     *
+     * Neither reading can be proved from the words, and the shape is visible
+     * without them: same entity, filters before, none now. So the turn answers
+     * one way and offers the other as a tap.
+     */
+    /*
+     * `lastPlan`, not `priorPlan` — the two differ by exactly one turn and I
+     * had them the wrong way round.
+     *
+     * While THIS turn is being answered, `lastPlan` is still the previous
+     * answer's plan: the save happens at the end. `priorPlan` is the one before
+     * that, and is what the chip needs when it is TAPPED a turn later. Reading
+     * the wrong one meant the chip was offered against a question two turns
+     * back — bookings, when the user meant the accepted quotes just listed.
+     */
+    const priorRead = (context.lastPlan?.steps ?? []).find(
+      (step) => (step as { entity?: string; where?: unknown[] }).where?.length
+    ) as { entity?: string; where?: unknown[] } | undefined;
+
+    const nowUnfiltered = readSteps.some((step) => {
+      // `readSteps` is a union; a for_each has no `where` and is not a read the
+      // user could have meant here anyway.
+      const read = step as { entity?: string; where?: unknown[] };
+      return read.entity === priorRead?.entity && !read.where?.length;
+    });
+
+    if (understanding && priorRead && nowUnfiltered) {
+      const narrower = describeFilters(priorRead as never, { language, enumLabels });
+
+      if (narrower) {
+        understanding.alternatives = [
+          {
+            // The FILTER, framed as a choice. The aggregate belongs to the
+            // previous question, not to the decision being offered here.
+            label: `${ONLY[language] ?? ONLY.en} ${narrower}`,
+            stepId: readSteps[0]?.id ?? 's1',
+            field: 'previous',
+            value: 'previous',
+            kind: 'previous_filters' as const,
+          },
+          ...understanding.alternatives,
+        ].slice(0, 6);
+      }
+    }
+
+    if (emptyResult && understanding) {
+      const siblings = await siblingCounts(readSteps, { userId: user.id, timezone }, language);
+
+      if (siblings.length > 0) {
+        understanding.alternatives = [
+          ...siblings,
+          ...understanding.alternatives.filter(
+            (existing) => !siblings.some((s) => s.field === existing.field && s.value === existing.value)
+          ),
+        ].slice(0, 6);
+      } else {
+        /*
+         * No sibling to offer — so the zero is either real, or it is a column
+         * nobody filled. The second reads identically to the first and means
+         * something completely different: "‏0.00 ‏₪ על פני 3 הזמנות" for three
+         * bookings whose value was never recorded.
+         */
+        understanding.note = (await explainEmptyTotal(readSteps, { userId: user.id, timezone }, language)) ?? undefined;
+      }
+    }
+
     const understood =
       understanding &&
-      (understanding.alternatives.length > 0 || emptyResult || Boolean(corrected))
+      (understanding.alternatives.length > 0 ||
+        emptyResult ||
+        Boolean(corrected) ||
+        readSteps.length > 1 ||
+        readSteps.some(isMoneyStep))
         ? understanding
         : undefined;
 
@@ -1342,7 +1503,30 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       return CATALOG.entities[groupedSubject.entity]?.relations?.[relationKey]?.target;
     })();
 
-    remember(
+    /*
+     * Rows from an earlier turn survive only while they are still the subject.
+     *
+     * Asked "כמה הצעות שלחתי" and then "הצג אותם" — show them — the chat listed
+     * CONTACTS. Nothing had gone wrong with either plan: the count was over
+     * quotes, but `lastRows` still held the three contacts from two turns
+     * earlier, and the prompt announces those as "you last showed these" — a
+     * far louder signal than the one line saying the last question was about
+     * quotes. The pronoun resolved to the loudest thing in the room.
+     *
+     * A read over a different entity is exactly the moment those rows stop
+     * being what "them" means. Dropping them leaves the subject line to answer
+     * the pronoun, which is the signal that is actually about this turn.
+     *
+     * The grouped-compute case above is the same rule from the other side: it
+     * REPLACES the rows when a group identifies real ones.
+     */
+    const readEntities = new Set(readSteps.map((step) => step.entity));
+    const staleRows =
+      context.lastRows && !readEntities.has(context.lastRows.entity)
+        ? undefined
+        : context.lastRows;
+
+    await remember(
       // An analyse step has no entity — it describes the others.
       plan.steps
         .map((step) => (step.op === 'analyse' ? step.op : `${step.op} ${step.entity}`))
@@ -1355,6 +1539,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
          * and applyAlternative refuses them again on the way out.
          */
         lastPlan: { steps: readSteps, answer: plan.answer, at: new Date().toISOString() },
+        // One turn further back, for the "did you mean the ones we were just
+        // talking about" chip — see ConversationContext.priorPlan.
+        priorPlan: context.lastPlan,
         /*
          * A choice the user made by tapping, kept for the conversation.
          *
@@ -1381,9 +1568,37 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
                     .map((g) => ({ id: g.id, label: g.key })),
                   at: new Date().toISOString(),
                 }
-              : context.lastRows,
+              : staleRows,
       }
     );
+
+    /*
+     * 8b. Learn from a correction.
+     *
+     * A tapped alternative is the user saying "that one, not the one you chose"
+     * — the strongest signal this system can get, and until now it was spent on
+     * one turn and thrown away. Stored against this tenant, it teaches the next
+     * phrasing of the same intent, which is the thing no label table reaches.
+     *
+     * Only corrections, for now. An answer that merely went unchallenged is a
+     * weaker signal and would fill the store with plans nobody actually
+     * confirmed — the way a verified-query repository gets poisoned.
+     *
+     * Non-blocking: this is a lesson for next time, never a reason this turn is
+     * slower or fails.
+     */
+    if (corrected) {
+      void getVerifiedQuestions()
+        .remember({
+          userId: user.id,
+          question: message,
+          language,
+          steps: readSteps,
+          source: 'correction',
+          turnId,
+        })
+        .catch((err) => requestLogger.debug({ err }, 'Verified question not stored'));
+    }
 
     // 9. Confirm the served plan actually worked, so a bad entry gets demoted.
     // Storing happens inside the planner, on a fresh successful plan only.

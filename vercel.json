@@ -41,12 +41,20 @@
       "schedule": "0 8 * * *"
     },
     {
+      "path": "/api/cron/intake-reminders",
+      "schedule": "15 * * * *"
+    },
+    {
       "path": "/api/cron/payment-retry",
       "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/daily-briefing",
       "schedule": "10 * * * *"
+    },
+    {
+      "path": "/api/cron/lead-response",
+      "schedule": "*/5 * * * *"
     },
     {
       "path": "/api/cron/abandoned-proposal-invoices",

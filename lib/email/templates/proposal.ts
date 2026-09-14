@@ -35,6 +35,14 @@ export interface ProposalEmailData {
   locale?: Locale;
   /** True when this replaces a previous version they were already sent. */
   isRevision?: boolean;
+  /**
+   * Days to pay, once an invoice is raised.
+   *
+   * Shown because it is a TERM of the offer, not a back-office setting: a
+   * client agreeing to ₪50,000 is also agreeing to when it falls due, and
+   * finding that out from the first invoice is finding out too late.
+   */
+  termsDays?: number | null;
   /** Whether the full proposal document is attached to this email. */
   hasDocument?: boolean;
   /** Its filename, so the client knows what they are looking for. */
@@ -70,6 +78,17 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
       emailDetailRow(t.dueOnAcceptLabel[locale], formatCurrency(data.dueOnAccept, data.currency))
     );
   }
+  if (typeof data.termsDays === 'number') {
+    rows.push(
+      emailDetailRow(
+        t.paymentTermsLabel[locale],
+        data.termsDays === 0
+          ? t.dueOnReceipt[locale]
+          : t.netDays[locale].replace('{days}', String(data.termsDays))
+      )
+    );
+  }
+
   if (validLine) {
     rows.push(emailDetailRow(t.validUntilLabel[locale], escapeHtml(validLine)));
   }
@@ -149,7 +168,7 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
     ${attachmentBlock}
 
     <div style="margin-top: 24px;">
-      ${emailButton(t.viewCta[locale], data.viewUrl, { backgroundColor: data.branding.primaryColor })}
+      ${emailButton(t.viewCta[locale], data.viewUrl, { branding: data.branding })}
     </div>
 
     <p style="margin: 22px 0 0; font-size: 12px; color: #8A91A5;">

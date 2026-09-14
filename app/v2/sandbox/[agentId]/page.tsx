@@ -16,6 +16,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
 import { canFinishCalibration, getPassSuggestions, type PassSuggestion } from '@/lib/calibration/finishGate'
 import { deriveHardcodeState } from '@/lib/calibration/hardcodeState'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
@@ -206,7 +207,8 @@ export default function BatchCalibrationPage() {
   // Load agent
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push('/login')
+      // Sign-in lives on the marketing site, on its own origin.
+      window.location.href = marketingLoginUrl()
       return
     }
 

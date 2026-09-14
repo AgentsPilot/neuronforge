@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { PAYMENT_TERMS_PRESETS } from '@/lib/payments/paymentTerms';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
@@ -64,14 +65,14 @@ interface Service {
 const REPORTS_COLOR = '#22C58B';
 
 // Due date preset options - translation keys for the labels
-const DUE_DATE_PRESETS_BASE = [
-  { value: 'receipt', key: 'due_on_receipt', days: 0 },
-  { value: 'net7', key: 'net_7', days: 7 },
-  { value: 'net15', key: 'net_15', days: 15 },
-  { value: 'net30', key: 'net_30', days: 30 },
-  { value: 'net60', key: 'net_60', days: 60 },
-  { value: 'custom', key: 'custom', days: -1 },
-];
+/*
+ * The presets now live in `lib/payments/paymentTerms`.
+ *
+ * They were defined here, inside a client component, which meant the server
+ * could not reach them — so every invoice raised without a human present
+ * invented its own due date. Same list, one owner.
+ */
+const DUE_DATE_PRESETS_BASE = PAYMENT_TERMS_PRESETS;
 
 export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, contactEmail }: Props) {
   const { currencyCode, availableCurrencies, t, isRTL } = useLanguage();

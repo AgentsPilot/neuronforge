@@ -179,6 +179,21 @@ export interface DetectorDefinition {
   // === Cooldown ===
 
   /** Hours before re-surfacing same insight */
+  /**
+   * Run even when this detector's vector is still dark.
+   *
+   * The maturity gate exists so a COMPARATIVE detector is not asked to reason
+   * from a baseline it does not have — "conversion is down 30%" is meaningless
+   * on eleven contacts. An ABSOLUTE detector has no such problem: "three people
+   * wrote to you and got no reply" is true on day one, and the businesses the
+   * gate silences are exactly the small ones that can least afford to lose an
+   * enquiry.
+   *
+   * Set it only where the count stands on its own. Default is to respect the
+   * gate, which is right for almost everything.
+   */
+  ignoresVectorMaturity?: boolean;
+
   cooldownHours: number;
 }
 

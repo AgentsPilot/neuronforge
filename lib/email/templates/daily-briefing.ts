@@ -91,7 +91,7 @@ export function generateDailyBriefingEmail(data: DailyBriefingEmailData): {
       ${items}
     </table>
 
-    ${emailButton(t.viewDashboard[locale], data.dashboardUrl, { backgroundColor: data.branding.primaryColor })}
+    ${emailButton(t.viewDashboard[locale], data.dashboardUrl, { branding: data.branding })}
 
     <p style="margin: 24px 0 0; font-size: 12px; color: #8A91A5;">
       ${t.unsubscribeHint[locale]}

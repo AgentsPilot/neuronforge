@@ -7,10 +7,10 @@
  */
 
 import { Metadata } from 'next';
-import { notFound } from 'next/navigation';
 import { ContactFormBlock } from '@/components/website/blocks/ContactFormBlock';
 import type { Locale } from '@/lib/i18n/config';
 import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
+import { PublicErrorScreen } from '@/components/public/PublicErrorScreen';
 import { PublicFooter } from '@/components/public/PublicFooter';
 import { PublicHeader } from '@/components/public/PublicHeader';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
@@ -85,8 +85,34 @@ export default async function StandaloneContactPage({ params }: PageProps) {
     resolvePublicBranding({ by: 'userCode', userCode }),
   ]);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * RENDERED, NOT THROWN.
+   *
+   * This was `notFound()`, and it ran AFTER the two awaits above. By then the
+   * segment layout — which resolves branding straight from the database — has
+   * already finished and Next has flushed the response shell, so the status is
+   * committed as 200 and there is no longer a render pass to throw into. Next
+   * tries anyway, deferring the not-found boundary onto a timer, and its own
+   * `ErrorBoundary` calls `usePathname` outside a render:
+   *
+   *   TypeError: Cannot read properties of null (reading 'useContext')
+   *     at usePathname (next/dist/client/components/navigation.js)
+   *     at ErrorBoundary (next/dist/client/components/error-boundary.js)
+   *     at Timeout._onTimeout
+   *
+   * The tell was the status code: a page calling `notFound()` should answer
+   * 404, and this one answered 200 — proof the headers were already gone. It
+   * was intermittent because it depends on the flush beating the fetches, which
+   * on a warm server it usually does and on a cold one often does not.
+   *
+   * Returning cannot fail that way whatever the stream has already done. It is
+   * also the better page: a smart link is handed out on WhatsApp and in bio
+   * links, so a visitor who arrives after the service was withdrawn should meet
+   * the business's own colours and language, not a bare platform 404.
+   */
   if (!businessData?.success || !brand) {
-    notFound();
+    return <PublicErrorScreen brand={brand} kind="not-found" />;
   }
 
   const language = brand.locale as Locale;

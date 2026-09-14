@@ -3,11 +3,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
-import { LiveDashboard, SetupItem, FunnelStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
+import { LiveDashboard, GapView, OperationalItem, SetupItem, FunnelStats, WeeklyStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
+import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { CHANNELS_CARD_ID } from '@/components/business-os/insight/ChannelsOverviewCard';
 import { CRMContactModal } from '@/components/crm/CRMContactModal';
 import { SchedulingDialog } from '@/components/business-os/SchedulingDialog';
@@ -49,7 +51,7 @@ function getGreetingFromTime(): 'morning' | 'afternoon' | 'evening' {
 
 function BusinessOSContent() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { t, language } = useLanguage();
   const chatPanelRef = useRef<ChatCommandPanelRef>(null);
   const [loading, setLoading] = useState(true);
@@ -58,6 +60,8 @@ function BusinessOSContent() {
   // The readiness chips want none of that, so they open the layout-level one
   // through the provider instead of borrowing this state.
   const { openConfiguration } = useConfigurationDialog();
+  // The nav bar's capability set, re-asked whenever this page edits the catalogue.
+  const { refresh: refreshCapabilities } = useCapabilities();
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [configInitialTab, setConfigInitialTab] = useState<'services' | 'availability' | 'intake' | 'payments'>('services');
   const [configVisibleTabs, setConfigVisibleTabs] = useState<('services' | 'availability' | 'intake' | 'payments')[] | undefined>(undefined);
@@ -94,6 +98,17 @@ function BusinessOSContent() {
 
 
   // My Day data - use time-based greeting as initial state
+  /*
+   * Everything waiting on the owner, from the gap registry.
+   *
+   * Its own state, and its own failure: a dashboard that will not load because
+   * one card's query failed is worse than a dashboard missing one card.
+   */
+  const [gaps, setGaps] = useState<GapView[]>([]);
+
+  /** Work the platform is offering to take on, with its live counts. */
+  const [automations, setAutomations] = useState<OperationalItem[]>([]);
+
   const [myDay, setMyDay] = useState<MyDayData>(() => ({
     userName: '', // Empty until loaded from API
     greeting: getGreetingFromTime(),
@@ -110,6 +125,8 @@ function BusinessOSContent() {
    */
   const [setupShape, setSetupShape] = useState<BusinessShape>(UNKNOWN_SHAPE);
   const [funnelStats, setFunnelStats] = useState<FunnelStats | undefined>(undefined);
+  /** The same funnel over 7 days — read only by the verdict card. */
+  const [weeklyStats, setWeeklyStats] = useState<WeeklyStats | undefined>(undefined);
   /**
    * Whether a client can reach this business at all, and by what.
    *
@@ -152,12 +169,45 @@ function BusinessOSContent() {
     try {
       // Fetch My Day data, stats, and pipeline stages in parallel
       // Use cache: 'no-store' to ensure fresh data on each load
-      const [myDayResponse, statsResponse, stagesResponse, channelsResponse] = await Promise.all([
+      const [myDayResponse, statsResponse, stagesResponse, channelsResponse, weekChannelsResponse] = await Promise.all([
         fetch('/api/business-os/my-day', { cache: 'no-store' }),
         fetch('/api/business-os/stats', { cache: 'no-store' }),
         fetch('/api/crm/pipeline-stages', { cache: 'no-store' }),
-        fetch('/api/business-os/channel-insights?period=month', { cache: 'no-store' })
+        fetch('/api/business-os/channel-insights?period=month', { cache: 'no-store' }),
+        // The same question over 7 days, for the verdict card's "This week"
+        // sentence. A second call rather than a narrower one: the monthly
+        // result above is what the channels card and the top-lead-channel line
+        // read, and re-pointing it at a week would quietly shrink both.
+        fetch('/api/business-os/channel-insights?period=week', { cache: 'no-store' })
       ]);
+
+      /*
+       * What needs the owner, on its own.
+       *
+       * Deliberately outside the Promise.all above: this list is the newest
+       * thing on the dashboard, and a failure here must cost only its card.
+       */
+      fetch('/api/business-os/gaps', { cache: 'no-store' })
+        .then(response => response.json())
+        .then(data => setGaps(data?.success ? data.gaps : []))
+        .catch(() => setGaps([]));
+
+      // Same reasoning: its own request, its own failure.
+      fetch('/api/business-os/automations/operational', { cache: 'no-store' })
+        .then(response => response.json())
+        /*
+         * Only the undecided reach the card. Approved is a setting and declined
+         * is an answer; the advisor exists to ask open questions.
+         */
+        .then(data =>
+          setAutomations(
+            data?.success
+              ? (data.automations as Array<OperationalItem & { enabled: boolean; declined: boolean }>)
+                  .filter(entry => !entry.enabled && !entry.declined)
+              : []
+          )
+        )
+        .catch(() => setAutomations([]));
 
       // Where clients came from. Failing here must degrade only that section,
       // never the whole dashboard.
@@ -173,6 +223,16 @@ function BusinessOSContent() {
         channelVisits = performance?.visits?.total;
       } catch {
         setChannelPerformance(undefined);
+      }
+
+      // Weekly visits, held the same way and for the same reason. Nothing but
+      // the verdict sentence reads it, so it goes to no state of its own.
+      let weekChannelVisits: number | undefined;
+      try {
+        const weekChannelsData = await weekChannelsResponse.json();
+        weekChannelVisits = weekChannelsData.success ? weekChannelsData.data?.visits?.total : undefined;
+      } catch {
+        weekChannelVisits = undefined;
       }
 
 
@@ -545,6 +605,27 @@ function BusinessOSContent() {
             paidAmount: s.payments?.revenue_30d || 0
           });
 
+          /*
+           * The same funnel over 7 days, for the verdict card badged "This week".
+           *
+           * Every figure here is a 7-day flow, including contacts: the funnel
+           * map wants the all-time contact snapshot, but a sentence about this
+           * week wants the people who arrived in it.
+           */
+          setWeeklyStats({
+            found: weekChannelVisits ?? s.website?.visitors_7d ?? 0,
+            contacts: s.crm?.new_this_week || 0,
+            // Placed this week, not starting this week: `bookings_this_week`
+            // is dated by start_time with no upper bound, so it also counts
+            // every appointment already on the books for any future date.
+            booked: s.scheduling?.bookings_placed_this_week || 0,
+            // The closing beat for a business that books nothing. Counted the
+            // same way the money is, so "2 paid" and the total beside it always
+            // describe the same two payments.
+            paidCount: s.payments?.payments_received_this_week || 0,
+            revenue: s.payments?.revenue_this_week || 0
+          });
+
           // Set real CRM pipeline stages (preferred over funnelStats)
           if (s.crm?.pipeline_stages && Array.isArray(s.crm.pipeline_stages)) {
             setPipelineStages(s.crm.pipeline_stages);
@@ -595,8 +676,29 @@ function BusinessOSContent() {
   useEffect(() => {
     if (user) {
       fetchDashboardData();
+      return;
     }
-  }, [user, fetchDashboardData]);
+
+    /*
+     * No user, and auth has finished looking.
+     *
+     * `loading` starts true and is cleared in exactly one place — the end of
+     * `fetchDashboardData`, which only runs for a signed-in user. So a browser
+     * whose session could not be restored sat on the spinner FOREVER: no error,
+     * no redirect, nothing in the console, and the server logs looking healthy
+     * because middleware was still reading a cookie the client had lost.
+     *
+     * Waiting for `authLoading` matters: `user` is null for the first moment of
+     * every load, and redirecting on that would bounce signed-in people to the
+     * login page.
+     *
+     * A full navigation, not a router push — the sign-in form is on the
+     * marketing site, a different origin. Same rule as `RequireAuth`.
+     */
+    if (!authLoading) {
+      window.location.href = marketingLoginUrl();
+    }
+  }, [user, authLoading, fetchDashboardData]);
 
   // Handle chat actions (open dialogs, etc.)
   const handleChatAction = useCallback(async (action: DialogAction) => {
@@ -1011,7 +1113,15 @@ function BusinessOSContent() {
     setConfigAvailabilityDays(undefined); // Reset availability days
     // Refresh dashboard stats
     fetchDashboardData();
-  }, [fetchDashboardData]);
+    /*
+     * And the navigation, which reads a different endpoint.
+     *
+     * This is the dashboard's OWN dialog instance — the chat-driven one — so it
+     * does not go through the layout provider that already does this. Editing a
+     * service here changes what the account has just as much.
+     */
+    refreshCapabilities();
+  }, [fetchDashboardData, refreshCapabilities]);
 
   // Handle config dialog close with unpublished changes - notify chat
   const handleCloseWithUnpublished = useCallback((serviceName: string) => {
@@ -1128,6 +1238,9 @@ function BusinessOSContent() {
         <div className="relative">
           <LiveDashboard
             userName={myDay.userName}
+            gaps={gaps}
+            automations={automations}
+            onGapsChanged={fetchDashboardData}
             greeting={myDay.greeting}
             briefing={myDay.briefing}
             setupItems={setupItems}
@@ -1135,7 +1248,6 @@ function BusinessOSContent() {
             channelPerformance={channelPerformance}
             onChannelsChanged={fetchDashboardData}
             isReachable={reach?.isReachable}
-            reachSurfaces={reach && { livePages: reach.livePages, smartLinks: reach.smartLinks }}
             ownedSurfaces={reach && {
               website: reach.websiteCount,
               landing: reach.landingCount,
@@ -1144,6 +1256,7 @@ function BusinessOSContent() {
               landingDrafts: reach.landingDrafts,
             }}
             funnelStats={funnelStats}
+            weeklyStats={weeklyStats}
             pipelineStages={pipelineStages}
             milestoneData={milestoneData}
             onConfigureClick={handleQuickSetupClick}
@@ -1185,8 +1298,9 @@ function BusinessOSContent() {
                  * which is a worse answer to "where do I do this?" than simply
                  * showing the reader where it is.
                  *
-                 * The steps are only rendered when the card is (both follow
-                 * `showChannels`), so this never scrolls to nothing.
+                 * The card is on the page for every business now — it also
+                 * carries the smart link, which is how a business with no
+                 * website is reached — so this never scrolls to nothing.
                  */
                 const target = document.getElementById(CHANNELS_CARD_ID);
                 if (target) {
@@ -1202,9 +1316,13 @@ function BusinessOSContent() {
                 // page. They are dialog tabs now, so the chip opens the dialog
                 // in place rather than navigating the reader off the dashboard
                 // they were measuring their readiness on.
-                openConfiguration('business');
+                //
+                // Refetched on close, like every other readiness step. Without
+                // it these two saved correctly and stayed drawn as outstanding
+                // until the page was reloaded.
+                openConfiguration('business', { onClose: fetchDashboardData });
               } else if (action === 'setup_invoicing') {
-                openConfiguration('invoice');
+                openConfiguration('invoice', { onClose: fetchDashboardData });
               } else if (action === 'customize_design') {
                 router.push('/business-os/website?view=design');
               } else if (action === 'view_funnel') {

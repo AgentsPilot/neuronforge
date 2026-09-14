@@ -56,6 +56,8 @@ interface V4Alternative {
 interface V4Understood {
   text: string;
   alternatives: V4Alternative[];
+  /** Why the figure looks the way it does, when the number alone would mislead. */
+  note?: string;
 }
 
 /**
@@ -69,6 +71,14 @@ interface V4Confirmation {
   id: string;
   message: string;
   preview: string[];
+  /**
+   * Whether a document can belong to this write.
+   *
+   * Server-decided, from the catalog — the client does not know which entities
+   * have a document field, and guessing from the preview text would be a
+   * different kind of wrong every time the wording changed.
+   */
+  canAttach?: boolean;
 }
 
 /**
@@ -1023,7 +1033,11 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     if (understood) {
       setMessages(prev => [
         ...prev,
-        { type: 'understood', content: understood.text, alternatives: understood.alternatives },
+        {
+          type: 'understood',
+          content: understood.note ? `${understood.text}\n${understood.note}` : understood.text,
+          alternatives: understood.alternatives,
+        },
       ]);
     }
 
@@ -1341,6 +1355,55 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
     }
   }, [messages, pendingContext, activeEntity, router, onAction, generateConfirmationMessage, getConfirmationSuggestions]);
 
+  /**
+   * Give the cursor back when the answer arrives.
+   *
+   * The textarea is `disabled` while a turn is in flight, and a disabled
+   * element cannot hold focus — the browser drops it to <body> and nothing puts
+   * it back. So every question ended with a click before the next one could be
+   * typed, which in a chat is the whole interaction.
+   *
+   * Restored on the transition OUT of loading rather than at the end of the
+   * send: React has not re-enabled the field yet at that point, and focusing a
+   * disabled element does nothing.
+   *
+   * Pointer-fine only. On a phone, refocusing reopens the keyboard over the
+   * answer the user just asked for.
+   */
+  const wasLoading = useRef(false);
+
+  useEffect(() => {
+    const finished = wasLoading.current && !loading;
+    wasLoading.current = loading;
+
+    if (!finished) return;
+    if (typeof window !== 'undefined' && !window.matchMedia('(pointer: fine)').matches) return;
+
+    /*
+     * Three times, because once was not enough in practice.
+     *
+     * Focusing in the effect is correct and still lost the caret: the answer
+     * that arrives in the same commit brings new message cards and a scroll to
+     * the bottom, and that work lands in later ticks — after this effect has
+     * run. Whatever drops focus there wins, and the user is back to clicking
+     * the box before every question.
+     *
+     * So the restore is repeated across the frame boundary and once more after
+     * the layout settles. Focusing an already-focused element is a no-op, so
+     * the extra calls cost nothing and are invisible when the first one holds.
+     */
+    const restore = () => inputRef.current?.focus();
+
+    restore();
+    const frame = requestAnimationFrame(restore);
+    const settled = setTimeout(restore, 150);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(settled);
+    };
+  }, [loading]);
+
   const handleExampleClick = (example: string) => {
     setInput(example);
     inputRef.current?.focus();
@@ -1411,6 +1474,70 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
       }
     },
     [loading, handleV4Send]
+  );
+
+  /**
+   * Attach a document to the quote on the card, then re-render the card.
+   *
+   * The file goes to the client the quote is FOR — the server reads that off
+   * the parked write rather than trusting anything sent from here — and the
+   * response carries a new confirmation id, because a quote that now names a
+   * document is not the write the previous card described.
+   */
+  const attachToPending = useCallback(
+    async (confirmationId: string, file: File): Promise<string | null> => {
+      const tooBig = file.size > 50 * 1024 * 1024;
+      if (tooBig) return isHebrewText(file.name) || language === 'he'
+        ? 'הקובץ גדול מדי (עד 50MB).'
+        : 'That file is too large (50MB max).';
+
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          // `result` is a data: URL; the payload is everything after the comma.
+          reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
+
+        const response = await fetch('/api/business-os/chat-v4/attach', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            confirmationId,
+            file_name: file.name,
+            mime_type: file.type || 'application/octet-stream',
+            file_content: base64,
+          }),
+        });
+
+        const result = await response.json();
+        if (!result.success) return result.error ?? 'Could not attach that file.';
+
+        // Replace the card with the re-previewed one, so the approval that
+        // follows applies to the write that includes the document.
+        setMessages(prev =>
+          prev.map(m =>
+            m.type === 'pending_write' && m.pendingWrite?.id === confirmationId
+              ? {
+                  ...m,
+                  pendingWrite: {
+                    ...(result.confirmation as V4Confirmation),
+                    message: m.pendingWrite.message,
+                    canAttach: m.pendingWrite.canAttach,
+                  },
+                }
+              : m
+          )
+        );
+
+        return null;
+      } catch (err) {
+        logger.error({ err }, 'Attachment failed');
+        return 'Could not attach that file.';
+      }
+    },
+    [language]
   );
 
   // Calculate height based on expanded state
@@ -1574,6 +1701,11 @@ export const ChatCommandPanel = forwardRef<ChatCommandPanelRef, ChatCommandPanel
               <PendingWriteMessage
                 pending={msg.pendingWrite}
                 isHebrew={language === 'he'}
+                onAttach={
+                  msg.pendingWrite.canAttach
+                    ? (file) => attachToPending(msg.pendingWrite!.id, file)
+                    : undefined
+                }
                 onRespond={(reply) => {
                   // Send the answer as an ordinary message. The server decides
                   // from what it has parked, so the outcome never depends on
@@ -1709,7 +1841,9 @@ function UnderstoodMessage({
     <div className="flex flex-col gap-1.5 max-w-[85%]" dir={isHebrew ? 'rtl' : 'ltr'}>
       <div className="flex items-start gap-1.5 text-[11px] sm:text-xs text-[var(--v2-text-secondary)]">
         <Info className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-70" strokeWidth={2} />
-        <span>{text}</span>
+        {/* The note arrives on its own line; a figure and its explanation are
+            two sentences, not one. */}
+        <span className="whitespace-pre-line">{text}</span>
       </div>
       {alternatives.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -1793,12 +1927,18 @@ function PendingWriteMessage({
   pending,
   isHebrew,
   onRespond,
+  onAttach,
 }: {
   pending: V4Confirmation;
   isHebrew: boolean;
   onRespond: (reply: string) => void;
+  /** Present only where a document can belong — a quote about to be sent. */
+  onAttach?: (file: File) => Promise<string | null>;
 }) {
   const [answered, setAnswered] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const respond = (reply: string) => {
     // Guard against a double-tap producing two confirmations. The backend's
@@ -1862,7 +2002,51 @@ function PendingWriteMessage({
           >
             {isHebrew ? 'ביטול' : 'Cancel'}
           </button>
+
+          {/*
+            Attach before approving, never after.
+
+            The document is part of what the client will receive, so it belongs
+            on the card the owner is reading — and attaching re-previews the
+            quote, so what they approve is the version that names the file.
+          */}
+          {onAttach && (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webp,.txt,.csv"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+
+                  setAttachError(null);
+                  setAttaching(true);
+                  const error = await onAttach(file);
+                  setAttaching(false);
+                  if (error) setAttachError(error);
+                }}
+              />
+              <button
+                type="button"
+                disabled={attaching}
+                onClick={() => fileRef.current?.click()}
+                className="text-xs font-medium text-[var(--v2-text-secondary)] bg-[var(--v2-bg)] border border-[var(--v2-border)] transition-colors hover:border-[var(--v2-text-muted)] disabled:opacity-50"
+                style={{ borderRadius: '10px', padding: '6px 14px' }}
+              >
+                {attaching
+                  ? isHebrew ? 'מצרף…' : 'Attaching…'
+                  : isHebrew ? 'צרף מסמך' : 'Attach a document'}
+              </button>
+            </>
+          )}
         </div>
+      )}
+
+      {attachError && (
+        <div className="ml-6 mt-2 text-[11px] text-red-600 dark:text-red-400">{attachError}</div>
       )}
     </div>
   );

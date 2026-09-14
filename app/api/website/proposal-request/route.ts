@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { notifyOwnerOfLead } from '@/lib/services/LeadAlertService';
 import { buildAttributionFromRequest } from '@/lib/utils/attribution';
 
 const logger = createLogger({ module: 'ProposalRequestAPI' });
@@ -287,6 +288,27 @@ export async function POST(request: NextRequest) {
        */
       requestLogger.error({ err: activityError, ownerId, contactId }, 'Could not log the request activity');
     }
+
+    /*
+     * Tell the owner. This route's header has always said it does — *"records
+     * what they asked for, and tells the owner"* — and it contained no email
+     * code at all.
+     *
+     * This is the one alert that cannot be automated away: the answer is a
+     * PRICE, and nobody but the owner can write it. An enquiry can be met with
+     * a booking link; a quote request met with a booking link ducks the
+     * question that was actually asked.
+     */
+    notifyOwnerOfLead({
+      ownerId,
+      contactId,
+      kind: 'quote',
+      contactName: data.name,
+      contactEmail: data.email,
+      phone: data.phone,
+      message: data.note,
+      serviceName: service.service_name,
+    }).catch(err => requestLogger.warn({ err, contactId }, 'Owner alert failed (non-blocking)'));
 
     requestLogger.info(
       { ownerId, contactId, serviceId: service.id },

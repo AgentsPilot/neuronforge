@@ -94,7 +94,7 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
             {index > 0 && (
               <div
                 className={`w-8 h-0.5 mx-1 transition-colors ${
-                  isPast || isCompleted ? '' : 'bg-gray-200 dark:bg-gray-700'
+                  isPast || isCompleted ? '' : 'ap-card-2'
                 }`}
                 style={isPast || isCompleted ? { backgroundColor: primaryColor } : {}}
               />
@@ -105,7 +105,7 @@ function StepIndicator({ steps, currentStep, completedSteps, primaryColor, isRTL
                   ? 'text-white shadow-lg'
                   : isCompleted || isPast
                   ? 'text-white'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500'
+                  : 'ap-card-2 ap-ink-3'
               }`}
               style={
                 isActive || isCompleted || isPast
@@ -369,7 +369,7 @@ export function BookingModal({
               {/* Frozen footer — outside the scrolling region, like the header. */}
               {footerActions && (
                 <div
-                  className="flex-shrink-0 border-t border-gray-100 dark:border-slate-700 px-8 py-4 md:px-12"
+                  className="flex-shrink-0 border-t ap-line px-8 py-4 md:px-12"
                   style={{ backgroundColor: theme?.colors?.background || '#ffffff' }}
                   dir={isRTL ? 'rtl' : 'ltr'}
                 >
@@ -378,7 +378,7 @@ export function BookingModal({
                       <button
                         type="button"
                         onClick={footerActions.onBack}
-                        className="flex items-center gap-2 px-4 py-3 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white text-sm font-medium"
+                        className="flex items-center gap-2 px-4 py-3 ap-ink-2 ap-hover-ink text-sm font-medium"
                       >
                         {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
                         {footerActions.backLabel}

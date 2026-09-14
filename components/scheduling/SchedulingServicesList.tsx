@@ -63,7 +63,27 @@ const COLUMN_WIDTHS = ['19%', '13%', '12%', '14%', '12%', '12%', '8%', '10%'] as
 export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false, processorReady = false }: SchedulingServicesListProps) {
   const { t, formatCurrency, currencyCode } = useLanguage();
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  /**
+   * Why the last publish did not happen.
+   *
+   * It used to fail in silence — `if (response.ok)` with no else, and a catch
+   * whose comment read "Silently fail - user can retry". So a refused publish
+   * looked exactly like a successful one: the spinner stopped, nothing moved,
+   * and the owner walked away believing the service was live while it sat in
+   * draft and no client could see it.
+   */
+  const [publishError, setPublishError] = useState<{ serviceId: string; message: string } | null>(null);
   const [recentlyEditedId, setRecentlyEditedId] = useState<string | null>(null); // Track recently edited service for highlight animation
+  /**
+   * Edited while it was LIVE — so it is not merely unpublished, it is off sale.
+   *
+   * Saving sets the row back to `draft`, and the public surfaces require both
+   * `is_active` AND `status = 'active'`. For a service nobody could book yet
+   * that costs nothing. For one that was on the booking page a second ago, it
+   * means clients cannot book it at all until Publish — which is a different
+   * sentence from "your change is not live yet", and the one the owner needs.
+   */
+  const [pausedByEditId, setPausedByEditId] = useState<string | null>(null);
   // Row editing state - stores all editable values for a row
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
 
@@ -179,6 +199,17 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const [optimisticUpdates, setOptimisticUpdates] = useState<Record<string, Partial<SchedulingService>>>({});
   // Delete confirmation state
   const [deleteConfirm, setDeleteConfirm] = useState<{ serviceId: string; serviceName: string } | null>(null);
+  /*
+   * What this service is holding up, fetched before the confirmation shows.
+   *
+   * A landing page is about one service, so deleting the service takes the
+   * page down with it. The owner is told which pages before they decide, not
+   * after a client fails to book on one.
+   */
+  const [deleteRefs, setDeleteRefs] = useState<{
+    landingPages: Array<{ id: string; title: string; status: string }>;
+    smartLinks: Array<{ id: string; name: string | null; code: string; onlyThisService: boolean }>;
+  } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<{ message: string; bookingCount?: number } | null>(null);
   // Toggle active state
@@ -356,6 +387,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     }
 
     setPublishingId(serviceId);
+    setPublishError(null);
     try {
       const response = await fetch(`/api/scheduling/services/${serviceId}/publish`, {
         method: 'POST'
@@ -366,11 +398,26 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         if (recentlyEditedId === serviceId) {
           setRecentlyEditedId(null);
         }
+        // Back on the booking page: there is nothing left to warn about.
+        if (pausedByEditId === serviceId) {
+          setPausedByEditId(null);
+        }
         onServicePublished?.();
         onServicePublishedWithId?.(serviceId);
+      } else {
+        const body = await response.json().catch(() => ({}));
+        logger.error(
+          { status: response.status, serviceId, error: body?.error },
+          'Publish refused'
+        );
+        setPublishError({
+          serviceId,
+          message: body?.error || t('config.services.publish_failed'),
+        });
       }
     } catch (error) {
-      // Silently fail - user can retry
+      logger.error({ err: error, serviceId }, 'Publish request failed');
+      setPublishError({ serviceId, message: t('config.services.publish_failed') });
     } finally {
       setPublishingId(null);
     }
@@ -475,10 +522,24 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
     setDeleteError(null);
     setDeleting(true);
 
-    // Pre-check if service has bookings before showing confirmation
+    setDeleteRefs(null);
+
+    // Pre-check bookings AND what else points at this service, before confirming
     try {
-      const response = await fetch(`/api/scheduling/services/${service.id}/bookings/count`);
+      const [response, refsResponse] = await Promise.all([
+        fetch(`/api/scheduling/services/${service.id}/bookings/count`),
+        fetch(`/api/scheduling/services/${service.id}/references`),
+      ]);
       const data = await response.json();
+
+      // A failed reference lookup must not block the owner deleting their own
+      // service — the confirmation just has less to say.
+      try {
+        const refsData = await refsResponse.json();
+        if (refsResponse.ok && refsData.success) setDeleteRefs(refsData.data);
+      } catch {
+        /* leave deleteRefs null */
+      }
 
       if (response.ok && data.count > 0) {
         // Service has bookings - show error immediately
@@ -664,7 +725,14 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         body: JSON.stringify({
           service_name: newRowValues.name,
           description: newRowValues.description.trim() || null,
-          duration_minutes: newRowValues.duration.trim() !== '' ? (parseInt(newRowValues.duration) || null) : null,
+          // A product has no length and no gap after it. The fields are hidden
+          // once "needs a time" is answered no — sending their last values
+          // anyway would leave a 60-minute download on the record, with nothing
+          // on screen to show for it or to correct it with.
+          duration_minutes: !newRowValues.is_scheduled
+            ? null
+            : (newRowValues.duration.trim() !== '' ? (parseInt(newRowValues.duration) || null) : null),
+          buffer_minutes: !newRowValues.is_scheduled ? 0 : (parseInt(newRowValues.buffer) || 0),
           is_scheduled: newRowValues.is_scheduled,
           sale_mode: newRowValues.sale_mode,
           // A quoted service publishes no collection — the price, and so the
@@ -672,7 +740,6 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           collection: newRowValues.sale_mode === 'proposal'
             ? null
             : (parseFloat(newRowValues.price) > 0 ? newRowValues.collection : null),
-          buffer_minutes: parseInt(newRowValues.buffer) || 0,
           price: parseFloat(newRowValues.price) || 0,
           currency: newRowValues.currency,
           is_active: false, // Start as draft
@@ -798,6 +865,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
   const saveRowEdit = async (serviceId: string) => {
     if (savingRow) return;
 
+    // Read BEFORE the optimistic update below rewrites it to 'draft'.
+    const wasLive = services.find(item => item.id === serviceId)?.status === 'active';
+
     const priced = editRowValues.price !== '' && parseFloat(editRowValues.price) > 0;
 
     const updateData = {
@@ -806,7 +876,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       // A product is not booked against a time, and a free service is not
       // collected at all — storing either would describe something that never
       // happens to a client.
-      duration_minutes: editRowValues.duration.trim() !== '' ? (parseInt(editRowValues.duration) || null) : null,
+      duration_minutes: !editRowValues.is_scheduled
+        ? null
+        : (editRowValues.duration.trim() !== '' ? (parseInt(editRowValues.duration) || null) : null),
       is_scheduled: editRowValues.is_scheduled,
       sale_mode: editRowValues.sale_mode,
       /*
@@ -816,7 +888,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       collection: editRowValues.sale_mode === 'proposal'
         ? null
         : collectionToPersist(editRowValues.collection, priced ? 1 : 0),
-      buffer_minutes: parseInt(editRowValues.buffer) || 0,
+      buffer_minutes: !editRowValues.is_scheduled ? 0 : (parseInt(editRowValues.buffer) || 0),
       price: editRowValues.price !== '' ? parseFloat(editRowValues.price) : null,
       currency: editRowValues.currency,
       payment_type: editRowValues.payment_type,
@@ -861,6 +933,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         });
         // Highlight the row to draw attention to the publish button (persists until dialog closes)
         setRecentlyEditedId(serviceId);
+        if (wasLive) setPausedByEditId(serviceId);
         // Notify parent that this service was edited (now draft)
         onServiceEdited?.(serviceId);
         onSilentRefresh?.();
@@ -1101,7 +1174,24 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               An edited service returns to draft, so the owner has done half of
               the act and the half that reaches clients is still waiting. Said
               here, next to the button that finishes it. */}
-          {!isNew && service && recentlyEditedId === service.id && isDraft && (
+          {/* A publish that did not happen, said out loud. */}
+          {!isNew && service && publishError?.serviceId === service.id && (
+            <div
+              className="flex items-start gap-2.5 px-3.5 py-3 text-[12.5px]"
+              style={{
+                borderRadius: 'var(--v2-radius-button)',
+                backgroundColor: 'rgba(220, 38, 38, 0.10)',
+                border: '1px solid rgba(220, 38, 38, 0.35)',
+                color: 'var(--v2-text-primary)',
+              }}
+              role="alert"
+            >
+              <AlertCircle className="h-4 w-4 flex-shrink-0 mt-px text-red-500" />
+              <span>{publishError.message}</span>
+            </div>
+          )}
+
+          {!isNew && service && recentlyEditedId === service.id && isDraft && !publishError && (
             <div
               className="flex items-start gap-2.5 px-3.5 py-3 text-[12.5px]"
               style={{
@@ -1113,7 +1203,13 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               role="status"
             >
               <AlertCircle className="h-4 w-4 flex-shrink-0 mt-px text-amber-500" />
-              <span>{t('config.services.saved_publish_prompt')}</span>
+              <span>
+                {t(
+                  pausedByEditId === service.id
+                    ? 'config.services.paused_publish_prompt'
+                    : 'config.services.saved_publish_prompt'
+                )}
+              </span>
             </div>
           )}
 
@@ -1826,6 +1922,47 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
                 <p className="text-sm text-[var(--v2-text-secondary)] mb-4">
                   {t('scheduling.service.delete_confirm_message').replace('{name}', deleteConfirm.serviceName)}
                 </p>
+
+                {/* What goes with it. Shown before the decision, listing the
+                    pages by name — "2 pages will be affected" gives the owner
+                    nothing to check.
+
+                    Red rather than amber: a landing page is now DELETED with
+                    its service, not unpublished, and that cannot be undone. The
+                    note below says how to keep one. */}
+                {deleteRefs && (deleteRefs.landingPages.length > 0 ||
+                  deleteRefs.smartLinks.some(l => l.onlyThisService)) && (
+                  <div
+                    className="mb-4 p-3 border border-red-500/30 bg-red-500/10"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                      {t('scheduling.service.delete_takes_down')}
+                    </p>
+                    <ul className="text-sm text-[var(--v2-text-secondary)] space-y-1">
+                      {deleteRefs.landingPages.map(page => (
+                        <li key={page.id} className="flex items-center gap-2">
+                          <span className="w-1 h-1 rounded-full bg-[var(--v2-text-muted)] shrink-0" />
+                          <span className="truncate">{page.title}</span>
+                          {page.status === 'live' && (
+                            <span className="text-xs text-amber-600 dark:text-amber-500 shrink-0">
+                              {t('scheduling.service.delete_page_live')}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                      {deleteRefs.smartLinks.filter(l => l.onlyThisService).map(link => (
+                        <li key={link.id} className="flex items-center gap-2">
+                          <span className="w-1 h-1 rounded-full bg-[var(--v2-text-muted)] shrink-0" />
+                          <span className="truncate">{link.name || `/${link.code}`}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-xs text-[var(--v2-text-muted)] mt-2">
+                      {t('scheduling.service.delete_takes_down_note')}
+                    </p>
+                  </div>
+                )}
 
                 {deleteError && !deleteError.bookingCount && (
                   <div className="flex items-start gap-2 p-3 mb-4 bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-sm" style={{ borderRadius: 'var(--v2-radius-button)' }}>
