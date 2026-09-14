@@ -15,6 +15,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "schema:check": "tsx scripts/schema-check.ts",
     "backfill:intensity": "tsx scripts/backfill-agent-intensity.ts",
     "backfill:intensity:history": "tsx scripts/backfill-intensity-from-history.ts",
     "sync:intensity:analytics": "tsx scripts/sync-intensity-from-analytics.ts",
