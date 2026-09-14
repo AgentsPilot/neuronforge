@@ -177,6 +177,59 @@ export class SmartLinkRepository {
   /**
    * Find smart link by ID
    */
+  /**
+   * Active smart links pinned to a particular service.
+   *
+   * A link with no `metadata.serviceIds` sends people to whatever is bookable
+   * at the time, so it is not a reference to any one service and never matches
+   * here — it heals itself when a service goes away.
+   */
+  async findByServiceId(
+    serviceId: string,
+    userId: string
+  ): Promise<SmartLinkRepositoryResult<SmartLink[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('smart_links')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .contains('metadata', { serviceIds: [serviceId] });
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error, serviceId, userId }, 'Failed to find smart links by service');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Switch links off without destroying them or their click history.
+   */
+  async deactivateMany(
+    linkIds: string[],
+    userId: string
+  ): Promise<SmartLinkRepositoryResult<number>> {
+    try {
+      if (!linkIds.length) return { data: 0, error: null };
+
+      const { error } = await this.supabase
+        .from('smart_links')
+        .update({ is_active: false })
+        .in('id', linkIds)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, count: linkIds.length }, 'Deactivated smart links');
+      return { data: linkIds.length, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, linkIds }, 'Failed to deactivate smart links');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async findById(linkId: string, userId: string): Promise<SmartLinkRepositoryResult<SmartLink>> {
     try {
       const { data, error } = await this.supabase

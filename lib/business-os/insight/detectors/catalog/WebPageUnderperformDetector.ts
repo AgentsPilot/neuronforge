@@ -112,7 +112,7 @@ export class WebPageUnderperformDetector extends BaseDetector {
     // Get booking sources to identify conversions
     const { data: bookings } = await this.supabase
       .from('scheduling_bookings')
-      .select('source_url, client_email')
+      .select('source_url')
       .eq('user_id', userId)
       .gte('created_at', thirtyDaysAgo.toISOString());
 

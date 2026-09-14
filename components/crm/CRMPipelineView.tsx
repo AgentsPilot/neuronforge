@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Mail, Phone, Calendar, GripVertical, User, Clock, CheckSquare } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { localizeStageLabel, type StageLanguage } from '@/lib/business-os/stageLabels';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
 
@@ -11,11 +12,11 @@ import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepos
 function PipelineFlowHeader({
   stages,
   contactCounts,
-  t
+  language
 }: {
   stages: CRMPipelineStage[];
   contactCounts: Record<string, number>;
-  t: (key: string) => string;
+  language: StageLanguage;
 }) {
   const total = Object.values(contactCounts).reduce((sum, c) => sum + c, 0);
 
@@ -37,9 +38,12 @@ function PipelineFlowHeader({
                 className="text-sm font-semibold truncate max-w-full px-2"
                 style={{ color: stage.color || 'var(--v2-text-primary)' }}
               >
-                {t(`crm.stage.${stage.stage_key}`) !== `crm.stage.${stage.stage_key}`
-                  ? t(`crm.stage.${stage.stage_key}`)
-                  : stage.stage_label}
+                {/* One rule for every stage name, shared with the funnel.
+                    The dictionary can only know the stages WE seed; onboarding
+                    invents one pipeline per business, so a key like
+                    `family_enrolled` is never in it and fell straight through
+                    to the stored Hebrew label — on an English board. */}
+                {localizeStageLabel(stage.stage_key, stage.stage_label, language as StageLanguage, stage.stage_type)}
               </span>
               <span
                 className="text-xs font-medium mt-0.5"
@@ -171,7 +175,7 @@ function getStageColors(hexColor: string | null) {
 }
 
 export function CRMPipelineView({ contacts, stages, onContactClick, onContactUpdated }: CRMPipelineViewProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const [draggedContact, setDraggedContact] = useState<CRMContact | null>(null);
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   // Optimistic updates: track contacts being moved (id -> new stage)
@@ -314,7 +318,7 @@ export function CRMPipelineView({ contacts, stages, onContactClick, onContactUpd
       <PipelineFlowHeader
         stages={stages}
         contactCounts={contactCounts}
-        t={t}
+        language={language as StageLanguage}
       />
 
       {/* Kanban Columns - matches flow header segments */}

@@ -24,7 +24,11 @@ import { ChannelsOverviewCard } from './ChannelsOverviewCard';
 import { useCapabilities } from '@/components/business-os/CapabilitiesProvider';
 import { FooterReplay, ReplayModal } from './FooterReplay';
 import { VectorsStrip } from './VectorsStrip';
-import { HandledSection, HandledEntry } from './HandledSection';
+import type { HandledEntry } from './HandledSection';
+import { DailyBriefingCard } from './DailyBriefingCard';
+import { NeedsYouCard, type GapView } from './NeedsYouCard';
+import type { OperationalItem } from './InsightAdvisorCard';
+import { briefingLines } from '@/lib/business-os/briefing/BriefingNarrator';
 import { InsightAdvisorCard } from './InsightAdvisorCard';
 
 // ===========================
@@ -90,6 +94,57 @@ export interface FunnelStats {
   paidAmount: number;
 }
 
+/**
+ * The same funnel over the last 7 days, for the verdict card alone.
+ *
+ * Separate from `FunnelStats` because the two answer different questions. The
+ * funnel map is a shape — where people are stacking up — and reads better over
+ * a month, with each station labelled with the window it was counted over. The
+ * verdict is a sentence badged "This week", and every figure in it has to mean
+ * that week or the badge is a lie. Reusing one set for both is what produced a
+ * card that said "This week" over a 30-day visitor count, a 30-day booking
+ * count and an all-time contact count.
+ */
+/** One labelled number in the verdict card's figure row. */
+export interface VerdictFigure {
+  value: string;
+  label: string;
+}
+
+/**
+ * What the verdict card renders. `text` is always a complete sentence; where
+ * the verdict is a set of numbers, `figures` and `highlight` carry the same
+ * content in a form the card can lay out instead of printing as prose.
+ */
+interface VerdictContent {
+  status: 'ok' | 'warn';
+  text: string;
+  sub: string;
+  when: string;
+  figures?: VerdictFigure[];
+  highlight?: string;
+}
+
+export interface WeeklyStats {
+  /** Visits to any surface this business owns, last 7 days. */
+  found: number;
+  /** Contacts created in the last 7 days — a flow, unlike FunnelStats.touch. */
+  contacts: number;
+  /** Bookings made in the last 7 days. */
+  booked: number;
+  /**
+   * Payments received in the last 7 days.
+   *
+   * The third beat for a business that books nothing. An invoicing practice has
+   * no appointments to count, so `booked` is permanently 0 and the week's story
+   * would never be told at all — this is the same step in its funnel, reached
+   * by a different route.
+   */
+  paidCount: number;
+  /** Money received in the last 7 days. */
+  revenue: number;
+}
+
 // Real CRM pipeline stage from crm_pipeline_stages table
 export interface PipelineStage {
   stage_key: string;
@@ -110,6 +165,25 @@ export interface MilestoneData {
 
 interface LiveDashboardProps {
   userName: string;
+  /**
+   * Everything waiting on the owner — unanswered enquiries, unwritten and
+   * unsent quotes, outstanding intake forms, unpaid invoices.
+   *
+   * Fetched by the page rather than here, so the card and the rest of the
+   * dashboard refresh together and an action cannot leave the two disagreeing.
+   */
+  gaps?: GapView[];
+  /**
+   * Work the platform is offering to take on, and whether it has permission.
+   *
+   * Carouselled inside the advisor itself rather than shown as a second card:
+   * operational advice is still advice, and an approval asked next to the pile
+   * it would clear is a decision, where the same approval on a settings screen
+   * is a checkbox people skip.
+   */
+  automations?: OperationalItem[];
+  /** Refetch after an action clears something, so the row leaves. */
+  onGapsChanged?: () => void;
   greeting?: 'morning' | 'afternoon' | 'evening';
   // Real data from parent
   setupItems?: SetupItem[];
@@ -137,8 +211,6 @@ interface LiveDashboardProps {
    * not a record of what is live.
    */
   isReachable?: boolean;
-  /** How that reach is achieved, so the verdict can name the right thing. */
-  reachSurfaces?: { livePages: boolean; smartLinks: boolean };
   /**
    * How many of each owned surface is live. Counts rather than booleans: the
    * connections panel lists these as channels and has to name them correctly,
@@ -152,9 +224,25 @@ interface LiveDashboardProps {
     landingDrafts: number;
   };
   funnelStats?: FunnelStats;
+  /** Last 7 days, for the verdict card's "This week" sentence. */
+  weeklyStats?: WeeklyStats;
   pipelineStages?: PipelineStage[];  // Real CRM pipeline stages
   milestoneData?: MilestoneData;
   autonomousWorkData?: HandledEntry[];
+  /**
+   * Today's narrated briefing, rendered as a list beside the weekly verdict.
+   * `narrative` is newline-separated, one fact per line.
+   * Null on a cold-start account, or on any day it could not be produced.
+   */
+  briefing?: {
+    narrative: string;
+    date: string;
+    /** Undefined when none is set; the morning email is gated on it. */
+    timezone?: string;
+    isQuiet: boolean;
+    source: 'llm' | 'fallback';
+    emailEnabled: boolean;
+  } | null;
   onConfigureClick?: (stepId: string) => void;
   onAction?: (action: string, data?: unknown) => void;
   // Collapse state
@@ -186,8 +274,8 @@ function AdvisorIdleCard({
       className="adv"
       style={{
         marginTop: '16px',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         borderRadius: '18px',
         padding: isSetup ? '20px 22px' : '16px 22px',
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
@@ -224,13 +312,13 @@ function AdvisorIdleCard({
                   fontSize: '19px',
                   fontWeight: 600,
                   letterSpacing: '-0.02em',
-                  color: '#131A2B',
+                  color: 'var(--v2-text-primary)',
                   margin: '6px 0 8px',
                 }}
               >
                 {t('advisor.headline.setup') || 'Everything is built. None of it is on.'}
               </h3>
-              <p style={{ fontSize: '14px', color: '#697187', lineHeight: 1.55, marginBottom: '16px' }}>
+              <p style={{ fontSize: '14px', color: 'var(--v2-text-secondary)', lineHeight: 1.55, marginBottom: '16px' }}>
                 {t('advisor.desc.setup') || 'I can\'t tell you anything about your business until your business is reachable. One button changes that, and I\'ve done the rest.'}
               </p>
               <button
@@ -251,7 +339,7 @@ function AdvisorIdleCard({
               </button>
             </>
           ) : (
-            <div style={{ fontSize: '13px', color: '#697187', marginTop: '2px' }}>
+            <div style={{ fontSize: '13px', color: 'var(--v2-text-secondary)', marginTop: '2px' }}>
               {t('advisor.eyebrow.waiting') || 'Watching, nothing to flag right now'}
             </div>
           )}
@@ -278,6 +366,9 @@ function useDateInfo(t: (key: string) => string | undefined) {
 
 export function LiveDashboard({
   userName,
+  gaps,
+  automations,
+  onGapsChanged,
   greeting = 'morning',
   setupItems = [],
   setupShape = UNKNOWN_SHAPE,
@@ -286,12 +377,13 @@ export function LiveDashboard({
   actionError,
   onChannelsChanged,
   isReachable,
-  reachSurfaces,
   ownedSurfaces,
   funnelStats,
+  weeklyStats,
   pipelineStages = [],
   milestoneData,
   autonomousWorkData = [],
+  briefing,
   onConfigureClick,
   onAction,
   collapsed = false,
@@ -335,6 +427,40 @@ export function LiveDashboard({
       insight => getProcessForDetector(insight.detector_id)?.eligibleForAutomation
     ).length,
     [pendingInsights]
+  );
+
+  /**
+   * Is there an automation still to be asked about?
+   *
+   * Approved ones are a setting and declined ones are an answer; only the
+   * undecided are advice. Computed here because the advisor slot has to know
+   * whether the operational card would render anything before choosing it.
+   */
+  const operationalPending = useMemo(
+    () => automations ?? [],
+    [automations]
+  );
+
+  /**
+   * Record an approval or a refusal, then refresh.
+   *
+   * The card does not keep its own copy of the answer: the parent refetches and
+   * stops sending the item, which is what makes the page leave the carousel.
+   * One source of truth for what is still undecided.
+   */
+  const handleOperationalDecide = useCallback(
+    async (id: string, approve: boolean) => {
+      try {
+        await fetch('/api/business-os/automations/operational', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, enabled: approve }),
+        });
+      } finally {
+        onGapsChanged?.();
+      }
+    },
+    [onGapsChanged]
   );
 
   const [currentInsightIndex, setCurrentInsightIndex] = useState(0);
@@ -427,7 +553,22 @@ export function LiveDashboard({
     item => (item.id === 'meta_insights' || item.id === 'google_analytics') && item.completed
   );
 
-  const showChannels =
+  /**
+   * Did this business ASK to see where its clients come from?
+   *
+   * Note what this no longer decides: whether the card is on the page. The card
+   * answers two questions — how a client can reach you (your site, your landing
+   * pages, your smart link) and where they came from (connected accounts) — and
+   * the onboarding question was only ever about the second. Gating the whole
+   * card on it hid a business's only booking link behind an answer about
+   * Instagram, with nothing anywhere able to switch it back on.
+   *
+   * All it decides now is the LABEL on the connections control: a reader who
+   * asked gets "Show connections", a reader who declined gets a sentence saying
+   * what is behind it. Either opens the same column, and connecting is the
+   * activation — `hasConnectedChannel` turns this true on its own from then on.
+   */
+  const connectionsWanted =
     hasConnectedChannel || (capabilitiesStatus === 'ready' && capabilities.has('channel_insights'));
 
   /**
@@ -439,14 +580,18 @@ export function LiveDashboard({
    */
   const showPipeline = !(capabilitiesStatus === 'ready' && !capabilities.has('crm'));
 
-  /**
-   * The Meta and Google readiness steps follow the same answer as the card, so
-   * a business is never told to connect Facebook and then left with nowhere to
-   * see what connecting it produced.
+  /*
+   * The Meta and Google steps are never filtered out.
+   *
+   * They used to follow the same answer as the card, on the reasoning that a
+   * business should not be told to connect Facebook and then left with nowhere
+   * to see what connecting it produced. The card is now always on the page, so
+   * that place always exists — and `setupGraph.ts` had already written down the
+   * rule this restores: those steps are present for EVERY business, because the
+   * onboarding answer "must not decide whether the business can ever change its
+   * mind".
    */
-  const readinessItems = showChannels
-    ? setupItems
-    : setupItems.filter(item => item.id !== 'meta_insights' && item.id !== 'google_analytics');
+  const readinessItems = setupItems;
 
   /**
    * The journey, built from what happened rather than from how long it has been.
@@ -580,6 +725,15 @@ export function LiveDashboard({
   // ===========================
 
   const stats = funnelStats || { found: 0, touch: 0, booked: 0, paid: 0, paidAmount: 0 };
+  /*
+   * Memoised, unlike `stats` above: it is a dependency of the verdict memo, and
+   * a fresh `{...}` literal every render would make that memo re-run on every
+   * render and defeat itself.
+   */
+  const weekly = useMemo<WeeklyStats>(
+    () => weeklyStats || { found: 0, contacts: 0, booked: 0, paidCount: 0, revenue: 0 },
+    [weeklyStats]
+  );
 
   /*
    * Is anything of this business actually live?
@@ -599,18 +753,6 @@ export function LiveDashboard({
   const websiteItem = setupItems.find(item => item.id === 'website');
   const hasPublished = isReachable ?? (websiteItem ? websiteItem.completed : false);
 
-  /**
-   * What this business actually publishes under, named for the verdict.
-   *
-   * Not hardcoded to a website: a smart link is the publication for a business
-   * that needs no site, and saying "since you published your site" to one would
-   * describe work it deliberately declined.
-   */
-  const liveSinceLabel = reachSurfaces?.livePages
-    ? (t('verdict.live.when') || 'Since you published')
-    : reachSurfaces?.smartLinks
-      ? (t('verdict.live.when.link') || 'Since your link went out')
-      : (t('verdict.live.when') || 'Since you published');
 
   /** The channel actually producing leads, if one is. */
   const topLeadChannel = (() => {
@@ -887,8 +1029,23 @@ export function LiveDashboard({
   }, [selectedNode, funnelNodes, hasPublished, windowLabel, t]);
 
 
+  /*
+   * Has anything ever happened here — ever, not lately.
+   *
+   * Read off the milestone dates the dashboard already holds, which is the only
+   * signal on this component that looks further back than the reporting period.
+   * A 30-day count cannot answer this: it says a year-old business with one
+   * dead month has never had a visitor, and the card then greets it as a new
+   * account.
+   */
+  const hasEverTraded = !!(
+    milestoneData?.firstVisitor ||
+    milestoneData?.firstEnquiry ||
+    milestoneData?.firstBooking
+  );
+
   // Build verdict from REAL data
-  const verdict = useMemo(() => {
+  const verdict = useMemo<VerdictContent>(() => {
     if (!hasPublished) {
       return {
         status: 'warn' as const,
@@ -898,47 +1055,190 @@ export function LiveDashboard({
       };
     }
 
-    if (stats.booked > 0) {
+    /*
+     * The week's trade, gated on the week's own last step.
+     *
+     * Which step that is depends on the business, not on the platform: a clinic
+     * closes the week with a booking, an invoicing practice closes it with a
+     * payment. `appointments === false` is the chat's own answer that nothing
+     * here is booked against a time, so counting bookings for that business
+     * would count a thing it does not do — `booked` stays 0 forever and the
+     * week's story never gets told at all, however much it trades. Only an
+     * explicit false switches: `null` means the chat has not asked yet, and an
+     * unanswered question must not silently re-label the card.
+     *
+     * Gating on the 30-day count instead would keep this sentence up through a
+     * quiet week and print "0 booked — ₪0" under a green dot. A week with no
+     * trade isn't this verdict; it falls through below.
+     */
+    const takesBookings = setupShape.appointments !== false;
+    const closingCount = takesBookings ? weekly.booked : weekly.paidCount;
+
+    if (closingCount > 0) {
+      /*
+       * Plain words for each beat. "Contacts" was the CRM's name for the middle
+       * step, not a person's — the owner of a barber shop did not gain three
+       * contacts this week, three people got in touch. Resolved once here
+       * because the same label is read twice: by the figure and by the sentence
+       * that labels the list for a screen reader.
+       */
+      const foundLabel = t('verdict.running.found') || 'found you';
+      const reachedLabel = t('verdict.running.reached') || 'got in touch';
+      const closingLabel = takesBookings
+        ? (t('verdict.running.booked') || 'booked')
+        : (t('verdict.running.paid') || 'paid');
+
       return {
         status: 'ok' as const,
-        text: `${stats.found} ${t('verdict.running.found') || 'found you'}. ${stats.touch} ${t('verdict.running.contacts') || 'contacts'}. ${stats.booked} ${t('verdict.running.booked') || 'booked'} — ${formatCurrency(stats.paidAmount)}.`,
-        sub: t('verdict.running.sub') || 'Everything\'s running.',
+        /*
+         * Figures, not a sentence.
+         *
+         * Three counts and a sum read as one 19px run-on line — "284 found you.
+         * 3 contacts. 3 booked — ₪4,350." — is a paragraph the eye has to parse
+         * word by word to find the four numbers that are the whole point. As
+         * labelled figures each number is scannable, and the money can sit
+         * apart from the counts instead of being punctuated onto the end of
+         * them. `text` stays filled for the accessible summary and for any
+         * consumer that wants the one-line form.
+         */
+        text: `${weekly.found} ${foundLabel}. ${weekly.contacts} ${reachedLabel}. ${closingCount} ${closingLabel}${weekly.revenue > 0 ? ` — ${formatCurrency(weekly.revenue)}` : ''}.`,
+        figures: [
+          { value: weekly.found.toLocaleString(), label: foundLabel },
+          { value: weekly.contacts.toLocaleString(), label: reachedLabel },
+          { value: closingCount.toLocaleString(), label: closingLabel },
+        ],
+        /*
+         * Omitted rather than printed as zero.
+         *
+         * Bookings and the money for them are not the same week's events: an
+         * invoiced service is booked now and paid later, so a perfectly normal
+         * week reads `booked: 2, revenue: 0`. Printing "₪0" beside the beat
+         * states a fact the business would read as a loss — nothing came in —
+         * when what actually happened is that nothing has come in YET.
+         */
+        highlight: weekly.revenue > 0 ? formatCurrency(weekly.revenue) : undefined,
+        /*
+         * No closing line. "Everything's running" is a verdict on the platform,
+         * not a fact about the business — printed whenever a booking existed,
+         * with nothing checked behind it. The three beats above already say
+         * what the week held, and the card omits an empty sub rather than
+         * leaving a blank row.
+         */
+        sub: '',
         when: t('verdict.running.when') || 'This week',
       };
     }
 
-    if (stats.found > 0) {
+    /*
+     * A week where nothing happened says so, rather than counting to zero.
+     *
+     * "0 found you. 0 got in touch." is technically the week's figures, and it
+     * is the wrong sentence: a row of zeros reads as a broken card, and it
+     * reports three times over what can be said once.
+     *
+     * Told apart from a business that has never had anything by its history,
+     * not by recent traffic. The gate here used to be a 30-day visitor count,
+     * which meant a business trading for a year that had one dead month was
+     * greeted with "You're live. Waiting for first visitors." — the sentence
+     * written for an account on its first day. Whether anyone has EVER arrived,
+     * enquired or booked is a different question from how last month went, and
+     * it is the one that decides which of these two sentences is true.
+     *
+     * No second line. The obvious one to reach for is the 30-day figure, and
+     * putting it here would walk straight back into the fault this card started
+     * with: a month's number under a badge that says THIS WEEK.
+     */
+    if (weekly.found === 0 && weekly.contacts === 0) {
+      if (!hasEverTraded) {
+        return {
+          status: 'ok' as const,
+          text: t('verdict.justPublished') || 'You\'re live. Waiting for first visitors.',
+          sub: t('verdict.justPublished.sub') || 'Usually within a few hours.',
+          when: t('verdict.justPublished.when') || 'Just published',
+        };
+      }
+
+      return {
+        status: 'ok' as const,
+        text: t('verdict.quiet') || 'No one came this week.',
+        sub: '',
+        when: t('verdict.running.when') || 'This week',
+      };
+    }
+
+    {
       /*
-       * Say where they came from, and name what is actually live.
-       *
-       * "Since you published" was printed whatever the business had published —
-       * and it was printed to businesses that had published nothing, because
-       * the flag behind it defaulted to true. A business reached by a smart
-       * link has published a link, not a site, and the sentence has to be able
-       * to say so. Where a channel is actually producing leads, that is the
-       * more useful fact than a visitor count.
+       * Say where they came from. Where a channel is actually producing leads,
+       * that is the more useful fact than a visitor count on its own.
        */
       const source = topLeadChannel
         ? ` ${t('verdict.live.via') || 'Most came from'} ${topLeadChannel.label}.`
         : '';
 
+      /*
+       * The week's two numbers, and nothing about the business.
+       *
+       * This sentence used to open "You're live" and close on a prediction —
+       * that 25 visitors is roughly where a first enquiry should appear. Both
+       * were addressed to a business in its first days, and this branch is not
+       * that business: it is every week that ends without trade, including the
+       * quiet week of a shop that has traded for a year. Being told it is live,
+       * and then told what to expect at 25 visitors, is the platform talking
+       * about itself.
+       *
+       * What it reports instead is what happened: how many arrived, how many
+       * spoke to you, and where they came from. The badge is the week, because
+       * the figures are the week's.
+       */
       return {
         status: 'ok' as const,
-        text: `${t('verdict.live') || 'You\'re live'}. ${stats.found} ${t('verdict.live.found') || 'people have found you'}.${source}`,
-        sub: stats.found < 25
-          ? (t('verdict.live.early') || 'At this point that tells me nothing — I\'d expect the first enquiry around 25 visitors.')
-          : (t('verdict.live.sub') || 'Looking good so far.'),
-        when: liveSinceLabel,
+        text: `${weekly.found} ${t('verdict.running.found') || 'found you'}. ${weekly.contacts} ${t('verdict.running.reached') || 'got in touch'}.${source}`,
+        sub: t('verdict.live.sub') || 'No one has booked this week.',
+        when: t('verdict.running.when') || 'This week',
       };
+    }
+  }, [hasPublished, reachesByLink, hasEverTraded, setupShape, weekly, topLeadChannel, formatCurrency, t]);
+
+  /*
+   * Today's briefing, ready for the card.
+   *
+   * Withheld on a cold start: an account with nothing in it gets a briefing
+   * about nothing, and the setup checklist is what that space is for. The
+   * `cold_start` reading is the same one AdvisorIdleCard uses to make the same
+   * judgement, so the two cannot disagree about whether the business has begun.
+   *
+   * The date is formatted here rather than in the API because it has to follow
+   * the interface language, which only the client knows — while the DAY it
+   * names is the business's own, resolved server-side. Those are different
+   * questions and each is answered where its answer lives.
+   */
+  const briefingForCard = useMemo(() => {
+    if (!briefing?.narrative) return undefined;
+    if (vectorMaturity?.maturityLevel === 'cold_start') return undefined;
+
+    const lines = briefingLines(briefing.narrative);
+    if (lines.length === 0) return undefined;
+
+    let dateLabel = briefing.date;
+    try {
+      // Parsed as UTC noon: the string is a calendar date with no time, and
+      // parsing it as local midnight can render the previous day west of UTC.
+      dateLabel = new Intl.DateTimeFormat(language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-GB', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      }).format(new Date(`${briefing.date}T12:00:00Z`));
+    } catch {
+      // Keep the ISO date rather than showing nothing.
     }
 
     return {
-      status: 'ok' as const,
-      text: t('verdict.justPublished') || 'You\'re live. Waiting for first visitors.',
-      sub: t('verdict.justPublished.sub') || 'Usually within a few hours.',
-      when: t('verdict.justPublished.when') || 'Just published',
+      lines,
+      dateLabel,
+      emailEnabled: briefing.emailEnabled,
+      timezone: briefing.timezone,
     };
-  }, [hasPublished, reachesByLink, stats, formatCurrency, t]);
+  }, [briefing, vectorMaturity?.maturityLevel, language]);
 
   // Ghost projection (only in setup mode)
   const ghost: GhostProjection | undefined = useMemo(() => {
@@ -1092,8 +1392,8 @@ export function LiveDashboard({
       <div
         className="mb-6"
         style={{
-          background: '#FFFFFF',
-          border: '1px solid #E7E9F1',
+          background: 'var(--v2-surface)',
+          border: '1px solid var(--v2-border)',
           borderRadius: '18px',
           padding: '18px 16px 14px',
           boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
@@ -1105,7 +1405,7 @@ export function LiveDashboard({
             fontWeight: 600,
             letterSpacing: '0.09em',
             textTransform: 'uppercase',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             marginBottom: '14px',
             paddingInlineStart: '2px',
           }}
@@ -1125,7 +1425,7 @@ export function LiveDashboard({
                 [isRTL ? 'right' : 'left']: '7.1%',
                 height: '2px',
                 width: '85.8%',
-                background: '#E7E9F1',
+                background: 'var(--v2-border)',
               }}
             />
             {railFilled > 0 && (
@@ -1219,8 +1519,8 @@ export function LiveDashboard({
                           boxShadow: '0 0 0 4px rgba(249,115,22,0.14)',
                         }
                       : row.state === 'counting'
-                      ? { background: '#FFF8F2', border: '2px dashed #F9A15C' }
-                      : { background: '#FFFFFF', border: '2px solid #E7E9F1' }),
+                      ? { background: 'rgba(249, 115, 22, 0.10)', border: '2px dashed #F9A15C' }
+                      : { background: 'var(--v2-surface)', border: '2px solid var(--v2-border)' }),
                   }}
                 >
                   <i
@@ -1231,10 +1531,10 @@ export function LiveDashboard({
                       display: 'block',
                       background:
                         row.state === 'reached'
-                          ? '#FFFFFF'
+                          ? 'var(--v2-surface)'
                           : row.state === 'counting'
                           ? '#F9A15C'
-                          : '#EDEFF5',
+                          : 'var(--v2-border)',
                     }}
                   />
                 </span>
@@ -1253,9 +1553,9 @@ export function LiveDashboard({
                       fontVariantNumeric: 'tabular-nums',
                       color:
                         row.state === 'reached'
-                          ? '#131A2B'
+                          ? 'var(--v2-text-primary)'
                           : row.state === 'counting'
-                          ? '#C2410C'
+                          ? '#F97316'
                           : '#C6CAD6',
                     }}
                   >
@@ -1268,7 +1568,7 @@ export function LiveDashboard({
                       fontWeight: 500,
                       lineHeight: 1.3,
                       marginTop: '3px',
-                      color: row.state === 'waiting' ? '#9AA1B4' : '#4A5165',
+                      color: row.state === 'waiting' ? 'var(--v2-text-muted)' : 'var(--v2-text-secondary)',
                     }}
                   >
                     {row.name}
@@ -1319,30 +1619,43 @@ export function LiveDashboard({
           list — and it stacks above on narrow screens rather than being cut. */}
       {(
         <div className="usage-readiness-row">
-          <UsageCard />
-          <SystemReadiness
-            items={readinessItems}
-            shape={setupShape}
-            onAction={onAction}
-            pendingActions={pendingActions}
-            actionError={actionError}
-          />
+          {/* Wrapped so the row's own scoped CSS can order them: styled-jsx
+              cannot reach a child component's root node, and the source order
+              here is what the stacked layout below 900px falls back to. */}
+          <div className="ur-usage">
+            <UsageCard />
+          </div>
+          <div className="ur-readiness">
+            <SystemReadiness
+              items={readinessItems}
+              shape={setupShape}
+              onAction={onAction}
+              pendingActions={pendingActions}
+              actionError={actionError}
+            />
+          </div>
         </div>
       )}
 
       <style jsx>{`
         .usage-readiness-row {
           display: grid;
-          /* Usage takes a third, readiness two thirds. Readiness is a task list
+          /* Readiness takes two thirds, usage a third. Readiness is a task list
              that needs the room; usage is a glance.
-             The explicit LTR below is there because the section above sets rtl
-             for Hebrew, which flips grid column order and put the widget on the
-             right. Column POSITION is a layout decision, not a reading
-             direction, so it is pinned; each card sets its own text direction.
+
+             The row MIRRORS with the document. It used to pin direction:ltr, on
+             the reasoning that column position is a layout decision rather than
+             a reading one — but the effect was that both languages put the
+             narrow glance card where the eye lands first in English and last in
+             Hebrew. Readiness is the card that matters; it belongs at the start
+             of the line in both, which is left in English and right in Hebrew.
+
+             Order, not DOM order, does the swapping. Readiness is second in the
+             markup so that when this collapses to one column below 900px the
+             usage card stays on top, which is what the narrow layout wants.
              (No backticks in this comment: it lives inside a template literal,
              and a stray one ends the string and breaks the parse.) */
-          direction: ltr;
-          grid-template-columns: 1fr 2fr;
+          grid-template-columns: 2fr 1fr;
           gap: 16px;
           /* Stretch, not start: the two cards are a pair and ending at
              different depths made the row look broken rather than deliberate.
@@ -1350,20 +1663,107 @@ export function LiveDashboard({
           align-items: stretch;
           margin-bottom: 16px;
         }
+        /* First track is readiness, second is usage — independent of which
+           side those tracks land on, which direction decides. */
+        .ur-readiness {
+          order: 1;
+        }
+        .ur-usage {
+          order: 2;
+        }
+        /* The wrappers must not shorten the cards: each card already sets
+           height 100%, and an auto-height wrapper between them and the
+           stretched track would collapse that back. */
+        .ur-usage,
+        .ur-readiness {
+          min-width: 0;
+          height: 100%;
+        }
         @media (max-width: 900px) {
           .usage-readiness-row {
+            grid-template-columns: 1fr;
+          }
+          /* Stacked: source order wins again, so the glance sits above the
+             task list rather than below it. */
+          .ur-usage,
+          .ur-readiness {
+            order: 0;
+          }
+        }
+        .lv-day-week-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          /* stretch, not start: the two cards are a matched pair and a ragged
+             bottom edge reads as a rendering fault rather than a design. Each
+             one grows to the taller of the two. */
+          align-items: stretch;
+          margin-bottom: 14px;
+        }
+        /* VerdictCard carries its own bottom margin for the stacked case; the
+           grid gap owns the spacing here. */
+        .lv-day-week-row > .lv-verdict {
+          margin-bottom: 0;
+          height: 100%;
+        }
+        .lv-day-week-row > * {
+          height: 100%;
+        }
+        @media (max-width: 900px) {
+          .lv-day-week-row {
             grid-template-columns: 1fr;
           }
         }
       `}</style>
 
-      {/* Verdict Card */}
-      {(
+      {/*
+        Today and this week, side by side.
+
+        Today leads in DOM order, so it lands on the right in RTL and the left
+        in LTR — first in reading order either way, which is what it is: the
+        thing you act on now, with the week beside it as context. They collapse
+        to one column below 900px, where two cards of prose would be unreadable.
+      */}
+      {/*
+        What is waiting on the owner, above everything else.
+
+        Ahead of the briefing on purpose: the briefing is what happened, and
+        this is what has not happened yet. It renders nothing when nothing is
+        stuck, so a business that is on top of things sees the dashboard it had
+        before.
+      */}
+      {gaps && gaps.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <NeedsYouCard gaps={gaps} onChanged={onGapsChanged} />
+        </div>
+      )}
+
+      {briefingForCard ? (
+        <div className="lv-day-week-row">
+          <DailyBriefingCard
+            lines={briefingForCard.lines}
+            dateLabel={briefingForCard.dateLabel}
+            emailEnabled={briefingForCard.emailEnabled}
+            timezone={briefingForCard.timezone}
+          />
+          <VerdictCard
+            status={verdict.status}
+            verdict={verdict.text}
+            verdictSub={verdict.sub}
+            when={verdict.when}
+            figures={verdict.figures}
+            highlight={verdict.highlight}
+            fillHeight
+          />
+        </div>
+      ) : (
         <VerdictCard
           status={verdict.status}
           verdict={verdict.text}
           verdictSub={verdict.sub}
           when={verdict.when}
+          figures={verdict.figures}
+          highlight={verdict.highlight}
         />
       )}
 
@@ -1401,7 +1801,7 @@ export function LiveDashboard({
             <p
               style={{
                 fontSize: '12px',
-                color: '#697187',
+                color: 'var(--v2-text-secondary)',
                 margin: '8px 2px 0',
                 lineHeight: 1.45,
               }}
@@ -1415,30 +1815,43 @@ export function LiveDashboard({
         </>
       )}
 
-      {/* Channels: what is connected, and what it brought in. Placed after the
+      {/* How clients reach you, and where they came from. Placed after the
           pipeline so the reader has seen the funnel before being asked which
-          channels feed it. */}
-      {showChannels && (
-        <ChannelsOverviewCard
-          performance={channelPerformance}
-          onChanged={onChannelsChanged}
-          /* Already on this component from `/api/business-os/stats` — the
-             connections column lists owned surfaces beside connected accounts,
-             and needed no query of its own to do it. Undefined rather than
-             false while the stats call is in flight: "not told yet" must not
-             render a Publish button at a business that has a published site. */
-          owned={ownedSurfaces}
-          onAction={action => onAction?.(action)}
-        />
-      )}
+          channels feed it.
 
-      {/* The advisor. The engine's pending detections are the advice; when it
-          has none, the card says so in one line rather than narrating the
-          account's age back at the reader. The only scripted copy left is the
-          setup pitch, which exists because its buttons genuinely do something. */}
-      {(pendingInsights.length > 0 ? (
+          Unconditional. This card carries the smart link — which for a business
+          with no website is the ONLY way a client reaches it — and that has
+          nothing to do with whether they wanted their Instagram read. */}
+      <ChannelsOverviewCard
+        performance={channelPerformance}
+        onChanged={onChannelsChanged}
+        /* The onboarding answer decides how the connections control reads,
+           never whether this card is here. */
+        offerConnections={!connectionsWanted}
+        /* Already on this component from `/api/business-os/stats` — the
+           connections column lists owned surfaces beside connected accounts,
+           and needed no query of its own to do it. Undefined rather than
+           false while the stats call is in flight: "not told yet" must not
+           render a Publish button at a business that has a published site. */
+        owned={ownedSurfaces}
+        onAction={action => onAction?.(action)}
+      />
+
+      {/*
+        ONE advisor.
+
+        The engine's pending detections are the advice; undecided automations
+        are carouselled after them, so approving one is a page of the same card
+        rather than a second card stacked above it. When there is neither, the
+        idle card says so in one line rather than narrating the account's age
+        back at the reader — the only scripted copy left is the setup pitch,
+        which exists because its buttons genuinely do something.
+      */}
+      {(pendingInsights.length > 0 || operationalPending.length > 0 ? (
         <InsightAdvisorCard
           insights={pendingInsights}
+          operational={operationalPending}
+          onOperationalDecide={handleOperationalDecide}
           currentIndex={currentInsightIndex}
           projection={pendingInsights[currentInsightIndex]?.projection}
           automationConfig={automationConfig}
@@ -1477,20 +1890,17 @@ export function LiveDashboard({
         />
       )}
 
-      {/* One handled section, same reason as the strip above — this hand-rolled
-          copy and the real HandledSection inside InsightAdvisorCard both showed
-          the same work whenever there was a pending insight. */}
-      {autonomousWork.length > 0 && (
-        <div style={{ marginTop: '16px' }}>
-          <HandledSection
-            entries={autonomousWork.slice(0, 4).map(work => ({
-              title: work.processName,
-              detail: work.summary || `${work.outcome.itemsSucceeded} completed`,
-            }))}
-            standalone
-          />
-        </div>
-      )}
+      {/* The standalone "What I've handled for you today" block used to sit
+          here. It has moved into the briefing at the top of the page, which
+          covers the same ground in one narrative rather than a second list of
+          today's events three cards below the first.
+
+          Note for whoever reads this next: the comment that used to sit here
+          said a second copy lived inside InsightAdvisorCard. It does not, and
+          did not — HandledSection is rendered nowhere as of this change. It is
+          still exported from ./index.ts. Either give it a home or delete it;
+          this codebase has already carried two orphaned insight components
+          (ReportCard, MyDaySection) long enough for both to be forgotten. */}
 
         </>
       )}

@@ -81,19 +81,19 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'bg-white dark:bg-slate-950'} ${className || ''}`}
+      className={`apc-sec ${styles?.padding || 'py-12 sm:py-16'} ${styles?.background || 'ap-bg'} ${className || ''}`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Header */}
         {(title || subtitle) && (
-          <div className="text-center mb-12">
+          <div className="apc-sec-head text-center mb-12">
             {title && (
               <motion.h2
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className="text-3xl sm:text-4xl font-bold text-gray-900 dark:text-white"
-                style={{ fontFamily: 'var(--website-font-heading)' }}
+                className="text-3xl sm:text-4xl font-bold ap-ink"
+                style={{ fontFamily: 'var(--ap-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -104,8 +104,8 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className="mt-4 text-lg text-gray-600 dark:text-gray-300 max-w-2xl mx-auto"
-                style={{ fontFamily: 'var(--website-font-body)' }}
+                className="mt-4 text-lg ap-ink-2 max-w-2xl mx-auto"
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -126,20 +126,20 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                 className="text-center"
               >
                 <div
-                  className="w-14 h-14 mx-auto rounded-xl flex items-center justify-center text-2xl mb-5"
+                  className="apc-icon w-14 h-14 mx-auto rounded-xl flex items-center justify-center text-2xl mb-5"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
                   {getIconComponent(feature.icon as string | undefined, primaryColor)}
                 </div>
                 <h3
-                  className="text-lg font-semibold text-gray-900 dark:text-white mb-2"
-                  style={{ fontFamily: 'var(--website-font-heading)' }}
+                  className="text-lg font-semibold ap-ink mb-2"
+                  style={{ fontFamily: 'var(--ap-font-heading)' }}
                 >
                   {feature.title}
                 </h3>
                 <p
-                  className="text-gray-600 dark:text-gray-400"
-                  style={{ fontFamily: 'var(--website-font-body)' }}
+                  className="ap-ink-2"
+                  style={{ fontFamily: 'var(--ap-font-body)' }}
                 >
                   {feature.description}
                 </p>
@@ -161,21 +161,21 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                 className="flex gap-4"
               >
                 <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
+                  className="apc-icon w-10 h-10 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
                   {getIconComponent(feature.icon as string | undefined, primaryColor)}
                 </div>
                 <div>
                   <h3
-                    className="text-lg font-semibold text-gray-900 dark:text-white mb-1"
-                    style={{ fontFamily: 'var(--website-font-heading)' }}
+                    className="text-lg font-semibold ap-ink mb-1"
+                    style={{ fontFamily: 'var(--ap-font-heading)' }}
                   >
                     {feature.title}
                   </h3>
                   <p
-                    className="text-gray-600 dark:text-gray-400"
-                    style={{ fontFamily: 'var(--website-font-body)' }}
+                    className="ap-ink-2"
+                    style={{ fontFamily: 'var(--ap-font-body)' }}
                   >
                     {feature.description}
                   </p>
@@ -200,21 +200,21 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                 }`}
               >
                 <div
-                  className="w-20 h-20 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0"
+                  className="apc-icon w-20 h-20 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
                   {getIconComponent(feature.icon as string | undefined, primaryColor)}
                 </div>
                 <div className={`text-center lg:text-start ${isRTL ? 'lg:text-end' : ''}`}>
                   <h3
-                    className="text-2xl font-bold text-gray-900 dark:text-white mb-4"
-                    style={{ fontFamily: 'var(--website-font-heading)' }}
+                    className="text-2xl font-bold ap-ink mb-4"
+                    style={{ fontFamily: 'var(--ap-font-heading)' }}
                   >
                     {feature.title}
                   </h3>
                   <p
-                    className="text-lg text-gray-600 dark:text-gray-400 max-w-lg"
-                    style={{ fontFamily: 'var(--website-font-body)' }}
+                    className="text-lg ap-ink-2 max-w-lg"
+                    style={{ fontFamily: 'var(--ap-font-body)' }}
                   >
                     {feature.description}
                   </p>
@@ -227,7 +227,7 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
         {/* Centered Layout */}
         {layout === 'centered' && (
           <div className="max-w-3xl mx-auto">
-            <div className="grid grid-cols-2 gap-6">
+            <div className="apc-grid grid grid-cols-2 gap-6">
               {features.map((feature, index) => (
                 <motion.div
                   key={index}
@@ -235,18 +235,17 @@ export function FeaturesBlock({ content, styles, theme, isRTL, className }: Bloc
                   whileInView={{ opacity: 1, scale: 1 }}
                   viewport={{ once: true }}
                   transition={{ delay: index * 0.1 }}
-                  className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-slate-800/50 rounded-xl"
-                  style={{ borderRadius: theme?.borderRadius || '0.75rem' }}
+                  className="apc-panel flex items-center gap-3 p-4 ap-card-2 rounded-xl"
                 >
                   <span
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0"
+                    className="apc-icon w-8 h-8 rounded-full flex items-center justify-center text-sm flex-shrink-0"
                     style={{ backgroundColor: primaryColor, color: 'white' }}
                   >
                     {getIconComponent(feature.icon as string | undefined, '#ffffff')}
                   </span>
                   <span
-                    className="font-medium text-gray-900 dark:text-white"
-                    style={{ fontFamily: 'var(--website-font-body)' }}
+                    className="font-medium ap-ink"
+                    style={{ fontFamily: 'var(--ap-font-body)' }}
                   >
                     {feature.title}
                   </span>

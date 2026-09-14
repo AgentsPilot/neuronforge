@@ -132,13 +132,13 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="bg-white dark:bg-slate-800 rounded-2xl shadow-lg p-6 sm:p-8 text-center"
+          className="ap-card rounded-2xl shadow-lg p-6 sm:p-8 text-center"
           style={{ borderRadius: theme?.borderRadius || '1rem' }}
         >
           {description && (
             <p
-              className="text-gray-600 dark:text-gray-300 mb-4"
-              style={{ fontFamily: 'var(--website-font-body)' }}
+              className="ap-ink-2 mb-4"
+              style={{ fontFamily: 'var(--ap-font-body)' }}
             >
               {description}
             </p>
@@ -146,12 +146,12 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
 
           {amount && (
             <p
-              className="text-4xl font-bold text-gray-900 dark:text-white mb-6"
-              style={{ fontFamily: 'var(--website-font-heading)' }}
+              className="text-4xl font-bold ap-ink mb-6"
+              style={{ fontFamily: 'var(--ap-font-heading)' }}
             >
               {formatAmount(amount, currency)}
               {payment_type === 'subscription' && (
-                <span className="text-base font-normal text-gray-500">/month</span>
+                <span className="text-base font-normal ap-ink-3">/month</span>
               )}
             </p>
           )}
@@ -190,7 +190,7 @@ export function PaymentButtonBlock({ content, styles, theme, locale, isRTL, clas
           )}
 
           {/* Security badges */}
-          <div className="mt-6 flex items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+          <div className="mt-6 flex items-center justify-center gap-4 text-sm ap-ink-3">
             <div className="flex items-center gap-1">
               <Lock className="w-4 h-4" />
               <span>{labels.secure}</span>

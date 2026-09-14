@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
 import {
   Settings,
   CreditCard,
@@ -94,12 +95,14 @@ export function UserMenu({ triggerIcon = 'avatar' }: UserMenuProps) {
         console.error('Logout error:', error)
       }
 
-      // Use window.location.href for clean redirect
-      window.location.href = '/login'
+      // A full page load, because the destination is the marketing site's
+      // sign-in page — a different app on a different origin. A relative
+      // `/login` is a 404 here.
+      window.location.href = marketingLoginUrl()
 
     } catch (error) {
       console.error('Unexpected logout error:', error)
-      window.location.href = '/login'
+      window.location.href = marketingLoginUrl()
     }
   }
 

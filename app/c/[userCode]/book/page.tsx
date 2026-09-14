@@ -12,11 +12,11 @@
 import { Metadata } from 'next';
 import type { PageTheme } from '@/components/website/blocks/types';
 import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
-import { notFound } from 'next/navigation';
 import { StandaloneBookingWidget } from './StandaloneBookingWidget';
 import type { CollectionMethod } from '@/lib/business-os/setup/setupGraph';
 import type { Locale } from '@/lib/i18n/config';
 import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
+import { PublicErrorScreen } from '@/components/public/PublicErrorScreen';
 import { PublicFooter } from '@/components/public/PublicFooter';
 import { PublicHeader } from '@/components/public/PublicHeader';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
@@ -55,6 +55,14 @@ interface BusinessData {
     is_scheduled?: boolean | null;
     /** How the money arrives, or null where the service is free. */
     collection?: 'online' | 'invoice' | null;
+    /**
+     * Bought outright, or quoted first.
+     *
+     * Same reason as `paymentPlan` below — the endpoint returns it and the
+     * modal acts on it, and a type that omitted it here would let a quoted
+     * service reach the widget looking like a direct sale.
+     */
+    sale_mode?: 'direct' | 'proposal';
     /**
      * How this service may be paid over time.
      *
@@ -171,8 +179,34 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
     resolvePublicBranding({ by: 'userCode', userCode }),
   ]);
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * RENDERED, NOT THROWN.
+   *
+   * This was `notFound()`, and it ran AFTER the two awaits above. By then the
+   * segment layout — which resolves branding straight from the database — has
+   * already finished and Next has flushed the response shell, so the status is
+   * committed as 200 and there is no longer a render pass to throw into. Next
+   * tries anyway, deferring the not-found boundary onto a timer, and its own
+   * `ErrorBoundary` calls `usePathname` outside a render:
+   *
+   *   TypeError: Cannot read properties of null (reading 'useContext')
+   *     at usePathname (next/dist/client/components/navigation.js)
+   *     at ErrorBoundary (next/dist/client/components/error-boundary.js)
+   *     at Timeout._onTimeout
+   *
+   * The tell was the status code: a page calling `notFound()` should answer
+   * 404, and this one answered 200 — proof the headers were already gone. It
+   * was intermittent because it depends on the flush beating the fetches, which
+   * on a warm server it usually does and on a cold one often does not.
+   *
+   * Returning cannot fail that way whatever the stream has already done. It is
+   * also the better page: a smart link is handed out on WhatsApp and in bio
+   * links, so a visitor who arrives after the service was withdrawn should meet
+   * the business's own colours and language, not a bare platform 404.
+   */
   if (!businessData?.success || !brand) {
-    notFound();
+    return <PublicErrorScreen brand={brand} kind="not-found" />;
   }
 
   // Filter services if `services` param is provided (comma-separated IDs)
@@ -245,7 +279,21 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
               primaryColor={brand.theme.colors.primary}
               locale={language}
               initialServiceId={initialServiceId}
-              theme={businessData.config?.theme ?? (brand.theme as PageTheme)}
+              /*
+               * The resolved brand theme, not the conversion API's raw blob.
+               *
+               * `config.theme` is `business_profiles.theme` served verbatim —
+               * it never passes through `completeTheme`, so it may be the
+               * four-field object the design tab saves, with no ground, no
+               * radius, no archetype id and no composition. Preferring it put
+               * an unthemed white modal inside a fully themed shell: the page
+               * around it near-black at 30px corners, the booking dialog in it
+               * platform white at 8px.
+               *
+               * `brand.theme` is the same business's look, completed from the
+               * template it chose — which is what every other surface renders.
+               */
+              theme={brand.theme as PageTheme}
               // Two separate reasons a booking may not ask for payment: the
               // business does not collect that way, or it does and Stripe is not
               // connected yet. Either one drops the step — a payment screen with
@@ -258,7 +306,7 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
           {/* Hours, phone and address, for the client who would rather call
               than book online. Renders nothing when the business has given us
               none of it. */}
-          <BusinessInfoPanel brand={brand} variant="footer" show={['contact', 'address', 'hours']} />
+          <BusinessInfoPanel brand={brand} variant="footer" show={['contact', 'address', 'hours', 'links']} />
 
           <PublicFooter brand={brand} showContact={false} />
         </div>

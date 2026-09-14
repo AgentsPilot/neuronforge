@@ -442,7 +442,8 @@ export class WebsiteActionHandler {
   }
 
   private async regenerateContent(blockType: string | undefined, userId: string): Promise<ActionResult> {
-    // TODO: Implement AI content regeneration using WebsiteAutoBuildService
+    // TODO: Implement AI content regeneration through WebsiteGenerationService,
+    // which is the live generation path.
     return {
       success: false,
       message: blockType

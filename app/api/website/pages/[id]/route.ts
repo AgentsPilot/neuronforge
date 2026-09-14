@@ -10,10 +10,19 @@ import { getUser } from '@/lib/auth';
 import { claimBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { completeTheme } from '@/lib/branding/theme';
 import { WebsitePageRepository, WebsitePageUpdate } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { z } from 'zod';
+import {
+  HERO_LAYOUTS,
+  SERVICES_LAYOUTS,
+  CTA_LAYOUTS,
+  GALLERY_LAYOUTS,
+  PRICING_LAYOUTS,
+  COMPOSITIONS,
+} from '@/lib/website-builder/pageTheme';
 
 const logger = createLogger({ module: 'WebsitePageAPI' });
 
@@ -26,19 +35,67 @@ const UpdatePageSchema = z.object({
   subdomain: z.string().min(3).max(30).nullable().optional(),
   custom_domain: z.string().nullable().optional(),
   website_language: z.enum(['en', 'es', 'he']).optional(),
+  /*
+   * The whole design, not only its palette.
+   *
+   * Zod strips what a schema does not declare, so the four fields an archetype
+   * adds — its id, its type scale, its layout arrangement and the Hebrew faces
+   * substituted where the Latin one carries no Hebrew glyphs — would be dropped
+   * on every save from the editor. The page would keep its colours and quietly
+   * lose its typography and its layout, which is the hardest kind of bug to
+   * notice: nothing errors, the page just drifts back towards the default.
+   */
   theme: z.object({
+    id: z.string().optional(),
+    source: z.string().optional(),
+    /*
+     * Validated against the same runtime array the stylesheets are keyed on, for
+     * the reason the layout enums below give: a `z.string()` here would accept a
+     * composition no stylesheet implements and store it, and the page would then
+     * render in the fallback bones with nothing anywhere saying why.
+     */
+    composition: z.enum(COMPOSITIONS).optional(),
+    /*
+     * Every colour optional, individually.
+     *
+     * `completeTheme` merges key by key precisely so a partial theme works: its
+     * own note says a theme carrying only `colors.primary` must still yield a
+     * full seven-colour palette. Requiring all seven here contradicted that and
+     * forced every caller to send values it does not edit — which is how the
+     * design tab came to carry a pre-archetype `#FFFFFF` and `0.5rem` through a
+     * form that changes neither.
+     */
     colors: z.object({
-      primary: z.string(),
-      secondary: z.string(),
-      accent: z.string(),
-      background: z.string(),
-      surface: z.string(),
-      text: z.string(),
-      textSecondary: z.string()
+      primary: z.string().optional(),
+      secondary: z.string().optional(),
+      accent: z.string().optional(),
+      background: z.string().optional(),
+      surface: z.string().optional(),
+      text: z.string().optional(),
+      textSecondary: z.string().optional()
     }).optional(),
     fonts: z.object({
-      heading: z.string(),
-      body: z.string()
+      heading: z.string().optional(),
+      body: z.string().optional(),
+      hebrewHeading: z.string().optional(),
+      hebrewBody: z.string().optional()
+    }).optional(),
+    scale: z.object({
+      h1: z.string(),
+      h2: z.string(),
+      h3: z.string(),
+      body: z.string(),
+      small: z.string()
+    }).optional(),
+    // Validated against the same arrays the block components' types come from,
+    // so a name no block implements is refused at the door rather than stored
+    // and silently ignored at render time.
+    layouts: z.object({
+      hero: z.enum(HERO_LAYOUTS),
+      services: z.enum(SERVICES_LAYOUTS),
+      cta: z.enum(CTA_LAYOUTS),
+      gallery: z.enum(GALLERY_LAYOUTS),
+      pricing: z.enum(PRICING_LAYOUTS)
     }).optional(),
     borderRadius: z.string().optional(),
     spacing: z.enum(['compact', 'normal', 'spacious']).optional()
@@ -110,7 +167,31 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     if (validated.seo_keywords !== undefined) updates.seo_keywords = validated.seo_keywords;
     if (validated.subdomain !== undefined) updates.subdomain = validated.subdomain;
     if (validated.custom_domain !== undefined) updates.custom_domain = validated.custom_domain;
-    if (validated.theme !== undefined) updates.theme = validated.theme;
+    /*
+     * A theme is stored whole, never in pieces.
+     *
+     * The editor sends only what changed — often a single colour — and this
+     * wrote that fragment straight into the column, so a page that had a
+     * complete design ended up with one field and nothing else. Every surface
+     * then fell back to platform defaults for the rest, which reads as the
+     * design silently reverting.
+     *
+     * `completeTheme` fills the gaps key by key, in the order that respects
+     * what the business actually chose: the fragment first, then the design its
+     * `template_id` names, then the platform defaults. Passing null through
+     * unchanged, because clearing a theme is a real instruction.
+     */
+    if (validated.theme !== undefined) {
+      if (validated.theme === null) {
+        updates.theme = null;
+      } else {
+        const existing = await pageRepo.findById(id, user.id);
+        updates.theme = completeTheme(
+          { ...(existing.data?.theme ?? {}), ...validated.theme },
+          existing.data?.template_id
+        );
+      }
+    }
     if (validated.favicon_url !== undefined) updates.favicon_url = validated.favicon_url;
     if (validated.og_image_url !== undefined) updates.og_image_url = validated.og_image_url;
     if (validated.website_language !== undefined) updates.website_language = validated.website_language;

@@ -15,7 +15,6 @@ import { fromMinorUnits } from '@/lib/payments/refundMath';
 import { resolveInvoicePaymentIntent } from '@/lib/payments/invoicePaymentIntent';
 import { syncBookingsForTransactions } from '@/lib/payments/syncBookingPaymentState';
 import { resolveProcessorFee, feeColumns } from '@/lib/payments/processorFee';
-import { promoteToClientStage } from '@/lib/crm/StageTypeUtils';
 import { phaseDurationFor, planPhases, planSchedule, type PlanFrequency } from '@/lib/payments/planSchedule';
 import { paymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
 import { describeChargeAccount } from '@/lib/payments/stripeAccountContext';
@@ -1480,12 +1479,24 @@ async function handleConnectInvoicePaid(invoice: Stripe.Invoice, connectAccountI
   } else {
     console.log('ℹ️  [Webhook] No platform invoice found by stripe_invoice_id, checking metadata...');
 
-    // Fallback: Look up by invoice_id from Checkout Session metadata
-    // When paying via Checkout Session, the invoice.metadata contains invoice_id
-    const metadataInvoiceId = invoice.metadata?.invoice_id;
+    /*
+     * Fallback: find our own invoice id in the Stripe invoice's metadata.
+     *
+     * Two writers, two key names, and this knew only one. The Checkout Session
+     * path writes `invoice_id`; the booking and invoice system writes
+     * `neuronforge_invoice_id` (BookingLifecycleService). So for every invoice
+     * raised with a booking, this fallback looked up `undefined`, found
+     * nothing, and the webhook gave up — which matters most in exactly the case
+     * the fallback exists for: the `invoice.paid` event arriving before we have
+     * stored `stripe_invoice_id` on our row.
+     *
+     * Both keys are read now, ours first.
+     */
+    const metadataInvoiceId =
+      invoice.metadata?.neuronforge_invoice_id || invoice.metadata?.invoice_id;
 
     if (metadataInvoiceId) {
-      console.log('🔍 [Webhook] Looking up by metadata.invoice_id:', metadataInvoiceId);
+      console.log('🔍 [Webhook] Looking up platform invoice by metadata:', metadataInvoiceId);
       const { data: invoiceByMetadata, error: metadataLookupError } = await supabaseAdmin
         .from('payment_invoices')
         .select('*')
@@ -1905,23 +1916,19 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
     console.log('✅ [Webhook] Invoice marked as paid:', platformInvoice.invoice_number);
 
     /*
-     * They have paid, so move them along their OWN pipeline.
+     * The pipeline is not moved from here any more.
      *
-     * This wrote `stage: 'customer'` — a key that exists only in the default
-     * pipeline the onboarding service seeds. A business running its own stages
-     * (this account's are פנייה → ייעוץ ראשוני → לקוח → הושלם) had its paying
-     * clients written into a stage with no column on the board.
+     * This promoted the contact on payment — first by writing the literal
+     * `stage: 'customer'`, a key only the seeded default pipeline contains,
+     * then via `promoteToClientStage`. Both answered the wrong question.
+     * Payment is not the relationship: a business billing by invoice has
+     * clients who have not paid, and a free intro call is not a client at all.
      *
-     * `promoteToClientStage` reads the business's configured client stage and
-     * refuses to demote anyone already at or past it.
+     * A booking being CONFIRMED is the rule, and it lives in one place — the
+     * `promote_contact_on_confirmed_booking` trigger. What this path owes it is
+     * the confirmation itself, below: a booking held pending because money was
+     * owed is confirmed once that money arrives.
      */
-    if (platformInvoice.contact_id) {
-      await promoteToClientStage(
-        supabaseAdmin,
-        platformInvoice.user_id,
-        platformInvoice.contact_id
-      );
-    }
 
     // Update linked booking's payment_status if invoice has a booking_id
     if (platformInvoice.booking_id) {
@@ -1930,9 +1937,22 @@ async function handleConnectCheckoutCompleted(session: Stripe.Checkout.Session, 
         .from('scheduling_bookings')
         .update({
           payment_status: 'paid',
+          /*
+           * And confirm it, if it was only pending because money was owed.
+           *
+           * This set `payment_status` alone, so a booking taken with payment
+           * up front stayed `pending` forever once paid — while the website's
+           * own finalize route set it `confirmed` for the same event. Two paths
+           * through the same purchase left the booking in two different states.
+           *
+           * Scoped to `pending` by the filter below so a cancelled or completed
+           * booking is never resurrected by a late webhook.
+           */
+          status: 'confirmed',
           updated_at: new Date().toISOString()
         })
-        .eq('id', platformInvoice.booking_id);
+        .eq('id', platformInvoice.booking_id)
+        .eq('status', 'pending');
 
       if (bookingError) {
         console.error('❌ [Webhook] Failed to update booking payment status:', bookingError);

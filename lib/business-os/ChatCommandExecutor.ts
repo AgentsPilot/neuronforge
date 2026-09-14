@@ -91,7 +91,25 @@ async function verifyCapabilityAccess(
   }
 
   try {
-    // Check if user has this capability activated
+    /*
+     * Still the stored rows, DELIBERATELY.
+     *
+     * This gate was briefly pointed at the derived shape, and it is the one
+     * place that must not be: it is FAIL-CLOSED, and a refusal here is silence
+     * — the user asks for something and is told the assistant cannot do it,
+     * with nothing to act on. Two shapes would have gone quiet that way: a
+     * business selling only products loses `scheduling` and with it
+     * `service.create`, though a catalogue is the one thing every business has;
+     * a business charging nothing loses `payments` and with it `invoice.query`.
+     *
+     * The derived shape decides what is SHOWN — settings tabs, navigation,
+     * dashboard cards — where being wrong costs a tab nobody needed. Deciding
+     * what may be SAID costs an answer, and that trade is not the same one.
+     *
+     * So the rows survive here, and only here, as a legacy allow-list. Whatever
+     * replaces this gate should refuse per ACTION, on the shape, and say WHY —
+     * never return silence on a coarse key.
+     */
     const { data: userCapability } = await supabaseServer
       .from('user_capabilities')
       .select(`

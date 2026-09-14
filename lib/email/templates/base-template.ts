@@ -22,6 +22,29 @@ export interface BrandingData {
    */
   headingFont?: string;
   bodyFont?: string;
+
+  /**
+   * The neutrals, derived from the same theme by `lib/email/branding`.
+   *
+   * All optional, and every one falls back below to the exact value this shell
+   * hardcoded before — so a caller that predates this renders byte-identically.
+   * An email has no custom properties to inherit, so these arrive already
+   * resolved and are written inline.
+   */
+  /** Black or white, whichever reads on `primaryColor`. */
+  onBrand?: string;
+  /** Behind the card. */
+  pageColor?: string;
+  /** The card itself. */
+  surfaceColor?: string;
+  /** The footer band, and any recessed panel. */
+  mutedSurfaceColor?: string;
+  borderColor?: string;
+  textColor?: string;
+  mutedTextColor?: string;
+  /** The card's corners; the button's are derived from it. */
+  radius?: string;
+  buttonRadius?: string;
 }
 
 /**
@@ -74,6 +97,19 @@ export function wrapInBrandedTemplate(
   const bodyStack = fontStack(branding.bodyFont);
   const headingStack = fontStack(branding.headingFont);
 
+  /*
+   * Every fallback is the value this file used to hardcode, so an email sent
+   * for a business with no theme is unchanged to the byte.
+   */
+  const onBrand = branding.onBrand || '#ffffff';
+  const page = branding.pageColor || '#f5f5f5';
+  const surface = branding.surfaceColor || '#ffffff';
+  const mutedSurface = branding.mutedSurfaceColor || '#fafafa';
+  const line = branding.borderColor || '#e5e5e5';
+  const ink = branding.textColor || '#1a1a1a';
+  const inkMuted = branding.mutedTextColor || '#666666';
+  const radius = branding.radius || '12px';
+
   return `<!DOCTYPE html>
 <html lang="${locale}" dir="${dir}">
 <head>
@@ -91,55 +127,62 @@ export function wrapInBrandedTemplate(
   </noscript>
   <![endif]-->${fontLink(branding.headingFont, branding.bodyFont)}
 </head>
-<body style="margin: 0; padding: 0; font-family: ${bodyStack}; background-color: #f5f5f5; -webkit-font-smoothing: antialiased;">
-  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #f5f5f5;">
+<body style="margin: 0; padding: 0; font-family: ${bodyStack}; color: ${ink}; background-color: ${page}; -webkit-font-smoothing: antialiased;">
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: ${page};">
     <tr>
       <td style="padding: 24px 16px;">
         <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto;">
 
-          <!-- Header with Logo/Business Name -->
+          <!--
+            THE WORDMARK, QUIET, ON THE PAGE GROUND.
+
+            This was a full-bleed block filled with the brand colour and the
+            business name reversed out of it — the standard transactional-SaaS
+            header, and the one thing none of the six templates does. Every one
+            of them opens with a small wordmark on the page's own ground and
+            keeps the brand colour for the single thing the reader is meant to
+            do. Stone has no accent colour at all, so an indigo or flame banner
+            above its receipt contradicted the design outright.
+
+            The logo where there is one, the name set in the heading face where
+            there is not, and a hairline under it instead of a fill.
+          -->
           <tr>
-            <td style="padding: 24px 32px; background-color: ${primaryColor}; border-radius: 12px 12px 0 0;">
-              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                <tr>
-                  <td style="text-align: center;">
-                    ${logoUrl ? `
-                    <img src="${logoUrl}" alt="${businessName}" style="max-height: 48px; max-width: 200px; display: inline-block;" />
-                    ` : `
-                    <h1 style="margin: 0; font-family: ${headingStack}; font-size: 24px; font-weight: 600; color: #ffffff; letter-spacing: -0.5px;">
-                      ${businessName}
-                    </h1>
-                    `}
-                  </td>
-                </tr>
-              </table>
+            <td style="padding: 4px 4px 18px; text-align: ${textAlign}; direction: ${dir};">
+              ${logoUrl ? `
+              <img src="${logoUrl}" alt="${businessName}" style="max-height: 34px; max-width: 180px; display: inline-block;" />
+              ` : `
+              <span style="font-family: ${headingStack}; font-size: 16px; font-weight: 600; color: ${ink}; letter-spacing: -0.02em;">
+                ${businessName}
+              </span>
+              `}
             </td>
           </tr>
 
-          <!-- Main Content -->
+          <!-- The message itself, on one panel with a hairline round it. -->
           <tr>
-            <td style="padding: 32px; background-color: #ffffff; border-left: 1px solid #e5e5e5; border-right: 1px solid #e5e5e5; text-align: ${textAlign}; direction: ${dir};">
+            <td style="padding: 34px 32px; background-color: ${surface}; border: 1px solid ${line}; border-radius: ${radius}; text-align: ${textAlign}; direction: ${dir};">
               ${content}
             </td>
           </tr>
 
-          <!-- Footer -->
+          <!--
+            The footer, outside the panel rather than welded to it.
+
+            A second filled block under the first made the whole message read as
+            three stacked bars. Every template ends the same way: one rule, the
+            name, the address, nothing else.
+          -->
           <tr>
-            <td style="padding: 24px 32px; background-color: #fafafa; border: 1px solid #e5e5e5; border-top: none; border-radius: 0 0 12px 12px;">
-              <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                <tr>
-                  <td style="text-align: center;">
-                    <p style="margin: 0 0 8px; font-size: 14px; color: #666666;">
-                      ${businessName}
-                    </p>
-                    ${websiteUrl ? `
-                    <p style="margin: 0; font-size: 13px;">
-                      <a href="${websiteUrl}" style="color: ${primaryColor}; text-decoration: none;">${websiteUrl.replace(/^https?:\/\//, '')}</a>
-                    </p>
-                    ` : ''}
-                  </td>
-                </tr>
-              </table>
+            <td style="padding: 18px 4px 4px; text-align: ${textAlign}; direction: ${dir};">
+              <p style="margin: 0 0 4px; font-size: 13px; color: ${inkMuted};">
+                ${businessName}
+              </p>
+              ${websiteUrl ? `
+              <p style="margin: 0; font-size: 13px;">
+                <a href="${websiteUrl}" style="color: ${inkMuted}; text-decoration: none;">${websiteUrl.replace(/^https?:\/\//, '')}</a>
+              </p>
+              ` : ''}
             </td>
           </tr>
 
@@ -152,6 +195,29 @@ export function wrapInBrandedTemplate(
 }
 
 /**
+ * The neutrals a helper needs, from a branding object or from the values this
+ * file has always hardcoded.
+ *
+ * The helpers are called from eleven templates and were the last place a
+ * business's own colours stopped: every one of them passed
+ * `{ backgroundColor: branding.primaryColor }` and then got a `#ffffff` label,
+ * an `8px` corner and an `#f0f0f0` rule regardless. Passing the whole branding
+ * object instead is what carries the rest — and `onBrand` is the one that
+ * matters, because a white label on a pale brand colour is unreadable.
+ */
+function helperTokens(branding?: BrandingData) {
+  return {
+    brand: branding?.primaryColor || '#4F46E5',
+    onBrand: branding?.onBrand || '#ffffff',
+    line: branding?.borderColor || '#f0f0f0',
+    ink: branding?.textColor || '#1a1a1a',
+    inkMuted: branding?.mutedTextColor || '#666666',
+    mutedSurface: branding?.mutedSurfaceColor || '#fafafa',
+    radius: branding?.buttonRadius || '8px',
+  };
+}
+
+/**
  * Generate a styled button for email templates
  */
 export function emailButton(
@@ -161,18 +227,20 @@ export function emailButton(
     color?: string;
     backgroundColor?: string;
     fullWidth?: boolean;
+    branding?: BrandingData;
   } = {}
 ): string {
+  const tokens = helperTokens(options.branding);
   const {
-    color = '#ffffff',
-    backgroundColor = '#4F46E5',
+    color = tokens.onBrand,
+    backgroundColor = tokens.brand,
     fullWidth = false
   } = options;
 
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" ${fullWidth ? 'width="100%"' : ''} style="margin: 16px 0;">
       <tr>
-        <td style="border-radius: 8px; background-color: ${backgroundColor};">
+        <td style="border-radius: ${tokens.radius}; background-color: ${backgroundColor};">
           <a href="${url}" target="_blank" style="display: inline-block; padding: 14px 28px; font-size: 15px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
             ${text}
           </a>
@@ -191,14 +259,16 @@ export function emailOutlineButton(
   options: {
     color?: string;
     fullWidth?: boolean;
+    branding?: BrandingData;
   } = {}
 ): string {
-  const { color = '#4F46E5', fullWidth = false } = options;
+  const tokens = helperTokens(options.branding);
+  const { color = tokens.brand, fullWidth = false } = options;
 
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" ${fullWidth ? 'width="100%"' : ''} style="margin: 8px 0;">
       <tr>
-        <td style="border-radius: 8px; border: 2px solid ${color}; background-color: transparent;">
+        <td style="border-radius: ${tokens.radius}; border: 2px solid ${color}; background-color: transparent;">
           <a href="${url}" target="_blank" style="display: inline-block; padding: 12px 24px; font-size: 14px; font-weight: 600; color: ${color}; text-decoration: none; text-align: center; ${fullWidth ? 'width: 100%; box-sizing: border-box;' : ''}">
             ${text}
           </a>
@@ -211,14 +281,15 @@ export function emailOutlineButton(
 /**
  * Generate a detail row (label: value format)
  */
-export function emailDetailRow(label: string, value: string): string {
+export function emailDetailRow(label: string, value: string, branding?: BrandingData): string {
+  const tokens = helperTokens(branding);
   return `
     <tr>
-      <td style="padding: 8px 0; border-bottom: 1px solid #f0f0f0;">
+      <td style="padding: 8px 0; border-bottom: 1px solid ${tokens.line};">
         <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
           <tr>
-            <td style="font-size: 14px; color: #666666; width: 35%;">${label}</td>
-            <td style="font-size: 14px; color: #1a1a1a; font-weight: 500;">${value}</td>
+            <td style="font-size: 14px; color: ${tokens.inkMuted}; width: 35%;">${label}</td>
+            <td style="font-size: 14px; color: ${tokens.ink}; font-weight: 500;">${value}</td>
           </tr>
         </table>
       </td>
@@ -229,9 +300,10 @@ export function emailDetailRow(label: string, value: string): string {
 /**
  * Generate a details table wrapper
  */
-export function emailDetailsTable(rows: string[]): string {
+export function emailDetailsTable(rows: string[], branding?: BrandingData): string {
+  const tokens = helperTokens(branding);
   return `
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 16px 0; background-color: #fafafa; border-radius: 8px; padding: 16px;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 16px 0; background-color: ${tokens.mutedSurface}; border-radius: ${tokens.radius}; padding: 16px;">
       <tbody>
         ${rows.join('')}
       </tbody>

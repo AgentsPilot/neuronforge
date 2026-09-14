@@ -16,6 +16,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteBookingConfirmAPI' });
@@ -140,28 +141,18 @@ export async function POST(request: NextRequest) {
       .eq('user_id', ownerId)
       .order('position', { ascending: true });
 
-    // Find best "active client" stage - priority: 'active_client' > 'active' > 'client' > highest non-terminal
-    let activeClientStage = 'client'; // fallback
-    if (pipelineStages && pipelineStages.length > 0) {
-      const stageKeys = pipelineStages.map(s => s.stage_key);
-      if (stageKeys.includes('active_client')) {
-        activeClientStage = 'active_client';
-      } else if (stageKeys.includes('active')) {
-        activeClientStage = 'active';
-      } else if (stageKeys.includes('client')) {
-        activeClientStage = 'client';
-      } else {
-        // Use the stage with highest position but not terminal stages
-        const validStages = pipelineStages.filter(
-          s => !['completed', 'inactive', 'past_client'].includes(s.stage_key)
-        );
-        if (validStages.length > 0) {
-          activeClientStage = validStages[validStages.length - 1].stage_key;
-        }
-      }
-    }
+    /*
+     * A new contact starts at the beginning; the booking promotes them.
+     *
+     * This guessed the client stage from English keys and fell back to the
+     * literal `'client'` — a key a Hebrew pipeline does not contain, so the
+     * contact was written with a stage matching no column on the board. It is
+     * not this route's decision any more: the booking below is written
+     * `confirmed`, and `promote_contact_on_confirmed_booking` moves them.
+     */
+    const activeClientStage = pipelineStages?.[0]?.stage_key ?? 'lead';
 
-    requestLogger.debug({ activeClientStage, pipelineStages }, 'Determined active client stage for paid booking');
+    requestLogger.debug({ startingStage: activeClientStage }, 'Starting stage for a new contact');
 
     // Create/update CRM contact
     let contactId: string | null = null;
@@ -208,7 +199,9 @@ export async function POST(request: NextRequest) {
           email: data.email,
           phone: data.phone || null,
           source: 'website_booking',
-          stage: activeClientStage // Use user's active client pipeline stage
+          // The first stage. The trigger promotes them when the booking below
+          // is confirmed, which is the only rule that decides this now.
+          stage: activeClientStage
         })
         .select('id')
         .single();
@@ -272,6 +265,18 @@ export async function POST(request: NextRequest) {
     // skipInvoice=true since payment is already completed
     BookingEmailService.sendBookingConfirmation(booking.id, ownerId, { skipInvoice: true })
       .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Booking confirmation email failed'));
+
+    /*
+     * And put it in the owner's calendar (non-blocking).
+     *
+     * A booking made HERE — by a client, through the public site — never
+     * reached the calendar, while one the owner made themselves always did. So
+     * the hour showed as free to the only person who needed to know it was
+     * taken. Never awaited: the appointment stands whether or not a calendar
+     * plugin answers.
+     */
+    syncBookingToOwnerCalendar(booking.id, ownerId, requestLogger)
+      .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Calendar sync failed'));
 
     // No payment receipt here. A receipt asserts that money arrived, and this
     // route no longer claims that for a priced booking — it records nothing, so

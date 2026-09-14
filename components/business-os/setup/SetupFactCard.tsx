@@ -96,27 +96,18 @@ export function SetupFactCard({
         transition: 'opacity 0.3s',
       }}
     >
-      {onChange && (
-        <button
-          onClick={onChange}
-          style={{
-            position: 'absolute',
-            insetInlineEnd: '12px',
-            top: '13px',
-            fontFamily: bodyFont,
-            fontSize: '10.5px',
-            color: 'var(--v2-text-muted)',
-            border: '1px solid var(--v2-border)',
-            borderRadius: '999px',
-            padding: '2px 9px',
-            background: 'var(--v2-surface)',
-            cursor: 'pointer',
-          }}
-        >
-          {changeLabel}
-        </button>
-      )}
+      {/*
+        The change button is IN the header row, not floating over it.
 
+        It used to be positioned absolutely in the top corner, which works only
+        while every title is short. "How clients reach you" is not — the cards
+        sit in a 220px-minimum grid, so the title wraps to the corner the button
+        was sitting in and the two printed on top of each other.
+
+        As a flex sibling pushed to the inline end, the title simply gets the
+        space that is left. `alignSelf: flex-start` keeps it level with the
+        first line when the title does wrap, rather than drifting to the middle.
+      */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
         <span
           style={{
@@ -140,10 +131,33 @@ export function SetupFactCard({
             color: 'var(--v2-text-primary)',
             margin: 0,
             minWidth: 0,
+            flex: 1,
           }}
         >
           {title}
         </h4>
+
+        {onChange && (
+          <button
+            onClick={onChange}
+            style={{
+              flexShrink: 0,
+              alignSelf: 'flex-start',
+              marginTop: '4px',
+              fontFamily: bodyFont,
+              fontSize: '10.5px',
+              color: 'var(--v2-text-muted)',
+              border: '1px solid var(--v2-border)',
+              borderRadius: '999px',
+              padding: '2px 9px',
+              background: 'var(--v2-surface)',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {changeLabel}
+          </button>
+        )}
       </div>
 
       {value && (

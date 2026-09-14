@@ -76,6 +76,14 @@ export interface JourneyVector {
   key: string;
   dataPoints: number;
   threshold: number;
+  /**
+   * The volume condition behind a time-based vector, when it has one.
+   *
+   * `price` and `ret` unlock on elapsed days AND on having enough behind them.
+   * The date alone is arithmetic and can be promised; the volume cannot, so a
+   * node whose volume is still short must not print a date it may not honour.
+   */
+  also?: { metric: string; current: number; threshold: number };
 }
 
 export interface JourneyInput {
@@ -170,7 +178,8 @@ function datedUnlock(
   anchor: number | null,
   thresholdDays: number,
   zero: number | null,
-  now: number
+  now: number,
+  vector?: JourneyVector
 ): JourneyNode {
   if (anchor === null) {
     return {
@@ -178,11 +187,39 @@ function datedUnlock(
       day: null, date: null, progress: null, offered: null,
     };
   }
+
   const unlocksAt = anchor + thresholdDays * DAY_MS;
+  const dayReached = now >= unlocksAt;
+
+  /*
+   * The clock is necessary and not sufficient.
+   *
+   * These vectors also need enough behind them — twenty bookings before the
+   * platform says anything about price, ten clients before a lapse is a rate.
+   * While that side is short, the node shows the COUNT and no date: the date
+   * would be a promise about the calendar for an unlock the calendar does not
+   * control, and this rail's whole discipline is never printing a date it
+   * cannot keep. Once the volume is there, the date is arithmetic again.
+   */
+  const also = vector?.also;
+  const volumeShort = !!also && also.current < also.threshold;
+
+  if (volumeShort) {
+    return {
+      key,
+      kind: 'unlock',
+      state: also!.current > 0 ? 'counting' : 'waiting',
+      day: null,
+      date: null,
+      progress: { current: also!.current, threshold: also!.threshold },
+      offered: null,
+    };
+  }
+
   return {
     key,
     kind: 'unlock',
-    state: now >= unlocksAt ? 'reached' : 'counting',
+    state: dayReached ? 'reached' : 'counting',
     day: dayNumber(unlocksAt, zero),
     date: new Date(unlocksAt).toISOString(),
     progress: null,
@@ -294,8 +331,8 @@ export function buildJourney(input: JourneyInput): Journey {
     countedUnlock('conv', vector('conv'), parse(input.convCrossedAt), zero),
     // 42 and 60 are not chosen here — they are read off the vector, which is
     // the one place a threshold is allowed to live. See VECTOR_THRESHOLDS.
-    datedUnlock('price', firstBooking, vector('price')?.threshold ?? 42, zero, now),
-    datedUnlock('ret', firstClient, vector('ret')?.threshold ?? 60, zero, now),
+    datedUnlock('price', firstBooking, vector('price')?.threshold ?? 42, zero, now, vector('price')),
+    datedUnlock('ret', firstClient, vector('ret')?.threshold ?? 60, zero, now, vector('ret')),
     handoverUnlock(parse(input.firstAutomationAt), input.automatableNow ?? 0, zero),
   ];
 

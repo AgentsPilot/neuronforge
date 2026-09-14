@@ -59,9 +59,22 @@ interface ChannelsOverviewCardProps {
   };
   /** Publish a site, create a link. The dashboard owns what those do. */
   onAction?: (action: string) => void;
+  /**
+   * Lead with a reason rather than a bare control.
+   *
+   * True for a business that declined channel tracking during onboarding and
+   * has connected nothing since. "Show connections" tells that reader nothing —
+   * they have no cause to think there is anything behind it — so the same
+   * control wears a sentence instead. It opens exactly the same column.
+   *
+   * The onboarding answer decides the LABEL and nothing else. It used to decide
+   * whether this card existed at all, which is how a business reached only by a
+   * booking link ended up unable to see that link.
+   */
+  offerConnections?: boolean;
 }
 
-export function ChannelsOverviewCard({ performance, onChanged, owned, onAction }: ChannelsOverviewCardProps) {
+export function ChannelsOverviewCard({ performance, onChanged, owned, onAction, offerConnections = false }: ChannelsOverviewCardProps) {
   const { isRTL, t } = useLanguage();
 
   /*
@@ -122,8 +135,8 @@ export function ChannelsOverviewCard({ performance, onChanged, owned, onAction }
         marginTop: '20px',
         marginBottom: '20px',
         borderRadius: '18px',
-        background: '#FFFFFF',
-        border: '1px solid #E7E9F1',
+        background: 'var(--v2-surface)',
+        border: '1px solid var(--v2-border)',
         overflow: 'hidden',
       }}
     >
@@ -143,20 +156,31 @@ export function ChannelsOverviewCard({ performance, onChanged, owned, onAction }
           it. The "hide" form waits for the column to actually appear, since
           offering to hide something still loading is a control with nothing
           behind it. */}
-      <div className="flex px-4 pt-3" style={{ minHeight: '28px' }}>
+      <div className="flex items-center gap-3 px-4 pt-3" style={{ minHeight: '28px' }}>
+        {/* The offer, for a reader with no reason to press the toggle.
+            Once the column is open it is the ordinary control again — there is
+            nothing left to explain, and a standing sentence would be noise. */}
+        {offerConnections && !showConnections && (
+          <p className="m-0 text-[11.5px] leading-snug text-[var(--v2-text-muted)] min-w-0">
+            {t('channels.discover') || 'Know where your clients came from — connect Instagram, Facebook or Google.'}
+          </p>
+        )}
+
         {(!showConnections || connectionsReady) && (
         <button
           type="button"
           onClick={toggleConnections}
           aria-expanded={showConnections}
-          className="ms-auto inline-flex items-center gap-1.5 text-xs font-medium text-[#6B7280] hover:text-[#111827] transition-colors"
+          className="ms-auto flex-shrink-0 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] transition-colors"
         >
           {showConnections
             ? <PanelLeftClose className="w-3.5 h-3.5" />
             : <PanelLeftOpen className="w-3.5 h-3.5" />}
           {showConnections
             ? (t('channels.hideConnections') || 'Hide connections')
-            : (t('channels.showConnections') || 'Show connections')}
+            : offerConnections
+              ? (t('channels.discoverAction') || 'Connect')
+              : (t('channels.showConnections') || 'Show connections')}
         </button>
         )}
       </div>

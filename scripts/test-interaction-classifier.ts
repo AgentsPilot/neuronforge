@@ -8,6 +8,22 @@
  * Usage: npx tsx scripts/test-interaction-classifier.ts
  */
 
+/*
+ * A module, not a global script — and that one line matters far beyond this
+ * file.
+ *
+ * With no import or export, TypeScript treats a file as a GLOBAL script, so the
+ * `describe` and `it` helpers defined below were declared in the global scope of
+ * the whole program. They shadowed the ones from `@types/jest` in every real
+ * test file, and `it('...', async () => {})` failed to typecheck against a
+ * signature expecting `() => boolean` — 3,394 errors across `__tests__`, enough
+ * that a genuine type error in a test could never have been seen.
+ *
+ * `export {}` makes this a module and confines its helpers to it. It changes
+ * nothing about how the script runs.
+ */
+export {};
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 require('dotenv').config({ path: '.env.local' });
 

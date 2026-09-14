@@ -9,9 +9,12 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, WebsitePageInsert, PageTheme } from '@/lib/repositories/WebsitePageRepository';
-import { adoptBusinessTemplate, adoptBusinessTheme } from '@/lib/business-os/businessTemplate';
+import { adoptBusinessTemplate, adoptBusinessTheme, getBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { resolveBusinessSubdomain } from '@/lib/business-os/businessSubdomain';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
+import { completeTheme } from '@/lib/branding/theme';
+import { imageForSection } from '@/lib/services/StockImageService';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPagesAPI' });
@@ -44,11 +47,29 @@ function getBlocksForOfferingType(
     getStarted: language === 'he' ? 'התחל עכשיו' : language === 'es' ? 'Comenzar' : 'Get Started'
   };
 
+
   const blocks: Array<{ block_type: string; defaultContent: Record<string, unknown> }> = [
     {
       block_type: 'header',
       defaultContent: {
+        /*
+         * The business name, not an empty string.
+         *
+         * This was blank, and with no menu items either the header rendered as
+         * a bare strip with one button in it — which read as a missing block
+         * rather than a deliberate one. The generator already receives
+         * `companyName` and writes it further down; it just started from
+         * nothing. Overwritten below for the same reason the logo is.
+         */
         logo_text: '',
+        /*
+         * Anchors to this page's own sections, never away from it.
+         *
+         * A landing page sells one thing, so a nav that leaves it is working
+         * against the page. These point at the sections this generator is about
+         * to create, so the menu helps someone move DOWN the page rather than
+         * off it. Filtered below to whatever actually got built.
+         */
         menu_items: [],
         cta_button: {
           text: needsBooking ? ctaText.book : (isCourse ? ctaText.enroll : ctaText.getStarted),
@@ -222,24 +243,79 @@ export async function POST(request: NextRequest) {
      */
     const subdomain = await resolveBusinessSubdomain(user.id);
 
-    // Convert theme to PageTheme format
-    const pageTheme: PageTheme = {
-      colors: {
-        primary: validated.theme.colors.primary,
-        secondary: validated.theme.colors.secondary,
-        accent: validated.theme.colors.secondary,
-        background: '#ffffff',
-        surface: '#f9fafb',
-        text: '#1a1a1a',
-        textSecondary: '#6b7280'
+    /*
+     * The landing page's look.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHY THIS IS NOT ASSEMBLED BY HAND ANY MORE
+     *
+     * It used to be: two colours off the wizard, then `#ffffff`, `#f9fafb`,
+     * `#1a1a1a`, `normal` and `8px` written in literally. That produced a theme
+     * that contradicted the `template_id` stored in the same row — a landing
+     * page created on Lumen, which is a DARK archetype with 30px corners,
+     * rendered white with 8px corners. It also carried no `id`, no `scale`, no
+     * `layouts` and no `composition`, so every block fell back to its default
+     * arrangement and the archetype reached the page as nothing but two hex
+     * values.
+     *
+     * `completeTheme` is the one merge that already knows the answer: the
+     * wizard's overrides first, then the named archetype, then the platform
+     * default. It also forces `id`, `source`, `scale`, `layouts` and
+     * `composition` to come from the archetype itself, so a caller cannot
+     * half-apply a design.
+     */
+    /*
+     * Which design to complete the theme from.
+     *
+     * The wizard sends a `templateId` when the owner picks a look, and sends
+     * none when they choose to reuse what the business already wears. Falling
+     * back to the business's own template is what makes that second case mean
+     * "the same as everything else I have" rather than "the platform default" —
+     * without it, reusing an existing theme produced a page with no archetype,
+     * no type scale, no layouts and no composition, which is the one outcome
+     * the owner was explicitly trying to avoid.
+     */
+    /*
+     * THE BUSINESS'S TEMPLATE WINS. A landing page does not get its own.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * WHY
+     *
+     * A landing page is the same business as the invoice that follows it and the
+     * booking confirmation after that. When it could carry its own template, a
+     * client met a near-black Bold page, booked, and received a warm cream
+     * receipt — and nothing about that reads as one business. The template is a
+     * property of the business, not of a page.
+     *
+     * The wizard's own picker made this reachable in one click, and the split
+     * was permanent: `adoptBusinessTemplate` is adopt-only, so a page choosing
+     * a different template never changed the business's, and the only repair
+     * was to re-apply the business template, which silently overwrote the page.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE ONE EXCEPTION, WHICH IS NOT A DIFFERENT TEMPLATE
+     *
+     * A business whose FIRST surface is a landing page has no template yet. Its
+     * choice there establishes the look for everything it later builds, which
+     * is the same first-surface-wins rule the website already follows. That is
+     * the business choosing, not the page diverging.
+     */
+    const businessTemplate = await getBusinessTemplate(user.id);
+    const designId = businessTemplate.templateId ?? validated.templateId ?? undefined;
+
+    const pageTheme: PageTheme = completeTheme(
+      {
+        colors: {
+          primary: validated.theme.colors.primary,
+          secondary: validated.theme.colors.secondary,
+        },
+        fonts: {
+          heading: validated.theme.fonts.heading,
+          body: validated.theme.fonts.body,
+        },
       },
-      fonts: {
-        heading: validated.theme.fonts.heading,
-        body: validated.theme.fonts.body
-      },
-      spacing: 'normal',
-      borderRadius: '8px'
-    };
+      designId
+    );
 
     // Create the landing page
     const pageData: WebsitePageInsert = {
@@ -252,7 +328,15 @@ export async function POST(request: NextRequest) {
       title: validated.serviceName,
       subdomain: subdomain || null,
       status: validated.shouldPublish ? 'live' : 'draft',
-      template_id: validated.templateId || null,
+      /*
+       * The template this page actually renders in — which is the business's.
+       *
+       * This wrote `validated.templateId`, so a page built on the business's
+       * look recorded null, and a page that had chosen its own recorded the
+       * difference. Writing what was actually used keeps the column and the
+       * theme beside it telling the same story.
+       */
+      template_id: designId || null,
       theme: pageTheme,
       // Store the language for RTL support and localized content
       website_language: validated.language
@@ -275,8 +359,10 @@ export async function POST(request: NextRequest) {
      * afterwards would choose its own and leave the landing page the odd one
      * out. A business that already has a template keeps it; this does nothing.
      */
-    if (validated.templateId) {
-      await adoptBusinessTemplate(user.id, validated.templateId);
+    if (designId) {
+      // Only ever an adoption: `designId` is already the business's template
+      // where it had one, so this is the first-surface case and nothing else.
+      await adoptBusinessTemplate(user.id, designId);
     } else {
       await adoptBusinessTheme(user.id, pageTheme as unknown as Record<string, unknown>);
     }
@@ -291,6 +377,22 @@ export async function POST(request: NextRequest) {
       hasBookingWidget: landingPageBlocks.some(b => b.block_type === 'booking_widget')
     }, 'Generating landing page blocks based on offering type');
 
+    /*
+     * A photograph for the hero, chosen the same way the website's is.
+     *
+     * A landing page is one offer on one screen, so its hero is doing more work
+     * than a website's — and `HeroBlock` disables the split layout without an
+     * image, which is the layout both Warm and Bold ask for. Never fatal: null
+     * means the hero keeps the gradient it had before this existed.
+     */
+    const { data: businessProfile } = await businessProfileRepository.findByUserId(user.id);
+    const heroImage = await imageForSection(
+      user.id,
+      businessProfile?.vertical ?? null,
+      'portrait',
+      'hero'
+    );
+
     // Create blocks with generated content
     const blocksToCreate: WebsiteBlockInsert[] = landingPageBlocks.map((block, index) => {
       // Merge generated content if available
@@ -304,9 +406,35 @@ export async function POST(request: NextRequest) {
 
       // For header, record whether to show the logo and the company name. The
       // logo URL is injected at read time from the business profile.
+      if (block.block_type === 'hero' && heroImage) {
+        content.background_image = heroImage;
+        content.background_type = 'image';
+      }
+
       if (block.block_type === 'header') {
         content.show_logo = validated.showLogo ?? false;
         content.logo_text = validated.companyName || '';
+
+        /*
+         * A menu of this page's own sections.
+         *
+         * Built from the blocks actually being created, so it can never point
+         * at a section that is not there — the reason it is assembled here
+         * rather than in the defaults above.
+         */
+        const sectionLinks: Array<{ label: string; anchor: string }> = [];
+        const has = (type: string) =>
+          landingPageBlocks.some((b: { block_type: string }) => b.block_type === type);
+
+        const lang = validated.language ?? 'en';
+        const label = (he: string, es: string, en: string) =>
+          lang === 'he' ? he : lang === 'es' ? es : en;
+
+        if (has('pricing')) sectionLinks.push({ label: label('מחירים', 'Precios', 'Pricing'), anchor: '#pricing' });
+        if (has('faq')) sectionLinks.push({ label: label('שאלות נפוצות', 'Preguntas', 'FAQ'), anchor: '#faq' });
+        if (has('booking_widget')) sectionLinks.push({ label: label('לקביעת תור', 'Reservar', 'Book'), anchor: '#booking' });
+
+        content.menu_items = sectionLinks;
       }
 
       // For hero, always set headline to service name (AI only generates subheadline)
@@ -317,7 +445,6 @@ export async function POST(request: NextRequest) {
       // For booking_widget, add the specific service and client flow
       if (block.block_type === 'booking_widget') {
         content.services = [validated.serviceId];
-        content.service_filter = [validated.serviceId];
         // Use new split steps as default - scheduling + client_info for bookable services
         content.client_flow = validated.clientFlow || ['scheduling', 'client_info', 'confirmation'];
       }

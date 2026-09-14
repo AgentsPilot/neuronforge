@@ -44,7 +44,7 @@ export function PublicShell({
     <div
       dir={brand.dir}
       lang={brand.locale}
-      className="min-h-screen px-4 py-8"
+      className="apc-shell min-h-screen px-4 py-8"
       style={{ background: 'var(--ap-bg)', color: 'var(--ap-text)' }}
     >
       <div className={`mx-auto ${WIDTHS[width]}`}>

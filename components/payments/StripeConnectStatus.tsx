@@ -370,76 +370,121 @@ export function StripeConnectStatus({ detailed = false, onStatusChange }: Props)
   // Fully connected and onboarded - show success state
   return (
     <>
-      <div
-        className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4"
-        style={{ borderRadius: 'var(--v2-radius-card)' }}
-        dir={isRTL ? 'rtl' : 'ltr'}
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
-              <h3 className="font-semibold text-green-900 dark:text-green-100">
-                {t('payments.stripe.connected')}
-              </h3>
-            </div>
-            {detailed ? (
-              <div className="mt-3 space-y-2 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-green-800 dark:text-green-200">{t('payments.stripe.ready_to_accept')}:</span>
-                  <span className="font-medium text-green-600 dark:text-green-400 flex items-center gap-1">
-                    <CheckCircle2 className="w-4 h-4" />
-                    {t('payments.stripe.yes')}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-green-800 dark:text-green-200">{t('payments.stripe.bank_connected')}:</span>
-                  <span className={`font-medium flex items-center gap-1 ${account.payouts_enabled ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                    {account.payouts_enabled ? (
-                      <>
-                        <CheckCircle2 className="w-4 h-4" />
-                        {t('payments.stripe.yes')}
-                      </>
-                    ) : (
-                      <>
-                        <Clock className="w-4 h-4" />
-                        {t('payments.stripe.pending')}
-                      </>
-                    )}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-green-800 dark:text-green-200">{t('payments.stripe.currency')}:</span>
-                  <span className="font-medium text-green-700 dark:text-green-300">{account.currency?.toUpperCase()}</span>
-                </div>
+      {detailed ? (
+        /*
+         * The connected state, as a status card rather than a green notice.
+         *
+         * It used to be a block of green with three `label: value` rows stacked
+         * down it, which read as an alert about something that had gone right.
+         * Once this sat beside the rest of the configuration dialog the mismatch
+         * was the loudest thing on the tab. Now it is a surface card like its
+         * neighbours: one green mark for the state, the three facts as tiles,
+         * and the actions where actions live.
+         */
+        <div
+          className="border border-[var(--v2-border)] bg-[var(--v2-surface)] p-4"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+          dir={isRTL ? 'rtl' : 'ltr'}
+        >
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="flex items-center justify-center w-8 h-8 shrink-0 rounded-full bg-emerald-500/10">
+                <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 dark:text-emerald-400" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] truncate">
+                  {t('payments.stripe.connected')}
+                </h3>
+                <p className="text-xs text-[var(--v2-text-muted)] truncate">
+                  {t('payments.stripe.connected_desc')}
+                </p>
               </div>
-            ) : (
-              <p className="text-sm text-green-800 dark:text-green-200 mt-1">
-                {t('payments.stripe.connected_desc')}
-              </p>
-            )}
-          </div>
-          {detailed && (
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={handleManageAccount}
-                className="text-green-700 dark:text-green-300 border-green-300 dark:border-green-700 hover:bg-green-100 dark:hover:bg-green-900/30"
-              >
-                <ExternalLink className="w-4 h-4 me-2" />
-                {t('payments.stripe.manage_button')}
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowDeleteConfirm(true)}
-                className="text-red-600 dark:text-red-400 border-red-300 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/30"
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
             </div>
-          )}
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleManageAccount}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:bg-[var(--v2-bg)] hover:text-[var(--v2-text-primary)] transition-colors"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                {t('payments.stripe.manage_button')}
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                aria-label={t('payments.stripe.disconnect_button')}
+                className="flex items-center justify-center w-8 h-8 border border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-red-600 hover:border-red-300 dark:hover:border-red-800 transition-colors"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* The three facts, as tiles. Side by side they are scannable; the
+              label above the value survives a long translation, which the old
+              `label: value` row did not — "מוכן לקבל תשלומים" pushed its own
+              answer off the end of the line. */}
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="p-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+              <p className="text-[10px] uppercase tracking-wide text-[var(--v2-text-muted)]">
+                {t('payments.stripe.ready_to_accept')}
+              </p>
+              <p className="mt-0.5 text-sm font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                {t('payments.stripe.yes')}
+              </p>
+            </div>
+
+            <div className="p-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+              <p className="text-[10px] uppercase tracking-wide text-[var(--v2-text-muted)]">
+                {t('payments.stripe.bank_connected')}
+              </p>
+              <p className={`mt-0.5 text-sm font-medium flex items-center gap-1 ${account.payouts_enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                {account.payouts_enabled ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    {t('payments.stripe.yes')}
+                  </>
+                ) : (
+                  <>
+                    <Clock className="w-3.5 h-3.5 shrink-0" />
+                    {t('payments.stripe.pending')}
+                  </>
+                )}
+              </p>
+            </div>
+
+            <div className="p-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)]" style={{ borderRadius: 'var(--v2-radius-button)' }}>
+              <p className="text-[10px] uppercase tracking-wide text-[var(--v2-text-muted)]">
+                {t('payments.stripe.currency')}
+              </p>
+              {/* Latin, left to right, even on a Hebrew form: a currency code
+                  is a code. */}
+              <p className="mt-0.5 text-sm font-medium text-[var(--v2-text-primary)]" dir="ltr">
+                {account.currency?.toUpperCase()}
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+      ) : (
+        /* The compact confirmation, used inline elsewhere — unchanged. */
+        <div
+          className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-4"
+          style={{ borderRadius: 'var(--v2-radius-card)' }}
+          dir={isRTL ? 'rtl' : 'ltr'}
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-green-600 dark:text-green-400" />
+            <h3 className="font-semibold text-green-900 dark:text-green-100">
+              {t('payments.stripe.connected')}
+            </h3>
+          </div>
+          <p className="text-sm text-green-800 dark:text-green-200 mt-1">
+            {t('payments.stripe.connected_desc')}
+          </p>
+        </div>
+      )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>

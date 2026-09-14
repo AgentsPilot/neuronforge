@@ -12,16 +12,20 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { completeTheme } from '@/lib/branding/theme';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { mergeCentralContent } from '@/lib/website-builder/mergeCentralContent';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
+import { withProfileContact } from '@/lib/branding/contactBlockContent';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlock } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteContentRepository, WebsiteContent, SectionType } from '@/lib/repositories/WebsiteContentRepository';
 import { SchedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { loadServicePaymentPlans, type ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
+import { formatPrice } from '@/lib/website-builder/servicePrice';
 
 const logger = createLogger({ module: 'BlocksWithContentAPI' });
 
@@ -43,12 +47,6 @@ function getServiceIcon(serviceName: string): string {
   return 'Star';
 }
 
-// Format price for display
-function formatPrice(price: number, currency?: string): string {
-  const symbols: Record<string, string> = { USD: '$', EUR: '€', ILS: '₪', GBP: '£' };
-  const symbol = symbols[currency || 'USD'] || '$';
-  return `${symbol}${price.toFixed(0)}`;
-}
 
 // Map block_type to section name in website_content
 const BLOCK_TO_SECTION_MAP: Record<string, SectionType> = {
@@ -146,7 +144,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const centralContentPromise = isLandingPage ? null : contentRepo.findByUserId(user.id);
 
-    const liveServicesPromise = hasServicesBlock || hasPricingBlock
+    /*
+     * A landing page always needs the live list, whatever blocks it has.
+     *
+     * This was gated on a services or pricing block, so a landing page built
+     * from a hero and a CTA alone never loaded it — and the check below, which
+     * asks whether the service this page sells still exists, had nothing to
+     * check against.
+     */
+    const liveServicesPromise = hasServicesBlock || hasPricingBlock || isLandingPage
       ? Promise.all([
           // Both in one pass, and the same pair the public route loads — the
           // editor and the live site must describe a service identically.
@@ -159,6 +165,23 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       : null;
 
     const businessLogoPromise = headerShowsLogo ? resolveBusinessLogo(user.id) : null;
+
+    /*
+     * The contact section's details, from the profile.
+     *
+     * The published site already resolved these and this route did not, so the
+     * editor and the preview showed an empty contact panel for a business whose
+     * profile had every field filled in — and the only way to see what a
+     * visitor would actually get was to publish. A preview that cannot be
+     * trusted on the details is not a preview.
+     *
+     * Only fetched when there is a contact section to fill, and started here so
+     * it overlaps the reads around it rather than adding a round trip.
+     */
+    const hasContactForm = blocks.some(b => b.block_type === 'contact_form');
+    const contactProfilePromise = hasContactForm
+      ? businessProfileRepository.findByUserId(user.id)
+      : null;
 
     // For landing pages, use block content directly (AI-generated content is stored in blocks)
     // Only fetch central content for homepage/main website pages
@@ -239,9 +262,74 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const businessLogoUrl = businessLogoPromise ? await businessLogoPromise : null;
+    const contactProfile = contactProfilePromise ? (await contactProfilePromise).data : null;
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * DOES THE SERVICE THIS LANDING PAGE SELLS STILL EXIST?
+     *
+     * Asked about the PAGE, not about each block, because a landing page is
+     * about one service and every conversion control on it leads to that one
+     * thing. Only some of those blocks carry the id: the pricing block does,
+     * and a CTA generated for a course does, but a hero, a header and most CTAs
+     * do not — they just call `resolveBookingAction`, which opens booking for
+     * the BUSINESS.
+     *
+     * So a per-block check disabled the pricing block and left the CTA beside
+     * it working, opening a dialog offering a completely different set of
+     * services on a page written to sell one deleted course. The page is the
+     * unit; if its service is gone, none of its buttons lead anywhere.
+     *
+     * Only landing pages. A homepage's CTA is deliberately about the business
+     * and has no service to lose.
+     */
+    const pageServiceId = isLandingPage
+      ? blocks
+          .map(b => (b.content as Record<string, unknown> | null)?.serviceId)
+          .find((id): id is string => typeof id === 'string' && id.length > 0)
+      : undefined;
+
+    const pageServiceGone = !!pageServiceId && !liveServices.some(svc => svc.id === pageServiceId);
+
+    if (pageServiceGone) {
+      requestLogger.info(
+        { pageId, pageServiceId },
+        'Landing page sells a service that is no longer active; its conversion controls are disabled'
+      );
+    }
+
+    /** Blocks whose button can start a booking, and so must go dead with it. */
+    const CONVERTING = new Set(['cta', 'hero', 'header', 'booking_widget']);
 
     // Merge central content into blocks (only for homepage/main website, not landing pages)
     const blocksWithContent: WebsiteBlock[] = blocks.map(block => {
+      /*
+       * Marked before anything else looks at the block, so a branch further
+       * down that returns early still carries the flag.
+       */
+      if (pageServiceGone && CONVERTING.has(block.block_type)) {
+        return {
+          ...block,
+          content: {
+            ...(block.content as Record<string, unknown>),
+            // Carried so the shape can render its control disabled rather than
+            // removing it — the section still has to look like itself.
+            serviceId: pageServiceId,
+            serviceUnavailable: true,
+          },
+        };
+      }
+
+      if (block.block_type === 'contact_form') {
+        return {
+          ...block,
+          content: withProfileContact(
+            block.content as Record<string, unknown>,
+            contactProfile as unknown as Record<string, unknown> | null
+          ),
+        };
+      }
+
       if (block.block_type === 'header') {
         const headerContent = block.content as Record<string, unknown>;
         return {
@@ -256,8 +344,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // For landing pages, use block content directly (AI-generated content stored in blocks)
       // BUT inject live service data for pricing blocks so prices stay current
       if (isLandingPage) {
-        // For pricing blocks, inject live service data from Scheduling
-        if (block.block_type === 'pricing' && liveServices.length > 0) {
+        /*
+         * For pricing blocks, inject live service data from Scheduling.
+         *
+         * NOT gated on `liveServices.length > 0` any more. That gate meant a
+         * business whose last active service had just been deleted skipped this
+         * branch entirely and got the stored snapshot back — which is the exact
+         * case the missing-service handling below exists for.
+         */
+        if (block.block_type === 'pricing') {
           const blockContent = block.content as Record<string, unknown>;
           const serviceId = blockContent.serviceId as string | undefined;
 
@@ -367,11 +462,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 }
               };
             }
+
+            /*
+             * The service is not in the ACTIVE list.
+             *
+             * Deleting a service deletes the landing pages that sell it, so the
+             * only way to arrive here is a service moved to DRAFT — and a draft
+             * is a temporary state the owner will come back from. The packages
+             * therefore stay exactly as they are; the flag is what stops them
+             * being sold, by disabling the block's booking control.
+             *
+             * Nothing is written: this is a read-time mark, so reactivating the
+             * service restores the block with no migration.
+             */
+            requestLogger.info(
+              { pageId, serviceId },
+              'Pricing block sells a service that is not active; its controls are disabled'
+            );
+
+            return {
+              ...block,
+              content: { ...blockContent, serviceUnavailable: true },
+            };
           }
         }
 
         // For CTA blocks (used instead of booking for courses), inject live service data
-        if (block.block_type === 'cta' && liveServices.length > 0) {
+        if (block.block_type === 'cta') {
           const blockContent = block.content as Record<string, unknown>;
           const serviceId = blockContent.serviceId as string | undefined;
 
@@ -389,6 +506,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
                 }
               };
             }
+
+            // Same as the pricing block above: the copy and the figures stay,
+            // the control goes dead.
+            return { ...block, content: { ...blockContent, serviceUnavailable: true } };
           }
         }
 
@@ -473,7 +594,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       success: true,
-      page: pageResult.data,
+      /*
+       * The theme completed from the row's `template_id`, for the same reason
+       * the public route does it: most stored themes are a palette and nothing
+       * more, because the landing-page route used to assemble one by hand. The
+       * editor preview reads this endpoint, so serving the raw blob is why
+       * switching template there changed the colours and nothing else.
+       */
+      page: {
+        ...pageResult.data,
+        theme: completeTheme(pageResult.data.theme, pageResult.data.template_id),
+      },
       blocks: normalizedBlocks,
       centralContentId: centralContent?.id || null
     });

@@ -228,6 +228,43 @@ export class StripeInvoiceService {
         }
       );
 
+      /*
+       * An invoice with nothing left to pay is already finished.
+       *
+       * Finalizing applies whatever credit the customer holds — a refund taken
+       * as customer balance, a credit note, an overpayment. When that covers the
+       * total, Stripe settles the invoice on the spot: `amount_due` is 0 and the
+       * status is already `paid`. `sendInvoice` then refuses it, with a message
+       * that reads like a fault at Stripe's end: "This invoice cannot be sent
+       * right now. Please contact us via support.stripe.com".
+       *
+       * The caller treated that as "Stripe failed" and fell back to a local
+       * invoice — so a booking whose invoice Stripe had ALREADY marked paid was
+       * recorded as pending, was never linked by `stripe_invoice_id` (leaving
+       * the `invoice.paid` webhook unable to find it), got a payment link for
+       * money that was not owed, and had a payment reminder scheduled for it.
+       *
+       * Nothing to send is a success, not an error. It is returned as one.
+       */
+      if (finalizedInvoice.amount_due === 0 || finalizedInvoice.status === 'paid') {
+        logger.info({
+          invoiceId: finalizedInvoice.id,
+          connectAccountId,
+          status: finalizedInvoice.status,
+          startingBalance: finalizedInvoice.starting_balance,
+          total: finalizedInvoice.total
+        }, 'Stripe invoice settled on finalization; nothing to send');
+
+        return {
+          invoiceId: finalizedInvoice.id,
+          hostedInvoiceUrl: finalizedInvoice.hosted_invoice_url ?? null,
+          invoicePdf: finalizedInvoice.invoice_pdf ?? null,
+          status: finalizedInvoice.status || 'paid',
+          amountDue: finalizedInvoice.amount_due,
+          currency: finalizedInvoice.currency
+        };
+      }
+
       // Send the invoice
       const sentInvoice = await this.stripe.invoices.sendInvoice(
         invoiceId,

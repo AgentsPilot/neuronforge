@@ -1140,6 +1140,51 @@ export class PaymentInvoiceRepository {
   }
 
   /**
+   * The same sweep, for every business at once. Cron only.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * NO `user_id` FILTER, DELIBERATELY.
+   *
+   * "Past its due date" is a property of the invoice and the calendar, not of
+   * who is looking. This is scheduled maintenance over the whole table, run by
+   * the daily payment-reminders cron under the service role — there is no
+   * caller whose tenancy could scope it, and scoping it would mean iterating
+   * every business to issue the identical statement N times.
+   *
+   * It is the per-user `markOverdueInvoices` above that belongs on a request:
+   * that one is the tenant-scoped version, kept for the routes that still call
+   * it. This one must never be reachable from a request handler.
+   * ───────────────────────────────────────────────────────────────────────────
+   *
+   * Idempotent — an invoice already marked no longer matches `status = 'sent'`,
+   * so a second run in the same day writes nothing.
+   */
+  async markAllOverdueInvoices(): Promise<PaymentRepositoryResult<number>> {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+
+      const { data, error } = await this.supabase
+        .from('payment_invoices')
+        .update({
+          status: 'overdue',
+          updated_at: new Date().toISOString()
+        })
+        .eq('status', 'sent')
+        .lt('due_date', today)
+        .select('id');
+
+      if (error) throw error;
+
+      const count = data?.length || 0;
+      logger.info({ count }, 'Swept overdue invoices across all businesses');
+      return { data: count, error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to sweep overdue invoices');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Get invoice stats grouped by status
    */
   async getStatsByStatus(userId: string): Promise<PaymentRepositoryResult<{

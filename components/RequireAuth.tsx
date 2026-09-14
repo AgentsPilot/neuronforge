@@ -1,17 +1,18 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { useAuth } from './UserProvider'
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
-  const router = useRouter()
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
     if (user === null) {
-      router.push('/login')
+      // The sign-in form lives on the marketing site — a different origin, so
+      // this has to be a full navigation rather than a client-side push.
+      window.location.href = marketingLoginUrl()
     } else {
       setChecking(false)
     }

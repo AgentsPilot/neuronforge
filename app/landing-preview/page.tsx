@@ -10,6 +10,9 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { WebsiteBlocks, type BlockData } from '@/components/website/blocks';
+import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
+import { PublicFontLinks } from '@/components/public/PublicFontLinks';
+import { DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
 import type { PageTheme } from '@/components/website/blocks/types';
 import type { Locale } from '@/lib/i18n/config';
 import { getDirection, isValidLocale, defaultLocale } from '@/lib/i18n/config';
@@ -152,61 +155,34 @@ function LandingPreviewContent() {
   const { blocks, theme, language, subdomain } = previewData;
   const isRTL = getDirection(language) === 'rtl';
 
-  // Build font links - always use Heebo as the primary font
-  const fontFamilies = new Set<string>();
-  // Always include Heebo as the platform font
-  fontFamilies.add('Heebo');
-  // Add any additional theme fonts if specified and different from Heebo
-  if (theme?.fonts?.heading && theme.fonts.heading !== 'Heebo') fontFamilies.add(theme.fonts.heading);
-  if (theme?.fonts?.body && theme.fonts.body !== 'Heebo') fontFamilies.add(theme.fonts.body);
-
-  const fontLinks = Array.from(fontFamilies)
-    .map(font => {
-      const subsets = font === 'Heebo' ? 'hebrew,latin' : 'latin';
-      return `https://fonts.googleapis.com/css2?family=${font.replace(/ /g, '+')}:wght@400;500;600;700&subset=${subsets}&display=swap`;
-    });
+  /*
+   * One theme for the variables and for the blocks. Passing the raw value to
+   * the blocks while the emitter got the resolved one left every block without
+   * `layouts`, so each rendered its default arrangement on a page whose CSS
+   * variables said it had a design.
+   */
+  const pageTheme = theme ?? DEFAULT_PUBLIC_THEME;
 
   return (
     <div className="min-h-full">
-      {/* Google Fonts */}
-      {fontLinks.map((link, i) => (
-        // eslint-disable-next-line @next/next/no-page-custom-font
-        <link key={i} rel="stylesheet" href={link} />
-      ))}
+      {/*
+        The same emitter the published site uses, so a preview and the page it
+        previews cannot disagree. This carried its own copy — including `Heebo`
+        hardcoded in front of the template's face, which is why no template's
+        typography has ever shown here either.
+      */}
+      <PublicFontLinks theme={pageTheme} />
+      <PublicThemeStyle theme={pageTheme} locale={language} scope="[data-ap-site]" />
+      <style>{`body { margin: 0; padding: 0; }`}</style>
 
-      {/* Apply theme styles */}
-      <style>
-        {`
-          :root {
-            --website-primary: ${theme?.colors?.primary || '#4F6EF7'};
-            --website-secondary: ${theme?.colors?.secondary || '#6366F1'};
-            --website-accent: ${theme?.colors?.accent || '#EC4899'};
-            --website-background: ${theme?.colors?.background || '#FFFFFF'};
-            --website-surface: ${theme?.colors?.surface || '#F9FAFB'};
-            --website-text: ${theme?.colors?.text || '#111827'};
-            --website-text-secondary: ${theme?.colors?.textSecondary || '#6B7280'};
-            --website-border-radius: ${theme?.borderRadius || '0.5rem'};
-            --website-font-heading: Heebo, ${theme?.fonts?.heading || 'Inter'}, sans-serif;
-            --website-font-body: Heebo, ${theme?.fonts?.body || 'Inter'}, sans-serif;
-          }
-          body {
-            margin: 0;
-            padding: 0;
-          }
-        `}
-      </style>
       <main
+        data-ap-site=""
         dir={isRTL ? 'rtl' : 'ltr'}
-        style={{
-          backgroundColor: 'var(--website-background)',
-          color: 'var(--website-text)',
-          fontFamily: 'var(--website-font-body)',
-          minHeight: '100vh'
-        }}
+        style={{ minHeight: '100vh' }}
       >
         <WebsiteBlocks
           blocks={blocks}
-          theme={theme}
+          theme={pageTheme}
           locale={language}
           useLiveData={false}
           isPreview={true}

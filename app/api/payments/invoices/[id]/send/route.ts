@@ -12,6 +12,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { sendInvoice, InvoiceNotSendableError } from '@/lib/services/InvoiceDeliveryService';
+import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'InvoiceSendAPI' });
@@ -52,6 +54,47 @@ export async function POST(
     if (result.error) {
       // A paid, cancelled or address-less invoice is something the user can see
       // and act on, so it reads back as their message rather than a 500.
+      /*
+       * A PAID invoice is not a refusal — it is a different document.
+       *
+       * "Send the invoice" from an owner whose client just asked for it means
+       * "send them the paperwork for this money". Before it was paid that is an
+       * invoice; after, it is a receipt. Refusing with "already paid" answers a
+       * question nobody asked and leaves the owner forwarding things by hand.
+       */
+      if (result.error instanceof InvoiceNotSendableError && result.error.reason === 'already_paid') {
+        const { data: invoice } = await supabaseServer
+          .from('payment_invoices')
+          .select('client_email, client_name, amount, currency, invoice_number, booking_id')
+          .eq('id', invoiceId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!invoice?.client_email) {
+          return NextResponse.json(
+            { success: false, error: result.error.message, reason: result.error.reason },
+            { status: 400 }
+          );
+        }
+
+        const receipt = await BookingEmailService.sendPaymentReceipt(user.id, {
+          customerEmail: invoice.client_email,
+          customerName: invoice.client_name || '',
+          amount: Number(invoice.amount),
+          currency: invoice.currency || 'USD',
+          receiptNumber: invoice.invoice_number,
+          bookingId: invoice.booking_id ?? undefined,
+        });
+
+        requestLogger.info({ invoiceId, sent: receipt.sent }, 'Paid invoice re-sent as a receipt');
+
+        return NextResponse.json({
+          success: receipt.sent,
+          sentAs: 'receipt',
+          error: receipt.sent ? undefined : receipt.error || 'Could not send the receipt',
+        });
+      }
+
       if (result.error instanceof InvoiceNotSendableError) {
         return NextResponse.json(
           { success: false, error: result.error.message, reason: result.error.reason },

@@ -1,12 +1,32 @@
 /**
- * GET /api/capabilities - Get user's enabled capabilities
- * Returns the list of capability keys the user has enabled
+ * GET /api/capabilities — what this account has.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DERIVED, NOT STORED.
+ *
+ * This used to be a straight read of `user_capabilities`, and the rows were not
+ * worth reading. `scheduling` was granted for having any service at all, so a
+ * shop selling downloads got an availability calendar and a booking widget; a
+ * sweep in `CapabilityActivationService` then added every capability whose
+ * `verticals` list was empty to every account, overriding whatever the
+ * onboarding chat had decided; and nothing anywhere could ever switch one off.
+ *
+ * Six of them are now answered from the business's own catalogue — see
+ * `lib/business-os/businessShape` for what each one means and why. The rest are
+ * still read from the rows, because nothing in a service list can say whether
+ * somebody asked for their Instagram account to be connected.
+ *
+ * The RESPONSE SHAPE is unchanged on purpose: the provider, the nav bar, the
+ * dashboard cards and the CRM drawer all read `enabledKeys`, and none of them
+ * had to be touched.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { resolveCapabilities } from '@/lib/business-os/businessShape.server';
 
 const logger = createLogger({ module: 'CapabilitiesAPI' });
 
@@ -24,72 +44,65 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    requestLogger.info({ userId: user.id }, 'Fetching user capabilities');
+    requestLogger.info({ userId: user.id }, 'Resolving user capabilities');
 
-    // 2. Fetch user's enabled capabilities with capability details
-    const { data: userCapabilities, error } = await supabaseServer
-      .from('user_capabilities')
-      .select(`
-        id,
-        is_active,
-        configuration,
-        capability_id,
-        capabilities (
-          capability_key,
-          name_en,
-          name_es,
-          name_he,
-          icon,
-          color,
-          category
-        )
-      `)
-      .eq('user_id', user.id)
-      .eq('is_active', true);
+    /*
+     * 2. What the business's own shape says it has, and the rows behind it.
+     *
+     * Both come back from one call because they come from one round trip. This
+     * route used to read `user_capabilities` a second time for the
+     * configuration blobs — the same table the resolver had just read — which
+     * is two of the five queries this endpoint was making. The tab bar waits on
+     * this request on every page, so those queries were visible.
+     */
+    const { keys: enabledKeys, stored } = await resolveCapabilities(user.id);
 
-    if (error) {
-      requestLogger.error({ err: error, userId: user.id }, 'Failed to fetch user capabilities');
-      return NextResponse.json(
-        { success: false, error: 'Failed to fetch capabilities' },
-        { status: 500 }
+    /*
+     * 3. The display metadata, and only for the keys that survived.
+     *
+     * Names, icons and colours are still rows — they are the capability's
+     * presentation, not the decision about whether the account has it. A key
+     * with no row is simply not described; it stays in `enabledKeys`, which is
+     * what every gate in the product actually reads.
+     */
+    const { data: catalogue, error: catalogueError } = await supabaseServer
+      .from('capabilities')
+      .select('capability_key, name_en, name_es, name_he, icon, color, category')
+      .in('capability_key', enabledKeys);
+
+    if (catalogueError) {
+      requestLogger.warn(
+        { err: catalogueError, userId: user.id },
+        'Could not read capability metadata; returning keys only'
       );
     }
 
-    // 3. Extract capability keys for easy lookup
-    const enabledCapabilities = (userCapabilities || []).map(uc => {
-      const cap = uc.capabilities as {
-        capability_key: string;
-        name_en: string;
-        name_es: string;
-        name_he: string;
-        icon: string;
-        color: string;
-        category: string;
-      };
-      return {
-        key: cap.capability_key,
-        name_en: cap.name_en,
-        name_es: cap.name_es,
-        name_he: cap.name_he,
-        icon: cap.icon,
-        color: cap.color,
-        category: cap.category,
-        configuration: uc.configuration
-      };
-    });
+    // Whatever the account configured for a capability travels with it, exactly
+    // as before — the shape decides IF, the row still decides HOW.
+    const configurationByKey = new Map<string, unknown>(
+      stored.map(row => [row.key, row.configuration])
+    );
 
-    // 4. Create a simple set of enabled capability keys for quick checks
-    const enabledKeys = enabledCapabilities.map(c => c.key);
+    const capabilities = (catalogue || []).map((cap: any) => ({
+      key: cap.capability_key,
+      name_en: cap.name_en,
+      name_es: cap.name_es,
+      name_he: cap.name_he,
+      icon: cap.icon,
+      color: cap.color,
+      category: cap.category,
+      configuration: configurationByKey.get(cap.capability_key) ?? null,
+    }));
 
     requestLogger.info(
       { userId: user.id, enabledCount: enabledKeys.length, enabledKeys },
-      'User capabilities fetched'
+      'User capabilities resolved'
     );
 
-    // 5. Return success
+    // 4. Return success
     return NextResponse.json({
       success: true,
-      capabilities: enabledCapabilities,
+      capabilities,
       enabledKeys
     });
 

@@ -87,7 +87,7 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
     // Get bookings (intro detection done via service name pattern, not metadata)
     const { data: allBookings, error: bookingsError } = await this.supabase
       .from('scheduling_bookings')
-      .select('id, client_email, service_id, payment_amount, created_at, status')
+      .select('id, contact_id, service_id, payment_amount, created_at, status')
       .eq('user_id', userId)
       .gte('created_at', ninetyDaysAgo.toISOString())
       .in('status', ['confirmed', 'completed']);
@@ -140,7 +140,11 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
     const clientBookingHistory: Record<string, Array<{ date: string; price: number; isIntro: boolean }>> = {};
 
     allBookings.forEach((booking) => {
-      const email = booking.client_email?.toLowerCase();
+      // The contact, not an email string. `client_email` was dropped —
+      // crm_contacts is the single source of truth — and `contact_id` is the
+      // better key regardless: one person with two spellings of their address
+      // used to count as two clients.
+      const email = booking.contact_id;
       if (!email) return;
 
       if (!clientBookingHistory[email]) {

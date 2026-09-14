@@ -19,6 +19,7 @@ import { PHYSICAL_CATALOG } from './catalog.generated';
 import { SEMANTIC_CATALOG } from './catalog';
 import {
   CatalogDriftError,
+  COMPLEMENTARY_OPS,
   type FieldType,
   type PhysicalColumn,
   type ResolvedCatalog,
@@ -204,7 +205,65 @@ function buildCatalog(): ResolvedCatalog {
       // checked, so an OR'd expansion cannot smuggle in an undeclared relation.
       const expansions = Array.isArray(derived.expand) ? derived.expand : [derived.expand];
 
+      /*
+       * All self, or all relation — never a mix.
+       *
+       * The two lower differently: a relation expansion resolves to a set of
+       * ids and several are OR'd by unioning them, while a self expansion is a
+       * plain predicate on this row. There is no correct way to union those
+       * two, so the shape that cannot be lowered is refused here rather than
+       * answered approximately.
+       */
+      const selfCount = expansions.filter((expansion) => !expansion.relation).length;
+
+      if (selfCount > 0 && selfCount !== expansions.length) {
+        problems.push(
+          `${entityKey}.derived.${derivedKey} mixes a self expansion with a relation one. ` +
+            `They lower differently and cannot be OR'd; declare two derived fields instead.`
+        );
+        continue;
+      }
+
       for (const expansion of expansions) {
+        /*
+         * A SELF expansion — a fact about this row's own columns.
+         *
+         * Held to a tighter contract than a relation one, because `eq false`
+         * must be lowerable: the compiler negates a self expansion by flipping
+         * its single operator, and the complement of a conjunction is a
+         * disjunction it cannot express. One predicate, and an operator with a
+         * complement, or the catalog refuses to build.
+         */
+        if (!expansion.relation) {
+          const where = expansion.where ?? [];
+
+          if (where.length !== 1) {
+            problems.push(
+              `${entityKey}.derived.${derivedKey} is a self expansion, so it must have ` +
+                `exactly one predicate (it has ${where.length}) — ` +
+                `'eq false' is lowered by negating that predicate.`
+            );
+            continue;
+          }
+
+          if (!fields[where[0].field]) {
+            problems.push(
+              `${entityKey}.derived.${derivedKey} filters on ` +
+                `'${entityKey}.${where[0].field}', which is not a declared field.`
+            );
+          }
+
+          if (!COMPLEMENTARY_OPS[where[0].op]) {
+            problems.push(
+              `${entityKey}.derived.${derivedKey} uses '${where[0].op}', which has no ` +
+                `complement here, so 'eq false' could not be answered. Use one of: ` +
+                `${Object.keys(COMPLEMENTARY_OPS).join(', ')}.`
+            );
+          }
+
+          continue;
+        }
+
         const relation = entity.relations?.[expansion.relation];
         if (!relation) {
           problems.push(

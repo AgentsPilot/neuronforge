@@ -26,7 +26,18 @@ export interface BookingConfirmationData {
   location?: string;
   price?: number;
   currency?: string;
-  paymentStatus?: 'pending' | 'paid' | 'not_required';
+  /**
+   * The booking's payment state, in the booking's own vocabulary.
+   *
+   * `scheduling_bookings.payment_status` is 'pending' | 'paid' | 'refunded',
+   * and this declared 'not_required' instead of 'refunded' — a value nothing in
+   * the codebase produces, against a value the table does. So a confirmation
+   * re-sent for a refunded booking would not typecheck, for a template that
+   * only ever asks whether the status is 'pending'.
+   *
+   * Only 'pending' shows the payment button; every other state simply does not.
+   */
+  paymentStatus?: 'pending' | 'paid' | 'refunded' | 'not_required';
   paymentUrl?: string;
   rescheduleUrl: string;
   cancelUrl: string;
@@ -210,7 +221,7 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
     ${hasPendingPayment ? `
     <!-- Payment Pending Notice -->
     ${emailNoticeBox((data.hasSchedule === false ? t.unscheduledPaymentRequired : t.paymentRequired)[locale](formatCurrency(data.price!, data.currency || 'USD')), 'warning')}
-    ${data.paymentUrl ? emailButton(t.payNow[locale], data.paymentUrl, { backgroundColor: data.branding.primaryColor }) : ''}
+    ${data.paymentUrl ? emailButton(t.payNow[locale], data.paymentUrl, { branding: data.branding }) : ''}
     ` : ''}
 
     ${data.hasSchedule === false ? '' : `
@@ -255,7 +266,7 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
             <tr>
               ${data.hasSchedule === false ? '' : `
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
-                ${emailOutlineButton(tIntake.reschedule[locale], data.rescheduleUrl, { color: data.branding.primaryColor })}
+                ${emailOutlineButton(tIntake.reschedule[locale], data.rescheduleUrl, { branding: data.branding })}
               </td>
               `}
               <td>
@@ -350,7 +361,7 @@ export function generateBookingCancellationEmail(data: {
     <p style="margin: 0 0 16px; font-size: 14px; color: #666666;">
       ${t.bookAgainPrompt[locale]}
     </p>
-    ${emailButton(t.bookAgain[locale], data.bookAgainUrl, { backgroundColor: data.branding.primaryColor })}
+    ${emailButton(t.bookAgain[locale], data.bookAgainUrl, { branding: data.branding })}
     ` : ''}
 
     <!-- Final Note -->
@@ -488,7 +499,7 @@ export function generateBookingRescheduledEmail(data: {
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
             <tr>
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
-                ${emailOutlineButton(t.rescheduleAgain[locale], data.rescheduleUrl, { color: data.branding.primaryColor })}
+                ${emailOutlineButton(t.rescheduleAgain[locale], data.rescheduleUrl, { branding: data.branding })}
               </td>
               <td>
                 ${emailOutlineButton(tIntake.cancel[locale], data.cancelUrl, { color: '#DC2626' })}

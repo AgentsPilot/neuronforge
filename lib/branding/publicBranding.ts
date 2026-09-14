@@ -33,12 +33,14 @@ import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { verifyBookingToken } from '@/lib/services/BookingEmailService';
+import { verifyProposalToken } from '@/lib/business-os/proposalToken';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
 import { resolveBusinessTheme } from '@/lib/branding/resolveTheme';
 import { completeTheme, DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
 import { cleanPublicContact } from '@/lib/branding/placeholderContact';
 import { whatsappLink } from '@/lib/branding/phone';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
+import { resolvePlatformWebsiteUrl } from '@/lib/branding/platformSite';
 import { isDarkColor } from '@/lib/branding/color';
 import { DAY_NAMES, windowsForDay, hasAnyAvailability, type AvailabilityWindow } from '@/lib/scheduling/availabilityWindows';
 import { isValidLocale, getDirection, defaultLocale, type Locale } from '@/lib/i18n/config';
@@ -54,7 +56,9 @@ export type PublicBrandRef =
   /** A signed booking-management link, as sent to a client by email. */
   | { by: 'bookingToken'; token: string }
   /** A public invoice link. The id is the unguessable part. */
-  | { by: 'invoiceId'; invoiceId: string };
+  | { by: 'invoiceId'; invoiceId: string }
+  /** A signed quote link, as sent to a client by email. */
+  | { by: 'proposalToken'; token: string };
 
 /** One day's opening hours, Sunday first. */
 export interface BusinessDayHours {
@@ -190,6 +194,30 @@ async function resolveUserId(ref: PublicBrandRef): Promise<{ userId: string; pro
     return { userId: data.user_id };
   }
 
+  if (ref.by === 'proposalToken') {
+    /*
+     * Same reasoning as the booking token above: the reader is the client being
+     * quoted, who has no session. The signature is the authorization, and this
+     * returns only the business's public identity — never the quote.
+     *
+     * Resolved in the LAYOUT rather than the page so the theme is emitted with
+     * the first byte of HTML. A page that fetches its own brand renders once
+     * unstyled and then repaints, which on the screen where a business is
+     * asking to be trusted with money is the worst place for it.
+     */
+    const decoded = verifyProposalToken(ref.token);
+    if (!decoded?.proposalId) return null;
+
+    const { data } = await supabaseServer
+      .from('proposals')
+      .select('user_id')
+      .eq('id', decoded.proposalId)
+      .maybeSingle();
+
+    if (!data?.user_id) return null;
+    return { userId: data.user_id };
+  }
+
   if (ref.by === 'invoiceId') {
     // Same reasoning as the booking token: the reader is the customer being
     // billed, who has no session. The invoice id is the capability.
@@ -318,14 +346,28 @@ async function loadPublicBranding(
 
   const hours = includeInfo ? readHours(profile?.scheduling_availability) : null;
   /*
-   * Parsed, not trusted.
+   * Ours first, then theirs — the same order the emails resolve in.
    *
-   * This becomes an `href` on a public page (`BusinessInfoPanel`), and the
-   * column is owner-supplied text. It has been null on every account so far
-   * only because nothing can write it yet — the guard belongs here before that
-   * changes, not after.
+   * ───────────────────────────────────────────────────────────────────────────
+   * A public page carries a "website" link the same way a booking email carries
+   * one, and until now the two disagreed. `resolveEmailBranding` asks
+   * `resolvePlatformWebsiteUrl` first, so a business whose site we host gets
+   * ITS OWN address in every email footer. This asked only for
+   * `business_profiles.website_url` — the site the business had before us —
+   * so the same business, on the page its client actually lands on, either
+   * showed a link to somewhere else entirely or no website at all.
+   *
+   * PUBLISHED only, and the homepage only: a draft subdomain serves nothing and
+   * a landing page is one campaign, not a website. `platformSite` holds both
+   * of those rules so this file does not have to repeat them.
+   *
+   * The external address stays as the fallback and is still sanitised — it is
+   * owner-typed text on its way into an `href`, while ours is built from a
+   * subdomain we control.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  const websiteUrl = safeExternalUrl(profile?.website_url);
+  const websiteUrl =
+    (await resolvePlatformWebsiteUrl(userId)) ?? safeExternalUrl(profile?.website_url);
   const userCode = profile?.user_code ?? null;
   const bookingUrl = userCode ? `/c/${userCode}/book` : null;
 

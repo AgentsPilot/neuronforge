@@ -34,6 +34,14 @@ export type EntityType =
   // Stopping a client's payment plan changes what they will be charged, so it
   // is audited like money moving — and the plan is the entity it happened to.
   | 'payment_plan_subscription'
+  // A milestone billed is a charge the client will see, and the stage is the
+  // thing it happened to — the invoice it produces is audited separately, so
+  // without this "when was milestone 2 billed" has no entity to hang off.
+  | 'payment_plan_installment'
+  // A quote is a commitment the business made to a client at a moment in time,
+  // and what it later became. "What did we offer, and when" has to be
+  // answerable independently of the invoice it produced.
+  | 'proposal'
   | 'crm_contact'
   | 'business_profile'
   | 'website_page'

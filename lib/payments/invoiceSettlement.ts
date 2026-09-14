@@ -10,6 +10,9 @@
 // Type-only, so it is erased at compile time and this module keeps the
 // property it was written for: no runtime dependency on Supabase.
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'InvoiceSettlement' });
 
 /** The fields the rule reads. Anything invoice-shaped satisfies it. */
 export interface SettleableInvoice {
@@ -208,6 +211,81 @@ export async function settleInvoicePaid(
       }`
     );
   }
+
+  /*
+   * A plan stage moves with the invoice that bills it.
+   *
+   * Without this the two halves of an instalment plan drift apart: the invoice
+   * says paid and the stage still says pending, so nothing can answer "how much
+   * of this job has been collected". The drawer read the FIRST invoice, found
+   * it paid, and marked a two-stage job complete on half the money.
+   *
+   * Keyed on `invoice_id`, which `raiseInvoice` writes when it raises the
+   * stage. Rows with no link — anything billed before that existed — are simply
+   * not matched, which is correct: nothing claims they were paid.
+   *
+   * Non-fatal. The money is recorded and the invoice is paid; a stage left
+   * pending is a reporting problem, not a reason to fail a settled payment
+   * that the caller would then retry.
+   */
+  const { error: stageError } = await db
+    .from('payment_plan_installments')
+    .update({ status: 'paid', paid_at: paidAt })
+    .eq('invoice_id', input.invoiceId)
+    .neq('status', 'paid');
+
+  if (stageError) {
+    logger.error(
+      { err: stageError, invoiceId: input.invoiceId, transactionId: transaction.id },
+      'Invoice settled but its plan stage could not be marked paid'
+    );
+  }
+
+  /*
+   * The receipt.
+   *
+   * Sent from here because this is where every payment path converges — card
+   * via the Stripe webhook, a manual mark-paid, bizql, a retry. Sending it from
+   * any one caller means the others stay silent, which is exactly how the plan
+   * stage came to disagree with its invoice.
+   *
+   * It matters more since the acceptance flow stopped emailing the invoice to
+   * anyone it redirects: without this, a client who accepted and paid by card
+   * received NO email at all about money leaving their account.
+   *
+   * Below the `alreadySettled` return above, so a replayed webhook cannot send
+   * a second receipt for the same payment. Non-blocking: the money is recorded
+   * and the invoice is paid; a mail failure must not fail a settled payment the
+   * caller would then retry.
+   */
+  void (async () => {
+    try {
+      const { data: invoice } = await db
+        .from('payment_invoices')
+        .select('user_id, client_email, client_name, invoice_number, currency, booking_id')
+        .eq('id', input.invoiceId)
+        .maybeSingle();
+
+      if (!invoice?.client_email) return;
+
+      const { BookingEmailService } = await import('@/lib/services/BookingEmailService');
+
+      await BookingEmailService.sendPaymentReceipt(invoice.user_id, {
+        customerEmail: invoice.client_email,
+        customerName: invoice.client_name || '',
+        amount: input.amount,
+        currency: invoice.currency || 'USD',
+        receiptNumber: invoice.invoice_number,
+        paymentMethod: input.paymentMethod ?? undefined,
+        bookingId: invoice.booking_id ?? undefined,
+      });
+    } catch (err) {
+      logger.error(
+        { err, invoiceId: input.invoiceId, transactionId: transaction.id },
+        'Payment settled but the receipt did not go out'
+      );
+    }
+  })();
 
   return { transactionId: transaction.id, alreadySettled: false };
 }

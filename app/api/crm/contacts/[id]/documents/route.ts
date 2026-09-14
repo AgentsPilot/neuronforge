@@ -20,7 +20,7 @@ const auditTrail = AuditTrailService.getInstance();
 // Validation schemas
 const uploadDocumentSchema = z.object({
   name: z.string().min(1).max(255),
-  document_type: z.enum(['contract', 'intake_form', 'invoice', 'receipt', 'id_document', 'medical', 'insurance', 'other']).optional(),
+  document_type: z.enum(['contract', 'intake_form', 'invoice', 'receipt', 'proposal', 'id_document', 'medical', 'insurance', 'other']).optional(),
   description: z.string().max(1000).optional(),
   tags: z.array(z.string()).optional(),
   file_name: z.string().min(1),
@@ -30,7 +30,7 @@ const uploadDocumentSchema = z.object({
 });
 
 const listDocumentsSchema = z.object({
-  document_type: z.enum(['contract', 'intake_form', 'invoice', 'receipt', 'id_document', 'medical', 'insurance', 'other']).optional(),
+  document_type: z.enum(['contract', 'intake_form', 'invoice', 'receipt', 'proposal', 'id_document', 'medical', 'insurance', 'other']).optional(),
   limit: z.number().min(1).max(100).optional(),
   offset: z.number().min(0).optional()
 });

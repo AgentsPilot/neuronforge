@@ -295,8 +295,10 @@ describe('[smoke] setup graph — shape', () => {
       for (const requirement of node.requires) {
         expect(known.has(requirement)).toBe(true);
       }
-      if (typeof node.mandatory === 'object') {
-        expect(known.has(node.mandatory.once)).toBe(true);
+      if (node.mandatory && typeof node.mandatory === 'object') {
+        // Narrowed explicitly: `mandatory` is a boolean OR a { once } object,
+        // and the boolean arm leaves nothing to look up.
+        expect(known.has((node.mandatory as { once: StepId }).once)).toBe(true);
       }
       if (node.belongsTo) expect(known.has(node.belongsTo)).toBe(true);
     }
@@ -542,5 +544,39 @@ describe('[smoke] setup graph — what the services say', () => {
 
     expect(find(graph, 'availability')?.mandatory).toBe(false);
     expect(find(graph, 'payments')?.mandatory).toBe(false);
+  });
+});
+
+/**
+ * A business that invoices for everything is never shown a card processor, so
+ * the payments step is absent by design — and the two steps that hang off it in
+ * the readiness card must still be reachable.
+ *
+ * The card nests by `belongsTo`, which silently dropped them: it said "you
+ * cannot send invoices" and offered nothing to click. Nesting is presentation;
+ * it must never remove a step from the list.
+ */
+describe('a step whose parent does not apply', () => {
+  const graph = resolveSetup(items(), INVOICE);
+  const steps = allSteps(graph);
+  const ids = steps.map(step => step.item.id);
+
+  it('leaves payments out for a business that never takes a card', () => {
+    expect(ids).not.toContain('payments');
+  });
+
+  it('still carries the invoice and company steps', () => {
+    expect(ids).toContain('invoicing');
+    expect(ids).toContain('profile');
+  });
+
+  it('and they are what the card must draw at the top level', () => {
+    const present = new Set(ids);
+    const topLevel = steps
+      .filter(step => !step.belongsTo || !present.has(step.belongsTo))
+      .map(step => step.item.id);
+
+    expect(topLevel).toContain('invoicing');
+    expect(topLevel).toContain('profile');
   });
 });

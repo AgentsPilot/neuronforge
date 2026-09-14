@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
-import { verifyBookingToken } from '@/lib/services/BookingEmailService';
+import { verifyBookingToken, BookingEmailService } from '@/lib/services/BookingEmailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { intakeRepository } from '@/lib/repositories/IntakeRepository';
 import { resolveIntakeForSending } from '@/lib/business-os/intake/resolveIntake';
@@ -337,6 +337,18 @@ export async function POST(
     }
 
     requestLogger.info({ bookingId, formId: form.id, version: form.version }, 'Intake responses saved');
+
+    /*
+     * Tell them it arrived.
+     *
+     * Non-blocking, and after the write on purpose: the answers are saved
+     * whether or not this sends, and a client who filled in a form must never
+     * see it fail because an email provider was down. The confirmation is a
+     * courtesy; the submission is the thing.
+     */
+    BookingEmailService.sendIntakeReceivedConfirmation(bookingId, booking.user_id).catch(err =>
+      requestLogger.warn({ err, bookingId }, 'Intake received confirmation failed (non-blocking)')
+    );
 
     return NextResponse.json({
       success: true,

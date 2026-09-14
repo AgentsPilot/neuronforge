@@ -239,7 +239,24 @@ export default function OnboardingChatPage() {
               .single();
 
             if (businessProfile?.onboarding_completed) {
-              router.push('/business-os');
+              /*
+               * A document navigation, not `router.push`.
+               *
+               * This page is the far end of the cross-origin sign-in handoff,
+               * and it runs while the session is still being installed from the
+               * URL fragment. A client-side push is an in-flight RSC request
+               * that any concurrent re-render of this tree cancels — and when
+               * it was cancelled there was nothing to notice: this branch has
+               * already returned, deliberately leaving the spinner up for a
+               * navigation that never arrived. The server log showed middleware
+               * waving `/business-os` through, the route compiling, and no page
+               * render ever following.
+               *
+               * `replace`, not `assign`: an onboarded business has no reason to
+               * come back here with the Back button, and returning would only
+               * bounce them forward again.
+               */
+              window.location.replace('/business-os');
               return;
             }
           }
@@ -451,7 +468,10 @@ export default function OnboardingChatPage() {
       // Said in words, because the extraction reads words rather than the form.
       // A product with no duration would otherwise arrive looking like a
       // service somebody forgot to time.
-      if (s.duration) {
+      // Only for something booked against a time. The field is hidden once the
+      // answer is no, so sending its last value would describe a length the
+      // person can no longer see or correct — and the extraction would read it.
+      if (s.isScheduled && s.duration) {
         parts.push(`${s.duration} ${selectedLanguage === 'he' ? 'דקות' : selectedLanguage === 'es' ? 'minutos' : 'minutes'}`);
       }
       if (!s.isScheduled) {
@@ -671,7 +691,10 @@ export default function OnboardingChatPage() {
           needs_stripe_connect: wantsProcessor,
           services: kept.map(service => ({
             name: service.service_name,
-            duration_minutes: service.duration_minutes,
+            // A product has no length. Hiding the field and then sending its
+            // last value would create a 60-minute download — the field would be
+            // gone from the form and still on the record.
+            duration_minutes: service.is_scheduled === false ? null : service.duration_minutes,
             price: service.price ?? undefined,
             currency: service.currency,
             payment_plan: service.payment_plan ?? null,
@@ -1585,18 +1608,28 @@ export default function OnboardingChatPage() {
                           ))}
                         </div>
 
-                        {/* Kept whatever the answer above was. A service can
-                            take two hours and still not be booked against a
-                            time — a workshop sold as a product, a recorded
-                            course. The duration describes the thing; the
-                            toggle describes how a client gets it. */}
+                        {/* Present but dead once the answer is no.
+                            A service nobody books against a time has no
+                            length, so the field stops accepting one — but it
+                            stays on screen, because this is a ROW in a grid the
+                            person is reading across, and a cell that vanishes
+                            mid-typing moves the columns under their eye.
+                            Greyed says "not for this one"; gone says "did I
+                            break something".
+
+                            The value is kept, not cleared: answer "כן" again
+                            and the same number is live again. It is dropped on
+                            the way out instead, so nothing downstream inherits
+                            a length that is no longer being asked for. */}
                         <input
                           type="number"
                           value={service.duration}
                           onChange={(e) => updateServiceRow(index, 'duration', e.target.value)}
+                          disabled={service.isScheduled === false}
                           placeholder="60"
                           className={cn(
                             'col-span-1 px-2 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
+                            service.isScheduled === false && 'opacity-40 cursor-not-allowed',
                             isRTL && 'text-right'
                           )}
                         />
@@ -2092,13 +2125,18 @@ export default function OnboardingChatPage() {
               ))}
             </div>
 
+            {/* Dead, not gone — the same rule as the services row in the
+                chat above, because it is the same question asked twice and the
+                two grids must not answer it differently. */}
             <input
               type="number"
               value={service.duration_minutes || ''}
               onChange={e => updateDraftService(index, 'duration_minutes', e.target.value)}
+              disabled={service.is_scheduled === false}
               placeholder="60"
               className={cn(
                 'col-span-1 px-2 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
+                service.is_scheduled === false && 'opacity-40 cursor-not-allowed',
                 isRTL && 'text-right'
               )}
             />

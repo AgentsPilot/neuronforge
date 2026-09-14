@@ -20,7 +20,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createLogger } from '@/lib/logger';
 import type { CapabilitiesStatus } from '@/lib/business-os/tabVisibility';
 
@@ -39,6 +39,21 @@ export type { CapabilitiesStatus };
 interface CapabilitiesContextValue {
   capabilities: Set<string>;
   status: CapabilitiesStatus;
+  /**
+   * Ask again, quietly.
+   *
+   * What an account HAS is derived from what it sells, so it changes the moment
+   * a service does — publish the first priced service and `payments` becomes
+   * true, which is the Orders tab. This is fetched once per full page load
+   * (deliberately: moving between tabs must not re-ask and re-flicker the bar),
+   * so without this the bar was the one surface that went on showing the answer
+   * from before the change until the page was reloaded.
+   *
+   * Silent on purpose — it never returns to `loading`. That state strips the
+   * bar down to the ungated entries, and taking tabs away for a moment to put
+   * them back is worse than being briefly out of date.
+   */
+  refresh: () => void;
 }
 
 const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null);
@@ -50,45 +65,63 @@ const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null)
  * everything.
  */
 export function useCapabilities(): CapabilitiesContextValue {
-  return useContext(CapabilitiesContext) ?? { capabilities: new Set<string>(), status: 'error' };
+  return (
+    useContext(CapabilitiesContext) ?? {
+      capabilities: new Set<string>(),
+      status: 'error',
+      refresh: () => {},
+    }
+  );
 }
 
 export function CapabilitiesProvider({ children }: { children: React.ReactNode }) {
   const [capabilities, setCapabilities] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<CapabilitiesStatus>('loading');
 
+  /*
+   * Torn down on unmount, and used to discard a reply that arrives after a
+   * newer one — a refresh fired on a dialog close can easily overtake a slower
+   * request already in flight.
+   */
+  const liveRef = useRef(true);
   useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const response = await fetch('/api/capabilities', { cache: 'no-store' });
-        if (!response.ok) throw new Error(`/api/capabilities responded ${response.status}`);
-
-        const data = await response.json();
-        if (cancelled) return;
-
-        // A 200 whose body says otherwise is still a failure — treating it as
-        // "no capabilities" would silently strip the bar down to two tabs.
-        if (!data?.success || !Array.isArray(data.enabledKeys)) {
-          throw new Error('/api/capabilities returned no enabledKeys');
-        }
-
-        setCapabilities(new Set<string>(data.enabledKeys));
-        setStatus('ready');
-      } catch (err) {
-        if (cancelled) return;
-        logger.error({ err }, 'Failed to load capabilities');
-        setStatus('error');
-      }
-    })();
-
+    liveRef.current = true;
     return () => {
-      cancelled = true;
+      liveRef.current = false;
     };
   }, []);
 
-  const value = useMemo(() => ({ capabilities, status }), [capabilities, status]);
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch('/api/capabilities', { cache: 'no-store' });
+      if (!response.ok) throw new Error(`/api/capabilities responded ${response.status}`);
+
+      const data = await response.json();
+      if (!liveRef.current) return;
+
+      // A 200 whose body says otherwise is still a failure — treating it as
+      // "no capabilities" would silently strip the bar down to two tabs.
+      if (!data?.success || !Array.isArray(data.enabledKeys)) {
+        throw new Error('/api/capabilities returned no enabledKeys');
+      }
+
+      setCapabilities(new Set<string>(data.enabledKeys));
+      setStatus('ready');
+    } catch (err) {
+      if (!liveRef.current) return;
+      logger.error({ err }, 'Failed to load capabilities');
+      setStatus('error');
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const value = useMemo(
+    () => ({ capabilities, status, refresh: load }),
+    [capabilities, status, load]
+  );
 
   return <CapabilitiesContext.Provider value={value}>{children}</CapabilitiesContext.Provider>;
 }

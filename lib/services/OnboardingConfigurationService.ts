@@ -15,6 +15,7 @@
 import { createLogger } from '@/lib/logger';
 import { STAGE_TRANSLATIONS } from '@/lib/business-os/stageLabels';
 import { getVerticalLabel } from '@/lib/business-os/verticalLabels';
+import { capabilityKeysFromShape, shapeFromServices } from '@/lib/business-os/businessShape';
 
 const logger = createLogger({ service: 'OnboardingConfigurationService' });
 
@@ -477,11 +478,10 @@ export class OnboardingConfigurationService {
     const onlinePresenceMode = this.computeOnlinePresenceMode(extracted);
     const paymentMode = this.computePaymentMode(extracted);
     const collectionMethod = this.computeCollectionMethod(extracted, paymentMode);
-    const { capabilities, buildingBlocks, reasons } = this.computeCapabilitiesAndBlocks(extracted);
-
-    // Check if CRM capability was added (if not, don't include pipeline)
-    // CRM is added in computeCapabilitiesAndBlocks based on clientTracking.needs_crm
-    const hasCrmCapability = capabilities.includes('crm');
+    const { capabilities, buildingBlocks, reasons } = this.computeCapabilitiesAndBlocks(
+      extracted,
+      onlinePresenceMode
+    );
 
     const config: InferredConfiguration = {
       // Profile
@@ -518,9 +518,16 @@ export class OnboardingConfigurationService {
       needs_stripe_connect: services.some(service => service.collection === 'online'),
       needs_intake: extracted.needs_intake === true,
 
-      // CRM - Only include pipeline if CRM capability is being added
-      // Pipeline stages help organize client journey tracking
-      pipeline_stages: hasCrmCapability ? this.getTranslatedPipeline(vertical, language, subVertical) : [],
+      /*
+       * The pipeline, always.
+       *
+       * This used to be conditional on the CRM capability, which the chat
+       * decided by asking. But CRM is not a choice: six tables carry a NOT NULL
+       * foreign key to `crm_contacts`, so a booking cannot be written without a
+       * contact. A business that answered "no" to tracking clients got contacts
+       * anyway, with no stages to put them in — a pipeline view of one column.
+       */
+      pipeline_stages: this.getTranslatedPipeline(vertical, language, subVertical),
 
       // Capabilities
       capabilities,
@@ -672,7 +679,10 @@ export class OnboardingConfigurationService {
   /**
    * Compute capabilities, building blocks, and reasons
    */
-  private computeCapabilitiesAndBlocks(data: ExtractedData): {
+  private computeCapabilitiesAndBlocks(
+    data: ExtractedData,
+    onlinePresenceMode: OnlinePresenceMode
+  ): {
     capabilities: string[];
     buildingBlocks: Record<string, string[]>;
     reasons: Record<string, string>;
@@ -839,8 +849,59 @@ export class OnboardingConfigurationService {
       buildingBlocks[cap] = Array.from(blockSet);
     });
 
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE SIX THE CATALOGUE ANSWERS ARE NOT GUESSED FROM THE CONVERSATION.
+     *
+     * Everything above still decides the building blocks and the sentence shown
+     * beside each capability, but it may no longer decide WHICH capabilities
+     * the account gets — not for the six that the services themselves answer.
+     *
+     * The rules it used were the ERP creep, and they read strangely once
+     * written down: seeing five clients a week switched on email automation,
+     * ten switched on reports and automations, twenty switched on insights.
+     * `scheduling` was granted for having any service, so a business selling
+     * only downloads got an availability calendar. None of that is a property
+     * of the business — it is a guess about one.
+     *
+     * What onboarding produces is the SERVICES and the presence answer. The
+     * shape follows from those, here and on every screen afterwards, so the
+     * dashboard cannot disagree with the plan the user just approved.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const derived = capabilityKeysFromShape(
+      shapeFromServices(
+        (data.services || []).map(service => ({
+          // Nothing is published yet — these are services about to be created,
+          // and the shape rules count published ones. Marked active so the
+          // catalogue the user just described is what answers.
+          status: 'active',
+          is_scheduled: service.is_scheduled,
+          collection: service.collection,
+          price: service.price,
+          payment_type:
+            service.payment_plan && service.payment_plan.installment_count >= 2
+              ? 'installments'
+              : 'full',
+          installment_count: service.payment_plan?.installment_count ?? 1,
+        })),
+        { online_presence_mode: onlinePresenceMode }
+      )
+    );
+
+    /*
+     * A UNION, not a replacement — the rows stay a SUPERSET of what they were.
+     *
+     * The derived keys are what the product now shows: settings tabs,
+     * navigation, dashboard cards, all resolved from the shape at read time.
+     * The rows they are written into still have one fail-closed reader — the v1
+     * chat gate in `ChatCommandExecutor` — and narrowing them there turns a
+     * question into silence. So nothing is subtracted: a row that would have
+     * been written before is still written, and the tailoring happens where it
+     * can be seen and corrected rather than where it goes quiet.
+     */
     return {
-      capabilities: Array.from(caps),
+      capabilities: Array.from(new Set([...derived, ...caps])),
       buildingBlocks,
       reasons,
     };

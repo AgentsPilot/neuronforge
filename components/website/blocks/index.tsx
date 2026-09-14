@@ -73,6 +73,8 @@ export * from './types';
 // Typed from the one contract every block already implements, rather than a
 // transcription of it: the copy that used to live here had drifted, and a prop
 // added to `BlockRendererProps` was rejected here for not existing.
+import { templateRendererFor } from '@/components/website/templates/registry';
+
 const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<BlockRendererProps>> = {
   header: HeaderBlock,
   hero: HeroBlock,
@@ -97,77 +99,6 @@ const BLOCK_REGISTRY: Record<BlockType, React.ComponentType<BlockRendererProps>>
   footer: FooterBlock
 };
 
-// Block display names (for UI)
-export const BLOCK_DISPLAY_NAMES: Record<BlockType, { en: string; es: string; he: string }> = {
-  header: { en: 'Header', es: 'Encabezado', he: 'כותרת עליונה' },
-  hero: { en: 'Hero', es: 'Héroe', he: 'כותרת ראשית' },
-  services: { en: 'Services', es: 'Servicios', he: 'שירותים' },
-  cta: { en: 'Call to Action', es: 'Llamada a la Acción', he: 'קריאה לפעולה' },
-  testimonials: { en: 'Testimonials', es: 'Testimonios', he: 'המלצות' },
-  contact_form: { en: 'Contact Form', es: 'Formulario de Contacto', he: 'טופס יצירת קשר' },
-  pricing: { en: 'Pricing', es: 'Precios', he: 'מחירון' },
-  faq: { en: 'FAQ', es: 'Preguntas Frecuentes', he: 'שאלות נפוצות' },
-  about: { en: 'About', es: 'Acerca de', he: 'אודות' },
-  features: { en: 'Features', es: 'Características', he: 'תכונות' },
-  stats: { en: 'Statistics', es: 'Estadísticas', he: 'סטטיסטיקות' },
-  booking_widget: { en: 'Booking', es: 'Reservas', he: 'הזמנת תור' },
-  payment_button: { en: 'Payment', es: 'Pago', he: 'תשלום' },
-  team: { en: 'Team', es: 'Equipo', he: 'צוות' },
-  process: { en: 'Process', es: 'Proceso', he: 'תהליך' },
-  process_flow: { en: 'Booking Flow', es: 'Flujo de Reserva', he: 'תהליך הזמנה' },
-  gallery: { en: 'Gallery', es: 'Galería', he: 'גלריה' },
-  newsletter: { en: 'Newsletter', es: 'Boletín', he: 'ניוזלטר' },
-  logo_cloud: { en: 'Logo Cloud', es: 'Logos', he: 'לוגואים' },
-  video: { en: 'Video', es: 'Video', he: 'וידאו' },
-  footer: { en: 'Footer', es: 'Pie de Página', he: 'כותרת תחתונה' }
-};
-
-// Block icons (for UI)
-export const BLOCK_ICONS: Record<BlockType, string> = {
-  header: '🧭',
-  hero: '🎯',
-  services: '📋',
-  cta: '📢',
-  testimonials: '💬',
-  contact_form: '✉️',
-  pricing: '💰',
-  faq: '❓',
-  about: '👤',
-  features: '✨',
-  stats: '📊',
-  booking_widget: '📅',
-  payment_button: '💳',
-  team: '👥',
-  process: '🔄',
-  process_flow: '🎯',
-  gallery: '🖼️',
-  newsletter: '📰',
-  logo_cloud: '🏢',
-  video: '🎬',
-  footer: '📍'
-};
-
-/**
- * Get block display name in specified locale
- */
-export function getBlockDisplayName(blockType: BlockType, locale: Locale): string {
-  return BLOCK_DISPLAY_NAMES[blockType]?.[locale] || BLOCK_DISPLAY_NAMES[blockType]?.en || blockType;
-}
-
-/**
- * Check if a block type is valid
- */
-export function isValidBlockType(type: string): type is BlockType {
-  return type in BLOCK_REGISTRY;
-}
-
-/**
- * Get all available block types
- */
-export function getAvailableBlockTypes(): BlockType[] {
-  return Object.keys(BLOCK_REGISTRY) as BlockType[];
-}
-
 /**
  * Render a single block
  */
@@ -186,47 +117,6 @@ interface RenderBlockOptions {
   clientFlow?: FlowStep[];
   /** Booking page URL */
   bookingUrl?: string;
-}
-
-export function renderBlock({
-  blockType,
-  content,
-  styles,
-  theme,
-  locale = 'en',
-  className,
-  useLiveData,
-  blockId,
-  pageId,
-  clientFlow,
-  bookingUrl
-}: RenderBlockOptions): React.ReactNode {
-  const BlockComponent = BLOCK_REGISTRY[blockType];
-
-  if (!BlockComponent) {
-    // Using console.warn here is intentional for development debugging
-    // eslint-disable-next-line no-console
-    console.warn(`Unknown block type: ${blockType}`);
-    return null;
-  }
-
-  const isRTL = getDirection(locale) === 'rtl';
-
-  return (
-    <BlockComponent
-      content={content}
-      styles={styles}
-      theme={theme}
-      locale={locale}
-      isRTL={isRTL}
-      className={className}
-      useLiveData={useLiveData}
-      blockId={blockId}
-      pageId={pageId}
-      clientFlow={clientFlow}
-      bookingUrl={bookingUrl}
-    />
-  );
 }
 
 /**
@@ -398,7 +288,17 @@ export function WebsiteBlocks({
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'}>
       {sortedBlocks.map((block) => {
-        const BlockComponent = BLOCK_REGISTRY[block.block_type];
+        /*
+         * The template draws the section if it has an opinion about it.
+         *
+         * A block owns its content and its behaviour; the template owns how
+         * that looks. Where a template has a renderer for this section it wins
+         * outright — a numbered row is not a restyled card, it is different
+         * markup. Where it has none the block draws itself exactly as before,
+         * which is what lets sections be converted one at a time.
+         */
+        const BlockComponent =
+          templateRendererFor(theme, block.block_type) ?? BLOCK_REGISTRY[block.block_type];
 
         if (!BlockComponent) {
           // Using console.warn here is intentional for development debugging
@@ -450,43 +350,3 @@ export function WebsiteBlocks({
   );
 }
 
-/**
- * Default blocks for new pages (can be customized per template)
- */
-export const DEFAULT_BLOCKS: Omit<BlockData, 'id'>[] = [
-  {
-    block_type: 'hero',
-    position: 0,
-    enabled: true,
-    content: {
-      headline: 'Welcome',
-      subheadline: 'Your professional service provider',
-      cta_text: 'Get Started',
-      cta_link: '#contact'
-    }
-  },
-  {
-    block_type: 'services',
-    position: 1,
-    enabled: true,
-    content: {
-      title: 'Services',
-      subtitle: 'How we can help you',
-      services: [],
-      layout: 'grid'
-    }
-  },
-  {
-    block_type: 'contact_form',
-    position: 2,
-    enabled: true,
-    content: {
-      title: 'Get in Touch',
-      fields: [
-        { name: 'name', type: 'text', label: 'Name', required: true },
-        { name: 'email', type: 'email', label: 'Email', required: true },
-        { name: 'message', type: 'textarea', label: 'Message', required: true }
-      ]
-    }
-  }
-];

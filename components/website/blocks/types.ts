@@ -5,29 +5,44 @@ import type { ServicePaymentPlan } from '@/lib/business-os/servicePaymentPlan';
  */
 
 import type { Locale } from '@/lib/i18n/config';
+import type { PageTheme } from '@/lib/website-builder/pageTheme';
 
-export type BlockType =
-  | 'header'
-  | 'hero'
-  | 'cta'
-  | 'services'
-  | 'testimonials'
-  | 'contact_form'
-  | 'pricing'
-  | 'faq'
-  | 'about'
-  | 'features'
-  | 'stats'
-  | 'booking_widget'
-  | 'payment_button'
-  | 'team'
-  | 'process'
-  | 'process_flow'
-  | 'gallery'
-  | 'newsletter'
-  | 'logo_cloud'
-  | 'video'
-  | 'footer';
+/**
+ * Every section a page can contain — as a VALUE, not only a type.
+ *
+ * The union used to be written out by hand, which meant nothing could check a
+ * list of block types at runtime without importing the component registry. That
+ * registry reaches a stylesheet through `ContactFormBlock`, so a test asking the
+ * simple question "does this recipe name a real block" could not run at all.
+ *
+ * Declared once here and the union derived from it: the two cannot drift, and a
+ * recipe can be validated against it without loading a single component.
+ */
+export const BLOCK_TYPES = [
+  'header',
+  'hero',
+  'cta',
+  'services',
+  'testimonials',
+  'contact_form',
+  'pricing',
+  'faq',
+  'about',
+  'features',
+  'stats',
+  'booking_widget',
+  'payment_button',
+  'team',
+  'process',
+  'process_flow',
+  'gallery',
+  'newsletter',
+  'logo_cloud',
+  'video',
+  'footer',
+] as const;
+
+export type BlockType = (typeof BLOCK_TYPES)[number];
 
 // Header menu item interface
 export interface HeaderMenuItem {
@@ -48,23 +63,24 @@ export interface BlockStyles {
   layout?: string;
 }
 
-export interface PageTheme {
-  colors: {
-    primary: string;
-    secondary: string;
-    accent: string;
-    background: string;
-    surface: string;
-    text: string;
-    textSecondary: string;
-  };
-  fonts: {
-    heading: string;
-    body: string;
-  };
-  borderRadius: string;
-  spacing: 'compact' | 'normal' | 'spacious';
-}
+/*
+ * Re-exported, not redeclared.
+ *
+ * This and `WebsitePageRepository` each carried an identical copy. Identical
+ * shapes match structurally, so the duplication was invisible — right up until
+ * one of them gained a field.
+ */
+export type {
+  PageTheme,
+  ArchetypeId,
+  ThemeLayouts,
+  ThemeScale,
+  HeroLayout,
+  ServicesLayout,
+  CtaLayout,
+  GalleryLayout,
+  PricingLayout,
+} from '@/lib/website-builder/pageTheme';
 
 /**
  * Client flow steps - defines what happens when a client clicks on a service
@@ -79,7 +95,14 @@ export interface PageTheme {
  * Legacy step (deprecated, for backward compatibility):
  * - 'booking' = Maps to ['scheduling', 'client_info']
  */
-export type FlowStep = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+export type FlowStep =
+  | 'scheduling'
+  | 'client_info'
+  | 'booking'
+  | 'request'
+  | 'payment'
+  | 'intake'
+  | 'confirmation';
 
 /**
  * Normalizes a client flow array by expanding legacy 'booking' step
@@ -118,6 +141,13 @@ export interface JourneyServiceFacts {
   is_scheduled?: boolean | null;
   /** How the money arrives, or null where the service is free. */
   collection?: 'online' | 'invoice' | null;
+  /**
+   * Bought outright, or quoted per job.
+   *
+   * `proposal` ends the journey at a request — there is no price to publish
+   * and no card to take until the owner has quoted the work.
+   */
+  sale_mode?: 'direct' | 'proposal' | null;
   priceRaw?: number | null;
   hidden?: boolean;
 }
@@ -189,6 +219,14 @@ export interface SelectedServiceData {
    */
   is_scheduled?: boolean | null;
   collection?: 'online' | 'invoice' | null;
+  /**
+   * Bought outright, or quoted per job.
+   *
+   * The third of the same kind. `proposal` ends this client's journey at a
+   * request: there is no price to charge and no date to agree until the owner
+   * has quoted the work.
+   */
+  sale_mode?: 'direct' | 'proposal' | null;
   /**
    * How this service may be paid over time.
    *

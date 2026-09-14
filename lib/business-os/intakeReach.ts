@@ -36,6 +36,18 @@
 
 export interface IntakeReachInput {
   is_enabled?: boolean | null;
+  /**
+   * Kept on the row and no longer a gate.
+   *
+   * It used to be required before a client could be emailed a form, which made
+   * "I collect intake" and "send it for me" two switches where the owner only
+   * ever meant one. A business that turns intake ON means clients should
+   * receive it; the exceptions are about the SERVICE, not about a preference —
+   * see `intakeAppliesToService`.
+   *
+   * The column defaults to false, so every account that never found the second
+   * switch had its automatic sends silently off.
+   */
   send_after_booking?: boolean | null;
   /**
    * Whether a PUBLISHED form exists — resolved by the caller from
@@ -53,11 +65,30 @@ export interface IntakeReachInput {
 export function intakeReachesClient(settings: IntakeReachInput | null | undefined): boolean {
   if (!settings) return false;
 
-  return (
-    settings.is_enabled === true &&
-    settings.send_after_booking === true &&
-    settings.hasPublishedForm === true
-  );
+  return settings.is_enabled === true && settings.hasPublishedForm === true;
+}
+
+/**
+ * Does this particular service ask its client anything?
+ *
+ * Intake is for work that is about to happen with a person. Two kinds of
+ * booking are not that, and sending a form for either is a question with no
+ * occasion behind it:
+ *
+ *   a QUOTE REQUEST — nothing has been agreed. The next thing the client should
+ *     receive is a price, not a questionnaire.
+ *   a PRODUCT — bought outright, with no appointment to prepare for.
+ *
+ * Everything else gets the form: a paid session, a free consultation, a course
+ * with a date. The owner switched intake on; this is what they meant by it.
+ */
+export function intakeAppliesToService(
+  service: { sale_mode?: string | null; is_scheduled?: boolean | null } | null | undefined
+): boolean {
+  if (!service) return true;
+  if (service.sale_mode === 'proposal') return false;
+  if (service.is_scheduled === false) return false;
+  return true;
 }
 
 /**
@@ -86,14 +117,16 @@ export function businessCollectsIntake(settings: IntakeReachInput | null | undef
  * outside. A business that has generated a form and not published it is one
  * click from working, and deserves to be told that rather than told no.
  */
-export type IntakeBlockReason = 'disabled' | 'not_published' | 'not_automatic';
+export type IntakeBlockReason = 'disabled' | 'not_published' | 'not_applicable';
 
 export function intakeBlockReason(
   settings: IntakeReachInput | null | undefined,
-  { forClient = false }: { forClient?: boolean } = {}
+  {
+    service,
+  }: { forClient?: boolean; service?: { sale_mode?: string | null; is_scheduled?: boolean | null } | null } = {}
 ): IntakeBlockReason | null {
   if (!settings || settings.is_enabled !== true) return 'disabled';
   if (settings.hasPublishedForm !== true) return 'not_published';
-  if (forClient && settings.send_after_booking !== true) return 'not_automatic';
+  if (service !== undefined && !intakeAppliesToService(service)) return 'not_applicable';
   return null;
 }

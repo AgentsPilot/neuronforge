@@ -13,6 +13,23 @@ interface StatusCardProps {
   children?: React.ReactNode;
   /** A full-page centred treatment, for terminal states. */
   standalone?: boolean;
+  /**
+   * The card sits inside a `PublicShell` rather than owning the viewport.
+   *
+   * `standalone` does two jobs: the hero styling — big icon, centred text — and
+   * a wrapper that centres the card in 60vh and caps it at `max-w-md`. Those
+   * belong together on a page that is nothing BUT the card, which is six of the
+   * seven places this is used.
+   *
+   * The seventh is the intake confirmation, which lives inside a shell with the
+   * business's contact panel beneath it. There the cap fought the shell: the
+   * panel below grew to the shell's width while the card stayed at 448px, and a
+   * date and a street address both wrapped inside it. The 60vh centring was
+   * wrong there too — it padded the card away from the panel it belongs with.
+   *
+   * So this keeps the hero styling and drops the page-owning wrapper.
+   */
+  inShell?: boolean;
 }
 
 /**
@@ -42,17 +59,17 @@ export function StatusCard({
   actions,
   children,
   standalone = false,
+  inShell = false,
 }: StatusCardProps) {
   const palette = TONES[tone];
   const Icon = icon ?? palette.icon;
 
   const body = (
     <div
-      className={standalone ? 'p-8 text-center' : 'p-5'}
+      className={`apc-panel ${standalone ? 'p-8 text-center' : 'p-5'}`}
       style={{
         background: 'var(--ap-surface)',
         border: '1px solid var(--ap-border)',
-        borderRadius: 'var(--ap-radius-lg)',
         boxShadow: standalone ? 'var(--ap-shadow-md)' : 'var(--ap-shadow-sm)',
       }}
     >
@@ -95,6 +112,10 @@ export function StatusCard({
   );
 
   if (!standalone) return body;
+
+  // Inside a shell the width is already decided, and the height should follow
+  // the content — the card has a sibling below it.
+  if (inShell) return body;
 
   return (
     <div className="flex min-h-[60vh] items-center justify-center px-4">

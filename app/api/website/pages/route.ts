@@ -10,7 +10,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository, WebsitePageInsert, PageTheme } from '@/lib/repositories/WebsitePageRepository';
 import { WebsiteBlockRepository, WebsiteBlockInsert } from '@/lib/repositories/WebsiteBlockRepository';
-import { getTemplateById, templateToPageTheme, getStandardHomepageBlocks, WebsiteTemplate } from '@/lib/website-builder/templates';
+import { themeForTemplateId, getStandardHomepageBlocks } from '@/lib/website-builder/templates';
 import { BuildingBlock } from '@/lib/website-builder/building-blocks';
 import { websiteBlockEnrichmentService } from '@/lib/services/WebsiteBlockEnrichmentService';
 import { translateBlockContent } from '@/lib/i18n/website-block-translations';
@@ -85,17 +85,24 @@ export async function POST(request: NextRequest) {
     const pageRepo = new WebsitePageRepository(supabaseServer);
     const blockRepo = new WebsiteBlockRepository(supabaseServer);
 
-    // Look up template if provided
-    let template: WebsiteTemplate | undefined;
+    /*
+     * The design behind the id, whichever kind of id it is.
+     *
+     * The wizard now sends an archetype ('stone', 'bloom', 'lumen', 'aster');
+     * accounts created before it sent a template id. `themeForTemplateId`
+     * resolves both, so an archetype no longer 404s here.
+     */
+    let templateTheme: PageTheme | undefined;
     if (validated.template_id) {
-      template = getTemplateById(validated.template_id);
-      if (!template) {
+      const resolved = themeForTemplateId(validated.template_id);
+      if (!resolved) {
         return NextResponse.json(
           { success: false, error: 'Template not found' },
           { status: 404 }
         );
       }
-      requestLogger.info({ templateId: validated.template_id, templateName: template.name }, 'Using template');
+      templateTheme = resolved as PageTheme;
+      requestLogger.info({ templateId: validated.template_id, design: resolved.id }, 'Using design');
     }
 
     // Generate slug if not provided
@@ -112,7 +119,7 @@ export async function POST(request: NextRequest) {
       template_id: validated.template_id || null, // String ID like 'therapist_modern_minimal'
       subdomain: validated.subdomain || null,
       status: 'draft',
-      theme: template ? templateToPageTheme(template) : undefined,
+      theme: templateTheme,
       website_language: validated.website_language
     };
 
@@ -186,7 +193,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    requestLogger.info({ pageId: pageResult.data.id, userId: user.id, templateUsed: !!template }, 'Created website page');
+    requestLogger.info({ pageId: pageResult.data.id, userId: user.id, templateUsed: !!templateTheme }, 'Created website page');
 
     return NextResponse.json({
       success: true,

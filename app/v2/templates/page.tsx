@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
 import { useAuth } from '@/components/UserProvider'
 import { V2Logo, V2Controls } from '@/components/v2/V2Header'
 import { Card } from '@/components/v2/ui/card'
@@ -110,7 +111,8 @@ export default function TemplatesPage() {
 
   async function handleImport(templateId: string) {
     if (!user) {
-      router.push('/login')
+      // Sign-in lives on the marketing site, on its own origin.
+      window.location.href = marketingLoginUrl()
       return
     }
 

@@ -131,20 +131,20 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
     }
     if (style === 'blur') {
       return isScrolled
-        ? 'bg-white/90 dark:bg-slate-950/90 backdrop-blur-md'
-        : 'bg-white/70 dark:bg-slate-950/70 backdrop-blur-sm';
+        ? 'ap-bg-blur-strong backdrop-blur-md'
+        : 'ap-bg-blur backdrop-blur-sm';
     }
     // solid
     return isScrolled
-      ? 'bg-white dark:bg-slate-950 shadow-sm'
-      : 'bg-white dark:bg-slate-950';
+      ? 'ap-bg shadow-sm'
+      : 'ap-bg';
   };
 
   const getTextColor = () => {
     if (style === 'transparent' && !isScrolled) {
       return 'text-white';
     }
-    return 'text-gray-900 dark:text-white';
+    return 'ap-ink';
   };
 
   return (
@@ -161,7 +161,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
         style={style === 'solid' ? { backgroundColor: bgColor } : undefined}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className={`flex items-center ${layout === 'centered' ? 'justify-center' : 'justify-between'}`}>
+          <div className={`apc-nav flex items-center ${layout === 'centered' ? 'justify-center' : 'justify-between'}`}>
 
             {/* Logo */}
             <div className={`flex items-center ${layout === 'centered' ? `absolute ${isRTL ? 'right-4 sm:right-6 lg:right-8' : 'left-4 sm:left-6 lg:left-8'}` : ''}`}>
@@ -175,9 +175,9 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                 )}
                 {logo_text && (
                   <span
-                    className={`text-xl sm:text-2xl font-bold ${getTextColor()}`}
+                    className={`apc-wm text-xl sm:text-2xl font-bold ${getTextColor()}`}
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: style === 'transparent' && !isScrolled ? undefined : primaryColor
                     }}
                   >
@@ -197,9 +197,9 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                     px-3 lg:px-4 py-2 rounded-lg text-sm font-medium
                     transition-colors duration-200
                     ${getTextColor()}
-                    hover:bg-gray-100 dark:hover:bg-slate-800
+                    ap-hover
                   `}
-                  style={{ fontFamily: 'var(--website-font-body)' }}
+                  style={{ fontFamily: 'var(--ap-font-body)' }}
                 >
                   {item.label}
                 </button>
@@ -228,7 +228,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                   className="px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-all duration-200 hover:opacity-90 hover:shadow-lg"
                   style={{
                     backgroundColor: primaryColor,
-                    fontFamily: 'var(--website-font-body)'
+                    fontFamily: 'var(--ap-font-body)'
                   }}
                 >
                   {cta_button.text || labels.bookNow}
@@ -239,7 +239,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
             {/* Mobile Menu Button */}
             <button
               onClick={() => setIsOpen(!isOpen)}
-              className={`md:hidden p-2 rounded-lg ${getTextColor()} hover:bg-gray-100 dark:hover:bg-slate-800`}
+              className={`md:hidden p-2 rounded-lg ${getTextColor()} ap-hover`}
               aria-label={isOpen ? 'Close menu' : 'Open menu'}
             >
               {isOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
@@ -273,14 +273,14 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
               transition={{ type: 'tween', duration: 0.3 }}
               className={`
                 fixed top-0 ${isRTL ? 'left-0' : 'right-0'} bottom-0 w-80 max-w-[85vw]
-                bg-white dark:bg-slate-950 z-50 md:hidden
+                ap-bg z-50 md:hidden
                 shadow-2xl
               `}
               style={{ backgroundColor: bgColor }}
               dir={isRTL ? 'rtl' : 'ltr'}
             >
               {/* Mobile Menu Header */}
-              <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-slate-800">
+              <div className="flex items-center justify-between p-4 border-b ap-line">
                 <div className="flex items-center gap-2">
                   {logo_url && (
                     <img src={logo_url} alt={logo_text} className="h-8 w-auto" />
@@ -289,7 +289,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                     <span
                       className="text-xl font-bold"
                       style={{
-                        fontFamily: 'var(--website-font-heading)',
+                        fontFamily: 'var(--ap-font-heading)',
                         color: primaryColor
                       }}
                     >
@@ -299,7 +299,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                 </div>
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-800"
+                  className="p-2 rounded-lg ap-ink-3 ap-hover"
                   aria-label="Close menu"
                 >
                   <X className="w-5 h-5" />
@@ -316,11 +316,11 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: index * 0.05 }}
                       onClick={() => handleNavClick(item.anchor)}
-                      className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-base font-medium text-gray-900 dark:text-white hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors"
-                      style={{ fontFamily: 'var(--website-font-body)' }}
+                      className="w-full flex items-center justify-between px-4 py-3 rounded-lg text-base font-medium ap-ink ap-hover transition-colors"
+                      style={{ fontFamily: 'var(--ap-font-body)' }}
                     >
                       <span>{item.label}</span>
-                      <ChevronRight className={`w-4 h-4 text-gray-400 ${isRTL ? 'rotate-180' : ''}`} />
+                      <ChevronRight className={`w-4 h-4 ap-ink-3 ${isRTL ? 'rotate-180' : ''}`} />
                     </motion.button>
                   ))}
                 </div>
@@ -331,7 +331,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: menu_items.length * 0.05 + 0.1 }}
-                    className="mt-6 pt-6 border-t border-gray-200 dark:border-slate-800"
+                    className="mt-6 pt-6 border-t ap-line"
                   >
                     <a
                       href={headerBooking.kind === 'link' ? headerBooking.href : cta_button.link}
@@ -353,7 +353,7 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                       className="block w-full px-4 py-3 rounded-lg text-center text-base font-semibold text-white transition-all duration-200 hover:opacity-90"
                       style={{
                         backgroundColor: primaryColor,
-                        fontFamily: 'var(--website-font-body)'
+                        fontFamily: 'var(--ap-font-body)'
                       }}
                     >
                       {cta_button.text || labels.bookNow}

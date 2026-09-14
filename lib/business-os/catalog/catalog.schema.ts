@@ -251,11 +251,52 @@ export interface RelationDef {
  * operator then composes with it for free.
  */
 export interface DerivedExpansion {
-  relation: string;
+  /**
+   * The relation to traverse — omitted for a fact about the row ITSELF.
+   *
+   * Most derived facts reach another table: "has completed intake" is a
+   * property of a booking, not of a contact. Some are a plain column test that
+   * the planner nonetheless cannot be expected to invent, because the column
+   * name says nothing about the business word for it — `proposals.sent_at is
+   * not null` is what "quotes I actually sent" means, and asked that question
+   * the planner counted every quote including three that never left, because
+   * the entity ALSO has a status value literally called `sent` (which means
+   * sent-and-unanswered, so filtering on it would have returned the opposite
+   * error: zero).
+   *
+   * A self expansion takes exactly ONE predicate. `eq false` has to be the
+   * complement, and the complement of a conjunction is a disjunction, which
+   * this compiler cannot express — so the shape that cannot be lowered
+   * correctly is refused at build time rather than answered wrongly.
+   */
+  relation?: string;
   /** 'any' → EXISTS, 'none' → NOT EXISTS, 'count' → aggregate. */
   quantifier: 'any' | 'none' | 'count';
   where?: Array<{ field: string; op: string; value?: unknown }>;
 }
+
+/**
+ * The operators a SELF expansion may use, and what each one becomes when the
+ * derived boolean is asked for as `false`.
+ *
+ * Shared by the catalog build (which refuses anything not listed) and the
+ * compiler (which does the flipping), so the two can never disagree about what
+ * is lowerable. Null-ness is the interesting one: "was it sent" is
+ * `sent_at is_not_null`, and "was it not sent" is the same column being null —
+ * not the absence of a row.
+ */
+export const COMPLEMENTARY_OPS: Record<string, string> = {
+  is_not_null: 'is_null',
+  is_null: 'is_not_null',
+  eq: 'neq',
+  neq: 'eq',
+  in: 'not_in',
+  not_in: 'in',
+  gt: 'lte',
+  gte: 'lt',
+  lt: 'gte',
+  lte: 'gt',
+};
 
 export interface DerivedFieldDef {
   type: 'boolean' | 'number' | 'datetime';
@@ -285,6 +326,23 @@ export interface ActionDef {
   labels: Labels;
   risk: RiskLevel;
   requiresConfirmation: boolean;
+  /**
+   * What a READ action gives back, so the answer can quote it.
+   *
+   * Every other result in this system is addressable — `{sN.count}` for a find,
+   * `{sN.value}` for an aggregate — and an action's was not. `open_time` returns
+   * free minutes, booked minutes and how many appointments still fit, and the
+   * planner had no way to name any of it: asked "כמה שעות פתוחות מחר" it
+   * invented `{s1.first.hours}`, validation rejected it, and the question could
+   * not be answered however well it was planned.
+   *
+   * Declared here rather than inferred, for the same reason every field is: the
+   * planner writes its sentence before anything runs, so it can only reference
+   * what the catalog promised would exist.
+   *
+   * Read actions only. A write's outcome is its confirmation line.
+   */
+  returns?: Record<string, { labels: Labels; format?: FormatHint }>;
   /**
    * Do this action's declared fields name COLUMNS, or parameters?
    *
@@ -355,9 +413,28 @@ export type UserScope =
   | { kind: 'column'; column: string }
   | { kind: 'relation'; relation: string };
 
+/**
+ * Rows this entity leaves out unless the question asks for them.
+ *
+ * Declared, never inferred, and only for a row that has been REPLACED by
+ * another row the answer already includes — a superseded quote version is the
+ * only case today. See lib/business-os/bizql/defaultScope.ts for why this is
+ * the one place a hidden filter is defensible, and for the three properties
+ * that keep it honest.
+ */
+export interface DefaultScope {
+  /** Fields whose presence in the plan means the user is steering; stand aside. */
+  unless: string[];
+  where: Array<{ field: string; op: string; value?: unknown }>;
+  /** Said out loud next to the answer, so the exclusion is never silent. */
+  labels: Labels;
+}
+
 export interface EntityDef {
   /** Physical table name. MUST exist in the physical catalog. */
   table: string;
+  /** Rows omitted unless asked for — see DefaultScope. */
+  defaultScope?: DefaultScope;
   labels: EntityLabels;
   userScope: UserScope;
   /**
@@ -378,6 +455,24 @@ export interface EntityDef {
    * a count of another.
    */
   aliases?: string[];
+  /**
+   * Whether this entity can be READ with find/compute. Default true.
+   *
+   * False for a configuration singleton: one row, a couple of columns, and
+   * nothing anyone would query. Its purpose in the catalog is its ACTIONS.
+   *
+   * `business_profile` is the case that needed it. Asked "how many hours are
+   * still open on Wednesday" the planner reliably emitted `find
+   * business_profile` — which returns company_name and vertical, cannot answer
+   * the question, and looks like an answer. Wording the action's label more
+   * invitingly moved the rate around and never fixed it, because a plausible
+   * wrong option stays available however the right one is described.
+   *
+   * So the wrong option is removed. A flag on the entity is the honest place
+   * for it: "this is not a queryable collection" is a fact about the entity,
+   * not a rule about one question, and the validator can state it generically.
+   */
+  queryable?: boolean;
   /** Column used when naming a row in prose or a card title. */
   labelField: string | string[];
   /** Columns shown by default in a result card. */

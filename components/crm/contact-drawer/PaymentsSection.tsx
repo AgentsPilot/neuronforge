@@ -6,6 +6,7 @@ import { Receipt, CreditCard, Plus, DollarSign, Calendar, ExternalLink, FileText
 import { RefundModal } from '@/components/payments/RefundModal';
 import { createLogger } from '@/lib/logger';
 import { buildMoneyItems, totalMoney, type MoneyEntry, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
+import { fetchContactMoney } from '@/lib/payments/fetchContactMoney';
 import { buildEntryActions } from '@/lib/payments/entryActions';
 import { MoneyDetailDrawer } from '@/components/payments/MoneyDetailDrawer';
 import { MoneyRow } from '@/components/payments/MoneyRow';
@@ -248,10 +249,8 @@ export function PaymentsSection({
    */
   const fetchPlans = async () => {
     try {
-      const response = await fetch(`/api/payments/money?contact_id=${contactId}&limit=100`, {
-        cache: 'no-store',
-      });
-      const data = await response.json();
+      // The drawer above asks for this too; both get one request.
+      const data = await fetchContactMoney(contactId);
       if (!data.success) return;
 
       const byBooking: Record<string, MoneyPlan> = {};

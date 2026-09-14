@@ -10,7 +10,7 @@ import { journeySteps, type BookingStep } from '@/lib/business-os/clientJourney'
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
 // Client flow step types
-type ClientFlowStepKey = 'scheduling' | 'client_info' | 'booking' | 'payment' | 'intake' | 'confirmation';
+type ClientFlowStepKey = 'scheduling' | 'client_info' | 'booking' | 'quote_request' | 'payment' | 'intake' | 'confirmation';
 
 interface ProcessContent {
   title?: string;
@@ -36,6 +36,19 @@ const CLIENT_FLOW_STEPS: Record<ClientFlowStepKey, Record<string, { title: strin
     en: { title: 'Book Your Session', description: 'Select a time and provide your details', icon: 'calendar' },
     es: { title: 'Reserva Tu Sesión', description: 'Selecciona un horario y proporciona tus datos', icon: 'calendar' },
     he: { title: 'קבע את הפגישה', description: 'בחר זמן ומלא את הפרטים שלך', icon: 'calendar' },
+  },
+  /*
+   * Where a quoted service ends.
+   *
+   * This section is the honest answer to "what happens if I hire you", so a
+   * business that quotes has to be able to say so. Without this entry the
+   * resolver's `request` step mapped to nothing and the section stopped at
+   * "Your Details" — describing a journey that silently ended mid-sentence.
+   */
+  quote_request: {
+    en: { title: 'Get Your Quote', description: "We'll review your request and send you a price", icon: 'filetext' },
+    es: { title: 'Recibe Tu Presupuesto', description: 'Revisaremos tu solicitud y te enviaremos un precio', icon: 'filetext' },
+    he: { title: 'קבלת הצעת מחיר', description: 'נבחן את הבקשה ונשלח לך הצעת מחיר', icon: 'filetext' },
   },
   payment: {
     en: { title: 'Secure Payment', description: 'Complete your payment safely online', icon: 'creditcard' },
@@ -143,7 +156,12 @@ function flowFromServices(services: JourneyServiceFacts[] | undefined): ClientFl
 
   const journeys = services.map(service =>
     journeySteps(
-      { is_scheduled: service.is_scheduled, collection: service.collection, price: service.priceRaw },
+      {
+        is_scheduled: service.is_scheduled,
+        collection: service.collection,
+        price: service.priceRaw,
+        sale_mode: service.sale_mode,
+      },
       // Not gated on the processor here: the section describes what buying
       // this service involves, and an unconnected Stripe is a gap the owner
       // has to close, not a step the client should stop being told about.
@@ -198,6 +216,7 @@ const STEP_TO_FLOW_KEY: Record<string, ClientFlowStepKey | undefined> = {
   service: undefined,
   datetime: 'scheduling',
   details: 'client_info',
+  request: 'quote_request',
   payment: 'payment',
   intake: 'intake',
   confirmation: 'confirmation',
@@ -251,7 +270,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-20 sm:py-32'} ${className || ''}`}
+      className={`apc-sec relative overflow-hidden ${styles?.padding || 'py-20 sm:py-32'} ${className || ''}`}
       style={{
         backgroundColor: isDark ? backgroundColor : '#ffffff'
       }}
@@ -282,7 +301,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6">
         {/* Enhanced Header */}
         {(title || subtitle) && (
-          <div className="text-center mb-16 sm:mb-20">
+          <div className="apc-sec-head text-center mb-16 sm:mb-20">
             {/* Decorative badge */}
             <motion.div
               initial={{ opacity: 0, scale: 0.8 }}
@@ -306,7 +325,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                 viewport={{ once: true }}
                 className="text-3xl sm:text-4xl lg:text-5xl font-bold"
                 style={{
-                  fontFamily: 'var(--website-font-heading)',
+                  fontFamily: 'var(--ap-font-heading)',
                   color: isDark ? '#ffffff' : textColor
                 }}
               >
@@ -321,7 +340,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                 transition={{ delay: 0.1 }}
                 className="mt-5 text-lg max-w-2xl mx-auto"
                 style={{
-                  fontFamily: 'var(--website-font-body)',
+                  fontFamily: 'var(--ap-font-body)',
                   color: isDark ? '#9ca3af' : '#6b7280'
                 }}
               >
@@ -361,7 +380,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                 {/* Step number circle */}
                 <motion.div
                   whileHover={{ scale: 1.1 }}
-                  className="relative w-12 h-12 rounded-2xl flex items-center justify-center text-xl text-white flex-shrink-0 shadow-lg"
+                  className="apc-icon relative w-12 h-12 rounded-2xl flex items-center justify-center text-xl text-white flex-shrink-0 shadow-lg"
                   style={{
                     background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`,
                     boxShadow: `0 10px 25px -5px ${primaryColor}40`
@@ -393,7 +412,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <h3
                       className="text-xl font-semibold mb-2"
                       style={{
-                        fontFamily: 'var(--website-font-heading)',
+                        fontFamily: 'var(--ap-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -401,7 +420,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     </h3>
                     <p
                       style={{
-                        fontFamily: 'var(--website-font-body)',
+                        fontFamily: 'var(--ap-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >
@@ -453,7 +472,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   {/* Enhanced dot with glow */}
                   <motion.div
                     whileHover={{ scale: 1.15 }}
-                    className="relative w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 z-10 shadow-xl"
+                    className="apc-icon relative w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 z-10 shadow-xl"
                     style={{
                       background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`,
                       color: 'white',
@@ -499,7 +518,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <h3
                       className="text-xl font-bold mb-3"
                       style={{
-                        fontFamily: 'var(--website-font-heading)',
+                        fontFamily: 'var(--ap-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -508,7 +527,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <p
                       className="leading-relaxed"
                       style={{
-                        fontFamily: 'var(--website-font-body)',
+                        fontFamily: 'var(--ap-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >
@@ -547,7 +566,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
               }}
             />
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10 lg:gap-6">
+            <div className="apc-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10 lg:gap-6">
               {steps.map((step, index) => (
                 <motion.div
                   key={index}
@@ -563,7 +582,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     className="relative mx-auto"
                   >
                     <div
-                      className="w-24 h-24 mx-auto rounded-3xl flex items-center justify-center text-white shadow-xl relative z-10"
+                      className="apc-icon w-24 h-24 mx-auto rounded-3xl flex items-center justify-center text-white shadow-xl relative z-10"
                       style={{
                         background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`,
                         boxShadow: `0 15px 35px -10px ${primaryColor}50`
@@ -606,7 +625,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <h3
                     className="mt-8 text-lg font-bold"
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -615,7 +634,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <p
                     className="mt-3 text-sm leading-relaxed"
                     style={{
-                      fontFamily: 'var(--website-font-body)',
+                      fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -643,7 +662,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
 
         {/* Cards Layout - Enhanced with glassmorphism */}
         {layout === 'cards' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="apc-grid grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
             {steps.map((step, index) => (
               <motion.div
                 key={index}
@@ -692,7 +711,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     whileInView={{ rotate: 0, scale: 1 }}
                     viewport={{ once: true }}
                     transition={{ delay: index * 0.1 + 0.2, type: "spring" }}
-                    className="w-14 h-14 rounded-2xl flex items-center justify-center mb-6 text-white"
+                    className="apc-icon w-14 h-14 rounded-2xl flex items-center justify-center mb-6 text-white"
                     style={{
                       background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`,
                       boxShadow: `0 8px 20px -5px ${primaryColor}40`
@@ -704,7 +723,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <h3
                     className="text-xl font-bold mb-3"
                     style={{
-                      fontFamily: 'var(--website-font-heading)',
+                      fontFamily: 'var(--ap-font-heading)',
                       color: isDark ? '#ffffff' : textColor
                     }}
                   >
@@ -713,7 +732,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                   <p
                     className="leading-relaxed"
                     style={{
-                      fontFamily: 'var(--website-font-body)',
+                      fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
                     }}
                   >
@@ -772,7 +791,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     className="relative flex-shrink-0"
                   >
                     <div
-                      className="w-28 h-28 rounded-3xl flex items-center justify-center text-white text-3xl font-bold shadow-2xl"
+                      className="apc-icon w-28 h-28 rounded-3xl flex items-center justify-center text-white text-3xl font-bold shadow-2xl"
                       style={{
                         background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`,
                         boxShadow: `0 20px 40px -10px ${primaryColor}50`
@@ -811,7 +830,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <h3
                       className="text-2xl font-bold mb-3"
                       style={{
-                        fontFamily: 'var(--website-font-heading)',
+                        fontFamily: 'var(--ap-font-heading)',
                         color: isDark ? '#ffffff' : textColor
                       }}
                     >
@@ -820,7 +839,7 @@ export function ProcessBlock({ content, styles, theme, isRTL, className, locale 
                     <p
                       className="text-base leading-relaxed"
                       style={{
-                        fontFamily: 'var(--website-font-body)',
+                        fontFamily: 'var(--ap-font-body)',
                         color: isDark ? '#9ca3af' : '#6b7280'
                       }}
                     >

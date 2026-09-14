@@ -5,6 +5,7 @@
  * Following the repository pattern defined in REPOSITORY_STRATEGY.md
  */
 
+import type { PageTheme } from '@/lib/website-builder/pageTheme';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 
@@ -50,23 +51,8 @@ export interface WebsitePage {
   updated_at: string;
 }
 
-export interface PageTheme {
-  colors: {
-    primary: string;
-    secondary: string;
-    accent: string;
-    background: string;
-    surface: string;
-    text: string;
-    textSecondary: string;
-  };
-  fonts: {
-    heading: string;
-    body: string;
-  };
-  borderRadius: string;
-  spacing: 'compact' | 'normal' | 'spacious';
-}
+/** Re-exported from the canonical definition — see `lib/website-builder/pageTheme`. */
+export type { PageTheme };
 
 export interface WebsitePageInsert {
   user_id: string;
@@ -141,6 +127,120 @@ export class WebsitePageRepository {
     }
   }
 
+  /**
+   * Landing pages, from a set of ids, that this user owns and has not archived.
+   *
+   * Used when working out what a service deletion would break. Archived pages
+   * are excluded — they are already not served, so offering to take one down
+   * is noise.
+   */
+  async findLandingPagesByIds(
+    pageIds: string[],
+    userId: string
+  ): Promise<RepositoryResult<WebsitePage[]>> {
+    try {
+      if (!pageIds.length) return { data: [], error: null };
+
+      const { data, error } = await this.supabase
+        .from('website_pages')
+        .select('*')
+        .in('id', pageIds)
+        .eq('user_id', userId)
+        .eq('page_type', 'landing')
+        .neq('status', 'archived');
+
+      if (error) throw error;
+      return { data: data || [], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to find landing pages by ids');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Take pages out of public view without destroying them.
+   *
+   * `status` is the gate the public renderer actually reads (`findBySubdomain`
+   * filters `status = 'live'`), so this is what stops a page being served. The
+   * `published` boolean on the same table is read nowhere and is left alone
+   * rather than half-maintained — see the delete flow in
+   * `lib/services/ServiceReferenceService.ts`.
+   */
+  async unpublishMany(pageIds: string[], userId: string): Promise<RepositoryResult<number>> {
+    try {
+      if (!pageIds.length) return { data: 0, error: null };
+
+      const { error } = await this.supabase
+        .from('website_pages')
+        .update({ status: 'draft' })
+        .in('id', pageIds)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, count: pageIds.length }, 'Unpublished landing pages');
+      return { data: pageIds.length, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, pageIds }, 'Failed to unpublish landing pages');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Destroy these pages for good.
+   *
+   * For the one case where keeping them is worse than losing them: a landing
+   * page is GENERATED for a single service — its headline, its copy, its
+   * objections and its closing section are all written about that one thing —
+   * so when the service is deleted the page is not a page missing a product,
+   * it is an article about something that no longer exists. Unpublishing it
+   * would leave the owner a draft they can never usefully republish, and a
+   * growing list of them.
+   *
+   * A service moved to DRAFT is the opposite case and must NOT come here: that
+   * is temporary, the copy is still true, and `unpublishMany` is what it wants.
+   *
+   * Blocks go with the page through `website_blocks.page_id` — declared
+   * `ON DELETE CASCADE`, so they are not deleted here.
+   */
+  async deleteMany(pageIds: string[], userId: string): Promise<RepositoryResult<number>> {
+    try {
+      if (!pageIds.length) return { data: 0, error: null };
+
+      const { error } = await this.supabase
+        .from('website_pages')
+        .delete()
+        .in('id', pageIds)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info({ userId, count: pageIds.length }, 'Deleted landing pages with their service');
+      return { data: pageIds.length, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, pageIds }, 'Failed to delete landing pages');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * The page served at this address.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS NOT `.single()`
+   *
+   * It was, and `.single()` ERRORS when it matches more than one row. A
+   * business is meant to have one live page per subdomain, but nothing enforces
+   * that — a live landing page sharing the subdomain is enough — and the error
+   * was caught, returned as a failure, and read by the public route as "no page
+   * found". So a second live page did not shadow the homepage: it took the
+   * whole site down to a Coming Soon screen, for the address the owner had
+   * already given to clients.
+   *
+   * The homepage wins where there is one, and the oldest page otherwise, so the
+   * answer is stable rather than whatever the database happened to return
+   * first. A site that is merely misconfigured now serves something.
+   */
   async findBySubdomain(subdomain: string): Promise<RepositoryResult<WebsitePage>> {
     try {
       const { data, error } = await this.supabase
@@ -148,12 +248,62 @@ export class WebsitePageRepository {
         .select('*')
         .eq('subdomain', subdomain)
         .eq('status', 'live')
-        .single();
+        .order('page_type', { ascending: true })   // 'homepage' before 'landing'
+        .order('created_at', { ascending: true })
+        .limit(1);
 
       if (error) throw error;
-      return { data, error: null };
+      if (!data || data.length === 0) {
+        return { data: null, error: new Error('No live page for this subdomain') };
+      }
+      return { data: data[0], error: null };
     } catch (error) {
       logger.error({ err: error, subdomain }, 'Failed to find page by subdomain');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * A live landing page at this address and slug.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY LANDING PAGES NEEDED THEIR OWN LOOKUP
+   *
+   * There was exactly one public route — `/site/[subdomain]` — and landing
+   * pages share the business's single subdomain with its homepage. So a landing
+   * page was only ever reachable if it happened to be the one row
+   * `findBySubdomain` returned, which meant a business could publish a landing
+   * page OR a website, never both. Publishing the second one did not shadow the
+   * first; it made the address ambiguous.
+   *
+   * The `slug` column has been on every row since the table was created and
+   * nothing read it publicly. This is that read.
+   */
+  async findLiveLandingBySlug(
+    subdomain: string,
+    slug: string
+  ): Promise<RepositoryResult<WebsitePage>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('website_pages')
+        .select('*')
+        .eq('subdomain', subdomain)
+        .eq('slug', slug)
+        .eq('page_type', 'landing')
+        .eq('status', 'live')
+        // Same reason as `findBySubdomain`: `.single()` errors on a duplicate
+        // and the caller reads that as "no page", taking down an address the
+        // owner has already shared.
+        .order('created_at', { ascending: true })
+        .limit(1);
+
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        return { data: null, error: new Error('No live landing page at that slug') };
+      }
+      return { data: data[0], error: null };
+    } catch (error) {
+      logger.error({ err: error, subdomain, slug }, 'Failed to find a landing page by slug');
       return { data: null, error: error as Error };
     }
   }

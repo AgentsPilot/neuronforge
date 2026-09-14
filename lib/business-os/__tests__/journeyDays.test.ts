@@ -123,4 +123,37 @@ describe('groupJourneyByDay', () => {
   it('is empty-safe', () => {
     expect(groupJourneyByDay([])).toEqual([]);
   });
+
+  /*
+   * The journey returning to a day it has already been on.
+   *
+   * Not hypothetical: the schedule step carries the APPOINTMENT's time, which
+   * is in the future, while the steps after it carry the times they were
+   * recorded. So an ordinary booking made today for tomorrow reads
+   * today → tomorrow → today, and both "today" groups came out with the same
+   * key. React deduplicates by key, so one of them was silently dropped or
+   * duplicated — the strip lost steps with nothing in the UI to say so.
+   */
+  it('gives a revisited day a distinct key, keeping the day itself intact', () => {
+    const groups = groupJourneyByDay([
+      step('2026-09-09T10:00:00', 'service'),
+      step('2026-09-10T09:00:00', 'schedule'),
+      step('2026-09-09T10:05:00', 'confirmation'),
+    ]);
+
+    const days = groups.filter(g => g.kind === 'day');
+    expect(days).toHaveLength(3);
+
+    const keys = days.map(g => g.key);
+    expect(new Set(keys).size).toBe(3);
+
+    // The day is still the day — only the list identity is disambiguated.
+    expect(days.map(g => (g.kind === 'day' ? g.day : ''))).toEqual([
+      '2026-09-09',
+      '2026-09-10',
+      '2026-09-09',
+    ]);
+    expect(keys[0]).toBe('2026-09-09');
+    expect(keys[2]).toBe('2026-09-09#2');
+  });
 });

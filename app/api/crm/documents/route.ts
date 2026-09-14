@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const contactId = searchParams.get('contact_id');
     const limit = parseInt(searchParams.get('limit') || '50', 10);
-    const documentType = searchParams.get('document_type') as 'contract' | 'intake_form' | 'invoice' | 'receipt' | 'id_document' | 'medical' | 'insurance' | 'other' | undefined;
+    const documentType = searchParams.get('document_type') as 'contract' | 'intake_form' | 'invoice' | 'receipt' | 'proposal' | 'id_document' | 'medical' | 'insurance' | 'other' | undefined;
 
     if (!contactId) {
       return NextResponse.json(

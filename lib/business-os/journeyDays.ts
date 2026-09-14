@@ -28,8 +28,21 @@ export interface DatedStep {
 
 export interface JourneyDayGroup<T> {
   kind: 'day';
-  /** `YYYY-MM-DD` in local time, or `undated`. Stable, so it can be a React key. */
+  /**
+   * Unique per group, so it can be a React key.
+   *
+   * Usually `YYYY-MM-DD`, but a day the journey RETURNS to gets a suffix —
+   * `2026-09-09#2`. Order is preserved rather than sorted (see below), so a
+   * journey can legitimately read 9 Sep → 10 Sep → 9 Sep: the schedule step
+   * carries the appointment's future time while the steps after it carry the
+   * times they were recorded. That produced two groups with the same key, and
+   * React silently dropped or duplicated one of them.
+   *
+   * Use `day` for the date identity; this field is for identity in a list.
+   */
   key: string;
+  /** `YYYY-MM-DD` in local time, or `undated`. Not unique within a journey. */
+  day: string;
   /** Midnight of that day, or null for the undated group. */
   date: Date | null;
   steps: T[];
@@ -87,12 +100,14 @@ function dayKey(date: Date): string {
 export function groupJourneyByDay<T extends DatedStep>(steps: T[]): JourneyGroup<T>[] {
   const groups: JourneyGroup<T>[] = [];
   let current: JourneyDayGroup<T> | null = null;
+  /** How many groups each day has already opened, so repeats stay distinct. */
+  const seen = new Map<string, number>();
 
   for (const step of steps) {
     const at = parse(step.timestamp);
-    const key = at ? dayKey(at) : 'undated';
+    const day = at ? dayKey(at) : 'undated';
 
-    if (current && current.key === key) {
+    if (current && current.day === day) {
       current.steps.push(step);
       continue;
     }
@@ -107,11 +122,22 @@ export function groupJourneyByDay<T extends DatedStep>(steps: T[]): JourneyGroup
       const gap = Math.round((startOfDay(at).getTime() - current.date.getTime()) / DAY_MS);
 
       if (gap >= WAIT_THRESHOLD_DAYS) {
-        groups.push({ kind: 'wait', key: `wait-${current.key}-${key}`, days: gap });
+        groups.push({ kind: 'wait', key: `wait-${current.key}-${day}`, days: gap });
       }
     }
 
-    current = { kind: 'day', key, date: at ? startOfDay(at) : null, steps: [step] };
+    // Annotated: without it TS walks `seen.set(day, occurrence)` back into this
+    // initializer and gives up, inferring `any` under a strict-mode error.
+    const occurrence: number = (seen.get(day) ?? 0) + 1;
+    seen.set(day, occurrence);
+
+    current = {
+      kind: 'day',
+      key: occurrence === 1 ? day : `${day}#${occurrence}`,
+      day,
+      date: at ? startOfDay(at) : null,
+      steps: [step],
+    };
     groups.push(current);
   }
 

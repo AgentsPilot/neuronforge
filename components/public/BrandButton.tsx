@@ -49,7 +49,13 @@ export function BrandButton({
     'inline-flex items-center justify-center gap-2 font-semibold transition-colors duration-150 disabled:opacity-55 disabled:cursor-not-allowed';
 
   const style: React.CSSProperties = {
-    borderRadius: 'var(--ap-radius-md)',
+    /*
+     * No `borderRadius` here on purpose: it is the template's to set. Stone and
+     * Warm use a pill, Aster a 10px rectangle, Lumen the largest corner in the
+     * set — and an inline radius would outrank every one of them. `.apc-btn` in
+     * the template stylesheet supplies it, and `base()` supplies the default for
+     * a surface with no template at all.
+     */
     ...(variant === 'primary'
       ? { background: 'var(--ap-brand)', color: 'var(--ap-on-brand)' }
       : variant === 'secondary'
@@ -70,7 +76,11 @@ export function BrandButton({
     </>
   );
 
-  const classes = `${base} ${SIZES[size]} ${fullWidth ? 'w-full' : ''} ${className}`;
+  // `apc-btn` is how the selected template reaches this control on the smart
+  // link, the invoice and the proposal, the same way it reaches a button inside
+  // a website section.
+  const solid = variant === 'primary' ? ' apc-btn--solid' : '';
+  const classes = `apc-btn${solid} ${base} ${SIZES[size]} ${fullWidth ? 'w-full' : ''} ${className}`;
 
   if (href && !disabled && !loading) {
     return (

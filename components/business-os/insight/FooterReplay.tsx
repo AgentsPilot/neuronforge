@@ -49,8 +49,8 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
           className="lv-replay"
           onClick={openModal}
           style={{
-            border: '1.5px solid #E7E9F1',
-            background: '#FFFFFF',
+            border: '1.5px solid var(--v2-border)',
+            background: 'var(--v2-surface)',
             borderRadius: '13px',
             padding: '12px 20px',
             fontSize: '14px',
@@ -62,14 +62,14 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
             transition: '0.15s',
             cursor: 'pointer',
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-            color: '#131A2B',
+            color: 'var(--v2-text-primary)',
             direction: isRTL ? 'rtl' : 'ltr',
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.borderColor = '#D7DBE7';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = '#E7E9F1';
+            e.currentTarget.style.borderColor = 'var(--v2-border)';
           }}
         >
           {/* Play icon */}
@@ -117,7 +117,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
             aria-modal="true"
             style={{
               direction: isRTL ? 'rtl' : 'ltr',
-              background: '#FFFFFF',
+              background: 'var(--v2-surface)',
               borderRadius: '20px',
               width: '100%',
               maxWidth: '460px',
@@ -135,7 +135,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
                 fontSize: '19px',
                 fontWeight: 600,
                 letterSpacing: '-0.02em',
-                color: '#131A2B',
+                color: 'var(--v2-text-primary)',
               }}
             >
               {modal.h}
@@ -146,7 +146,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
               className="mb-s"
               style={{
                 fontSize: '13.5px',
-                color: '#697187',
+                color: 'var(--v2-text-secondary)',
                 margin: '4px 0 18px',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
@@ -164,7 +164,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
                   gap: '11px',
                   alignItems: 'flex-start',
                   padding: '11px 0',
-                  borderBottom: index < modal.rows.length - 1 ? '1px solid #E7E9F1' : 'none',
+                  borderBottom: index < modal.rows.length - 1 ? '1px solid var(--v2-border)' : 'none',
                 }}
               >
                 {/* Check icon: .mb-ic */}
@@ -174,7 +174,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
                     width: '24px',
                     height: '24px',
                     borderRadius: '8px',
-                    background: '#E6F8F0',
+                    background: 'rgba(34, 197, 139, 0.12)',
                     flexShrink: 0,
                     display: 'grid',
                     placeItems: 'center',
@@ -185,7 +185,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
                     style={{
                       width: '12px',
                       height: '12px',
-                      stroke: '#1B9A6C',
+                      stroke: '#22C58B',
                       fill: 'none',
                       strokeWidth: 3,
                       strokeLinecap: 'round',
@@ -204,7 +204,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
                       fontWeight: 600,
                       display: 'block',
                       fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                      color: '#131A2B',
+                      color: 'var(--v2-text-primary)',
                     }}
                   >
                     {row.b}
@@ -212,7 +212,7 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
                   <small
                     style={{
                       fontSize: '12.5px',
-                      color: '#697187',
+                      color: 'var(--v2-text-secondary)',
                       fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                     }}
                   >
@@ -229,15 +229,15 @@ export function FooterReplay({ label, modal }: FooterReplayProps) {
               style={{
                 width: '100%',
                 marginTop: '18px',
-                border: '1.5px solid #E7E9F1',
-                background: '#fff',
+                border: '1.5px solid var(--v2-border)',
+                background: 'var(--v2-surface)',
                 borderRadius: '12px',
                 padding: '12px',
                 fontSize: '14px',
                 fontWeight: 600,
                 cursor: 'pointer',
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-                color: '#131A2B',
+                color: 'var(--v2-text-primary)',
               }}
             >
               {t('insight.modal.close') || 'Close'}

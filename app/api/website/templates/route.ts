@@ -1,15 +1,82 @@
 /**
- * Website Templates API
- * GET - List available templates, optionally filtered by vertical
+ * The looks a business can choose from.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT THIS USED TO RETURN, AND WHY IT CHANGED
+ *
+ * Thirty-three templates, filtered by vertical, ordered by a recommender, and
+ * sliced to four by the wizard. Each one nominated three hex values and a font
+ * name — and the font never rendered, because every public surface hardcoded
+ * Heebo at the front of the stack. So a photographer and a lawyer picked from
+ * different galleries and got the same site in a different accent colour.
+ *
+ * It now returns the four archetypes: complete designs — palette, type stack,
+ * type scale, radii, spacing register and layout arrangement — that the block
+ * components actually switch on. Four real choices rather than thirty-three
+ * near-identical ones.
+ *
+ * The response keeps its old shape on purpose. `templates`, `theme.colors`,
+ * `theme.primary_color` and an empty `blocks` array are all still there, so the
+ * website page and the setup wizard keep compiling and rendering while they are
+ * moved over. What changed is what is IN the list.
+ *
+ * The vertical still matters — it picks which card is pre-selected — but it no
+ * longer filters, because all four suit any trade and an owner who wants the
+ * dark one should be able to have it.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { selectTemplateForBusiness } from '@/lib/website-builder/selectTemplate';
-import { WEBSITE_TEMPLATES, WebsiteTemplate } from '@/lib/website-builder/templates';
+import { archetypeRepository } from '@/lib/repositories/ArchetypeRepository';
+import { recommendArchetypeId } from '@/lib/website-builder/recipes';
+import { getArchetypeLabel, type TemplateLabelLanguage } from '@/lib/website-builder/templateLabels';
+import type { PageTheme } from '@/lib/website-builder/pageTheme';
 
 const logger = createLogger({ module: 'WebsiteTemplatesAPI' });
+
+/**
+ * An archetype, in the shape the gallery already reads.
+ *
+ * `theme` carries both spellings — the flat `primary_color` the wizard's swatch
+ * reads and the nested `colors` the preview reads — because both consumers
+ * exist today and neither needed changing for this to land.
+ */
+function toGalleryEntry(archetype: PageTheme, language: TemplateLabelLanguage) {
+  // `PageTheme.id` is optional, because a theme stored before archetypes
+  // existed has none. Everything this function receives comes from the
+  // repository and does carry one, but the gallery needs a stable key either
+  // way and a card with no id could not be selected.
+  const id = archetype.id ?? 'stone';
+  const label = getArchetypeLabel(id, language);
+
+  return {
+    id,
+    name: label.name,
+    description: label.blurb,
+    // Not a vertical any more: every look is offered to every trade.
+    vertical: '',
+    source: archetype.source,
+    theme: {
+      primary_color: archetype.colors.primary,
+      secondary_color: archetype.colors.secondary,
+      accent_color: archetype.colors.accent,
+      font_family: archetype.fonts.heading,
+      colors: archetype.colors,
+      fonts: archetype.fonts,
+    },
+    // The full design, for a gallery card that wants to draw a real preview
+    // rather than two diagonal swatches.
+    scale: archetype.scale,
+    borderRadius: archetype.borderRadius,
+    spacing: archetype.spacing,
+    layouts: archetype.layouts,
+    // The recipe decides which sections a page has, from the data. An archetype
+    // has no opinion, and this stays empty so the older consumers do not break.
+    blocks: [],
+  };
+}
 
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -23,109 +90,48 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const vertical = searchParams.get('vertical');
-    const subVertical = searchParams.get('sub_vertical');
-    const description = searchParams.get('description');
-    const templateType = searchParams.get('type');
+    const language = (searchParams.get('lang') || 'en') as TemplateLabelLanguage;
 
-    let templates: WebsiteTemplate[] = WEBSITE_TEMPLATES;
-
-    // Filter by vertical if provided
-    // NOTE: Verticals are normalized at OnboardingConfigurationService now,
-    // but we keep a fallback mapping here for backward compatibility with old data
-    if (vertical) {
-      // Fallback mapping for legacy data (primary normalization is at OnboardingConfigurationService)
-      const fallbackMapping: Record<string, string> = {
-        teacher: 'tutor',
-        wellness: 'therapist',
-        // Beauty has its own vertical now
-        makeup_artist: 'beauty',
-        makeup: 'beauty',
-        esthetician: 'beauty',
-        nail_tech: 'beauty',
-        hairdresser: 'beauty',
-        hairstylist: 'beauty',
-        barber: 'beauty',
-        spa: 'beauty',
-        salon: 'beauty',
-        cosmetologist: 'beauty',
-        fitness: 'trainer',
-        healthcare: 'therapist',
-        accountant: 'consultant',
-        designer: 'photographer',
-        other: '', // Will use all templates
-      };
-
-      const normalizedVertical = fallbackMapping[vertical] ?? vertical;
-      const filteredTemplates = normalizedVertical
-        ? templates.filter(t => t.vertical === normalizedVertical)
-        : [];
-
-      // If exact match found, use filtered. Otherwise fall back to showing all templates
-      templates = filteredTemplates.length > 0 ? filteredTemplates : WEBSITE_TEMPLATES;
-
-      if (filteredTemplates.length === 0) {
-        // Worth saying out loud: the caller gets all 33 templates ordered
-        // therapist-first, so a business whose vertical we do not recognise is
-        // shown — and used to be pre-selected into — a therapist template.
-        requestLogger.warn(
-          { vertical, normalizedVertical },
-          'No templates for this vertical; returning the full roster'
-        );
-      }
-    }
-
-    // Filter by template type if provided
-    if (templateType) {
-      templates = templates.filter(t => t.template_type === templateType);
-    }
-
-    // Get unique verticals for the filter dropdown
-    const verticals = [...new Set(WEBSITE_TEMPLATES.map(t => t.vertical))];
+    // Never empty and never throws: the four in code stand in whenever the
+    // table is unmigrated or unreachable, because a gallery with nothing in it
+    // is a step of the wizard with no way forward.
+    const archetypes = await archetypeRepository.listActive();
 
     /*
-     * The recommendation, and the list ordered to match it.
+     * Which card opens pre-selected.
      *
-     * The vertical filter above only narrows a gallery; it never picked one, so
-     * the wizard pre-selected whatever was first in the array. The selector
-     * below is allowed to cross the vertical boundary on the sub-vertical —
-     * which is the only way a parenting school reaches a coaching template
-     * rather than academic tutoring.
-     *
-     * Ordering the response rather than only naming a winner means the four
-     * templates the wizard shows are the four best, not the first four.
+     * A recommendation, not a filter. The old route narrowed the gallery to a
+     * vertical and then warned when it could not, which meant an unrecognised
+     * trade was shown thirty-three templates ordered therapist-first. All four
+     * are always offered; the vertical only decides which one is ticked.
      */
-    let recommendedTemplateId: string | undefined;
-    if (vertical || subVertical) {
-      const selection = selectTemplateForBusiness({
-        vertical,
-        sub_vertical: subVertical,
-        description,
-      });
-      recommendedTemplateId = selection.template.id;
-      requestLogger.info(
-        { vertical, subVertical, recommendedTemplateId, reason: selection.reason },
-        'Template recommended'
-      );
+    const recommendedTemplateId = recommendArchetypeId(vertical);
 
-      // Order the returned list to match, keeping anything the selector's pool
-      // did not cover at the end rather than dropping it.
-      const rank = new Map(selection.candidates.map((t, i) => [t.id, i]));
-      templates = [...templates].sort(
-        (a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER)
-      );
-    }
+    const templates = archetypes
+      .slice()
+      .sort((a, b) =>
+        a.id === recommendedTemplateId ? -1 : b.id === recommendedTemplateId ? 1 : 0
+      )
+      .map(archetype => toGalleryEntry(archetype, language));
+
+    requestLogger.info(
+      { vertical, recommendedTemplateId, count: templates.length },
+      'Archetypes listed'
+    );
 
     return NextResponse.json({
       success: true,
       templates,
-      verticals,
+      // Kept so the older consumers keep compiling. Nothing filters by vertical
+      // any more, so there is nothing to populate it with.
+      verticals: [],
       recommendedTemplateId,
-      total: templates.length
+      total: templates.length,
     });
   } catch (error) {
-    requestLogger.error({ err: error }, 'Failed to list templates');
+    requestLogger.error({ err: error }, 'Failed to list archetypes');
     return NextResponse.json(
-      { success: false, error: 'Failed to list templates' },
+      { success: false, error: 'Failed to list designs' },
       { status: 500 }
     );
   }

@@ -46,6 +46,17 @@ export interface ApplyWritesArgs {
   timezone?: string;
   /** Narrow, because branding resolution is typed to the supported set. */
   language?: 'en' | 'he' | 'es';
+  /**
+   * The names each step resolved to at preview time, positionally aligned with
+   * `steps`. Optional: a saved plan re-run has no preview to carry them from.
+   *
+   * Same invariant as the frozen rows, applied to labels. `executeMutate`
+   * renders its outcome line from what it is given, so applying without these
+   * reported the raw id for anything the user had been shown by name — a task
+   * confirmed as "איש קשר: דויד המלך" came back as
+   * "איש קשר: 8742fcd8-fdfc-4e32-bb1f-c599cf72adf5".
+   */
+  names?: Array<{ targetName?: string; referenceNames?: Record<string, string> }>;
 }
 
 export interface ApplyWritesResult {
@@ -56,7 +67,7 @@ export interface ApplyWritesResult {
 }
 
 export async function applyFrozenWrites(args: ApplyWritesArgs): Promise<ApplyWritesResult> {
-  const { steps, frozenRows, userId, planId, timezone, language = 'en' } = args;
+  const { steps, frozenRows, userId, planId, timezone, language = 'en', names } = args;
 
   const applied: string[] = [];
   let partial = false;
@@ -67,7 +78,7 @@ export async function applyFrozenWrites(args: ApplyWritesArgs): Promise<ApplyWri
     ? await resolveEmailBranding(userId, language)
     : undefined;
 
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
     if (step.op === 'for_each') {
       const rows = (frozenRows?.[step.id ?? ''] ?? []) as QueryRow[];
 
@@ -87,7 +98,11 @@ export async function applyFrozenWrites(args: ApplyWritesArgs): Promise<ApplyWri
     const result = await executeMutate(
       step as MutateQuery,
       { userId, timezone, consumer: 'chat' },
-      { language }
+      {
+        language,
+        targetName: names?.[index]?.targetName,
+        referenceNames: names?.[index]?.referenceNames,
+      }
     );
     applied.push(result.preview ?? `${step.entity}.${step.action}`);
   }

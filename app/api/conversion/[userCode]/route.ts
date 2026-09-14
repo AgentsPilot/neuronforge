@@ -57,7 +57,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // different questions, and the toggle sets only the first. Filtering on
       // `status` alone left a deactivated service off the website (which checks
       // both) while every smart link went on selling it.
-      .select('id, service_name, description, duration_minutes, price, currency, status, is_scheduled, collection')
+      .select('id, service_name, description, duration_minutes, price, currency, status, is_scheduled, collection, sale_mode')
       .eq('user_id', config.userId)
       .eq('status', 'active')
       .eq('is_active', true)
@@ -84,6 +84,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       // the same journey for a booked session and a downloadable product.
       is_scheduled: s.is_scheduled !== false,
       collection: s.collection ?? null,
+      // The third: bought outright, or quoted per job. A smart link is often
+      // the ONLY thing a contractor publishes, so this is exactly the surface
+      // that must not offer "Book now" on a job with no price.
+      sale_mode: s.sale_mode || 'direct',
       // How this service may be paid over time. Undefined for most, and the
       // widget then shows a single price as it always has.
       paymentPlan: plansByService[s.id]

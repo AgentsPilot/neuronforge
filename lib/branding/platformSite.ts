@@ -75,3 +75,58 @@ export async function resolvePlatformWebsiteUrl(userId: string): Promise<string 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
   return `${appUrl}/site/${subdomain}`;
 }
+
+/**
+ * Where to send a client who wants to book.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A "book again" link has one job, and it was the only thing the old chain did
+ * not check: that the destination is somewhere you can actually book.
+ *
+ * The order matters and is not arbitrary:
+ *
+ *   1. its WEBSITE on this platform, when we host one — a booking widget
+ *   2. its smart link — `/c/{user_code}/book`, which exists for EVERY account
+ *      and is the whole answer for a business that never wanted a website
+ *
+ * A landing page is deliberately not step 1: it is a campaign surface, and the
+ * smart link below is purpose-built for booking and never goes stale. The
+ * business's own external site is not in the list at all — a homepage is not a
+ * booking page, and a button that says "book again" has to land on one.
+ *
+ * Step 2 was missing entirely. Without it, a business on `booking_only` — one
+ * that told onboarding it did not want a site — had no bookable link to offer,
+ * so a cancelled client got no button at all. Meanwhile `user_code` was sitting
+ * on the profile, populated for every account, pointing at a booking page built
+ * for exactly this.
+ *
+ * `status = 'published'`: an unpublished page's subdomain resolves to nothing.
+ * Two of the four call sites did not filter on it. `maybeSingle` rather than
+ * `single` for the same reason the filter matters — a business with two pages
+ * made `single()` throw, and the error was swallowed into "no link".
+ * MOVED HERE FROM BookingEmailService
+ *
+ * It was module-private there, so the incoming-enquiries feature would have had
+ * to copy it — and a second copy of a precedence rule is how the footer and the
+ * button above it come to disagree. It belongs beside
+ * `resolvePlatformWebsiteUrl`, which answers the neighbouring question and
+ * which this calls.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function resolveBookingUrl(
+  userId: string,
+  profile: { user_code?: string | null } | null | undefined
+): Promise<string | undefined> {
+  // The same helper the email branding uses, so "do we host their website"
+  // cannot be answered one way in the footer and another in the button above it.
+  const subdomain = await resolvePublishedWebsiteSubdomain(userId);
+
+  if (subdomain) return `${appUrl()}/site/${subdomain}/book`;
+  if (profile?.user_code) return `${appUrl()}/c/${profile.user_code}/book`;
+  return undefined;
+}
+
+/** Read at call time: tests and previews set it after module load. */
+function appUrl(): string {
+  return process.env.NEXT_PUBLIC_APP_URL || '';
+}

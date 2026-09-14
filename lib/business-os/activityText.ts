@@ -56,6 +56,16 @@ const SENTENCES: Record<string, Record<ActivityLocale, string>> = {
     es: 'Cita cancelada — era el {date}',
     he: 'הפגישה בוטלה — הייתה ב־{date}',
   },
+  booking_link_sent: {
+    en: 'Sent them a link to book',
+    es: 'Se les envió un enlace para reservar',
+    he: 'נשלח אליהם קישור לקביעת מועד',
+  },
+  booking_link_chase: {
+    en: 'Reminded them to book',
+    es: 'Se les recordó reservar',
+    he: 'נשלחה תזכורת לקביעת מועד',
+  },
   website_contact_form: {
     en: 'Contact form submitted from your website',
     es: 'Formulario de contacto enviado desde tu web',

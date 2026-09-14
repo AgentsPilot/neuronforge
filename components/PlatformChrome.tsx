@@ -14,11 +14,27 @@ const PlatformShell = dynamic(
  * Route prefixes served to the *customer of an AgentPilot user* rather than to
  * the user themselves. These get no platform chrome at all.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A NEW PUBLIC ROUTE HAS TO BE ADDED IN TWO PLACES, and missing either one
+ * fails in a way that looks nothing like its cause:
+ *
+ *   middleware `skipOnboardingCheck`  omit → the customer is sent to onboarding
+ *   this list                         omit → the customer loads the OWNER's
+ *                                            platform shell, and its authed
+ *                                            calls 401 in their browser
+ *
+ * `/proposal` cost both in one sitting, plus a third — the middleware's
+ * `V2_REWRITE_EXEMPT`, which no longer exists: the V2 rewrite it belonged to
+ * has been removed, so no route can be rewritten under `/v2` any more. If a
+ * third list ever reappears, these should be collapsed into one exported
+ * constant.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
  * `/site` is deliberately absent. The public website has the same problem and
  * would benefit from the same treatment, but it is outside the scope of this
  * change; adding it here is a one-line follow-up.
  */
-const PUBLIC_PREFIXES = ['/book', '/c/', '/invoice/', '/go/'] as const
+const PUBLIC_PREFIXES = ['/book', '/c/', '/invoice/', '/go/', '/proposal/'] as const
 
 /**
  * Customer-facing pages that are NOT under a public prefix.

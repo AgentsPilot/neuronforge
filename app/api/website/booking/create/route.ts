@@ -22,6 +22,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { BookingEmailService } from '@/lib/services/BookingEmailService';
+import { syncBookingToOwnerCalendar } from '@/lib/scheduling/syncBookingCalendar';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { buildAttributionFromRequest, type LeadSourceMetadata } from '@/lib/utils/attribution';
 import { z } from 'zod';
@@ -152,7 +153,12 @@ export async function POST(request: NextRequest) {
       // `collection` is what decides whether money is taken here at all. The
       // select omitted it, so the decision below could not consult it even in
       // principle and fell back to price.
-      .select('id, service_name, duration_minutes, price, currency, is_active, collection')
+      //
+      // `sale_mode` for the same reason, one bug later: a quoted service has no
+      // price yet, so it looked free — and "free" files the contact as a client
+      // on the spot. Asking for a quote made you a client before anyone had
+      // named a figure.
+      .select('id, service_name, duration_minutes, price, currency, is_active, collection, sale_mode')
       .eq('id', data.service_id)
       .eq('user_id', ownerId)
       .single();
@@ -263,35 +269,29 @@ export async function POST(request: NextRequest) {
     // First stage for leads (paid services that need payment first)
     const firstStage = pipelineStages?.[0]?.stage_key || 'lead';
 
-    // Find best "active client" stage for free services (they're immediately clients)
-    // Priority: 'active_client' > 'active' > 'client' > highest non-terminal stage > first stage
-    let activeClientStage = firstStage;
-    if (pipelineStages && pipelineStages.length > 0) {
-      const stageKeys = pipelineStages.map(s => s.stage_key);
-      if (stageKeys.includes('active_client')) {
-        activeClientStage = 'active_client';
-      } else if (stageKeys.includes('active')) {
-        activeClientStage = 'active';
-      } else if (stageKeys.includes('client')) {
-        activeClientStage = 'client';
-      } else {
-        // Use the stage with highest position but not terminal stages
-        const validStages = pipelineStages.filter(
-          s => !['completed', 'inactive', 'past_client'].includes(s.stage_key)
-        );
-        if (validStages.length > 0) {
-          activeClientStage = validStages[validStages.length - 1].stage_key;
-        }
-      }
-    }
-
-    // Determine contact stage based on payment requirement
-    // For paid services: start at first pipeline stage (will be upgraded after payment)
-    // For free services: directly set as active client (no payment barrier)
-    const contactStage = requiresPayment ? firstStage : activeClientStage;
+    /*
+     * A new contact starts at the beginning. Always.
+     *
+     * This route used to decide the client stage itself — free service, so they
+     * are a client now — which is how a quote request produced a client. It no
+     * longer decides at all: `promote_contact_on_confirmed_booking` moves them
+     * the moment the booking below is written `confirmed`, which for a free
+     * service is immediately and for a quote request is not at all.
+     *
+     * One rule, in one place, reached by every path that confirms a booking.
+     */
+    const isQuoteRequest = service.sale_mode === 'proposal';
+    const contactStage = firstStage;
 
     requestLogger.info(
-      { price: service.price, requiresPayment, contactStage, firstStage, activeClientStage },
+      {
+        price: service.price,
+        saleMode: service.sale_mode,
+        requiresPayment,
+        isQuoteRequest,
+        contactStage,
+        firstStage,
+      },
       'Contact creation decision - always creating contact first'
     );
 
@@ -432,7 +432,19 @@ export async function POST(request: NextRequest) {
         contact_id: contactId,  // Required - client data is in crm_contacts
         start_time: startTime?.toISOString() || null,
         end_time: endTime?.toISOString() || null,
-        status: requiresPayment ? 'pending' : 'confirmed',
+        /*
+         * A quote request is not a confirmed appointment.
+         *
+         * `requiresPayment` is false for a quoted service — there is nothing to
+         * charge until a price exists — so this wrote it `confirmed`, and the
+         * line below wrote it `paid` because the price is 0. A request for a
+         * quotation was therefore recorded as a booking that had happened and
+         * been paid for, which is why the CRM moved the contact to the client
+         * stage: by every field on the row, they were one.
+         *
+         * It stays PENDING until the quote is written and accepted.
+         */
+        status: requiresPayment || isQuoteRequest ? 'pending' : 'confirmed',
         /*
          * Owing money is not the same as having paid it.
          *
@@ -444,7 +456,11 @@ export async function POST(request: NextRequest) {
          *
          * Paid means paid: price zero, or nothing to collect.
          */
-        payment_status: (service.price || 0) > 0 ? 'pending' : 'paid',
+        /*
+         * And a quote has nothing paid about it either. Zero is not the price
+         * of this job; it is the absence of one.
+         */
+        payment_status: isQuoteRequest || (service.price || 0) > 0 ? 'pending' : 'paid',
         notes: data.notes || null,
         booking_source: 'website',
         timezone: bookingTimezone
@@ -565,6 +581,26 @@ export async function POST(request: NextRequest) {
       // This helps clients prepare for their appointment
       BookingEmailService.sendIntakeFormRequest(booking.id, ownerId)
         .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Intake form request email failed'));
+
+      /*
+       * No email to the owner for a booking, deliberately — see the note in
+       * /finalize. It is already in their calendar and in the briefing, and an
+       * alert per booking is what teaches somebody to ignore the sender.
+       */
+      /*
+       * And put it in the owner's calendar (non-blocking).
+       *
+       * Only for a booking that is CONFIRMED and has a time. A paid one is
+       * still `pending` here and is synced by `/finalize` once the money is
+       * recorded; a quote request is pending by design and is not an
+       * appointment at all; and a service with no slot has no hour to block.
+       *
+       * See `lib/scheduling/syncBookingCalendar` for why this was missing.
+       */
+      if (!isQuoteRequest && isScheduledBooking) {
+        syncBookingToOwnerCalendar(booking.id, ownerId, requestLogger)
+          .catch(err => requestLogger.warn({ err, bookingId: booking.id }, 'Calendar sync failed'));
+      }
     }
 
     requestLogger.info(

@@ -118,18 +118,26 @@ export class CrmEngagementDecayDetector extends BaseDetector {
     // Also check for recent bookings
     const { data: bookings } = await this.supabase
       .from('scheduling_bookings')
-      .select('client_email, start_time')
+      .select('contact_id, start_time')
       .eq('user_id', userId)
       .gte('start_time', silentDate.toISOString());
 
-    // Build set of active clients
+    /*
+     * Build set of active clients.
+     *
+     * Bookings used to be matched to contacts by comparing lowercased email
+     * text, because a booking carried its own copy of the client's address.
+     * That column is gone — crm_contacts is the single source of truth and the
+     * booking holds `contact_id` — so both halves are now the same kind of key
+     * and a client with no email on file can still be matched.
+     */
     const activeClientIds = new Set(activities?.map((a) => a.contact_id) || []);
-    const activeClientEmails = new Set(bookings?.map((b) => b.client_email?.toLowerCase()) || []);
+    const clientsWithRecentBookings = new Set(bookings?.map((b) => b.contact_id) || []);
 
     // Find silent clients (no activity AND no bookings)
     const silentClients = clients.filter((client) => {
       if (activeClientIds.has(client.id)) return false;
-      if (client.email && activeClientEmails.has(client.email.toLowerCase())) return false;
+      if (clientsWithRecentBookings.has(client.id)) return false;
       // Only count if client relationship is at least 30 days old
       const clientSince = new Date(client.created_at);
       return clientSince < silentDate;

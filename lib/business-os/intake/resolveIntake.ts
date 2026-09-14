@@ -42,7 +42,20 @@ export interface ResolvedIntake {
 
 export async function resolveIntakeForSending(
   userId: string,
-  { forClient = false }: { forClient?: boolean } = {}
+  {
+    forClient = false,
+    service,
+  }: {
+    forClient?: boolean;
+    /**
+     * The service being booked, when the caller knows it.
+     *
+     * Some bookings have no occasion for a form — a quote request, a product —
+     * and that is a fact about the SERVICE, not about the business's settings.
+     * Omitted, the question is not asked and only the settings decide.
+     */
+    service?: { sale_mode?: string | null; is_scheduled?: boolean | null } | null;
+  } = {}
 ): Promise<ResolvedIntake> {
   const [settings, published] = await Promise.all([
     intakeRepository.getSettings(userId),
@@ -55,7 +68,7 @@ export async function resolveIntakeForSending(
     hasPublishedForm: !!published.data,
   };
 
-  const blocked = intakeBlockReason(reach, { forClient });
+  const blocked = intakeBlockReason(reach, { forClient, service });
 
   // The form is withheld when anything blocks it, rather than returned with a
   // flag beside it. A caller holding the questions is one `if` away from
@@ -77,7 +90,7 @@ export function intakeBlockMessageKey(reason: IntakeBlockReason): string {
       return 'intake.blocked.disabled';
     case 'not_published':
       return 'intake.blocked.not_published';
-    case 'not_automatic':
-      return 'intake.blocked.not_automatic';
+    case 'not_applicable':
+      return 'intake.blocked.not_applicable';
   }
 }

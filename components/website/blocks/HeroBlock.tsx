@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
 import { ArrowRight, Sparkles, Star, Users, Award, Play } from 'lucide-react';
 import { resolveBookingAction } from './bookingAction';
 import type { BlockRendererProps } from './types';
@@ -91,6 +92,14 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
    * Preview opens the dialog, a published page follows `bookingUrl`, and a page
    * that can take no booking at all falls back to the link it always had.
    */
+  /*
+   * The editor's hero image field wrote `content.image` while this reads
+   * `content.background_image`, so a picture saved there never appeared. Both
+   * are read now, which brings back every hero image already chosen without
+   * anyone regenerating a page.
+   */
+  const heroImage = background_image || (content as { image?: string }).image;
+
   const heroBooking = resolveBookingAction({
     isPreview,
     onOpenBooking,
@@ -98,7 +107,36 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
     fallbackHref: cta_link,
   });
 
-  const alignment = styles?.alignment || 'center';
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE FOUR HEROES.
+   *
+   * `styles.layout` is written by the generator from the archetype. It is the
+   * single biggest difference between two sites built from the same content,
+   * and until now every business got the same one: centred, with an animated
+   * glow behind it.
+   *
+   *   centered    content centred over a gradient glow. Loud, product-shaped.
+   *   stacked     content aligned to the reading edge, full width, no glow.
+   *               Quiet and typographic — the whole of Stone's opening.
+   *   split       content one side, the business's own photograph the other.
+   *   full-bleed  the photograph IS the hero, content over a scrim.
+   *
+   * `styles.alignment` still wins where a page carries one, because somebody
+   * set it by hand in the editor.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const layout = (resolveBlockLayout('hero', theme?.layouts, styles?.layout) as
+    'stacked' | 'split' | 'centered' | 'full-bleed') || 'centered';
+
+  /** Only the centred hero keeps the glow and the floating shapes. */
+  const decorated = layout === 'centered';
+  /** Two columns, with a real image beside the words rather than behind them. */
+  const split = layout === 'split' && Boolean(heroImage);
+  /** The photograph, at full height, with the words over it. */
+  const fullBleed = layout === 'full-bleed' && Boolean(heroImage);
+
+  const alignment = styles?.alignment || (layout === 'stacked' || split ? 'left' : 'center');
   const alignmentClasses = {
     left: 'text-start items-start',
     center: 'text-center items-center',
@@ -116,7 +154,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
   const getBackgroundStyle = () => {
     if (background_type === 'image' && background_image) {
       return {
-        backgroundImage: `url(${background_image})`,
+        backgroundImage: `url(${heroImage})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center'
       };
@@ -124,38 +162,57 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
     if (background_type === 'solid') {
       return { backgroundColor };
     }
-    // Default: beautiful mesh gradient
+    /*
+     * Default: a mesh gradient, routed through a custom property so a
+     * composition can replace it with its own flat ground.
+     *
+     * All three mockups open on flat paper or flat night — the wash is what
+     * makes a generated page read as generated. An inline value cannot be
+     * overridden by a rule, but a custom property READ by one can, and the
+     * fallback keeps every uncomposed hero exactly as it is today.
+     */
     if (isDark) {
-      return {
-        background: `
+      const mesh = `
           radial-gradient(at 40% 20%, ${primaryColor}40 0px, transparent 50%),
           radial-gradient(at 80% 0%, ${secondaryColor}30 0px, transparent 50%),
           radial-gradient(at 0% 80%, ${primaryColor}30 0px, transparent 50%),
           linear-gradient(180deg, ${backgroundColor} 0%, ${backgroundColor} 100%)
-        `
-      };
+        `;
+      return { background: `var(--apc-band, ${mesh})` };
     }
     return {
-      background: generateGradient(primaryColor, secondaryColor, 'mesh')
+      background: `var(--apc-band, ${generateGradient(primaryColor, secondaryColor, 'mesh')})`
     };
   };
 
   // Gradient text style
   const gradientTextStyle = gradient_text ? {
-    background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 50%, ${primaryColor} 100%)`,
-    WebkitBackgroundClip: 'text',
-    WebkitTextFillColor: 'transparent',
-    backgroundClip: 'text'
+    color: 'var(--ap-text)'
   } : {};
 
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-16 sm:py-20 lg:py-24'} ${background_value || ''} ${className || ''}`}
-      style={getBackgroundStyle()}
+      className={`apc-sec relative overflow-hidden ${styles?.padding || 'py-16 sm:py-20 lg:py-24'} ${background_value || ''} ${className || ''}`}
+      style={{
+        ...getBackgroundStyle(),
+        // A full-bleed hero is the photograph; it needs the height to be one.
+        ...(fullBleed
+          ? {
+              backgroundImage: `url(${heroImage})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              minHeight: 'min(78vh, 720px)',
+              display: 'flex',
+              alignItems: 'center',
+            }
+          : {}),
+      }}
     >
-      {/* Decorative elements */}
-      {background_type !== 'image' && (
+      {/* Decorative elements. Only the centred hero has them: on a quiet,
+          type-led opening a floating blurred circle is the one thing that makes
+          it look generated. */}
+      {decorated && background_type !== 'image' && (
         <>
           {/* Animated floating shapes - smaller for compact layout */}
           <motion.div
@@ -168,7 +225,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute top-10 right-[10%] w-48 h-48 rounded-full opacity-25 blur-3xl"
+            className="apc-decor absolute top-10 right-[10%] w-48 h-48 rounded-full opacity-25 blur-3xl"
             style={{ backgroundColor: primaryColor }}
           />
           <motion.div
@@ -181,7 +238,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute bottom-10 left-[5%] w-64 h-64 rounded-full opacity-20 blur-3xl"
+            className="apc-decor absolute bottom-10 left-[5%] w-64 h-64 rounded-full opacity-20 blur-3xl"
             style={{ backgroundColor: secondaryColor }}
           />
           <motion.div
@@ -194,7 +251,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full opacity-10 blur-3xl"
+            className="apc-decor absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] rounded-full opacity-10 blur-3xl"
             style={{ backgroundColor: primaryColor }}
           />
 
@@ -214,7 +271,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             <motion.div
               animate={{ rotate: -360 }}
               transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-              className="w-12 h-12 rounded-full opacity-15 border-4"
+              className="apc-decor w-12 h-12 rounded-full opacity-15 border-4"
               style={{ borderColor: secondaryColor }}
             />
           </div>
@@ -239,7 +296,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
       )}
 
       {/* Overlay for image backgrounds */}
-      {background_type === 'image' && (
+      {(background_type === 'image' || fullBleed) && (
         <div
           className="absolute inset-0"
           style={{
@@ -248,14 +305,37 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
         />
       )}
 
-      <div className={`relative max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col ${alignmentClasses[alignment]}`}>
+      <div
+        className={`relative mx-auto px-4 sm:px-6 lg:px-8 w-full ${
+          split ? 'max-w-7xl grid gap-10 lg:gap-16 items-center lg:grid-cols-2' : 'max-w-5xl'
+        }`}
+      >
+      {/* The photograph, beside the words rather than behind them. First in the
+          DOM so it sits at the inline start — which puts it on the left in
+          English and the right in Hebrew, without a direction branch. */}
+      {split && (
+        <motion.div
+          initial={{ opacity: 0, scale: 1.04 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.7 }}
+          className="order-first lg:order-none w-full"
+          style={{
+            aspectRatio: '4 / 5',
+            backgroundImage: `url(${heroImage})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        />
+      )}
+
+      <div className={`flex flex-col w-full ${alignmentClasses[alignment]}`}>
         {/* Badge */}
         {badge && (
           <motion.span
             initial={{ opacity: 0, y: 20, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             transition={{ duration: 0.5 }}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold mb-8 shadow-lg backdrop-blur-sm"
+            className="apc-eyebrow inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold mb-8 shadow-lg backdrop-blur-sm"
             style={{
               backgroundColor: isDark ? `${primaryColor}30` : `${primaryColor}12`,
               color: isDark ? '#ffffff' : primaryColor,
@@ -275,13 +355,24 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
 
         {/* Headline with optional gradient text */}
         <motion.h1
+          data-apc="headline"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, delay: 0.1 }}
-          className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-bold tracking-tight leading-[1.15]"
+          className="font-bold tracking-tight leading-[1.15]"
           style={{
-            fontFamily: 'var(--website-font-heading)',
-            color: background_type === 'image' ? '#ffffff' : textColor,
+            fontFamily: 'var(--ap-font-heading)',
+            /*
+             * The archetype's own display size, not a fixed Tailwind ramp.
+             *
+             * `--ap-scale-h1` is a clamp() PublicThemeStyle writes from
+             * theme.scale, so it already spans phone to desktop — which is what
+             * the four responsive classes here were doing, identically for every
+             * template. Stone asks for 64px and Lumen for 58px; both rendered at
+             * whatever `xl:text-6xl` happened to be.
+             */
+            fontSize: 'var(--ap-scale-h1)',
+            color: background_type === 'image' || fullBleed ? '#ffffff' : 'var(--ap-text)',
             ...gradientTextStyle
           }}
         >
@@ -293,10 +384,12 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.2 }}
-            className="mt-4 sm:mt-6 text-base sm:text-lg lg:text-xl max-w-2xl leading-relaxed"
+            className="apc-lede mt-4 sm:mt-6 max-w-2xl leading-relaxed"
             style={{
-              fontFamily: 'var(--website-font-body)',
-              color: background_type === 'image' ? '#e5e7eb' : (isDark ? '#9ca3af' : '#4b5563')
+              fontFamily: 'var(--ap-font-body)',
+              // Same reasoning as the headline above.
+              fontSize: 'var(--ap-scale-h3)',
+              color: background_type === 'image' || fullBleed ? 'rgba(255,255,255,.86)' : 'var(--ap-text-muted)'
             }}
           >
             {subheadline}
@@ -309,25 +402,27 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.3 }}
-            className="mt-8 sm:mt-10 flex flex-col sm:flex-row gap-3"
+            className="apc-cta-row mt-8 sm:mt-10 flex flex-col sm:flex-row gap-3"
           >
             {cta_text && (
               // Same button either way — a real <button> when it opens the
               // dialog, an anchor when it navigates. Only the element differs.
               (() => {
-                const ctaClassName = "group relative inline-flex items-center justify-center gap-2 px-8 py-4 text-base font-semibold text-white rounded-xl overflow-hidden transition-all duration-300";
-                const ctaStyle = { borderRadius: theme?.borderRadius || '0.75rem' };
+                const ctaClassName = "apc-btn apc-btn--solid group relative inline-flex items-center justify-center gap-2 px-8 py-4 text-base font-semibold overflow-hidden transition-all duration-300";
+                // `--ap-on-brand` rather than white: Lumen's acid lime needs a
+                // black label and Aster's indigo needs a white one.
+                const ctaStyle = { color: 'var(--ap-on-brand)', backgroundColor: 'var(--ap-brand)' };
                 const ctaInner = (<>
                 {/* Button gradient background */}
                 <span
-                  className="absolute inset-0 transition-opacity duration-300"
+                  className="apc-decor absolute inset-0 transition-opacity duration-300"
                   style={{
                     background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
                   }}
                 />
                 {/* Shimmer effect */}
                 <span
-                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+                  className="apc-decor absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"
                   style={{
                     background: `linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)`,
                     transform: 'translateX(-100%)',
@@ -336,7 +431,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
                 />
                 {/* Shadow glow */}
                 <span
-                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-xl"
+                  className="apc-decor absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-xl"
                   style={{ backgroundColor: primaryColor }}
                 />
                 <span className="relative flex items-center gap-2">
@@ -359,13 +454,16 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             {secondary_cta_text && (
               <a
                 href={secondary_cta_link || '#services'}
-                className="group inline-flex items-center justify-center gap-2 px-8 py-4 text-base font-semibold rounded-xl backdrop-blur-sm transition-all duration-300 hover:scale-[1.02]"
-                style={{
-                  border: `2px solid ${background_type === 'image' ? 'rgba(255,255,255,0.3)' : `${primaryColor}30`}`,
-                  color: background_type === 'image' ? 'white' : primaryColor,
-                  backgroundColor: background_type === 'image' ? 'rgba(255,255,255,0.1)' : `${primaryColor}05`,
-                  borderRadius: theme?.borderRadius || '0.75rem'
-                }}
+                className="apc-btn group inline-flex items-center justify-center gap-2 px-8 py-4 text-base font-semibold backdrop-blur-sm transition-all duration-300 hover:scale-[1.02]"
+                style={
+                  background_type === 'image'
+                    ? {
+                        border: '2px solid rgba(255,255,255,0.3)',
+                        color: 'white',
+                        backgroundColor: 'rgba(255,255,255,0.1)',
+                      }
+                    : undefined
+                }
               >
                 {video_url && <Play className="w-5 h-5" />}
                 {secondary_cta_text}
@@ -380,7 +478,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.4 }}
-            className="mt-8 sm:mt-10 flex flex-wrap items-center justify-center gap-4 sm:gap-8"
+            className="apc-trust mt-8 sm:mt-10 flex flex-wrap items-center justify-center gap-4 sm:gap-8"
           >
             {/* Rating */}
             {trust_indicators.rating && (
@@ -397,7 +495,7 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
                 </div>
                 <span
                   className="text-sm font-medium"
-                  style={{ color: isDark ? '#9ca3af' : '#6b7280' }}
+                  style={{ color: 'var(--ap-text-muted)' }}
                 >
                   {trust_indicators.rating.toFixed(1)}
                   {trust_indicators.reviews_count && ` (${trust_indicators.reviews_count}+ ${t('reviews', 'common')})`}
@@ -409,14 +507,14 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             {trust_indicators.clients_count && (
               <div className="flex items-center gap-2">
                 <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center"
+                  className="apc-icon w-8 h-8 rounded-full flex items-center justify-center"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
                   <Users className="w-4 h-4" style={{ color: primaryColor }} />
                 </div>
                 <span
                   className="text-sm font-medium"
-                  style={{ color: isDark ? '#9ca3af' : '#6b7280' }}
+                  style={{ color: 'var(--ap-text-muted)' }}
                 >
                   {trust_indicators.clients_count} {t('clientsServed', 'common')}
                 </span>
@@ -427,14 +525,14 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
             {trust_indicators.awards && trust_indicators.awards.length > 0 && (
               <div className="flex items-center gap-2">
                 <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center"
+                  className="apc-icon w-8 h-8 rounded-full flex items-center justify-center"
                   style={{ backgroundColor: `${primaryColor}15` }}
                 >
                   <Award className="w-4 h-4" style={{ color: primaryColor }} />
                 </div>
                 <span
                   className="text-sm font-medium"
-                  style={{ color: isDark ? '#9ca3af' : '#6b7280' }}
+                  style={{ color: 'var(--ap-text-muted)' }}
                 >
                   {trust_indicators.awards[0]}
                 </span>
@@ -448,11 +546,12 @@ export function HeroBlock({ content, styles, theme, isRTL, className, locale = '
           initial={{ scaleX: 0 }}
           animate={{ scaleX: 1 }}
           transition={{ duration: 0.8, delay: 0.5 }}
-          className="mt-10 w-20 h-0.5 rounded-full mx-auto hidden sm:block"
+          className={`mt-10 w-20 h-0.5 rounded-full hidden sm:block ${alignment === 'center' ? 'mx-auto' : ''}`}
           style={{
             background: `linear-gradient(90deg, transparent 0%, ${primaryColor}50 50%, transparent 100%)`
           }}
         />
+      </div>
       </div>
 
       {/* Add shimmer keyframes */}

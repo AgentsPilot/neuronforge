@@ -160,7 +160,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | first_name — first name · (string) | last_name — last name · (string) | email — email · (string) | phone — phone · (string) | stage — stage · (enum) · values are configured per business — read them first · business terms: {\"$semantic\":\"lead\"}, {\"$semantic\":\"prospect\"}, {\"$semantic\":\"client\"}, {\"$semantic\":\"past_client\"} | tags — tags · (string[]) | source — source · (string) | referrer_domain — came from · (string) | utm_source — campaign source · (string) | utm_medium — campaign medium · (string) | utm_campaign — campaign · (string) | notes — notes · (string) | created_at — created · (datetime) | has_completed_intake — completed intake form | has_bookings — has bookings | owes_money — owes money",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | first_name — first name · (string) | last_name — last name · (string) | email — email · (string) | phone — phone · (string) | stage — stage · (enum) · values are configured per business — read them first · business terms: {\"$semantic\":\"lead\"}, {\"$semantic\":\"prospect\"}, {\"$semantic\":\"client\"}, {\"$semantic\":\"past_client\"} | tags — tags · (string[]) | source — source · (string) | referrer_domain — came from · (string) | utm_source — campaign source · (string) | utm_medium — campaign medium · (string) | utm_campaign — campaign · (string) | notes — notes · (string) | created_at — created · (datetime) | has_completed_intake — completed intake form | was_sent_intake — was sent the intake form | has_bookings — has bookings | owes_money — owes money",
             "items": {
               "type": "object",
               "properties": {
@@ -182,6 +182,7 @@
                     "notes",
                     "created_at",
                     "has_completed_intake",
+                    "was_sent_intake",
                     "has_bookings",
                     "owes_money"
                   ]
@@ -415,7 +416,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | first_name — first name · (string) | last_name — last name · (string) | email — email · (string) | phone — phone · (string) | stage — stage · (enum) · values are configured per business — read them first · business terms: {\"$semantic\":\"lead\"}, {\"$semantic\":\"prospect\"}, {\"$semantic\":\"client\"}, {\"$semantic\":\"past_client\"} | tags — tags · (string[]) | source — source · (string) | referrer_domain — came from · (string) | utm_source — campaign source · (string) | utm_medium — campaign medium · (string) | utm_campaign — campaign · (string) | notes — notes · (string) | created_at — created · (datetime) | has_completed_intake — completed intake form | has_bookings — has bookings | owes_money — owes money",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | first_name — first name · (string) | last_name — last name · (string) | email — email · (string) | phone — phone · (string) | stage — stage · (enum) · values are configured per business — read them first · business terms: {\"$semantic\":\"lead\"}, {\"$semantic\":\"prospect\"}, {\"$semantic\":\"client\"}, {\"$semantic\":\"past_client\"} | tags — tags · (string[]) | source — source · (string) | referrer_domain — came from · (string) | utm_source — campaign source · (string) | utm_medium — campaign medium · (string) | utm_campaign — campaign · (string) | notes — notes · (string) | created_at — created · (datetime) | has_completed_intake — completed intake form | was_sent_intake — was sent the intake form | has_bookings — has bookings | owes_money — owes money",
             "items": {
               "type": "object",
               "properties": {
@@ -437,6 +438,7 @@
                     "notes",
                     "created_at",
                     "has_completed_intake",
+                    "was_sent_intake",
                     "has_bookings",
                     "owes_money"
                   ]
@@ -993,7 +995,7 @@
                 },
                 "status": {
                   "type": "string",
-                  "description": "status · (enum) · one of: draft, sent, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"}"
+                  "description": "status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"}"
                 },
                 "due_date": {
                   "type": "string",
@@ -1066,7 +1068,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
             "items": {
               "type": "object",
               "properties": {
@@ -1336,7 +1338,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | invoice_number — invoice number · (string) | contact_id — contact · (uuid) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, paid, overdue, cancelled, refunded · business terms: {\"$semantic\":\"unpaid\"} | due_date — due date · (date) | sent_at — sent at · (datetime) | paid_at — paid at · (datetime) | client_name — client name · (string) | client_email — client email · (string) | notes — notes · (string) | created_at — created · (datetime) | service_id — service · (uuid) | booking_id — booking · (uuid) | was_refunded — was refunded",
             "items": {
               "type": "object",
               "properties": {
@@ -1838,6 +1840,888 @@
         ]
       }
     },
+    "find_proposals": {
+      "description": "Find quotes in the user's own business records",
+      "usage_context": "Read the business's own quotes. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "search",
+      "input_entity": null,
+      "output_entity": "proposals",
+      "input_cardinality": null,
+      "output_cardinality": "collection",
+      "output_fields": [
+        "id",
+        "title",
+        "description",
+        "contact_id",
+        "service_id",
+        "booking_id",
+        "total",
+        "currency",
+        "status",
+        "valid_until",
+        "decline_reason",
+        "sent_at",
+        "viewed_at",
+        "decided_at",
+        "created_at"
+      ],
+      "required_params": [],
+      "optional_params": [
+        "filters",
+        "limit",
+        "order_by"
+      ],
+      "must_support": [
+        "field_filtering",
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "description": "The matching quotes.",
+            "x-guaranteed": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "ID · (uuid)"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "title · (string)"
+                },
+                "description": {
+                  "type": "string",
+                  "description": "description · (string)"
+                },
+                "contact_id": {
+                  "type": "string",
+                  "description": "contact · (uuid)"
+                },
+                "service_id": {
+                  "type": "string",
+                  "description": "service · (uuid)"
+                },
+                "booking_id": {
+                  "type": "string",
+                  "description": "booking · (uuid)"
+                },
+                "total": {
+                  "type": "number",
+                  "description": "quote value · (money)"
+                },
+                "currency": {
+                  "type": "string",
+                  "description": "currency · (enum) · one of: USD, EUR, ILS, GBP"
+                },
+                "status": {
+                  "type": "string",
+                  "description": "status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"}"
+                },
+                "valid_until": {
+                  "type": "string",
+                  "description": "valid until · (date)"
+                },
+                "decline_reason": {
+                  "type": "string",
+                  "description": "reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other"
+                },
+                "sent_at": {
+                  "type": "string",
+                  "description": "sent at · (datetime)"
+                },
+                "viewed_at": {
+                  "type": "string",
+                  "description": "opened at · (datetime)"
+                },
+                "decided_at": {
+                  "type": "string",
+                  "description": "answered at · (datetime)"
+                },
+                "created_at": {
+                  "type": "string",
+                  "description": "created at · (datetime)"
+                }
+              }
+            }
+          },
+          "count": {
+            "type": "integer",
+            "description": "How many rows were returned.",
+            "x-guaranteed": true
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when the limit was reached and more rows exist.",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Found quotes",
+        "sample_output": {
+          "rows": [
+            {
+              "title": "<title>",
+              "total": 0,
+              "status": "<status>",
+              "valid_until": "<valid_until>"
+            }
+          ],
+          "count": 1,
+          "truncated": false
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "filters": {
+            "type": "array",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "title",
+                    "description",
+                    "contact_id",
+                    "service_id",
+                    "booking_id",
+                    "total",
+                    "currency",
+                    "status",
+                    "valid_until",
+                    "decline_reason",
+                    "sent_at",
+                    "viewed_at",
+                    "decided_at",
+                    "created_at",
+                    "is_current_version",
+                    "has_open_payments",
+                    "was_sent"
+                  ]
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "neq",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "in",
+                    "not_in",
+                    "contains",
+                    "starts_with",
+                    "is_null",
+                    "is_not_null"
+                  ]
+                },
+                "value": {
+                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ]
+            }
+          },
+          "order_by": {
+            "type": "array",
+            "description": "Sort order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "title",
+                    "description",
+                    "contact_id",
+                    "service_id",
+                    "booking_id",
+                    "total",
+                    "currency",
+                    "status",
+                    "valid_until",
+                    "decline_reason",
+                    "sent_at",
+                    "viewed_at",
+                    "decided_at",
+                    "created_at"
+                  ]
+                },
+                "dir": {
+                  "type": "string",
+                  "enum": [
+                    "asc",
+                    "desc"
+                  ]
+                }
+              },
+              "required": [
+                "field"
+              ]
+            }
+          },
+          "limit": {
+            "type": "number",
+            "description": "How many to return. Capped at 500.",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 50
+          }
+        },
+        "required": []
+      }
+    },
+    "aggregate_proposals": {
+      "description": "Aggregate quotes — totals, counts and averages, optionally grouped",
+      "usage_context": "Answer a QUANTITATIVE question about the business's own quotes — \"how much\", \"how many\", \"what is the average\", and the same broken down by a field. Prefer this over fetching rows and adding them up: the arithmetic runs against the data rather than in the workflow, and the result reports whether it was complete. This reads private data and changes nothing.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "aggregate",
+      "input_entity": null,
+      "output_entity": "proposals",
+      "input_cardinality": null,
+      "output_cardinality": "single",
+      "output_fields": [],
+      "required_params": [
+        "fn"
+      ],
+      "optional_params": [
+        "field",
+        "group_by",
+        "filters",
+        "distinct"
+      ],
+      "must_support": [
+        "field_filtering",
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The aggregate over everything matched. Null when nothing matched.",
+            "x-guaranteed": true
+          },
+          "groups": {
+            "type": "array",
+            "description": "Present when group_by was supplied: one entry per distinct value.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "approximate": {
+            "type": "boolean",
+            "description": "True when the aggregate ran over a capped scan and may be incomplete. MUST be surfaced rather than presenting the number as a final total.",
+            "x-guaranteed": true
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "Aggregated quotes",
+        "sample_output": {
+          "value": 0,
+          "groups": [
+            {
+              "key": "<group>",
+              "value": 0
+            }
+          ],
+          "approximate": false
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "fn": {
+            "type": "string",
+            "description": "Which aggregate to compute.",
+            "enum": [
+              "count",
+              "sum",
+              "avg",
+              "min",
+              "max"
+            ]
+          },
+          "field": {
+            "type": "string",
+            "description": "The field to aggregate. Required for sum, avg, min and max; ignored by count.",
+            "enum": [
+              "total"
+            ]
+          },
+          "group_by": {
+            "type": "string",
+            "description": "Break the result down, one entry per distinct value. Three forms: a field on this record; a RELATION NAME on its own ('service', 'contact') to group by what the related thing is CALLED rather than by its id; or a date field with a bucket ('created_at:month') to group a trend by calendar period.",
+            "enum": [
+              "id",
+              "title",
+              "description",
+              "contact_id",
+              "service_id",
+              "booking_id",
+              "total",
+              "currency",
+              "status",
+              "valid_until",
+              "decline_reason",
+              "sent_at",
+              "viewed_at",
+              "decided_at",
+              "created_at",
+              "contact",
+              "service",
+              "booking",
+              "invoice",
+              "plan",
+              "valid_until:day",
+              "valid_until:week",
+              "valid_until:month",
+              "valid_until:year",
+              "sent_at:day",
+              "sent_at:week",
+              "sent_at:month",
+              "sent_at:year",
+              "viewed_at:day",
+              "viewed_at:week",
+              "viewed_at:month",
+              "viewed_at:year",
+              "decided_at:day",
+              "decided_at:week",
+              "decided_at:month",
+              "decided_at:year",
+              "created_at:day",
+              "created_at:week",
+              "created_at:month",
+              "created_at:year"
+            ]
+          },
+          "distinct": {
+            "type": "boolean",
+            "description": "Count how many DIFFERENT values the field has rather than how many rows. Only meaningful for count."
+          },
+          "over": {
+            "type": "string",
+            "description": "Aggregate the records on the far side of a relation, one group per record HERE — 'services' with over='transactions' ranks every service by revenue, including the ones that earned nothing. Use this for \"which X is doing least\": grouping the other way round omits any record with no related rows, so the lowest group returned is the lowest NON-ZERO one. Filters apply to the related records.",
+            "enum": [
+              "milestones"
+            ]
+          },
+          "having": {
+            "type": "object",
+            "description": "Keep only the groups whose aggregate passes this test — \"clients who spent over 5000\". Applied after the aggregate, so it needs group_by to mean anything.",
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte",
+                  "eq",
+                  "neq"
+                ]
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "op",
+              "value"
+            ]
+          },
+          "filters": {
+            "type": "array",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | description — description · (string) | contact_id — contact · (uuid) | service_id — service · (uuid) | booking_id — booking · (uuid) | total — quote value · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | status — status · (enum) · one of: draft, sent, viewed, accepted, declined, expired, withdrawn, superseded · business terms: {\"$semantic\":\"open\"}, {\"$semantic\":\"awaiting_reply\"} | valid_until — valid until · (date) | decline_reason — reason for declining · (enum) · one of: too_expensive, timing, scope, chose_other, other | sent_at — sent at · (datetime) | viewed_at — opened at · (datetime) | decided_at — answered at · (datetime) | created_at — created at · (datetime) | is_current_version — is the current version | has_open_payments — has payments still to collect | was_sent — was sent to the client",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string",
+                  "enum": [
+                    "id",
+                    "title",
+                    "description",
+                    "contact_id",
+                    "service_id",
+                    "booking_id",
+                    "total",
+                    "currency",
+                    "status",
+                    "valid_until",
+                    "decline_reason",
+                    "sent_at",
+                    "viewed_at",
+                    "decided_at",
+                    "created_at",
+                    "is_current_version",
+                    "has_open_payments",
+                    "was_sent"
+                  ]
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "eq",
+                    "neq",
+                    "gt",
+                    "gte",
+                    "lt",
+                    "lte",
+                    "in",
+                    "not_in",
+                    "contains",
+                    "starts_with",
+                    "is_null",
+                    "is_not_null"
+                  ]
+                },
+                "value": {
+                  "description": "A literal, an array of literals, {\"$semantic\":\"term\"} for a business term, or {\"$date\":\"today|tomorrow|start_of_week|…\"} for a relative date. Omit entirely for is_null / is_not_null."
+                }
+              },
+              "required": [
+                "field",
+                "op"
+              ]
+            }
+          }
+        },
+        "required": [
+          "fn"
+        ]
+      }
+    },
+    "create_proposals": {
+      "description": "draft a quote — quote in the user's own business records",
+      "usage_context": "draft a quote. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE quote; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "create",
+      "input_entity": "proposals",
+      "output_entity": "proposals",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "title",
+        "description",
+        "contact_id",
+        "service_id",
+        "booking_id",
+        "total",
+        "currency",
+        "status",
+        "valid_until",
+        "decline_reason",
+        "sent_at",
+        "viewed_at",
+        "decided_at",
+        "created_at"
+      ],
+      "required_params": [
+        "data"
+      ],
+      "optional_params": [],
+      "side_effect": "create",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The quote after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "draft a quote",
+        "sample_output": {
+          "applied": true,
+          "summary": "draft a quote",
+          "row": {
+            "title": "<title>",
+            "total": 0,
+            "status": "<status>",
+            "valid_until": "<valid_until>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: title, description, contact_id, service_id, booking_id, total, currency, valid_until. Required: contact_id, title, total.",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "description": "contact · (uuid)"
+              },
+              "title": {
+                "type": "string",
+                "description": "title · (string)"
+              },
+              "total": {
+                "type": "number",
+                "description": "quote value · (money)"
+              },
+              "description": {
+                "type": "string",
+                "description": "description · (string)"
+              },
+              "service_id": {
+                "type": "string",
+                "description": "service · (uuid)"
+              },
+              "booking_id": {
+                "type": "string",
+                "description": "booking · (uuid)"
+              },
+              "valid_until": {
+                "type": "string",
+                "description": "valid until · (date)"
+              },
+              "currency": {
+                "type": "string",
+                "description": "currency · (enum) · one of: USD, EUR, ILS, GBP"
+              }
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      }
+    },
+    "create_and_send_proposals": {
+      "description": "draft a quote and send it — quote in the user's own business records",
+      "usage_context": "draft a quote and send it. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE quote; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "create_and_send",
+      "input_entity": "proposals",
+      "output_entity": "proposals",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "title",
+        "description",
+        "contact_id",
+        "service_id",
+        "booking_id",
+        "total",
+        "currency",
+        "status",
+        "valid_until",
+        "decline_reason",
+        "sent_at",
+        "viewed_at",
+        "decided_at",
+        "created_at"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "send",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The quote after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "draft a quote and send it",
+        "sample_output": {
+          "applied": true,
+          "summary": "draft a quote and send it",
+          "row": {
+            "title": "<title>",
+            "total": 0,
+            "status": "<status>",
+            "valid_until": "<valid_until>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the quote to act on. Must come from a find_proposals result — never invented."
+          },
+          "data": {
+            "type": "object",
+            "description": "Values to write. Writable fields: title, description, contact_id, service_id, booking_id, total, currency, valid_until. Required: contact_id, title, total.",
+            "properties": {
+              "contact_id": {
+                "type": "string",
+                "description": "contact · (uuid)"
+              },
+              "title": {
+                "type": "string",
+                "description": "title · (string)"
+              },
+              "total": {
+                "type": "number",
+                "description": "quote value · (money)"
+              },
+              "description": {
+                "type": "string",
+                "description": "description · (string)"
+              },
+              "service_id": {
+                "type": "string",
+                "description": "service · (uuid)"
+              },
+              "booking_id": {
+                "type": "string",
+                "description": "booking · (uuid)"
+              },
+              "valid_until": {
+                "type": "string",
+                "description": "valid until · (date)"
+              },
+              "currency": {
+                "type": "string",
+                "description": "currency · (enum) · one of: USD, EUR, ILS, GBP"
+              }
+            }
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
+    "send_proposals": {
+      "description": "send a quote — quote in the user's own business records",
+      "usage_context": "send a quote. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE quote; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "send",
+      "input_entity": "proposals",
+      "output_entity": "proposals",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "title",
+        "description",
+        "contact_id",
+        "service_id",
+        "booking_id",
+        "total",
+        "currency",
+        "status",
+        "valid_until",
+        "decline_reason",
+        "sent_at",
+        "viewed_at",
+        "decided_at",
+        "created_at"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "send",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The quote after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "send a quote",
+        "sample_output": {
+          "applied": true,
+          "summary": "send a quote",
+          "row": {
+            "title": "<title>",
+            "total": 0,
+            "status": "<status>",
+            "valid_until": "<valid_until>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the quote to act on. Must come from a find_proposals result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
+    "withdraw_proposals": {
+      "description": "withdraw a quote — quote in the user's own business records",
+      "usage_context": "withdraw a quote. This CHANGES the user's real business data. Requires explicit confirmation before it runs. Applies to exactly ONE quote; there is no bulk form.",
+      "idempotent": false,
+      "domain": "business",
+      "capability": "withdraw",
+      "input_entity": "proposals",
+      "output_entity": "proposals",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "title",
+        "description",
+        "contact_id",
+        "service_id",
+        "booking_id",
+        "total",
+        "currency",
+        "status",
+        "valid_until",
+        "decline_reason",
+        "sent_at",
+        "viewed_at",
+        "decided_at",
+        "created_at"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "update",
+      "must_support": [
+        "user_scoped",
+        "confirmation"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The quote after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "withdraw a quote",
+        "sample_output": {
+          "applied": true,
+          "summary": "withdraw a quote",
+          "row": {
+            "title": "<title>",
+            "total": 0,
+            "status": "<status>",
+            "valid_until": "<valid_until>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the quote to act on. Must come from a find_proposals result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
     "find_installments": {
       "description": "Find installments in the user's own business records",
       "usage_context": "Read the business's own installments. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
@@ -1856,7 +2740,11 @@
         "currency",
         "due_date",
         "status",
-        "paid_at"
+        "paid_at",
+        "label",
+        "trigger",
+        "completed_at",
+        "proposal_id"
       ],
       "required_params": [],
       "optional_params": [
@@ -1909,6 +2797,22 @@
                 "paid_at": {
                   "type": "string",
                   "description": "paid at · (datetime)"
+                },
+                "label": {
+                  "type": "string",
+                  "description": "stage · (string)"
+                },
+                "trigger": {
+                  "type": "string",
+                  "description": "billed by · (enum) · one of: date, manual"
+                },
+                "completed_at": {
+                  "type": "string",
+                  "description": "stage completed at · (datetime)"
+                },
+                "proposal_id": {
+                  "type": "string",
+                  "description": "quote · (uuid)"
                 }
               }
             }
@@ -1945,7 +2849,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | installment_number — payment number · (number) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | due_date — due date · (date) | status — status · (enum) · one of: pending, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | paid_at — paid at · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | installment_number — payment number · (number) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | due_date — due date · (date) | status — status · (enum) · one of: pending, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | paid_at — paid at · (datetime) | label — stage · (string) | trigger — billed by · (enum) · one of: date, manual | completed_at — stage completed at · (datetime) | proposal_id — quote · (uuid)",
             "items": {
               "type": "object",
               "properties": {
@@ -1959,7 +2863,11 @@
                     "currency",
                     "due_date",
                     "status",
-                    "paid_at"
+                    "paid_at",
+                    "label",
+                    "trigger",
+                    "completed_at",
+                    "proposal_id"
                   ]
                 },
                 "op": {
@@ -2005,7 +2913,11 @@
                     "currency",
                     "due_date",
                     "status",
-                    "paid_at"
+                    "paid_at",
+                    "label",
+                    "trigger",
+                    "completed_at",
+                    "proposal_id"
                   ]
                 },
                 "dir": {
@@ -2136,6 +3048,14 @@
               "due_date",
               "status",
               "paid_at",
+              "label",
+              "trigger",
+              "completed_at",
+              "proposal_id",
+              "contact",
+              "plan",
+              "subscription",
+              "proposal",
               "due_date:day",
               "due_date:week",
               "due_date:month",
@@ -2143,7 +3063,11 @@
               "paid_at:day",
               "paid_at:week",
               "paid_at:month",
-              "paid_at:year"
+              "paid_at:year",
+              "completed_at:day",
+              "completed_at:week",
+              "completed_at:month",
+              "completed_at:year"
             ]
           },
           "distinct": {
@@ -2181,7 +3105,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | installment_number — payment number · (number) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | due_date — due date · (date) | status — status · (enum) · one of: pending, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | paid_at — paid at · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | installment_number — payment number · (number) | amount — amount · (money) | currency — currency · (enum) · one of: USD, EUR, ILS, GBP | due_date — due date · (date) | status — status · (enum) · one of: pending, paid, overdue, cancelled · business terms: {\"$semantic\":\"unpaid\"} | paid_at — paid at · (datetime) | label — stage · (string) | trigger — billed by · (enum) · one of: date, manual | completed_at — stage completed at · (datetime) | proposal_id — quote · (uuid)",
             "items": {
               "type": "object",
               "properties": {
@@ -2195,7 +3119,11 @@
                     "currency",
                     "due_date",
                     "status",
-                    "paid_at"
+                    "paid_at",
+                    "label",
+                    "trigger",
+                    "completed_at",
+                    "proposal_id"
                   ]
                 },
                 "op": {
@@ -2250,6 +3178,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -2307,6 +3236,10 @@
                   "type": "string",
                   "description": "intake completed at · (datetime)"
                 },
+                "intake_sent_at": {
+                  "type": "string",
+                  "description": "intake form sent at · (datetime)"
+                },
                 "notes": {
                   "type": "string",
                   "description": "notes · (string)"
@@ -2358,7 +3291,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | intake_sent_at — intake form sent at · (datetime) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -2373,6 +3306,7 @@
                     "status",
                     "payment_status",
                     "intake_completed_at",
+                    "intake_sent_at",
                     "notes",
                     "payment_amount",
                     "invoice_id",
@@ -2423,6 +3357,7 @@
                     "status",
                     "payment_status",
                     "intake_completed_at",
+                    "intake_sent_at",
                     "notes",
                     "payment_amount",
                     "invoice_id",
@@ -2556,6 +3491,7 @@
               "status",
               "payment_status",
               "intake_completed_at",
+              "intake_sent_at",
               "notes",
               "payment_amount",
               "invoice_id",
@@ -2575,6 +3511,10 @@
               "intake_completed_at:week",
               "intake_completed_at:month",
               "intake_completed_at:year",
+              "intake_sent_at:day",
+              "intake_sent_at:week",
+              "intake_sent_at:month",
+              "intake_sent_at:year",
               "created_at:day",
               "created_at:week",
               "created_at:month",
@@ -2616,7 +3556,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | service_id — service · (uuid) | start_time — start time · (datetime) | end_time — end time · (datetime) | status — status · (enum) · one of: confirmed, cancelled, completed, no_show · business terms: {\"$semantic\":\"upcoming\"} | payment_status — payment status · (enum) · one of: pending, paid, refunded | intake_completed_at — intake completed at · (datetime) | intake_sent_at — intake form sent at · (datetime) | notes — notes · (string) | payment_amount — amount · (number) | invoice_id — invoice · (uuid) | created_at — created · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -2631,6 +3571,7 @@
                     "status",
                     "payment_status",
                     "intake_completed_at",
+                    "intake_sent_at",
                     "notes",
                     "payment_amount",
                     "invoice_id",
@@ -2689,6 +3630,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -2769,6 +3711,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -2849,6 +3792,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -2929,6 +3873,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3009,6 +3954,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3088,6 +4034,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3168,6 +4115,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -3262,6 +4210,7 @@
         "status",
         "payment_status",
         "intake_completed_at",
+        "intake_sent_at",
         "notes",
         "payment_amount",
         "invoice_id",
@@ -7054,7 +8003,7 @@
                 },
                 "activity_type": {
                   "type": "string",
-                  "description": "type · (enum) · one of: note, email, call, meeting, booking, payment"
+                  "description": "type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined"
                 },
                 "activity_date": {
                   "type": "string",
@@ -7098,7 +8047,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -7325,7 +8274,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | contact_id — contact · (uuid) | title — what happened · (string) | description — details · (string) | activity_type — type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined | activity_date — when · (datetime) | auto_logged — logged automatically · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -7454,7 +8403,7 @@
               },
               "activity_type": {
                 "type": "string",
-                "description": "type · (enum) · one of: note, email, call, meeting, booking, payment"
+                "description": "type · (enum) · one of: note, email, call, meeting, booking, payment, payment_received, invoice_sent, refund_issued, booking_rescheduled, booking_confirmation_sent, intake_form_sent, contact_updated, document_uploaded, task_completed, proposal_sent, proposal_accepted, proposal_declined"
               },
               "activity_date": {
                 "type": "string",
@@ -7927,7 +8876,7 @@
                 },
                 "page_type": {
                   "type": "string",
-                  "description": "type · (string)"
+                  "description": "type · (enum) · one of: landing, homepage"
                 },
                 "published": {
                   "type": "boolean",
@@ -7972,7 +8921,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (string) | published — live · (boolean) | published_at — published · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (enum) · one of: landing, homepage | published — live · (boolean) | published_at — published · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -8197,7 +9146,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (string) | published — live · (boolean) | published_at — published · (datetime)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | title — title · (string) | slug — address · (string) | page_type — type · (enum) · one of: landing, homepage | published — live · (boolean) | published_at — published · (datetime)",
             "items": {
               "type": "object",
               "properties": {
@@ -8317,7 +9266,7 @@
               },
               "page_type": {
                 "type": "string",
-                "description": "type · (string)"
+                "description": "type · (enum) · one of: landing, homepage"
               },
               "slug": {
                 "type": "string",
@@ -10615,6 +11564,74 @@
         ]
       }
     },
+    "open_time_business_profile": {
+      "description": "how many hours or slots are still open / free / available on a given day — business profile in the user's own business records",
+      "usage_context": "how many hours or slots are still open / free / available on a given day. This READS the user's business data and changes nothing. Applies to exactly ONE business profile; there is no bulk form.",
+      "idempotent": true,
+      "domain": "business",
+      "capability": "open_time",
+      "input_entity": "business_profile",
+      "output_entity": "business_profile",
+      "input_cardinality": "single",
+      "output_cardinality": "single",
+      "output_fields": [
+        "id",
+        "company_name",
+        "vertical"
+      ],
+      "required_params": [
+        "target_id"
+      ],
+      "optional_params": [
+        "data"
+      ],
+      "side_effect": "read",
+      "must_support": [
+        "user_scoped"
+      ],
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean",
+            "description": "True when the change was actually written.",
+            "x-guaranteed": true
+          },
+          "summary": {
+            "type": "string",
+            "description": "What was done, in the user's language.",
+            "x-guaranteed": true
+          },
+          "row": {
+            "type": "object",
+            "description": "The business profile after the change."
+          }
+        }
+      },
+      "output_guidance": {
+        "success_description": "how many hours or slots are still open / free / available on a given day",
+        "sample_output": {
+          "applied": true,
+          "summary": "how many hours or slots are still open / free / available on a given day",
+          "row": {
+            "company_name": "<company_name>",
+            "vertical": "<vertical>"
+          }
+        }
+      },
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "description": "The id of the business profile to act on. Must come from a find_business_profile result — never invented."
+          }
+        },
+        "required": [
+          "target_id"
+        ]
+      }
+    },
     "find_sections": {
       "description": "Find sections in the user's own business records",
       "usage_context": "Read the business's own sections. This is the user's private data — no external service is involved and nothing needs connecting. Use it to answer questions about their business, or to select rows for a later action.",
@@ -10662,7 +11679,7 @@
                 },
                 "block_type": {
                   "type": "string",
-                  "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer"
+                  "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing"
                 },
                 "position": {
                   "type": "number",
@@ -10706,7 +11723,7 @@
         "properties": {
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer | position — order on the page · (number) | enabled — shown · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing | position — order on the page · (number) | enabled — shown · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -10925,7 +11942,7 @@
           },
           "filters": {
             "type": "array",
-            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer | position — order on the page · (number) | enabled — shown · (boolean)",
+            "description": "Conditions, ANDed together. Each is {field, op, value}. Fields: id — ID · (uuid) | page_id — page · (uuid) | block_type — section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing | position — order on the page · (number) | enabled — shown · (boolean)",
             "items": {
               "type": "object",
               "properties": {
@@ -11120,7 +12137,7 @@
               },
               "block_type": {
                 "type": "string",
-                "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer"
+                "description": "section · (enum) · one of: header, hero, about, services, process, testimonials, faq, cta, contact_form, booking_widget, footer, features, pricing"
               }
             }
           }

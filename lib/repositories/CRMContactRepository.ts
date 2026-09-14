@@ -52,6 +52,8 @@ export interface CRMContactUpdate {
   email?: string | null;
   phone?: string | null;
   stage?: string;
+  /** Where this contact came from. A real column, and the API already edits it. */
+  source?: string;
   tags?: string[];
   custom_fields?: Record<string, any>;
   notes?: string | null;
@@ -243,6 +245,71 @@ export class CRMContactRepository {
       return { data: contacts, error: null };
     } catch (error) {
       logger.error({ err: error, userId, options }, 'Failed to list CRM contacts');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * How many contacts were created inside a window.
+   *
+   * A half-open range [startUtc, endUtc), because the caller's window is a
+   * business day: a contact created at exactly tomorrow's local midnight
+   * belongs to tomorrow, and an inclusive upper bound would count it on both
+   * days. Head-only — the briefing needs the number, never the rows.
+   */
+  /**
+   * The people who got in touch during a window, not just how many.
+   *
+   * `countCreatedBetween` below answers "how many", which is what the morning
+   * briefing said for a long time: *"2 new people got in touch today."* True,
+   * and almost useless — the owner still had to open the CRM to find out who,
+   * which is the whole thing they wanted to be told.
+   *
+   * Capped rather than paged. This feeds one line of a briefing; a business
+   * with forty new leads in a day is told about a few of them and the count
+   * covers the rest.
+   */
+  async listCreatedBetween(
+    userId: string,
+    startUtc: string,
+    endUtc: string,
+    limit: number = 5
+  ): Promise<CRMContactRepositoryResult<CRMContact[]>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('crm_contacts')
+        .select('id, first_name, last_name, email, source, custom_fields, created_at')
+        .eq('user_id', userId)
+        .gte('created_at', startUtc)
+        .lt('created_at', endUtc)
+        .order('created_at', { ascending: true })
+        .limit(limit);
+
+      if (error) throw error;
+      return { data: (data || []) as CRMContact[], error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, startUtc, endUtc }, 'Failed to list new contacts');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  async countCreatedBetween(
+    userId: string,
+    startUtc: string,
+    endUtc: string
+  ): Promise<CRMContactRepositoryResult<number>> {
+    try {
+      const { count, error } = await this.supabase
+        .from('crm_contacts')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .gte('created_at', startUtc)
+        .lt('created_at', endUtc);
+
+      if (error) throw error;
+      return { data: count || 0, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, startUtc, endUtc }, 'Failed to count new contacts');
       return { data: null, error: error as Error };
     }
   }

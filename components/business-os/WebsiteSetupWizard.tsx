@@ -19,7 +19,8 @@ import { MediaUploader } from '@/components/website/MediaUploader';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { ServiceDescriptionField } from '@/components/business-os/ServiceDescriptionField';
 // One copy of these, shared with the website page and the landing page wizard.
-import { getTranslatedTemplateName, getTranslatedBrandVoice } from '@/lib/website-builder/templateLabels';
+import { getTranslatedTemplateName, getTranslatedBrandVoice, getArchetypeLabel } from '@/lib/website-builder/templateLabels';
+import { ArchetypePreview, ArchetypeFontLinks } from '@/components/business-os/ArchetypePreview';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
 import type { FlowStepKey } from '@/lib/business-os/clientJourney';
@@ -29,28 +30,47 @@ import type { FlowStepKey } from '@/lib/business-os/clientJourney';
 
 
 // Types
+/**
+ * One entry in the design gallery.
+ *
+ * `/api/website/templates` now answers with the four archetypes rather than
+ * thirty-three templates, and an archetype is a whole design — palette, type
+ * stack, type scale, corner radius and layout arrangement — not three hex
+ * values and a font name that never rendered. The extra fields below are what
+ * let a card draw a miniature of the actual page instead of a colour swatch.
+ *
+ * Every older field is kept optional so a cached response from the previous
+ * shape still renders rather than throwing.
+ */
 interface WebsiteTemplate {
   id: string;
   name: string;
   description?: string;
   vertical: string;
+  source?: string;
   preview_url?: string;
   thumbnail_url?: string;
   theme: {
     primary_color?: string;
     secondary_color?: string;
-    // Both are read by the template grid below — the accent swatch (:640) and
-    // the brand-voice caption (:690) — but were absent here, so TypeScript
-    // reported reads of fields this shape says do not exist. `WebsiteTemplate`
-    // is declared three times (here, the website page, and the real one in
-    // `lib/website-builder/templates.ts`) and this copy had drifted furthest.
     accent_color?: string;
     brand_voice?: string;
+    font_family?: string;
     colors?: {
       primary: string;
       secondary: string;
+      accent?: string;
+      background?: string;
+      surface?: string;
+      text?: string;
+      textSecondary?: string;
     };
+    fonts?: { heading?: string; body?: string };
   };
+  scale?: { h1?: string; h2?: string; h3?: string; body?: string; small?: string };
+  borderRadius?: string;
+  spacing?: string;
+  layouts?: { hero?: string; services?: string; cta?: string; gallery?: string; pricing?: string };
 }
 
 interface SchedulingService {
@@ -576,6 +596,20 @@ export function WebsiteSetupWizard({
     });
   };
 
+  /**
+   * Every face the gallery needs.
+   *
+   * Also capped at four, and the cap had to go with the other one: a card whose
+   * typeface was never requested draws in the platform's face, so the two
+   * designs the slice was hiding would have come back looking like each other
+   * — which is exactly the sameness the miniatures exist to break.
+   */
+  const galleryFontFamilies = useMemo(
+    () =>
+      templates.flatMap(t => [t.theme?.fonts?.heading, t.theme?.fonts?.body, t.theme?.font_family]),
+    [templates]
+  );
+
   const getTemplatePrimaryColor = (template: WebsiteTemplate): string => {
     return template.theme?.colors?.primary || template.theme?.primary_color || '#4F6EF7';
   };
@@ -596,16 +630,48 @@ export function WebsiteSetupWizard({
             <p className="text-sm text-[var(--v2-text-muted)]">{labels.loading_templates}</p>
           </div>
         ) : (
-        <div className="grid grid-cols-2 gap-2">
-          {/* The API now returns these ordered best-first for this business, so
-              the four shown are the four best rather than the first four in a
-              hardcoded array. */}
-          {templates.slice(0, 4).map((template) => {
+        <div className="grid grid-cols-3 gap-2">
+          {/* Every design's typeface, in one request — without it each card
+              draws in the platform's face and they all look alike again. */}
+          <ArchetypeFontLinks families={galleryFontFamilies} />
+          {/*
+            EVERY design, the recommended one first.
+
+            This was `.slice(0, 4)`, written when there were four archetypes.
+            Two more shipped and the slice silently hid them, so the wizard —
+            which is where most sites are created — offered two thirds of the
+            catalogue while the templates tab offered all of it. A cap that
+            names a count goes stale the moment the count changes; there is no
+            reason to cap it at all, since the list IS the six designs.
+
+            Three across rather than two: six cards in two rows read as a
+            gallery to compare, where three rows of two read as a list to scroll.
+          */}
+          {templates.map((template) => {
             const isSelected = selectedTemplateId === template.id;
             const isRecommended = template.id === recommendedTemplateId;
             const primaryColor = getTemplatePrimaryColor(template);
             const secondaryColor = getTemplateSecondaryColor(template);
             const accentColor = template.theme?.accent_color || secondaryColor;
+
+            /*
+             * The miniature.
+             *
+             * A design is a ground, a typeface and a shape, and none of the
+             * three survived being drawn as two diagonal colour swatches — which
+             * is why every card in the old gallery looked interchangeable, quite
+             * accurately, since the templates behind them were.
+             *
+             * Each falls back to the flat colour fields so a response in the
+             * older shape still draws something rather than nothing.
+             */
+            const ground = template.theme?.colors?.background || '#FFFFFF';
+            const ink = template.theme?.colors?.text || '#111111';
+            const inkMuted = template.theme?.colors?.textSecondary || ink;
+            const headingFace = template.theme?.fonts?.heading || template.theme?.font_family;
+            const cardRadius = template.borderRadius || '8px';
+            const label = getArchetypeLabel(template.id, language);
+            const name = label.blurb ? label.name : getTranslatedTemplateName(template.name, language, template.id);
 
             return (
               <button
@@ -628,36 +694,32 @@ export function WebsiteSetupWizard({
                     {labels.template_recommended}
                   </span>
                 )}
-                {/* Color Preview Bar - Shows the template's color palette */}
-                <div className="h-16 relative overflow-hidden">
-                  {/* Background gradient using template colors */}
-                  <div
-                    className="absolute inset-0"
-                    style={{
-                      background: `linear-gradient(135deg, ${primaryColor} 0%, ${primaryColor} 50%, ${secondaryColor} 50%, ${secondaryColor} 100%)`
-                    }}
-                  />
-                  {/* Accent stripe */}
-                  <div
-                    className="absolute bottom-0 left-0 right-0 h-2"
-                    style={{ backgroundColor: accentColor }}
-                  />
-                  {/* Selected checkmark */}
-                  {isSelected && (
-                    <div className="absolute top-1.5 right-1.5 w-5 h-5 bg-white rounded-full flex items-center justify-center shadow-md">
-                      <Check className="w-3 h-3 text-[#4F6EF7]" />
-                    </div>
-                  )}
-                </div>
+                <ArchetypePreview
+                  name={name}
+                  background={ground}
+                  ink={ink}
+                  inkMuted={inkMuted}
+                  brand={primaryColor}
+                  accent={accentColor}
+                  headingFont={headingFace}
+                  radius={cardRadius}
+                  selected={isSelected}
+                  // Shorter than the default, because three across in a modal
+                  // is a narrower card than two — the miniature keeps its
+                  // proportions instead of becoming a tall, mostly empty band.
+                  heightClass="h-20"
+                />
 
-                {/* Template Info */}
-                <div className="p-2.5 bg-[var(--v2-surface)]">
-                  <h4 className="text-xs font-semibold text-[var(--v2-text-primary)] truncate">
-                    {getTranslatedTemplateName(template.name, language)}
+                {/* Name, and who it suits — the only question an owner is
+                    actually asking in front of this gallery. */}
+                <div className="p-2 bg-[var(--v2-surface)]">
+                  <h4 className="text-[11px] font-semibold text-[var(--v2-text-primary)] truncate">
+                    {name}
                   </h4>
-                  {template.theme?.brand_voice && (
-                    <span className="text-[10px] text-[var(--v2-text-muted)]">
-                      {getTranslatedBrandVoice(template.theme.brand_voice, language)}
+                  {(template.description || template.theme?.brand_voice) && (
+                    <span className="text-[10px] leading-tight text-[var(--v2-text-muted)] line-clamp-2">
+                      {template.description
+                        || getTranslatedBrandVoice(template.theme!.brand_voice!, language)}
                     </span>
                   )}
                 </div>

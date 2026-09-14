@@ -19,6 +19,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { paymentReminderService } from '@/lib/services/PaymentReminderService';
+import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 
 // The claim reaper's lease (90s) is set > maxDuration so an overrun function is
 // provably dead. Keep maxDuration aligned with the lease constant in the service.
@@ -73,12 +74,31 @@ export async function GET(request: NextRequest) {
     // Check for overdue items and schedule overdue reminders
     const overdueStats = await paymentReminderService.processOverdueItems();
 
+    /*
+     * Stamp the status, once a day, here.
+     *
+     * This used to happen on the read path — every dashboard load ran an
+     * UPDATE over `payment_invoices` before it could show anything. It is a
+     * property of the calendar, not of somebody opening a page, so it belongs
+     * on a schedule.
+     *
+     * AFTER the reminder scan above, not before. The scan now reads 'sent' and
+     * 'overdue' both, so the order no longer decides whether a client gets
+     * reminded — but running the write second keeps the two independent even
+     * if that filter is ever narrowed again.
+     */
+    const overdueSweep = await paymentInvoiceRepository.markAllOverdueInvoices();
+    if (overdueSweep.error) {
+      requestLogger.error({ err: overdueSweep.error }, 'Overdue sweep failed (reminders still processed)');
+    }
+
     const duration = Date.now() - startTime;
 
     requestLogger.info({
       duration,
       reminders: reminderStats,
-      overdue: overdueStats
+      overdue: overdueStats,
+      invoicesMarkedOverdue: overdueSweep.data ?? 0
     }, 'Payment reminders cron job completed');
 
     return NextResponse.json({
@@ -86,7 +106,8 @@ export async function GET(request: NextRequest) {
       data: {
         duration,
         reminders: reminderStats,
-        overdue: overdueStats
+        overdue: overdueStats,
+        invoicesMarkedOverdue: overdueSweep.data ?? 0
       }
     });
 

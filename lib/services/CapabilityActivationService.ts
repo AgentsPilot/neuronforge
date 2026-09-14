@@ -244,27 +244,24 @@ export class CapabilityActivationService {
       }
     }
 
-    // 2. Query database for capabilities matching user's vertical
-    if (profile.vertical) {
-      logger.info({ vertical: profile.vertical }, 'Querying capabilities for vertical');
-
-      const { data: verticalCaps } = await supabaseServer
-        .from('capabilities')
-        .select('capability_key, verticals');
-
-      if (verticalCaps) {
-        verticalCaps.forEach(cap => {
-          // If verticals is empty OR contains user's vertical
-          if (!cap.verticals || cap.verticals.length === 0 || cap.verticals.includes(profile.vertical!)) {
-            capabilitiesToActivate.add(cap.capability_key);
-            logger.info(
-              { capabilityKey: cap.capability_key, vertical: profile.vertical },
-              'Matched capability for vertical'
-            );
-          }
-        });
-      }
-    }
+    /*
+     * 2. REMOVED: the vertical sweep.
+     *
+     * It read every row in `capabilities` and activated any whose `verticals`
+     * list was EMPTY — which is seven of the eleven — for every account with a
+     * vertical. So whatever the onboarding chat had carefully decided in step 1
+     * was immediately overridden by "everybody gets nearly everything", and a
+     * business that had said it wanted no website had the website capability
+     * switched on regardless.
+     *
+     * An empty `verticals` list means "this is not scoped to a trade". It never
+     * meant "give this to everyone", and reading it that way is precisely how a
+     * tailored product turns into an ERP.
+     *
+     * What an account has is now derived from its own catalogue — see
+     * `lib/business-os/businessShape` — and the rows below are only the answers
+     * nothing in a service list can give.
+     */
 
     // 3. Add dependency-based and conditional capabilities
 

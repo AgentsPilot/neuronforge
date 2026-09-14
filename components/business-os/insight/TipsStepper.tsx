@@ -47,8 +47,8 @@ export function TipsStepper({ tips, onSelectTip }: TipsStepperProps) {
         display: 'flex',
         alignItems: 'center',
         gap: '12px',
-        background: 'linear-gradient(180deg, #FFF8F2, #FFFDFB)',
-        border: '1px solid #FBDCC0',
+        background: 'linear-gradient(180deg, rgba(249, 115, 22, 0.10), rgba(249, 115, 22, 0.03))',
+        border: '1px solid rgba(249, 115, 22, 0.30)',
         borderRadius: '18px',
         padding: '14px 16px',
         marginBottom: '16px',
@@ -80,7 +80,7 @@ export function TipsStepper({ tips, onSelectTip }: TipsStepperProps) {
             fontSize: '14.5px',
             fontWeight: 600,
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
-            color: '#131A2B',
+            color: 'var(--v2-text-primary)',
           }}
         >
           {currentTip.t}
@@ -89,7 +89,7 @@ export function TipsStepper({ tips, onSelectTip }: TipsStepperProps) {
           style={{
             display: 'block',
             fontWeight: 400,
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             fontSize: '13px',
             marginTop: '1px',
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -104,7 +104,7 @@ export function TipsStepper({ tips, onSelectTip }: TipsStepperProps) {
         <span
           style={{
             fontSize: '12.5px',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             fontVariantNumeric: 'tabular-nums',
             whiteSpace: 'nowrap',
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
@@ -120,12 +120,12 @@ export function TipsStepper({ tips, onSelectTip }: TipsStepperProps) {
           onClick={handleNext}
           style={{
             border: '1.5px solid #F3D2B4',
-            background: '#fff',
+            background: 'var(--v2-surface)',
             borderRadius: '11px',
             padding: '8px 13px',
             fontSize: '13px',
             fontWeight: 600,
-            color: '#C2410C',
+            color: '#F97316',
             whiteSpace: 'nowrap',
             transition: '0.15s',
             cursor: 'pointer',
@@ -135,7 +135,7 @@ export function TipsStepper({ tips, onSelectTip }: TipsStepperProps) {
             e.currentTarget.style.background = '#FFF3E8';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = '#fff';
+            e.currentTarget.style.background = 'var(--v2-surface)';
           }}
         >
           {/* Arrow icon */}
@@ -144,7 +144,7 @@ export function TipsStepper({ tips, onSelectTip }: TipsStepperProps) {
             style={{
               width: '14px',
               height: '14px',
-              stroke: '#C2410C',
+              stroke: '#F97316',
               fill: 'none',
               strokeWidth: 2,
               strokeLinecap: 'round',

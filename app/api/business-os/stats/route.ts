@@ -20,7 +20,6 @@ import {
   revenueByCurrency,
 } from '@/lib/payments/revenueMath';
 import { channelConnectionRepository } from '@/lib/repositories/ChannelConnectionRepository';
-import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import {
   isBusinessProfileComplete,
   missingProfileFields,
@@ -31,6 +30,7 @@ import {
   type InvoiceField,
 } from '@/lib/business-os/setup/profileReadiness';
 import { UNATTRIBUTED_SERVICE_ID } from '@/lib/business-os/reports/constants';
+import { resolveCapabilityKeys } from '@/lib/business-os/businessShape.server';
 
 const logger = createLogger({ module: 'BusinessOSStatsAPI' });
 
@@ -177,6 +177,16 @@ interface CapabilityStats {
     // Weekly comparison
     bookings_this_week: number;
     bookings_last_week: number;
+    /**
+     * Bookings PLACED in the last 7 days, cancellations excluded.
+     *
+     * Distinct from `bookings_this_week`, which is dated by `start_time` and
+     * has no upper bound — so it counts every appointment already on the books
+     * for any future date, and cannot answer "how many people booked this
+     * week". Dated by `created_at`, exactly like `booked_value_this_week`, so
+     * the count and the value describe the same set of bookings.
+     */
+    bookings_placed_this_week: number;
     // Detailed breakdown
     confirmed_30d: number;
     completed_30d: number;
@@ -262,6 +272,12 @@ interface CapabilityStats {
     // Weekly comparison
     revenue_this_week: number;
     revenue_last_week: number;
+    /**
+     * Payments RECEIVED in the last 7 days, de-duplicated the same way
+     * `revenue_this_week` is — an invoice settled by a transaction counts once.
+     * The count that goes with that sum.
+     */
+    payments_received_this_week: number;
     // Detailed breakdown
     successful_transactions_30d: number;
     /** Charges accepted, whatever happened to the money afterwards. */
@@ -319,14 +335,23 @@ export async function GET(request: NextRequest) {
 
     requestLogger.info({ userId: user.id, period }, 'Fetching Business OS stats');
 
-    // An invoice past its due date is only counted as overdue once something
-    // writes that status, and until now nothing did — the dashboard reported no
-    // overdue invoices while they aged. Idempotent, and it usually writes
-    // nothing, so it is cheap enough to do on the read that displays the count.
-    const overdueRefresh = await paymentInvoiceRepository.markOverdueInvoices(user.id);
-    if (overdueRefresh.error) {
-      requestLogger.warn({ err: overdueRefresh.error, userId: user.id }, 'Could not refresh overdue invoices');
-    }
+    /*
+     * The overdue stamp is the cron's job, not this request's.
+     *
+     * This ran `markOverdueInvoices` — an UPDATE over `payment_invoices` — on
+     * every dashboard load, serially, ahead of the fifty-odd reads below it.
+     * A GET that writes, once per page view, per business.
+     *
+     * It was also actively harmful. `PaymentReminderService.processOverdueItems`
+     * scanned for `status = 'sent'`, so an invoice this restamped 'overdue'
+     * dropped out of the reminder scan: opening your dashboard before the 08:00
+     * cron meant your client never got the overdue reminder. That scan now reads
+     * both statuses, and `/api/cron/payment-reminders` does the stamping.
+     *
+     * What this costs: an invoice falling due is marked at the next daily run
+     * rather than the next page load, so the count below can lag by up to a day.
+     * The reminder it drives is daily anyway.
+     */
 
     // 3. Calculate date ranges
     const now = new Date();
@@ -340,32 +365,34 @@ export async function GET(request: NextRequest) {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const fourteenDaysAgoDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000).toISOString();
 
-    // 4. Fetch user's enabled capabilities (DATABASE-DRIVEN)
-    const { data: userCapabilities } = await supabaseServer
-      .from('user_capabilities')
-      .select(`
-        is_active,
-        capabilities (
-          capability_key
-        )
-      `)
-      .eq('user_id', user.id)
-      .eq('is_active', true);
-
-    // Create a set of active capability keys (database-driven, no hardcoded defaults)
-    const activeCapabilityKeys = new Set<string>();
-
-    // Add user's activated capabilities from database
-    (userCapabilities || []).forEach((uc: any) => {
-      if (uc.capabilities?.capability_key) {
-        activeCapabilityKeys.add(uc.capabilities.capability_key);
-      }
+    /*
+     * 4. What this account has — derived from its own catalogue.
+     *
+     * This was a straight read of `user_capabilities`, which is the same rows
+     * the navigation used to read and disagreed with: a sweep granted nearly
+     * everything to everyone, so a dashboard card could say a capability was
+     * active for a business that had no use for it. `resolveCapabilityKeys` is
+     * the one answer, shared with `/api/capabilities` and the chat gate — see
+     * `lib/business-os/businessShape`.
+     */
+    /*
+     * Started here, awaited AFTER the batch below.
+     *
+     * It was awaited on this line, which put three sequential queries in front
+     * of a parallel batch of forty — about 200ms of pure wall-clock on the
+     * slowest request the dashboard makes, spent waiting rather than working.
+     * A promise held and awaited later costs nothing: it runs alongside
+     * everything else and is already settled by the time anything reads it.
+     */
+    const capabilityKeysPromise = resolveCapabilityKeys(user.id).catch(err => {
+      // Handled HERE rather than at the await, so a rejection that lands while
+      // the batch is still running has a handler attached the whole time — an
+      // unawaited rejected promise is an unhandled-rejection warning, and in
+      // this route it would also take down a response that is forty other
+      // queries' worth of correct.
+      requestLogger.warn({ err, userId: user.id }, 'Could not resolve capabilities');
+      return [] as string[];
     });
-
-    requestLogger.info(
-      { userId: user.id, capabilities: Array.from(activeCapabilityKeys) },
-      'Active capabilities for user'
-    );
 
     // 5. Fetch pipeline stages for the user
     const { data: pipelineStages } = await supabaseServer
@@ -845,6 +872,14 @@ export async function GET(request: NextRequest) {
       channelConnectionRepository.findByUser(user.id),
     ]);
 
+    // Settled long ago — started before the batch above, read now.
+    const activeCapabilityKeys = new Set<string>(await capabilityKeysPromise);
+
+    requestLogger.info(
+      { userId: user.id, capabilities: Array.from(activeCapabilityKeys) },
+      'Active capabilities for user'
+    );
+
     // Business profile and invoice details — the two readiness steps that live
     // in user settings rather than in the configuration dialog.
     //
@@ -1010,6 +1045,17 @@ export async function GET(request: NextRequest) {
     const paymentRevenueLastWeek = sumAmounts(revenueLastWeekData);
 
     const invoiceRevenueThisWeek = sumInvoicesNotSettledByTransaction(paidInvoicesThisWeekData, revenueThisWeekData);
+
+    /*
+     * How many payments arrived this week, de-duplicated exactly as the money
+     * is: an invoice settled by a transaction is one payment, not two. Counted
+     * off the same two arrays and the same filter as `revenueThisWeek`, so the
+     * count and the sum can never describe different sets — a business seeing
+     * "2 paid" beside a total is entitled to assume the total is those two.
+     */
+    const paymentsReceivedThisWeek =
+      ((revenueThisWeekData as unknown[] | null) || []).length +
+      invoicesNotSettledByTransaction(paidInvoicesThisWeekData, revenueThisWeekData).length;
     const invoiceRevenueLastWeek = sumInvoicesNotSettledByTransaction(paidInvoicesLastWeekData, revenueLastWeekData);
     const invoiceRevenue30d = sumInvoicesNotSettledByTransaction(paidInvoices30dData, paymentsData);
 
@@ -1671,6 +1717,9 @@ export async function GET(request: NextRequest) {
         // Weekly comparison
         bookings_this_week: bookingsThisWeek || 0,
         bookings_last_week: bookingsLastWeek || 0,
+        // Counted off the rows already fetched for booked_value_this_week —
+        // same filter, same period, no extra query.
+        bookings_placed_this_week: bookedValueThisWeekData?.length || 0,
         // Detailed breakdown
         confirmed_30d: bookingStatusCounts.confirmed,
         completed_30d: bookingStatusCounts.completed,
@@ -1820,6 +1869,7 @@ export async function GET(request: NextRequest) {
         pending_invoices_amount: pendingInvoicesAmount,
         // Weekly comparison - includes payment transactions + booking revenue + paid invoices
         revenue_this_week: revenueThisWeek,
+        payments_received_this_week: paymentsReceivedThisWeek,
         revenue_last_week: revenueLastWeek,
         // Detailed breakdown
         successful_transactions_30d: transactionCounts.succeeded,

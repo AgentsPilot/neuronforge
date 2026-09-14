@@ -19,6 +19,7 @@
  */
 
 import { CATALOG, type ResolvedEntity, type ResolvedField } from '@/lib/business-os/catalog';
+import { evaluateExpression } from './expression';
 import type {
   ComputeResult,
   FindResult,
@@ -269,6 +270,40 @@ function renderRow(entity: ResolvedEntity, row: QueryRow, ctx: RenderContext): R
  * aggregate over an aggregate, and the planner should not have to know which
  * shape it picked in order to divide them.
  */
+/**
+ * Does this step's figure carry a currency?
+ *
+ * A `sum`/`avg`/`min`/`max` over a field the catalog formats as money is money;
+ * a count never is, whatever the entity holds.
+ */
+function isMoneyAggregate(result: QueryResult): boolean {
+  if (result.op !== 'compute') return false;
+
+  const compute = result as ComputeResult;
+  if (compute.agg?.fn === 'count' || !compute.agg?.field) return false;
+
+  return CATALOG.entities[compute.entity]?.fields[compute.agg.field]?.format === 'money';
+}
+
+/**
+ * What KIND of quantity a step produced: a number of rows, or an amount.
+ *
+ * The distinction only matters for division. Counting is what a `find` and a
+ * `count` aggregate do; every other aggregate produces a magnitude in the
+ * field's own unit, and dividing one by the other is meaningless however
+ * cleanly it formats.
+ */
+function magnitudeKind(result: QueryResult | undefined): 'count' | 'amount' | null {
+  if (!result) return null;
+  if (result.op === 'find') return 'count';
+  if (result.op === 'compute') {
+    // `agg` is carried on the result for exactly this kind of question — see
+    // the note on ComputeResult.
+    return (result as ComputeResult).agg?.fn === 'count' ? 'count' : 'amount';
+  }
+  return null;
+}
+
 function numericValue(result: QueryResult | undefined): number | null {
   if (!result) return null;
   if (result.op === 'find') return (result as FindResult).rows.length;
@@ -288,6 +323,82 @@ function resolvePlaceholder(
   results: Map<string, QueryResult>,
   ctx: RenderContext
 ): string {
+  /*
+   * `{= (s2.value - s1.value) / s2.value }` — arithmetic the named paths cannot
+   * express, composed by the model and computed here.
+   *
+   * Intercepted before the step-path split below, because an expression is not
+   * a path: it has no single owning step, and splitting it on "." would produce
+   * nonsense.
+   *
+   * The optional format sigil says how to READ the result — a bare ratio, a
+   * percentage, or money. That set is closed and stays closed: formats are
+   * finite in a way arithmetic is not, which is precisely why the arithmetic
+   * had to stop being a fixed list and the formatting does not.
+   *
+   * `null` from the evaluator means something was uncertain — a step with no
+   * value, a division by zero, a source that did not parse. It resolves to the
+   * empty string, which marks the whole sentence as unrenderable and sends the
+   * caller to the plain fallback. See `evaluateExpression` for why refusing
+   * beats returning a number.
+   */
+  if (expression.startsWith('=')) {
+    const explicit = expression[1] === '%' || expression[1] === '$' ? expression[1] : '';
+    const source = expression.slice(1 + explicit.length);
+
+    /*
+     * Money in, money out.
+     *
+     * `{= s1.value + s2.value }` over two money totals rendered "2,105" — the
+     * right number stripped of the one thing that says what it is. Asked what
+     * two clients owe, a bare figure with no ₪ is a worse answer than the sum
+     * it computed.
+     *
+     * Inferred rather than demanded: the sigil still wins when the model writes
+     * one, and adding two amounts can only produce an amount. A count anywhere
+     * in the expression makes it dimensionless again, so nothing is assumed
+     * about "3 invoices + 2 payments".
+     */
+    const referenced = [...source.matchAll(/s\d+/g)].map((m) => results.get(m[0]));
+    const allMoney =
+      referenced.length > 0 &&
+      referenced.every((step) => step && isMoneyAggregate(step));
+
+    const sigil = explicit || (allMoney ? '$' : '');
+
+    const value = evaluateExpression(source, (ref: string) => {
+      const [stepId, path] = ref.split('.');
+      const step = results.get(stepId);
+      if (!step) return null;
+      if (path === 'count') return step.op === 'find' ? (step as FindResult).rows.length : null;
+      return numericValue(step);
+    });
+
+    if (value === null) return '';
+
+    try {
+      if (sigil === '%') {
+        return new Intl.NumberFormat(ctx.language || 'en', {
+          style: 'percent',
+          maximumFractionDigits: Math.abs(value * 100) < 10 ? 1 : 0,
+        }).format(value);
+      }
+
+      if (sigil === '$') {
+        return new Intl.NumberFormat(ctx.language || 'en', {
+          style: 'currency',
+          currency: ctx.currency || 'USD',
+        }).format(value);
+      }
+
+      return new Intl.NumberFormat(ctx.language || 'en', {
+        maximumFractionDigits: 2,
+      }).format(value);
+    } catch {
+      return String(Math.round(value * 100) / 100);
+    }
+  }
+
   const [stepId, ...rest] = expression.split('.');
   const path = rest.join('.');
   const result = results.get(stepId);
@@ -303,12 +414,92 @@ function resolvePlaceholder(
   //
   // Division by zero resolves to empty rather than Infinity or NaN, which sends
   // the caller to the plain fallback line — no rate is better than "NaN%".
+  /*
+   * `{s1.groups.g2.label}` — naming a group the model was never told the name of.
+   *
+   * The analysis layer receives `g1`, `g2`, `g3` and their figures, never the
+   * labels. It refers to a group by ref; the label is looked up here, from the
+   * result already in hand. So the sentence can say "בדיקה 3 earns most" while
+   * the model has never seen the string "בדיקה 3" — which is both the privacy
+   * property and the reason it cannot invent a service that does not exist.
+   *
+   * Refs are 1-based and positional, matching the payload builder. Out of range
+   * resolves to empty, sending the whole sentence to the fallback rather than
+   * naming the wrong thing.
+   */
+  /*
+   * `{s1.result.freeMinutes}` — what a READ ACTION gave back.
+   *
+   * A find has {sN.count} and an aggregate {sN.value}; an action had nothing,
+   * so a question answered by one could be planned perfectly and still not be
+   * sayable. The fields are whatever the catalog declared under `returns`, and
+   * the executor puts the handler's object on `row`.
+   *
+   * Unknown key resolves to empty, which takes the whole sentence to the
+   * fallback — the same treatment every other unresolvable placeholder gets.
+   */
+  const actionMatch = /^result\.(\w+)$/.exec(path);
+  if (actionMatch) {
+    if (result.op !== 'mutate') return '';
+
+    const row = (result as { row?: Record<string, unknown> }).row;
+    const value = row?.[actionMatch[1]];
+    if (value === undefined || value === null) return '';
+
+    const declared = CATALOG.entities[result.entity]?.actions?.[result.action]?.returns?.[
+      actionMatch[1]
+    ];
+
+    if (typeof value === 'boolean') return value ? 'yes' : 'no';
+
+    return formatValue(value, declared?.format, ctx);
+  }
+
+  const groupMatch = /^groups\.g(\d+)\.(label|value)$/.exec(path);
+  if (groupMatch) {
+    if (result.op !== 'compute') return '';
+
+    const compute = result as ComputeResult;
+    const group = compute.groups?.[Number(groupMatch[1]) - 1];
+    if (!group) return '';
+
+    if (groupMatch[2] === 'label') return String(group.key);
+
+    /*
+     * A group's figure is money only when the SUMMED column is — the same rule
+     * the ungrouped value below already applies, and for the same reason: a
+     * count of services is not four dollars of services.
+     */
+    const entity = CATALOG.entities[compute.entity];
+    const aggregatedField = compute.agg?.field ? entity?.fields[compute.agg.field] : undefined;
+    const isMoney = compute.agg?.fn !== 'count' && aggregatedField?.format === 'money';
+
+    return isMoney
+      ? formatValue(group.value, 'money', ctx)
+      : String(Math.round(group.value * 100) / 100);
+  }
+
   const percentMatch = /^percent_of\.(\w+)$/.exec(path);
   if (percentMatch) {
-    const whole = numericValue(results.get(percentMatch[1]));
+    const denominator = results.get(percentMatch[1]);
+    const whole = numericValue(denominator);
     const part = numericValue(result);
 
     if (part === null || whole === null || whole === 0) return '';
+
+    /*
+     * A share is only a share of the SAME KIND of quantity.
+     *
+     * "₪15,850 of 7 quotes, which is 226,429%" is what came out when a money
+     * total was divided by a row count — a number with no meaning at all,
+     * formatted to two decimal places and stated as a fact. Rows over rows is a
+     * share; money over money is a share; money over rows is an average at
+     * best, and never a percentage.
+     *
+     * Empty rather than wrong: the sentence then falls to the plain line, which
+     * says less and says nothing untrue.
+     */
+    if (magnitudeKind(result) !== magnitudeKind(denominator)) return '';
 
     const percent = (part / whole) * 100;
     try {

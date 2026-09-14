@@ -15,7 +15,7 @@ import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { safeExternalUrl } from '@/lib/branding/externalUrl';
-import { resolvePublishedWebsiteSubdomain } from '@/lib/branding/platformSite';
+import { resolvePlatformWebsiteUrl, resolveBookingUrl } from '@/lib/branding/platformSite';
 import { emailSendRepository } from '@/lib/repositories/EmailAutomationRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 // The same source `/book/manage/[token]/intake` reads, so the email asking for
@@ -28,6 +28,7 @@ import { generatePaymentReceiptEmail } from '@/lib/email/templates/payment-recei
 import { generateRefundConfirmationEmail } from '@/lib/email/templates/refund-confirmation';
 import { generateWelcomeEmail, generateReturningContactEmail } from '@/lib/email/templates/welcome-email';
 import { generateIntakeRequestEmail } from '@/lib/email/templates/intake-request';
+import { generateIntakeReceivedEmail } from '@/lib/email/templates/intake-received';
 import { resolveEmailBranding } from '@/lib/email/branding';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
@@ -39,49 +40,6 @@ const logger = createLogger({ service: 'BookingEmailService' });
 // JWT secret for booking manage tokens
 const BOOKING_TOKEN_SECRET = process.env.BOOKING_TOKEN_SECRET || process.env.NEXTAUTH_SECRET || 'fallback-secret-change-in-prod';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
-
-/**
- * Where to send a client who wants to book.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * A "book again" link has one job, and it was the only thing the old chain did
- * not check: that the destination is somewhere you can actually book.
- *
- * The order matters and is not arbitrary:
- *
- *   1. its WEBSITE on this platform, when we host one — a booking widget
- *   2. its smart link — `/c/{user_code}/book`, which exists for EVERY account
- *      and is the whole answer for a business that never wanted a website
- *
- * A landing page is deliberately not step 1: it is a campaign surface, and the
- * smart link below is purpose-built for booking and never goes stale. The
- * business's own external site is not in the list at all — a homepage is not a
- * booking page, and a button that says "book again" has to land on one.
- *
- * Step 2 was missing entirely. Without it, a business on `booking_only` — one
- * that told onboarding it did not want a site — had no bookable link to offer,
- * so a cancelled client got no button at all. Meanwhile `user_code` was sitting
- * on the profile, populated for every account, pointing at a booking page built
- * for exactly this.
- *
- * `status = 'published'`: an unpublished page's subdomain resolves to nothing.
- * Two of the four call sites did not filter on it. `maybeSingle` rather than
- * `single` for the same reason the filter matters — a business with two pages
- * made `single()` throw, and the error was swallowed into "no link".
- * ─────────────────────────────────────────────────────────────────────────────
- */
-async function resolveBookingUrl(
-  userId: string,
-  profile: { user_code?: string | null } | null | undefined
-): Promise<string | undefined> {
-  // The same helper the email branding uses, so "do we host their website"
-  // cannot be answered one way in the footer and another in the button above it.
-  const subdomain = await resolvePublishedWebsiteSubdomain(userId);
-
-  if (subdomain) return `${APP_URL}/site/${subdomain}/book`;
-  if (profile?.user_code) return `${APP_URL}/c/${profile.user_code}/book`;
-  return undefined;
-}
 
 // Token expiry for booking management links (30 days)
 const TOKEN_EXPIRY_DAYS = 30;
@@ -124,6 +82,24 @@ export function verifyBookingToken(token: string): { bookingId: string; email: s
  * Fetch user's preferred language from user_preferences table
  * Used for business owner's internal emails
  */
+/**
+ * The OWNER's interface language. Not for anything a client reads.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `user_preferences.preferred_language` is a personal setting: which language
+ * this person wants the app in. Every client-facing email used to resolve
+ * through it, so an owner who switched their own interface to English — to read
+ * their pipeline, say — silently changed the language their Hebrew clients were
+ * written to. One booking's confirmation went out in English at 16:32 because
+ * of exactly that, while every other email that day was Hebrew.
+ *
+ * What a client should be written in is a fact about the BUSINESS, and it does
+ * not change when the owner changes their own screen. So the senders now use
+ * `getBusinessLocale`, and this is kept for anything addressed to the owner
+ * themselves.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function getUserLocale(userId: string): Promise<Locale> {
   try {
     const { data, error } = await supabaseServer
@@ -249,7 +225,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -260,7 +236,17 @@ export class BookingEmailService {
       const booking = bookingResult.data;
 
       // Validate client email exists
-      if (!booking.client_email) {
+      /*
+       * Resolved once, and narrowed.
+       *
+       * `client_email` comes from the joined contact and is normalised to `''`
+       * when that contact has no address, so its type is `string | undefined`
+       * and its value can be empty. Every use below wants a real address —
+       * including `generateBookingToken`, which would otherwise mint a token
+       * for nobody.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
         requestLogger.error({ bookingId, contactId: booking.contact_id }, 'Booking contact has no email address');
         return { sent: false, error: 'Client email is missing' };
       }
@@ -278,7 +264,7 @@ export class BookingEmailService {
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
-      const token = generateBookingToken(bookingId, booking.client_email);
+      const token = generateBookingToken(bookingId, clientEmail);
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
 
@@ -323,7 +309,7 @@ export class BookingEmailService {
 
       const emailData = {
         clientName,
-        clientEmail: booking.client_email,
+        clientEmail,
         serviceName: service.service_name,
         dateTime: startTime,
         endTime,
@@ -432,7 +418,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId,
@@ -442,7 +428,7 @@ export class BookingEmailService {
       if (result.sent) {
         requestLogger.info({
           provider: result.provider,
-          clientEmail: booking.client_email,
+          clientEmail,
           invoiceAttached: attachments.length > 0
         }, 'Booking confirmation sent');
       } else {
@@ -453,7 +439,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -533,7 +519,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
@@ -673,7 +659,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -682,6 +668,23 @@ export class BookingEmailService {
         return { sent: false, error: 'Booking not found' };
       }
       const booking = bookingResult.data;
+
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
 
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -722,7 +725,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
@@ -738,7 +741,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -764,7 +767,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking (with new time)
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -773,6 +776,23 @@ export class BookingEmailService {
         return { sent: false, error: 'Booking not found' };
       }
       const booking = bookingResult.data;
+
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
 
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -787,7 +807,7 @@ export class BookingEmailService {
       const branding = await resolveEmailBranding(userId, locale, profileResult.data);
 
       // Generate booking management token and URLs
-      const token = generateBookingToken(bookingId, booking.client_email);
+      const token = generateBookingToken(bookingId, clientEmail);
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
 
@@ -802,7 +822,7 @@ export class BookingEmailService {
       // Generate email
       const { subject, html } = generateBookingRescheduledEmail({
         clientName,
-        clientEmail: booking.client_email,
+        clientEmail,
         serviceName: service.service_name,
         oldDateTime: previousDateTime,
         newDateTime,
@@ -818,7 +838,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
@@ -834,7 +854,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -865,7 +885,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
@@ -889,7 +909,19 @@ export class BookingEmailService {
        *
        * Sanitised because it reaches an href and is owner-typed text.
        */
-      const websiteUrl = safeExternalUrl(profileResult.data?.website_url) ?? undefined;
+      /*
+       * Ours first, then theirs — the order every other branded surface uses.
+       *
+       * This read the external address alone, so a business whose website we
+       * host had its own site named in `resolveEmailBranding`'s footer and
+       * somewhere else entirely in the body of this email. `platformSite`
+       * answers published-only and homepage-only, so a draft or a landing page
+       * still falls through to the address the business had before us.
+       */
+      const websiteUrl =
+        (await resolvePlatformWebsiteUrl(userId)) ??
+        safeExternalUrl(profileResult.data?.website_url) ??
+        undefined;
       const bookingUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Generate email
@@ -953,7 +985,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch business profile for branding
       const profileResult = await businessProfileRepository.findByUserId(userId);
@@ -977,7 +1009,19 @@ export class BookingEmailService {
        *
        * Sanitised because it reaches an href and is owner-typed text.
        */
-      const websiteUrl = safeExternalUrl(profileResult.data?.website_url) ?? undefined;
+      /*
+       * Ours first, then theirs — the order every other branded surface uses.
+       *
+       * This read the external address alone, so a business whose website we
+       * host had its own site named in `resolveEmailBranding`'s footer and
+       * somewhere else entirely in the body of this email. `platformSite`
+       * answers published-only and homepage-only, so a draft or a landing page
+       * still falls through to the address the business had before us.
+       */
+      const websiteUrl =
+        (await resolvePlatformWebsiteUrl(userId)) ??
+        safeExternalUrl(profileResult.data?.website_url) ??
+        undefined;
       const bookingUrl = await resolveBookingUrl(userId, profileResult.data);
 
       // Generate email
@@ -1040,6 +1084,14 @@ export class BookingEmailService {
        * and the endpoint answered 500.
        */
       manual?: boolean;
+      /**
+       * A second ask, a day before the meeting.
+       *
+       * The same form and the same link — only the subject and the opening
+       * line change, because a client who ignored the first one should not
+       * receive a message that reads as if it were the first one.
+       */
+      reminder?: boolean;
     }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendIntakeFormRequest' });
@@ -1055,6 +1107,23 @@ export class BookingEmailService {
         return { sent: false, error: 'Booking not found' };
       }
       const booking = bookingResult.data;
+
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
 
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -1095,9 +1164,19 @@ export class BookingEmailService {
        * `send_after_booking` here refused the act it exists to permit.
        */
       const { form, blocked } = await resolveIntakeForSending(userId, {
-        // The automatic path is the one that has to respect `send_after_booking`;
-        // the manual path IS the owner sending it themselves.
         forClient: !options?.manual,
+        /*
+         * The service decides whether there is anything to ask.
+         *
+         * A quote request has no occasion for a form — the next thing that
+         * client should receive is a price — and a product has no appointment
+         * to prepare for. Everything else is asked, free consultations
+         * included: costing nothing is not the same as needing nothing.
+         */
+        service: {
+          sale_mode: (service as { sale_mode?: string | null }).sale_mode ?? null,
+          is_scheduled: (service as { is_scheduled?: boolean | null }).is_scheduled ?? null,
+        },
       });
 
       if (!form) {
@@ -1116,14 +1195,14 @@ export class BookingEmailService {
           error:
             blocked === 'not_published'
               ? 'Your intake form has not been published yet'
-              : blocked === 'not_automatic'
-                ? 'Automatic sending is switched off for this business'
+              : blocked === 'not_applicable'
+                ? 'This service does not collect an intake form'
                 : 'No intake form configured',
         };
       }
 
       // Generate booking management token and URLs
-      const token = generateBookingToken(bookingId, booking.client_email);
+      const token = generateBookingToken(bookingId, clientEmail);
       const intakeFormUrl = `${APP_URL}/book/manage/${token}/intake`;
       const rescheduleUrl = `${APP_URL}/book/manage/${token}/reschedule`;
       const cancelUrl = `${APP_URL}/book/manage/${token}/cancel`;
@@ -1152,8 +1231,9 @@ export class BookingEmailService {
 
       // Generate email
       const { subject, html } = generateIntakeRequestEmail({
+        isReminder: !!options?.reminder,
         clientName,
-        clientEmail: booking.client_email,
+        clientEmail,
         serviceName: service.service_name,
         dateTime: startTime,
         duration: durationMinutes,
@@ -1169,13 +1249,27 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
       });
 
       if (result.sent) {
+        /*
+         * Record that it went, on the booking.
+         *
+         * The column was added with the intake rewrite and nothing ever wrote
+         * it — the old code marked "asked" with a sentinel inside
+         * `intake_responses` instead. Three states need three answers:
+         * never asked, asked, answered. The reminder below reads this, and so
+         * does the morning briefing, which was filtering on a column that was
+         * always null.
+         */
+        await schedulingBookingRepository
+          .update(bookingId, userId, { intake_sent_at: new Date().toISOString() })
+          .catch(err => requestLogger.warn({ err, bookingId }, 'Could not stamp intake_sent_at'));
+
         requestLogger.info({ provider: result.provider }, 'Intake form request sent');
       } else {
         requestLogger.warn({ error: result.error }, 'Failed to send intake form request');
@@ -1185,7 +1279,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result
@@ -1219,6 +1313,128 @@ export class BookingEmailService {
   }
 
   /**
+   * Tell the client their intake arrived.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The one email in this flow the client had no way to get. They answered
+   * personal questions on a page they had never seen, pressed Submit, and the
+   * only acknowledgement lived on a screen they were about to close. Nothing in
+   * their inbox said it landed, and a submission that failed on the way looked
+   * exactly the same.
+   *
+   * Deliberately NOT gated on `intakeReach`. Those predicates answer "may we
+   * ASK this client for an intake" — a question about whether the business
+   * collects intake and has published a form. This is the receipt for something
+   * that already happened, and refusing to send it because the owner
+   * unpublished the form ten minutes later would leave a real submission
+   * unacknowledged.
+   *
+   * Non-blocking at the call site: a submission is saved whether or not this
+   * sends. The answers are the thing that matters; the receipt is a courtesy.
+   * ───────────────────────────────────────────────────────────────────────────
+   *
+   * Called from: /api/book/manage/[token]/intake (POST)
+   */
+  static async sendIntakeReceivedConfirmation(
+    bookingId: string,
+    userId: string
+  ): Promise<EmailResult> {
+    const requestLogger = logger.child({
+      bookingId,
+      userId,
+      action: 'sendIntakeReceivedConfirmation'
+    });
+
+    try {
+      // Client-facing, so it speaks the business's language like the rest.
+      const locale = await getBusinessLocale(userId);
+
+      const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
+      if (bookingResult.error || !bookingResult.data) {
+        requestLogger.error({ err: bookingResult.error }, 'Booking not found');
+        return { sent: false, error: 'Booking not found' };
+      }
+      const booking = bookingResult.data;
+
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        // Nowhere to send it. Not an error worth surfacing — the answers saved.
+        return { sent: false, error: 'No client email' };
+      }
+
+      const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
+      if (serviceResult.error || !serviceResult.data) {
+        requestLogger.error({ err: serviceResult.error }, 'Service not found');
+        return { sent: false, error: 'Service not found' };
+      }
+      const service = serviceResult.data;
+
+      const profileResult = await businessProfileRepository.findByUserId(userId);
+      const branding = await resolveEmailBranding(userId, locale, profileResult.data);
+
+      /*
+       * A fresh token rather than the one they arrived with.
+       *
+       * The link in their hand may be minutes from expiring, and this email
+       * outlives the session that produced it.
+       */
+      const token = generateBookingToken(bookingId, clientEmail);
+
+      const clientName = [booking.client_first_name, booking.client_last_name]
+        .filter(Boolean)
+        .join(' ');
+
+      /*
+       * `start_time` is null for a product or a service sold without a slot.
+       * Passed through as null so the template says "your order" and omits the
+       * date, rather than dating the email 1 January 1970 — the trap the receipt
+       * and intake-request emails both fell into.
+       */
+      const { subject, html } = generateIntakeReceivedEmail({
+        clientName,
+        serviceName: service.service_name,
+        dateTime: booking.start_time ? new Date(booking.start_time) : null,
+        timezone: booking.timezone || 'UTC',
+        completedAt: booking.intake_completed_at
+          ? new Date(booking.intake_completed_at)
+          : new Date(),
+        rescheduleUrl: `${APP_URL}/book/manage/${token}/reschedule`,
+        cancelUrl: `${APP_URL}/book/manage/${token}/cancel`,
+        branding,
+        locale
+      });
+
+      const result = await sendEmail({
+        to: [clientEmail],
+        subject,
+        html,
+        ownerUserId: userId
+      });
+
+      if (result.sent) {
+        requestLogger.info({ provider: result.provider }, 'Intake received confirmation sent');
+      } else {
+        requestLogger.warn({ error: result.error }, 'Failed to send intake received confirmation');
+      }
+
+      // Log email to email_sends table (non-blocking)
+      logEmailSend({
+        userId,
+        contactId: booking.contact_id,
+        toEmail: clientEmail,
+        subject,
+        bodyHtml: html,
+        result
+      }).catch(err => requestLogger.warn({ err }, 'Email logging failed (non-blocking)'));
+
+      return { sent: result.sent, error: result.error };
+    } catch (error) {
+      requestLogger.error({ err: error }, 'Error sending intake received confirmation');
+      return { sent: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+  }
+
+  /**
    * Send refund confirmation email
    * Called from: /api/scheduling/bookings/[id]/refund
    */
@@ -1238,7 +1454,7 @@ export class BookingEmailService {
 
     try {
       // Fetch user's preferred language from profile
-      const locale = await getUserLocale(userId);
+      const locale = await getBusinessLocale(userId);
 
       // Fetch booking
       const bookingResult = await schedulingBookingRepository.findById(bookingId, userId);
@@ -1247,6 +1463,23 @@ export class BookingEmailService {
         return { sent: false, error: 'Booking not found' };
       }
       const booking = bookingResult.data;
+
+      /*
+       * There has to be somebody to send to.
+       *
+       * `client_email` is derived from the joined contact and normalised to `''`
+       * when that contact has no address, so the type is `string | undefined`
+       * and the value can be empty. Passing it straight to `sendEmail` meant a
+       * send to `['']` — an attempt that fails somewhere in the transport, or
+       * worse, a booking token minted for an empty address.
+       *
+       * Resolved once, refused here, and the narrowed value used below.
+       */
+      const clientEmail = booking.client_email?.trim();
+      if (!clientEmail) {
+        requestLogger.warn({ bookingId }, 'No client email on this booking; nothing sent');
+        return { sent: false, error: 'No client email' };
+      }
 
       // Fetch service
       const serviceResult = await schedulingServiceRepository.findById(booking.service_id, userId);
@@ -1281,7 +1514,7 @@ export class BookingEmailService {
 
       // Send email
       const result = await sendEmail({
-        to: [booking.client_email],
+        to: [clientEmail],
         subject,
         html,
         ownerUserId: userId
@@ -1297,7 +1530,7 @@ export class BookingEmailService {
       logEmailSend({
         userId,
         contactId: booking.contact_id,
-        toEmail: booking.client_email,
+        toEmail: clientEmail,
         subject,
         bodyHtml: html,
         result

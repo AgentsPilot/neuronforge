@@ -33,7 +33,6 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { buildMoneyItems, totalMoney, type MoneyItem, type MoneyPlan } from '@/lib/payments/moneyItems';
-import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 
 const logger = createLogger({ module: 'MoneyListAPI' });
 
@@ -111,12 +110,23 @@ export async function GET(request: NextRequest) {
 
     const { limit, offset, contact_id, filter, search, sort } = parsed.data;
 
-    // Refresh overdue before reading, exactly as /api/payments/invoices does.
-    // Without it an invoice only becomes overdue when somebody happens to visit
-    // the other page, so this list would quietly under-report what is late.
-    await paymentInvoiceRepository.markOverdueInvoices(user.id).catch(err =>
-      requestLogger.warn({ err }, 'Could not refresh overdue invoices (non-blocking)')
-    );
+    /*
+     * No overdue refresh here any more — the daily payment-reminders cron does
+     * the stamping. This ran an UPDATE over `payment_invoices` on every load of
+     * the orders page, ahead of the three reads below it.
+     *
+     * WHAT DOES NOT CHANGE, which is the part that matters:
+     *
+     * `moneyStatus` maps a stored 'overdue' to 'overdue' and everything else —
+     * 'sent' included — to 'awaiting_payment'. Both are in the `unpaid` filter
+     * and both are in `OUTSTANDING_STATUSES`, so a late invoice appears in the
+     * same filtered lists and the same outstanding totals either way. No row
+     * appears or disappears from this endpoint because of this removal.
+     *
+     * What changes is the LABEL, for at most a day: a newly late invoice reads
+     * "awaiting payment" until the cron stamps it, and sorts and exports under
+     * that word. The filter that finds it is unaffected.
+     */
 
     // Both sides plus the bookings that head the rows. Scoped by the session's
     // user on every one — that is the only tenant boundary in this system.

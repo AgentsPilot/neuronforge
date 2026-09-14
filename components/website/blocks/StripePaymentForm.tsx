@@ -153,13 +153,13 @@ function PaymentForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Card input label */}
-      <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+      <div className="text-sm font-medium ap-ink-2 mb-2">
         {labels.cardDetails}
       </div>
 
       {/* Stripe Payment Element */}
       <div
-        className="p-4 border border-gray-200 dark:border-gray-600 bg-white dark:bg-slate-800"
+        className="p-4 border ap-line ap-card"
         style={{ borderRadius }}
       >
         <PaymentElement
@@ -205,7 +205,7 @@ function PaymentForm({
       </button>
 
       {/* Security badges */}
-      <div className="flex items-center justify-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex items-center justify-center gap-4 text-sm ap-ink-3">
         <div className="flex items-center gap-1">
           <Lock className="w-4 h-4" />
           <span>{labels.securePayment}</span>
@@ -265,7 +265,7 @@ export function StripePaymentForm({
   if (!stripeLoaded) {
     return (
       <div className="flex items-center justify-center py-8">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+        <Loader2 className="w-6 h-6 animate-spin ap-ink-3" />
       </div>
     );
   }
@@ -283,8 +283,8 @@ export function StripePaymentForm({
     return (
       <div className="flex flex-col items-center gap-2 py-8 text-center">
         <AlertCircle className="w-6 h-6 text-red-500" />
-        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{labels.paymentFailed}</p>
-        <p className="text-xs text-gray-500 dark:text-gray-400">{labels.tryAgain}</p>
+        <p className="text-sm font-medium ap-ink">{labels.paymentFailed}</p>
+        <p className="text-xs ap-ink-3">{labels.tryAgain}</p>
       </div>
     );
   }

@@ -29,6 +29,16 @@ export type FirstPaymentDue = 'on_booking' | 'days_after';
  */
 export type ServiceCollection = 'online' | 'invoice';
 
+/**
+ * Whether a client can buy this outright, or has to be quoted first.
+ *
+ * The third fact that decides a service's client journey, beside
+ * `is_scheduled` and `collection`. `proposal` means the journey stops after
+ * the client leaves their details: there is no price to show and no card to
+ * take until the owner has quoted the job.
+ */
+export type ServiceSaleMode = 'direct' | 'proposal';
+
 export interface ServiceAISuggestions {
   reasoning: string;
   confidence: number;
@@ -48,6 +58,8 @@ export interface SchedulingService {
   is_scheduled: boolean;
   /** How the money arrives. Null while the service is free. */
   collection: ServiceCollection | null;
+  /** Bought outright, or quoted first. NOT NULL DEFAULT 'direct'. */
+  sale_mode: ServiceSaleMode;
   buffer_minutes: number;
   max_bookings_per_day: number | null;
   advance_booking_days: number;
@@ -76,6 +88,7 @@ export interface SchedulingServiceInsert {
   currency?: ServiceCurrency;
   is_scheduled?: boolean;
   collection?: ServiceCollection | null;
+  sale_mode?: ServiceSaleMode;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -101,6 +114,7 @@ export interface SchedulingServiceUpdate {
   currency?: ServiceCurrency;
   is_scheduled?: boolean;
   collection?: ServiceCollection | null;
+  sale_mode?: ServiceSaleMode;
   buffer_minutes?: number;
   max_bookings_per_day?: number | null;
   advance_booking_days?: number;
@@ -213,6 +227,8 @@ export interface SchedulingBookingUpdate {
     template_key: string;
     responses: Record<string, unknown>;
   } | null;
+  /** When the form was emailed. Distinct from `intake_completed_at`: asked is not answered. */
+  intake_sent_at?: string | null;
   intake_completed_at?: string | null;
 }
 
@@ -724,6 +740,45 @@ export class SchedulingBookingRepository {
   }
 
   /**
+   * The soonest booking starting at or after `afterUtc`.
+   *
+   * `list` cannot answer this: it is ordered `start_time DESC` — newest first,
+   * which is what a history table wants — so asking it for one row from a
+   * forward window returns the LAST appointment on the books, not the next one.
+   * Reversing the order there would change every caller that reads a list of
+   * recent bookings, so the forward question gets its own method.
+   *
+   * Cancelled bookings are excluded: a slot someone cancelled is not what the
+   * owner is being told to expect.
+   */
+  async findNextAfter(
+    userId: string,
+    afterUtc: string
+  ): Promise<SchedulingRepositoryResult<SchedulingBooking | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('scheduling_bookings')
+        .select(`
+          *,
+          contact:crm_contacts(first_name, last_name, email, phone),
+          service:scheduling_services(service_name)
+        `)
+        .eq('user_id', userId)
+        .in('status', ['confirmed', 'completed'])
+        .gte('start_time', afterUtc)
+        .order('start_time', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+      return { data: (data as SchedulingBooking) ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId, afterUtc }, 'Failed to find next booking');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * List bookings with date range filtering and contact data
    */
   async list(
@@ -734,6 +789,16 @@ export class SchedulingBookingRepository {
       status?: string | string[];
       startDate?: string;
       endDate?: string;
+      /**
+       * Exclusive upper bound on start_time.
+       *
+       * `endDate` is inclusive (`lte`), which is right for a date but wrong for
+       * a day window: a booking at exactly tomorrow's midnight belongs to
+       * tomorrow, and an inclusive bound counts it in both days. Callers
+       * working in half-open [start, end) windows — anything derived from
+       * businessDayFor — want this instead.
+       */
+      endBefore?: string;
       search?: string;
       limit?: number;
       offset?: number;
@@ -746,6 +811,7 @@ export class SchedulingBookingRepository {
         status,
         startDate,
         endDate,
+        endBefore,
         search,
         limit = 50,
         offset = 0
@@ -758,7 +824,7 @@ export class SchedulingBookingRepository {
         .select(`
           *,
           contact:crm_contacts(first_name, last_name, email, phone),
-          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency),
+          service:scheduling_services(service_name, price, currency, payment_type, installment_count, installment_frequency, sale_mode),
           invoice:payment_invoices!payment_invoices_booking_id_fkey(id, status, amount, paid_at, due_date, sent_at, refunded_amount, refund_status, refunded_at),
           payments:payment_transactions!payment_transactions_booking_id_fkey(id, amount, refunded_amount, status, invoice_id)
         `)
@@ -782,6 +848,10 @@ export class SchedulingBookingRepository {
 
       if (endDate) {
         query = query.lte('start_time', endDate);
+      }
+
+      if (endBefore) {
+        query = query.lt('start_time', endBefore);
       }
 
       // Client name search - search in JOINed crm_contacts table

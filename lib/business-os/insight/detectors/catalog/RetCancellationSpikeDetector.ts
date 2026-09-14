@@ -60,7 +60,7 @@ export class RetCancellationSpikeDetector extends BaseDetector {
     // Get current week cancellations (use updated_at since cancelled_at doesn't exist)
     const { data: currentWeek, error: currentError } = await this.supabase
       .from('scheduling_bookings')
-      .select('id, client_email, service_id, cancellation_reason, updated_at')
+      .select('id, service_id, cancellation_reason, updated_at')
       .eq('user_id', userId)
       .eq('status', 'cancelled')
       .gte('updated_at', weekAgo.toISOString())

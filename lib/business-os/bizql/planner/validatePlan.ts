@@ -16,10 +16,17 @@
  */
 
 import { CATALOG, type ResolvedEntity } from '@/lib/business-os/catalog';
-import { VALUELESS_OPS, isSemanticValue, type Predicate, type Query } from '../types';
+import {
+  VALUELESS_OPS,
+  isSemanticValue,
+  isIsoCalendarDate,
+  type Predicate,
+  type Query,
+} from '../types';
 import type { Plan } from './Planner';
 import { relationPredicateProblem } from '../predicateRules';
 import { parseGroupBy } from '../groupBy';
+import { containsCalendarDate } from '../dates';
 
 /** The four step operations. Anything else is a slip, not a step. */
 const KNOWN_OPS_SET = new Set(['find', 'compute', 'mutate', 'for_each']);
@@ -137,7 +144,116 @@ export function normalizePlan(plan: Plan): void {
     }
 
     walk((s.where as unknown[]) ?? []);
+    unwrapEnumValuesDressedAsTerms(s);
+    collapseRepeatedEquals(s);
   }
+}
+
+/**
+ * `status eq draft AND status eq sent AND status eq viewed` — a contradiction.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `where` is a conjunction, so three equalities on one field can never all
+ * hold: the query is guaranteed to return nothing, and nothing reads as a
+ * truthful "you have none".
+ *
+ * It is exactly how gpt-4o-mini writes "quotes that are still open" in Hebrew —
+ * the same question in English comes out as `status in [draft, sent, viewed]`,
+ * which is the same intent correctly expressed. There is only one thing the
+ * model can have meant, so it is written down rather than argued with.
+ *
+ * Deliberately narrow: only `eq` predicates, only at the same level, only on
+ * one field, and only when they disagree. Two identical equalities are
+ * redundant rather than contradictory and are left alone; anything involving
+ * another operator is a real conjunction and stays untouched.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function collapseRepeatedEquals(step: Record<string, unknown>): void {
+  const where = step.where;
+  if (!Array.isArray(where)) return;
+
+  const byField = new Map<string, Array<Record<string, unknown>>>();
+
+  for (const predicate of where) {
+    if (!predicate || typeof predicate !== 'object') continue;
+    const p = predicate as Record<string, unknown>;
+    if (p.op !== 'eq' || typeof p.field !== 'string') continue;
+    if (p.value === null || typeof p.value === 'object') continue;
+
+    byField.set(p.field, [...(byField.get(p.field) ?? []), p]);
+  }
+
+  for (const [, predicates] of byField) {
+    const values = [...new Set(predicates.map((p) => p.value))];
+    if (predicates.length < 2 || values.length < 2) continue;
+
+    // The first one becomes the whole set; the rest are dropped from `where`.
+    predicates[0].op = 'in';
+    predicates[0].value = values;
+
+    step.where = (step.where as unknown[]).filter((p) => !predicates.slice(1).includes(p as never));
+  }
+}
+
+/**
+ * `{"$semantic":"accepted"}` where `accepted` is simply an enum VALUE.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The most expensive small bug of the day, and every link in it was ours.
+ *
+ * The tool schema said: "If the field shows {..} semantic terms, you MUST use
+ * {"$semantic":"..."}" — which reads as "every value of this field is a
+ * semantic term". So asked how many quotes were accepted, the model wrapped a
+ * perfectly good enum value: `{"$semantic":"accepted"}`.
+ *
+ * The validator then rejected it with "Known terms: open, awaiting_reply" — a
+ * message that never mentions the value is fine as it stands — and the repair
+ * round picked the first term it was offered. `open` is draft|sent|viewed, so
+ * "how many were accepted" answered **3**, confidently, for a business with 4.
+ *
+ * Fixed at the source (the wording) and at the message (which now names the
+ * values too), but fixed HERE first: the wrapper around a declared enum value
+ * has exactly one reading, and undoing it costs no model call at all. The same
+ * shape as putting a date anchor back — a fact we can compute rather than
+ * argue about.
+ *
+ * Only when the inner string IS a declared value of that field. An unknown term
+ * still fails validation, because that one might mean something we cannot
+ * guess.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function unwrapEnumValuesDressedAsTerms(step: Record<string, unknown>): void {
+  const entity = CATALOG.entities[String(step.entity)];
+  if (!entity) return;
+
+  const walk = (predicates: unknown[]): void => {
+    for (const predicate of predicates) {
+      if (!predicate || typeof predicate !== 'object') continue;
+      const p = predicate as Record<string, unknown>;
+
+      for (const key of ['and', 'or', 'where'] as const) {
+        if (Array.isArray(p[key])) walk(p[key] as unknown[]);
+      }
+      if (p.not) walk([p.not]);
+
+      const field = typeof p.field === 'string' ? entity.fields[p.field] : undefined;
+      if (!field?.enumValues?.length) continue;
+
+      const unwrap = (value: unknown): unknown => {
+        if (!isSemanticValue(value)) return value;
+
+        const term = value.$semantic;
+        // A real term wins: `open` is declared, and means three values.
+        if (field.semanticTerms?.[term.toLowerCase()]) return value;
+
+        return field.enumValues?.includes(term) ? term : value;
+      };
+
+      p.value = Array.isArray(p.value) ? p.value.map(unwrap) : unwrap(p.value);
+    }
+  };
+
+  walk((step.where as unknown[]) ?? []);
 }
 
 /**
@@ -298,21 +414,30 @@ function inlineStepReferencedLookups(plan: Plan): void {
   // died on a vocabulary slip while the intent was perfectly clear. Two shapes
   // are unambiguous and both are repaired here:
   //
-  //   op names a declared action     → that action, as a mutate
-  //   unknown op, but `action` set   → a mutate of the action already named
+  //   `action` already names a declared action → fix the op, keep the action
+  //   op names a declared action, none given   → that action, as a mutate
   //
   // Anything else is left to fail. Guessing WHICH write was meant is exactly the
   // inference this normaliser refuses to do.
+  //
+  // ORDER MATTERS, and the wrong order cost an afternoon. "תפרסם את דף הנחיתה"
+  // (publish the landing page) planned {"op":"update","action":"publish"} — the
+  // op a vocabulary slip, the action exactly right. Reading the op first
+  // OVERWROTE `publish` with `update`, because `pages` declares an `update`
+  // action too, so the page was renamed instead of published and the model was
+  // blamed for a rewrite this function performed. An action the planner already
+  // named is a statement of intent; an op that happens to collide with an action
+  // name is a guess about one. The statement wins.
   for (const step of plan.steps ?? []) {
     const raw = step as unknown as { op?: string; entity?: string; action?: string };
     if (!raw.op || KNOWN_OPS_SET.has(raw.op)) continue;
 
     const actions = CATALOG.entities[raw.entity ?? '']?.actions ?? {};
 
-    if (actions[raw.op]) {
-      raw.action = raw.op;
+    if (raw.action && actions[raw.action]) {
       raw.op = 'mutate';
-    } else if (raw.action && actions[raw.action]) {
+    } else if (actions[raw.op]) {
+      raw.action = raw.op;
       raw.op = 'mutate';
     }
   }
@@ -739,12 +864,28 @@ function validatePredicate(
         );
       } else if (!field.semanticTerms?.[term]) {
         const known = Object.keys(field.semanticTerms ?? {});
+        /*
+         * Name the VALUES as well as the terms.
+         *
+         * "Known terms: open, awaiting_reply" is a true message that teaches the
+         * wrong answer: asked for `accepted` — an ordinary enum value the model
+         * had merely wrapped — the repair round picked the first term it was
+         * offered, and a question about 4 accepted quotes was answered with the
+         * 3 that were open. A rejection has to say what the right shape IS, or
+         * it turns a near-miss into a confident miss.
+         */
+        const values = field.enumValues ?? [];
+
         problems.push(
           `${path}: '${candidate.$semantic}' is not a semantic term for ` +
             `'${entity.key}.${p.field}'. ` +
             (known.length
-              ? `Known terms: ${known.join(', ')}.`
-              : `That field has no semantic terms.`)
+              ? `The only terms are: ${known.join(', ')}. `
+              : `That field has no semantic terms. `) +
+            (values.length
+              ? `If you meant one of its ordinary values — ${values.join(', ')} — pass it as ` +
+                `a plain string: {"field":"${p.field}","op":"eq","value":"${candidate.$semantic}"}.`
+              : '')
         );
       }
     }
@@ -804,6 +945,13 @@ const DATE_ANCHORS = new Set([
   'end_of_week',
   'start_of_month',
   'end_of_month',
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
 ]);
 
 /**
@@ -821,10 +969,19 @@ function validateDateExpr(value: unknown, path: string, problems: string[]): voi
     if (typeof candidate !== 'object' || candidate === null || !('$date' in candidate)) continue;
 
     const anchor = (candidate as { $date: unknown }).$date;
+
+    // A day the user named is not an anchor and never will be — anchors are
+    // relative to now. Accepted here as well as in the resolver: validating a
+    // plan more strictly than the resolver executes it rejects writes that
+    // would have worked, which is what happened to "change the due date to 30
+    // October" — the value was legal by the time it reached the resolver, but
+    // the plan never got that far.
+    if (isIsoCalendarDate(anchor)) continue;
+
     if (typeof anchor !== 'string' || !DATE_ANCHORS.has(anchor)) {
       problems.push(
         `${path}: '${String(anchor)}' is not a valid $date anchor. ` +
-          `Use one of: ${[...DATE_ANCHORS].join(', ')}.`
+          `Use one of: ${[...DATE_ANCHORS].join(', ')} — or a specific day as YYYY-MM-DD.`
       );
     }
   }
@@ -896,7 +1053,7 @@ function validateLiteralAgainstEnum(
 }
 
 /** Step kinds. Distinct from KNOWN_OPS above, which is the comparison operators. */
-const KNOWN_STEP_OPS = new Set(['find', 'compute', 'mutate', 'for_each']);
+const KNOWN_STEP_OPS = new Set(['find', 'compute', 'mutate', 'for_each', 'analyse']);
 
 function validateStep(
   step: Query,
@@ -922,12 +1079,44 @@ function validateStep(
     return;
   }
 
+  /*
+   * `analyse` names no entity — it fetches nothing. Everything below this point
+   * is about a query against a table, so it stops here rather than reporting a
+   * missing entity for a step that is not supposed to have one.
+   */
+  if (step.op === 'analyse') return;
+
   const entity = CATALOG.entities[step.entity];
 
   if (!entity) {
     problems.push(
       `${path}: unknown entity '${step.entity}'. ` +
         `Known entities: ${Object.keys(CATALOG.entities).join(', ')}.`
+    );
+    return;
+  }
+
+  /*
+   * A configuration singleton cannot be queried, only acted on.
+   *
+   * Generic: the catalog says which entities these are, and this states the
+   * consequence. Without it the planner had a plausible wrong option — `find
+   * business_profile` returns a company name and a vertical, answers nothing,
+   * and reads like an answer — and reliably took it for "how many hours are
+   * still open on Wednesday". Making the action's label more inviting moved the
+   * rate around without fixing it, because a wrong option that remains
+   * available eventually gets picked.
+   *
+   * Naming the actions matters as much as the refusal: the repair round can act
+   * on "use one of these", and cannot act on "no".
+   */
+  if ((step.op === 'find' || step.op === 'compute') && entity.queryable === false) {
+    const actions = Object.keys(entity.actions ?? {});
+    problems.push(
+      `${path}: '${entity.key}' holds one row of configuration and cannot be read with ` +
+        `${step.op}. Everything it knows is exposed as an action — use ` +
+        `{"op":"mutate","entity":"${entity.key}","action":"..."} with one of: ` +
+        `${actions.join(', ')}.`
     );
     return;
   }
@@ -1069,10 +1258,28 @@ function validateStep(
         // Nested rather than folded into the condition: `!id` is what narrows
         // `id` to a string for the branches below, and `!id && …` does not.
         if (action?.needsTarget !== false) {
+          /*
+           * The example is built from THIS entity, not from invoices.
+           *
+           * It used to read `{"field":"invoice_number","op":"eq","value":
+           * "INV-00002"}` whatever was being written. Asked to publish a
+           * landing page, the planner emitted `pages.publish` — correctly — and
+           * the repair, shown an invoice, came back with a RENAME of a page
+           * nobody had mentioned. A rejection that demonstrates the wrong shape
+           * is how a near-miss becomes a confident miss; this is the third one
+           * today.
+           */
+          const named = Array.isArray(entity.labelField)
+            ? entity.labelField[0]
+            : entity.labelField;
+          const searchable = entity.searchableFields?.[0] ?? named;
+
           problems.push(
-            `${path}: '${mutate.action}' needs a target. Either target.id — a literal id ` +
-              `you were actually given — or target.find to describe the row, e.g. ` +
-              `{"find":{"where":[{"field":"invoice_number","op":"eq","value":"INV-00002"}]}}.`
+            `${path}: '${mutate.action}' needs a target — WHICH ${entity.key} to act on. ` +
+              `Either target.id, a literal id you were actually given, or target.find ` +
+              `describing it in the user's own words, e.g. ` +
+              `{"find":{"where":[{"field":"${searchable}","op":"contains","value":"…"}]}}. ` +
+              `Keep the action you chose: the target is what is missing, not the verb.`
           );
         }
       } else if (/^s\d+\./.test(id) || /\{|\$|rows/.test(id)) {
@@ -1275,8 +1482,39 @@ function validateStep(
 
     if (step.group_by) {
       const parsed = parseGroupBy(entity, step.group_by);
+      /*
+       * Grouping by a raw id shows the user a uuid.
+       *
+       * The prompt has always said not to, and asking was not enough: a
+       * compound question grouped by `service_id`, so the group's key WAS the
+       * uuid and the sentence read "the service with the most refund cases is
+       * c700c2f0-1810-4ff5-9dbe-de78aa86345b". The renderer is not at fault —
+       * it printed the label it was given, and the label was an id.
+       *
+       * Caught here because the fix is mechanical: a relation with the same
+       * name minus `_id` groups by what the thing is CALLED, which is what the
+       * question meant.
+       */
+      const groupedField =
+        typeof step.group_by === 'string' ? entity.fields[step.group_by] : undefined;
+
+      if (groupedField && (groupedField.type === 'uuid' || groupedField.references)) {
+        const viaRelation = Object.entries(entity.relations ?? {}).find(
+          ([, relation]) => relation.via?.column === groupedField.column
+        );
+
+        problems.push(
+          `${path}.group_by: '${entity.key}.${step.group_by}' is an id, so every group would ` +
+            `be named by a uuid the user cannot read.` +
+            (viaRelation
+              ? ` Group by the relation '${viaRelation[0]}' instead — it groups by what the ` +
+                `thing is called.`
+              : ` Group by a relation, or by a field that holds a name.`)
+        );
+      }
+
       if (parsed.problem) {
-        problems.push(`${path}.group_by: ${parsed.problem}`);
+        problems.push(`${path}.group_by: ${parsed.problem}${inversionHint(entity, step.group_by)}`);
       }
     }
   }
@@ -1379,9 +1617,369 @@ function countSubjectProblem(
  * data. This is the guardrail that makes "answer text lives in the plan" safe
  * enough to replace ~120 hand-written response templates.
  */
+/**
+ * A calendar date the user never gave a number for.
+ *
+ * "ביום רביעי" — on Wednesday — has no expressible date, so the planner used to
+ * work one out itself and get it wrong: told it was Monday 7 September it
+ * filtered on the 14th, which is a Monday; another run picked the 7th, which is
+ * yesterday and not a Wednesday either. English resolved the weekday anchor
+ * reliably; Hebrew reached for YYYY-MM-DD every time.
+ *
+ * The signal that separates the two cases needs no vocabulary, which is the
+ * point — a per-language weekday table would be the first hardcoded word list
+ * in a system built to avoid them, and every new language would then need one.
+ *
+ *   a day the user NUMBERED   "30 October", "‏30 באוקטובר", "on 3 March"   has a digit
+ *   a day the user NAMED      "Wednesday", "ביום רביעי", "el miércoles"    has none
+ *
+ * So: an absolute date is only legitimate when the message carries a digit it
+ * could have come from. The same technique `validateAnswer` already uses below
+ * to catch an invented figure — compare against the user's own message rather
+ * than banning digits outright.
+ *
+ * Fails toward permissive. An unrelated digit ("for בדיקה 1") lets an absolute
+ * date through, which is a missed catch rather than a false rejection — and a
+ * spelled-out "the thirtieth of October" costs one clarifying round trip, not a
+ * wrong answer.
+ */
+/**
+ * Problems worth one repair round, but not worth losing the answer over.
+ *
+ * A missing answer sentence is the case this exists for. Requiring one took
+ * measured coverage from 69% to 81% — and pushed `valid` from 293/297 down to
+ * 262, because a plan the model would not re-write became a hard failure. The
+ * user then sees "I didn't quite follow that" where they used to see a bare
+ * count: a different bad outcome, not an improvement.
+ *
+ * So the validator still says it, the repair round still acts on it, and if the
+ * model will not comply the plan runs anyway and the renderer's fallback
+ * carries the answer. Pressure without a cliff.
+ *
+ * Kept as a prefix match on the message rather than a separate return channel:
+ * `validatePlan` has one contract — a list of strings — and four callers.
+ */
+const SOFT_PROBLEMS = ['answer.text is required.', 'answer.text cites no step.'];
+
+/**
+ * Matched as a PREFIX, which is what keeps the two-read case hard.
+ *
+ * Both missing-sentence messages contain the words "answer.text is required",
+ * but only one of them is safe to ship without. A one-read plan with no
+ * sentence renders "contacts: 1" — thin, and still about the thing that was
+ * asked. A two-read plan with no sentence renders ONE of the two numbers under
+ * its own label, which is a confident answer to a question nobody asked; that
+ * is the `מי חייב לי כסף וכמה` → `איש קשר: 1` failure, and an error is better
+ * than it. The multi-read message opens with "this plan reads N things", so a
+ * prefix match leaves it fatal on purpose.
+ */
+export function isSoftProblem(problem: string): boolean {
+  return SOFT_PROBLEMS.some((prefix) => problem.startsWith(prefix));
+}
+
+/**
+ * Where an `analyse` step may appear, and how many.
+ *
+ * Last, because it speaks about results that do not exist until the steps
+ * before it have run. At most one, because two sentences about the same figures
+ * is two answers to one question.
+ *
+ * And never alone: interpretation needs something to interpret, and a plan that
+ * is only an analyse step would send an empty payload to a model and get back a
+ * sentence about nothing.
+ */
+/**
+ * "Group these by something they cannot reach — try it from the other side."
+ *
+ * "Which service has the most refund cases" is a fair question with no direct
+ * expression: `refunds` relates to `transaction` and `invoice`, the service
+ * hangs off `transactions`, and relations are single-hop, so grouping refunds by
+ * service is simply not available.
+ *
+ * It IS answerable by inverting the question — count transactions that have a
+ * refund, grouped by service — and the planner has to think of that unaided,
+ * which it will not do reliably. So the catalog is asked instead: is there an
+ * entity that can see BOTH the thing being grouped and the thing being grouped
+ * by? If there is, name it and the shape.
+ *
+ * Generic on purpose. Nothing here knows about refunds or services; it is a
+ * search over declared relations, so a catalog change fixes the hint for free
+ * and a new pair of entities gets the same help without anyone writing it.
+ */
+function inversionHint(entity: ResolvedEntity, groupBy: unknown): string {
+  if (typeof groupBy !== 'string' || entity.relations?.[groupBy]) return '';
+
+  /*
+   * The entity's OWN relations first, in the order it declares them.
+   *
+   * A plain scan of the catalog picks whoever comes first alphabetically, which
+   * offered `invoices` for a refund when `refunds.transaction` is the path the
+   * data actually takes — a refund attaches to a transaction, and the invoice is
+   * a step further out. Following the declared relations keeps the suggestion on
+   * the join the schema itself describes.
+   */
+  const ownTargets = Object.values(entity.relations ?? {}).map((relation) => relation.target);
+  const ordered = [
+    ...ownTargets,
+    ...Object.keys(CATALOG.entities).filter((key) => !ownTargets.includes(key)),
+  ];
+
+  for (const key of ordered) {
+    if (key === entity.key) continue;
+    const candidate = CATALOG.entities[key];
+    if (!candidate) continue;
+
+    const reachesTarget = Boolean(candidate.relations?.[groupBy]);
+    const reachesUs = Object.values(candidate.relations ?? {}).some(
+      (relation) => relation.target === entity.key
+    );
+
+    if (reachesTarget && reachesUs) {
+      return (
+        ` '${entity.key}' cannot reach '${groupBy}', but '${key}' can see both — ` +
+        `ask it instead: {"op":"compute","entity":"${key}","group_by":"${groupBy}",` +
+        `"where":[{"relation":"${entity.key}","quantifier":"any"}]}.`
+      );
+    }
+  }
+
+  return '';
+}
+
+function validateAnalyseStep(plan: Plan, problems: string[]): void {
+  const indexes = plan.steps
+    .map((step, index) => ((step as { op?: string }).op === 'analyse' ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (indexes.length === 0) return;
+
+  if (indexes.length > 1) {
+    problems.push(
+      `a plan may hold at most one "analyse" step; this one has ${indexes.length}. ` +
+        `One question gets one answer.`
+    );
+  }
+
+  if (indexes[indexes.length - 1] !== plan.steps.length - 1) {
+    problems.push(
+      `the "analyse" step must be LAST — it describes what the other steps found, ` +
+        `so it cannot run before them.`
+    );
+  }
+
+  if (plan.steps.length === 1) {
+    problems.push(
+      `an "analyse" step needs something to analyse. Add the find or compute steps ` +
+        `whose figures the answer is about.`
+    );
+  }
+}
+
+function validateNamedDateHasDigits(
+  plan: Plan,
+  problems: string[],
+  userMessage?: string
+): void {
+  // No message to compare against — this is the eval harness or a stored plan
+  // being re-validated, and there is nothing to be suspicious of.
+  if (userMessage === undefined) return;
+  if (/\d/.test(userMessage)) return;
+
+  plan.steps.forEach((step, index) => {
+    if (!containsCalendarDate(step)) return;
+
+    problems.push(
+      `steps[${index}]: this uses an absolute YYYY-MM-DD date, but the request names no ` +
+        `number to take one from — so it was worked out rather than read, and that has ` +
+        `produced the wrong day. If the user named a WEEKDAY use that anchor ` +
+        `({"$date":"wednesday"}, which resolves to the next one); if they described a day ` +
+        `relative to now use today/tomorrow/start_of_week and an offset.`
+    );
+  });
+}
+
+/**
+ * What KIND of quantity a step will produce: rows, or an amount.
+ *
+ * Only division cares. A `find` and a `count` aggregate both answer "how many";
+ * every other aggregate answers "how much", in the unit of the field it summed.
+ * Mixing them is the one arithmetic mistake this grammar can express, so it is
+ * the one it has to refuse.
+ */
+/**
+ * Words that ASK for a ratio, in the three languages the chat speaks.
+ *
+ * A deliberate exception to this file's rule against vocabulary, and narrow in
+ * the direction that matters: it only ever ALLOWS a percentage that the
+ * structural test would have refused. Nothing is inferred from its absence
+ * except "say the two numbers plainly", which is never wrong.
+ */
+const RATIO_WORDS = [
+  '%',
+  'percent',
+  'percentage',
+  'share',
+  'ratio',
+  'rate',
+  'proportion',
+  'אחוז',
+  'שיעור',
+  'יחס',
+  'חלק',
+  'porcentaje',
+  'por ciento',
+  'proporción',
+  'tasa',
+];
+
+function asksForARatio(message?: string): boolean {
+  if (!message) return true; // A stored plan being re-validated; nothing to read.
+
+  const said = message.toLowerCase();
+  return RATIO_WORDS.some((word) => said.includes(word));
+}
+
+/**
+ * Is the part genuinely a narrower slice of the whole?
+ *
+ * The same entity, and every one of the whole's predicates also present on the
+ * part — so "accepted quotes" over "quotes" is a share, and "quotes" over
+ * "payments" is two unrelated figures with a division sign between them.
+ *
+ * Compared as serialised predicates: an inherited filter is copied verbatim, so
+ * equality is exact by construction, and anything cleverer would start guessing
+ * about predicates that only look alike.
+ */
+function isASliceOf(plan: Plan, partId: string, wholeId: string): boolean {
+  const stepOf = (id: string) =>
+    plan.steps.find((s, i) => ((s as { id?: string }).id ?? `s${i + 1}`) === id) as
+      | { entity?: string; where?: unknown[] }
+      | undefined;
+
+  const part = stepOf(partId);
+  const whole = stepOf(wholeId);
+
+  if (!part || !whole || part.entity !== whole.entity) return false;
+
+  const partPredicates = new Set((part.where ?? []).map((p) => JSON.stringify(p)));
+
+  return (
+    (whole.where ?? []).every((p) => partPredicates.has(JSON.stringify(p))) &&
+    (part.where ?? []).length > (whole.where ?? []).length
+  );
+}
+
+function quantityKind(plan: Plan, stepId: string): 'count' | 'amount' | null {
+  const step = plan.steps.find((s, i) => (s.id ?? `s${i + 1}`) === stepId) as
+    | { op?: string; agg?: { fn?: string } }
+    | undefined;
+
+  if (!step) return null;
+  if (step.op === 'find') return 'count';
+  if (step.op === 'compute') return step.agg?.fn === 'count' ? 'count' : 'amount';
+
+  return null;
+}
+
 function validateAnswer(plan: Plan, problems: string[], userMessage?: string): void {
   const text = plan.answer?.text;
+
+  /*
+   * A plan that reads more than one thing MUST say how they relate.
+   *
+   * With no sentence the renderer falls back to labelling the primary step, and
+   * for a single read that is fine — "invoices: 3" answers "how many invoices".
+   * Across two it silently drops the question. Asked "כמה אחוז זה מההכנסות"
+   * the planner correctly computed refunds AND revenue, wrote no sentence, and
+   * the user was shown "סכום שחויב: 931.33 $" — one of the two numbers, labelled
+   * as something they had not asked about. A confident non-answer.
+   *
+   * Writes are exempt: a mutate describes itself on the confirmation card, and
+   * demanding prose for "mark it paid" would reject a perfectly good plan.
+   */
+  const reads = plan.steps.filter((step) => {
+    const op = (step as unknown as { op?: string }).op;
+    return op === 'find' || op === 'compute';
+  });
+
+  /*
+   * A read without a sentence is not an answer.
+   *
+   * The renderer falls back to labelling the primary step — "איש קשר: 1",
+   * "תשלומים: 2" — which is a category and a count, not a reply to anything.
+   * Measured over a catalog-generated corpus this was **30 of 39 failures**:
+   * one defect causing three quarters of everything wrong, across every entity
+   * and all three languages. The plans were right; there was nothing to say
+   * them with.
+   *
+   * Gated on `userMessage` because that is what distinguishes a live turn from
+   * a stored plan being re-validated. A saved plan has no question in hand, so
+   * demanding a sentence for it would reject something that was already
+   * answered once — and it is why the fixtures that call `validatePlan(plan)`
+   * with no message are unaffected.
+   */
+  if (!text && reads.length > 0 && userMessage !== undefined) {
+    problems.push(
+      reads.length > 1
+        ? `this plan reads ${reads.length} things, so answer.text is required — it is the ` +
+          `only place their relationship is expressed. Without it only the first is shown ` +
+          `and the question goes unanswered. Cite each step, e.g. ` +
+          `"{s1.value} of {s2.value}, which is {s1.percent_of.s2}".`
+        : `answer.text is required. Without it the reply is a bare label and a count — ` +
+          `"contacts: 1" — which answers nothing. Write the sentence the user should read, ` +
+          `using {s1.count}, {s1.value} or {s1.rows} for what this step found.`
+    );
+  }
+
   if (!text) return;
+
+  /*
+   * A read-only plan's sentence must cite something it read.
+   *
+   * At plan time the model has seen NO data — the steps have not run — so any
+   * content-bearing claim it writes without a `{sN…}` reference is a statement
+   * about results it cannot have. That is not a style preference; it is the
+   * only moment in the pipeline where the distinction is knowable for certain.
+   *
+   * The case that found it: "תוסיף לדף הנחיתה סקשן של המלצות" (add a
+   * testimonials section to the landing page) planned a single `find` on
+   * `pages` and answered "הוספת סקשן של המלצות לדף הנחיתה." — "a testimonials
+   * section was added to the landing page." Nothing was added. Nothing could
+   * have been: the plan reads. The user was told a write had happened, the
+   * plan cache stored the sentence alongside the plan, and the same false
+   * claim was then served to that phrasing forever.
+   *
+   * Writes are exempt — "created the page" is legitimate prose for a mutate,
+   * which really will have happened by the time it is read — and so is a plan
+   * carrying an `analyse` step, whose sentence is written from results by a
+   * later model call rather than by this one.
+   *
+   * SOFT, deliberately. Measured over the live plan cache, 25 of 26 read-only
+   * plans already cite a step, and the 26th is the false claim above; so the
+   * rule costs one repair round on a shape that is essentially always wrong,
+   * and if the model will not comply the turn still answers rather than dying.
+   */
+  const hasWrite = plan.steps.some(
+    (step) => (step as unknown as { op?: string }).op === 'mutate'
+  );
+  const hasAnalyse = plan.steps.some(
+    (step) => (step as unknown as { op?: string }).op === 'analyse'
+  );
+
+  if (
+    userMessage !== undefined &&
+    reads.length > 0 &&
+    !hasWrite &&
+    !hasAnalyse &&
+    !/\{s\d/.test(text)
+  ) {
+    problems.push(
+      `answer.text cites no step. This plan only READS, and the steps have not run yet — ` +
+        `a sentence with no {s1...} reference states something you cannot know, and if it ` +
+        `describes an action it claims one that will never happen. Cite what the plan found ` +
+        `({s1.count}, {s1.value}, {s1.rows}), or plan the write that was actually asked for.`
+    );
+  }
 
   const withoutPlaceholders = text.replace(/\{[^}]*\}/g, '');
 
@@ -1400,6 +1998,34 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
         `not mention and you cannot know — you have not seen the data. Use a {placeholder} ` +
         `such as {s1.count}. Received: "${text}".`
     );
+  }
+
+  /*
+   * A PERCENTAGE written as an expression, `{=% s1.value / s2.value }`.
+   *
+   * The same rule as `{sN.percent_of.sM}` and, until now, not the same check —
+   * so the model simply used the other spelling: asked for a total it answered
+   * "‏34,350.00 ‏₪ מתוך ‏4,350.00 ‏₪, שזה 790%", where nobody had asked for a
+   * ratio and the two figures are not a part and its whole.
+   *
+   * Reading the two step ids out of the expression is enough: whatever
+   * arithmetic surrounds them, a `%` sigil says the result is being presented
+   * as a share, and a share needs a slice of something.
+   */
+  for (const match of text.matchAll(/\{=%\s*([^}]+)\}/g)) {
+    const referenced = [...new Set([...match[1].matchAll(/\b(s\d+)\b/g)].map((m) => m[1]))];
+    if (referenced.length !== 2) continue;
+
+    const [part, whole] = referenced;
+
+    if (!isASliceOf(plan, part, whole) && !asksForARatio(userMessage)) {
+      problems.push(
+        `answer.text presents {=% …} as a percentage, but ${part} is not a subset of ` +
+          `${whole} and the request did not ask for one. A share needs a part and the whole ` +
+          `it came out of — the same entity, with the whole's filters plus at least one ` +
+          `more. State the two figures instead.`
+      );
+    }
   }
 
   const stepIds = new Set(plan.steps.map((s) => (s as unknown as { id?: string }).id ?? ''));
@@ -1422,6 +2048,70 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
 
     if (KNOWN_PATHS.has(path)) continue;
 
+    /*
+     * `{sN.result.FIELD}` — a value a READ ACTION gave back.
+     *
+     * Missing from the known paths, so the correct placeholder was rejected and
+     * the error listed only row-shaped ones — which taught the planner to write
+     * {sN.first.freeMinutes} instead, then rejected that too. The syntax existed
+     * in the prompt and the renderer; the validator sat between them refusing
+     * it, which is why no amount of prompting moved this.
+     *
+     * Checked against what the action DECLARED it returns, so a typo is still
+     * caught by name.
+     */
+    /*
+     * `{sN.groups.gK.label}` / `.value` — naming one group of a grouped result.
+     *
+     * The renderer resolves these; the validator did not, so the correct
+     * placeholder was rejected. That is the SECOND instance of this class in a
+     * day: the first, `{sN.result.…}`, defeated three prompt attempts because
+     * the validator was refusing the right answer while its error message
+     * taught the model to write the wrong one. The parity test added alongside
+     * this is what makes a third impossible.
+     */
+    const groupMatch = /^groups\.g(\d+)\.(label|value)$/.exec(path);
+    if (groupMatch) {
+      const step = plan.steps.find(
+        (candidate) => (candidate as { id?: string }).id === stepId
+      ) as { op?: string; group_by?: unknown } | undefined;
+
+      if (step?.op !== 'compute' || !step.group_by) {
+        problems.push(
+          `answer.text uses {${stepId}.groups.g${groupMatch[1]}.${groupMatch[2]}}, but step ` +
+            `'${stepId}' is not grouped — only a compute with group_by has groups.`
+        );
+      }
+
+      continue;
+    }
+
+    const resultMatch = /^result\.(\w+)$/.exec(path);
+    if (resultMatch) {
+      const step = plan.steps.find(
+        (candidate) => (candidate as { id?: string }).id === stepId
+      ) as { op?: string; entity?: string; action?: string } | undefined;
+
+      const declared =
+        step?.op === 'mutate' && step.entity && step.action
+          ? CATALOG.entities[step.entity]?.actions?.[step.action]?.returns
+          : undefined;
+
+      if (!declared) {
+        problems.push(
+          `answer.text uses {${stepId}.result.${resultMatch[1]}}, but step '${stepId}' is ` +
+            `not a read action that returns values.`
+        );
+      } else if (!declared[resultMatch[1]]) {
+        problems.push(
+          `answer.text uses {${stepId}.result.${resultMatch[1]}}, which that action does ` +
+            `not return. It returns: ${Object.keys(declared).join(', ')}.`
+        );
+      }
+
+      continue;
+    }
+
     // `{sN.percent_of.sM}` — one number as a percentage of another.
     const percentMatch = /^percent_of\.(\w+)$/.exec(path);
     if (percentMatch) {
@@ -1436,6 +2126,58 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
           `answer.text uses {${stepId}.percent_of.${stepId}} — a step as a percentage ` +
             `of itself is always 100%. Name the step holding the total.`
         );
+      } else {
+        /*
+         * A share is only a share of the SAME KIND of quantity.
+         *
+         * A money total divided by a row count produced "₪15,850 of 7 quotes,
+         * which is 226,429%" — a figure with no meaning, formatted to the
+         * decimal and stated as fact. Caught here rather than only at render
+         * time so the repair round is told, and the turn comes back with a
+         * sentence that says something true.
+         */
+        /*
+         * A SHARE is a part of a whole — not any two numbers divided.
+         *
+         * "₪45,850 of ₪2,245, which is 2,042%" was the third unrequested
+         * percentage in one evening: the quotes total over an unrelated
+         * payments total, dimensionally valid and completely meaningless. The
+         * user never asked for a ratio in any of the three.
+         *
+         * So one is allowed in exactly two situations, and the first is the
+         * structural one: the part must be a NARROWER slice of the whole — the
+         * same entity, with the whole's filters all present on the part. "4
+         * accepted of 7 quotes" passes; quotes over payments does not.
+         *
+         * The second is that the user asked. That check reads the message for a
+         * ratio word, which is vocabulary and therefore something this file
+         * normally refuses to hold — justified here because it only ever GRANTS
+         * permission. A missing word costs a percentage the user can ask for
+         * again; the absence of this check cost three wrong numbers stated as
+         * fact.
+         */
+        if (!isASliceOf(plan, stepId, percentMatch[1]) && !asksForARatio(userMessage)) {
+          problems.push(
+            `answer.text uses {${stepId}.percent_of.${percentMatch[1]}}, but ${stepId} is not ` +
+              `a subset of ${percentMatch[1]} and the request did not ask for a percentage. ` +
+              `A share needs a part and the whole it came out of — the same entity, with the ` +
+              `whole's filters plus at least one more. State the two figures instead.`
+          );
+          continue;
+        }
+
+        const part = quantityKind(plan, stepId);
+        const whole = quantityKind(plan, percentMatch[1]);
+
+        if (part && whole && part !== whole) {
+          problems.push(
+            `answer.text uses {${stepId}.percent_of.${percentMatch[1]}}, but ${stepId} is ` +
+              `${part === 'count' ? 'a number of rows' : 'an amount'} and ${percentMatch[1]} is ` +
+              `${whole === 'count' ? 'a number of rows' : 'an amount'} — dividing one by the ` +
+              `other is not a percentage of anything. Compare rows with rows, or amounts ` +
+              `with amounts: for "what share of my quotes were accepted", count both.`
+          );
+        }
       }
       continue;
     }
@@ -1588,7 +2330,9 @@ function validateNotAScattergun(plan: Plan, problems: string[]): void {
     return !Array.isArray(where) || where.length === 0;
   });
 
-  const entities = new Set(unfiltered.map((step) => step.entity));
+  const entities = new Set(
+    unfiltered.filter((step) => step.op !== 'analyse').map((step) => step.entity)
+  );
 
   if (entities.size >= 3) {
     problems.push(
@@ -1743,6 +2487,8 @@ export function validatePlan(plan: Plan, userMessage?: string): string[] {
   validateSendAddress(plan, problems);
   validateNoFabricatedThreshold(plan, problems);
   validateNotAScattergun(plan, problems);
+  validateAnalyseStep(plan, problems);
+  validateNamedDateHasDigits(plan, problems, userMessage);
   validateAnswer(plan, problems, userMessage);
 
   return problems;

@@ -175,6 +175,69 @@ describe('buildJourney', () => {
     });
   });
 
+  /*
+   * Six weeks and one booking is not six weeks of pricing data.
+   *
+   * `days_with_bookings` is elapsed time since the first booking and says
+   * nothing about how many there have been, so the clock alone used to unlock
+   * pricing on a sample of one. These pin the second condition.
+   */
+  describe('a time-based unlock also needs the volume behind it', () => {
+    /** 100 days past the first booking — the 42-day clock is long since done. */
+    const longEnough = (bookings: number) =>
+      buildJourney({
+        accountCreatedAt: '2026-06-01T09:00:00Z',
+        firstVisitorAt: null,
+        firstEnquiryAt: null,
+        firstBookingAt: '2026-06-10T09:00:00Z',
+        firstClientAt: null,
+        vectors: [
+          {
+            key: 'price',
+            dataPoints: 100,
+            threshold: 42,
+            also: { metric: 'total_bookings', current: bookings, threshold: 20 },
+          },
+        ],
+        now: at('2026-09-18T09:00:00Z'),
+      });
+
+    it('states the count and NO date while the volume is short', () => {
+      expect(node(longEnough(6), 'price')).toMatchObject({
+        state: 'counting',
+        date: null,
+        day: null,
+        progress: { current: 6, threshold: 20 },
+      });
+    });
+
+    it('waits silently when the clock has run but nothing has happened', () => {
+      expect(node(longEnough(0), 'price')).toMatchObject({
+        state: 'waiting',
+        date: null,
+        progress: { current: 0, threshold: 20 },
+      });
+    });
+
+    it('reaches once BOTH the days and the volume are there', () => {
+      expect(node(longEnough(20), 'price')).toMatchObject({ state: 'reached' });
+      expect(node(longEnough(20), 'price').date).not.toBeNull();
+    });
+
+    it('leaves a vector with no volume condition on the clock alone', () => {
+      const journey = buildJourney({
+        accountCreatedAt: '2026-06-01T09:00:00Z',
+        firstVisitorAt: null,
+        firstEnquiryAt: null,
+        firstBookingAt: '2026-06-10T09:00:00Z',
+        firstClientAt: null,
+        vectors: [{ key: 'price', dataPoints: 100, threshold: 42 }],
+        now: at('2026-09-18T09:00:00Z'),
+      });
+      expect(node(journey, 'price')).toMatchObject({ state: 'reached' });
+    });
+  });
+
   describe('a missing or unreadable day zero', () => {
     it('states no day numbers rather than treating today as day zero', () => {
       const journey = buildJourney({

@@ -23,7 +23,18 @@ export type BuildingBlockType =
   | 'gallery'
   | 'newsletter'
   | 'logo_cloud'
-  | 'video';
+  | 'video'
+  /*
+   * `footer` was missing from this union, which is why no factory could be
+   * written for it and why `getStandardHomepageBlocks` had no footer to emit —
+   * every page created from a template simply stopped after the contact form,
+   * despite every recipe ending `… cta, footer`.
+   *
+   * `process_flow` is deliberately still absent: it is a rendered booking
+   * journey rather than a section anyone scaffolds, and it carries state no
+   * static factory could produce.
+   */
+  | 'footer';
 
 // =============================================
 // HEADER MENU ITEM INTERFACE
@@ -242,6 +253,37 @@ export const ServicesBlock = {
 // CTA BLOCKS
 // =============================================
 
+/**
+ * The last line of a page.
+ *
+ * There was no factory for this, which is why `getStandardHomepageBlocks` had
+ * no footer to emit and every page it scaffolded simply stopped after the
+ * contact form — no address, no copyright, no second chance at the phone
+ * number. Every recipe has ordered a footer since recipes existed.
+ */
+export const FooterBlock = {
+  standard: (data: {
+    company_name: string;
+    tagline?: string;
+    email?: string;
+    phone?: string;
+  }): BuildingBlock => ({
+    block_type: 'footer',
+    position: 99,
+    content: {
+      company_name: data.company_name,
+      tagline: data.tagline ?? '',
+      email: data.email ?? '',
+      phone: data.phone ?? '',
+      // Resolved when the page renders, so a site published in December is not
+      // still claiming the year it was generated in.
+      copyright_year: new Date().getFullYear(),
+      menu_items: [],
+    },
+    styles: {},
+  }),
+};
+
 export const CTABlock = {
   primary: (data: { title: string; description: string; button_text: string }): BuildingBlock => ({
     block_type: 'cta',
@@ -422,7 +464,7 @@ export const AboutBlock = {
     content: {
       title: data.title,
       content: data.content,
-      image: data.image || '/placeholder-profile.jpg',
+      image: data.image || '',
       layout: 'side-by-side'
     },
     styles: {
@@ -612,7 +654,7 @@ export const TeamBlock = {
         name: m.name,
         role: m.role,
         bio: m.bio || '',
-        image: m.image || '/placeholder-profile.jpg'
+        image: m.image || ''
       })),
       layout: 'grid'
     },

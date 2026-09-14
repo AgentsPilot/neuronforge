@@ -51,12 +51,35 @@ export default function CancelBookingPage() {
   const locale = brand?.locale ?? 'en';
   const t = createPublicT(locale);
 
+  /**
+   * Why a cancellation was refused, in the reader's language.
+   *
+   * The mirror of the one on the reschedule page: the route sends a code and
+   * the hours behind it, and the sentence is written here where the dictionary
+   * lives. An unrecognised code reads as "something went wrong" in the right
+   * language rather than leaking the server's English.
+   */
+  const cancelErrorText = (data: { code?: string; hours?: number }): string => {
+    switch (data.code) {
+      case 'too_late':
+        return t('cancelTooLate', { hours: String(data.hours ?? 24) });
+      case 'not_found':
+        return t('bookingNotFoundDesc');
+      case 'invalid_link':
+        return t('invalidLink');
+      case 'not_cancellable':
+        return t('notCancellable');
+      default:
+        return t('cancelFailed');
+    }
+  };
+
   useEffect(() => {
     fetch(`/api/book/manage/${token}`)
       .then(res => res.json())
       .then(data => {
         if (data.success) setBooking(data.booking);
-        else setError(data.error || t('bookingNotFoundDesc'));
+        else setError(cancelErrorText(data));
       })
       .catch(() => setError(t('bookingNotFoundDesc')))
       .finally(() => setLoading(false));
@@ -76,7 +99,7 @@ export default function CancelBookingPage() {
       const data = await response.json();
 
       if (data.success) setCancelled(true);
-      else setError(data.error || t('cancelFailed'));
+      else setError(cancelErrorText(data));
     } catch {
       setError(t('cancelFailed'));
     } finally {

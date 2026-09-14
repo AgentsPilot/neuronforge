@@ -42,6 +42,7 @@ import {
   Send,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { TabFooter } from '@/components/business-os/settings/TabFooter';
 import { createLogger } from '@/lib/logger';
 import type { IntakeForm, IntakeQuestion } from '@/lib/business-os/intake/types';
 import { IntakeQuestionRow } from './intake/IntakeQuestionRow';
@@ -485,8 +486,22 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
                 </label>
               </div>
 
-              {/* ── Footer: preview, regenerate, publish ────────────────── */}
-              <div className="flex flex-wrap items-center gap-2">
+              {/* ── Footer: preview, regenerate, publish ──────────────────
+                  Frozen at the bottom of the tab. The generated questions run
+                  past a screen, so an owner reviewing the last of them had to
+                  scroll back up to publish what they had just read. */}
+              <TabFooter
+                message={
+                  /* The one sentence that says whether clients are getting
+                     this — beside the button that would change the answer. */
+                  !form.hasPublished ? (
+                    <p className="flex items-center gap-1.5 text-[11.5px] text-amber-600 dark:text-amber-400">
+                      <CornerDownRight className="w-3.5 h-3.5 flex-shrink-0" />
+                      {t('config.intake.not_live_yet')}
+                    </p>
+                  ) : null
+                }
+              >
                 <button
                   onClick={() => setPreviewing(p => !p)}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-medium border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
@@ -506,8 +521,6 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
                   {t('config.intake.regenerate')}
                 </button>
 
-                <div className="flex-1" />
-
                 {/* Enabled only when there is something unpublished. A publish
                     button that is always live invites the owner to press it and
                     wonder what changed. */}
@@ -526,15 +539,7 @@ export function IntakeSettingsPanel({ onSaved }: IntakeSettingsPanelProps) {
                     ? t('config.intake.publish_changes')
                     : t('config.intake.publish')}
                 </button>
-              </div>
-
-              {/* The one sentence that says whether clients are getting this. */}
-              {!form.hasPublished && (
-                <p className="flex items-center gap-1.5 text-[11.5px] text-amber-600 dark:text-amber-400">
-                  <CornerDownRight className="w-3.5 h-3.5 flex-shrink-0" />
-                  {t('config.intake.not_live_yet')}
-                </p>
-              )}
+              </TabFooter>
             </>
           )}
         </>

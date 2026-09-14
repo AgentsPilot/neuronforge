@@ -155,7 +155,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
     <section
       ref={ref}
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`relative overflow-hidden ${styles?.padding || 'py-16 sm:py-24'} ${className || ''}`}
+      className={`apc-sec relative overflow-hidden ${styles?.padding || 'py-16 sm:py-24'} ${className || ''}`}
       style={useGradientBg ? {
         background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
       } : undefined}
@@ -174,7 +174,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute top-10 right-[10%] w-40 h-40 rounded-full opacity-20 blur-2xl"
+            className="apc-decor absolute top-10 right-[10%] w-40 h-40 rounded-full opacity-20 blur-2xl"
             style={{ backgroundColor: '#ffffff' }}
           />
           <motion.div
@@ -187,7 +187,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
               repeat: Infinity,
               ease: "easeInOut"
             }}
-            className="absolute bottom-10 left-[5%] w-60 h-60 rounded-full opacity-15 blur-3xl"
+            className="apc-decor absolute bottom-10 left-[5%] w-60 h-60 rounded-full opacity-15 blur-3xl"
             style={{ backgroundColor: '#ffffff' }}
           />
 
@@ -205,14 +205,14 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6">
         {/* Header */}
         {(title || subtitle) && (
-          <div className="text-center mb-16">
+          <div className="apc-sec-head text-center mb-16">
             {title && (
               <motion.h2
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                className={`text-3xl sm:text-4xl lg:text-5xl font-bold ${useGradientBg ? 'text-white' : (styles?.text_color || 'text-gray-900')}`}
-                style={{ fontFamily: 'var(--website-font-heading)' }}
+                className={`text-3xl sm:text-4xl lg:text-5xl font-bold ${useGradientBg ? 'text-white' : (styles?.text_color || 'ap-ink')}`}
+                style={{ fontFamily: 'var(--ap-font-heading)' }}
               >
                 {title}
               </motion.h2>
@@ -223,8 +223,8 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.1 }}
-                className={`mt-4 text-lg max-w-2xl mx-auto ${useGradientBg ? 'text-white/80' : 'text-gray-600'}`}
-                style={{ fontFamily: 'var(--website-font-body)' }}
+                className={`mt-4 text-lg max-w-2xl mx-auto ${useGradientBg ? 'text-white/80' : 'ap-ink-2'}`}
+                style={{ fontFamily: 'var(--ap-font-body)' }}
               >
                 {subtitle}
               </motion.p>
@@ -234,7 +234,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
         {/* Horizontal Layout - Enhanced */}
         {layout === 'horizontal' && (
-          <div className={`grid grid-cols-2 lg:grid-cols-${columns} gap-8 lg:gap-12`}>
+          <div className={`apc-facts grid grid-cols-2 lg:grid-cols-${columns} gap-8 lg:gap-12`}>
             {stats.map((stat, index) => {
               const IconComponent = getStatIcon(stat.label, index);
               return (
@@ -259,15 +259,15 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                       whileInView={{ scale: 1 }}
                       viewport={{ once: true }}
                       transition={{ delay: index * 0.1 + 0.2, type: "spring" }}
-                      className="mx-auto mb-4 w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10 backdrop-blur-sm group-hover:bg-white/20 transition-colors"
+                      className="apc-icon mx-auto mb-4 w-14 h-14 rounded-2xl flex items-center justify-center bg-white/10 backdrop-blur-sm group-hover:bg-white/20 transition-colors"
                     >
                       <IconComponent className="w-7 h-7 text-white" />
                     </motion.div>
                   )}
 
                   <p
-                    className={`text-4xl sm:text-5xl lg:text-6xl font-bold ${useGradientBg ? 'text-white' : (styles?.text_color || 'text-gray-900')}`}
-                    style={{ fontFamily: 'var(--website-font-heading)' }}
+                    className={`text-4xl sm:text-5xl lg:text-6xl font-bold ${useGradientBg ? 'text-white' : (styles?.text_color || 'ap-ink')}`}
+                    style={{ fontFamily: 'var(--ap-font-heading)' }}
                   >
                     {animate_numbers ? (
                       <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -276,8 +276,8 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                     )}
                   </p>
                   <p
-                    className={`mt-3 text-sm sm:text-base font-medium ${useGradientBg ? 'text-white/80' : 'text-gray-500'}`}
-                    style={{ fontFamily: 'var(--website-font-body)' }}
+                    className={`mt-3 text-sm sm:text-base font-medium ${useGradientBg ? 'text-white/80' : 'ap-ink-3'}`}
+                    style={{ fontFamily: 'var(--ap-font-body)' }}
                   >
                     {stat.label}
                   </p>
@@ -289,7 +289,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
         {/* Grid Layout - Enhanced with gradient backgrounds */}
         {layout === 'grid' && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="apc-facts grid grid-cols-2 lg:grid-cols-4 gap-6">
             {stats.map((stat, index) => {
               const IconComponent = getStatIcon(stat.label, index);
               // Rotate through gradient angles for variety
@@ -307,11 +307,9 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                     scale: 1.03,
                     boxShadow: `0 20px 40px -15px ${primaryColor}40`
                   }}
-                  className="relative text-center p-8 rounded-2xl overflow-hidden group cursor-default"
+                  className="apc-stat relative text-center p-8 rounded-2xl overflow-hidden group cursor-default"
                   style={{
-                    background: `linear-gradient(${angle}deg, ${primaryColor}15 0%, ${secondaryColor}20 100%)`,
-                    borderRadius: theme?.borderRadius || '1rem',
-                    border: `1px solid ${primaryColor}15`
+                    background: `linear-gradient(${angle}deg, ${primaryColor}15 0%, ${secondaryColor}20 100%)`
                   }}
                 >
                   {/* Hover gradient overlay */}
@@ -330,7 +328,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                         whileInView={{ scale: 1, rotate: 0 }}
                         viewport={{ once: true }}
                         transition={{ delay: index * 0.1 + 0.2, type: "spring", stiffness: 200 }}
-                        className="mx-auto mb-4 w-12 h-12 rounded-xl flex items-center justify-center"
+                        className="apc-icon mx-auto mb-4 w-12 h-12 rounded-xl flex items-center justify-center"
                         style={{
                           background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
                         }}
@@ -341,7 +339,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
                     <p
                       className="text-3xl sm:text-4xl font-bold"
-                      style={{ fontFamily: 'var(--website-font-heading)', color: primaryColor }}
+                      style={{ fontFamily: 'var(--ap-font-heading)', color: primaryColor }}
                     >
                       {animate_numbers ? (
                         <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -350,15 +348,15 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                       )}
                     </p>
                     <p
-                      className="mt-2 font-semibold text-gray-800 dark:text-white"
-                      style={{ fontFamily: 'var(--website-font-heading)' }}
+                      className="mt-2 font-semibold ap-ink"
+                      style={{ fontFamily: 'var(--ap-font-heading)' }}
                     >
                       {stat.label}
                     </p>
                     {stat.description && (
                       <p
-                        className="mt-2 text-sm text-gray-500 dark:text-gray-400"
-                        style={{ fontFamily: 'var(--website-font-body)' }}
+                        className="mt-2 text-sm ap-ink-3"
+                        style={{ fontFamily: 'var(--ap-font-body)' }}
                       >
                         {stat.description}
                       </p>
@@ -372,7 +370,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
         {/* Cards Layout - Enhanced with glassmorphism */}
         {layout === 'cards' && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="apc-facts grid grid-cols-2 lg:grid-cols-4 gap-6">
             {stats.map((stat, index) => {
               const IconComponent = getStatIcon(stat.label, index);
 
@@ -419,7 +417,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                         whileInView={{ scale: 1 }}
                         viewport={{ once: true }}
                         transition={{ delay: index * 0.1 + 0.2, type: "spring" }}
-                        className="mx-auto mb-5 w-14 h-14 rounded-2xl flex items-center justify-center"
+                        className="apc-icon mx-auto mb-5 w-14 h-14 rounded-2xl flex items-center justify-center"
                         style={{
                           background: `linear-gradient(135deg, ${primaryColor}15 0%, ${secondaryColor}20 100%)`,
                           border: `1px solid ${primaryColor}20`
@@ -431,7 +429,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
                     <p
                       className="text-3xl sm:text-4xl lg:text-5xl font-bold"
-                      style={{ fontFamily: 'var(--website-font-heading)', color: primaryColor }}
+                      style={{ fontFamily: 'var(--ap-font-heading)', color: primaryColor }}
                     >
                       {animate_numbers ? (
                         <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -440,15 +438,15 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                       )}
                     </p>
                     <p
-                      className={`mt-3 font-semibold ${isDark ? 'text-white' : 'text-gray-800'}`}
-                      style={{ fontFamily: 'var(--website-font-heading)' }}
+                      className={`mt-3 font-semibold ${isDark ? 'text-white' : 'ap-ink'}`}
+                      style={{ fontFamily: 'var(--ap-font-heading)' }}
                     >
                       {stat.label}
                     </p>
                     {stat.description && (
                       <p
-                        className="mt-2 text-sm text-gray-500 dark:text-gray-400"
-                        style={{ fontFamily: 'var(--website-font-body)' }}
+                        className="mt-2 text-sm ap-ink-3"
+                        style={{ fontFamily: 'var(--ap-font-body)' }}
                       >
                         {stat.description}
                       </p>
@@ -462,7 +460,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
         {/* Gradient Layout - NEW: Each stat has its own gradient card */}
         {layout === 'gradient' && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="apc-facts grid grid-cols-2 lg:grid-cols-4 gap-6">
             {stats.map((stat, index) => {
               const IconComponent = getStatIcon(stat.label, index);
               // Different gradient for each card
@@ -503,7 +501,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                         whileInView={{ y: 0, opacity: 1 }}
                         viewport={{ once: true }}
                         transition={{ delay: index * 0.1 + 0.1 }}
-                        className="mx-auto mb-4 w-12 h-12 rounded-xl flex items-center justify-center bg-white/20 backdrop-blur-sm"
+                        className="apc-icon mx-auto mb-4 w-12 h-12 rounded-xl flex items-center justify-center bg-white/20 backdrop-blur-sm"
                       >
                         <IconComponent className="w-6 h-6 text-white" />
                       </motion.div>
@@ -511,7 +509,7 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
 
                     <p
                       className="text-4xl sm:text-5xl font-bold text-white"
-                      style={{ fontFamily: 'var(--website-font-heading)' }}
+                      style={{ fontFamily: 'var(--ap-font-heading)' }}
                     >
                       {animate_numbers ? (
                         <AnimatedNumber value={stat.value} isInView={isInView} />
@@ -521,14 +519,14 @@ export function StatsBlock({ content, styles, theme, isRTL, className }: BlockRe
                     </p>
                     <p
                       className="mt-3 font-semibold text-white/90"
-                      style={{ fontFamily: 'var(--website-font-heading)' }}
+                      style={{ fontFamily: 'var(--ap-font-heading)' }}
                     >
                       {stat.label}
                     </p>
                     {stat.description && (
                       <p
                         className="mt-2 text-sm text-white/70"
-                        style={{ fontFamily: 'var(--website-font-body)' }}
+                        style={{ fontFamily: 'var(--ap-font-body)' }}
                       >
                         {stat.description}
                       </p>

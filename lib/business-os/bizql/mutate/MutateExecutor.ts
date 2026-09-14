@@ -117,6 +117,88 @@ function deriveStageKey(label: string): string {
   return slug || `stage_${randomUUID().slice(0, 8)}`;
 }
 
+/**
+ * Turn dictated quote fields into an insert the repository will accept.
+ *
+ * Two things happen here that the catalog cannot express on its own.
+ *
+ * The CURRENCY falls back to the business's own — resolved the way every other
+ * money surface resolves it, from a service price first and the last invoice
+ * second — because a price said out loud carries no currency and asking for one
+ * turns a sentence into a form.
+ *
+ * The PAYMENT SHAPE is validated against the same schema the quote builder
+ * posts through. It is the one dictated field that is a structure rather than a
+ * value, so it is the one that can arrive malformed: stages that do not add up
+ * make a quote that is agreed and then unbillable. A shape that fails the check
+ * is dropped rather than stored, and the quote falls back to a single payment —
+ * visible on the confirmation card before anything is written.
+ */
+async function proposalInsertFrom(
+  query: MutateQuery,
+  data: Record<string, unknown>,
+  ctx: QueryContext
+): Promise<{ user_id: string; contact_id: string; title: string; total: number; currency: string }> {
+  const { resolveUserCurrency } = await import('@/lib/business-os/userCurrency');
+  const { paymentShapeSchema } = await import('@/lib/business-os/proposalShape');
+
+  const { payment_shape: dictatedShape, ...fields } = data;
+
+  const currency =
+    typeof fields.currency === 'string' && fields.currency
+      ? (fields.currency as string)
+      : await resolveUserCurrency(supabaseServer, ctx.userId);
+
+  const shape = dictatedShape ? paymentShapeSchema.safeParse(dictatedShape) : null;
+
+  if (dictatedShape && !shape?.success) {
+    logger.warn(
+      { userId: ctx.userId, issues: shape?.error.issues },
+      'Dictated payment shape was rejected; the quote falls back to a single payment'
+    );
+  }
+
+  /*
+   * The attached document, and the ownership proof that lets it be used.
+   *
+   * It arrives in `params` rather than `data` because a writable foreign key
+   * must declare what it references, and `contact_documents` is not a catalog
+   * entity — so the executor's generic check cannot run and this one takes its
+   * place. Scoped to the OWNER and to the CLIENT the quote is for: a document
+   * id from anywhere else fetches nothing and the quote is created without it,
+   * rather than carrying someone else's file to a client.
+   */
+  const attachedId = query.params?.document_id;
+  let documentId: string | undefined;
+
+  if (typeof attachedId === 'string') {
+    const { data: document } = await supabaseServer
+      .from('contact_documents')
+      .select('id')
+      .eq('id', attachedId)
+      .eq('user_id', ctx.userId)
+      .eq('contact_id', String(fields.contact_id))
+      .maybeSingle();
+
+    if (document) {
+      documentId = attachedId;
+    } else {
+      logger.warn(
+        { userId: ctx.userId, documentId: attachedId },
+        'Attached document does not belong to this quote; creating without it'
+      );
+    }
+  }
+
+  return {
+    ...(fields as { contact_id: string; title: string; total: number }),
+    user_id: ctx.userId,
+    currency,
+    ...(shape?.success ? { payment_shape: shape.data } : {}),
+    ...(documentId ? { document_id: documentId } : {}),
+  };
+}
+
 const HANDLERS: Record<string, Record<string, Handler>> = {
   contacts: {
     create: async (_q, data, ctx) =>
@@ -322,13 +404,24 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       }
     },
 
-    update: async (q, data, ctx) =>
-      paymentInvoiceRepository.update(requireTargetId(q), ctx.userId, data) as Promise<
-        RepoResult<unknown>
-      >,
-
-    // Both go through invoiceLifecycle, which refuses a paid invoice and stops
-    // the Stripe hosted page being payable before the local row changes.
+    /*
+     * There is deliberately no `update` here.
+     *
+     * One existed, undeclared in the catalog and therefore unreachable — dead
+     * code with a live edge. It passed `data` straight to the repository, so
+     * reaching it would have allowed `status: 'paid'` with no settlement, or an
+     * `amount` change on an invoice a client is already looking at through a
+     * Stripe hosted page.
+     *
+     * `mark_paid`, `void` and `send` exist precisely because those transitions
+     * are not field writes. If editing a draft's notes or due date is wanted
+     * later, it should be a declared action scoped to those fields and refused
+     * on a paid invoice — not a passthrough that happens to work.
+     *
+     * Both of the following go through invoiceLifecycle, which refuses a paid
+     * invoice and stops the Stripe hosted page being payable before the local
+     * row changes.
+     */
     void: async (q, _data, ctx) => {
       const { voidInvoice } = await import('@/lib/payments/invoiceLifecycle');
       const result = await voidInvoice({ invoiceId: requireTargetId(q), userId: ctx.userId });
@@ -378,6 +471,134 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         result.data!.invoiceId,
         ctx.userId
       ) as Promise<RepoResult<unknown>>;
+    },
+  },
+
+  /**
+   * QUOTES.
+   *
+   * Three actions, deliberately separate: drafting, sending and withdrawing are
+   * three different decisions, and a chat that drafts and sends in one breath
+   * removes the moment where the owner reads back the number they just
+   * dictated. Every one of them goes through the same repository and service
+   * the quote builder uses, so the chat cannot reach a write path nobody has
+   * reviewed.
+   */
+  proposals: {
+    /*
+     * Draft. Status and currency are the handler's to supply — a quote
+     * dictated into a chat is in the business's own currency until someone says
+     * otherwise, and asking would turn one sentence into two questions.
+     */
+    create: async (q, data, ctx) => {
+      const { proposalRepository } = await import('@/lib/repositories/ProposalRepository');
+      const input = await proposalInsertFrom(q, data, ctx);
+
+      return proposalRepository.create(input) as Promise<RepoResult<unknown>>;
+    },
+
+    /**
+     * Draft it and send it, as one instruction.
+     *
+     * The order matters and so does the failure. If the send fails — most often
+     * because the client has no email address — the DRAFT STAYS. Rolling it
+     * back would throw away a price the owner just dictated, and the honest
+     * outcome is a quote sitting in the drawer with a reason it did not go,
+     * which they can fix and send from either surface.
+     *
+     * The two halves are one handler because the plan grammar cannot chain
+     * them: `target.id` must be a literal row id, so no step can point at a row
+     * an earlier step created. See the catalog note on this action.
+     */
+    create_and_send: async (q, data, ctx) => {
+      const { proposalRepository } = await import('@/lib/repositories/ProposalRepository');
+      const { sendProposal } = await import('@/lib/services/ProposalSendService');
+
+      const created = await proposalRepository.create(await proposalInsertFrom(q, data, ctx));
+
+      if (created.error || !created.data) {
+        return created as RepoResult<unknown>;
+      }
+
+      const outcome = await sendProposal(created.data.id, ctx.userId);
+
+      if (!outcome.ok) {
+        return {
+          data: null,
+          error: new Error(
+            outcome.reason === 'no_client_email'
+              ? 'The quote was saved as a draft, but that client has no email address to send it to'
+              : 'The quote was saved as a draft, but could not be sent'
+          ),
+        };
+      }
+
+      return {
+        data: {
+          proposalId: outcome.proposal.id,
+          title: outcome.proposal.title,
+          total: outcome.proposal.total,
+          sent: true,
+        } as Record<string, unknown>,
+        error: null,
+      };
+    },
+
+    /*
+     * Send it. The service claims the send first, so this cannot produce a
+     * second email however many times it is asked.
+     */
+    send: async (q, _data, ctx) => {
+      const proposalId = requireTargetId(q);
+      const { sendProposal } = await import('@/lib/services/ProposalSendService');
+
+      const outcome = await sendProposal(proposalId, ctx.userId);
+
+      if (!outcome.ok) {
+        return {
+          data: null,
+          error: new Error(
+            outcome.reason === 'no_client_email'
+              ? 'That client has no email address, so the quote cannot be sent'
+              : 'That quote could not be found'
+          ),
+        };
+      }
+
+      return {
+        data: {
+          proposalId: outcome.proposal.id,
+          title: outcome.proposal.title,
+          // Surfaced rather than hidden: "it was already sent" is the honest
+          // answer to a second attempt, and the confirmation line can say so.
+          alreadySent: outcome.alreadySent,
+        } as Record<string, unknown>,
+        error: null,
+      };
+    },
+
+    /*
+     * Withdraw. Refuses anything already accepted or decided — money may have
+     * been created against it, and a quote cannot be un-agreed by retracting the
+     * document it was agreed on.
+     */
+    withdraw: async (q, _data, ctx) => {
+      const proposalId = requireTargetId(q);
+      const { proposalRepository } = await import('@/lib/repositories/ProposalRepository');
+
+      const result = await proposalRepository.withdraw(proposalId, ctx.userId);
+      if (result.error) return result as RepoResult<unknown>;
+
+      if (!result.data) {
+        return {
+          data: null,
+          error: new Error(
+            'That quote can no longer be withdrawn — it has already been answered'
+          ),
+        };
+      }
+
+      return { data: result.data as unknown as Record<string, unknown>, error: null };
     },
   },
 
@@ -509,17 +730,43 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       const pageType = String(data.page_type ?? 'landing');
       const language = String(data.website_language ?? 'en');
 
+      /*
+       * The design, if the chat named one.
+       *
+       * Resolves an archetype id ('stone', 'bloom', …) as well as one of the
+       * legacy template ids stored before the gallery changed — the catalogue
+       * this used to look up no longer exists.
+       */
       const templateId = data.template_id ? String(data.template_id) : null;
-      const template = templateId ? templates.getTemplateById(templateId) : undefined;
-      if (templateId && !template) {
-        return { data: null, error: new Error(`No template called '${templateId}'.`) };
+      const templateTheme = templateId ? templates.themeForTemplateId(templateId) : null;
+      if (templateId && !templateTheme) {
+        return { data: null, error: new Error(`No design called '${templateId}'.`) };
       }
 
       // The same slug rule the API uses, so a page made here and a page made
-      // there are addressable the same way.
+      /*
+       * An address the title can actually produce.
+       *
+       * The rule copied from the pages API keeps `a-z0-9` only, and a Hebrew
+       * title has none of it: "ניהול זמן להורים" reduced to the empty string
+       * and the page was created at slug "/" — the HOME page's address, taken
+       * by a landing page, for every Hebrew- or Arabic-named page anyone asks
+       * the chat to build. The wizard hit the same bug and answers it by
+       * leaving the field blank for a person to fill in; there is nobody to
+       * fill it in here, so a generated address must always be a real one.
+       *
+       * No transliteration is invented — there is no honest one. A title with
+       * usable ASCII keeps it, and a title without gets its type and a short
+       * unique tail, which is unmistakable in a URL bar and cannot collide.
+       */
+      const fromTitle = title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+
       const slug =
         (data.slug ? String(data.slug) : '') ||
-        `/${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+        `/${/[a-z]/.test(fromTitle) ? fromTitle : `${pageType}-${crypto.randomUUID().slice(0, 8)}`}`;
 
       const pageRepo = new WebsitePageRepository(supabaseServer);
       const created = await pageRepo.create({
@@ -529,7 +776,7 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         title,
         template_id: templateId,
         status: 'draft',
-        theme: template ? templates.templateToPageTheme(template) : undefined,
+        theme: templateTheme ?? undefined,
         website_language: language,
       } as Parameters<typeof pageRepo.create>[0]);
 
@@ -538,11 +785,63 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       }
 
       /*
-       * A homepage without sections publishes as a blank screen, so it gets the
-       * standard set. Other page types start empty on purpose — a landing page's
-       * sections depend on what it is selling, and guessing them produces a page
-       * the owner has to dismantle.
+       * A LANDING PAGE is built, not left blank.
+       *
+       * It used to start empty on the reasoning that its sections depend on
+       * what it is selling — which is true, and is an argument for asking what
+       * it is selling rather than for handing back an empty page. The owner
+       * said "build me a landing page for the summer course"; a slug and a
+       * title is not that.
+       *
+       * So the same generator the onboarding build uses fills it: the theme
+       * from the template, the voice and trade from the business profile, and
+       * the OFFER from what was dictated. The page stays a draft and the reply
+       * carries a link to look at it — publishing is a separate word, said
+       * afterwards, once they have seen it.
+       *
+       * A generation failure is not fatal: the page exists and can be filled in
+       * the builder, which is better than refusing to create it at all.
        */
+      if (pageType === 'landing') {
+        const { WebsiteGenerationService } = await import('@/lib/services/WebsiteGenerationService');
+
+        const generated = await new WebsiteGenerationService().generateWebsite(ctx.userId, {
+          pageId: created.data.id,
+          ...(templateId ? { templateId } : {}),
+          focus: {
+            title,
+            ...(data.description ? { description: String(data.description) } : {}),
+          },
+        });
+
+        if (!generated.success) {
+          logger.warn(
+            { userId: ctx.userId, pageId: created.data.id, error: generated.error },
+            'Landing page created but its content could not be generated'
+          );
+        }
+
+        return {
+          data: {
+            pageId: created.data.id,
+            title,
+            slug,
+            blocks: generated.blocksCreated ?? 0,
+            /*
+             * The link, which is the point of the whole turn.
+             *
+             * A draft has no public address — `/site/[subdomain]` resolves
+             * published pages — so this is the preview route the wizard uses.
+             * `executeMutate` appends a `url` to the confirmation line, so the
+             * owner is handed something to click rather than told a page now
+             * exists somewhere.
+             */
+            url: `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/website-preview/${created.data.id}`,
+          } as Record<string, unknown>,
+          error: null,
+        };
+      }
+
       if (pageType === 'homepage') {
         const blockRepo = new WebsiteBlockRepository(supabaseServer);
         const blocks = templates
@@ -977,6 +1276,104 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
 
       return { data: result.data as unknown as QueryRow, error: result.error };
     },
+
+    /*
+     * What is still free on a day. Reads only.
+     *
+     * Two decisions live here rather than in the arithmetic, because both are
+     * about THIS question rather than about time:
+     *
+     * 1. Only `confirmed` bookings occupy the day. A cancelled slot is free
+     *    again — counting it was the original bug's cousin, since the chat had
+     *    been listing cancelled bookings as if they answered "am I busy".
+     *    Completed ones are excluded for the same reason a past appointment
+     *    does not block a future hour; on a past date the answer is history
+     *    either way.
+     * 2. The service is optional. Without one the honest answer is an amount of
+     *    time; with one it is a count of appointments, because a duration is
+     *    what turns free minutes into slots.
+     */
+    open_time: async (_q, data, ctx) => {
+      const { computeOpenTime } = await import('@/lib/scheduling/openTime');
+
+      /*
+       * A date parameter takes the SAME form as a date anywhere else.
+       *
+       * This accepted only a literal YYYY-MM-DD, while the planner — correctly,
+       * following the grammar it is taught everywhere else — sends
+       * {"$date":"wednesday"} or {"$date":"tomorrow"}. String() turned that into
+       * "[object Object]" and the user was told "'[object Object]' is not a
+       * date", so a well-formed plan failed at the last step.
+       *
+       * Resolving through `resolveDateExpr` also means "tomorrow" and "wednesday"
+       * are worked out server-side against the business's own timezone, which is
+       * the whole reason anchors exist.
+       */
+      const raw = data.date;
+      const date = isDateExpr(raw)
+        ? resolveDateExpr(raw, ctx.timezone, 'date').slice(0, 10)
+        : String(raw ?? '').slice(0, 10);
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return {
+          data: null,
+          error: new Error(
+            `I could not read '${String(raw)}' as a day. Try "tomorrow", "Wednesday", or a date.`
+          ),
+        };
+      }
+
+      const { data: profile, error: profileError } = await supabaseServer
+        .from('business_profiles')
+        .select('scheduling_availability')
+        .eq('user_id', ctx.userId)
+        .maybeSingle();
+
+      if (profileError) return { data: null, error: profileError as Error };
+
+      // A named service sets the appointment length; without one we report time
+      // rather than slots.
+      let durationMinutes: number | undefined;
+      if (data.service) {
+        const { data: services } = await supabaseServer
+          .from('scheduling_services')
+          .select('name, duration_minutes')
+          .eq('user_id', ctx.userId)
+          .ilike('name', `%${String(data.service)}%`)
+          .limit(1);
+
+        durationMinutes = services?.[0]?.duration_minutes ?? undefined;
+      }
+
+      /*
+       * A generous window either side of the day, then filtered precisely by the
+       * computation in the business's own zone. Querying the exact day in UTC
+       * would drop an early booking for a business east of it and include one
+       * that belongs to the neighbouring day for a business west.
+       */
+      const { data: bookings, error: bookingsError } = await supabaseServer
+        .from('scheduling_bookings')
+        .select('start_time, end_time')
+        .eq('user_id', ctx.userId)
+        .eq('status', 'confirmed')
+        .gte('start_time', `${date}T00:00:00Z`)
+        .lt('start_time', `${date}T23:59:59Z`);
+
+      if (bookingsError) return { data: null, error: bookingsError as Error };
+
+      const result = computeOpenTime({
+        availability: profile?.scheduling_availability,
+        date,
+        timeZone: ctx.timezone ?? 'UTC',
+        bookings: (bookings ?? []).map((b) => ({
+          start: b.start_time as string,
+          end: (b.end_time as string | null) ?? null,
+        })),
+        durationMinutes,
+      });
+
+      return { data: result as unknown as QueryRow, error: null };
+    },
   },
 
   activities: {
@@ -1054,7 +1451,16 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         skipInvoice: true,
       });
 
-      if (!result?.success) {
+      /*
+       * `sent`, not `success` — and this was not merely a type error.
+       *
+       * `EmailResult` has no `success` field, so `!result?.success` was ALWAYS
+       * true: every resend reported "the confirmation could not be sent" to the
+       * user, including the ones that had just gone out. The only reason it was
+       * never chased is that `next.config.js` ignores type errors at build time,
+       * which is exactly the failure mode that argues for fixing them anyway.
+       */
+      if (!result?.sent) {
         return {
           data: null,
           error: new Error(result?.error || 'The confirmation could not be sent'),
@@ -1281,7 +1687,7 @@ async function assertReferencesOwned(
  * question — were these words present? — and a wrong answer costs a clarifying
  * question, never a fabricated record.
  */
-function isGroundedIn(value: string, utterance: string): boolean {
+export function isGroundedIn(value: string, utterance: string): boolean {
   const normalise = (text: string) =>
     text
       .toLowerCase()
@@ -1352,7 +1758,8 @@ function describe(
   query: MutateQuery,
   data: Record<string, unknown>,
   language: string,
-  names: { target?: string; references?: Record<string, string> } = {}
+  names: { target?: string; references?: Record<string, string> } = {},
+  timezone?: string
 ): string {
   const action = entity.actions?.[query.action];
   const label =
@@ -1376,10 +1783,30 @@ function describe(
       if (!field) return null;
 
       const fieldLabel = field.labels[language as 'en'] ?? field.labels.en;
+
+      /*
+       * An enum shows its LABEL, not the value stored in the column.
+       *
+       * The catalog already carries these — the result card renders
+       * "עדיפות: בינונית" from the same table — but this preview printed the raw
+       * value, so a Hebrew conversation ended on "עדיפות: high" and
+       * "סטטוס: completed". The one English word in the sentence was the word
+       * saying what had just been done to the user's data.
+       *
+       * Falls back to the stored value: a value with no label is better shown
+       * as itself than hidden.
+       */
+      const enumLabel =
+        typeof value === 'string'
+          ? (field.enumLabels?.[value]?.[language as 'en'] ?? field.enumLabels?.[value]?.en)
+          : undefined;
+
       // A resolved reference shows the row's NAME. "contact: 36c2ab05-…" is not
       // something a user can check, which makes approving it meaningless.
       const shown =
-        names.references?.[field.key] ?? formatForPreview(value, field.format, language);
+        names.references?.[field.key] ??
+        enumLabel ??
+        formatForPreview(value, field.format, language, timezone);
 
       return `${fieldLabel}: ${shown}`;
     })
@@ -1401,21 +1828,80 @@ function describe(
  * a row yet. Getting a wrong currency symbol onto an approval card would be a
  * worse bug than a plain number.
  */
-function formatForPreview(value: unknown, format: string | undefined, language: string): string {
+/**
+ * One readable line for a structured value.
+ *
+ * Deliberately shallow and deliberately generic. It is a summary for a human
+ * about to approve something, not a serialiser: two levels, values only for
+ * arrays of objects, and a `percent` key rendered with its sign because a bare
+ * "30" beside a stage name is ambiguous in the one way that matters.
+ */
+function summariseStructured(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map(summariseStructured).join(', ');
+  }
+
+  if (value === null || typeof value !== 'object') {
+    return String(value ?? '');
+  }
+
+  return Object.entries(value as Record<string, unknown>)
+    .map(([key, inner]) => {
+      // The discriminator names the shape; the label names the stage. Neither
+      // reads better with its key printed in front of it.
+      if (key === 'kind' || key === 'label') return String(inner);
+      if (/percent$/i.test(key)) return `${inner}%`;
+      if (inner !== null && typeof inner === 'object') return summariseStructured(inner);
+
+      return `${key} ${String(inner)}`;
+    })
+    .filter(Boolean)
+    .join(' ');
+}
+
+function formatForPreview(
+  value: unknown,
+  format: string | undefined,
+  language: string,
+  timezone: string | undefined
+): string {
   if (value === null || value === undefined || value === '') return '—';
 
-  // Date expressions are resolved before this point, so anything still an object
-  // is unexpected — show a placeholder rather than "[object Object]" on the card
-  // the user is about to approve.
-  if (typeof value === 'object') return '…';
+  /*
+   * A STRUCTURED value, summarised rather than hidden.
+   *
+   * Date expressions are resolved before this point, so an object here is a
+   * field that genuinely holds a structure — today that is a quote's payment
+   * shape, and it is precisely the part of a dictated quote the owner most
+   * needs to check: "אופן התשלום: …" tells them nothing, and the difference
+   * between three stages and one payment is the difference between two
+   * agreements.
+   *
+   * Summarised generically, by shape rather than by which field it is: no
+   * knowledge of proposals lives here, and a new structured field renders
+   * legibly the day it is declared.
+   */
+  if (typeof value === 'object') return summariseStructured(value);
 
   if (format === 'date' || format === 'datetime') {
     const date = new Date(String(value));
     if (!Number.isNaN(date.getTime())) {
       try {
+        /*
+         * In the BUSINESS's timezone, not the server's.
+         *
+         * A date field is stored as the instant of midnight where the business
+         * is — "30 October" in Asia/Jerusalem is 2026-10-29T21:00:00Z. Formatted
+         * with no timeZone this runs in the server's zone, which on Vercel is
+         * UTC, so the confirmation said "29 באוק׳" for a task the dialog then
+         * showed as the 30th. The value written was right the whole time; only
+         * the sentence describing it was wrong, which is worse than it sounds —
+         * this string is the last thing the user reads before approving.
+         */
         return new Intl.DateTimeFormat(language || 'en', {
           dateStyle: 'medium',
           ...(format === 'datetime' ? { timeStyle: 'short' } : {}),
+          ...(timezone ? { timeZone: timezone } : {}),
         }).format(date);
       } catch {
         return date.toISOString();
@@ -1573,10 +2059,14 @@ export async function executeMutate(
 
   const preview = takesParams
     ? describeParams(entity, query, data, options.language ?? 'en')
-    : describe(entity, query, data, options.language ?? 'en', {
-        target: options.targetName,
-        references: options.referenceNames,
-      });
+    : describe(
+        entity,
+        query,
+        data,
+        options.language ?? 'en',
+        { target: options.targetName, references: options.referenceNames },
+        ctx.timezone
+      );
 
   if (options.dryRun) {
     return { op: 'mutate', entity: query.entity, action: query.action, applied: false, preview };
@@ -1597,13 +2087,27 @@ export async function executeMutate(
     'Write applied'
   );
 
+  /*
+   * A link the handler produced belongs in the line the user reads.
+   *
+   * The preview sentence is built BEFORE the write, from what was asked for —
+   * which is right for approving one and useless for acting on the result. A
+   * created landing page is only useful if you can open it, so a handler that
+   * returns a `url` has it appended to the line the reply quotes.
+   *
+   * A convention rather than a grammar change: no other write returns one, and
+   * the ones that do are saying "here is the thing you just made".
+   */
+  const produced = result.data as { url?: unknown } | null;
+  const url = typeof produced?.url === 'string' ? produced.url : undefined;
+
   return {
     op: 'mutate',
     entity: query.entity,
     action: query.action,
     applied: true,
     row: (result.data as QueryRow) ?? undefined,
-    preview,
+    preview: url ? `${preview} — ${url}` : preview,
   };
 }
 

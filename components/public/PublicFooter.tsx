@@ -31,6 +31,20 @@ export function PublicFooter({
   const message = publicT(brand.locale, 'questionsContact', { name: brand.businessName });
 
   return (
+    /*
+      Not `apc-footer`.
+
+      That class belongs to the website's FOOTER SECTION — the template's own
+      closing band, which every composition gives a `border-block-start` because
+      that is the design. This is a different thing wearing its name: the small
+      "powered by" tail on a booking or invoice page. It inherited the rule and
+      drew a second hairline a few rows under the one the details panel already
+      had, which reads as a mistake rather than as structure.
+
+      It loses nothing else by dropping the class — it sets its own muted
+      colours inline, and `mt-8` gives it the space the composition's padding
+      would have.
+    */
     <footer className="mt-8 text-center ap-no-print">
       {showContact && (
         <p className="text-sm" style={{ color: 'var(--ap-text-muted)' }}>

@@ -3,7 +3,7 @@
  *
  * Produced by: npx tsx scripts/generate-business-catalog.ts
  * Source     : jgccgkyhpwirgknnceoh.supabase.co
- * Generated  : 2026-09-03T17:13:51.552Z
+ * Generated  : 2026-09-10T06:34:30.405Z
  *
  * This is the PHYSICAL half of the Business Catalog: what columns actually exist
  * in the database. The hand-authored semantic half lives in ./catalog.ts, and
@@ -16,9 +16,102 @@
 import type { PhysicalCatalog } from './catalog.schema';
 
 export const PHYSICAL_CATALOG: PhysicalCatalog = {
-  "generatedAt": "2026-09-03T17:13:51.552Z",
+  "generatedAt": "2026-09-10T06:34:30.405Z",
   "source": "jgccgkyhpwirgknnceoh.supabase.co",
   "tables": {
+    "business_intake_forms": {
+      "name": "business_intake_forms",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "user_settings_complete",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+        },
+        {
+          "name": "version",
+          "format": "integer",
+          "jsonType": "integer",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "status",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "draft = never sent; published = the form clients receive (at most one); archived = superseded, kept so completed submissions stay readable."
+        },
+        {
+          "name": "questions",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "IntakeQuestion[] in the business's own language. See lib/business-os/intake/types.ts."
+        },
+        {
+          "name": "generated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "generated_from",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "published_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        }
+      ]
+    },
     "crm_contacts": {
       "name": "crm_contacts",
       "columns": [
@@ -768,6 +861,15 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": false,
           "isPrimaryKey": false
+        },
+        {
+          "name": "allow_online_payment",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Whether this invoice may be paid online (card, via the connected processor). FALSE means collect it by transfer: no card button on the pay page, bank details instead. NULL means no choice was recorded — fall back to the business's own collection capability, which is how every invoice behaved before this column existed."
         }
       ]
     },
@@ -1772,7 +1874,7 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "name": "due_date",
           "format": "date",
           "jsonType": "string",
-          "required": true,
+          "required": false,
           "hasDefault": false,
           "isPrimaryKey": false
         },
@@ -1894,6 +1996,307 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "required": false,
           "hasDefault": false,
           "isPrimaryKey": false
+        },
+        {
+          "name": "label",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "The stage this payment is for — \"Foundation\", \"Sessions 1-4\". Null for a plain instalment, which is identified by its number."
+        },
+        {
+          "name": "trigger",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "date = bills on its due_date, the existing instalment behaviour and the default so nothing changes. manual = a milestone: no due date until the owner marks the stage complete, which is what raises its invoice."
+        },
+        {
+          "name": "completed_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "proposal_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "proposals",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `proposals.id`."
+        }
+      ]
+    },
+    "proposals": {
+      "name": "proposals",
+      "columns": [
+        {
+          "name": "id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": true,
+          "description": "Note: This is a Primary Key."
+        },
+        {
+          "name": "user_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "user_settings_complete",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `user_settings_complete.id`."
+        },
+        {
+          "name": "contact_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "crm_contacts",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `crm_contacts.id`."
+        },
+        {
+          "name": "service_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_services",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `scheduling_services.id`."
+        },
+        {
+          "name": "title",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "description",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "currency",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "total",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "prices_include_tax",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "tax_rate",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "tax_label",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "status",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "valid_until",
+          "format": "date",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "payment_shape",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": true,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "decline_reason",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "decline_note",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "supersedes_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "proposals",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `proposals.id`."
+        },
+        {
+          "name": "accepted_snapshot",
+          "format": "jsonb",
+          "jsonType": "unknown",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_invoice_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_invoices",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_invoices.id`."
+        },
+        {
+          "name": "created_plan_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "payment_plans",
+            "column": "id"
+          },
+          "description": "Note: This is a Foreign Key to `payment_plans.id`."
+        },
+        {
+          "name": "sent_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "viewed_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "decided_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "created_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "updated_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false
+        },
+        {
+          "name": "booking_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "scheduling_bookings",
+            "column": "id"
+          },
+          "description": "The request this quote answers. Null for quotes created before this column existed, and for any raised outside a booking. Note: This is a Foreign Key to `scheduling_bookings.id`."
+        },
+        {
+          "name": "document_id",
+          "format": "uuid",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "foreignKey": {
+            "table": "contact_documents",
+            "column": "id"
+          },
+          "description": "Optional proposal document, attached to the email and shown to the client before they can accept. Note: This is a Foreign Key to `contact_documents.id`."
         }
       ]
     },
@@ -2164,6 +2567,15 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "Timestamp when intake form was completed"
+        },
+        {
+          "name": "intake_sent_at",
+          "format": "timestamp with time zone",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "When the intake request was emailed to the client. Replaces the template_key='pending' sentinel previously written into intake_responses."
         }
       ]
     },
@@ -2381,6 +2793,15 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "How money for this service arrives: online (card at the moment of booking — requires a connected processor) | invoice (billed afterwards; transfer, Bit or cash — requires no processor). NULL where the service is free, or where nobody has said yet."
+        },
+        {
+          "name": "sale_mode",
+          "format": "text",
+          "jsonType": "string",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "direct = the client books and pays in one sitting (today's behaviour, and the default so no existing service changes). proposal = the client cannot buy immediately; they leave details, the owner sends a quote, and the journey resumes once it is accepted. Read by journeySteps() to decide where the client journey stops."
         }
       ]
     },
@@ -3022,6 +3443,51 @@ export const PHYSICAL_CATALOG: PhysicalCatalog = {
           "hasDefault": false,
           "isPrimaryKey": false,
           "description": "The address this business shows its clients — where to come. Free text, because a display address is written the way the business writes it. Distinct from invoice_address, which is the structured billing address printed on invoices and may deliberately differ."
+        },
+        {
+          "name": "invoice_document_type",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What the business's client-facing documents are titled: receipt, invoice or tax_invoice. NULL follows the derived default (tax + tax id => tax_invoice, tax alone => invoice, otherwise receipt). The platform never decides this on the business's behalf — entitlement to issue a tax invoice comes from a registration, not from a settings flag."
+        },
+        {
+          "name": "invoice_prices_include_tax",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "The business states its prices already contain tax. Display only — the platform never adds tax to a price."
+        },
+        {
+          "name": "invoice_tax_rate",
+          "format": "numeric",
+          "jsonType": "number",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "Percent, as the business typed it (19, 17, 21). Used only to carve the tax out of an inclusive price for display."
+        },
+        {
+          "name": "invoice_tax_label",
+          "format": "text",
+          "jsonType": "string",
+          "required": false,
+          "hasDefault": false,
+          "isPrimaryKey": false,
+          "description": "What the business calls it — VAT, מע״מ, IVA, MwSt. Free text."
+        },
+        {
+          "name": "daily_briefing_email_enabled",
+          "format": "boolean",
+          "jsonType": "boolean",
+          "required": true,
+          "hasDefault": true,
+          "isPrimaryKey": false,
+          "description": "Opt-in for the morning briefing email. Off by default; requires a timezone on user_preferences to be meaningful."
         }
       ]
     },

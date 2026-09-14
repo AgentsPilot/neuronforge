@@ -41,7 +41,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
         alignItems: 'stretch',
         gap: 0,
         marginTop: '16px',
-        border: '1px solid #E7E9F1',
+        border: '1px solid var(--v2-border)',
         borderRadius: '14px',
         overflow: 'hidden',
       }}
@@ -63,7 +63,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             fontWeight: 600,
             letterSpacing: '0.07em',
             textTransform: 'uppercase',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             marginBottom: '4px',
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
           }}
@@ -79,7 +79,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             fontSize: '16px',
             fontWeight: 600,
             letterSpacing: '-0.02em',
-            color: '#131A2B',
+            color: 'var(--v2-text-primary)',
           }}
         >
           {left.value}
@@ -91,7 +91,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             className="pj-s"
             style={{
               fontSize: '12.5px',
-              color: '#697187',
+              color: 'var(--v2-text-secondary)',
               marginTop: '3px',
               fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
             }}
@@ -109,7 +109,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
           padding: '13px 15px',
           minWidth: 0,
           background: '#F6FBF8',
-          borderInlineStart: '1px solid #E7E9F1',
+          borderInlineStart: '1px solid var(--v2-border)',
         }}
       >
         {/* Label: .pj-lb */}
@@ -120,7 +120,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             fontWeight: 600,
             letterSpacing: '0.07em',
             textTransform: 'uppercase',
-            color: '#697187',
+            color: 'var(--v2-text-secondary)',
             marginBottom: '4px',
             fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
           }}
@@ -136,7 +136,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             fontSize: '16px',
             fontWeight: 600,
             letterSpacing: '-0.02em',
-            color: '#1B9A6C',
+            color: '#22C58B',
           }}
         >
           {right.value}
@@ -148,7 +148,7 @@ export function BeforeAfterPanel({ left, right }: BeforeAfterPanelProps) {
             className="pj-s"
             style={{
               fontSize: '12.5px',
-              color: '#697187',
+              color: 'var(--v2-text-secondary)',
               marginTop: '3px',
               fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
             }}

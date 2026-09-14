@@ -87,6 +87,20 @@ html[data-public-surface] {
  * any customer whose phone was in dark mode. The business's background wins
  * here, whatever the device thinks.
  */
+/*
+ * The ground goes on the document, not only on the body.
+ *
+ * Only `body` carried it, and `html` stayed the browser's white. Anywhere the
+ * body did not cover the viewport — a short page, a clipped overflow container,
+ * the rubber-band area past the end of a scroll — that white showed through,
+ * which on a near-black template reads as a white band beside the page rather
+ * than as a gap.
+ */
+html[data-public-surface] {
+  background: var(--ap-bg, #ffffff);
+}
+
+
 html[data-public-surface] body {
   background: var(--ap-bg, #ffffff);
   color: var(--ap-text, #111827);
@@ -99,6 +113,84 @@ html[data-public-surface] h3,
 html[data-public-surface] h4 {
   font-family: var(--ap-font-heading, "Heebo", -apple-system, BlinkMacSystemFont, sans-serif);
 }
+
+/* ==========================================================================
+   THE SEMANTIC NEUTRALS
+
+   The 26 website block components painted every neutral with a Tailwind grey:
+   `text-gray-900` for headings, `text-gray-600` for body, `bg-gray-50` for
+   cards, `border-gray-200` for rules — 54 of the first alone. A business's
+   theme therefore reached its own website as a font, a primary colour and a
+   radius, and every other colour a reader actually sees was the same grey for
+   every business on the platform.
+
+   Each `dark:` twin beside them was already inert: `@custom-variant dark` at
+   the top of this file binds the variant to the `.dark` CLASS, and no public
+   or preview surface mounts the provider that sets it. So the light value
+   always won, unconditionally, whatever palette the business had chosen.
+
+   These seven classes replace those greys by NAME, inside the block markup,
+   which is a substitution that cannot alter JSX structure. They are scoped to
+   the two public surfaces so nothing in the signed-in app can pick them up by
+   accident.
+   ========================================================================== */
+
+html[data-public-surface] .ap-ink,
+[data-ap-site] .ap-ink { color: var(--ap-text); }
+
+html[data-public-surface] .ap-ink-2,
+[data-ap-site] .ap-ink-2 { color: var(--ap-text-muted); }
+
+/* The faintest ink — captions, timestamps, a disabled icon. Derived rather
+   than given its own token: a third text colour in the theme would be a value
+   nobody could name, and this is always the muted one, quieter. */
+html[data-public-surface] .ap-ink-3,
+[data-ap-site] .ap-ink-3 { color: var(--ap-text-muted); opacity: 0.75; }
+
+html[data-public-surface] .ap-bg,
+[data-ap-site] .ap-bg { background-color: var(--ap-bg); }
+
+/* A card lifted off the ground. White on a light palette, a sixth of the way
+   to white on a dark one — the emitter has already worked out which. */
+html[data-public-surface] .ap-card,
+[data-ap-site] .ap-card { background-color: var(--ap-surface); }
+
+/* The recessed band a section sits in. The business's own `surface` colour. */
+html[data-public-surface] .ap-card-2,
+[data-ap-site] .ap-card-2 { background-color: var(--ap-surface-2); }
+
+html[data-public-surface] .ap-line,
+[data-ap-site] .ap-line { border-color: var(--ap-border); }
+
+html[data-public-surface] .ap-divide > * + *,
+[data-ap-site] .ap-divide > * + * { border-color: var(--ap-border); }
+
+/* Hover states. Derived from the palette rather than given tokens of their own:
+   a hover colour is never a decision a business makes, it is the surface it is
+   already on, moved slightly. `--ap-brand-tint` is the brand at 10%, which is
+   the one hover that should carry the brand. */
+html[data-public-surface] .ap-hover:hover,
+[data-ap-site] .ap-hover:hover { background-color: var(--ap-brand-tint); }
+
+html[data-public-surface] .ap-hover-line:hover,
+[data-ap-site] .ap-hover-line:hover { border-color: var(--ap-brand); }
+
+html[data-public-surface] .ap-hover-ink:hover,
+[data-ap-site] .ap-hover-ink:hover { color: var(--ap-brand); }
+
+html[data-public-surface] .group:hover .ap-group-hover-ink,
+[data-ap-site] .group:hover .ap-group-hover-ink { color: var(--ap-brand); }
+
+html[data-public-surface] .ap-placeholder::placeholder,
+[data-ap-site] .ap-placeholder::placeholder { color: var(--ap-text-muted); opacity: 0.7; }
+
+/* A sticky header over scrolling content: the business's own ground, made
+   translucent, rather than a white that disappears on a dark template. */
+html[data-public-surface] .ap-bg-blur,
+[data-ap-site] .ap-bg-blur { background-color: color-mix(in srgb, var(--ap-bg) 70%, transparent); }
+
+html[data-public-surface] .ap-bg-blur-strong,
+[data-ap-site] .ap-bg-blur-strong { background-color: color-mix(in srgb, var(--ap-bg) 90%, transparent); }
 
 /* A visible focus ring in the brand's colour, on every interactive element.
    None of the public pages had focus styling of any kind. */
@@ -194,6 +286,22 @@ html[data-public-surface] :focus-visible {
 
 .scrollbar-thin:hover::-webkit-scrollbar-thumb {
   opacity: 1;
+}
+
+/* Scrolls, shows no bar.
+
+   For a scroller whose bar carries no information: the website preview's canvas
+   sits inside a fixed shell and holds a frame already sized to its content, so
+   the bar can only ever say "there is more below", which the page itself says
+   better. Scrolling, wheel, trackpad and keyboard are all untouched — this
+   hides the bar, it does not disable the scroller. */
+.scrollbar-none {
+  scrollbar-width: none;          /* Firefox */
+  -ms-overflow-style: none;       /* old Edge */
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;                  /* WebKit, Blink */
 }
 
 /* Dark mode date picker icon fix - multiple selectors for compatibility */

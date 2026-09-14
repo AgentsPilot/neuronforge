@@ -7,7 +7,7 @@ import { Clock, Settings, ChevronDown, ChevronRight, Check, Tag, Trash2, Loader2
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { ServicePaymentOptions } from './ServicePaymentOptions';
 import { ServiceCurrencySelect, CURRENCY_OPTIONS, getCurrencySymbol } from './ServiceCurrencySelect';
-import type { SchedulingService, ServiceCurrency, ServiceCollection, PaymentType, InstallmentFrequency, FirstPaymentDue } from '@/lib/repositories/SchedulingRepository';
+import type { SchedulingService, ServiceCurrency, ServiceCollection, ServiceSaleMode, PaymentType, InstallmentFrequency, FirstPaymentDue } from '@/lib/repositories/SchedulingRepository';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 
 interface SchedulingServiceModalProps {
@@ -35,6 +35,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
     // programme billed against an invoice, and only the first needs a
     // processor connected.
     is_scheduled: true,
+    sale_mode: 'direct' as ServiceSaleMode,
     collection: 'invoice' as ServiceCollection,
     buffer_minutes: 15,
     max_bookings_per_day: null as number | null,
@@ -102,6 +103,8 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
         // exactly as it did: everything was an appointment, and nothing was
         // ever assumed to need a card processor.
         is_scheduled: service.is_scheduled !== false,
+        // Absent means direct, matching the column default.
+        sale_mode: (service.sale_mode || 'direct') as ServiceSaleMode,
         collection: (service.collection || 'invoice') as ServiceCollection,
         buffer_minutes: service.buffer_minutes,
         max_bookings_per_day: service.max_bookings_per_day,
@@ -138,6 +141,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
         price: 0,
         currency: currencyCode as ServiceCurrency,
         is_scheduled: true,
+        sale_mode: 'direct' as ServiceSaleMode,
         // Never 'online' by default: that would make a card processor
         // mandatory for a business that has not said it wants one.
         collection: 'invoice' as ServiceCollection,
@@ -188,7 +192,17 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
           // service, not how a client gets it. A free service is still not
           // collected at all.
           duration_minutes: formData.duration_minutes || null,
-          collection: formData.price > 0 ? formData.collection : null,
+          /*
+           * A quoted service publishes no collection.
+           *
+           * Nobody has said what the work costs, so there is no money for a
+           * method to describe — that is settled on the proposal. Writing one
+           * here would put a payment step on the half of the journey that ends
+           * at a request.
+           */
+          collection: formData.sale_mode === 'proposal'
+            ? null
+            : (formData.price > 0 ? formData.collection : null),
         })
       });
 
@@ -354,6 +368,51 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
               {t('scheduling.modal.time_pricing')}
             </h3>
 
+            {/* Can a client buy this outright, or do you quote it?
+                Placed before the time and money questions because it decides
+                whether they apply at all: a quoted job has no published price
+                and no card taken at booking — both are settled in the proposal. */}
+            <div>
+              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
+                {t('scheduling.modal.sale_mode')}
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                {(['direct', 'proposal'] as const).map(value => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, sale_mode: value }))}
+                    className={`p-3 text-start border transition-all ${
+                      formData.sale_mode === value
+                        ? 'border-[#14B8A6] bg-[#14B8A6]/10'
+                        : 'border-[var(--v2-border)] bg-[var(--v2-bg)] hover:border-[var(--v2-text-muted)]'
+                    }`}
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        formData.sale_mode === value ? 'border-[#14B8A6]' : 'border-[var(--v2-text-muted)]'
+                      }`}>
+                        {formData.sale_mode === value && <div className="w-2 h-2 rounded-full bg-[#14B8A6]" />}
+                      </div>
+                      <span className={`text-sm font-medium ${
+                        formData.sale_mode === value ? 'text-[#14B8A6]' : 'text-[var(--v2-text-primary)]'
+                      }`}>
+                        {value === 'direct'
+                          ? t('scheduling.modal.sale_mode.direct')
+                          : t('scheduling.modal.sale_mode.proposal')}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-[var(--v2-text-secondary)] leading-snug">
+                      {value === 'direct'
+                        ? t('scheduling.modal.sale_mode.direct_desc')
+                        : t('scheduling.modal.sale_mode.proposal_desc')}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Does a client pick a time for this?
                 Asked explicitly rather than inferred from a blank duration: a
                 field left empty by accident must not silently switch booking
@@ -449,6 +508,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
                   scheduled: formData.is_scheduled,
                   collection: formData.price > 0 ? formData.collection : null,
                   price: formData.price,
+                  saleMode: formData.sale_mode,
                 }}
                 intakeEnabled={intakeEnabled}
               />

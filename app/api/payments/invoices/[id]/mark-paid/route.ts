@@ -23,7 +23,6 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
-import { promoteToClientStage } from '@/lib/crm/StageTypeUtils';
 
 const logger = createLogger({ module: 'InvoiceMarkPaidAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -68,7 +67,7 @@ export async function POST(
     // finds nothing.
     const { data: invoice } = await supabaseServer
       .from('payment_invoices')
-      .select('id, user_id, contact_id, amount, currency, status, invoice_number')
+      .select('id, user_id, contact_id, booking_id, amount, currency, status, invoice_number')
       .eq('id', invoiceId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -110,17 +109,31 @@ export async function POST(
     /*
      * Money arriving by hand is still money arriving.
      *
-     * The Stripe path promoted the contact and this one did not, so whether a
-     * paying client showed up as a client on the board depended on which way
-     * they happened to pay. Same helper, same rule, same result.
+     * This used to promote the contact directly. It no longer decides that:
+     * payment is not the relationship, and "a booking was confirmed" is the one
+     * rule, held by `promote_contact_on_confirmed_booking`. What this path owes
+     * is the confirmation — a booking held pending because money was owed is
+     * confirmed once the money is recorded, however it arrived.
      *
-     * Not awaited for its answer: the payment is recorded either way, and where
-     * a contact sits on a board is not worth failing a settlement over.
+     * Scoped to `pending`, so a cancelled or completed booking is never
+     * resurrected by a late settlement. Non-blocking: the payment is recorded
+     * either way, and a board position is not worth failing a settlement over.
      */
-    if (invoice.contact_id) {
-      await promoteToClientStage(supabaseServer, user.id, invoice.contact_id).catch(err =>
-        requestLogger.warn({ err, contactId: invoice.contact_id }, 'Stage promotion failed (non-blocking)')
-      );
+    if (invoice.booking_id) {
+      await supabaseServer
+        .from('scheduling_bookings')
+        .update({ status: 'confirmed', payment_status: 'paid', updated_at: new Date().toISOString() })
+        .eq('id', invoice.booking_id)
+        .eq('user_id', user.id)
+        .eq('status', 'pending')
+        .then(({ error }) => {
+          if (error) {
+            requestLogger.warn(
+              { err: error, bookingId: invoice.booking_id },
+              'Could not confirm the booking after a manual settlement (non-blocking)'
+            );
+          }
+        });
     }
 
     if (result.alreadySettled) {

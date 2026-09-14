@@ -17,6 +17,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
+import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
 import { V2Logo } from '@/components/v2/V2Header';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { SetupFactCard, SetupFactDeck } from '@/components/business-os/setup/SetupFactCard';
@@ -441,7 +442,8 @@ function OnboardingBuildContent() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.user) {
-          router.push('/login');
+          // Sign-in lives on the marketing site, on its own origin.
+          window.location.href = marketingLoginUrl();
           return;
         }
         if (!cancelled) setUserId(session.user.id);
@@ -551,6 +553,18 @@ function OnboardingBuildContent() {
   };
 
   /** Marks a step done and closes whatever was open for it. */
+  /**
+   * Does anything in this catalogue take a card?
+   *
+   * The same test the owner-step list makes, lifted to the component so the
+   * bank panel can decide whether connecting a processor is still worth
+   * offering — there is nothing to offer a business that is already set up to
+   * be paid that way.
+   */
+  const collectsOnlineSome = (previewData?.services || []).some(
+    service => (service.price || 0) > 0 && service.collection === 'online'
+  );
+
   const settleOwnerStep = (id: string) => {
     setSettled(prev => {
       const next = { ...prev, [id]: true };
@@ -902,11 +916,12 @@ function OnboardingBuildContent() {
           surface. Dropped straight onto a scrim it was transparent, so the
           surface has to come from here. */}
       {openStep === 'stripe' && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-3 overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
           {/* The wizard's own root is max-w-lg, so a wider shell only added
-              empty margin around it. */}
+              empty margin around it. Bounded to the window for the same reason
+              as the bank panel below: the wizard grows with each step. */}
           <div
-            className="w-full max-w-lg my-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-4"
+            className="w-full max-w-lg max-h-[calc(100vh-1.5rem)] overflow-y-auto bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-4"
             dir={isRTL ? 'rtl' : 'ltr'}
           >
             <div className="flex items-center justify-between gap-3 mb-2.5">
@@ -935,13 +950,19 @@ function OnboardingBuildContent() {
           failure this screen exists to prevent, reintroduced for one card. The
           settings section is a component, so it can be mounted here like the
           rest. */}
+      {/* The panel fits the window; the FORM scrolls inside it.
+          It used to grow to whatever the invoice form needed and let the
+          backdrop scroll, which pushed the title off the top and the Done
+          button below the fold — so the way out of the dialog was the one
+          thing you could not see. Header and footer are pinned, and only the
+          middle moves. */}
       {openStep === 'bank' && userId && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-3 overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
           <div
-            className="w-full max-w-2xl my-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-4"
+            className="w-full max-w-2xl max-h-[calc(100vh-1.5rem)] flex flex-col bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl overflow-hidden"
             dir={isRTL ? 'rtl' : 'ltr'}
           >
-            <div className="flex items-center justify-between gap-3 mb-2.5">
+            <div className="flex-shrink-0 flex items-center justify-between gap-3 px-4 pt-4 pb-2.5">
               <h3 className="text-[14px] font-bold text-[var(--v2-text-primary)] m-0">
                 {selectedLanguage === 'he' ? 'פרטי החברה והבנק' : selectedLanguage === 'es' ? 'Datos de empresa y banco' : 'Company and bank details'}
               </h3>
@@ -954,15 +975,53 @@ function OnboardingBuildContent() {
               </button>
             </div>
 
-            <InvoiceSettingsSection userId={userId} expanded onToggle={() => {}} />
+            <div className="flex-1 min-h-0 overflow-y-auto px-4">
+              {/* No processor here.
+                  This step exists BECAUSE the business invoices — it is the
+                  bank details that go on the invoice so a client knows where to
+                  send the money. A "connect payments" panel inside it offers
+                  the opposite arrangement, and this screen already carries its
+                  own Stripe step for the businesses that take cards. Two doors
+                  to the same place, one of them in the wrong room. */}
+              <InvoiceSettingsSection userId={userId} expanded onToggle={() => {}} showProcessor={false} />
+            </div>
 
-            <button
-              onClick={() => settleOwnerStep('bank')}
-              className="w-full mt-3 px-4 py-2.5 text-sm font-semibold text-white rounded-lg"
-              style={{ background: '#C2410C' }}
-            >
-              {selectedLanguage === 'he' ? 'סיימתי' : selectedLanguage === 'es' ? 'Listo' : 'Done'}
-            </button>
+            <div className="flex-shrink-0 border-t border-[var(--v2-border)] px-4 pb-4 pt-3 space-y-3">
+              {/* Asked, not assumed.
+                  A business that invoices may still want a card taken now and
+                  then, and this is the moment it is thinking about getting
+                  paid. What was here before was a "Payment Setup Required"
+                  panel that announced a requirement — for something this
+                  business chose not to do. An offer with a plain no is the
+                  same door, without the accusation.
+
+                  Hidden once connected: there is nothing left to offer. */}
+              {!collectsOnlineSome && (
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <p className="text-[12px] text-[var(--v2-text-muted)] m-0 min-w-0">
+                    {selectedLanguage === 'he'
+                      ? 'רוצה שלקוחות יוכלו גם לשלם בכרטיס?'
+                      : selectedLanguage === 'es'
+                        ? '¿Quieres que tus clientes también puedan pagar con tarjeta?'
+                        : 'Want clients to be able to pay by card as well?'}
+                  </p>
+                  <button
+                    onClick={() => setOpenStep('stripe')}
+                    className="flex-shrink-0 px-3 py-1.5 text-[12px] font-medium rounded-lg border border-[var(--v2-border)] text-[var(--v2-text-primary)] hover:bg-[var(--v2-bg)] transition-colors"
+                  >
+                    {selectedLanguage === 'he' ? 'חבר תשלומים' : selectedLanguage === 'es' ? 'Conectar pagos' : 'Connect payments'}
+                  </button>
+                </div>
+              )}
+
+              <button
+                onClick={() => settleOwnerStep('bank')}
+                className="w-full px-4 py-2.5 text-sm font-semibold text-white rounded-lg"
+                style={{ background: '#C2410C' }}
+              >
+                {selectedLanguage === 'he' ? 'סיימתי' : selectedLanguage === 'es' ? 'Listo' : 'Done'}
+              </button>
+            </div>
           </div>
         </div>
       )}

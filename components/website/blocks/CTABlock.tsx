@@ -1,6 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
+import { resolveBlockLayout } from '@/lib/website-builder/pageTheme';
 import { ArrowRight, Calendar } from 'lucide-react';
 import { resolveBookingAction } from './bookingAction';
 import type { BlockRendererProps, SelectedServiceData } from './types';
@@ -18,6 +19,11 @@ interface CTAContent {
   style?: 'primary' | 'subtle' | 'gradient' | 'dark';
   // Service info for booking integration
   serviceId?: string;
+  /**
+   * Set by the public renderer when the linked service no longer exists or has
+   * been switched off — see `PricingBlock` for the reasoning.
+   */
+  serviceUnavailable?: boolean;
   serviceName?: string;
   priceRaw?: number;
   currency?: string;
@@ -41,59 +47,114 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
     description,
     secondary_button_text,
     secondary_button_link,
-    style = 'gradient' // Default to gradient for better visibility
+    // `style` is read below through `rawContent.style`, where it is weighed
+    // against the archetype's layout rather than defaulted in isolation.
   } = rawContent;
 
-  const primaryColor = theme?.colors.primary || '#4F6EF7';
-  const secondaryColor = theme?.colors.secondary || '#E8DDD4';
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE LAYOUT VOCABULARY, WIRED.
+   *
+   * `styles.layout` is written by the generator from the archetype and is one of
+   * three closed names. It decides the SHAPE of the closing call; the palette
+   * decides its colour, and neither knows anything about the other.
+   *
+   *   panel   a filled brand block, the whole width. The loudest.
+   *   flat    a flat field of the brand colour with no rounding — Cloaked's
+   *           closing move, and what Lumen was designed around.
+   *   inline  a quiet band on the page's own surface, for an archetype that
+   *           has already said everything it needs to. Stone uses this.
+   *
+   * `content.style` is the older, per-page way of saying the same thing and
+   * still wins where a page carries one, because somebody chose it by hand.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const layout = (resolveBlockLayout('cta', theme?.layouts, styles?.layout) as
+    'panel' | 'flat' | 'inline' | undefined) ?? 'panel';
 
-  // Dynamic gradient style using theme colors
-  const dynamicGradientStyle = {
-    background: `linear-gradient(135deg, ${primaryColor} 0%, ${secondaryColor} 100%)`
-  };
+  const LAYOUT_TO_STYLE = { panel: 'gradient', flat: 'primary', inline: 'subtle' } as const;
+  const resolvedStyle = rawContent.style ?? LAYOUT_TO_STYLE[layout] ?? 'gradient';
+
+  /*
+   * Every value from the emitter.
+   *
+   * `--ap-on-brand` is the one worth naming: it is black or white depending on
+   * which reads on the brand colour, worked out once where the theme is
+   * emitted. Lumen's acid lime needs black text on it and Aster's indigo needs
+   * white — a block hardcoding `text-white` gets one of those wrong, and it was
+   * hardcoding `text-white` for three of the four variants.
+   */
+  const brand = 'var(--ap-brand)';
+  const onBrand = 'var(--ap-on-brand)';
+  const ink = 'var(--ap-text)';
+  const inkMuted = 'var(--ap-text-muted)';
+  const surface = 'var(--ap-surface-2)';
+  const border = 'var(--ap-border)';
+  const radius = 'var(--ap-radius-lg)';
 
   const styleVariants = {
     primary: {
-      bg: '', // Will use dynamicGradientStyle
-      useDynamicBg: true,
-      text: 'text-white',
-      buttonBg: 'bg-white hover:bg-gray-100',
-      buttonText: primaryColor,
-      secondaryBorder: 'border-white/30 text-white hover:bg-white/10'
+      background: brand,
+      color: onBrand,
+      radius: '0px',
+      buttonBackground: onBrand,
+      buttonColor: brand,
+      secondaryBorder: 'currentColor',
     },
     subtle: {
-      bg: styles?.background || 'bg-gray-100 dark:bg-slate-800',
-      useDynamicBg: false,
-      text: 'text-gray-900 dark:text-white',
-      buttonBg: '',
-      buttonText: 'white',
-      secondaryBorder: 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-slate-700'
+      background: surface,
+      color: ink,
+      radius,
+      buttonBackground: brand,
+      buttonColor: onBrand,
+      secondaryBorder: border,
     },
     gradient: {
-      bg: '', // Will use dynamicGradientStyle
-      useDynamicBg: true,
-      text: 'text-white',
-      buttonBg: 'bg-white hover:bg-gray-100',
-      buttonText: primaryColor,
-      secondaryBorder: 'border-white/30 text-white hover:bg-white/10'
+      background: `linear-gradient(135deg, var(--ap-brand) 0%, var(--ap-brand-secondary) 100%)`,
+      color: onBrand,
+      radius,
+      buttonBackground: onBrand,
+      buttonColor: brand,
+      secondaryBorder: 'currentColor',
     },
     dark: {
-      bg: 'bg-gray-900 dark:bg-black',
-      useDynamicBg: false,
-      text: 'text-white',
-      buttonBg: '',
-      buttonText: 'white',
-      secondaryBorder: 'border-gray-600 text-gray-300 hover:bg-gray-800'
-    }
+      background: ink,
+      color: 'var(--ap-bg)',
+      radius,
+      buttonBackground: brand,
+      buttonColor: onBrand,
+      secondaryBorder: 'currentColor',
+    },
   };
 
-  const variant = styleVariants[style];
+  const variant = styleVariants[resolvedStyle as keyof typeof styleVariants];
 
   // UUID regex for validation
   const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  // Check if we have a valid service linked for booking (must be valid UUID)
-  const hasServiceLinked = !!rawContent.serviceId && UUID_REGEX.test(rawContent.serviceId);
+  /*
+   * A well-formed id is not the same as a service that exists — a deleted
+   * service's id still passes the shape test, so the renderer tells us
+   * outright when the thing behind it is gone.
+   */
+  const hasServiceLinked =
+    !rawContent.serviceUnavailable &&
+    !!rawContent.serviceId &&
+    UUID_REGEX.test(rawContent.serviceId);
+
+  /*
+   * Gone is not the same as never linked.
+   *
+   * Both made `hasServiceLinked` false and both fell into the branch below,
+   * which opens booking for the BUSINESS — every active service. That is right
+   * for a homepage's closing call to action and wrong for a landing page whose
+   * one service has been deleted: its button kept working and offered the
+   * client a completely different set of things to buy.
+   *
+   *   no `serviceId` at all      about the business  → book
+   *   `serviceId` + unavailable  about a gone thing  → no control
+   */
+  const serviceGone = !!rawContent.serviceId && rawContent.serviceUnavailable === true;
   const hasBookingCapability = !!(bookingUrl || (isPreview && onOpenBooking));
 
   // For the unlinked case below: the same resolver the header and hero use.
@@ -137,16 +198,35 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
   return (
     <section
       dir={isRTL ? 'rtl' : 'ltr'}
-      className={`${styles?.padding || 'py-12 sm:py-16'} ${variant.bg} ${className || ''}`}
-      style={variant.useDynamicBg ? dynamicGradientStyle : undefined}
+      className={`apc-sec ${styles?.padding || 'py-12 sm:py-16'} ${className || ''}`}
+      /*
+       * The band behind the closing block, routed through a custom property so
+       * a composition can switch it off.
+       *
+       * All three mockups close on a SINGLE inverted panel sitting on the page
+       * ground. This block paints the whole section as well, so with a
+       * composition applied the page showed a coloured band with a second,
+       * differently-coloured panel inside it. An inline value cannot be
+       * overridden by any rule, but a custom property READ by an inline value
+       * can — the composition sets `--apc-band` on the surface and the fallback
+       * here keeps every uncomposed page exactly as it was.
+       */
+      style={{
+        background: `var(--apc-band, ${variant.background})`,
+        color: `var(--apc-band-ink, ${variant.color})`,
+      }}
     >
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center">
+      <div className="apc-close max-w-4xl mx-auto px-4 sm:px-6 text-center">
         <motion.h2
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className={`text-2xl sm:text-3xl lg:text-4xl font-bold ${variant.text}`}
-          style={{ fontFamily: 'var(--website-font-heading)' }}
+          className="font-bold"
+          style={{
+            fontFamily: 'var(--ap-font-heading)',
+            fontSize: 'var(--ap-scale-h2)',
+            color: 'inherit',
+          }}
         >
           {title}
         </motion.h2>
@@ -157,8 +237,14 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: 0.1 }}
-            className={`mt-4 text-lg ${style === 'primary' || style === 'gradient' || style === 'dark' ? 'text-white/80' : 'text-gray-600 dark:text-gray-300'}`}
-            style={{ fontFamily: 'var(--website-font-body)' }}
+            className="mt-4 text-lg"
+            style={{
+              fontFamily: 'var(--ap-font-body)',
+              // On a filled panel the description is the heading's colour at
+              // reduced weight; on the page's own surface it is the muted ink.
+              color: resolvedStyle === 'subtle' ? inkMuted : 'inherit',
+              opacity: resolvedStyle === 'subtle' ? 1 : 0.82,
+            }}
           >
             {description}
           </motion.p>
@@ -173,19 +259,38 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
         >
           {/* Primary CTA Button - uses booking modal if available */}
           {/* Only show booking button if we have a valid serviceId (required for booking API) */}
-          {hasServiceLinked && ((isPreview && onOpenBooking) || hasBookingCapability) ? (
+          {serviceGone ? (
+            /*
+             * Present, and unable to do anything.
+             *
+             * A real `<button disabled>` rather than a styled anchor: an anchor
+             * has no disabled state, so `pointer-events: none` would stop the
+             * mouse and still leave it reachable by keyboard. Kept rather than
+             * removed because the owner is looking at this in the editor and a
+             * closing section with no control reads as broken rather than as
+             * blocked.
+             */
+            <button
+              type="button"
+              disabled
+              className="apc-btn apc-btn--solid inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold opacity-45 cursor-not-allowed"
+              style={{
+                backgroundColor: variant.buttonBackground,
+                color: variant.buttonColor,
+              }}
+            >
+              {buttonText}
+            </button>
+          ) : hasServiceLinked && ((isPreview && onOpenBooking) || hasBookingCapability) ? (
             // Has booking capability - use booking modal or link
             isPreview && onOpenBooking ? (
               <button
                 type="button"
                 onClick={handleBookingClick}
-                className={`inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all hover:scale-105 ${
-                  style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
-                }`}
+                className="apc-btn apc-btn--solid inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold transition-all hover:opacity-90"
                 style={{
-                  backgroundColor: style === 'subtle' || style === 'dark' ? primaryColor : undefined,
-                  color: variant.buttonText,
-                  borderRadius: theme?.borderRadius || '0.5rem'
+                  backgroundColor: variant.buttonBackground,
+                  color: variant.buttonColor,
                 }}
               >
                 <Calendar className="w-5 h-5" />
@@ -195,13 +300,10 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
             ) : bookingUrl ? (
               <a
                 href={bookingUrl}
-                className={`inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all hover:scale-105 ${
-                  style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
-                }`}
+                className="apc-btn apc-btn--solid inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold transition-all hover:opacity-90"
                 style={{
-                  backgroundColor: style === 'subtle' || style === 'dark' ? primaryColor : undefined,
-                  color: variant.buttonText,
-                  borderRadius: theme?.borderRadius || '0.5rem'
+                  backgroundColor: variant.buttonBackground,
+                  color: variant.buttonColor,
                 }}
               >
                 <Calendar className="w-5 h-5" />
@@ -228,13 +330,10 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
                   ctaBooking.onClick();
                 }
               }}
-              className={`inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold rounded-lg shadow-lg transition-all hover:scale-105 ${
-                style === 'subtle' || style === 'dark' ? '' : variant.buttonBg
-              }`}
+              className="apc-btn apc-btn--solid inline-flex items-center justify-center gap-2 px-8 py-3 text-base font-semibold transition-all hover:opacity-90"
               style={{
-                backgroundColor: style === 'subtle' || style === 'dark' ? primaryColor : undefined,
-                color: variant.buttonText,
-                borderRadius: theme?.borderRadius || '0.5rem'
+                backgroundColor: variant.buttonBackground,
+                color: variant.buttonColor,
               }}
             >
               {buttonText}
@@ -242,15 +341,28 @@ export function CTABlock({ content, styles, theme, isRTL, className, locale = 'e
             </a>
           )}
 
-          {secondary_button_text && (
-            <a
-              href={secondary_button_link || '#'}
-              className={`inline-flex items-center justify-center px-8 py-3 text-base font-semibold border-2 rounded-lg transition-all ${variant.secondaryBorder}`}
-              style={{ borderRadius: theme?.borderRadius || '0.5rem' }}
-            >
-              {secondary_button_text}
-            </a>
-          )}
+          {secondary_button_text &&
+            (serviceGone ? (
+              <button
+                type="button"
+                disabled
+                className="apc-btn inline-flex items-center justify-center px-8 py-3 text-base font-semibold border-2 opacity-45 cursor-not-allowed"
+                style={{ borderColor: variant.secondaryBorder, color: 'inherit' }}
+              >
+                {secondary_button_text}
+              </button>
+            ) : (
+              <a
+                href={secondary_button_link || '#'}
+                className="apc-btn inline-flex items-center justify-center px-8 py-3 text-base font-semibold border-2 transition-all hover:opacity-80"
+                style={{
+                  borderColor: variant.secondaryBorder,
+                  color: 'inherit',
+                }}
+              >
+                {secondary_button_text}
+              </a>
+            ))}
         </motion.div>
       </div>
     </section>

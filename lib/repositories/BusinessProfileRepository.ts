@@ -186,6 +186,8 @@ export interface BusinessProfile {
   invoice_payment_instructions: string | null;
   invoice_footer_text: string | null;
   invoice_number_prefix: string | null;
+  /** Days to pay for invoices raised automatically. 0 = due on receipt. */
+  invoice_payment_terms_days: number | null;
   invoice_logo_url: string | null;
 
   // Conversion layer -- short public link code (20260824_add_conversion_layer)
@@ -197,6 +199,10 @@ export interface BusinessProfile {
   // (20260827_business_logo_single_source / 20260902_business_theme)
   show_logo_on_smart_links: boolean;
   theme: Record<string, unknown> | null;
+
+  // Notification preferences. NOT NULL DEFAULT false, so not nullable.
+  // (20260911_daily_briefing)
+  daily_briefing_email_enabled: boolean;
 
   // Payment collection method (20260831_collection_method)
   collection_method: string | null;
@@ -288,10 +294,12 @@ export interface BusinessProfileInsert {
   invoice_payment_instructions?: string | null;
   invoice_footer_text?: string | null;
   invoice_number_prefix?: string | null;
+  invoice_payment_terms_days?: number | null;
   invoice_logo_url?: string | null;
   user_code?: string | null;
   show_logo_on_smart_links?: boolean;
   theme?: Record<string, unknown> | null;
+  daily_briefing_email_enabled?: boolean;
   collection_method?: string | null;
   template_id?: string | null;
   subdomain?: string | null;
@@ -719,7 +727,8 @@ export class BusinessProfileRepository {
           invoice_tax_rate,
           invoice_tax_label,
           invoice_document_type,
-          invoice_number_prefix
+          invoice_number_prefix,
+          invoice_payment_terms_days
         `)
         .eq('user_id', userId)
         .single();
@@ -741,7 +750,8 @@ export class BusinessProfileRepository {
               invoice_tax_rate: null,
               invoice_tax_label: null,
               invoice_document_type: null,
-              invoice_number_prefix: 'INV'
+              invoice_number_prefix: 'INV',
+              invoice_payment_terms_days: 30
             },
             error: null
           };
@@ -770,7 +780,17 @@ export class BusinessProfileRepository {
         invoice_tax_rate: data.invoice_tax_rate ?? null,
         invoice_tax_label: data.invoice_tax_label ?? null,
         invoice_document_type: (data.invoice_document_type as DocumentType) ?? null,
-        invoice_number_prefix: data.invoice_number_prefix || 'INV'
+        invoice_number_prefix: data.invoice_number_prefix || 'INV',
+        /*
+         * `??`, not `||`: zero is "due on receipt", a real setting, and `||`
+         * would swap it for the default every time the page loaded.
+         *
+         * This mapping is why the field appeared not to save — the column was
+         * added to the SELECT above but never copied out here, so the value
+         * reached the repository and was dropped on the way to the form. The
+         * write worked; the read never returned it.
+         */
+        invoice_payment_terms_days: data.invoice_payment_terms_days ?? 30
       };
 
       logger.debug({ userId }, 'Retrieved invoice settings');
@@ -821,6 +841,59 @@ export class BusinessProfileRepository {
       return { data: true, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to update business branding');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * What the platform is allowed to send the owner, unprompted.
+   *
+   * Its own method for the same reason as the two beside it — one save must not
+   * be able to blank another — and because these are the owner's preferences
+   * about being contacted, not facts about the business.
+   *
+   * Only fields explicitly supplied are written, so a caller that knows about
+   * one preference cannot clear another it has never heard of.
+   */
+  async updateNotificationPreferences(
+    userId: string,
+    preferences: {
+      daily_briefing_email_enabled?: boolean;
+      lead_alert_email_enabled?: boolean;
+      lead_autosend_enabled?: boolean;
+    }
+  ): Promise<BusinessProfileRepositoryResult<true>> {
+    try {
+      const updateData: Record<string, unknown> = {
+        updated_at: new Date().toISOString(),
+      };
+
+      if (preferences.daily_briefing_email_enabled !== undefined) {
+        updateData.daily_briefing_email_enabled = preferences.daily_briefing_email_enabled;
+      }
+
+      if (preferences.lead_alert_email_enabled !== undefined) {
+        updateData.lead_alert_email_enabled = preferences.lead_alert_email_enabled;
+      }
+
+      if (preferences.lead_autosend_enabled !== undefined) {
+        updateData.lead_autosend_enabled = preferences.lead_autosend_enabled;
+      }
+
+      const { error } = await this.supabase
+        .from('business_profiles')
+        .update(updateData)
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      logger.info(
+        { userId, fields: Object.keys(preferences) },
+        'Notification preferences updated'
+      );
+      return { data: true, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to update notification preferences');
       return { data: null, error: error as Error };
     }
   }
@@ -954,6 +1027,9 @@ export class BusinessProfileRepository {
       }
       if (settings.invoice_number_prefix !== undefined) {
         updateData.invoice_number_prefix = settings.invoice_number_prefix;
+      }
+      if (settings.invoice_payment_terms_days !== undefined) {
+        updateData.invoice_payment_terms_days = settings.invoice_payment_terms_days;
       }
       const { error } = await this.supabase
         .from('business_profiles')

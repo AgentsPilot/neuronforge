@@ -31,48 +31,6 @@ const RESERVED_SUBDOMAINS = [
   'preview'
 ]
 
-/**
- * Paths that must never be rewritten under `/v2`.
- *
- * The V2 rewrite moves everything not on this list to `/v2{path}`. A route
- * added outside these prefixes silently starts 404ing for every V2 account,
- * and the failure looks nothing like its cause — which is exactly what happened
- * when the website preview moved out of `/business-os` and began resolving to
- * `/v2/website-preview/...`.
- *
- * `/website-preview` is here rather than under `/business-os` because that
- * segment's layout paints the platform header and tab bar, and this page is
- * rendered inside a 320px iframe where that chrome has no business appearing.
- */
-const V2_REWRITE_EXEMPT = [
-  '/v2',
-  '/onboarding',
-  '/business-os',
-  '/invoice',
-  '/website-preview',
-  // Same reason as the line above: the landing page wizard's preview iframe.
-  // It lived under `/business-os`, so it inherited that segment's header and
-  // tabs — the whole platform chrome, rendered a second time inside a preview
-  // frame — and every load went through the onboarding check on its way there.
-  '/landing-preview',
-  // Customer-facing public surfaces. These already return early from the
-  // onboarding skip list above, so listing them here changes nothing today —
-  // it is here so that reordering the two blocks, or adding a path to one and
-  // not the other, cannot silently start redirecting a customer's booking or
-  // invoice link into `/v2/...`. That is precisely how `/book` broke.
-  '/book',
-  '/c',
-  '/go',
-  '/site',
-  '/payments/success',
-  '/payments/cancelled',
-] as const;
-
-/** Whether this path keeps its own URL under the V2 rewrite. */
-function isV2Exempt(pathname: string): boolean {
-  return V2_REWRITE_EXEMPT.some(prefix => pathname.startsWith(prefix));
-}
-
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const host = request.headers.get('host') || ''
@@ -136,6 +94,10 @@ export async function middleware(request: NextRequest) {
     pathname === '/book' ||
     pathname.startsWith('/book/') ||
     pathname.startsWith('/invoice/') || // Public invoice pages
+    // The quote a client opens from their email. Unauthenticated by design —
+    // the signed token in the URL is the authorisation — so it must never be
+    // rewritten under /v2, where it 404s.
+    pathname.startsWith('/proposal/') ||
     // The two generic post-Stripe screens. Matched exactly, because the
     // owner-facing `/payments` dashboard lives under the same first segment and
     // must keep its auth and onboarding checks.
@@ -247,86 +209,29 @@ export async function middleware(request: NextRequest) {
     // On error, continue (don't block access)
   }
 
-  // Check for manual override via query param (for testing)
-  const uiParam = request.nextUrl.searchParams.get('ui')
-  if (uiParam === 'v1' || uiParam === 'v2') {
-    // Same exemptions as the database-driven rewrite below — a manual `?ui=v2`
-    // must not send a preview iframe somewhere the automatic path would not.
-    if (uiParam === 'v2' && !isV2Exempt(pathname)) {
-      const url = request.nextUrl.clone()
-      url.pathname = `/v2${pathname}`
-      return NextResponse.redirect(url)
-    }
-    if (uiParam === 'v1' && pathname.startsWith('/v2')) {
-      const url = request.nextUrl.clone()
-      url.pathname = pathname.replace(/^\/v2/, '')
-      return NextResponse.redirect(url)
-    }
-  }
-
   /*
-   * The UI version decides two redirects, and for most paths it decides nothing.
+   * ───────────────────────────────────────────────────────────────────────────
+   * The V2 rewrite used to live here, and is gone.
    *
-   * Read the two conditions below. `uiVersion === 'v2'` only redirects a path
-   * that is NOT v2-exempt; `uiVersion === 'v1'` only redirects a path already
-   * under `/v2`. So for an exempt path that is not `/v2` — every `/business-os`
-   * page, every `/onboarding` page, every public `/book`, `/c`, `/go`, `/site`
-   * and `/invoice` link — both conditions are false whatever the database says,
-   * and all three exits return `NextResponse.next()`.
+   * It read `system_settings_config.ui_version` on every navigation and, while
+   * that row said `v2`, moved any path not on an exemption list to `/v2{path}`.
+   * It was the switch for the V1 dashboard → V2 dashboard migration, and it
+   * outlived both: Business OS is the product now, and it was exempt, so the
+   * rewrite decided nothing for any page a user actually visits.
    *
-   * The query still ran. A fresh service-role client and a round trip to read
-   * one global row, on every navigation, to reach a conclusion already fixed by
-   * the pathname. It is the third of three round trips the middleware makes
-   * before a page can start rendering, and for the whole Business OS it was
-   * pure cost.
+   * What it still did was break the ones nobody had thought to exempt. `/`
+   * redirected to `/v2`, which is not a page — a 404 on the app's own root.
+   * `/reset-password` redirected to `/v2/reset-password`, likewise. `/book` and
+   * `/proposal` had each been fixed by adding another prefix to the list.
    *
-   * Skipping it is not a cache and has no staleness: the result could not have
-   * changed the response.
+   * Removing it also removes a service-role client and a round trip to read one
+   * global row, on every request, before a page could begin rendering.
+   *
+   * `/v2/*` pages still exist and still resolve if visited directly; nothing
+   * sends anyone there. `lib/design-system-v2` and `components/v2/V2Header` are
+   * a separate matter and very much alive — Business OS renders both.
+   * ───────────────────────────────────────────────────────────────────────────
    */
-  const uiVersionCanRedirect = !isV2Exempt(pathname) || pathname.startsWith('/v2')
-
-  if (!uiVersionCanRedirect) {
-    return NextResponse.next()
-  }
-
-  // Fetch UI version from database
-  try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
-
-    const { data, error } = await supabase
-      .from('system_settings_config')
-      .select('value')
-      .eq('key', 'ui_version')
-      .single()
-
-    if (error) {
-      requestLogger.error({ err: error }, 'Could not read the UI version; leaving the path unchanged')
-      return NextResponse.next()
-    }
-
-    const uiVersion = data?.value as 'v1' | 'v2'
-
-    // If V2 is enabled and not already on V2 route, redirect
-    // EXCEPT for onboarding routes, business-os routes, and public invoice pages - they should stay as-is
-    if (uiVersion === 'v2' && !isV2Exempt(pathname)) {
-      const url = request.nextUrl.clone()
-      url.pathname = `/v2${pathname}`
-      return NextResponse.redirect(url)
-    }
-
-    // If V1 is enabled and currently on V2 route, redirect back
-    if (uiVersion === 'v1' && pathname.startsWith('/v2')) {
-      const url = request.nextUrl.clone()
-      url.pathname = pathname.replace(/^\/v2/, '')
-      return NextResponse.redirect(url)
-    }
-  } catch (error) {
-    requestLogger.error({ err: error }, 'UI version routing failed; leaving the path unchanged')
-    return NextResponse.next()
-  }
 
   return NextResponse.next()
 }

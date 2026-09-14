@@ -17,6 +17,8 @@ export type DocumentType =
   | 'intake_form'
   | 'invoice'
   | 'receipt'
+  /** A quote document, attached to the proposal email the client reads. */
+  | 'proposal'
   | 'id_document'
   | 'medical'
   | 'insurance'

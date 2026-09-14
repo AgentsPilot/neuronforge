@@ -4,6 +4,7 @@
 
 export { InsightDetailModal } from './InsightDetailModal';
 export type { InsightData, InsightProjection, InsightProcess } from './InsightDetailModal';
+export type { OperationalItem } from './InsightAdvisorCard';
 
 // New insight card components
 export { InsightAdvisorCard } from './InsightAdvisorCard';
@@ -13,6 +14,9 @@ export { BeforeAfterPanel } from './BeforeAfterPanel';
 export type { ProjectionColumn } from './BeforeAfterPanel';
 
 export { VectorsStrip } from './VectorsStrip';
+
+export { NeedsYouCard } from './NeedsYouCard';
+export type { GapView, GapItemView } from './NeedsYouCard';
 
 export { HandledSection } from './HandledSection';
 export type { HandledEntry } from './HandledSection';
@@ -45,4 +49,4 @@ export type { ReplayRow, ReplayModal } from './FooterReplay';
 
 // Live Dashboard (main mockup-based insight component)
 export { LiveDashboard } from './LiveDashboard';
-export type { SetupItem, FunnelStats, MilestoneData, PipelineStage, ChannelPerformance } from './LiveDashboard';
+export type { SetupItem, FunnelStats, WeeklyStats, MilestoneData, PipelineStage, ChannelPerformance } from './LiveDashboard';

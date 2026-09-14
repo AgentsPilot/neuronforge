@@ -1,4 +1,16 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+/*
+ * Structured logging, as CLAUDE.md requires of every file under lib/.
+ *
+ * This file's own header has claimed "Proper Pino logging (instead of
+ * console.log)" since it was written, while every call below was a `console.*`.
+ * They went to stdout unstructured, so the one that matters — a config read
+ * failing and the caller silently taking a fallback model — could not be
+ * queried, alerted on, or tied to a request.
+ */
+const logger = createLogger({ service: 'SystemConfigService' });
 
 /**
  * @deprecated Use `systemConfigRepository` from `@/lib/repositories` instead.
@@ -95,7 +107,7 @@ export class SystemConfigService {
 
     if (error) {
       // A genuine read failure. Never cached — the next call must retry.
-      console.warn(`[SystemConfig] Failed to fetch config '${key}':`, error.message);
+      logger.warn({ key, err: error }, 'Failed to fetch config');
       if (fallback !== undefined) {
         return fallback;
       }
@@ -180,7 +192,7 @@ export class SystemConfigService {
       .order('key');
 
     if (error) {
-      console.error(`[SystemConfig] Failed to fetch category '${category}':`, error);
+      logger.error({ category, err: error }, 'Failed to fetch config category');
       throw error;
     }
 
@@ -198,7 +210,7 @@ export class SystemConfigService {
       .order('key');
 
     if (error) {
-      console.error('[SystemConfig] Failed to fetch all configs:', error);
+      logger.error({ err: error }, 'Failed to fetch all configs');
       throw error;
     }
 
@@ -223,17 +235,17 @@ export class SystemConfigService {
 
     if (existing) {
       // Update existing
-      console.log(`[SystemConfig] Updating existing key '${key}' with value:`, value);
+      logger.info({ key, value }, 'Updating existing config key');
       const { error } = await supabase
         .from('system_settings_config')
         .update({ value, updated_at: new Date().toISOString() })
         .eq('key', key);
 
       if (error) {
-        console.error(`[SystemConfig] Failed to update config '${key}':`, error);
+        logger.error({ key, err: error }, 'Failed to update config');
         throw error;
       }
-      console.log(`[SystemConfig] Successfully updated '${key}'`);
+      logger.info({ key }, 'Config updated');
     } else {
       // Insert new - infer category from key prefix
       const category = key.startsWith('pilot_') || key.startsWith('workflow_orchestrator_')
@@ -248,7 +260,7 @@ export class SystemConfigService {
         ? 'agent_creation'
         : 'general';
 
-      console.log(`[SystemConfig] Inserting new key '${key}' with category '${category}' and value:`, value);
+      logger.info({ key, category, value }, 'Inserting new config key');
       const { error } = await supabase
         .from('system_settings_config')
         .insert({
@@ -259,10 +271,10 @@ export class SystemConfigService {
         });
 
       if (error) {
-        console.error(`[SystemConfig] Failed to create config '${key}':`, error);
+        logger.error({ key, err: error }, 'Failed to create config');
         throw error;
       }
-      console.log(`[SystemConfig] Successfully created '${key}'`);
+      logger.info({ key }, 'Config created');
     }
 
     // Invalidate cache
@@ -304,7 +316,7 @@ export class SystemConfigService {
       });
 
     if (error) {
-      console.error(`[SystemConfig] Failed to create config '${key}':`, error);
+      logger.error({ key, err: error }, 'Failed to create config');
       throw error;
     }
   }
@@ -322,7 +334,7 @@ export class SystemConfigService {
       .eq('key', key);
 
     if (error) {
-      console.error(`[SystemConfig] Failed to delete config '${key}':`, error);
+      logger.error({ key, err: error }, 'Failed to delete config');
       throw error;
     }
 
@@ -334,7 +346,7 @@ export class SystemConfigService {
    */
   static clearCache(): void {
     this.cache.clear();
-    console.log('[SystemConfig] Cache cleared');
+    logger.debug('Config cache cleared');
   }
 
   /**
@@ -342,7 +354,7 @@ export class SystemConfigService {
    */
   static invalidateCache(key: string): void {
     this.cache.delete(key);
-    console.log(`[SystemConfig] Cache invalidated for key: ${key}`);
+    logger.debug({ key }, 'Config cache invalidated');
   }
 
   /**

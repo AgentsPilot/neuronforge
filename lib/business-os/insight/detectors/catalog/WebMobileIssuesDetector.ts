@@ -127,7 +127,7 @@ export class WebMobileIssuesDetector extends BaseDetector {
     // Get bookings with user agent/device info
     const { data: bookings, error: bookingsError } = await this.supabase
       .from('scheduling_bookings')
-      .select('id, metadata, client_email')
+      .select('id, metadata')
       .eq('user_id', userId)
       .gte('created_at', thirtyDaysAgo.toISOString())
       .in('status', ['confirmed', 'completed']);

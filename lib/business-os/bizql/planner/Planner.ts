@@ -25,10 +25,16 @@ import { createLogger } from '@/lib/logger';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { CATALOG_VERSION } from '@/lib/business-os/catalog';
+import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
+import { anchorizeInventedDates } from '../dates';
 import type { ComputeQuery, FindQuery, Query } from '../types';
-import { normalizePlan, validatePlan } from './validatePlan';
-import { buildPlanTool, PLANNER_SYSTEM_PROMPT } from './planTool';
+import { isSoftProblem, normalizePlan, validatePlan } from './validatePlan';
+import { resolveSameRows } from './resolveSameRows';
+import {
+  getVerifiedQuestions,
+  renderExamplesForPrompt,
+} from './VerifiedQuestions';
+import { buildPlanTool, plannerSystemPrompt } from './planTool';
 import {
   guessRelevantEntities,
   renderCatalogForPrompt,
@@ -191,14 +197,35 @@ export class BizQLPlanner {
   async plan(request: PlanRequest): Promise<PlanOutcome> {
     const started = Date.now();
 
-    // Cache first. This belongs in the planner rather than the route because
-    // caching IS the planner's job — avoiding an LLM call — and putting it here
-    // means every caller benefits and the eval harness measures it.
-    // A context-dependent turn is deliberately NOT cached, in either direction.
-    // "show him" means something different in every conversation, so serving a
-    // cached plan for it would apply one user's referent to another's question.
+    /*
+     * Cache first — but never for a turn the conversation could have shaped.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This test used to be "is there a pending question, or rows on screen",
+     * and it let the worst cache entry this system has produced through.
+     *
+     * "מה הסך הכולל שלהם" — what is THEIR total — was planned once during a
+     * window when the previous turn's context had not finished saving, so it
+     * resolved "them" against a bookings question from two turns earlier. The
+     * previous turn had been a COUNT, which leaves no rows on screen, so by the
+     * old test the turn was not contextual: the wrong plan was stored under the
+     * bare words, and served four more times without the conversation ever
+     * being consulted again. Every later fix appeared not to work, because
+     * nothing was being planned at all.
+     *
+     * The honest rule is that a plan is a function of everything in its prompt.
+     * The conversation goes into that prompt, so a turn with ANY history behind
+     * it cannot be keyed on its words alone. That costs cache hits on
+     * follow-ups — which are exactly the turns where a stale plan is a wrong
+     * answer rather than a saved call.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
+    const context = request.context;
     const contextual = Boolean(
-      request.context?.pendingQuestion || request.context?.lastRows?.items.length
+      context?.pendingQuestion ||
+        context?.lastRows?.items.length ||
+        context?.lastPlan ||
+        context?.turns?.length
     );
 
     const cache = getPlanCache();
@@ -253,14 +280,48 @@ export class BizQLPlanner {
       if (cached.entryId) await cache.recordOutcome(cached.entryId, false);
     }
 
-    // Scope the catalog when we can identify the subject, purely to save tokens.
-    // A miss falls back to the whole catalog, so this never costs correctness.
-    const guessed = guessRelevantEntities(request.message);
-    const entities = guessed.length > 0 ? guessed : undefined;
+    /*
+     * Scope the catalog when we can identify the subject, to save tokens.
+     * A miss falls back to the whole catalog, so this never costs correctness.
+     *
+     * The guess reads the MESSAGE, and a follow-up does not name its subject —
+     * it inherited it from the turn before. "שנה עדיפות לנמוכה" and "change the
+     * due date to 30 October" both scope to nothing, so the whole catalog ships
+     * on exactly the turns a conversation is mostly made of.
+     *
+     * The subject is not unknown though: `lastRows.entity` is what the user was
+     * just shown, and it is the thing they are talking about. Seeding from it
+     * costs nothing and is a better signal than the words in a short reply.
+     *
+     * It also buys correctness, which the message-only guess was quietly
+     * costing: "set the priority to urgent" matched `insights` — whose severity
+     * field publishes "urgent" — and NOT `tasks`, so the planner was handed the
+     * wrong entity and produced `insights.confirm`, an action that does not
+     * exist. Naming the real subject stops that.
+     */
+    const guessed = new Set(guessRelevantEntities(request.message));
+
+    const subject = request.context?.lastRows?.entity;
+    if (subject && CATALOG.entities[subject]) {
+      guessed.add(subject);
+      // Its relations too, matching what the message-based guess does: a reply
+      // about a task may still need the contact it belongs to.
+      for (const relation of Object.values(CATALOG.entities[subject].relations ?? {})) {
+        guessed.add(relation.target);
+      }
+    }
+
+    const entities = guessed.size > 0 ? [...guessed] : undefined;
 
     // Writes are now expressible, so the planner must see which actions exist
     // and which of them require confirmation.
-    const catalogText = renderCatalogForPrompt({ entities, includeActions: true });
+    // In the reader's language: the enum values carry the words they actually
+    // type, so "אושרו" matches `accepted=אושרה` instead of being translated.
+    const catalogText = renderCatalogForPrompt({
+      entities,
+      includeActions: true,
+      language: request.language,
+    });
     const tool = buildPlanTool(entities);
 
     // Read this user's own configured values for any data-driven field, so the
@@ -275,24 +336,107 @@ export class BizQLPlanner {
 
     const conversation = request.context ? renderContextForPrompt(request.context) : '';
 
+    /*
+     * What this business has already had answered correctly, in their words.
+     *
+     * The only mechanism here that generalises to phrasings nobody wrote down:
+     * a tenant who once corrected "תלוי באוויר" into the open-quote filter has
+     * taught it, and "ממתינות להחלטה" arrives at the same plan without a label
+     * for either. Costs one embedding, and only for a business that has
+     * verified something — see VerifiedQuestions.has.
+     */
+    const examples = renderExamplesForPrompt(
+      await getVerifiedQuestions().similar({
+        userId: request.userId,
+        question: request.message,
+        language: request.language ?? 'he',
+        turnId: request.turnId,
+      })
+    );
+
+    /*
+     * The action rules are sent only when an action is reachable.
+     *
+     * Rules 12, 13, 16 and 17 and ~920 tokens of tool schema describe naming a
+     * target, acting on many rows and performing a write. If nothing offered to
+     * this turn declares an action, none of it can be used — and it was going
+     * out on every call regardless, on top of a prompt that is already 69% of
+     * what a question costs.
+     */
+    // `undefined` means the whole catalog was shipped, which certainly includes
+    // entities with actions.
+    const canAct = (entities ?? Object.keys(CATALOG.entities)).some(
+      (key) => Object.keys(CATALOG.entities[key]?.actions ?? {}).length > 0
+    );
+
     const system =
-      `${PLANNER_SYSTEM_PROMPT}\n\nCATALOG\n${catalogText}` +
+      `${plannerSystemPrompt({ actions: canAct })}\n\nCATALOG\n${catalogText}` +
       (vocabulary ? `\n\nTHIS USER'S CONFIGURED VALUES\n${vocabulary}` : '') +
+      (examples ? `\n\n${examples}` : '') +
       (conversation ? `\n\nCONVERSATION SO FAR\n${conversation}` : '');
-    const user = request.language
-      ? `Answer in language: ${request.language}\n\nRequest: ${request.message}`
-      : `Request: ${request.message}`;
+    /*
+     * Today, in the business's own timezone.
+     *
+     * Needed the moment a user names a day rather than describing one. Asked to
+     * set a due date to "30 October" the planner answered 2023-10-30 — a year
+     * three in the past, because nothing had ever told it what year it is.
+     *
+     * It goes in the USER message, not the system prompt, and that placement is
+     * the point: `plannerVersion()` hashes the system prompt into the plan-cache
+     * key, so a date up there would invalidate every cached plan at midnight,
+     * every night.
+     */
+    const todayInZone = new Intl.DateTimeFormat('en-CA', {
+      timeZone: request.timezone ?? 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+
+    const user =
+      `Today is ${todayInZone}.\n` +
+      (request.language ? `Answer in language: ${request.language}\n` : '') +
+      `\nRequest: ${request.message}`;
 
     const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
       { role: 'system', content: system },
       { role: 'user', content: user },
     ];
 
+    /*
+     * The exact prompt, on demand.
+     *
+     * Added after an afternoon of a reproduction disagreeing with the product:
+     * a hand-built copy of this prompt planned `pages.publish` every time while
+     * the real one planned `pages.update`, and there is no way to settle that by
+     * reading two files side by side. Off unless asked for, and it writes the
+     * whole thing rather than a summary — the difference that mattered was
+     * never going to be in the summary.
+     */
+    if (process.env.BIZQL_DUMP_PROMPT) {
+      const { writeFileSync } = await import('fs');
+      writeFileSync(process.env.BIZQL_DUMP_PROMPT, `${system}\n\n=== USER ===\n${user}`);
+    }
+
     let repairAttempted = false;
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    /*
+     * Three attempts: the first plan, then up to two repairs.
+     *
+     * It was one repair, and one was not enough for a failure mode the model
+     * repeats. Asked to change a task's status it would emit a mutate step with
+     * no `action`, be told exactly that, and do it again — so the user saw "I
+     * didn't understand" for a request that succeeded on the very next try.
+     *
+     * Enumerating `action` in the tool schema took that from roughly half of
+     * attempts to about one in eight. A second repair is the cheap half of the
+     * remainder: a repair only runs when the turn has ALREADY failed, so this
+     * costs nothing on the normal path and turns a visible failure into a
+     * slightly slower success.
+     */
+    for (let attempt = 0; attempt < 3; attempt++) {
       let raw: Record<string, unknown>;
 
       try {
@@ -304,11 +448,34 @@ export class BizQLPlanner {
             tools: [tool],
             tool_choice: 'required',
             temperature: 0,
+            /*
+             * What stops the runaway the cap below only made cheap.
+             *
+             * Greedy decoding at temperature 0, under an instruction prompt this
+             * long, collapses into a repetition loop. It emitted a perfectly
+             * good `steps` array, reached `answer`, and then produced
+             * `"  " , "  " , "  " ,` until it hit the cap — invalid JSON, so the
+             * user was told "I couldn't understand the request" for something as
+             * ordinary as "how many meetings do I have tomorrow".
+             *
+             * Deterministic per question, which is why it looked like a parsing
+             * bug rather than a sampling one: count-plus-a-date failed every
+             * time, while counting alone and listing with a date were fine.
+             *
+             * Neither temperature (0.3 recovered 1 run in 4) nor tool_choice nor
+             * the schema made any difference. A frequency penalty did, because
+             * this is exactly the failure it exists for: measured across eight
+             * representative questions, 6/8 parsed without it and 8/8 with it,
+             * with nothing that previously worked regressed. Kept low — JSON is
+             * legitimately repetitive, and `"field"`/`"op"`/`"value"` must stay
+             * cheap to re-emit.
+             */
+            frequency_penalty: 0.3,
             // A plan is small — a handful of steps and one sentence. Without a
             // cap the model can run away: one Hebrew case produced 16,384
             // output tokens of invalid JSON, costing ~40x a normal turn and
             // still failing. Capping makes a runaway fail fast and cheaply
-            // instead of expensively.
+            // instead of expensively — this is the belt to the penalty's braces.
             max_tokens: MAX_PLAN_TOKENS,
           },
           {
@@ -423,6 +590,34 @@ export class BizQLPlanner {
       // Canonicalise unambiguous variations (`>` -> `gt`) before judging the
       // plan, so a repair pass is spent on real problems only.
       normalizePlan(plan);
+
+      /*
+       * "The same rows as last time", filled in from the stored plan.
+       *
+       * Before validation, because an inherited step arrives without an entity
+       * — the model was told not to repeat one — and validation would refuse it
+       * on the way past.
+       */
+      const inherited = resolveSameRows(plan, request.context);
+      if (inherited > 0) {
+        logger.info({ inherited, userId: request.userId }, 'Steps inherited the previous rows');
+      }
+
+      /*
+       * Put back the anchor behind a date the model worked out for itself.
+       *
+       * Runs BEFORE validation, not as a repair of it: the digit rule would
+       * reject "2026-09-01" for a request that says only "this month", and two
+       * repair rounds do not change the model's mind — 18 of 40 measured
+       * failures, and two wasted calls each. The date is `start_of_month` on
+       * today's clock, which is a fact rather than an opinion, so we substitute
+       * it and spend the repairs on problems we cannot solve ourselves.
+       */
+      const anchored = anchorizeInventedDates(plan, request.message, request.timezone);
+      if (anchored > 0) {
+        logger.info({ anchored, userId: request.userId }, 'Restored date anchors in a plan');
+      }
+
       const problems = validatePlan(plan, request.message);
 
       if (problems.length === 0) {
@@ -468,11 +663,13 @@ export class BizQLPlanner {
         };
       }
 
-      if (attempt === 0) {
+      // Not `attempt === 0`: with a third iteration available, stopping the
+      // repair after the first one would leave the extra attempt unused.
+      if (attempt < 2) {
         // Feed the exact problems back. A machine-readable repair message is far
         // more effective than "that was wrong, try again".
         repairAttempted = true;
-        logger.warn({ problems }, 'Plan failed validation; attempting one repair');
+        logger.warn({ problems, attempt }, 'Plan failed validation; attempting a repair');
 
         messages.push({
           role: 'assistant',
@@ -485,6 +682,48 @@ export class BizQLPlanner {
             `Fix these problems and call emit_plan again. Use only catalog names.`,
         });
         continue;
+      }
+
+      /*
+       * Repairs are spent. If everything still outstanding is SOFT, ship it.
+       *
+       * Soft problems are all about the answer SENTENCE, and the renderer has a
+       * fallback for having none. Refusing here would replace a thin answer
+       * with no answer — measured, that was 31 turns of 297 turning into "I
+       * didn't quite follow that" where they had shown a bare count. The rule
+       * is there to push the model, not to punish the user when it will not
+       * move.
+       *
+       * One of them is not survivable as written, though: a sentence on a
+       * read-only plan that cites no step is a claim about data nobody read,
+       * and "הוספת סקשן של המלצות" — a section was added — shipped to the user
+       * over a plan that added nothing. A MISSING sentence costs detail; a
+       * FALSE one costs trust. So that sentence is dropped rather than shown,
+       * and the renderer's fallback answers from what the plan really found.
+       */
+      if (problems.every(isSoftProblem)) {
+        if (problems.some((p) => p.startsWith('answer.text cites no step.')) && plan.answer) {
+          logger.warn(
+            { text: plan.answer.text },
+            'Dropped an answer sentence that cited no step — it could only assert what was never read'
+          );
+          delete (plan as { answer?: unknown }).answer;
+        }
+
+        logger.warn({ problems }, 'Accepting a plan with soft problems after repairs');
+
+        return {
+          ok: true,
+          plan,
+          diagnostics: this.diagnostics({
+            model,
+            entities,
+            repairAttempted,
+            started,
+            promptTokens,
+            completionTokens,
+          }),
+        };
       }
 
       return this.fail(`Plan failed validation: ${problems.join('; ')}`, {

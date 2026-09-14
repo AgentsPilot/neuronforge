@@ -10,6 +10,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
+import { getBusinessTemplate } from '@/lib/business-os/businessTemplate';
+import { completeTheme } from '@/lib/branding/theme';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPagePreviewAPI' });
@@ -30,6 +32,16 @@ const PreviewSchema = z.object({
       body: z.string()
     })
   }),
+  /*
+   * Which design the preview is OF.
+   *
+   * The preview had no way to know. It received two colours and two font names
+   * and assembled the rest by hand, so it showed white with 8px corners no
+   * matter which archetype the wizard had selected — and the owner judged a
+   * design they were never actually shown. Optional because a caller that omits
+   * it still gets the platform default, exactly as before.
+   */
+  templateId: z.string().optional(),
   generatedContent: z.record(z.unknown()).optional(),
   clientFlow: z.array(z.string()).optional(),
   language: z.enum(['en', 'es', 'he']).optional().default('en'),
@@ -205,7 +217,6 @@ export async function POST(request: NextRequest) {
         content.client_flow = validated.clientFlow || ['scheduling', 'client_info', 'confirmation'];
         if (validated.serviceId) {
           content.services = [validated.serviceId];
-          content.service_filter = [validated.serviceId];
         }
       }
 
@@ -236,24 +247,46 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // Build the theme object for preview
-    const theme = {
-      colors: {
-        primary: validated.theme.colors.primary,
-        secondary: validated.theme.colors.secondary,
-        accent: validated.theme.colors.secondary,
-        background: '#ffffff',
-        surface: '#f9fafb',
-        text: '#1a1a1a',
-        textSecondary: '#6b7280'
+    /*
+     * The theme the preview renders in — completed from the archetype, not
+     * assembled here.
+     *
+     * The preview and the saved page have to agree, or the owner approves one
+     * design and publishes another. Both now go through `completeTheme` with
+     * the same template id, so they cannot drift.
+     */
+    /*
+     * Which design to complete the theme from.
+     *
+     * The wizard sends a `templateId` when the owner picks a look, and sends
+     * none when they choose to reuse what the business already wears. Falling
+     * back to the business's own template is what makes that second case mean
+     * "the same as everything else I have" rather than "the platform default" —
+     * without it, reusing an existing theme produced a page with no archetype,
+     * no type scale, no layouts and no composition, which is the one outcome
+     * the owner was explicitly trying to avoid.
+     */
+    const businessTemplate = await getBusinessTemplate(user.id);
+    /*
+     * Same precedence as the save: the business's template wins, and the
+     * wizard's choice only applies to a business that has none yet. If these
+     * two disagreed the owner would approve one design and publish another.
+     */
+    const designId = businessTemplate.templateId ?? validated.templateId ?? undefined;
+
+    const theme = completeTheme(
+      {
+        colors: {
+          primary: validated.theme.colors.primary,
+          secondary: validated.theme.colors.secondary,
+        },
+        fonts: {
+          heading: validated.theme.fonts.heading,
+          body: validated.theme.fonts.body,
+        },
       },
-      fonts: {
-        heading: validated.theme.fonts.heading,
-        body: validated.theme.fonts.body
-      },
-      spacing: 'normal',
-      borderRadius: '8px'
-    };
+      designId
+    );
 
     requestLogger.info({
       userId: user.id,

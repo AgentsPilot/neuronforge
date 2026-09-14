@@ -119,7 +119,7 @@ export async function GET(request: NextRequest) {
       // Both flags. This route checked only `is_active`, the exact mirror of
       // the conversion routes checking only `status` — so a draft service was
       // bookable on the website and a deactivated one on the smart links.
-      .select('id, service_name, description, duration_minutes, price, currency, is_active, status, is_scheduled, collection')
+      .select('id, service_name, description, duration_minutes, price, currency, is_active, status, is_scheduled, collection, sale_mode')
       .eq('user_id', ownerId)
       .eq('is_active', true)
       .eq('status', 'active')

@@ -88,7 +88,7 @@ export function generateWelcomeEmail(data: WelcomeEmailData): {
           <p style="margin: 0 0 12px; font-size: 15px; color: #1a1a1a;">
             ${t.scheduleNow[locale]}
           </p>
-          ${emailButton(t.bookCall[locale], bookingUrl, { backgroundColor: branding.primaryColor })}
+          ${emailButton(t.bookCall[locale], bookingUrl, { branding: branding })}
         </td>
       </tr>
     </table>
@@ -188,7 +188,7 @@ export function generateReturningContactEmail(data: WelcomeEmailData): {
           <p style="margin: 0 0 12px; font-size: 15px; color: #1a1a1a;">
             ${t.scheduleNow[locale]}
           </p>
-          ${emailButton(t.bookCall[locale], bookingUrl, { backgroundColor: branding.primaryColor })}
+          ${emailButton(t.bookCall[locale], bookingUrl, { branding: branding })}
         </td>
       </tr>
     </table>

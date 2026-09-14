@@ -10,6 +10,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { z } from 'zod';
+import { DEFAULT_PAYMENT_TERMS_DAYS } from '@/lib/payments/paymentTerms';
 
 const logger = createLogger({ module: 'InvoiceSettingsAPI' });
 
@@ -33,6 +34,15 @@ const invoiceSettingsSchema = z.object({
   invoice_payment_instructions: z.string().max(1000).optional(),
   invoice_footer_text: z.string().max(500).optional(),
   invoice_number_prefix: z.string().max(10).optional(),
+  /*
+   * Days to pay, for invoices this business raises WITHOUT a human present —
+   * a quote being accepted, a milestone billed. The manual invoice dialog still
+   * lets the owner choose per invoice; this is what everything else assumes.
+   *
+   * Bounded rather than free: 0 is "due on receipt" and a year is already an
+   * unusual arrangement, so anything outside that is a typo.
+   */
+  invoice_payment_terms_days: z.coerce.number().int().min(0).max(365).optional(),
 
   // Tax, as the business states it. Display only — the platform never adds tax
   // to a price. The rate bounds match the database CHECK: a value outside them
@@ -141,6 +151,9 @@ export async function PUT(request: NextRequest) {
         invoice_payment_instructions: settings.invoice_payment_instructions || null,
         invoice_footer_text: settings.invoice_footer_text || null,
         invoice_number_prefix: settings.invoice_number_prefix || 'INV',
+        // `??`, not `||`: zero means due on receipt, which `||` would discard.
+        invoice_payment_terms_days:
+          settings.invoice_payment_terms_days ?? DEFAULT_PAYMENT_TERMS_DAYS,
 
         // Passed through undefined-and-all: the repository skips keys that are
         // `undefined`, so a caller that does not send these leaves them as they

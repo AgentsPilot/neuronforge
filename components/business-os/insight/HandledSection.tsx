@@ -44,9 +44,9 @@ export function HandledSection({ entries, standalone = false }: HandledSectionPr
       className="hdl"
       style={{
         direction: isRTL ? 'rtl' : 'ltr',
-        background: standalone ? '#FFFFFF' : undefined,
-        border: standalone ? '1px solid #E7E9F1' : undefined,
-        borderTop: standalone ? undefined : '1px solid #E7E9F1',
+        background: standalone ? 'var(--v2-surface)' : undefined,
+        border: standalone ? '1px solid var(--v2-border)' : undefined,
+        borderTop: standalone ? undefined : '1px solid var(--v2-border)',
         borderRadius: standalone ? '18px' : undefined,
         padding: '15px 22px 18px',
       }}
@@ -59,7 +59,7 @@ export function HandledSection({ entries, standalone = false }: HandledSectionPr
           fontWeight: 600,
           letterSpacing: '0.09em',
           textTransform: 'uppercase',
-          color: '#697187',
+          color: 'var(--v2-text-secondary)',
           marginBottom: '10px',
           fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
         }}
@@ -87,7 +87,7 @@ export function HandledSection({ entries, standalone = false }: HandledSectionPr
                 width: '18px',
                 height: '18px',
                 borderRadius: '50%',
-                background: '#E6F8F0',
+                background: 'rgba(34, 197, 139, 0.12)',
                 flexShrink: 0,
                 display: 'grid',
                 placeItems: 'center',
@@ -98,7 +98,7 @@ export function HandledSection({ entries, standalone = false }: HandledSectionPr
                 style={{
                   width: '10px',
                   height: '10px',
-                  color: '#1B9A6C',
+                  color: '#22C58B',
                   strokeWidth: 3.2,
                 }}
               />
@@ -111,7 +111,7 @@ export function HandledSection({ entries, standalone = false }: HandledSectionPr
                   fontSize: '13.5px',
                   fontWeight: 600,
                   display: 'block',
-                  color: '#131A2B',
+                  color: 'var(--v2-text-primary)',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
               >
@@ -120,7 +120,7 @@ export function HandledSection({ entries, standalone = false }: HandledSectionPr
               <small
                 style={{
                   fontSize: '12.5px',
-                  color: '#697187',
+                  color: 'var(--v2-text-secondary)',
                   display: 'block',
                   fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
                 }}
