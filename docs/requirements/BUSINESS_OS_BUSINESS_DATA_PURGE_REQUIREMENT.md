@@ -1,10 +1,10 @@
 # Requirement: Business OS — Business Data Reset & Purge
 
-> **Last Updated**: 2026-09-14
+> **Last Updated**: 2026-09-15
 
 **Created by:** BA
 **Date:** 2026-09-14
-**Status:** ✅ **Approved by SA — ready for Dev workplanning**
+**Status:** ✅ **Approved by SA — in implementation.** Amended 2026-09-15 from SA's workplan review (FR-26, FR-28, AC-26, AC-40; D11, D12; §8.7 closed).
 
 ## Overview
 
@@ -12,11 +12,12 @@ A capability to delete and clean up **all data belonging to one business** in Bu
 
 Because Stripe — not this database — executes recurring payment schedules and refunds, the deletion is **gated by a live pre-flight check of external payment state**. If the business has money in flight in either direction, the purge **refuses to run**. See [§10.5](#105-pre-flight-external-state-gate).
 
-The investigation in §§1–8 establishes the blast radius. §9 records product decisions D1–D10; §10 is the requirement. §11 carries the two follow-throughs that remain open during Dev. §13 and §14 are SA's two review passes.
+The investigation in §§1–8 establishes the blast radius. §9 records product decisions D1–D12; §10 is the requirement. §11 carries the one follow-through still open during Dev. §13 and §14 are SA's review passes.
 
-**Two structural findings drive everything:**
+**Three structural findings drive everything:**
 - [§2](#2-there-is-no-business-id) — there is no `business_id`. A *business* is a **user account**.
-- [§1.2](#12-prior-art-an-existing-deletion-script-in-this-repo-is-broken-in-exactly-the-way-sa-warned-about) — the repo already contains a user-deletion script, and it embodies precisely the platform-wide-delete failure SA identified as this feature's real risk.
+- [§1.2](#12-prior-art-an-existing-deletion-script-in-this-repo-is-broken-in-exactly-the-way-sa-warned-about) — the repo contained a user-deletion script embodying precisely the platform-wide-delete failure SA identified as this feature's real risk.
+- [§1.3](#13-a-third-deletion-path-exists-and-it-is-customer-facing) — a **live, customer-facing** delete path already ships, and it is broken in a way that makes it worse than having none.
 
 ---
 
@@ -30,7 +31,7 @@ The investigation in §§1–8 establishes the blast radius. §9 records product
 6. [Ordering constraints & trigger hazards](#6-ordering-constraints--trigger-hazards)
 7. [Non-table state](#7-non-table-state)
 8. [The exclusion set — enumerated](#8-the-exclusion-set--enumerated)
-9. [Product decisions (D1–D10)](#9-product-decisions-d1d10)
+9. [Product decisions (D1–D12)](#9-product-decisions-d1d12)
 10. [Requirement](#10-requirement)
 11. [Open follow-throughs during Dev](#11-open-follow-throughs-during-dev)
 12. [Notes on integration points](#12-notes-on-integration-points)
@@ -55,11 +56,12 @@ The investigation in §§1–8 establishes the blast radius. §9 records product
 | `supabase/migrations/20260828b_payment_refund_ledger.sql` | Refund lifecycle, reconciler queue, dashboard-issued-refund class |
 | `lib/repositories/*.ts` (54 files) | Which tables have an owning repository |
 | `vercel.json` | The 11 crons |
-| SA review passes 1 & 2 (§13, §14) | Independent verification of B1–B4, T1, T2, buckets, crons, repositories; the T5 correction; two independent completeness sweeps |
+| SA review passes 1 & 2 (§13, §14) | Independent verification of B1–B4, T1, T2, buckets, crons, repositories; the T5 correction; two completeness sweeps |
+| **SA workplan review 2026-09-15** ([workplan §12](/docs/workplans/business-os-business-data-purge.md#12-sa-review-notes)) | The FR-26/FR-28/AC-26/AC-40 amendments; D11; D12; §8.7's static closure. **Corrected two claims this document had wrong** — see §6.3 and FR-26 |
 
 ### 1.1 Migration files are NOT proof the table exists — and neither is `catalog.generated.ts` alone
 
-[Insights hazard H6](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md#11-known-state--hazards) records **58 migrations deliberately not applied**. SA additionally established that `catalog.generated.ts` introspects only a **hard-coded 25-table list** and its committed output is **stale** — so it proves presence for the tables it covers and nothing about the rest.
+[Insights hazard H6](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md#11-known-state--hazards) records **58 migrations deliberately not applied**. SA additionally established that `catalog.generated.ts` introspects only a **hard-coded 25-table list** and its committed output is **stale**.
 
 | Tag | Meaning |
 |---|---|
@@ -69,9 +71,9 @@ The investigation in §§1–8 establishes the blast radius. §9 records product
 
 **Tag counts: 22 ✅ · 35 📄 · 3 ❓.**
 
-### 1.2 Prior art: an existing deletion script in this repo is broken in exactly the way SA warned about
+### 1.2 Prior art: an existing deletion script in this repo was broken in exactly the way SA warned about
 
-`supabase/SQL Scripts/delete_user_by_id.sql` is a pre-existing "delete all data for a user" script, headed *"FOR TESTING ONLY"*. It is the closest prior art to this feature — and it contains the exact defect SA named as the real service-role vector:
+`supabase/SQL Scripts/delete_user_by_id.sql` was a pre-existing "delete all data for a user" script, headed *"FOR TESTING ONLY"*, containing the exact defect SA named as the real service-role vector:
 
 ```sql
 DECLARE
@@ -80,13 +82,29 @@ BEGIN
     DELETE FROM agent_executions WHERE user_id = user_id;
 ```
 
-The PL/pgSQL variable is named `user_id`, identical to the column. Under `plpgsql.variable_conflict = use_variable` this resolves to `WHERE <var> = <var>` — **constantly true — and deletes every row in the table, for every user on the platform.** Under the PostgreSQL default (`error`) it raises "column reference is ambiguous" and deletes nothing. **Which of those happens is a database setting, not a property of the file.**
+The PL/pgSQL variable is named `user_id`, identical to the column. Under `plpgsql.variable_conflict = use_variable` this resolves to `WHERE <var> = <var>` — **constantly true — deleting every row in the table, for every user on the platform.** Under the PostgreSQL default it raises "column reference is ambiguous". **Which of those happens is a database setting, not a property of the file.**
 
-Three consequences:
+Consequences, all still binding:
 
-1. It is **live evidence** for SA's ruling that the guard belongs on *scoping*, not on ownership pre-checks. NFR **Security — delete scoping** and **AC-45** exist because of it.
-2. The purge RPC must **never bind a parameter whose name matches a column it filters on**. Mandated: `p_user_id`, consistent with `claim_due_payment_reminders(p_runner, p_batch)`.
-3. **The file is a live hazard.** SA ruled it should be **removed, not repaired** — repairing it would create a second deletion path with no gate, no snapshot, no audit and no descriptor guard, which is the second-code-path problem D6a forbids, applied to deletion itself. FU-13; handled outside this cycle. §1.2 preserves the lesson either way.
+1. **Live evidence** for SA's ruling that the guard belongs on *scoping*, not ownership pre-checks. NFR **Security — delete scoping** and **AC-45** exist because of it.
+2. The purge RPC must **never bind a parameter whose name matches a column it filters on**. Mandated: `p_user_id`.
+3. The file itself was **removed** (FU-13, PR #39) rather than repaired — a repaired script is a second deletion path with no gate, snapshot, audit or descriptor guard.
+
+### 1.3 A third deletion path exists, and it is customer-facing
+
+Surfaced by Dev during workplanning and verified line-by-line by SA. `components/business-os/settings/SecurityTab.tsx:305` renders a **"Delete account"** button calling **`POST /api/user/delete-account`**. It ships today, to customers, and this requirement had never mentioned it.
+
+| Verified fact | Consequence |
+|---|---|
+| It deletes `auth.users` | **Violates D3 and FR-30**, which forbid that absolutely |
+| It deletes `user_preferences` | That is a **`K*` table** — retained by both levels under this requirement (§3.14) |
+| It touches **exactly one** of the 60 in-scope tables (#60) | The other 59 are left behind entirely |
+| It audits **intent but never outcome** | A failed run is indistinguishable from a successful one in the audit trail |
+| It **500s at phase 6 for every onboarded user** — 16 `auth.users` FKs have no `ON DELETE` clause | And it does so **after phases 1–5 have irreversibly run**, so it reliably produces a half-deleted account and then reports failure |
+
+The last row is why this is worse than having no button: a path that always fails *after* destroying part of the account leaves more unaccounted residue than one that never starts. **D11** puts it in scope.
+
+> A **fourth** destructive path — `/api/auth/cleanup-incomplete`, which deletes `auth.users` on a predicate the live onboarding flow never writes — was also found during workplanning. It is **out of this cycle's scope and escalated separately** (workplan §12.9 E1), noted here only because it bears on this feature's premise: this codebase has accumulated several destructive paths nobody inventoried, and gating, scoping, snapshotting and auditing deletion is the whole point of this work.
 
 ---
 
@@ -117,13 +135,13 @@ auth.users(id)
 
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
-| 1 | `business_profiles` | `user_id` **1:1** | K | ✅ | UNIQUE `user_code`, UNIQUE partial `subdomain`. **No DELETE RLS policy** |
+| 1 | `business_profiles` | `user_id` **1:1** | K | ✅ | UNIQUE `user_code`, UNIQUE partial `subdomain`. **No DELETE RLS policy**. Reset retains it — the enumeration source for `calendar-sync` (FR-26) |
 
 ### 3.2 CRM — 5 tables
 
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
-| 2 | `crm_contacts` | `user_id` | D | ✅ | CRM hub — referenced by 13 tables. **BEFORE DELETE trigger T1** |
+| 2 | `crm_contacts` | `user_id` | D | ✅ | CRM hub — referenced by 13 tables. **BEFORE DELETE trigger T1**. One of `insight-detect`'s four enumeration sources |
 | 3 | `crm_activities` | `user_id` + contact CASCADE | D | ✅ | **Deleted LAST inside the RPC** (T5 ordering) |
 | 4 | `crm_pipeline_stages` | `user_id` | K | ✅ | Seeded by `/api/onboarding/build` |
 | 5 | `crm_tasks` | `user_id` + contact SET NULL | D | ✅ | |
@@ -137,7 +155,7 @@ auth.users(id)
 | 8 | `website_blocks` | **indirect** (`page_id` CASCADE) | D | ✅ | **No `user_id`.** Child ids captured in snapshot (AC-5) |
 | 9 | `website_content` | `user_id` **1:1** | D | 📄 | **No DELETE RLS policy** |
 | 10 | `website_page_views` | `user_id` + page CASCADE | D | ✅ | **Open INSERT policy** `WITH CHECK (true)` |
-| 11 | `websites` | unknown | D | ❓ | Queried only by the two [known-dead detectors (H2)](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md#11-known-state--hazards) — probably phantom, must be resolved not assumed |
+| 11 | `websites` | unknown | D | ❓ | Queried only by the two [known-dead detectors (H2)](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md#11-known-state--hazards) — probably phantom |
 | — | `website_analytics_summary` (VIEW) | — | — | 📄 | No rows of its own |
 
 ### 3.4 Scheduling — 4 tables
@@ -145,15 +163,15 @@ auth.users(id)
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
 | 12 | `scheduling_services` | `user_id` | D | ✅ | |
-| 13 | `scheduling_bookings` | `user_id` | D | ✅ | Blocked by **B2**; reached by **T1** |
+| 13 | `scheduling_bookings` | `user_id` | D | ✅ | Blocked by **B2**; reached by **T1**. One of `insight-detect`'s four enumeration sources |
 | 14 | `scheduling_availability_exceptions` | `user_id` | D | 📄 | |
-| 15 | `external_calendar_events` | `user_id` | D | 📄 | Re-populated by `calendar-sync` |
+| 15 | `external_calendar_events` | `user_id` | D | 📄 | **Repopulated by `calendar-sync` within ~5 min after a Reset** (FR-26) |
 
 ### 3.5 Payments — 14 tables
 
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
-| 16 | `payment_invoices` | `user_id` | D | ✅ | Unpaid rows drive **C3** |
+| 16 | `payment_invoices` | `user_id` | D | ✅ | Unpaid rows drive **C3**. One of `insight-detect`'s four enumeration sources |
 | 17 | `payment_transactions` | `user_id` | D | ✅ | Blocked by **B1**. Pending rows drive **C2** |
 | 18 | `payment_refunds` | `user_id` | D | ✅ | `transaction_id … RESTRICT`. SELECT-only RLS. `status='pending'` drives **C2** |
 | 19 | `payment_plan_subscriptions` | `user_id` | D | ✅ | `booking_id … RESTRICT`. SELECT-only RLS. Drives **C1**. **B2 + B4** |
@@ -183,20 +201,20 @@ auth.users(id)
 
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
-| 36 | `user_intake_settings` | `user_id` **1:1** | K | 📄 | Created by `20260728_create_intake_tables.sql` — **a different and older migration than #37, so #37's ❓ does not propagate here** (SA-verified) |
-| 37 | `business_intake_forms` | `user_id` | K | ❓ | In the generator's `TABLES` list but **absent from `catalog.generated.ts`**, which `process.exit(1)`s on a missing table — so the snapshot predates it. Resolved by FR-1 in Dev's first hour; see §10.2 ¶2 and §11.1 |
+| 36 | `user_intake_settings` | `user_id` **1:1** | K | 📄 | Created by `20260728_create_intake_tables.sql` — **older than #37, so #37's ❓ does not propagate here** |
+| 37 | `business_intake_forms` | `user_id` | K | ❓ | Absent from `catalog.generated.ts`, which `process.exit(1)`s on a missing table — the snapshot predates it. Resolved by FR-1 in Dev's first hour; §10.2 ¶2, §11.1 |
 
 ### 3.8 Onboarding & chat — 7 tables
 
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
-| 38 | `onboarding_conversations` | `user_id` | D | 📄 | Append-only RLS. `/api/onboarding/chat/reset` already hard-deletes these |
-| 39 | `onboarding_prompt_ideas` | `user_id` | D | 📄 | Written by `app/api/onboarding/generate-prompt-ideas/route.ts` |
+| 38 | `onboarding_conversations` | `user_id` | D | 📄 | Append-only RLS |
+| 39 | `onboarding_prompt_ideas` | `user_id` | D | 📄 | |
 | 40 | `command_sessions` | `user_id` | D | 📄 | |
 | 41 | `business_chat_conversation` | `user_id` is **PK** | D | 📄 | |
-| 42 | `business_chat_action_log` | `user_id` | D | 📄 | UNIQUE `idempotency_key` — deleting re-arms plan-level sends. **Accepted; see FR-24** |
+| 42 | `business_chat_action_log` | `user_id` | D | 📄 | UNIQUE `idempotency_key` — deleting re-arms plan-level sends. **Accepted; FR-24** |
 | 43 | `business_chat_saved_plans` | `user_id` | D | 📄 | |
-| 44 | `business_chat_plan_cache` | `user_id` **NULLABLE** | D (own rows only) | 📄 | ⚠️ `user_id IS NULL` = portable, cross-tenant — **excluded (§8)**. Those surviving rows are also *why* a `planId` can recur post-purge (FR-24) |
+| 44 | `business_chat_plan_cache` | `user_id` **NULLABLE** | D (own rows only) | 📄 | ⚠️ `user_id IS NULL` = portable, cross-tenant — **excluded (§8.2)**. Those surviving rows are why a `planId` can recur post-purge (FR-24) |
 
 ### 3.9 Capabilities — 2 tables
 
@@ -216,8 +234,8 @@ auth.users(id)
 
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
-| 49 | `channel_connections` | `user_id` | K | ✅ | Holds `account_token`. **Always deleted by Purge** regardless of checkbox |
-| 50 | `channel_metrics_daily` | `user_id` | D | ✅ | |
+| 49 | `channel_connections` | `user_id` | K | ✅ | Holds `account_token`. **Always deleted by Purge** regardless of checkbox. Reset retains it **including `last_synced_at`**, which is why channel stats return only on the next scheduled sync (FR-26) |
+| 50 | `channel_metrics_daily` | `user_id` | D | ✅ | Repopulated by `channel-metrics-sync` on the connection's next due sync — **up to ~20 h** |
 
 ### 3.12 Insights — 7 tables
 
@@ -226,7 +244,7 @@ auth.users(id)
 | 51 | `insights` | `user_id` | D | ✅ | Self-FK `correlation_parent_id` SET NULL |
 | 52 | `owner_insight_history` | `user_id` + insight CASCADE | D | 📄 | |
 | 53 | `insight_outcomes` | `user_id` | D | 📄 | **A 7th insight table** (`OutcomeRepository.ts`) — absent from both the data-model doc and the as-built Insights doc, which says six |
-| 54 | `business_events` | `user_id` | D | 📄 | Hazard H1 — no emitters; likely empty |
+| 54 | `business_events` | `user_id` | D | 📄 | Hazard H1 — no emitters. One of `insight-detect`'s four enumeration sources |
 | 55 | `derived_metrics` | `user_id` | D | 📄 | |
 | 56 | `insight_automations` | `user_id` | D | 📄 | **Blocks B3** |
 | 57 | `business_health_summaries` | `user_id` | D | 📄 | |
@@ -242,7 +260,7 @@ auth.users(id)
 
 | # | Table | Scoping | R | Status | Notes |
 |---|---|---|---|---|---|
-| 60 | **`user_preferences`** | `user_id` | **K\*** | 📄 | 🔒 **RETAINED ON BOTH LEVELS.** Holds `preferred_language` and currency — read by `InsightRepository.ts:420`, `LanguageContext.tsx`, `BookingEmailService`, `CurrencyService`. Two reasons: deleting it mid-run resets the owner's language **while they read the result screen**, and — SA's addition — it is an **account preference attached to a login that survives every level** (D3), so deleting it renders the owner's *next sign-in* in the wrong language. A worse outcome, for one row of non-sensitive data, than keeping it |
+| 60 | **`user_preferences`** | `user_id` | **K\*** | 📄 | 🔒 **RETAINED ON BOTH LEVELS.** Holds `preferred_language` and currency. Two reasons: deleting it mid-run resets the owner's language **while they read the result screen**, and it is an **account preference on a login that survives every level** (D3), so deleting it renders the owner's *next sign-in* in the wrong language. ⚠️ **The existing `/api/user/delete-account` route deletes this table** — see §1.3, D11 |
 
 ### 3.15 Still unresolved — answered by FR-1 in Dev's first hour
 
@@ -259,16 +277,16 @@ auth.users(id)
 
 | Table | Scoping | Disposition |
 |---|---|---|
-| `agent_prompt_threads` | `user_id` CASCADE | **In the "delete my agents" checkbox** — holds the user's own agent-creation prompts |
+| `agent_prompt_threads` | `user_id` CASCADE | **In the "delete my agents" checkbox** |
 | `agent_prompt_workflow_generation_sessions` | `user_id` | **Same** |
-| `user_memory` | `user_id` CASCADE | **Same** — the user's own remembered preferences; leaving it after "delete my agents" is the same defect |
+| `user_memory` | `user_id` CASCADE | **Same** — the user's own remembered preferences |
 | `audit_trail` | `user_id` **SET NULL** | The third opt-in checkbox |
-| `advisor_reports` | `user_id` + `org_id` | **Excluded** — org-analytics advisor, a different subsystem from Business OS Insights (§8) |
-| `automation_slas` | `user_id` + `org_id` + `agent_id` | **Excluded** — workflow/agent SLAs (§8) |
-| `metric_baselines` | `user_id` + `org_id` | **Excluded** — agent-execution analytics, not `derived_metrics` (§8) |
-| `group_metrics_rollup` | `user_id` / `org_id` | **Excluded** — workflow-group analytics (§8) |
-| `storage_usage` | `user_id` | **Excluded** — platform quota accounting; deleting it corrupts billing state (§8) |
-| `agent_versions`, `usage_records`, `audit_logs`, `user_api_keys`, `contact_submissions` | named only by `delete_user_by_id.sql` | ⚠️ **Existence unverified — these are probably phantom names in a stale script.** SA confirmed **no `CREATE TABLE` in either DDL directory and no `.from()` reference anywhere in `lib/` or `app/`**. They are listed so FR-1 can rule on them, **not** because they were found and excluded. **Caveat: `contact_submissions` is intake-shaped** — if FR-1 finds it live and user-scoped, it needs a **fresh ruling, not the blanket exclusion** |
+| `advisor_reports` | `user_id` + `org_id` | **Excluded** — org-analytics advisor, a different subsystem (§8.6) |
+| `automation_slas` | `user_id` + `org_id` + `agent_id` | **Excluded** (§8.6) |
+| `metric_baselines` | `user_id` + `org_id` | **Excluded** — agent-execution analytics, not `derived_metrics` (§8.6) |
+| `group_metrics_rollup` | `user_id` / `org_id` | **Excluded** (§8.6) |
+| `storage_usage` | `user_id` | **Excluded** — platform quota accounting (§8.5) |
+| `agent_versions`, `usage_records`, `audit_logs`, `user_api_keys`, `contact_submissions` | named only by the now-removed `delete_user_by_id.sql` | ⚠️ **Existence unverified — probably phantom names in a stale script.** No `CREATE TABLE` in either DDL directory and no `.from()` reference (SA-verified). Listed so FR-1 can rule, **not** because they were found and excluded. **Caveat: `contact_submissions` is intake-shaped** — if FR-1 finds it live and user-scoped it needs a **fresh ruling, not the blanket exclusion** |
 
 ---
 
@@ -297,11 +315,13 @@ auth.users(id)
 
 `business_profiles`, `crm_contacts`, `crm_activities`, `crm_pipeline_stages`, `payment_processors`, `payment_plans`, `payment_events`, `payment_automation_rules`, `onboarding_conversations`, `website_pages` declare the FK with **no ON DELETE clause** (= NO ACTION). "Delete the auth user and let CASCADE handle it" does not work — and is forbidden anyway (D3).
 
-> ⚠️ The [duplicate CRM migrations](/docs/architecture/BUSINESS_OS_DATA_MODEL.md#3-crm) disagree about CASCADE **and about triggers** — `20260721` creates `update_crm_contacts_timestamp`, `20260722` creates `update_crm_contacts_updated_at_trigger`, and `CREATE TABLE IF NOT EXISTS` means the second still created *its* triggers. Resolved by FR-1's dump (`pg_constraint` + `pg_trigger` + `pg_policies`).
+> This is not theoretical. SA counted **16 `auth.users` FKs with no `ON DELETE` clause**, which is exactly why the existing `/api/user/delete-account` route 500s at its final phase for every onboarded user (§1.3).
+
+> ⚠️ The [duplicate CRM migrations](/docs/architecture/BUSINESS_OS_DATA_MODEL.md#3-crm) disagree about CASCADE **and about triggers**. Resolved by FR-1's dump (`pg_constraint` + `pg_trigger` + `pg_policies`).
 
 ### 5.3 RLS makes this a service-role operation
 
-~20 tables give the logged-in user no DELETE policy: `business_profiles`, `website_content`, `onboarding_conversations` (append-only), `payment_refunds` (SELECT only), `payment_plan_subscriptions` (SELECT only), all four `business_chat_*`, and every insight/kernel/channel-metrics table. Hence the §10.9 **delete-scoping** guard.
+~20 tables give the logged-in user no DELETE policy. Hence the §10.9 **delete-scoping** guard.
 
 ---
 
@@ -314,10 +334,10 @@ auth.users(id)
 | **B1** | `payment_transactions` | `payment_refunds.transaction_id … ON DELETE RESTRICT` | `payment_refunds` |
 | **B2** | `scheduling_bookings` | `payment_plan_subscriptions.booking_id … ON DELETE RESTRICT` | `payment_plan_subscriptions` |
 | **B3** | `kernel_executions` | `insight_automations.last_run_execution_id` — no `ON DELETE` = NO ACTION | `insight_automations` |
-| **B4** | `crm_contacts` | **T1** fires `BEFORE DELETE ON crm_contacts` and deletes future `scheduling_bookings`, tripping **B2** from a direction B2 alone does not name | `payment_plan_subscriptions` before `crm_contacts`, not merely before bookings |
+| **B4** | `crm_contacts` | **T1** deletes future `scheduling_bookings`, tripping **B2** from a direction B2 alone does not name | `payment_plan_subscriptions` before `crm_contacts` |
 | B5 | `insights` | `owner_insight_history` CASCADE; kernel FKs SET NULL | — (safe) |
 
-B1 and B2 are deliberate (*"RESTRICT, not CASCADE: deleting a transaction must never silently erase the record that money was returned"*). The purge overrides them **by ordering**, never by altering a FK. ✅ All SA-confirmed against DDL.
+The purge overrides B1/B2 **by ordering**, never by altering a FK. ✅ All SA-confirmed against DDL.
 
 ### 6.2 Triggers
 
@@ -327,16 +347,31 @@ B1 and B2 are deliberate (*"RESTRICT, not CASCADE: deleting a transaction must n
 | T2 | `recompute_transaction_refund_state_trigger` | AFTER DELETE on `payment_refunds` | UPDATEs `payment_transactions` **including `status`** |
 | T3 | `propagate_refund_to_booking_trigger` | AFTER UPDATE on `payment_transactions` | UPDATEs `scheduling_bookings.payment_status` |
 | T4 | `update_invoice_on_payment` | Transaction changes | **Unscoped** — `WHERE id = NEW.invoice_id` |
-| **T5** | `log_*_activity` triggers | `AFTER INSERT OR UPDATE **OF status**` | ⚠️ **Corrected by SA — narrower than BA originally claimed.** A delete-only purge fires **exactly one** path: `payment_refunds` delete → T2 updates `payment_transactions.status` → `log_payment_activity_trigger` writes `crm_activities`. `propagate_refund_to_booking` writes `payment_status`, which `log_booking_activity_trigger` does **not** watch, so it does not fire. **One path — and AC-22 stands unchanged** |
+| **T5** | `log_*_activity` triggers | `AFTER INSERT OR UPDATE **OF status**` | ⚠️ **Corrected by SA.** A delete-only purge fires **exactly one** path: `payment_refunds` delete → T2 updates `payment_transactions.status` → `log_payment_activity_trigger` writes `crm_activities`. `propagate_refund_to_booking` writes `payment_status`, which `log_booking_activity_trigger` does **not** watch. **One path — AC-22 stands** |
 | T6 | `ensure_user_code_on_insert` | BEFORE INSERT on `business_profiles` | Re-seed after Purge generates a **new** `user_code`; Reset keeps it |
 
-**T5 is handled by ordering, not suppression.** `crm_activities` is deleted **last**, as the final statement inside the RPC transaction. Suppression is **not available**: `ALTER TABLE … DISABLE TRIGGER` is table-owner-only and `SET session_replication_role = replica` is superuser-only — neither is reliably available to the service role on Supabase.
+**T5 is handled by ordering, not suppression.** `crm_activities` is deleted **last**, as the final statement inside the RPC transaction. Suppression is **not available**: `ALTER TABLE … DISABLE TRIGGER` is table-owner-only and `SET session_replication_role = replica` is superuser-only.
 
 ### 6.3 Crons and public endpoints re-populate after commit
 
-Six of eleven crons write into the purge set: `insight-detect` (15 min), `insight-metrics` (daily 03:00), `insight-automations` (5 min), `channel-metrics-sync` (hourly :30), `calendar-sync` (5 min), `payment-reminders` / `payment-retry`. Plus two **public unauthenticated INSERT paths**: `website_page_views` and `smart_link_clicks`.
+Six of eleven crons write into the purge set. **The enumeration source is what decides whether a cron finds a business after a Reset** — and this document previously got that wrong:
 
-**Purge** starves them by removing `business_profiles`, `channel_connections`, `insight_automations`, `website_pages`, `smart_links`. **Reset** keeps `business_profiles`, so new `insights` appear within 15 minutes — FR-26 requires the UI to say so.
+| Cron | Schedule | Enumerates tenants from | Returns after a **Reset**? |
+|---|---|---|---|
+| `calendar-sync` | 5 min | `business_profiles` (**K**) | ✅ **Yes — ~5 min.** `calendar_last_synced_at` is retained and already stale |
+| `channel-metrics-sync` | hourly :30 | `channel_connections` (**K**) | ✅ **Yes — but on that connection's next scheduled sync, up to ~20 h.** `last_synced_at` is retained, so a Reset does not make the connection due |
+| `insight-detect` | 15 min | `payment_invoices` · `scheduling_bookings` · `crm_contacts` · `business_events` — **all four `D`** | ❌ **No.** Only once the owner creates new data |
+| `insight-metrics` | daily 03:00 | `D` tables | ❌ No |
+| `insight-automations` | 5 min | `insight_automations` (**D**) | ❌ No |
+| `payment-reminders` / `payment-retry` | daily 08:00 / hourly | `D` tables | ❌ No |
+
+Plus two **public unauthenticated INSERT paths**: `website_page_views` and `smart_link_clicks`.
+
+**Requirement implication (FR-14):** **Purge** removes the rows that make a business visible to every producer above. **Reset** deliberately keeps `business_profiles` and `channel_connections`, so what returns is calendar events and channel stats — **not insights**. FR-26 governs the copy.
+
+> ⚠️ **The earlier claim that "new `insights` appear within 15 minutes" after a Reset was false** and has been removed. It assumed `insight-detect` enumerates from `business_profiles`; it does not.
+>
+> *Noted in passing, not a change to this requirement:* each of `insight-detect`'s four enumeration selects carries `.limit(500)` with no pagination — a pre-existing tenant-coverage bug, irrelevant to the purge, worth its own follow-up.
 
 ---
 
@@ -353,21 +388,21 @@ Six of eleven crons write into the purge set: `insight-detect` (15 min), `insigh
 | External | Unpaid invoices owed to the business | 🛑 **BLOCKS** (C3) |
 | External | Connect account, saved customers, calendar events | 📋 Reported, non-blocking |
 | External | Emails already delivered | ❌ Irreversible |
-| External | `subdomain` — the `*.agentpilot.io` rewrite | ✅ Purge frees it; **the name becomes claimable by a different business** — FR-25 |
+| External | `subdomain` — the `*.agentpilot.io` rewrite | ✅ Purge frees it; **the name becomes claimable** — FR-25 |
 | Platform | `plugin_connections` · agents+threads+sessions+memory · `audit_trail` | ⚙️ Opt-in, off by default (§10.3) |
-| Platform | `profiles`, `auth.users` | 🚫 Never deleted (D3) |
+| Platform | `profiles`, `auth.users` | 🚫 Never deleted (D3) — **and the existing delete-account route violates this** (§1.3, D11) |
 
 ---
 
 ## 8. The exclusion set — enumerated
 
-> ⚠️ **This section is machine-readable input, not prose.** An `information_schema` enumeration (FR-1 route (a)) **cannot distinguish "Business OS" from "kernel"** — it returns every user-scoped table in the database. AC-37's "fails closed when a user-scoped table exists that the engine does not know about" is therefore only implementable if the engine holds an **enumerated known-and-excluded list** alongside its known-and-deleted list. A category name is not evaluable; **route (a) with prose categories fails closed permanently on its first run.** Every row below becomes one descriptor at `level: 'never'` in the §10.9 structure.
+> ⚠️ **Machine-readable input, not prose.** An `information_schema` enumeration (FR-1 route (a)) **cannot distinguish "Business OS" from "kernel"**. AC-37 is therefore only implementable if the engine holds an **enumerated known-and-excluded list** alongside its known-and-deleted list. Every row below becomes one descriptor at `level: 'never'`.
 
 ### 8.1 Global catalogs — no `user_id`
 
 | Table | Scope | Why |
 |---|---|---|
-| `capabilities` | `global` | Shared catalog, RLS off — deleting breaks every user |
+| `capabilities` | `global` | Shared catalog, RLS off |
 | `capability_building_blocks` | `global` | Same |
 | `website_templates` | `global` | Public read; breaks website creation platform-wide |
 | `intake_form_templates` | `global` | ❓ a DROP exists in `20260910_business_intake_forms.sql` — FR-1 confirms |
@@ -376,7 +411,7 @@ Six of eleven crons write into the purge set: `insight-detect` (15 min), `insigh
 
 | Table | Rule |
 |---|---|
-| `business_chat_plan_cache` **WHERE `user_id IS NULL`** | Portable rows shared by **all** tenants. Predicate must be `user_id = p_user_id`; **`<>`, `IS DISTINCT FROM` and `NOT IN` are forbidden** on this table — the danger is a future "tidy-up" rewriting equality as exclusion. These surviving rows are also why a `planId` can recur post-purge (FR-24) |
+| `business_chat_plan_cache` **WHERE `user_id IS NULL`** | Portable rows shared by **all** tenants. Predicate must be `user_id = p_user_id`; **`<>`, `IS DISTINCT FROM` and `NOT IN` are forbidden** — the danger is a future "tidy-up" rewriting equality as exclusion. These surviving rows are also why a `planId` can recur post-purge (FR-24) |
 
 ### 8.3 Retained Business OS tables
 
@@ -396,7 +431,7 @@ Six of eleven crons write into the purge set: `insight-detect` (15 min), `insigh
 
 | Table | Why |
 |---|---|
-| `subscriptions` | Billing state — never touched by this feature |
+| `subscriptions` | Billing state |
 | `usage_records` | ❓ existence unverified (§3.16); billing if present |
 | `storage_usage` | Platform quota accounting |
 
@@ -409,9 +444,7 @@ Six of eleven crons write into the purge set: `insight-detect` (15 min), `insigh
 | `metric_baselines` | Agent-execution analytics, not `derived_metrics` |
 | `group_metrics_rollup` | Workflow-group analytics |
 
-### 8.7 Kernel / V6 learning
-
-Seeded with the five SA's independent sweep surfaced, plus those evidenced by migration filenames:
+### 8.7 Kernel / V6 learning — ✅ closed
 
 | Table | Evidence |
 |---|---|
@@ -424,13 +457,13 @@ Seeded with the five SA's independent sweep surfaced, plus those evidenced by mi
 | `intent_examples` | `20260629_intent_examples_table.sql` |
 | `execution_model_tracking` | `20260629_execution_model_tracking.sql` |
 
-> **⚠️ This list is seeded, not closed — and Dev must close it.** Two migration files have **plural names implying multiple tables that BA has not enumerated**: `20260629_platform_learning_tables.sql` and `20260629_execution_optimization_tables.sql`. **Dev must expand both from FR-1's output and add one descriptor per table before the engine's first run**, because any kernel table missing from this list will fail the run closed. Recording the obligation rather than guessing names is deliberate — inventing a table name here would produce a descriptor that silently matches nothing.
+> ✅ **This list was previously marked "seeded, not closed", with a Dev obligation to expand two plural-named migrations. That obligation is now discharged — statically, not by enumeration.** SA opened both files: `20260629_platform_learning_tables.sql` creates **`workflow_patterns`** and **`global_failure_patterns`**, and **neither carries a `user_id`**, so neither can ever appear in FR-1 route (a)'s user-scoped enumeration and neither needs an exclusion descriptor. `20260629_execution_optimization_tables.sql` creates two tables already listed above. **Nothing is outstanding.** T2 confirms against the live dump rather than discovering.
 
 ### 8.8 Platform identity
 
 | Table | Why |
 |---|---|
-| `admin_users` | Locks admins out |
+| `admin_users` | Locks admins out — **and is now the authorisation source for the internal surface (D12)** |
 | `profiles` | D3 |
 | `auth.users` | D3 — never deleted, at any level, under any option |
 
@@ -438,11 +471,11 @@ Seeded with the five SA's independent sweep surfaced, plus those evidenced by mi
 
 `agent_versions` · `usage_records` · `audit_logs` · `user_api_keys` · `contact_submissions`
 
-No `CREATE TABLE` in either DDL directory and no code reference (SA-verified). Probably phantom names in a stale script. **If FR-1 finds any of them live and user-scoped it needs a ruling, not a default** — and **`contact_submissions` specifically is intake-shaped**, so it must not inherit the blanket exclusion.
+No `CREATE TABLE` in either DDL directory and no code reference (SA-verified). **If FR-1 finds any live and user-scoped it needs a ruling, not a default** — and **`contact_submissions` is intake-shaped**, so it must not inherit the blanket exclusion.
 
 ---
 
-## 9. Product decisions (D1–D10)
+## 9. Product decisions (D1–D12)
 
 | # | Decision | Ruling |
 |---|---|---|
@@ -455,13 +488,15 @@ No `CREATE TABLE` in either DDL directory and no code reference (SA-verified). P
 | **D6a** | Gate scope | **Hard block on both surfaces. No override, no bypass flag** |
 | **D6b** | In-flight refunds | `payment_refunds.status='pending'` folds into **C2** |
 | **D7** | Grace period | **None.** Immediate on typed confirmation |
-| **D8** | `email_unsubscribes` | **RETAINED on both levels.** BA proposed deletion; SA overruled because `auth.users` survives (D3), so the same `user_id` can re-onboard and resume emailing people who opted out. **Consequence accepted: the customer copy must not claim total erasure** (FR-23) |
-| **D9** | Customer surface | **FLAG-GATED.** Internal `/test-business-os` unflagged; customer surface behind `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE`, off by default. Un-gating requires **AC-2, AC-5, AC-10, AC-13, AC-16, AC-24, AC-37** demonstrated on a real account. The flag hides the **surface**, never the **gate** |
-| **D10** | Stripe key | **No read-only credential exists today** — only `STRIPE_SECRET_KEY` (53 references). Provisioning `STRIPE_RESTRICTED_KEY_READONLY` is a Stripe-dashboard + Vercel-env task, **same blocker shape as `CRON_SECRET`** — **an external dependency with an owner, not a blocker on starting work.** Until it lands **the gate runs on the fully-privileged key — a known, time-boxed state.** FU-12 |
+| **D8** | `email_unsubscribes` | **RETAINED on both levels.** BA proposed deletion; SA overruled because `auth.users` survives (D3), so the same `user_id` can re-onboard and resume emailing people who opted out. **The customer copy must not claim total erasure** (FR-23) |
+| **D9** | Customer surface | **FLAG-GATED.** Customer surface behind `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE`, off by default. Un-gating requires **AC-2, AC-5, AC-10, AC-13, AC-16, AC-24, AC-37** demonstrated on a real account. ⚠️ **Amended by D12** — the internal surface is *not* simply "unflagged"; it is admin-gated server-side, because without that D9's staging is a fiction |
+| **D10** | Stripe key | **No read-only credential exists today** — only `STRIPE_SECRET_KEY` (53 references). Provisioning `STRIPE_RESTRICTED_KEY_READONLY` is a Vercel-env task, **same blocker shape as `CRON_SECRET`** — an external dependency with an owner, not a blocker on starting work. Until it lands **the gate runs on the fully-privileged key — a known, time-boxed state.** FU-12 |
+| **D11** | **The existing "Delete account" button is IN SCOPE** *(new, 2026-09-15)* | The customer-facing button at `SecurityTab.tsx:305` → `POST /api/user/delete-account` (§1.3) is **this feature's problem, not a separate one.** The user **rejected** replacing it with a support-request message — self-service erasure stays. **Dev decides and justifies between: (a)** reuse the existing button as the customer-facing surface and build the correct functionality behind it, or **(b)** build the new surface and formally deprecate the old button. **Decision pending Dev's justification**; either way the route's current behaviour — deleting `auth.users` (violating D3/FR-30), deleting the `K*` `user_preferences`, touching 1 of 60 tables, auditing intent but never outcome, and 500ing at phase 6 after phases 1–5 have irreversibly run — must not survive this cycle |
+| **D12** | **Internal-surface authorisation moves server-side to `AdminAccessService`** *(new, 2026-09-15)* | SA **retracted** its first-pass approval of shipping the internal surface "unflagged". `/test-business-os` is on the middleware skip-onboarding list with **no admin gate**, and the page gates on `useAuth()` only — so an unflagged internal Purge would be **reachable by every signed-in customer who knows the URL**, while the polished surface sat behind a flag. That makes D9's staged rollout a fiction. **The user chose platform admins via `AdminAccessService`** (the `admin_users` table). The control is **server-side on the preview and commit routes**, not on tab visibility — a `NEXT_PUBLIC_` flag is a rendering hint, never an authorisation boundary; the tab renders only after that server check resolves. **Per CLAUDE.md § Security Rules, `profiles.role` must never be used for this** — it is user-writable and self-promotable; `admin_users` is the only trusted admin signal |
 
 ### BA's position on D8, preserved
 
-BA proposed deleting `email_unsubscribes`, reasoning that a purged business cannot send. **That premise was wrong** — D3 keeps `auth.users`, so the same login re-onboards under the same `user_id`, sequences are rebuilt, and the list that would have stopped those sends is gone. SA's overrule is correct and BA does not contest it.
+BA proposed deleting `email_unsubscribes`, reasoning that a purged business cannot send. **That premise was wrong** — D3 keeps `auth.users`, so the same login re-onboards under the same `user_id`. SA's overrule is correct and BA does not contest it.
 
 ### ⚠️ Residual risk
 
@@ -470,6 +505,7 @@ BA proposed deleting `email_unsubscribes`, reasoning that a purged business cann
 3. **Liveness** — a Stripe outage means you cannot delete. A refusal, never a false pass.
 4. **`email_unsubscribes` and `user_preferences` survive** — the copy must be honest (FR-23).
 5. **The gate runs on a fully-privileged key** until FU-12 lands (D10).
+6. **A broken customer-facing delete path ships today** until D11 resolves (§1.3).
 
 ---
 
@@ -496,12 +532,12 @@ BA proposed deleting `email_unsubscribes`, reasoning that a purged business cann
 | All other §3 tables | Deleted | Deleted |
 | Storage buckets | Emptied | Emptied |
 | Re-run tests without onboarding? | **Yes** | No |
-| Cron re-population | Possible (§6.3) | Starved |
+| What returns on a timer | Calendar events (~5 min), channel stats (next sync, up to ~20 h). **Not insights** — FR-26 | Nothing — all producers starved |
 
 **Re-seed divergence:**
 
-1. **`user_code` / `subdomain`.** Reset keeps them, so `/c/{userCode}` links and the public address still resolve. Purge releases both; a re-seed fires T6 and generates a **new** `user_code`, and the subdomain becomes claimable by a different business (FR-25).
-2. **Intake.** ⚠️ **Contingent, and narrower than first stated.** The **settings** half is firm: `user_intake_settings` (#36) comes from `20260728_create_intake_tables.sql`, a different and older migration, so Reset keeps the business's intake configuration regardless. The **forms** half depends on `business_intake_forms` (#37, ❓): *if it exists*, Reset keeps the `draft` and `published` rows (one each, partial unique indexes) so re-testing needs no regeneration, and Purge loses archived versions and the readability of old submissions. **If FR-1 finds it absent, this paragraph's second half is void and the table drops out of the purge set.** Settled from FR-1's output **before the workplan goes to SA code review** — not a reason to delay Dev.
+1. **`user_code` / `subdomain`.** Reset keeps them, so `/c/{userCode}` links and the public address still resolve. Purge releases both; a re-seed fires T6 and generates a **new** `user_code`, and the subdomain becomes claimable (FR-25).
+2. **Intake.** ⚠️ **Contingent, and narrow.** The **settings** half is firm: `user_intake_settings` (#36) comes from an older migration, so Reset keeps the business's intake configuration regardless. The **forms** half depends on `business_intake_forms` (#37, ❓): *if it exists*, Reset keeps the `draft` and `published` rows so re-testing needs no regeneration, and Purge loses archived versions. **If FR-1 finds it absent, this half is void and the table drops out of the purge set.** Settled from FR-1's output **before the workplan goes to SA code review**.
 3. **Capabilities.** Reset keeps the dashboard's tabs; Purge returns to pre-onboarding state.
 4. **Stripe.** Reset keeps Connect, so test payments work immediately.
 
@@ -515,7 +551,7 @@ BA proposed deleting `email_unsubscribes`, reasoning that a purged business cann
 
 Constraints:
 - `auth.users` / `profiles` never deleted, under any combination.
-- **Purge always deletes `channel_connections`** regardless of the integrations checkbox. The UI must not imply otherwise.
+- **Purge always deletes `channel_connections`** regardless of the integrations checkbox.
 - With the audit checkbox ticked, the audit record of *this* purge is still written afterwards.
 - **The gate runs before every deletion including the extras** — `plugin_connections` is one of the two sources of a Stripe account id (AC-33).
 
@@ -523,15 +559,16 @@ Constraints:
 
 | | `/test-business-os` → Danger Zone | Account settings → Delete my business |
 |---|---|---|
-| Flag | **Unflagged** | **`NEXT_PUBLIC_ENABLE_BUSINESS_DELETE`, off by default (D9)** |
-| Auth | `getUser()`, session user only | `getUser()`, session user only |
+| **Authorisation** | **`AdminAccessService` (`admin_users`), enforced server-side on the routes (D12)** | `getUser()`, session user only |
+| Flag | No `NEXT_PUBLIC_` flag — the admin check is the boundary | **`NEXT_PUBLIC_ENABLE_BUSINESS_DELETE`, off by default (D9)** |
+| Target | Caller's own session user only | Caller's own session user only |
 | Levels | Reset **and** Purge | Purge |
 | Gate | Enforced, no override | Enforced, no override |
 | Copy | Technical; table names and counts | Plain language, localised, no table names |
 | Dry-run | Mandatory | Mandatory |
 | Confirmation | Type the business name | Type the business name |
 
-**Neither surface accepts a `user_id` from the client.**
+**Neither surface accepts a `user_id` from the client.** Tab visibility is never the control — it renders only after the server check resolves.
 
 ### 10.5 Pre-flight external-state gate
 
@@ -540,18 +577,18 @@ Constraints:
 | # | Condition | Why it blocks | Local signal |
 |---|---|---|---|
 | **C1** | Active recurring subscription schedules | Stripe executes the schedule; deleting the local record leaves clients charged with nothing recording it | `payment_plan_subscriptions.status ∈ {pending, active, past_due, paused}` |
-| **C2** | Pending/uncaptured payments **and in-flight refunds** | Money in flight either way. A pending refund is money owed **back to a client**; deleting the ledger row destroys the only record of it and the reconciler's queue entry | `payment_transactions.status='pending'`; `payment_refunds.status='pending'` |
+| **C2** | Pending/uncaptured payments **and in-flight refunds** | Money in flight either way. A pending refund is money owed **back to a client** | `payment_transactions.status='pending'`; `payment_refunds.status='pending'` |
 | **C3** | Unpaid invoices owed to the business | The owner loses the record of money owed to them | `payment_invoices.status ∈ {sent, overdue}` |
 
-> **C3 — a deliberate decision.** BA assessed C3 as different in kind: an unpaid invoice is the business's **own** loss, and blocking means a business cannot leave while any client owes it money. The owner saw that reasoning and chose to block anyway. FU-1a is the cheapest softening.
+> **C3 — a deliberate decision.** BA assessed it as different in kind: an unpaid invoice is the business's **own** loss. The owner saw that reasoning and chose to block anyway. FU-1a is the cheapest softening.
 
 #### 10.5.2 Enumerate from the provider; Reset gated identically
 
-**From Stripe, not from local rows.** A schedule or refund created in the Stripe dashboard has no local row. Local state selects *which accounts to ask about*; the provider's answer is authoritative.
+**From Stripe, not from local rows.** A schedule or refund created in the Stripe dashboard has no local row.
 
-**Multi-account.** `resolveUserConnectAccounts()` returns a **list**, warning when the two sources differ. Every read carries `stripeRequestOptions()` / `stripeAccount`, because these are **direct charges on connected accounts** and a platform-scoped read returns "no such object" — a **false all-clear**.
+**Multi-account.** `resolveUserConnectAccounts()` returns a **list**, warning when the two sources differ. Every read carries `stripeRequestOptions()` / `stripeAccount` — these are **direct charges on connected accounts**, and a platform-scoped read returns "no such object": a **false all-clear**.
 
-**Reset is gated identically.** Reset keeps Connect but deletes subscriptions, transactions, invoices, refunds and reminders — so the business keeps trading while Stripe keeps charging and settling, with the local mirror gone, producing **silently wrong books**. Arguably worse than Purge.
+**Reset is gated identically.** Reset keeps Connect but deletes subscriptions, transactions, invoices, refunds and reminders — so the business keeps trading while Stripe keeps charging and settling, with the local mirror gone, producing **silently wrong books**.
 
 #### 10.5.3 Failure and absence semantics
 
@@ -564,34 +601,34 @@ Constraints:
 
 #### 10.5.4 Placement and TOCTOU
 
-Evaluated **inside the dry-run**, and **re-evaluated immediately before the RPC**. v1 accepts the residual window; both timestamps are logged (FR-19) so it is measurable.
+Evaluated **inside the dry-run**, and **re-evaluated immediately before the RPC**. v1 accepts the residual window; both timestamps are logged (FR-19).
 
 #### 10.5.5 What the block tells the user
 
-Per condition: what was found, how many, and the id to search for in Stripe (subscription / schedule / payment-intent / **refund** / invoice). Never "resolve your outstanding items" without saying **which**.
+Per condition: what was found, how many, and the id to search for in Stripe (subscription / schedule / payment-intent / **refund** / invoice).
 
 ### 10.6 Dry-run preview and confirmation
 
 1. A destructive run is reachable only after a dry-run in the same session, same target, level and options, carrying the same `correlationId` (FR-21).
 2. The dry-run returns gate outcome, per-table counts, per-bucket object counts, non-blocking provider items, and any table FR-1 could not verify.
 3. If the gate blocks, **no confirmation is offered**.
-4. Confirmation requires typing the business name (`company_name`, falling back to account email).
+4. Confirmation requires typing the business name.
 5. Material count drift is **reported**, not hidden.
 6. No grace period (D7).
 
 ### 10.7 Pre-purge snapshot
 
-1. Written before any deletion: every row to be deleted keyed by table, **plus the child ids of `website_blocks` / `smart_link_clicks` / `user_capability_blocks`** (so AC-5 is testable), the gate result, and the non-blocking provider inventory.
-2. **Location:** new private bucket `business-purge-snapshots`, `public = false`, `{user_id}/{iso8601}.json`. **No storage RLS policy granting `authenticated` anything**, no read route, no signed-URL helper — unlike the two existing buckets, which carry `(storage.foldername(name))[1] = auth.uid()` policies. Service role only.
-3. **Retention is a mechanism: 7 days, with a shipped enforcer** on the daily `/api/auth/cleanup-incomplete` cron (02:00). **If the enforcer does not ship, the customer-path snapshot carries counts and row ids only — no contact names, emails, phone numbers or message bodies.**
-4. **"Verified" means write-then-read-back** — confirm byte length and the table-key set.
+1. Written before any deletion: every row to be deleted keyed by table, **plus the child ids of `website_blocks` / `smart_link_clicks` / `user_capability_blocks`**, the gate result, and the non-blocking provider inventory.
+2. **Location:** private bucket `business-purge-snapshots`, `public = false`, `{user_id}/{iso8601}.json`. **No storage RLS policy granting `authenticated` anything**, no read route, no signed-URL helper. Service role only.
+3. **Retention is a mechanism: 7 days, with a shipped enforcer.** If the enforcer does not ship, the customer-path snapshot carries counts and row ids only — **no contact PII**.
+4. **"Verified" means write-then-read-back.**
 5. **Snapshot failure aborts the run** with zero rows deleted.
-6. Forensic artefact, **not** a restore path. Its path is recorded in the audit row.
+6. Forensic artefact, **not** a restore path.
 
 ### 10.8 Functional requirements
 
-1. **Schema verification — FR-1 route (a), confirmed.** A **`SECURITY DEFINER` RPC** returning `information_schema.columns` + `pg_constraint` + `pg_trigger` + `pg_policies` rows, consumed by the engine **at run time**. Route (b), a build-time manifest, was rejected: it cannot detect a table added after the manifest was committed — which is precisely how §3 became incomplete, twice, in this document — and AC-37 is a D9 un-gating condition, so certifying the manifest rather than the database is the wrong oracle. Conditions: **(i)** `EXECUTE` is granted to **`service_role` only, never `authenticated`** — a SECURITY DEFINER function returning `information_schema` is a full schema-disclosure endpoint if callable from the browser; **(ii)** the engine holds §8's **enumerated** exclusion descriptors, without which route (a) cannot pass its own first run; **(iii)** it **fails closed** when an expected table is missing, or when a user-scoped table is present in neither the delete set nor the exclusion set. The same migration can carry FR-28's advisory-lock grant. *(The previously named tools cannot do this: `generate-business-catalog.ts` introspects a hard-coded 25-table allow-list with stale output; `schema:check` replays only `.select()` calls already in source. "Not a second mechanism" is struck.)*
-2. Operates on exactly one business, `user_id` from `getUser()`. **No client-supplied id accepted** on any route, in any parameter position.
+1. **Schema verification — FR-1 route (a).** A **`SECURITY DEFINER` RPC** returning `information_schema.columns` + `pg_constraint` + `pg_trigger` + `pg_policies`, consumed **at run time**. Route (b) was rejected: a manifest cannot detect a table added after it was committed. Conditions: **(i)** `EXECUTE` granted to **`service_role` only, never `authenticated`** — a SECURITY DEFINER function returning `information_schema` is a schema-disclosure endpoint if browser-callable; **(ii)** the engine holds §8's **enumerated** exclusion descriptors; **(iii)** it **fails closed** when an expected table is missing, or a user-scoped table is in neither set.
+2. Operates on exactly one business, `user_id` from `getUser()`. **No client-supplied id accepted.**
 3. Two levels per §10.2 and the **R** column.
 4. Three opt-in extras, off by default, per §10.3.
 5. **Pre-flight gate before any deletion, both levels, both surfaces, no override.** Blocks on C1, C2 (charges **and** refunds), C3.
@@ -603,54 +640,55 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 11. Typed confirmation of the business name. No grace period.
 12. Pre-purge snapshot written, **read-back verified**, child ids captured (§10.7).
 13. Covers every §3 table appropriate to the level, all storage buckets, and reports orphan counts for the three `user_id`-less tables.
-14. **Purge** starves the six crons and two public INSERT paths; **Reset** does not, and says so.
+14. **Purge** starves the six crons and two public INSERT paths; **Reset** does not, and says so (FR-26).
 15. Respects **B1, B2, B3 and B4**; **never alters a FK definition**.
 16. Never touches the §8 exclusion set or the portable `business_chat_plan_cache` rows.
-17. **T5 residue prevented by ordering** — `crm_activities` deleted last inside the RPC. Trigger suppression must not be designed for; it is unavailable to the service role.
-18. **Three-phase execution:** **(1)** gate + snapshot in TypeScript, no transaction, all reads through repositories; **(2)** destructive commit as **one `SECURITY DEFINER` RPC** `purge_business_data(p_user_id uuid, p_level text, p_options jsonb)` returning per-table counts as JSONB — everything goes or nothing does; **(3)** storage removal, report, audit. **Resume is rejected**: `supabase-js` speaks PostgREST, so 55+ ordered deletes are 55+ round-trips with 54 failure points, and resume needs the durable half-state D7 refused. Engine in **`lib/business-os/purge/`**.
+17. **T5 residue prevented by ordering** — `crm_activities` deleted last inside the RPC.
+18. **Three-phase execution:** **(1)** gate + snapshot in TypeScript, no transaction, all reads through repositories; **(2)** destructive commit as **one `SECURITY DEFINER` RPC** `purge_business_data(p_user_id uuid, p_level text, p_options jsonb)` returning per-table counts as JSONB; **(3)** storage removal, report, audit. **Resume is rejected.** Engine in **`lib/business-os/purge/`**.
 19. Structured result: gate outcome, rows per table, storage objects deleted **and any that failed**, tables skipped and why, non-blocking provider state, snapshot path, **both gate timestamps and the commit timestamp**, duration.
 20. Every run — **including blocked attempts** — written to the audit trail with actor, target, level, options, gate outcome, counts, snapshot path and timestamps.
 21. **`correlationId` carried from the dry-run into the commit**, not regenerated.
-22. **Storage removal is non-transactional.** It runs after the DB commit and cannot be rolled back with it. Partial failure **reports per-object failures and surfaces the residue; it does not fail the run** (the data is already gone).
+22. **Storage removal is non-transactional.** It runs after the DB commit. Partial failure **reports per-object failures and surfaces the residue; it does not fail the run**.
 23. **The customer copy must not claim total erasure.** `email_unsubscribes` and `user_preferences` survive. Required sentence, localised: *"People who asked you to stop emailing them are kept, so they won't be emailed again if you come back."*
-24. **Duplicate-send re-arm: accepted, and documented.** `business_chat_action_log` is deleted; the keys are **not** retained. Decided on evidence — `ActionLog.ts:47` builds `sha256(planId|stepId|itemId ?? '-')`. Where `itemId` is present it is an entity row id, re-created post-purge with a **new UUID**, so the key is not reproducible and no re-arm is possible. Where `itemId` is absent the key reduces to `planId|stepId`, and a `planId` from the **portable** `business_chat_plan_cache` rows (which survive by design, §8.2) **is** reproducible — so the re-arm is real but confined to item-less, plan-level actions. **In exactly that case re-arming is correct behaviour:** a business that wiped its data should be able to send its welcome sequence again; blocking it forever because a since-deleted business once ran it would be the bug, not the protection. Retention would also sit awkwardly against "delete my data" while buying nothing. The note appears on the **internal** surface's result only — the customer does not need it. *Recorded so the choice is not re-litigated.*
+24. **Duplicate-send re-arm: accepted, and documented.** `business_chat_action_log` is deleted; keys are **not** retained. `ActionLog.ts:47` builds `sha256(planId|stepId|itemId ?? '-')`. Where `itemId` is present it is an entity row id re-created post-purge with a **new UUID**, so the key is not reproducible. Where absent it reduces to `planId|stepId`, and a `planId` from the **portable** `business_chat_plan_cache` rows (§8.2) **is** reproducible — so the re-arm is real but confined to item-less, plan-level actions. **In exactly that case re-arming is correct:** a business that wiped its data should be able to send its welcome sequence again. The note appears on the **internal** surface's result only.
 25. **Subdomain release is stated.** Purge frees `business_profiles.subdomain`; the old URL may later serve a **different** business. The result copy says so.
-26. **Reset's post-state is not presented as permanent.** `insight-detect` runs every 15 minutes and Reset keeps `business_profiles`, so new insights appear shortly. The UI must say so.
-27. **Post-purge destination is specified.** After Purge, `business_profiles` is gone and the middleware onboarding gate routes the account into the onboarding wizard. The customer must not be silently dropped into "let's set up your business" — the destination and message are named in the workplan.
-28. **Double submission is a provable no-op.** A second concurrent run returns "already running". Mechanism: `pg_try_advisory_lock` keyed on `user_id` — **already exists** (`supabase/SQL Scripts/20260129_add_advisory_lock_functions.sql`, granted to `service_role`).
-29. **Both routes validate input with Zod before any business logic** (mandatory rule 2): `level`, `confirmText`, the three booleans, the dry-run token.
-30. `auth.users` and `profiles` are never deleted.
-31. **No bypass flag, env var, query parameter or internal route may skip the gate** (D6a). The D9 flag hides the **surface**, never the **gate**.
+26. **Reset's post-state is not presented as permanent — and the UI must name the right things.** Reset keeps `business_profiles` and `channel_connections`, so **`calendar-sync` repopulates `external_calendar_events` within about five minutes** (it enumerates via `business_profiles`, and the retained `calendar_last_synced_at` is already stale), and **`channel-metrics-sync` repopulates `channel_metrics_daily` on that connection's next scheduled sync — up to ~20 hours**, because `channel_connections.last_synced_at` is retained and a Reset does not make the connection due. **Insights and metrics do not return on a timer:** `insight-detect` enumerates tenants from `payment_invoices` / `scheduling_bookings` / `crm_contacts` / `business_events`, all of which Reset deletes, and `insight-metrics` and `insight-automations` likewise read `D` tables — so they rebuild only once the owner creates new data. The UI must say this and **must not promise insights within 15 minutes**.
+27. **Post-purge destination is specified.** After Purge, `business_profiles` is gone and the middleware onboarding gate routes the account into the onboarding wizard. The customer must not be silently dropped into "let's set up your business".
+28. **Double submission is a provable no-op.** A second concurrent run returns "already running". Mechanism: **`pg_try_advisory_xact_lock(hashtextextended(p_user_id::text, 0))` taken inside `purge_business_data`**, released automatically at COMMIT or ROLLBACK, with no unlock call that can leak. The pre-existing `pg_try_advisory_lock` wrapper (`supabase/SQL Scripts/20260129_add_advisory_lock_functions.sql`) is **deliberately not used**: it is session-scoped, and `supabase-js` speaks PostgREST over a pooled connection, so it yields both false passes (a concurrent call served by another backend does not observe the lock) and permanent false blocks (a run that dies leaves the lock held on a connection handed to unrelated traffic). No new DDL beyond the purge RPC itself.
+29. **Both routes validate input with Zod before any business logic** (mandatory rule 2).
+30. `auth.users` and `profiles` are never deleted. ⚠️ **The existing `/api/user/delete-account` route violates this today** — D11 resolves it.
+31. **No bypass flag, env var, query parameter or internal route may skip the gate** (D6a). The D9 flag hides the **surface**, never the **gate**; and per D12 the internal surface's boundary is server-side authorisation, not flag or tab visibility.
 
-> **Note (was FR-27, relaxed by SA):** with `user_preferences` retained on both levels (§3.14), resolving the owner's language before phase 2 is no longer load-bearing. Keep it as sensible ordering, not a requirement.
+> **Note (was FR-27, relaxed by SA):** with `user_preferences` retained on both levels, resolving the owner's language before phase 2 is no longer load-bearing. Sensible ordering, not a requirement.
 
 ### 10.9 Non-functional requirements
 
-- **Security — delete scoping (the guard that matters).** FR-2 / AC-28 already forbid a caller-supplied `user_id`, which is **stronger** than an ownership pre-check, so the classic M1 vector is closed by construction. The real service-role risk is different: **a purge is one missing `WHERE user_id = …` away from `DELETE FROM crm_contacts` platform-wide** — and §1.2 shows a script in this repo that already has that defect. Required:
-  - Every table is described by **one declarative descriptor** — table, level (`reset` / `purge` / `never` / `optional:<checkbox>`), scope (`user_id`, `via: { parent, fk }`, or `global`). **The executor iterates only that structure; no table name appears anywhere else in the code.**
-  - **The descriptor set must include §8's exclusions as `level: 'never'` rows**, not as prose — FR-1 route (a) cannot otherwise distinguish an unknown table from a deliberately excluded one, and would fail closed on every run.
-  - A **unit test asserts the structural invariant**: every descriptor has a non-`global` scope or is a `level: 'never'` row, and **no delete statement is ever emitted without a scoping predicate**. It must fail when a descriptor is added without a scope.
-  - `business_chat_plan_cache` carries `user_id = p_user_id` with a comment; **`<>` / `IS DISTINCT FROM` / `NOT IN` are forbidden** on it in review.
-  - **RPC parameters are prefixed `p_`** and must never share a name with a column they filter on (§1.2).
-  - The two unscoped triggers (`update_invoice_on_payment`, `recompute_transaction_refund_state`) filter by `id` with no `user_id`. Safe **provided no FK crosses tenants** — AC-24 tests that empirically. Stated, not implicitly relied on.
+- **Security — delete scoping (the guard that matters).** FR-2 / AC-28 already forbid a caller-supplied `user_id`, stronger than an ownership pre-check. The real service-role risk: **a purge is one missing `WHERE user_id = …` away from `DELETE FROM crm_contacts` platform-wide** — §1.2 shows a script that had that defect. Required:
+  - One **declarative descriptor** per table — table, level (`reset` / `purge` / `never` / `optional:<checkbox>`), scope (`user_id`, `via: { parent, fk }`, `global`). **The executor iterates only that structure.**
+  - **§8's exclusions are `level: 'never'` rows**, not prose — FR-1 route (a) cannot otherwise distinguish unknown from excluded.
+  - A **unit test asserts the structural invariant**: every descriptor has a non-`global` scope or is `level: 'never'`, and **no delete is emitted without a scoping predicate**.
+  - `business_chat_plan_cache` carries `user_id = p_user_id`; **`<>` / `IS DISTINCT FROM` / `NOT IN` forbidden**.
+  - **RPC parameters prefixed `p_`**, never sharing a name with a column they filter on (§1.2).
+  - The two unscoped triggers filter by `id`. Safe **provided no FK crosses tenants** — AC-24 tests that empirically.
   - The RLS bypass is documented in code per CLAUDE.md § Security Rules.
-- **Security — provider credentials.** **(a) There is no read-only Stripe credential.** Only `STRIPE_SECRET_KEY` (53 references); **the gate runs on the full-privilege platform secret key** — acceptable for v1 because the gate's entire surface is `list` and `retrieve` on a path the owner already authenticated to, but **stated, not assumed** (D10, FU-12). **(b) There is no existing Stripe client to reuse** — 18 files each call `new Stripe(...)`. Dev creates `lib/stripe/client.ts` (one instantiation, one pinned `apiVersion`); this *reduces* pattern count so it is approved under rule 7, but it is **unbudgeted work the workplan must carry**. Do **not** migrate the other 18 call sites this cycle.
-- **Resilience — gate bounds (mandatory; exceeding any bound is a refusal, never a truncated pass).** Three of the four conditions use list endpoints with **no status filter** (`/v1/payment_intents`, `/v1/refunds`, `/v1/subscription_schedules`), so each is a **paginated traversal of account history**, per account, ×2 accounts. Only `/v1/invoices` filters by status.
-  1. **Time-window every unfilterable traversal** — `created: { gte: now − N days }`, N justified per condition (uncaptured PaymentIntents expire at 7 days, so ~14 is generous; a `pending` refund older than ~30 days is a reconciler defect, not live money).
-  2. **Hard page cap and hard wall-clock budget — ≤ 10 s for the entire gate.** Exceeding either is a **fail-closed refusal with a distinct message** ("we could not finish checking your Stripe account"). Silently truncated results would be a false all-clear — worse than the timeout.
-  3. **`export const maxDuration`** set explicitly on both routes, above the gate budget. No route outside the crons sets it today; the default is 10 s.
-  4. **Retry is global, not per-read** — ≤2 for the whole gate, exponential backoff.
+- **Security — authorisation boundary (D12).** The internal surface's control is **server-side on the preview and commit routes**, via `AdminAccessService` / `admin_users`. **`profiles.role` must never be used** — it is user-writable and self-promotable. A `NEXT_PUBLIC_` flag is a rendering hint, never an authorisation boundary.
+- **Security — provider credentials.** **(a) No read-only Stripe credential exists;** the gate runs on the full-privilege `STRIPE_SECRET_KEY` — acceptable for v1 because the gate's surface is `list`/`retrieve` on an authenticated path, but **stated, not assumed** (D10, FU-12). **(b) No existing Stripe client to reuse** — 18 files each call `new Stripe(...)`. Dev creates `lib/stripe/client.ts`; **unbudgeted work the workplan must carry.** Do not migrate the other 18 this cycle.
+- **Resilience — gate bounds (exceeding any bound is a refusal, never a truncated pass).** Three of four conditions use list endpoints with **no status filter**, so each is a **paginated traversal of account history**.
+  1. **Time-window every unfilterable traversal** — `created: { gte: now − N days }`, N justified per condition.
+  2. **Hard page cap and hard wall-clock budget — ≤ 10 s for the entire gate.** Exceeding either is a **fail-closed refusal with a distinct message**. Silently truncated results would be a false all-clear.
+  3. **`export const maxDuration`** set explicitly on both routes, above the gate budget.
+  4. **Retry is global, not per-read** — ≤2 for the whole gate.
   5. **429 is not a "no"** — retry, then refuse.
-  6. **Cache the dry-run gate result for the session**, keyed by user + level + options.
-- **Atomicity.** Per FR-18. A Vercel timeout mid-RPC rolls the transaction back — correct — but the user sees a failure with no idea of their state, which FR-27 and the progress requirement address.
+  6. **Cache the dry-run gate result for the session.**
+- **Atomicity.** Per FR-18.
 - **Duration & progress (customer path).** The workplan specifies the progress signal and the timeout message.
-- **Rate limiting.** Both destructive routes rate-limited — the concern is accidental client retry loops against an expensive dry-run.
-- **Data protection (customer path).** Residue is a compliance failure, not cosmetic. Hence FR-1 failing closed and D9's flag gate.
-- **Logging.** Pino, `correlationId` continuous across dry-run and commit, one line per table with counts, gate outcome with per-condition detail. No `console.*`.
-- **Repository pattern.** Mandatory rule 1: **every read** in phase 1 goes through repositories. The RPC is the destructive commit only — the documented exception, rule-7 signed off.
-- **Performance.** Set-wise deletes inside the RPC; rows in memory only to build the snapshot.
-- **Accessibility.** Keyboard-operable dialogs; typed-confirmation field associated with its instruction; **blocked state announced to assistive technology, not conveyed by colour alone**.
-- **Copy quality.** Plain language, localised via `LanguageContext` (en/es/he). No table names. Blocked message actionable. Must include FR-23's retention sentence and FR-25's subdomain sentence.
+- **Rate limiting.** Both destructive routes rate-limited.
+- **Data protection (customer path).** Residue is a compliance failure, not cosmetic.
+- **Logging.** Pino, `correlationId` continuous across dry-run and commit. No `console.*`.
+- **Repository pattern.** **Every read** in phase 1 goes through repositories. The RPC is the destructive commit only — the documented exception, rule-7 signed off.
+- **Performance.** Set-wise deletes inside the RPC.
+- **Accessibility.** Keyboard-operable dialogs; **blocked state announced to assistive technology, not conveyed by colour alone**.
+- **Copy quality.** Plain language, localised via `LanguageContext` (en/es/he). Must include FR-23's retention sentence, FR-25's subdomain sentence and FR-26's corrected Reset copy.
 
 ### 10.10 Acceptance criteria
 
@@ -682,12 +720,12 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 
 - [ ] **AC-19** A business with `payment_refunds` and `payment_plan_subscriptions` rows (both in **non-blocking terminal** states) purges successfully — proves **B1**, **B2**, no FK altered.
 - [ ] **AC-20** A `kernel_executions` row referenced by `insight_automations.last_run_execution_id` purges successfully — proves **B3**.
-- [ ] **AC-21** **B4** — a `payment_plan_subscriptions` row whose `booking_id` points at a **future** booking of a contact being deleted purges successfully, proving subscriptions go before `crm_contacts` and T1 does not trip B2.
+- [ ] **AC-21** **B4** — a `payment_plan_subscriptions` row whose `booking_id` points at a **future** booking of a contact being deleted purges successfully.
 - [ ] **AC-22** After a **Purge**, `crm_activities` is empty — proves the single live T5 path left no residue.
-- [ ] **AC-23** After a **Purge**, every §8 table is unchanged — including the four global catalogs, `organizations`/`organization_members`, the billing and org-analytics tables, and the §8.7 kernel tables (`calibration_history`, `error_patterns`, `execution_anomalies`, `execution_baselines`, `plugin_performance`, …) — **and `business_chat_plan_cache WHERE user_id IS NULL` matches on both row count and a content checksum** (a count alone survives a delete-and-reinsert).
-- [ ] **AC-24** A **second, different** business is completely unaffected — full cross-tenant sweep. *(D9 un-gating condition; also the empirical test that no FK crosses tenants.)*
+- [ ] **AC-23** After a **Purge**, every §8 table is unchanged — the four global catalogs, `organizations`/`organization_members`, billing, org analytics, and the §8.7 kernel tables — **and `business_chat_plan_cache WHERE user_id IS NULL` matches on both row count and a content checksum**.
+- [ ] **AC-24** A **second, different** business is completely unaffected — full cross-tenant sweep. *(D9 un-gating condition.)*
 - [ ] **AC-25** **Purge** leaves no row causing the six crons to pick this business up. **Each cron's selection predicate is named in the workplan.**
-- [ ] **AC-26** After a **Reset**, the UI states that insights/metrics regenerate; a later cron regenerating them is **not** a failure.
+- [ ] **AC-26** After a **Reset**, the UI states that calendar events resync within minutes, that channel stats refresh on their next scheduled sync, and that insights and metrics rebuild once new data is created. A later cron regenerating any of them is **not** a failure.
 - [ ] **AC-27** A public `POST` to the page-view or smart-link-click endpoint after a **Purge** cannot create a row attributable to the deleted business.
 
 **Safety & surfaces**
@@ -702,9 +740,9 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 - [ ] **AC-35** A failed snapshot write aborts with zero rows deleted; a snapshot that writes but fails **read-back** does the same.
 - [ ] **AC-36** The snapshot bucket has **no** policy granting `authenticated` any access, and no route returns its contents.
 - [ ] **AC-37** **Schema completeness** — the engine fails closed when an expected table is absent **and** when a user-scoped table exists in neither the delete set nor §8's enumerated exclusion set. **The FR-1 RPC is not executable as `authenticated`.** *(D9 un-gating condition.)*
-- [ ] **AC-38** **Double submission** — two concurrent runs for the same user: the second returns "already running"; exactly one purge occurs.
+- [ ] **AC-38** **Double submission** — two concurrent runs for the same user: the second returns "already running"; exactly one purge occurs. **The lock is transaction-scoped** — a run that dies leaves no lock held.
 - [ ] **AC-39** **Zod** — malformed bodies rejected with 400 before any business logic, on both routes.
-- [ ] **AC-40** **Feature flag** — with `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` off, the customer surface is unreachable; the internal surface is unaffected.
+- [ ] **AC-40** **Authorisation and flag.** With `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` off, the customer surface is unreachable **and no other surface in the application offers Reset or Purge to a non-admin.** A non-admin calling the preview or commit routes for the internal surface or the Reset level receives **403 regardless of what the client renders** (D12).
 
 **Behaviour after**
 
@@ -729,26 +767,27 @@ Per condition: what was found, how many, and the id to search for in Stripe (sub
 | **FU-1a** | Clear a **C3** block in-product by voiding the unpaid invoices | 🟡 |
 | **FU-2** | Close the TOCTOU window (provider-side freeze); needs FU-1 | 🟢 |
 | **FU-3** | Data export alongside deletion | 🟡 |
-| **FU-4** | Admin / support-initiated purge of another business | 🟡 |
+| **FU-4** | Admin / support-initiated purge of **another** business (D5 keeps v1 self-service only; D12 gates *who may reach the internal surface*, not *whose data they may purge*) | 🟡 |
 | **FU-5** | Restore-from-snapshot | 🟢 |
 | **FU-6** | Soft delete / undo / grace period | 🟢 |
 | **FU-7** | Pausing or fencing the crons during a run | 🟢 |
 | **FU-8** | Scheduled cleanup of stale test businesses | 🟢 |
 | **FU-9** | Deleting `auth.users` / closing the account | 🟢 |
 | **FU-10** | Extend the gate to future payment processors | 🟢 |
-| **FU-11** | **Replace retained `email_unsubscribes` addresses with salted hashes** — keeps the suppression guarantee without retaining third-party PII. The resolution if legal later objects to D8 | 🟡 |
-| **FU-12** | **Provision `STRIPE_RESTRICTED_KEY_READONLY`** and move the gate onto it (D10) | 🟡 — Stripe-dashboard half can start now |
-| **FU-13** | **REMOVE `supabase/SQL Scripts/delete_user_by_id.sql`** — a latent platform-wide delete (§1.2). **SA ruled removal, not repair:** repairing it creates a second deletion path with no gate, no snapshot, no audit and no descriptor guard — the second-code-path problem D6a forbids, applied to deletion itself. One-line `fix/` branch, standalone, outside this cycle, with a pointer in `supabase/SQL Scripts/README.md` naming this feature as its replacement. Minimum interim if it must be kept: rename the variable to `p_user_id` | 🔴 **hazard** — standalone fix, not this cycle |
+| **FU-11** | **Replace retained `email_unsubscribes` addresses with salted hashes** — the resolution if legal later objects to D8 | 🟡 |
+| **FU-12** | **Provision `STRIPE_RESTRICTED_KEY_READONLY`** and move the gate onto it (D10) | 🟡 |
+| **FU-13** | ✅ **Done — `delete_user_by_id.sql` removed** (PR #39), not repaired | ✅ |
 | **FU-14** | Migrate the other 18 `new Stripe(...)` call sites onto `lib/stripe/client.ts` | 🟢 |
+| **FU-15** | **The `pg_try_advisory_lock` / `pg_advisory_unlock` wrappers are `SECURITY DEFINER` and granted to `authenticated`** — any logged-in user can take or release an arbitrary advisory lock id. Not used by this feature (FR-28), but a real exposure needing an owner, outside this cycle | 🟡 |
+| **FU-16** | `insight-detect`'s four enumeration selects each carry `.limit(500)` with no pagination — a pre-existing tenant-coverage bug, irrelevant to the purge | 🟢 |
 
 ---
 
 ## 11. Open follow-throughs during Dev
 
-Neither blocks starting. Both must close before the workplan goes to SA code review.
-
-1. **§10.2 ¶2 — the intake paragraph.** `business_intake_forms` is ❓; FR-1 is task 1 and answers it in Dev's first hour. If absent: the table drops out of the purge set, §10.2 ¶2's second half is deleted, and AC-3's intake assertion is dropped. Nothing architectural pivots on it — the Reset/Purge split, the gate, the RPC shape and the descriptor structure are all unaffected. **The settings half is firm regardless** (#36 comes from an older migration).
-2. **§8.7 — the kernel exclusion list is seeded, not closed.** `20260629_platform_learning_tables.sql` and `20260629_execution_optimization_tables.sql` have plural names implying tables BA has not enumerated. **Dev expands both from FR-1's output and adds one descriptor per table before the engine's first run.** Any kernel table missing from §8 fails the run closed — which is the design working, but it must be closed before it is exercised.
+1. **§10.2 ¶2 — the intake paragraph.** `business_intake_forms` is ❓; FR-1 is task 1 and answers it in Dev's first hour. If absent: the table drops out of the purge set, §10.2 ¶2's second half is deleted, and AC-3's intake assertion is dropped. Nothing architectural pivots on it. **The settings half is firm regardless.** Must close **before the workplan goes to SA code review**.
+2. ~~**§8.7 — the kernel exclusion list is seeded, not closed.**~~ ✅ **Resolved 2026-09-15.** Discharged statically rather than by enumeration: `platform_learning_tables` creates `workflow_patterns` and `global_failure_patterns`, **neither of which has a `user_id`**, so neither can ever appear in FR-1 route (a)'s user-scoped enumeration; `execution_optimization_tables` creates two tables already listed. No Dev obligation remains — T2 confirms against the dump rather than discovering.
+3. **D11 — Dev's justified choice** between reusing the existing Delete-account button as the customer surface, or building the new surface and formally deprecating the old button. Pending; must be recorded with its justification before the customer surface ships.
 
 ---
 
@@ -757,18 +796,20 @@ Neither blocks starting. Both must close before the workplan goes to SA code rev
 | System | Impact |
 |---|---|
 | **`lib/payments/stripeAccountContext.ts`** | Gate foundation — `resolveUserConnectAccounts()`, `stripeRequestOptions()`, "absent evidence refuses". Do not reimplement account resolution |
-| **`lib/stripe/client.ts`** | **Does not exist — Dev creates it.** 18 files each call `new Stripe(...)`; the gate uses the new shared client. Unbudgeted; do not migrate the other 18 this cycle |
-| **`lib/business-os/bizql/mutate/ActionLog.ts`** | `idempotencyKey = sha256(planId\|stepId\|itemId)` — the evidence behind FR-24's accept-the-re-arm ruling |
-| **`supabase/SQL Scripts/20260129_add_advisory_lock_functions.sql`** | `pg_try_advisory_lock` / `pg_advisory_unlock` already exist, granted to `service_role` — FR-28's mechanism, no new DDL |
-| **`supabase/SQL Scripts/delete_user_by_id.sql`** | Prior art and a latent platform-wide-delete hazard (§1.2). **Slated for removal (FU-13).** Read it as a worked example of the failure mode, never as a template |
+| **`lib/stripe/client.ts`** | **Does not exist — Dev creates it.** 18 files each call `new Stripe(...)`; the gate uses the new shared client. Unbudgeted; do not migrate the other 18 |
+| **`lib/business-os/bizql/mutate/ActionLog.ts`** | `idempotencyKey = sha256(planId\|stepId\|itemId)` — the evidence behind FR-24 |
+| **`supabase/SQL Scripts/20260129_add_advisory_lock_functions.sql`** | **Not used by this feature** — session-scoped over a pooled connection, so unsuitable as a double-submit guard (FR-28). Recorded here because it is `SECURITY DEFINER` and granted to **`authenticated`**, letting any logged-in user take or release an arbitrary advisory lock id — a follow-up with an owner, outside this cycle (FU-15) |
+| **`components/business-os/settings/SecurityTab.tsx:305` → `POST /api/user/delete-account`** | ⚠️ **The existing customer-facing delete path (§1.3), in scope under D11.** Deletes `auth.users` (violates D3/FR-30) and `user_preferences` (a `K*` table), touches 1 of 60 in-scope tables, audits intent but never outcome, and **500s at phase 6 for every onboarded user after phases 1–5 have irreversibly run.** Dev decides between reusing it and deprecating it |
+| **`AdminAccessService` / `admin_users`** | **The internal surface's authorisation boundary (D12)**, enforced server-side on the preview and commit routes. **Never `profiles.role`** — user-writable and self-promotable. See [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md) |
+| **`middleware.ts:155–156`** | `/test-business-os` is on the **skip-onboarding-check** list with no admin gate — the reason D12 exists |
 | **`supabase/migrations/20260828b_payment_refund_ledger.sql`** | The refund lifecycle C2's refund half gates on |
-| **`lib/payments/` (PaymentPlanService, invoiceLifecycle, RefundService, cancelPlan)** | Existing lifecycle vocabularies — the gate's conditions must agree, not invent parallels |
-| **Account settings** | New destructive section behind `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` (D9), localised incl. blocked-state copy |
-| **`/test-business-os`** | New Danger Zone tab, unflagged, session-based, no gate bypass |
+| **`lib/payments/` (PaymentPlanService, invoiceLifecycle, RefundService, cancelPlan)** | Existing lifecycle vocabularies — the gate's conditions must agree |
+| **Account settings** | Destructive section behind `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` (D9), localised incl. blocked-state copy |
+| **`/test-business-os`** | Danger Zone tab, **admin-gated server-side (D12)**, session-based, no gate bypass |
 | **`lib/business-os/purge/`** | **Engine location (SA-ruled).** Not `lib/services/` |
-| **`lib/repositories/**`** | All phase-1 reads. ~30 repositories own a purge-set table |
+| **`lib/repositories/**`** | All phase-1 reads |
 | **`AuditTrailService`** | `BUSINESS_DATA_PURGED` / `..._BLOCKED`, non-blocking `.catch()`, severity ≥ `warning` |
-| **`/api/auth/cleanup-incomplete` (daily 02:00)** | Host for the 7-day snapshot-retention enforcer |
+| **Snapshot retention enforcer** | 7-day cleanup; host cron per the workplan's C-17 ruling |
 | **`POST /api/onboarding/chat/reset`** | Existing precedent; the purge should **absorb** it rather than duplicate it |
 | **`POST /api/onboarding/build`** | Re-seed counterpart (AC-42) |
 | **Supabase Storage** | `contact-documents`, `website-images`, plus the new `business-purge-snapshots` |
@@ -778,18 +819,16 @@ Neither blocks starting. Both must close before the workplan goes to SA code rev
 
 ## SA Review — 2026-09-14 (first pass)
 
-**Verdict:** 🔄 Rework required. Six blockers, all closed by BA's rework:
+**Verdict:** 🔄 Rework required. Six blockers, all closed:
 
 | # | SA item | Disposition |
 |---|---|---|
-| **SA-B1** | §3 incomplete; tags wrong; `SQL Scripts/` unread | ✅ Closed — directory read; 4 tables added; 11 tags corrected; `business_intake_forms` →❓; §3.16 dispositions; agents checkbox gains 3 tables |
-| **SA-B2** | FR-1's mechanism does not exist | ✅ Closed — FR-1 rewritten, route (a) selected, AC-37 re-based |
-| **SA-B3** | `email_unsubscribes` retained | ✅ Closed — D8; `K*`; AC-2 exception; FR-23; FR-24; FU-11 |
-| **SA-B4** | Stripe credential/client/bounds premises wrong | ✅ Closed — D10; six bounds as NFRs; AC-17; FU-12, FU-14 |
-| **SA-B5** | Tenant-isolation guard aimed at the wrong vector | ✅ Closed — descriptor + structural-invariant test; AC-45; §1.2 |
-| **SA-B6** | Missing NFRs | ✅ Closed — Zod, `maxDuration`, advisory lock, post-purge redirect, `correlationId` continuity, non-transactional storage, subdomain release, engine location |
-
-SA's rulings R1–R7 remain the authoritative record of why each item is shaped as it is.
+| **SA-B1** | §3 incomplete; tags wrong; `SQL Scripts/` unread | ✅ Closed |
+| **SA-B2** | FR-1's mechanism does not exist | ✅ Closed — route (a) |
+| **SA-B3** | `email_unsubscribes` retained | ✅ Closed — D8 |
+| **SA-B4** | Stripe credential/client/bounds premises wrong | ✅ Closed — D10 |
+| **SA-B5** | Tenant-isolation guard aimed at the wrong vector | ✅ Closed — descriptor + invariant test |
+| **SA-B6** | Missing NFRs | ✅ Closed |
 
 ---
 
@@ -797,17 +836,31 @@ SA's rulings R1–R7 remain the authoritative record of why each item is shaped 
 
 **Verdict:** ✅ **Approved for Dev** — subject to SA-2P1, four rulings, and the `service_role`-only grant. All applied.
 
-SA re-ran the completeness check independently: every table carrying a `user_id` in either DDL directory, diffed against the whole document. **Five came back unnamed** — all kernel/V6, all under §8's categories, none belonging in the purge set.
-
 | Item | Ruling | Applied |
 |---|---|---|
-| **SA-2P1** (required) | §8's prose categories cannot be evaluated by an `information_schema` enumeration, so FR-1 route (a) would **fail closed permanently on its first run**. Expand every category into one `level: 'never'` descriptor per table; seed with `calibration_history`, `error_patterns`, `execution_anomalies`, `execution_baselines`, `plugin_performance`. Grant the FR-1 RPC to **`service_role` only, never `authenticated`** | ✅ §8 rewritten as nine enumerated subsections; FR-1 condition (i)/(ii); §10.9 descriptor rule; AC-37, AC-45 |
-| **§11.1** `user_preferences` | **BA right — change to `K*`.** Second reason: it is an account preference on a login that survives (D3), so deleting it renders the owner's **next sign-in** in the wrong language. FR-27 relaxes to a note | ✅ §3.14, §8.3, §10.2, AC-2, AC-43; old FR-27 demoted to a note |
-| **§11.2** `business_intake_forms` | **Do not hold the cycle.** FR-1 answers it in hour one; only §10.2 ¶2 and AC-3 depend on it. **The ❓ does not propagate to `user_intake_settings`** — a different, older migration | ✅ §3.7, §10.2 ¶2 narrowed, AC-3 marked contingent, §11.1 |
-| **§11.3** FR-24 | **Accept the re-arm; delete the log.** Key is `sha256(planId\|stepId\|itemId)` — reproducible only for item-less plan-level actions via the portable cache, where re-arming is *correct* behaviour | ✅ FR-24 rewritten with the reasoning recorded |
-| **§11.4** FR-1 route | **Route (a)** — BA's argument upheld; a manifest certifies the wrong oracle | ✅ FR-1 |
-| §3.16 (non-blocking) | Last row overstates certainty — those names are probably phantom. `contact_submissions` is intake-shaped and needs a fresh ruling if found | ✅ §3.16 reworded; §8.9 |
-| FU-13 | **Remove, don't repair** — a repaired script is a second deletion path with no gate, snapshot, audit or descriptor guard | ✅ FU-13 rewritten; §1.2; §12 |
+| **SA-2P1** | §8's prose categories cannot be evaluated by an `information_schema` enumeration; expand into `level: 'never'` descriptors; grant the FR-1 RPC to `service_role` only | ✅ §8 rewritten as nine subsections |
+| **§11.1** | `user_preferences` → `K*` | ✅ §3.14, §8.3, §10.2 |
+| **§11.2** | `business_intake_forms` ❓ does not block Dev; does not propagate to `user_intake_settings` | ✅ §3.7, §10.2 ¶2 |
+| **§11.3** | FR-24 — accept the re-arm, delete the log | ✅ FR-24 |
+| **§11.4** | FR-1 route (a) | ✅ FR-1 |
+| §3.16 | Last row overstates certainty | ✅ Reworded; §8.9 |
+| FU-13 | Remove, don't repair | ✅ Done, PR #39 |
+
+---
+
+## SA Review — 2026-09-15 (workplan review — amendments back into this requirement)
+
+SA's workplan review produced changes to the approved requirement. SA deliberately did not edit this document from a workplan review and left BA exact replacement text ([workplan §12.6](/docs/workplans/business-os-business-data-purge.md)). All applied verbatim.
+
+| # | Amendment | Applied |
+|---|---|---|
+| **1** | **FR-28** — `pg_try_advisory_lock` is session-scoped and unsafe over a pooled PostgREST connection (false passes *and* leaked locks). Replaced with **`pg_try_advisory_xact_lock` inside the RPC** | ✅ FR-28, AC-38, §12 |
+| **2** | **FR-26** — the claim that insights return 15 minutes after a Reset is **false**; `insight-detect` enumerates from four `D` tables, not `business_profiles`. What returns is `calendar-sync` (~5 min) and `channel-metrics-sync` (**next scheduled sync, up to ~20 h** — SA's correction of Dev's proposed "within the hour", because `last_synced_at` is retained) | ✅ FR-26 |
+| **3** | **AC-26** — replaced to match | ✅ AC-26 |
+| **4** | **§6.3** — the false sentence removed and replaced with the enumeration-source table | ✅ §6.3 |
+| **5** | **§11.2** — resolved; §8.7 closed statically | ✅ §8.7, §11.2 |
+| **D11** | The existing customer-facing Delete-account path is **in scope**; user rejected a support-request replacement; Dev decides reuse vs deprecate | ✅ §1.3, §9, §11.3, §12 |
+| **D12** | Internal-surface authorisation moves server-side to **`AdminAccessService`**; SA retracted its "unflagged internal surface" approval | ✅ §9, §10.4, §10.9, AC-40, §12 |
 
 ---
 
@@ -815,11 +868,12 @@ SA re-ran the completeness check independently: every table carrying a `user_id`
 
 | Date | Change | Details |
 |------|--------|---------|
-| 2026-09-14 | Created | Investigation + draft. No `business_id` — a business is a user account. 56 tables, 3 FK blockers, 6 triggers, 6 crons, 2 public insert paths, 3 orphan-risk tables, the portable plan-cache rows, no soft-delete convention. 5 open questions. |
-| 2026-09-14 | D1–D7 resolved | D1 overrode BA's test-only recommendation — customer-facing as well. Reset/Purge split, opt-in extras, two surfaces one engine, dry-run + typed confirmation, snapshot. 15 FRs, 26 ACs. |
-| 2026-09-14 | D6 amended — pre-flight blocker | External state moved from post-hoc report to hard gate. Enumerate from the provider, all accounts, `stripeAccount`-scoped; fail closed; skip cleanly; in the dry-run; re-evaluated pre-commit. Reset gated identically. C3 recorded as a deliberate decision over BA's contrary reasoning. |
-| 2026-09-14 | D6b — in-flight refunds fold into C2 | AC-8 added; ACs renumbered to 39; SA list closed at SA-1…SA-7. |
-| 2026-09-14 | **SA first pass — rework required** | Seven questions ruled; six blockers. SA confirmed B1/B2/B3, T1, T2, the portable rows, both buckets, 11 crons, 54 repositories — and **corrected T5**, which BA had overstated. |
-| 2026-09-14 | **BA rework — SA-B1…SA-B6 closed; D8/D9/D10 applied** | Read `supabase/SQL Scripts/` (65 files), the missing evidence directory. **§3 grew 56 → 60** (`insight_outcomes` — a 7th insight table absent from two architecture docs — `onboarding_prompt_ideas`, `user_preferences`, `websites`). Eleven tags corrected 📄→✅; `business_intake_forms` →❓. New §3.16. **New §1.2 documents `delete_user_by_id.sql`** — a latent platform-wide delete whose blast radius depends on a `plpgsql.variable_conflict` setting; in-repo proof of the vector SA's guard addresses. FR-1 rewritten; §10.9 rewritten twice over; three-phase shape mandated; B4 added; T5 corrected. FRs 21 → 32, ACs 39 → 49. |
-| 2026-09-14 | **SA second pass — approved for Dev** | Both blockers confirmed closed via an independent completeness sweep. Four §11 items ruled; one required fix (SA-2P1). |
-| 2026-09-14 | **BA final — SA-2P1 applied; requirement closed** | **§8 rewritten from three prose categories into nine enumerated subsections**, one row per table, each becoming a `level: 'never'` descriptor — because an `information_schema` enumeration cannot tell Business OS from kernel, so route (a) with categories would have failed closed on its first run. Seeded §8.7 with SA's five (`calibration_history`, `error_patterns`, `execution_anomalies`, `execution_baselines`, `plugin_performance`) plus three evidenced by migration filenames. **§8.7 is explicitly seeded-not-closed:** two plural-named migrations (`platform_learning_tables`, `execution_optimization_tables`) create tables BA has not enumerated, so §11.2 makes expanding them from FR-1's output a Dev obligation before first run — recording the obligation rather than inventing table names that would silently match nothing. **FR-1 confirmed as route (a)** with the **`service_role`-only `EXECUTE` grant** (a SECURITY DEFINER function returning `information_schema` is a schema-disclosure endpoint if browser-callable) and the enumerated-exclusion precondition. **Four rulings folded in:** `user_preferences` → **`K*`** retained on both levels, with SA's next-sign-in reason added and old FR-27 demoted to a note (FRs 32 → 31); `business_intake_forms` ❓ does **not** block Dev and does **not** propagate to `user_intake_settings`, so §10.2 ¶2 now separates the firm settings half from the contingent forms half and AC-3 is marked contingent; **FR-24 rewritten to accept the re-arm and delete the log**, with SA's `ActionLog.ts:47` evidence recorded so the choice is not re-litigated; FR-1 route (a) confirmed. **§3.16 reworded** — five names are unverified and probably phantom rather than found-and-excluded, with a caveat that intake-shaped `contact_submissions` needs a fresh ruling if FR-1 finds it live (§8.9). **FU-13 changed from repair to removal** per SA. AC-23 extended to the §8.7 kernel tables; AC-45 extended to assert every §8 exclusion exists as a descriptor. **Final: 31 FRs, 49 ACs, 60 in-scope tables, 30+ enumerated exclusions.** Status → approved, ready for Dev workplanning. |
+| 2026-09-14 | Created | Investigation + draft. No `business_id` — a business is a user account. 56 tables, 3 FK blockers, 6 triggers, 6 crons, 2 public insert paths, 3 orphan-risk tables, the portable plan-cache rows, no soft-delete convention. |
+| 2026-09-14 | D1–D7 resolved | D1 overrode BA's test-only recommendation. Reset/Purge split, opt-in extras, two surfaces one engine, dry-run + typed confirmation, snapshot. 15 FRs, 26 ACs. |
+| 2026-09-14 | D6 amended — pre-flight blocker | External state moved from post-hoc report to hard gate, enumerated from the provider. C3 recorded as a deliberate decision over BA's contrary reasoning. |
+| 2026-09-14 | D6b — in-flight refunds fold into C2 | AC-8 added; ACs renumbered to 39. |
+| 2026-09-14 | **SA first pass — rework required** | Six blockers. SA corrected T5, which BA had overstated. |
+| 2026-09-14 | **BA rework — SA-B1…SA-B6 closed; D8/D9/D10 applied** | Read `supabase/SQL Scripts/` (65 files). §3 grew 56 → 60. Eleven tags corrected. New §1.2 (`delete_user_by_id.sql`). FR-1 rewritten; §10.9 rewritten; three-phase shape; B4; T5 corrected. FRs 21 → 32, ACs 39 → 49. |
+| 2026-09-14 | **SA second pass — approved for Dev** | Four §11 items ruled; SA-2P1 required. |
+| 2026-09-14 | **BA final — SA-2P1 applied** | §8 rewritten into nine enumerated subsections. `user_preferences` → `K*` (FRs 32 → 31). FR-24 accept-the-re-arm. Route (a) confirmed. 31 FRs, 49 ACs. |
+| 2026-09-15 | **BA amendments from SA's workplan review — FR-26, FR-28, AC-26, AC-40; D11, D12; §8.7 closed** | **Two requirement claims were wrong and are corrected.** **FR-28:** the named `pg_try_advisory_lock` wrapper is **session-scoped**, and over `supabase-js`'s pooled PostgREST connection it yields both false passes and permanently leaked locks; replaced with **`pg_try_advisory_xact_lock(hashtextextended(p_user_id::text, 0))` taken inside the RPC**, released at COMMIT/ROLLBACK with no unlock call to leak. AC-38 gains the transaction-scope assertion; §12's row now records that the unused wrapper is `SECURITY DEFINER` **granted to `authenticated`**, letting any logged-in user take or release an arbitrary lock id — new **FU-15**. **FR-26/AC-26/§6.3:** the claim that insights return within 15 minutes of a Reset was **false** — `insight-detect` enumerates tenants from `payment_invoices`/`scheduling_bookings`/`crm_contacts`/`business_events`, **all four deleted by Reset**, not from `business_profiles`. What actually returns is `calendar-sync` (~5 min) and `channel-metrics-sync` (**next scheduled sync, up to ~20 h**, because `channel_connections.last_synced_at` is retained — SA's correction of Dev's proposed "within the hour"). §6.3 now carries an enumeration-source column so the error cannot recur; `insight-detect`'s unpaginated `.limit(500)` noted as **FU-16**. **D11 (new):** the live customer-facing `SecurityTab.tsx:305` → `POST /api/user/delete-account` path — never previously mentioned in this requirement — is **in scope**; the user rejected replacing it with a support-request message, so self-service erasure stays and **Dev justifies reuse vs formal deprecation**. New **§1.3** records the verified facts: it deletes `auth.users` (violating D3/FR-30) and `user_preferences` (a `K*` table), touches 1 of 60 in-scope tables, audits intent but never outcome, and **500s at phase 6 for every onboarded user after phases 1–5 have irreversibly run** — worse than having no button, because it reliably half-deletes and then reports failure. **D12 (new):** SA **retracted** its approval of an "unflagged" internal surface — `/test-business-os` is on the middleware skip list with no admin gate, so an unflagged Purge would be reachable by every signed-in customer, making D9's flag gate a fiction. Authorisation moves **server-side to `AdminAccessService`/`admin_users`** on the preview and commit routes (never `profiles.role`, which is user-writable); §10.4 and AC-40 updated. **§8.7 closed statically** — `platform_learning_tables` creates `workflow_patterns` and `global_failure_patterns`, **neither with a `user_id`**, so neither can ever reach FR-1's user-scoped enumeration; the outstanding Dev obligation in §11.2 is discharged. **Counts unchanged at 31 FRs / 49 ACs** (FR-26, FR-28, AC-26, AC-40 replaced in place); decisions D1–D12; follow-ups FU-1…FU-16. |
