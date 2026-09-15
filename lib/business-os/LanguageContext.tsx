@@ -3034,6 +3034,14 @@ const translations = {
     'settings.security.delete_account_desc': 'Permanently delete your account',
     'settings.security.delete_button': 'Delete',
     'settings.security.delete_warning': 'This will delete all your data and cannot be undone.',
+    // Interim erasure-request panel (workplan T31). Replaced by the full purge
+    // flow once NEXT_PUBLIC_ENABLE_BUSINESS_DELETE is on.
+    'settings.security.erasure_request_title': 'Request account erasure',
+    'settings.security.erasure_request_body':
+      'Self-service deletion is being rolled out. In the meantime, contact us and we will erase your account and business data for you.',
+    'settings.security.erasure_request_export_hint':
+      'We recommend downloading a copy of your data first — erasure cannot be undone.',
+    'settings.security.erasure_request_contact': 'Contact us',
     'settings.security.delete_dialog_title': 'Delete Your Account?',
     'settings.security.delete_dialog_desc': 'This action is permanent and cannot be undone. All your data, settings, and connected services will be permanently deleted.',
     'settings.security.delete_confirm_label': 'Type DELETE to confirm',
@@ -6293,6 +6301,12 @@ const translations = {
     'settings.security.delete_account_desc': 'Eliminar permanentemente tu cuenta',
     'settings.security.delete_button': 'Eliminar',
     'settings.security.delete_warning': 'Esto eliminará todos tus datos y no se puede deshacer.',
+    'settings.security.erasure_request_title': 'Solicitar la eliminación de la cuenta',
+    'settings.security.erasure_request_body':
+      'La eliminación automática se está implementando. Mientras tanto, contáctanos y eliminaremos tu cuenta y los datos de tu negocio.',
+    'settings.security.erasure_request_export_hint':
+      'Te recomendamos descargar una copia de tus datos primero: la eliminación no se puede deshacer.',
+    'settings.security.erasure_request_contact': 'Contáctanos',
     'settings.security.delete_dialog_title': '¿Eliminar tu cuenta?',
     'settings.security.delete_dialog_desc': 'Esta acción es permanente y no se puede deshacer. Todos tus datos, configuraciones y servicios conectados serán eliminados permanentemente.',
     'settings.security.delete_confirm_label': 'Escribe ELIMINAR para confirmar',
@@ -8328,6 +8342,12 @@ const translations = {
     'settings.security.delete_account_desc': 'מחק את החשבון לצמיתות',
     'settings.security.delete_button': 'מחק',
     'settings.security.delete_warning': 'פעולה זו תמחק את כל הנתונים ולא ניתן לבטל.',
+    'settings.security.erasure_request_title': 'בקשה למחיקת החשבון',
+    'settings.security.erasure_request_body':
+      'מחיקה עצמאית נמצאת בתהליך השקה. בינתיים, פנו אלינו ונמחק עבורכם את החשבון ואת נתוני העסק.',
+    'settings.security.erasure_request_export_hint':
+      'מומלץ להוריד עותק של הנתונים שלכם קודם — לא ניתן לבטל מחיקה.',
+    'settings.security.erasure_request_contact': 'צרו קשר',
     'settings.security.delete_dialog_title': 'למחוק את החשבון?',
     'settings.security.delete_dialog_desc': 'פעולה זו היא סופית ולא ניתן לבטל אותה. כל הנתונים, ההגדרות והשירותים המחוברים שלך יימחקו לצמיתות.',
     'settings.security.delete_confirm_label': 'הקלד מחק לאישור',
@@ -10051,4 +10071,22 @@ export function useLanguage() {
     throw new Error('useLanguage must be used within a LanguageProvider');
   }
   return context;
+}
+
+/**
+ * Non-throwing variant, for components shared across surfaces that are not all
+ * wrapped in a `LanguageProvider`.
+ *
+ * `LanguageProvider` covers `app/business-os/**` and `app/onboarding-build/**`,
+ * but NOT `app/v2/**` — `app/v2/layout.tsx` provides only `V2ThemeProvider`. So
+ * a component rendered on both `/business-os/settings` and `/v2/settings`
+ * cannot call `useLanguage()`: it would throw at render on the v2 surface.
+ *
+ * Callers get `undefined` outside a provider and are expected to fall back to
+ * their own English strings. Prefer `useLanguage()` anywhere the provider is
+ * guaranteed — an accidental silent fallback to English is a worse bug than a
+ * loud missing-provider error.
+ */
+export function useOptionalLanguage(): LanguageContextType | undefined {
+  return useContext(LanguageContext);
 }

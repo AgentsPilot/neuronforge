@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { DangerZonePanel } from '@/components/business-os/purge/DangerZonePanel'
+import { createLogger } from '@/lib/logger'
 import {
   Key,
   Download,
@@ -18,6 +20,8 @@ import {
   Loader2,
   Save
 } from 'lucide-react'
+
+const logger = createLogger({ module: 'SettingsSecurityTab' })
 
 export default function SecurityTab() {
   const { user } = useAuth()
@@ -104,13 +108,13 @@ export default function SecurityTab() {
           })
         });
       } catch (auditError) {
-        console.error('Audit logging failed (non-critical):', auditError);
+        logger.error({ err: auditError }, 'Audit logging failed (non-blocking)');
       }
 
       setSuccessMessage('Security settings updated successfully!')
 
     } catch (error: any) {
-      console.error('Error saving security settings:', error)
+      logger.error({ err: error }, 'Failed to save security settings')
       setErrorMessage(`Failed to save security settings: ${error.message || 'Database connection issue'}`)
     } finally {
       setSaving(false)
@@ -166,13 +170,13 @@ export default function SecurityTab() {
           })
         });
       } catch (auditError) {
-        console.error('Audit logging failed (non-critical):', auditError);
+        logger.error({ err: auditError }, 'Audit logging failed (non-blocking)');
       }
 
       setSuccessMessage('Password updated successfully!')
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
     } catch (error) {
-      console.error('Error changing password:', error)
+      logger.error({ err: error }, 'Password change failed')
       setErrorMessage('Failed to change password. Please try again.')
     }
   }
@@ -226,35 +230,36 @@ export default function SecurityTab() {
 
       setSuccessMessage('Data exported successfully! Check your downloads folder.')
     } catch (error) {
-      console.error('Error exporting data:', error)
+      logger.error({ err: error }, 'User data export failed')
       setErrorMessage('Failed to export data. Please try again.')
     }
   }
 
-  const handleDeleteAccount = async () => {
-    if (!user) return
-
-    if (confirm('This action cannot be undone. Are you absolutely sure you want to delete your account?')) {
-      if (confirm('Final confirmation: This will permanently delete all your data, agents, and settings.')) {
-        try {
-          setSuccessMessage('')
-          setErrorMessage('')
-
-          await Promise.all([
-            supabase.from('profiles').delete().eq('id', user.id),
-            supabase.from('user_preferences').delete().eq('user_id', user.id),
-            supabase.from('notification_settings').delete().eq('user_id', user.id),
-            supabase.from('plugin_connections').delete().eq('user_id', user.id)
-          ])
-
-          setErrorMessage('Account deletion initiated. Please check your email within 24 hours to complete the process.')
-        } catch (error) {
-          console.error('Error deleting account:', error)
-          setErrorMessage('Failed to delete account. Please contact support.')
-        }
-      }
-    }
-  }
+  /*
+   * `handleDeleteAccount` removed (CR-1).
+   *
+   * It deleted four tables straight from the browser —
+   *   profiles, user_preferences, notification_settings, plugin_connections
+   * — and then told the customer "Account deletion initiated. Please check your
+   * email within 24 hours to complete the process."
+   *
+   * Three things were wrong with that, and they compound:
+   *   1. `profiles` must never be deleted (FR-30 / D3), and `user_preferences`
+   *      is retained by BOTH purge levels by design, so the owner's next
+   *      sign-in is not rendered in the wrong language. `plugin_connections` is
+   *      an opt-in extra that defaults to OFF.
+   *   2. No email is ever sent. There is no 24-hour process. The account
+   *      survives; only the four tables do not.
+   *   3. `Promise.all` inspected no result, and supabase-js does not throw on an
+   *      RLS denial — it returns `{ error }`. So the customer saw the same
+   *      confirmation whether all four deletes landed or none did. Both
+   *      outcomes were lies, in opposite directions.
+   *
+   * Replaced by the shared, non-destructive Danger Zone panel. Real deletion
+   * arrives through the Business OS purge flow, which is gated on live payment
+   * state, snapshotted before it touches anything, descriptor-scoped, and
+   * audited on outcome rather than intent.
+   */
 
   return (
     <div className="space-y-4">
@@ -439,7 +444,7 @@ export default function SecurityTab() {
             </div>
           </div>
 
-          {/* Danger Zone */}
+          {/* Danger Zone — shared with the other settings surfaces (N7 / CR-1) */}
           <div className="border-t-2 border-red-200 pt-4 mt-4">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 bg-gradient-to-br from-red-500 to-pink-600 rounded-lg flex items-center justify-center shadow-md">
@@ -448,28 +453,7 @@ export default function SecurityTab() {
               <h4 className="text-sm font-semibold text-red-900">Danger Zone</h4>
             </div>
 
-            <div className="p-4 rounded-xl bg-gradient-to-br from-red-50 to-pink-50 border border-red-200/50">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <h4 className="font-semibold text-sm text-red-900 mb-1">Delete Account</h4>
-                  <p className="text-xs text-red-800 mb-3">
-                    Permanently delete your account and all data. This cannot be undone.
-                  </p>
-                  <div className="bg-red-100/80 border border-red-200 rounded-lg p-3">
-                    <p className="text-xs text-red-700 font-medium">
-                      This will delete: All agents, conversations, plugin connections, and settings.
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={handleDeleteAccount}
-                  className="ml-3 inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-red-600 to-pink-600 text-white rounded-lg hover:from-red-700 hover:to-pink-700 transition-all duration-300 text-xs font-semibold shadow-md"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete
-                </button>
-              </div>
-            </div>
+            <DangerZonePanel />
           </div>
         </div>
 

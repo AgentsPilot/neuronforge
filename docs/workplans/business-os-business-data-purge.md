@@ -391,15 +391,15 @@ Legend: 🟢 easy · 🟡 medium · 🔴 hard · ⬜ todo · ✅ done · 🔒 he
 
 | # | Task | Cx | Depends | Status |
 |---|---|---|---|---|
-| **T1** | **FR-1 schema introspection.** `20260915a_purge_schema_introspect.sql` (`SECURITY DEFINER`, `service_role`-only `EXECUTE`). Run the live dump via the **Supabase SQL editor** — no `pg` driver, no `DATABASE_URL` in this repo. Capture `information_schema.columns` for every table with a `user_id`, plus `pg_constraint`, `pg_trigger`, `pg_policies`. Attach with project ref + timestamp. **C-1: state in the dump doc's header that no code reads it — it is evidence for T3/T4; `SchemaReconciler` is the runtime oracle** | 🔴 | — | 🟠 **Part 1 done (T1 dump doc)** |
-| **T2** | **Close the unknowns.** (a) the four ❓: `business_intake_forms`, `websites`, `payment_methods`, `processed_webhook_events`; (b) the five §8.9 phantom names — **`contact_submissions` gets a fresh ruling if live**; (c) 🔄 **downgraded to 🟡 by SA §12.4** — `execution_optimization_tables` creates `execution_baselines`/`execution_anomalies` (both already in §8.7) and `platform_learning_tables` creates `workflow_patterns`/`global_failure_patterns`, **neither of which has a `user_id`**, so neither can ever appear in FR-1's enumeration and neither needs a descriptor. **§8.7 is closed statically; T2(c) is now one grep against the dump to confirm no third table appeared live**; (d) settle §10.2 ¶2 and AC-3's intake half | 🟡 | T1 | ⬜ |
-| **T3** | **Derive the delete order** from T1's `pg_constraint` dump, **not from migration files**. Verify B1–B4, including **B4** (`payment_plan_subscriptions` before `crm_contacts`, because T1's BEFORE DELETE trigger deletes future bookings and trips B2 from a direction B2 alone does not name). Confirm `crm_activities` last. Confirm **no FK crosses tenants**. **Emit the FK-set fingerprint C-2 needs** | 🔴 | T1 | ⬜ |
+| **T1** | **FR-1 schema introspection.** `20260915a_purge_schema_introspect.sql` (`SECURITY DEFINER`, `service_role`-only `EXECUTE`). Run the live dump via the **Supabase SQL editor** — no `pg` driver, no `DATABASE_URL` in this repo. Capture `information_schema.columns` for every table with a `user_id`, plus `pg_constraint`, `pg_trigger`, `pg_policies`. Attach with project ref + timestamp. **C-1: state in the dump doc's header that no code reads it — it is evidence for T3/T4; `SchemaReconciler` is the runtime oracle** | 🔴 | — | ✅ **COMPLETE — Parts 1 & 2 in the dump doc** |
+| **T2** | **Close the unknowns.** (a) the four ❓: `business_intake_forms`, `websites`, `payment_methods`, `processed_webhook_events`; (b) the five §8.9 phantom names — **`contact_submissions` gets a fresh ruling if live**; (c) 🔄 **downgraded to 🟡 by SA §12.4** — `execution_optimization_tables` creates `execution_baselines`/`execution_anomalies` (both already in §8.7) and `platform_learning_tables` creates `workflow_patterns`/`global_failure_patterns`, **neither of which has a `user_id`**, so neither can ever appear in FR-1's enumeration and neither needs a descriptor. **§8.7 is closed statically; T2(c) is now one grep against the dump to confirm no third table appeared live**; (d) settle §10.2 ¶2 and AC-3's intake half | 🟡 | T1 | ✅ **COMPLETE** |
+| **T3** | **Derive the delete order** from T1's `pg_constraint` dump, **not from migration files**. Verify B1–B4, including **B4** (`payment_plan_subscriptions` before `crm_contacts`, because T1's BEFORE DELETE trigger deletes future bookings and trips B2 from a direction B2 alone does not name). Confirm `crm_activities` last. Confirm **no FK crosses tenants**. **Emit the FK-set fingerprint C-2 needs** | 🔴 | T1 | ✅ **COMPLETE — 9 blocking edges; B5 absent, B6 new** |
 
 ### Stage 1 — Descriptors and the invariant
 
 | # | Task | Cx | Depends | Status |
 |---|---|---|---|---|
-| **T4** | **Write `descriptors.ts`** — 60 in-scope rows (level / scope / order / `snapshot` mode / why-comment), 30+ `never` rows, 3 `optional:*` groups, **plus the `StorageDescriptor[]` (C-16)**. `business_chat_plan_cache` gets `user_id = p_user_id` and a comment on why exclusion syntax is forbidden | 🔴 | T2, T3 | ⬜ |
+| **T4** | **Write `descriptors.ts`** — 60 in-scope rows (level / scope / order / `snapshot` mode / why-comment), 30+ `never` rows, 3 `optional:*` groups, **plus the `StorageDescriptor[]` (C-16)**. `business_chat_plan_cache` gets `user_id = p_user_id` and a comment on why exclusion syntax is forbidden | 🔴 | T2, T3 | ✅ **COMPLETE — 121 descriptors, 0 unclassified** |
 | **T5** | Types module. Strict; no `any` | 🟢 | — | ✅ **SA-approved** |
 | **T6** | **Structural-invariant test (AC-45)** — the five invariants in §2.2, including the **B-1 single-Supabase-importer scan (C-4)** and the **C-16 bucket-literal check**. Must fail against a deliberately broken fixture | 🟡 | T4, T5 | ⬜ |
 | **T7** | **`SchemaReconciler`** — fails closed on a table in neither set, on an expected-but-missing table (AC-37), **and on an FK-set fingerprint mismatch against T3 (C-2)**, so a FK added after T3 surfaces as a phase-1 sentence rather than an opaque constraint error inside the phase-2 transaction | 🟡 | T4, T8 | ⬜ |
@@ -769,12 +769,217 @@ Two changes, applied from here on:
 
 Recorded because the lesson is not "SA was careless" — it is that a Windows console default plus a truncating open is a live data-loss combination for anyone scripting edits to these documents.
 
+#### 🔴 F-15 — **B6 is a new blocker**, and it sits in the same blind spot as N11
+
+T3's dump answers the blocker question completely. **The full FK graph is cyclic and cannot be topologically sorted** — `scheduling_bookings.contact_id → crm_contacts` is `SET NULL` while other edges run the other way, producing cycles through `crm_contacts`, `scheduling_bookings`, `agents`, `payment_invoices`, `payment_plans`, `scheduling_services`, `workflow_executions` and the two calibration tables.
+
+That turns out not to matter, and the reason is the useful part: **only `RESTRICT` and `NO ACTION` edges constrain a delete.** `CASCADE` removes the child for you; `SET NULL` nulls it. Restricted to blocking edges the graph **is acyclic**, and there are exactly **nine** among the 110 user-scoped base tables. So the RPC does not need a total order over 239 FKs — it needs to honour nine constraints plus `crm_activities`-last. That is a simpler contract *and* a more robust one: a newly added `CASCADE` FK cannot invalidate it.
+
+| ID | Status |
+|---|---|
+| **B1** `payment_refunds` → `payment_transactions` | ✅ Confirmed, RESTRICT |
+| **B2** `payment_plan_subscriptions` → `scheduling_bookings` | ✅ Confirmed, RESTRICT |
+| **B3** `insight_automations` → `kernel_executions` | ✅ Confirmed, NO ACTION |
+| **B4** `payment_plan_subscriptions` before `crm_contacts` | ✅ Confirmed — **and the mechanism is the trigger, not the FK.** The only FK between them is SET NULL and does not block; the constraint is `delete_future_bookings_on_contact_delete_trigger` tripping B2 |
+| **B5** `data_decision_requests` → `agents` | ❌ **Does not exist** — CASCADE. Recorded as a negative result at SA's request. N11's `optional:agents` still stands on its own reasoning, but it adds **no ordering constraint** |
+| **B6** 🆕 `agent_logs` → `agents` | 🔴 **NEW.** `agent_logs_agent_id_fkey` is **NO ACTION**, and **both tables are in the "delete my agents" opt-in** — so ticking that checkbox fails unless `agent_logs` goes first |
+
+**B6 lands in exactly the blind spot SA named for N11.** The agents option is **off by default**, so a default T28 sweep passes green whether or not B6 is handled. It is the same trap, found by the same dump, one table over — which is the argument for T28 running the agents path explicitly rather than treating it as an optional extra.
+
+The other five blocking edges (`billing_events`, `boost_pack_purchases`, `user_rewards` → `credit_transactions`; `credit_transactions` → `token_usage`; `billing_events` → `user_subscriptions`) sit **entirely between tables the owner ruled `never`**, so they never constrain a purge. Recorded so that reclassifying any billing table knows it inherits an ordering problem.
+
+**T5 is confirmed against live trigger definitions, not migration files.** Only four DELETE-capable triggers exist in `public`. Of the five `log_*_activity` triggers, exactly one is reachable by a delete-only purge: `payment_refunds` delete → `recompute_transaction_refund_state_trigger` updates `payment_transactions.status` → `log_payment_activity_trigger` writes `crm_activities`. `log_booking_activity_trigger` watches `status`, while the refund propagation writes `payment_status` — **SA's narrowing holds.** `crm_activities`-last remains correct and sufficient. The duplicate `crm_contacts` triggers §5.2 predicted are **both present live**, and both are BEFORE UPDATE, so a delete-only purge never fires them.
+
+#### 🔴 F-16 — `organizations` exposes a gap in the oracle, not just the inventory
+
+`organizations` is a base table, is tenant-owned, and is **absent from FR-1's enumeration** because it keys on **`owner_user_id`**. The predicate is a literal column-name match.
+
+**This weakens AC-37's guarantee rather than merely missing a row.** AC-37 promises the engine fails closed when a user-scoped table is in neither set. A table whose ownership column is named anything else is invisible to that check. `organizations` *is* correctly excluded in §8.4 — but by a human writing prose, which is the mechanism FR-1 exists to replace.
+
+**Measured rather than assumed.** Across all 155 base tables, scanning ten candidate ownership column names: **exactly one** non-enumerated base table carries an owner-ish column — `organizations`. Separately, nine non-enumerated base tables hold an FK to `auth.users`, of which **eight are attribution, not ownership** (`updated_by`, `changed_by`, `acknowledged_by`, `imported_by_user_id`), plus `profiles.id`.
+
+**My recommendation: widen the predicate to the union of (a) a tenancy column by name and (b) any FK to `auth.users`.** Full reasoning and the proposed SQL are in [§9.5 of the dump](/docs/workplans/business-os-business-data-purge-schema-dump.md#95--a-gap-in-the-oracle-itself--organizations). In short: a name allow-list alone fixes today's gap and not tomorrow's; FK-alone misses the many `user_id` columns in this codebase that have no constraint; the union fails safe. Its cost is eight extra `never` descriptors for attribution-only tables — a one-time cost that converts "we think nothing else is tenant-scoped" into a check. **This changes FR-1's text, so SA must rule.**
+
+#### 🟡 F-17 — fifteen open `INSERT` policies, where the requirement named two
+
+§6.3 and AC-27 name two public unauthenticated INSERT paths (`website_page_views`, `smart_link_clicks`). The live dump has **15 `WITH CHECK (true)` INSERT policies**, of which those granted to `public`/`anon` include `agent_memories`, `execution_insights`, `pilot_step_routing_history` (×2), `workflow_approval_requests` and `workflow_step_executions` — alongside the two known ones.
+
+**Three carry a policy name asserting service-role scope while the role list is `public`** (`"Service role can access all agent memories"`, `"Service role can insert insights"`, `"Service role can access all routing history"`). `workflow_step_executions` is granted to `anon` outright.
+
+**Stated with its limit:** a permissive policy is necessary but not sufficient — PostgREST also requires a table-level `GRANT`, which this dump does not capture. So this is **a strong signal, not a proven vulnerability**, and it needs a grants check before anyone acts. It is **outside this feature's scope**; flagged because a policy whose name contradicts its role list is precisely what survives review, and because `agent_memories` is inside the agents opt-in. For SA to route.
+
+#### 🟢 F-18 — inventory reconciled: 110, not 117, and nothing was lost
+
+The RPC filters `BASE TABLE`; my Part 1 count came from the OpenAPI spec, which does not distinguish views. The difference is **exactly seven views**, all droppable at zero cost. Of BA's eight suspected views, **six are confirmed** — but **`agent_stats` and `agent_intensity_metrics` are base tables and still need descriptors**.
+
+**Zero base tables were missing from the OpenAPI list**, so Part 1's set was a strict superset and none of BA's classification work is invalidated. `user_scoped_tables` from the RPC is now the authority for the §3/§8 reconciliation.
+
+#### 🛑 F-19 — the terminate endpoint **is** called by a live UI, so I stopped rather than tombstoning it
+
+The instruction was to confirm nothing in the product calls `POST /api/admin/users/[id]/terminate` first, and to stop rather than break an admin screen silently. **Something does call it**, so I stopped. No tombstone written.
+
+**The caller:** `app/admin/users/page.tsx:360` — `handleTerminateUser()`, behind a confirmation modal with a free-text reason, which on success removes the user from the list and decrements a `totalUsers` stat. A real, finished admin feature, not a stray fetch.
+
+**But the screen protecting it does not exist.** I checked every layer, because "breaking an admin screen" only weighs against tombstoning if the screen is in fact restricted to admins:
+
+| Layer | Guard |
+|---|---|
+| `middleware.ts` for `/admin` | ❌ **None.** `/admin` is deliberately *not* on the skip list, but the only thing that buys is the **onboarding** check — and that check only runs when an auth cookie parses. No cookie ⇒ falls through to `NextResponse.next()` |
+| `app/admin/layout.tsx` | ❌ **None.** 36 lines of chrome — sidebar, header, gradients. No auth, no redirect |
+| `app/admin/users/page.tsx` | ❌ **None.** No `useAuth`, no redirect, no role check |
+| Any file under `app/admin/**` | ❌ **None.** `grep` for `isAdmin` / `AdminAccessService` / `admin_users` across the whole directory returns **zero files** |
+| The API route itself | ❌ **None** — SA's finding |
+
+So the terminate button is not an admin affordance that a tombstone would break. **It is an unauthenticated account-deletion affordance with an unauthenticated back end**, and the UI is as reachable as the route.
+
+**This changes the decision, which is why I am returning it rather than acting.** The user's ruling assumed the trade-off was "retire a dangerous endpoint at the cost of an admin screen". The real trade-off is different, and cuts two ways:
+
+1. **Tombstoning the route alone leaves the UI in place** — the screen still renders to anyone, still lists users, and the terminate button now fails with "Failed to terminate user". That is safer than today, but it leaves a delete affordance on screen for unauthenticated visitors and an error toast as the only thing stopping it. It is the same shape as the C-21 defect I just spent a cycle removing from the customer surfaces.
+2. **The UI and the route are one hazard, not two.** The honest fix retires both together.
+
+**Options, for the user and SA:**
+
+| | Action | Effect |
+|---|---|---|
+| **(a)** | Tombstone the route only, as instructed | Deletion stops immediately. Unauthenticated user-listing screen and a dead button remain |
+| **(b)** | Tombstone the route **and** remove the terminate button + modal from `app/admin/users/page.tsx` | Hazard retired coherently, nothing half-wired. Slightly wider than the instruction; still inside the `fix/` branch |
+| **(c)** | Put a real `AdminAccessService` guard on the route and keep the feature | ❌ **Not recommended here.** It is a second, ungated deletion path with no snapshot, no descriptor scoping and no outcome audit — the second-code-path problem FU-13 and DEV-Q3 both ruled against. And it would fix one route while 38 others stay open, which is the workstream the user has already separated |
+
+**My recommendation is (b)**, on the same reasoning that made option (a) right for the customer surfaces: retire the endpoint honestly and remove the affordance that points at it, so nothing is left half-wired. I have written nothing pending that ruling.
+
+⚠️ **The wider fact belongs to the separated admin-authz workstream, not to me:** the entire `/admin` surface — every page, not just this one — has no authorization at any layer. I am recording it once here because it changes how urgent that workstream is, and stopping there.
+
+#### 🟡 F-20 — corrected blocking-edge extraction (C-29): SA's filter was right, and the census now reconciles exactly
+
+My earlier extraction required **both** endpoints to be user-scoped. That filter cannot see a child with no tenancy column — which is precisely how B7 hides. Re-run with SA's filter (**every blocking edge whose parent is in the delete set, child unrestricted**), the full census is:
+
+| Group | Count | Disposition |
+|---|---|---|
+| Parent is `auth.users` | **23** | Inert — D3 never deletes `auth.users` |
+| Parent is one of the 110 user-scoped base tables | **10** | The nine I already had, **plus B7** |
+| Parent outside the 110 | **4** | `boost_packs`, `reward_config`, `organizations`, `workflow_approval_requests` — all never deleted, all inert |
+| **Total blocking edges in `public`** | **37** | ✅ **Reconciles exactly with SA's 37** |
+
+SA grouped these as "23 + 9 + 5"; I group them "23 + 10 + 4" because I count B7 with the in-scope parents rather than with the remainder. Same 37 edges, same single live finding — **no disagreement, and worth stating so the difference in the two write-ups is not read as one.**
+
+**C-29 — all three opt-in sets, external blocking edges:**
+
+| Opt-in | External blocking edges into the set |
+|---|---|
+| `optional:agents` | **One — B7.** `agent_scheduler_state.last_execution_id → agent_executions`, NO ACTION |
+| `optional:integrations` | **None** |
+| `optional:activityHistory` | **None** |
+
+(B6, `agent_logs → agents`, is *intra-set* — both tables are in the agents opt-in — so it is an ordering constraint inside the set rather than an external blocker. Both still have to be honoured.)
+
+**C-30 — B7's descriptor.** `agent_scheduler_state` has **no tenancy column**; ownership runs `agent_id → agents.user_id`. Its two FKs are `agent_id → agents` **CASCADE** and `last_execution_id → agent_executions` **NO ACTION**. No code in `lib/` or `app/` references the table at all, so it is written by a database function or is dormant.
+
+```ts
+{ table:  'agent_scheduler_state',
+  level:  'optional:agents',
+  scope:  { kind: 'via', parent: 'agents', fk: 'agent_id' },  // no user_id column
+  order:  /* before agent_executions */,
+  snapshot: 'ids',
+  notes:  'B7: last_execution_id -> agent_executions is NO ACTION, so this must go first. '
+        + 'agent_id -> agents is CASCADE, so deleting agents would also clear it — but relying on '
+        + 'that would make the ordering depend on an FK action rather than on the descriptor set.' }
+```
+
+The resulting agents-opt-in order is `agent_logs` → `agents` → `agent_scheduler_state` → `agent_executions` → the rest. Deleting `agents` first would CASCADE `agent_scheduler_state` away and incidentally unblock `agent_executions`, but **an explicit descriptor is the right mechanism**: it keeps the order a property of the structure the executor iterates rather than an emergent consequence of an FK action someone could later change to `SET NULL`.
+
+**C-31 noted and agreed:** C-2's fingerprint covers the blocking subgraph and stays separate from FR-1's tenancy predicate. They answer different questions, and B7 is the proof that neither subsumes the other — it has **no tenancy column and no `auth.users` FK**, so the N15 union cannot see it; only the blocking-edge check can.
+
+#### 🟢 F-21 — terminate endpoint and its affordance retired together (N18 ruled (b))
+
+Both halves done, in the T31 `fix/` branch:
+
+| File | Change |
+|---|---|
+| `app/api/admin/users/[id]/terminate/route.ts` | **`410 Gone` tombstone.** No Supabase client, no `auth.admin`, no service-role key. **17 tests**, including the C-21 source scan and two assertions specific to this route: it **never reads `params`** (a tombstone that still resolves the id is one line from acting on it), and it **does not echo the id back** (which would turn a headstone into an id oracle) |
+| `app/admin/users/page.tsx` | `handleTerminateUser`, `openTerminateModal`, the row action button, the confirmation modal, the reason field and four pieces of now-dead state removed. Unused `Trash2` import dropped. **9 `console.*` converted to Pino** (rule 3 fires on touch) |
+
+Two details from reading the old implementation that were not in the brief, both recorded in the tombstone's header:
+
+- It returned **`deleteError.message`** to the client with no `NODE_ENV` guard.
+- It wrote an audit row with **`user_id: <the deleted user>`** and a literal **`terminated_by: 'admin'`** — attributing the deletion to its own victim, because the route had no idea who the caller was. **Audit that records the wrong actor is worse than no audit: it looks like provenance.**
+
+**Explicitly not a security fix, and the code says so.** The tombstone and the page both carry a scope note: the whole `/admin` surface is unauthenticated, that is a separate tracked workstream, and removing one deletion affordance narrows its blast radius without closing it. **No auth guard was added to the page**, as instructed.
+
+#### 🟡 F-22 — my own C-21 assertion was broken, and it failed *open* in the first tombstone
+
+The comment-stripper in the tombstone tests ran block comments before line comments:
+
+```ts
+source.replace(/\/\*[\s\S]*?\*\//g, '')   // block first  <-- wrong
+      .replace(/^[ 	]*\/\/.*$/gm, '');
+```
+
+The terminate route's header documents the scope limit using the glob **`app/admin/**`**. That `/*` opens a block-comment match which runs to the next `*/` — the JSDoc above `gone()` — **swallowing both imports**. The `createLogger` assertion then failed against a file that plainly uses it.
+
+It surfaced as a red test, so it cost minutes. But the failure direction is the part worth recording: had the swallowed region contained `createClient` instead of an import of the logger, **the no-deletion-primitives scan would have silently passed over it.** A checker whose input is mangled by its own preprocessing reports clean for the same reason it reports broken.
+
+Fixed in both tombstone tests by stripping **line comments first**, with the reason in a comment beside it so the order is not "tidied" back later. The delete-account tombstone happened not to contain a `/*`-bearing line comment, so its assertion was sound — **by luck, not by construction**, which is exactly the distinction worth fixing.
+
+#### 🟢 F-23 — T4 descriptor set written, and it passes AC-37's own check
+
+`lib/business-os/purge/descriptors.ts`: **121 descriptors**, no duplicates, typechecks clean under `--strict`.
+
+**The completeness check that matters, run against the live dump:** every one of the 110 user-scoped base tables has a descriptor. **Zero unclassified.** The engine would not fail closed on its first run. The 11 descriptors for relations *outside* the enumeration are exactly the expected categories and no others: five global catalogs, `organizations` (the `owner_user_id` gap N15 closes), `profiles`, and the four parent-scoped children with no tenancy column (`website_blocks`, `smart_link_clicks`, `user_capability_blocks`, `agent_scheduler_state`).
+
+Ordering is **not** a topological sort — it cannot be, because the full FK graph is cyclic. It is four bands plus `crm_activities` at `LAST`, with `BLOCKING_EDGES` exported from the file so the invariant test can assert `order[child] < order[parent]` for each of the nine **against the live dump**. That makes the ordering verified rather than asserted by whoever last edited a band. B4 cannot be expressed as an FK at all, so it is carried separately in `TRIGGER_ORDERING` with the reason.
+
+**Three of BA's open confirmations answered from the dump, one of them a negative result that saves work:**
+
+| BA's question | Answer |
+|---|---|
+| Does `user_media` have a storage bucket? (§3.15 #64) | **No new one.** `storage_path` points at the **existing `website-images`** bucket — `GeneratedImageService.ts:41` and `StockImageService.ts:58` both set `BUCKET = 'website-images'` and record into `userMediaRepository`. **No fourth `StorageDescriptor`, and AC-4 does not extend to a new bucket.** |
+| Is `business_chat_verified_questions.user_id` nullable? (§3.8 #44) | **NOT NULL.** So §8.2's portable-row shape does **not** apply to it — it is a plain scoped delete. Only `business_chat_plan_cache` is nullable, and it keeps the equality-predicate prohibition |
+| Does `agent_memory` (singular) exist? (§10.3) | **Yes**, live and user-scoped — not a migration-file phantom. And there are **four** memory tables: `agent_memory`, `agent_memories`, `run_memories`, `user_memory` |
+
+⚠️ **One requirement amendment still pending, and the descriptor set is ahead of it.** §8.10 still lists `data_decision_requests` as provisionally `never`, awaiting the identification T4 was asked to supply. I supplied it (F-9) and SA ruled **`optional:agents`** (N11), so the descriptor is written that way with the divergence flagged in its own `notes`. **BA needs to move it from §8.10 into §10.3's agents checkbox** so the document and the code agree.
+
+⚠️ **§8.13 needs the same treatment:** six of its eight suspected views are confirmed views and drop at zero cost, but **`agent_stats` and `agent_intensity_metrics` are base tables** and now carry real `never` descriptors. The list should say so rather than leaving them filed as views.
+
+#### 🔴 F-24 — C-35: the two retired routes' findings, preserved before the files were deleted
+
+C-34 replaced the per-file tombstones with one repo-wide guard and **deleted both route files**. Everything the tombstone headers documented is recorded here, because it was the only place it lived.
+
+**`POST /api/admin/users/[id]/terminate`** — hard-deleted an arbitrary `auth.users` row from a URL path parameter, on a module-scope service-role client, with **no authentication of any kind**: no `getUser()`, no admin check, not even the untrustworthy `profiles.role`. `middleware.ts` skips all of `/api`, so nothing upstream gated it. Two further defects:
+
+- It returned **`deleteError.message`** to the client with **no `NODE_ENV` guard**, against the Security Rules table.
+- It wrote an audit row as:
+
+  ```ts
+  await supabase.from('audit_trail').insert({
+    user_id: userId,                                  // <- the DELETED user
+    action: 'TERMINATE_USER',
+    details: { reason, terminated_by: 'admin' },      // <- a literal string
+  });
+  ```
+
+  **The audit row attributes the deletion to its own victim**, and records the actor as the literal string `'admin'` — because the route had no idea who the caller was, having never authenticated one. There is no actor id anywhere in the record. SA calls this the cleanest example in this codebase of **an audit record that looks like accountability and contains none**: it would survive a compliance review, satisfy a "was this logged?" question, and tell you nothing about who did it.
+
+**`POST /api/user/delete-account`** — the findings are already in §9.4 F-1 and §9.3; restated in one line so deleting the file loses nothing: it deleted `auth.users` (forbidden by D3/FR-30), deleted `user_preferences` (the `K*` retained by both purge levels), audited **intent but never outcome**, leaked `error.message` unguarded, wrote `role: 'deleted'` into the user-writable `profiles.role`, and **500'd partway through for every onboarded user** — 16 `REFERENCES auth.users` declarations carry no `ON DELETE`, so the final delete raised an FK violation after six tables had already gone.
+
+Both summaries also go into T32 (§11.3), where the count of live deletion paths now stands at **five**.
+
+#### 🟢 F-25 — the repo-wide guard found a sixth candidate, and it was legitimate
+
+Running the new guard for the first time produced two hits. Recorded because "the guard found nothing" would have been the less informative outcome:
+
+| Hit | Verdict |
+|---|---|
+| `app/api/plugin-connections/route.ts` — `.from('plugin_connections').delete()` | ✅ **Legitimate.** Scoped `.eq('plugin_key', …).eq('user_id', userId)` — a user disconnecting their own integration. `plugin_connections` was therefore moved out of the SERVER table list and kept in the CLIENT one, where a delete would still be the CR-1 shape. Adding an allow-list entry for ordinary behaviour would have been the wrong fix: **an allow-list padded with routine exceptions stops being read**, which is the failure mode it exists to prevent |
+| The guard file matching itself | ✅ Excluded **by exact path**, not by skipping `__tests__`. It must contain every forbidden primitive by construction. Blanket-exempting test directories would leave a hole large enough for the next incident |
+
+The guard runs in ~4s over 500+ files, so it can run every build.
+
 ### 9.5 Still needs SA or the owner
 
 | # | Item | Who |
 |---|---|---|
 | **N1** | **E1 — `/api/auth/cleanup-incomplete` is a dormant mass-account-deletion hazard armed by the pending `CRON_SECRET` change.** The user approved sending Offir a heads-up **now**, decoupled from the decision; T32's full summary still lands at cycle exit | Owner + Offir |
-| **N2** | **The erasure-request channel.** User decision: generic placeholder for now, real address before merge. Implemented as `PLACEHOLDER_ERASURE_CONTACT = 'TODO-ERASURE-CONTACT@example.invalid'` in exactly one file, **with a test asserting it is present and `.invalid`** — a mechanical backstop, not a promise. **Blocking pre-merge item** | Owner |
+| **N2** | 🟠 **Interim: the erasure contact is now `meiribarak@gmail.com`** — the product owner's personal address, as a temporary unblock because no support mailbox exists. **It is rendered to every customer on three settings surfaces**, so replacing it is a product decision, not a config tidy. Defined in exactly one place; find it with `grep -rn "TEMP-ERASURE-CONTACT"`. **Owner: Barak**, before or shortly after launch | Owner |
 | **N3** | **E3 residue** — whether non-admin internal staff reach the internal Danger Zone. Boundary settled (server-side, `AdminAccessService`); membership ruled **platform admins only** | ✅ ruled |
 | **N4** | **Un-gating at cycle exit**, decided on QA evidence. SA confirms T28 genuinely discharges all seven D9 conditions. Build for it; do not assume it | Owner |
 | **N5** | **C-18 escalation trigger** — if T13 measures a clean single-account business above 20 s, stop and return to SA rather than raising the number | SA, on trigger |
@@ -782,11 +987,17 @@ Recorded because the lesson is not "SA was careless" — it is that a Windows co
 | ~~N7~~ | ✅ **RESOLVED — both surfaces, one shared component**, then extended by CR-1 to **all five** delete affordances. `DangerZonePanel` / `ErasureRequestContent` in `components/business-os/purge/` | done |
 | **N8** | **Classification of the 38 unclassified user-scoped relations.** ✅ BA classified all 38; §3 60 → 64, §8 30 → 54. **Remaining:** the 8 suspected views in §8.13 drop out once T1 Part 2 confirms them | BA (done) / T1 Part 2 |
 | **N9** | **Three schema rulings.** ✅ Ruled: `processed_webhook_events` → `never`; `audit_logs` live and user-scoped; `insight_outcomes` removed from §3 and its repository spun off | ✅ ruled |
-| **N10** | 🔴 **T3 → T4 → T9 blocked** on a human running `20260915a_purge_schema_introspect.sql` in the Supabase SQL editor. `exec_sql` does not exist; no `pg` driver; no `DATABASE_URL`. **The only remaining input to the delete order, and it is the critical path** | Owner |
+| ~~N10~~ | ✅ **RESOLVED.** The user applied the migration; I called `purge_schema_introspect()` and persisted the full output to the dump doc. **T3 is done, T4/T9 unblocked** | done |
 | **N11** | ✅ **Ruled `optional:agents`**, on my reasoning. **T3 must look for the FK explicitly:** if `data_decision_requests.agent_id` is RESTRICT/NO ACTION this is **B5 — `data_decision_requests` before `agents`**. ⚠️ **The agents option is off by default, so a default T28 sweep reports green** — T28 must run the agents path explicitly, after T3 confirms | T3, T28 |
 | **N12** | ✅ **Ruled: delete both dead files.** Done — `components/business-os/settings/{SecurityTab,ProfileTab}.tsx` removed and the `ProfileTab` re-export dropped from `index.ts` in the same change, so the build does not break. The **live** `components/settings/SecurityTab.tsx` was kept and fixed (CR-1) | done |
 | **N13** | 🆕 **`tsc` is not being run by anyone.** SA could not run it (OOMs at ~4 GB; needs `NODE_OPTIONS=--max-old-space-size=8192`), and `next.config.js` sets `ignoreBuildErrors`. I typecheck my touched files with a scoped `tsconfig`, which is a workaround, not a gate. Separate follow-up | SA |
 | **N14** | 🆕 **`/v2` has no `LanguageProvider`** (F-8). Ruled out of scope this cycle — wrapping `app/v2/layout.tsx` would change RTL/`dir` handling on a major surface as a side effect of a Danger Zone panel. Separate follow-up | SA |
+| **N15** | 🆕 **FR-1's predicate misses `organizations` (F-16).** This is a hole in AC-37's fail-closed guarantee, not one missing row. **Recommendation: union of (a) tenancy column by name and (b) any FK to `auth.users`** — measured cost is 8 extra `never` descriptors. **Changes FR-1's text** | SA |
+| **N16** | 🆕 **B6 — `agent_logs` before `agents` (F-15).** New blocker inside the off-by-default agents opt-in. Must be in the descriptor order **and** T28 must run the agents path explicitly — same blind spot as N11 | T4, T9, T28 |
+| **N17** | 🆕 **15 open `INSERT` policies, three named "Service role" but granted to `public` (F-17).** Outside this feature's scope; needs a table-`GRANT` check before anyone concludes it is exploitable. `agent_memories` is inside the agents opt-in | SA to route |
+| ~~N18~~ | ✅ **RESOLVED — ruled (b), done.** Route tombstoned (17 tests) and the terminate button, modal, reason field and dead state removed from `app/admin/users/page.tsx`. No auth guard added — the `/admin` surface is a separate workstream (F-21) | done |
+| **N19** | 🆕 **B7 confirmed and characterised (F-20, C-30).** `agent_scheduler_state` has no tenancy column; needs a `via`-scoped `optional:agents` descriptor, proposed text in §9.4. **C-29 complete: `optional:agents` has exactly one external blocking edge; `integrations` and `activityHistory` have none.** Census reconciles with SA at 37 | T4, T9 |
+| **N20** | 🆕 **Two requirement amendments the descriptor set is ahead of (F-23).** (a) `data_decision_requests` — §8.10 still says provisional `never`; SA ruled `optional:agents`, and the descriptor is written that way. (b) §8.13 — `agent_stats` and `agent_intensity_metrics` are base tables, not views, and now carry real `never` descriptors | BA |
 
 ## 10. Non-compliant Files Touched (Pino)
 
@@ -835,7 +1046,7 @@ Sent **once this cycle finishes**. Per the user: **note it, do not act on it.** 
 5. **Therefore every business onboarded through the current flow is a deletion candidate.**
 6. It is dormant only because **`CRON_SECRET` is unset** (the route fail-closes at line 17 before doing any work) — and, incidentally, because `listUsers()` is unpaginated so it only ever inspects the first page. Neither is a designed safeguard.
 7. **Setting `CRON_SECRET` on Vercel — the change needed to un-dormant the payment queue drains — arms this cron, and all eleven in `vercel.json`, at once.** Today the last line of defence against mass account deletion is a data-integrity constraint: the `business_profiles → auth.users` FK has no `ON DELETE`, so the delete errors out.
-8. **Context for the decision: this is the fourth live deletion path found in one cycle**, after `delete_user_by_id.sql`, `/api/user/delete-account` and `components/settings/SecurityTab.tsx`'s browser-side delete. Each was found by a different oracle, and each time the previous oracle had reported clean. The pattern is not a run of unrelated mistakes — it is that **nothing in this codebase inventories its destructive paths**.
+8. **Context for the decision: this is the FIFTH live deletion path found in one cycle**, after `delete_user_by_id.sql`, `/api/user/delete-account`, `components/settings/SecurityTab.tsx`'s browser-side delete and `/api/admin/users/[id]/terminate`. **And a finding materially larger than this cron: the entire `/admin` surface is unauthenticated** — no guard in middleware, in `app/admin/layout.tsx`, or on any page, and zero files under `app/admin/**` reference `isAdmin`/`AdminAccessService`/`admin_users`; 43 admin API routes are in the same state. That is its own workstream, but it is the context in which this cron sits. Each was found by a different oracle, and each time the previous oracle had reported clean. The pattern is not a run of unrelated mistakes — it is that **nothing in this codebase inventories its destructive paths**.
 9. **This route still has 10 `console.*` calls.** Their conversion was deliberately withheld rather than done, because a tidy, well-logged mass-deletion hazard reads as *maintained* to the next person who opens it. The obligation travels with this summary.
 10. **Ask:** do not set `CRON_SECRET` until this has a decision. The decision itself (fix the predicate to `business_profiles.onboarding_completed`, or retire the cron, or something else) comes **after** this summary — running *any* automated account deletion is a product call, not an engineering one.
 ## 12. SA Review Notes
@@ -1521,6 +1732,324 @@ C-1…C-21 remain in force.
 
 ---
 
+## 12C. SA Review — T3 / the live schema dump, CR-1 verification, N15–N17
+
+**Reviewed by SA — 2026-09-15**
+**Status:** ✅ **CR-1 verified fixed. T9's contract accepted with one correction. N15 ruled (FR-1 amends). One new blocker found (B7). One critical out-of-scope security finding escalated (E5).**
+
+This is the strongest artefact produced in this cycle. The dump doc measures rather than asserts throughout, records a **negative result** (B5) because I asked for it, and corrects its own earlier numbers (117 → 110) without being prompted. Two things need correcting, and one of them matters.
+
+---
+
+### 12C.1 The T9 delete-order contract — ✅ accepted, with a correction to the filter
+
+**The core reasoning is right and I accept it.** Only `RESTRICT` and `NO ACTION` edges constrain a delete; `CASCADE` and `SET NULL` cannot block one. Sorting the blocking subgraph instead of all 239 FKs is correct, and Dev's robustness argument is the better half of it: **a newly added `CASCADE` FK cannot invalidate an order derived only from blocking edges**, whereas a total order over 239 edges would need re-deriving on every schema change.
+
+**I verified the acyclicity claim rather than accepting it.** Over the nine edges, `credit_transactions` is the only node appearing as both parent (#2, #4, #9) and child (#5 → `token_usage`), and `token_usage` is never a child. No cycle. ✅ The arithmetic also reconciles: 144 CASCADE + 35 NO ACTION + 2 RESTRICT + 58 SET NULL = 239. ✅ And the five-of-nine billing claim holds. ✅
+
+#### 🔴 But the filter is wrong, and it hides a tenth blocker
+
+Dev selected *"the nine blocking edges **among the 110 user-scoped base tables**."* **The correct filter is "every blocking edge whose PARENT is in the delete set" — irrespective of whether the CHILD is user-scoped.** A non-user-scoped child holding a `NO ACTION` FK to a purge-set parent blocks the delete exactly as hard, and by construction it can never appear in a list filtered to user-scoped tables.
+
+I extracted all 37 blocking edges from §9.8. Twenty-three point at `users` and are inert (D3 keeps `auth.users`). Of the remaining fourteen, nine are Dev's. **Five are not**, and four of those five are genuinely inert:
+
+| Edge | Disposition |
+|---|---|
+| `credit_transactions → boost_packs` | Inert — parent is a global catalog, child is `never` |
+| `credit_transactions → reward_config` | Inert — same |
+| `profiles → organizations` | Inert — both `never` |
+| `workflow_approval_responses → workflow_approval_requests` | Inert — both outside the purge set |
+| 🔴 **`agent_scheduler_state → agent_executions`** (`NO ACTION`) | **NOT inert. This is a new blocker.** |
+
+**B7 — `agent_scheduler_state` before `agent_executions`.** Verified against §9.7: `agent_executions` **is** among the 110 and **is** inside the "delete my agents" opt-in. `agent_scheduler_state` is **not** among the 110 — it has no tenancy column — which is precisely why the user-scoped filter could not see it. Tick the agents checkbox and the RPC's delete of `agent_executions` raises a foreign-key violation, the transaction rolls back, and the purge refuses. Fail-closed, so no data loss — but the agents option is simply broken, and **off by default, so a default T28 sweep reports green**.
+
+**This is the third instance of the same trap in this cycle** (N11's original premise, B6, now B7), and the second instance of the *same blind-spot shape as N15*: a predicate that enumerates by tenancy cannot see something that has no tenancy column.
+
+**Required:**
+
+1. **B7 joins the order.** `agent_scheduler_state` gets a descriptor scoped `{ kind: 'via', parent: 'agent_executions', fk: <execution fk> }` at `optional:agents` — the grammar already supports this; it is how `website_blocks`, `smart_link_clicks` and `user_capability_blocks` work. Confirm the FK column name from the dump; do not invent it.
+2. **T3 re-runs its blocking-edge extraction with the corrected filter** — parent-in-delete-set, not child-is-user-scoped — and reports the result even if it is "no further edges". The five I classified above are my read of §9.8; Dev should confirm them against the live dump rather than inherit my classification.
+3. **C-2's FK fingerprint covers the blocking subgraph specifically**, so a blocking edge added later fails in phase 1 with a sentence rather than inside the phase-2 transaction as an opaque constraint error.
+4. **The ordering-completeness check is not the tenancy predicate and must not be folded into it.** It is answerable directly from `pg_constraint` — "which blocking edges point at a table I am about to delete" — and it is independent of how tenancy is detected. Keep them as two separate checks in T7.
+
+**Everything else about the contract stands: nine (now eleven — nine + B6 already counted, plus B7) constraints plus `crm_activities`-last.**
+
+---
+
+### 12C.2 N15 — FR-1's predicate → ✅ **Take the union. BA amends the requirement.**
+
+**Ruling: adopt Dev's union — `column_name IN ('user_id','owner_user_id')` OR any FK referencing `auth.users`.**
+
+Dev's reasoning is the right reasoning and I will not restate it, except for the part that decides it: **the alternative fixes the instance and not the class.** `organizations` happens to be correctly excluded already — by a human writing prose in §8.4, which is exactly the mechanism FR-1 exists to replace. AC-37 promises a *mechanical* fail-closed guarantee; a predicate that can only see one column name delivers that guarantee over an arbitrary subset and gives no signal about the rest. Eight extra `never` descriptors with a one-line reason each is a trivial price for converting "we believe nothing else is tenant-scoped" into a check.
+
+I also value that Dev **measured the blast radius before recommending** — ten candidate column names across all 155 base tables, with the eight attribution columns named individually. That is what made this rulable in one pass.
+
+**Two bounds on the ruling:**
+
+- **The union does not close the class, and the requirement must not claim it does.** B7 is the proof: `agent_scheduler_state` has no tenancy column *and* no FK to `auth.users`, so the union would not find it either. Tables owned only through a parent are a real category — `website_blocks`, `smart_link_clicks`, `user_capability_blocks` and now `agent_scheduler_state`. FR-1's amended text must say plainly that the predicate covers **directly-tenanted** tables, and that **parent-scoped children are covered by the descriptor set and by the blocking-edge check (12C.1), not by this predicate.** Otherwise we have replaced one silent gap with a better-documented one.
+- **The eight attribution-only `never` descriptors each carry their column name in the reason** (`updated_by`, `changed_by`, `acknowledged_by`, `imported_by_user_id`), so a future reader can tell "excluded because attribution" from "excluded because someone decided so".
+
+**Who amends: BA, in the requirement.** This changes FR-1's normative text and AC-37's scope, and the single-source-of-truth rule says the requirement is where FR text lives. A predicate change that rides in a workplan is invisible to anyone reading the requirement afterwards — which is the failure mode that produced FR-26 and FR-28.
+
+**Amendment 6 — FR-1, for BA to apply.** Append to FR-1:
+
+> The enumeration predicate is the **union** of (a) a tenancy column by name — `user_id` or `owner_user_id` — and (b) any foreign key referencing `auth.users`. Either half alone leaves a silent gap: a name allow-list misses a future `tenant_id`, and an FK test misses the many tenancy columns in this schema that carry no constraint. The union costs eight `never` descriptors for attribution-only tables (`updated_by`, `changed_by`, `acknowledged_by`, `imported_by_user_id`), each of which must state that column in its reason.
+>
+> **Scope limit, stated so it is not over-read:** this predicate enumerates **directly-tenanted** tables. Tables owned only through a parent — `website_blocks`, `smart_link_clicks`, `user_capability_blocks`, `agent_scheduler_state` — carry neither a tenancy column nor an `auth.users` FK and are **invisible to it by construction**. They are covered by their `via` descriptors and by the blocking-edge check in FR-15, never by FR-1. AC-37's fail-closed guarantee is therefore over directly-tenanted tables only.
+
+**AC-37** gains the same scope limit sentence.
+
+---
+
+### 12C.3 N16 / B6 → ✅ confirmed, and the QA gate is granted — now covering three blockers, not one
+
+`agent_logs → agents`, `NO ACTION`, both inside the off-by-default agents opt-in. Confirmed in §9.8.
+
+**Yes — write it as a hard QA gate, not a note.** And it is now **three independent reasons**, not two:
+
+| # | Reason the agents path must be exercised | Source |
+|---|---|---|
+| 1 | **B6** — `agent_logs` before `agents` | this dump |
+| 2 | **B7** — `agent_scheduler_state` before `agent_executions` | 12C.1, new |
+| 3 | **N11** — `data_decision_requests` orphan-row correctness (no ordering constraint; B5 confirmed absent) | §12B |
+
+**New gate, C-28:** *T28 does not pass unless the sweep is run twice — once with all three opt-ins off, and once with **Also delete my agents** on. AC-34's assertions are only meaningful in the second run. A single default-configuration sweep is not a pass and QA must refuse to record it as one.*
+
+The reason this needs to be a gate rather than a note is structural: **every defect in this family is invisible in the default configuration**, so the cheapest test path is also the one that reports green. That is the shape of a trap, and the only reliable defence is to make the expensive path mandatory.
+
+I would extend the same logic one step: the other two opt-ins (`integrations`, `activityHistory`) have had no equivalent blocking-edge analysis. **T3's corrected extraction (12C.1 item 2) must cover all three option sets**, not just agents — `plugin_connections` and `audit_trail` have the same "parent in delete set, child possibly not user-scoped" exposure and nobody has looked.
+
+---
+
+### 12C.4 N17 — policies → **route it out. Its own tracked item, not this cycle.**
+
+**Ruling: out of scope for this cycle; raise it as a standalone security item with a named owner, ahead of the other follow-ups.**
+
+Three reasons it does not belong here:
+
+1. **Dev is right that this is a signal, not a finding.** A permissive `WITH CHECK (true)` policy is necessary but not sufficient — PostgREST also needs a table-level `GRANT`, which this dump does not capture. Acting on an unproven vulnerability inside a purge cycle would mean changing RLS policies on nine tables with no evidence of exploitability and no test of what breaks. **I want to record that Dev stated the limit instead of overclaiming.** A finding described as "three endpoints are publicly writable" would have been more dramatic and less true, and it would have been acted on.
+2. **It is not a deletion path.** This cycle's scope creep has been disciplined precisely because everything absorbed so far *was* one.
+3. **The fix is a grants check first**, which is a ten-minute query — but it is a query against a live database that is currently the user's bottleneck (N10's migration took a whole cycle step). Queueing it behind purge work would delay both.
+
+**What travels with it, so it is not lost:** the three policies whose *name* asserts service-role scope while the role list is `public` (`agent_memories`, `execution_insights`, `pilot_step_routing_history`) and the one granted to `anon` (`workflow_step_executions`). **A policy whose name contradicts its role list is the specific thing to chase** — it survives review because reviewers read the name.
+
+**One thing does stay in this cycle**, and it is small: `agent_memories` is inside the agents opt-in, and `smart_link_clicks` / `website_page_views` are already known re-population paths under FR-14/AC-27. **AC-27's assertion extends to `agent_memories`** — after a Purge with the agents option on, a public insert must not create an attributable row. That is one extra assertion in T28's agents run (C-28's second pass), not new work.
+
+**The two tables marked "unclassified until §8 reconciliation"** (`execution_insights`, `pilot_step_routing_history`) must be classified by T4 regardless — they are in the 110, so AC-37 fails the run closed until they have descriptors. That is the design working; just don't let the N17 routing decision be read as deferring their classification.
+
+---
+
+### 12C.5 CR-1 — verified fixed, and I ran my own oracle rather than trusting the second sweep
+
+You asked me not to take the second sweep on trust. I didn't.
+
+| Check | Result |
+|---|---|
+| `components/settings/SecurityTab.tsx` no longer deletes | ✅ `handleDeleteAccount` gone (comment at :239 records the removal); renders `<DangerZonePanel />` at :456; **0 `console.*`** |
+| All live surfaces render the shared panel | ✅ `components/settings/SecurityTab.tsx`, `components/v2/settings/SecurityTabV2.tsx:283`, `app/business-os/settings/page.tsx:905` (`ErasureRequestContent` inside its dialog, as designed) |
+| N12 deletions | ✅ Both dead files deleted, **and the `ProfileTab` line removed from `components/business-os/settings/index.ts`** — the trap I flagged was avoided |
+| Panel now has its own test | ✅ `components/business-os/purge/__tests__/DangerZonePanel.test.ts` |
+
+**My independent oracle, run four ways** rather than by route-path: (a) every `.delete()` in `components/**` and `app/**/*.tsx`; (b) every `auth.admin.deleteUser` anywhere in the tree; (c) every "Danger Zone" string; (d) every `/api/admin/**` route lacking an admin guard.
+
+**(a) and (c) came back clean.** The only remaining client-side `.delete()` is `app/(protected)/agents/[id]/delete/page.tsx` — deleting one agent, normal product functionality. Every "Danger Zone" string is accounted for. **There is no sixth in-product Danger Zone.** Dev's C-27 sweep was correct within the oracle I specified.
+
+**(b) and (d) found something else entirely — see E5.** That is not a failure of Dev's sweep: I specified C-27 as "every component containing a delete affordance", and this is an API route with no UI. The oracle was too narrow, and that is mine.
+
+---
+
+### 12C.6 🔴 E5 — ESCALATION: 41 admin API routes have no authorisation, and one of them deletes any user account
+
+Found by oracle (d). **This is not this feature's work and I am not folding it in.** It is reported here because this feature's own inventory discipline surfaced it and it should not be lost.
+
+**`POST /api/admin/users/[id]/terminate`** (`app/api/admin/users/[id]/terminate/route.ts`):
+
+- **No authentication of any kind.** No `getUser()`. No admin check. No `AdminAccessService`. No `profiles.role` check either — nothing. It is "admin" by directory name only.
+- **Module-scope service-role client** (lines 5–8).
+- **`auth.admin.deleteUser(params.id)`** at line 22 — hard-deletes an arbitrary `auth.users` row **from a caller-supplied path parameter**. That is the M1 cross-tenant vector the `tenant-isolation-guard` skill exists to prevent, at its maximum: not "write to another tenant's row" but "delete any account on the platform".
+- Leaks `deleteError.message` and `error.message` to the client with no `NODE_ENV` guard; 5 × `console.*`; no Zod.
+- **Reachable.** `middleware.ts:83` skips all `/api` paths, and the middleware only performs onboarding redirects in any case — it is not an authorisation layer.
+
+**It is not an isolated route.** Scanning `app/api/admin/**` for any of `AdminAccessService` / `adminAccessService` / `requireAdmin` / `isAdmin`: **41 routes have no admin check, and 38 of those also never call `getUser()`.** Spot-checked three to avoid overclaiming from a grep — `app/api/admin/users` (service-role read of the `profiles` table), `app/api/admin/user-emails` (bulk email lookup by id), `app/api/admin/audit-trail` (which carries the literal comment `// TODO: Add admin role check here`). All three confirmed to have no guard of any kind.
+
+So the exposure is a platform-wide unauthenticated admin surface covering user PII, audit trail, system configuration, pricing and token usage — with account termination as its most destructive member.
+
+**Recommendation, split by urgency:**
+
+1. **`/api/admin/users/[id]/terminate` should be dealt with now**, in the T31 `fix/` branch or one beside it. It is a deletion path, it is unauthenticated, and this cycle's entire premise is that destructive paths must be inventoried and gated. Retiring it to a `410` tombstone is the cheapest correct action — the same treatment, the same reasoning, and there is no evidence any UI depends on it (that should be confirmed first).
+2. **The other 40 are a separate security workstream with its own owner.** They are not deletion paths and folding them in would be the scope creep I have been refusing all cycle. But they should not be recorded only in a workplan section.
+3. **This is the fifth live deletion path this cycle** — `delete_user_by_id.sql`, `/api/user/delete-account`, `/api/auth/cleanup-incomplete`, `components/settings/SecurityTab.tsx`, and now `/api/admin/users/[id]/terminate`. **The pattern is no longer "legacy mistakes"; it is the absence of any inventory of destructive or privileged paths.** T32's count moves from four to five, and I would put the admin-authz finding in front of the user in the same breath, because it is materially larger than the cron.
+
+**Which parts are product calls:** whether to retire `/terminate` outright versus guard it (product — someone may rely on it); who owns the admin-authz workstream and when (product/resourcing). **That every one of these routes needs an authorisation boundary is not a product call.**
+
+---
+
+### 12C.7 Smaller confirmations
+
+| Item | SA |
+|---|---|
+| **B5 absent** | ✅ Recorded as a negative result exactly as asked. This is the right habit — an unrecorded negative gets re-investigated by the next person |
+| **B4 mechanism corrected** | ✅ Accepted. The FK is `SET NULL` and does not block; the constraint is entirely the `BEFORE DELETE` trigger tripping B2. My §12 and the requirement both described B4 as though the FK participated. The corrected mechanism is what T3's order must encode |
+| **T5 single-path narrowing** | ✅ Confirmed from live definitions, including the `status` vs `payment_status` distinction that makes `log_booking_activity_trigger` unreachable. My first-pass correction of BA holds. `crm_activities`-last remains correct and sufficient |
+| **Duplicate `crm_contacts` triggers** | ✅ Both present, both `BEFORE UPDATE`, inert for a delete-only purge. §5.2's prediction confirmed |
+| **Inventory 117 → 110** | ✅ Accepted, and the important half is the negative: **zero base tables were missing from Part 1**, so it was a strict superset and no classification work is invalidated. `agent_stats` and `agent_intensity_metrics` need descriptors |
+| **27 tables with no DELETE policy** (vs "~20") | ✅ Live confirmation that the service role is structurally required. **B-4's RLS-bypass comment must cite 27 and this list**, not the estimate |
+
+---
+
+### 12C.8 Conditions added
+
+| # | Condition | Blocks |
+|---|---|---|
+| **C-28** | **T28 runs twice — opt-ins off, then "Also delete my agents" on.** A single default-configuration sweep is not a pass; QA must refuse to record it as one. Three defects (B6, B7, N11) are invisible in the default configuration | T28 |
+| **C-29** | T3 re-extracts blocking edges with the corrected filter — **parent in the delete set**, regardless of whether the child is user-scoped — across **all three opt-in sets**, and reports the result even if empty | T3, T4, T9 |
+| **C-30** | `agent_scheduler_state` gets a `via`-scoped `optional:agents` descriptor (**B7**); FK column name taken from the dump, never invented | T4, T9 |
+| **C-31** | C-2's FK fingerprint covers the **blocking subgraph** specifically, and T7 keeps the ordering-completeness check **separate** from the tenancy predicate — they answer different questions | T7 |
+| **C-32** | AC-27's public-insert assertion extends to `agent_memories`, asserted in C-28's second (agents-on) run | T28 |
+
+---
+
+### Approval — T3 / dump review
+
+- [x] **T9's delete-order contract accepted**, corrected to eleven constraints (nine + B6 + **B7**) plus `crm_activities`-last.
+- [x] **N15 ruled: take the union. BA amends FR-1 and AC-37** with the scope limit in 12C.2.
+- [x] **N16 / B6 confirmed; the QA gate is granted as C-28**, now covering three reasons.
+- [x] **N17 routed out** as its own security item with a named owner; `agent_memories`' in-scope consequence stays as C-32.
+- [x] **CR-1 verified fixed** by independent oracle; no sixth in-product Danger Zone exists.
+- [ ] **E5 escalated** — unauthenticated admin surface; `/terminate` recommended for immediate retirement, the other 40 routed to a separate workstream.
+- [ ] **N6** — T31's `fix/` branch still needs the user's approval before RM cuts it.
+
+---
+
+## 12D. SA Rulings — the D9 flag, and tombstone vs. deletion
+
+**Reviewed by SA — 2026-09-15** · Both raised by the user on the 22-file working-tree diff.
+**Status:** ✅ **Both ruled.** Ruling 1 keeps the server check but fixes how it reads the flag — **including a defect neither the user nor Dev named**. Ruling 2 takes the coordinator's proposal: **delete the routes, replace both tombstone tests with one repo-wide guard**, under six design conditions.
+
+---
+
+### 12D.1 Ruling 1 — the D9 flag
+
+#### Can `featureFlags.ts` be imported from server code? **Yes today — and it still must not be the dependency of an authorisation boundary.**
+
+Measured: `lib/utils/featureFlags.ts` has **no `'use client'` directive**, and `lib/logger/client.ts` is a three-line re-export of `clientLogger` from the main Pino logger, which is server-safe. So the import would work.
+
+**But it has never had to work.** Grepping `app/api/**` and `lib/**` for importers of `@/lib/utils/featureFlags`: **zero server importers exist.** Every consumer today is a React component. The module's contract is "helpers for client rendering", and nothing enforces that it stays server-safe — one `'use client'` directive, one `window` reference, one browser-only import added by someone with no reason to think about `authorizePurge`, and the authorisation boundary breaks at build time or, worse, at runtime.
+
+**That is too fragile a dependency for a security check, regardless of whether it happens to work today.** Dev's instinct to avoid it was right; the implementation of that instinct is what needs fixing.
+
+#### The shape — one parser, two callers, no logger under the boundary
+
+1. **Extract `parseBooleanFlag` into a server-safe module with zero imports** — `lib/utils/parseBooleanFlag.ts`. No logger, no React, nothing. `featureFlags.ts` imports it; `purgeAuthz.ts` imports it. This resolves deviation **(c)** properly: `=1`, `=TRUE`, `= true ` all behave, with an explicit default, in both readings — and the two readings cannot drift, because there is one parser.
+2. **Register `useBusinessDeleteSurface()` in `featureFlags.ts`**, delegating to the shared parser and appearing in `getFeatureFlags()`. This resolves **(a)**. It is a **rendering hint** and nothing else.
+3. **`isBusinessDeleteSurfaceEnabled()` in `purgeAuthz.ts` remains the authoritative read**, delegating to the same parser. The C-22 reasoning is unchanged: a `NEXT_PUBLIC_` flag evaluated on the client is a rendering hint, not a boundary. Moving this check into the client helper would reopen on the customer surface exactly what T30 closed on the internal one.
+4. **Document it** — Available Flags table, numbered Flag Details section, `.env.local` example. Resolves **(b)**, which is the deviation that would actually have bitten: an undeployed flag is an un-un-gateable feature.
+
+#### 🔴 A defect neither the user nor Dev named: the env read is a *computed* lookup
+
+`purgeAuthz.ts:79` is:
+
+```ts
+return process.env[BUSINESS_DELETE_FLAG] === 'true';
+```
+
+**`process.env[someVariable]` is a computed property access, and Next.js only statically inlines *literal* `process.env.NEXT_PUBLIC_FOO` accesses.** In the Node.js runtime this happens to work, because `process.env` is the real environment object — so the code is not broken today. But it is exempt from Next's build-time substitution, and it returns `undefined` under the Edge runtime, where `process.env` is a build-time-populated object rather than the live environment.
+
+The failure direction is **gated** — fail-closed, and therefore safe. But it presents as *"we set the flag and the surface still isn't there, with no signal why"*, which is the user's deviation **(c)** arriving through a second door. Two doors to the same silent-stays-gated outcome is one too many.
+
+**Required: read the literal.** Keep the exported `BUSINESS_DELETE_FLAG` constant as the canonical *name* for the docs and the tests, but have the function evaluate `process.env.NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` directly, with a comment saying why a literal is mandatory. It reads as duplication; it is not.
+
+#### Naming — **keep `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE`**. Premise (d) does not hold.
+
+The observation was reasonable but the measurement disagrees. Scanning `featureFlags.ts` and `docs/feature_flags.md` for every `NEXT_PUBLIC_*` flag:
+
+> `NEXT_PUBLIC_USE_AI_DATA_LAYER` · `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` · `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` · `NEXT_PUBLIC_USE_V6_*` · **`NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON`** · **`NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION`**
+
+**Two existing flags already do not use `USE_`.** The convention is `NEXT_PUBLIC_<verb>_<thing>`, not `NEXT_PUBLIC_USE_*`, so `ENABLE_` is inside the convention rather than a deviation from it.
+
+It is also the more accurate verb. Every `USE_*` flag here selects **which implementation runs** — V6 versus the older pipeline, thread-based versus classic creation. This flag does something categorically different: it **exposes a destructive capability to customers**. `SHOW_`/`MOVE_TO_`/`ENABLE_` are the exposure verbs and this is an exposure flag. And it is already written into the approved requirement (D9), AC-40 and three SA review sections — renaming ripples through an approved requirement for a cosmetic that measurement says isn't even a convention.
+
+#### The documentation requirement — **granted, and made stronger than asked**
+
+The coordinator's reasoning is exactly right and is the reason this needs to be binding: *listed like every other flag, the next person tidies the check onto the client for consistency and silently reopens it.* A deviation that isn't recorded as deliberate gets undone by someone being helpful.
+
+**C-33 (binding), three parts:**
+
+- **`docs/feature_flags.md`** — the Flag Details entry carries a `⚠️ This flag is not like the others` block: the client hook is a **rendering hint**; the authoritative check is `authorizePurge()` server-side; moving or duplicating the gate onto the client reopens the hole T30/C-22 closed. Name `authorizePurge` so the reader can find it.
+- **`featureFlags.ts`** — `useBusinessDeleteSurface()`'s JSDoc says the same in two lines and points at `purgeAuthz.ts`. The warning has to be where the tidying would happen, not only in a doc nobody opens first.
+- **A test, not just prose.** T21 asserts that a **non-admin customer-surface request is refused while the flag is off**. A comment is a request; a failing test is a boundary. This is the part that actually survives a tidy-up, and it is one assertion.
+
+---
+
+### 12D.2 Ruling 2 — **delete the routes. Take the repo-wide guard.**
+
+✅ **The coordinator's proposal is accepted, and the user's pushback is correct.**
+
+The deciding argument is the coordinator's, and it is my own reasoning turned against my C-21 and C-24: **a per-file assertion protects a path that already exists.** The fifth deletion path — `components/settings/SecurityTab.tsx` — was found precisely *because* it was outside the oracle I had specified, and a guard scoped to files we already know about is structurally incapable of finding the sixth. A repo-wide oracle covers paths that do not exist yet. That is strictly stronger, and it is the difference between testing an instance and testing the class — the same distinction I used to rule N15.
+
+The user is also right on the narrow point: **410 vs 404 is cosmetic here.** A stale browser bundle POSTing `/api/user/delete-account` fails safely either way, and nothing deletes in either case. I over-valued the signal-to-stale-clients argument when I approved the tombstone; two routes that exist to do nothing, plus ~115 lines of test that only ever guard those two paths, is not a good trade.
+
+**So: delete `app/api/user/delete-account/route.ts`, delete `app/api/admin/users/[id]/terminate/route.ts`, delete both `__tests__/` directories, and add one guard.**
+
+#### C-34 — how the guard must be built (six conditions, and the first is the important one)
+
+**Dev's own finding that the tombstone's comment-stripper failed open is the warning that governs this whole design.** A scan-based guard has exactly one catastrophic failure mode: it passes because it found nothing to look at.
+
+| # | Condition |
+|---|---|
+| **a** | 🔴 **It must fail closed.** Assert a **floor on the number of files scanned** before asserting anything about their contents. A bad glob, a moved directory or a renamed root must turn the suite **red**, never green. "Scanned 0 files, found 0 violations" is the exact shape of the comment-stripper defect, one level up |
+| **b** | **Allow-list, never deny-list.** Legitimate sites are named by exact path; anything else matching the pattern fails. `app/api/auth/cleanup-incomplete/route.ts` is allow-listed **with an inline comment naming E1 and T32**, so the one live exception is visible in the guard rather than absent from it. When E1 is decided, the allow-list entry is what tells the next person the decision is owed |
+| **c** | **Three assertion families:** (1) no `auth.admin.deleteUser` / `admin.deleteUser` outside the allow-list; (2) no `.delete()` against identity tables — `profiles`, `auth.users`, `user_preferences`, `notification_settings`, `plugin_connections` — from any file carrying `'use client'` (the CR-1 shape); (3) no `.from('<identity table>').delete()` under `app/api/**` outside `lib/business-os/purge/**` and `lib/repositories/**` |
+| **d** | **Strip comments before matching — and unit-test the stripper**, proving it removes block and line comments. A primitive appearing inside a **string literal** must still count as a hit: when in doubt the guard fails, because a false positive costs a conversation and a false negative costs an account |
+| **e** | **Location: `lib/business-os/purge/__tests__/no-deletion-paths.guard.test.ts`** — beside T6's descriptor invariant. Same structural character, and the rule belongs to the feature whose entire premise it encodes. Not a repo-root test that nobody owns |
+| **f** | **The "why" must outlive the files.** Deleting a tombstone deletes its documentation, and that record is worth more than the route was |
+
+#### C-35 — what must be preserved before the files are deleted
+
+Move into the workplan's findings section (beside F-1…F-18) and into T32's summary:
+
+**`/api/user/delete-account`** — deleted `auth.users` (D3/FR-30 forbid); deleted `user_preferences`, table #60, the `K*` this feature guarantees survives both levels; audited **intent but never outcome**; **500'd at phase 6 for every onboarded user** because 16 `REFERENCES auth.users` declarations carry no `ON DELETE`, after phases 1–5 had already run irreversibly; returned `error.message` unguarded by `NODE_ENV`; wrote `role: 'deleted'` into the user-writable `profiles.role`.
+
+**`/api/admin/users/[id]/terminate`** — hard-deleted an arbitrary `auth.users` row **from a caller-supplied path parameter with no authentication of any kind**, on a module-scope service-role client, reachable because `middleware.ts:83` skips all of `/api`; leaked `deleteError.message` unguarded; and **wrote an audit row attributing the deletion to its own victim** (`user_id: userId`, `terminated_by: 'admin'` as a literal string — no actor id anywhere). I verified that last detail in the source rather than repeating it: the only identity in the audit trail of a termination was the terminated user's.
+
+That last one is worth keeping verbatim somewhere permanent. It is the cleanest example in this codebase of an audit record that looks like accountability and contains none.
+
+#### Credit where it is due
+
+Dev removed the terminate button and its modal from `app/admin/users/page.tsx` and **scoped the claim correctly** in the comment: *"NOT a security fix for this page. This whole admin surface is unauthenticated… Removing one deletion affordance narrows that gap's blast radius; it does not close it."* That is the right sentence. The temptation to describe removing one button as fixing the problem is exactly what turns a tracked workstream into a forgotten one.
+
+---
+
+### 12D.3 🔴 E5 escalation — amplified by the P0 already on record
+
+E5 said: 41 `/api/admin/**` routes with no admin check, 38 with no authentication at all, all on a module-scope **service-role** client.
+
+The project memory now also records: **the repository is PUBLIC and the live Supabase `service_role` key has been committed since 2025-10-30.**
+
+**These two compound, and the order of remediation changes because of it.** If the service-role key is public, the 38 unauthenticated routes are not the primary exposure — anyone holding that key already has unrestricted database access directly, bypassing the routes entirely. Fixing the routes while the key is published would be securing the doors of a building whose walls are gone.
+
+**Sequencing, stated plainly:**
+
+1. **Rotate the `service_role` key first.** Nothing else in this list matters until that is done.
+2. **Then** the admin-authz workstream (the 40 remaining routes).
+3. **`/terminate` is already handled** — the route is being deleted and the UI affordance is gone.
+
+This is not this cycle's work and I am not folding it in. It is recorded here because this feature's inventory discipline surfaced the routes, and because the two findings are more severe together than either is alone — which is the kind of thing that gets missed when each lives in its own tracker. **Product/ops call, and urgent.**
+
+---
+
+### 12D.4 Conditions added
+
+| # | Condition | Blocks |
+|---|---|---|
+| **C-33** | Flag: extract `parseBooleanFlag` to a zero-import server-safe module; register `useBusinessDeleteSurface()` as a **rendering hint**; `isBusinessDeleteSurfaceEnabled()` stays authoritative and **reads a literal `process.env.NEXT_PUBLIC_…`**; keep the `ENABLE_` name; document the deviation in **both** `feature_flags.md` and the JSDoc; **and assert it in a T21 test** | T30, T19, T20, T21 |
+| **C-34** | Delete both route files and both `__tests__/` dirs; add one repo-wide deletion-path guard under the six design conditions — **fail-closed file-count floor first** | T31 |
+| **C-35** | Preserve both tombstones' documented findings in the workplan and T32 before deleting the files | T31, T32 |
+
+**C-21 and C-24 are superseded by C-34** — they scoped the assertion to one file, which is the weakness C-34 fixes.
+
+---
+
 ## 13. QA Testing Report
 
 _QA will populate this section._
@@ -1537,6 +2066,13 @@ _RM will populate this section._
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-15 | **Dev — C-33 flag, C-34 guard, C-35 preservation, T6 invariant suite** | **C-34:** both retired route files and their `__tests__` deleted; replaced by ONE repo-wide guard at `lib/business-os/purge/__tests__/no-deletion-paths.guard.test.ts` with all six conditions — a file-count floor that fails closed (the comment-stripper defect one level up), an allow-list naming `cleanup-incomplete`/E1 inline, three assertion families, a **unit-tested comment stripper** including the exact `app/admin/**` input that broke the tombstones, string-literal hits counting as hits, and ~4s over 500+ files. **It found two hits on its first run (F-25):** `app/api/plugin-connections/route.ts` — legitimate, properly scoped, so `plugin_connections` moved to client-only rather than being allow-listed, because an allow-list padded with routine exceptions stops being read; and the guard matching itself, excluded by exact path rather than by exempting `__tests__`. **C-35:** both tombstones' findings preserved in §9.4 F-24 and T32 — verbatim, the `/terminate` audit row attributing the deletion to its own victim with `terminated_by: 'admin'` as a literal and no actor id anywhere. **C-33:** `parseBooleanFlag` extracted to a zero-import module; `useBusinessDeleteSurface()` registered with a JSDoc saying it is a rendering hint; **the computed `process.env[CONST]` replaced with a literal read** (invisible to Next's static substitution, `undefined` on Edge — fails gated, but presents as "we set the flag and nothing happened"); documented in `feature_flags.md` with a ⚠️ block naming `authorizePurge`. **T6:** 24-assertion invariant suite — ordering verified against the live dump via exported `BLOCKING_EDGES`, B-1 importer scan, C-16 storage rules, and a deliberately broken fixture proving the scope assertion can fail. **Erasure contact** swapped to the owner's address as a marked interim (N2). 38 tests pass. |
+| 2026-09-15 | **SA rulings — D9 flag shape; delete-vs-tombstone** | **Flag:** `featureFlags.ts` *is* importable server-side (no `'use client'`; `logger/client` re-exports Pino) — but it has **zero server importers today**, so nothing enforces that it stays server-safe, and that is too fragile a dependency for an authorisation boundary. **Extract `parseBooleanFlag` to a zero-import module** both callers share; register `useBusinessDeleteSurface()` as a **rendering hint**; `isBusinessDeleteSurfaceEnabled()` stays authoritative per C-22. **🔴 Defect neither the user nor Dev named:** `process.env[BUSINESS_DELETE_FLAG]` is a **computed** lookup, and Next inlines only *literal* `process.env.NEXT_PUBLIC_*` accesses — works in the Node runtime, returns `undefined` on Edge, and presents as “flag set, nothing happened, no signal”, i.e. deviation (c) through a second door. **Read the literal.** **Naming: premise (d) does not hold** — measured, `NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON` and `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` already exist without `USE_`; the convention is `NEXT_PUBLIC_<verb>_<thing>`, `USE_*` means “select implementation A vs B”, and this is an exposure flag. **Keep `ENABLE_`.** Documentation deviation made **binding in three places**, incl. a T21 test — a comment is a request, a failing test is a boundary (**C-33**). **Tombstone → delete.** The user's pushback is correct and the coordinator's proposal is **strictly stronger**: a per-file assertion protects a path that already exists, and the fifth deletion path was found *outside* the oracle SA specified. 410 vs 404 is cosmetic for a stale bundle. **Delete both route files and both `__tests__/` dirs; one repo-wide guard replaces them** (**C-34**), under six conditions of which the first is decisive — **it must fail closed on a file-count floor**, because “scanned 0, found 0” is Dev's comment-stripper defect one level up. Allow-list not deny-list, with `cleanup-incomplete` listed inline naming E1/T32. **C-21 and C-24 superseded.** **C-35:** preserve both tombstones' documented findings before deleting — including that `/terminate` wrote an audit row attributing the deletion to its own victim (`user_id: userId`, `terminated_by: 'admin'` as a literal, no actor id), verified in source. **E5 amplified:** with the repo PUBLIC and the live `service_role` key committed since 2025-10-30, the 38 unauthenticated service-role routes are **not** the primary exposure — **rotate the key first**, then the admin-authz workstream. The two findings are more severe together than separately, which is what gets missed when each lives in its own tracker. |
+| 2026-09-15 | **Dev — T4 descriptor set complete (121 descriptors, 0 unclassified)** | `lib/business-os/purge/descriptors.ts` written from the requirement's §3/§8 classification and the **live dump** for every ordering and scoping fact. **Passes AC-37's own completeness check: all 110 user-scoped base tables have a descriptor**, and the 11 extras are exactly the expected categories (five global catalogs, `organizations`, `profiles`, four parent-scoped children with no tenancy column). Ordering is four bands plus `crm_activities` LAST, with `BLOCKING_EDGES` exported so the invariant test asserts `order[child] < order[parent]` for all nine **against the dump** rather than trusting the bands; B4 is carried separately in `TRIGGER_ORDERING` because it cannot be expressed as an FK. **BA's three confirmations answered:** `user_media` needs **no fourth StorageDescriptor** — its `storage_path` points at the existing `website-images` bucket (`GeneratedImageService`/`StockImageService` both set `BUCKET = 'website-images'`), so AC-4 does not extend; `business_chat_verified_questions.user_id` is **NOT NULL**, so §8.2's portable-row shape does not apply to it; `agent_memory` (singular) **exists**, alongside three other memory tables. **Two pending requirement amendments flagged (N20):** §8.10 still lists `data_decision_requests` as provisional `never` where SA ruled `optional:agents`, and §8.13 still files `agent_stats`/`agent_intensity_metrics` as suspected views when Part 2 proved they are base tables. |
+| 2026-09-15 | **Dev — terminate endpoint and affordance retired (N18 (b)); C-21 stripper bug fixed** | **F-21:** `POST /api/admin/users/[id]/terminate` is now a `410 Gone` tombstone with **17 tests**, including two assertions specific to it — it never reads `params`, and it does not echo the id back, which would make a headstone into an id oracle. `app/admin/users/page.tsx` lost the handler, opener, row button, confirmation modal, reason field, four pieces of dead state and an unused `Trash2` import; its **9 `console.*` converted to Pino**. Two details from the old code recorded in the tombstone header and not previously noted: it leaked `deleteError.message` with no `NODE_ENV` guard, and it wrote an audit row attributing the deletion to **its own victim** with a literal `terminated_by: 'admin'` — audit recording the wrong actor is worse than none, because it looks like provenance. **No auth guard added to the page**, as instructed; both files carry a scope note saying this is not a security fix for `/admin`. **F-22:** my own C-21 comment-stripper was broken — it ran block comments before line comments, so the glob `app/admin/**` in the route header opened a match that swallowed both imports. It failed loudly this time, but **the same bug fails *open*** if the swallowed region contains a deletion primitive; fixed in both tombstone tests, with the ordering reason recorded so it is not tidied back. The delete-account assertion was sound by luck rather than construction. |
+| 2026-09-15 | **Dev — C-29 extraction corrected; terminate tombstone STOPPED on a live caller** | **F-19 (stop):** `POST /api/admin/users/[id]/terminate` **is** called by `app/admin/users/page.tsx:360`, so I did not write the tombstone. Checked every guard layer first: middleware treats `/admin` only for the onboarding redirect (which needs a parseable auth cookie), `app/admin/layout.tsx` is 36 lines of chrome, the page has no guard, and **zero files under `app/admin/**` reference `isAdmin`/`AdminAccessService`/`admin_users`**. So the affordance is as unauthenticated as the route, and tombstoning the route alone would leave a delete button on an open screen failing with a toast — the same C-21 shape just removed from the customer surfaces. **Recommend (b): retire route and affordance together.** **F-20 (C-29):** re-ran the extraction with SA's filter — every blocking edge whose parent is in the delete set, child unrestricted. **Census reconciles exactly with SA at 37**: 23 point at `auth.users` (inert under D3), 10 at parents in the 110 (the nine I had **plus B7**), 4 at parents outside it (all inert). My earlier filter required both endpoints to be user-scoped, which is precisely how B7 hides. **All three opt-in sets swept: `agents` has exactly one external blocking edge (B7), `integrations` and `activityHistory` have none.** **C-30:** `agent_scheduler_state` characterised — no tenancy column, owned `via agents.agent_id`, `last_execution_id -> agent_executions` NO ACTION, `agent_id -> agents` CASCADE, and no code references it anywhere; descriptor drafted, with the reasoning for an explicit descriptor over relying on the CASCADE. **C-31 agreed** — B7 is the proof neither check subsumes the other: no tenancy column *and* no `auth.users` FK, so the N15 union cannot see it. |
+| 2026-09-15 | **SA review 3 — T3 / live schema dump; CR-1 verified; N15–N17 ruled** | **T9's delete-order contract accepted**, and the acyclicity verified independently (`credit_transactions` is the only node appearing on both sides; `token_usage` is never a child). Arithmetic reconciles (144+35+2+58=239). **But the filter was wrong:** Dev selected blocking edges *among the 110 user-scoped tables*; the correct filter is **every blocking edge whose PARENT is in the delete set**, regardless of whether the child is user-scoped. Extracting all 37 blocking edges found five outside Dev's nine, four inert — and one real: **🔴 B7 — `agent_scheduler_state` → `agent_executions` (NO ACTION).** The child has no tenancy column, so a user-scoped filter cannot see it by construction; ticking the agents opt-in would fail the transaction. **Third instance of the off-by-default trap**, and the same blind-spot shape as N15 one level over. **N15 ruled: take the union** — the alternative fixes the instance, not the class, and `organizations` is currently excluded by human prose, the very mechanism FR-1 replaces. **BA amends FR-1 and AC-37** (Amendment 6), including a **scope limit**: the union does not close the class either — B7 has neither a tenancy column nor an `auth.users` FK — so parent-scoped children are covered by their `via` descriptors and the blocking-edge check, never by FR-1. **N16/B6 confirmed; QA gate granted as C-28** — T28 must run twice (opt-ins off, then agents on), because **three** defects (B6, B7, N11) are invisible in the default configuration, i.e. the cheapest test path is the one that reports green. **N17 routed out** as its own security item pending a table-`GRANT` check — Dev stated the limit rather than overclaiming, which is why it is rulable; `agent_memories` keeps one in-scope consequence (C-32). **CR-1 verified fixed by independent oracle** (client `.delete()` sweep, `auth.admin.deleteUser` sweep, Danger-Zone string sweep): all three live surfaces render the shared panel, both dead files deleted **with the barrel line**, 0 `console.*`. **No sixth in-product Danger Zone exists.** **🔴 E5 escalated (out of scope):** `POST /api/admin/users/[id]/terminate` hard-deletes an arbitrary `auth.users` row from a caller-supplied path param with **no authentication of any kind**, on a module-scope service-role client, reachable because `middleware.ts:83` skips all `/api`. It is not isolated — **41 `/api/admin/**` routes have no admin check, 38 never call `getUser()`**; three spot-checked, one carrying the literal comment `// TODO: Add admin role check here`. **Fifth live deletion path this cycle**; T32's count moves to five. **New C-28…C-32.** |
+| 2026-09-15 | **Dev — T3 complete; live FK/trigger/policy dump persisted** | N10 cleared: the user applied the introspection migration, I called `purge_schema_introspect()` with the service-role key and persisted the full output (2,540 column rows, **110 user-scoped base tables**, 239 FKs, 84 triggers, 360 policies) to the schema-dump doc as the authoritative artifact. **Delete order derived (F-15): the full FK graph is cyclic and cannot be sorted, but only the nine `RESTRICT`/`NO ACTION` edges constrain a delete and that subgraph is acyclic** — so the RPC honours nine constraints plus `crm_activities`-last, not a total order over 239 FKs. B1/B2/B3 confirmed; **B4 confirmed as a trigger constraint, not an FK one**; **B5 does not exist** (CASCADE) — negative result recorded as SA asked; **B6 is new** — `agent_logs` before `agents`, NO ACTION, inside the off-by-default agents opt-in, the same blind spot as N11. **T5's single-path narrowing confirmed from live trigger definitions**, and §5.2's predicted duplicate `crm_contacts` triggers are both present. **F-16:** `organizations` is invisible to FR-1's predicate because it keys on `owner_user_id` — a gap in AC-37's guarantee, measured as exactly one such table, with a union predicate recommended (N15). **F-17:** 15 open `INSERT` policies where the requirement named two, three of them named "Service role" but granted to `public` (N17). **F-18:** inventory reconciled 117 -> 110; seven views drop out, but `agent_stats` and `agent_intensity_metrics` are base tables needing descriptors, and no base table was missing from Part 1. |
 | 2026-09-15 | **Dev — SA code review applied (CR-1, C-22, C-26, N12) + workplan re-emit** | **CR-1 fixed:** `components/settings/SecurityTab.tsx` — the **fifth** Danger Zone, live at `/settings`, deleting `profiles`, `user_preferences`, `notification_settings` and `plugin_connections` **from the browser** behind a promise of an email that is never sent, with `Promise.all` inspecting no result so an RLS denial and a success looked identical. My F-1 claim was true and answered the wrong question; **C-27's oracle — every delete affordance, not every caller of the dead route — applied in two sweeps, and there is no sixth** (the remaining hits are Stripe Connect and an agent Danger Zone). **C-22:** the D9 flag check now lives **inside `authorizePurge`**, so a non-admin cannot Purge with the flag off by calling the route directly; it restricts to admins rather than forbidding, or T28 could never demonstrate the un-gating criteria. **N12:** both dead files deleted, with the `ProfileTab` re-export dropped from `index.ts` in the same change. **C-26:** the `FALLBACK_COPY` ↔ `en` equality is now a test, with a non-vacuity guard and an assertion that the placeholder address is present and `.invalid`. 20 tests pass; typecheck clean on every touched file. **F-14:** the truncation bug is reachable from my own tooling — a `print()` of `→` raised `UnicodeEncodeError` on this machine's cp1252 stdout — so every write is now temp-then-`os.replace` and diagnostics run under `PYTHONIOENCODING=utf-8`. **§1–§11 re-emitted from session state**; §9.4 (F-1…F-14) and §9.5 (N1…N14) reconciled, §6 statuses and the §10 Pino table restored. |
 | 2026-09-15 | **SA rows — summary text lost in Dev's re-emit** | ⚠️ Three SA Change-History rows (the truncation/recovery notice, the rev-2 clearance, and code review 1) were dropped by **my** re-emit split, which cut the document at `## Change History` and rebuilt without it. I have not paraphrased SA's wording back in as if it were SA's. **Nothing substantive is lost:** the Recovery Notice at the top of this file, and §12A / §12B, are verbatim and are the authoritative record of all three. SA may re-emit its rows; this row is the marker, not a replacement. |
 | 2026-09-15 | **Dev — implementation round 2 (N7 shared component, BA's two greps)** | One shared component, split into `ErasureRequestContent` (the copy + the single erasure address) and `DangerZonePanel` (boxed chrome), because the surfaces use different idioms. All four known callers rewired. **F-8:** `useLanguage()` throws outside a provider and **`app/v2/**` has none**, so the obvious implementation would have crashed `/v2/settings`; resolved with `useOptionalLanguage()` + English fallbacks, with `tr()` treating `t(key) === key` as a miss. **Greps answered:** `agent_memory` is real (there are four memory tables); `data_decision_requests` is written by `lib/pilot/shadow/DataDecisionHandler.ts` and should be **`optional:agents`**, not `never` — and **no migration creates it**, so its FKs are unknown until Part 2. Pino extended to `SecurityTabV2` and `ProfileTab`. |
