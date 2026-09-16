@@ -27,6 +27,7 @@ import {
   LogOut,
 } from 'lucide-react';
 import { LeadNotificationToggles } from '@/components/business-os/settings/LeadNotificationToggles';
+import { ErasureRequestContent } from '@/components/business-os/purge/DangerZonePanel';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
 import { createLogger } from '@/lib/logger';
@@ -84,8 +85,6 @@ function BusinessOSSettingsContent() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [deleteConfirmation, setDeleteConfirmation] = useState('');
-  const [deleting, setDeleting] = useState(false);
 
   // Dropdown state
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
@@ -282,48 +281,6 @@ function BusinessOSSettingsContent() {
     }
   };
 
-  // Get the confirmation word based on language
-  const getDeleteConfirmWord = () => {
-    if (language === 'es') return 'ELIMINAR';
-    if (language === 'he') return 'מחק';
-    return 'DELETE';
-  };
-
-  const handleDeleteAccount = async () => {
-    const confirmWord = getDeleteConfirmWord();
-    if (deleteConfirmation !== confirmWord) {
-      setErrorMessage(t('settings.security.delete_wrong_confirmation'));
-      return;
-    }
-
-    try {
-      setDeleting(true);
-      setErrorMessage('');
-
-      const response = await fetch('/api/user/delete-account', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmation: 'DELETE_MY_ACCOUNT' }),
-      });
-
-      if (response.ok) {
-        setSuccessMessage(t('settings.security.delete_success'));
-        setTimeout(async () => {
-          await supabase.auth.signOut();
-          window.location.href = '/';
-        }, 2000);
-      } else {
-        setErrorMessage(t('settings.security.delete_error'));
-      }
-    } catch (error) {
-      setErrorMessage(t('settings.security.delete_error'));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Language options
-
   /**
    * Sign out, properly.
    *
@@ -427,6 +384,22 @@ function BusinessOSSettingsContent() {
     window.location.href = `${marketingUrl}/login`;
   };
 
+  /*
+   * `handleDeleteAccount` removed — it POSTed to `/api/user/delete-account`,
+   * which deleted `auth.users` and, for every onboarded user, failed partway
+   * through and left a half-destroyed account. That route is now a 410
+   * tombstone, so the handler is deleted rather than repointed: leaving it
+   * would surface an error toast, which is the broken-delete experience
+   * retiring the route was meant to end.
+   *
+   * The dialog below now shows the shared `ErasureRequestContent` until the
+   * Business OS purge flow is un-gated (D9, NEXT_PUBLIC_ENABLE_BUSINESS_DELETE),
+   * at which point the full dry-run → gate → typed-confirmation flow lands in
+   * its place. The typed-confirmation input went with the handler: asking
+   * someone to type DELETE and then not deleting anything would be theatre.
+   */
+
+  // Language options
   const languageOptions = [
     { code: 'en', label: 'English', flag: '🇺🇸' },
     { code: 'es', label: 'Español', flag: '🇪🇸' },
@@ -902,7 +875,6 @@ function BusinessOSSettingsContent() {
       <Dialog open={showDeleteDialog} onOpenChange={(open) => {
         setShowDeleteDialog(open);
         if (!open) {
-          setDeleteConfirmation('');
           setErrorMessage('');
         }
       }}>
@@ -913,7 +885,7 @@ function BusinessOSSettingsContent() {
               {t('settings.security.delete_dialog_title')}
             </DialogTitle>
             <DialogDescription className="pt-2">
-              {t('settings.security.delete_dialog_desc')}
+              {t('settings.security.erasure_request_title')}
             </DialogDescription>
           </DialogHeader>
 
@@ -925,45 +897,21 @@ function BusinessOSSettingsContent() {
               </p>
             </div>
 
-            {/* Confirmation Input */}
-            <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                {t('settings.security.delete_confirm_label')}
-              </label>
-              <input
-                type="text"
-                value={deleteConfirmation}
-                onChange={(e) => setDeleteConfirmation(e.target.value)}
-                placeholder={t('settings.security.delete_confirm_placeholder')}
-                className="w-full px-3 py-2.5 text-sm border border-red-200 dark:border-red-800 bg-[var(--v2-bg)] text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-red-500"
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-                dir={isRTL ? 'rtl' : 'ltr'}
-              />
-              <p className="text-xs text-[var(--v2-text-muted)] mt-1">
-                {language === 'es' ? 'ELIMINAR' : language === 'he' ? 'מחק' : 'DELETE'}
-              </p>
-            </div>
+            {/*
+              Shared with /v2/settings — one copy of the copy, and one place the
+              erasure contact address lives. See components/business-os/purge/
+              DangerZonePanel.tsx.
+            */}
+            <ErasureRequestContent />
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
             <button
-              onClick={() => {
-                setShowDeleteDialog(false);
-                setDeleteConfirmation('');
-              }}
+              onClick={() => setShowDeleteDialog(false)}
               className="px-4 py-2 text-sm text-[var(--v2-text-secondary)] hover:bg-[var(--v2-bg)] transition-colors"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
             >
-              {t('common.cancel')}
-            </button>
-            <button
-              onClick={handleDeleteAccount}
-              disabled={deleting || deleteConfirmation !== getDeleteConfirmWord()}
-              className="px-4 py-2 text-sm bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
-              {t('settings.security.delete_confirm_button')}
+              {t('common.close')}
             </button>
           </DialogFooter>
         </DialogContent>

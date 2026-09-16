@@ -3,6 +3,8 @@
 import React, { useState } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
+import { DangerZonePanel } from '@/components/business-os/purge/DangerZonePanel'
+import { createLogger } from '@/lib/logger'
 import {
   Download,
   Trash2,
@@ -12,6 +14,8 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react'
+
+const logger = createLogger({ module: 'SecurityTabV2' })
 
 export default function SecurityTabV2() {
   const { user } = useAuth()
@@ -74,13 +78,13 @@ export default function SecurityTabV2() {
           })
         })
       } catch (auditError) {
-        console.error('Audit logging failed (non-critical):', auditError)
+        logger.error({ err: auditError }, 'Audit logging failed (non-blocking)')
       }
 
       setSuccessMessage('Password updated successfully!')
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
     } catch (error) {
-      console.error('Error changing password:', error)
+      logger.error({ err: error }, 'Password change failed')
       setErrorMessage('Failed to change password. Please try again.')
     }
   }
@@ -146,80 +150,28 @@ export default function SecurityTabV2() {
           })
         })
       } catch (auditError) {
-        console.error('Audit logging failed (non-critical):', auditError)
+        logger.error({ err: auditError }, 'Audit logging failed (non-blocking)')
       }
 
       setSuccessMessage('Data exported successfully! Check your downloads folder.')
     } catch (error) {
-      console.error('Error exporting data:', error)
+      logger.error({ err: error }, 'User data export failed')
       setErrorMessage('Failed to export data. Please try again.')
     }
   }
 
-  const handleDeleteAccount = async () => {
-    if (!user) return
-
-    const firstConfirm = confirm(
-      'This action cannot be undone.\n\n' +
-      'Your account will be anonymized:\n' +
-      '• Personal information will be removed\n' +
-      '• Agents will be archived (retained for AI training)\n' +
-      '• Financial records anonymized (required by law)\n\n' +
-      'Are you sure you want to proceed?'
-    )
-
-    if (firstConfirm) {
-      const typedConfirmation = prompt(
-        'Type "DELETE_MY_ACCOUNT" to confirm account deletion:'
-      )
-
-      if (typedConfirmation === 'DELETE_MY_ACCOUNT') {
-        const reason = prompt('Optional: Please tell us why you\'re leaving (this helps us improve):')
-
-        try {
-          setSuccessMessage('')
-          setErrorMessage('')
-          setErrorMessage('Processing account deletion...')
-
-          // Call our GDPR-compliant deletion endpoint
-          const response = await fetch('/api/user/delete-account', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              confirmation: 'DELETE_MY_ACCOUNT',
-              reason: reason || 'No reason provided'
-            })
-          })
-
-          const result = await response.json()
-
-          if (response.ok && result.success) {
-            setSuccessMessage(
-              'Account deleted successfully. ' +
-              'Your personal data has been removed and agents have been anonymized. ' +
-              'You will be signed out shortly.'
-            )
-
-            // Sign out after 3 seconds
-            setTimeout(async () => {
-              await supabase.auth.signOut()
-              window.location.href = '/'
-            }, 3000)
-          } else {
-            setErrorMessage(result.message || 'Failed to delete account. Please contact support.')
-          }
-        } catch (error) {
-          console.error('Error deleting account:', error)
-          setErrorMessage('Failed to delete account. Please try again or contact support.')
-        }
-      } else if (typedConfirmation !== null) {
-        // User typed something but not the correct confirmation
-        setErrorMessage('Incorrect confirmation. Account deletion cancelled.')
-      }
-    }
-  }
+  /*
+   * `handleDeleteAccount` removed — it POSTed to `/api/user/delete-account`,
+   * which deleted `auth.users` and, for every onboarded user, failed partway
+   * through and left a half-destroyed account. That route is now a 410
+   * tombstone, so the handler is deleted rather than repointed: leaving it
+   * would surface an error toast, which is the broken-delete experience
+   * retiring the route was meant to end.
+   *
+   * The Danger Zone below now renders the shared `DangerZonePanel`, the same
+   * component `/business-os/settings` uses, so the copy and the erasure contact
+   * address exist in exactly one place.
+   */
 
   return (
     <div className="space-y-4">
@@ -327,30 +279,8 @@ export default function SecurityTabV2() {
           </button>
         </div>
 
-        {/* Danger Zone - Compact */}
-        <div className="border-2 p-3 danger-zone" style={{ borderRadius: 'var(--v2-radius-card)' }}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex-1 min-w-0">
-              <h4 className="font-semibold text-sm mb-1 danger-zone-title">Delete Account</h4>
-              <p className="text-xs mb-2 danger-zone-text">
-                Permanently delete your account and all data. This cannot be undone.
-              </p>
-              <div className="border p-2 danger-zone-warning" style={{ borderRadius: 'var(--v2-radius-button)' }}>
-                <p className="text-xs font-medium danger-zone-warning-text">
-                  This will delete: All agents, conversations, plugin connections, and settings.
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={handleDeleteAccount}
-              className="flex-shrink-0 inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 text-white hover:scale-105 transition-transform duration-200 text-sm font-semibold shadow-md"
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Delete
-            </button>
-          </div>
-        </div>
+        {/* Danger Zone — shared with /business-os/settings (N7) */}
+        <DangerZonePanel />
       </div>
 
       {/* Success/Error Messages - Compact */}

@@ -44,6 +44,7 @@ Feature flag functions are defined in:
 | Thread-Based Agent Creation | `NEXT_PUBLIC_USE_THREAD_BASED_AGENT_CREATION` | Client | `false` | Legacy: `/agents/new/chat` only |
 | New Agent Creation UI | `NEXT_PUBLIC_USE_NEW_AGENT_CREATION_UI` | Client | `false` | Legacy: `/agents/new/chat` only |
 | Automated Calibration RCA | `CALIBRATION_AUTO_RCA_ENABLED` | **Server** | `false` | `/api/v2/calibrate/batch` (admin alert tail) |
+| **Business Delete (customer surface)** | `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE` | Client **hint** + **Server boundary** | `false` | `/business-os/settings`, `/v2/settings`, `/settings`, `/api/business-os/purge/*` |
 
 ---
 
@@ -168,6 +169,60 @@ ON CONFLICT (key) DO NOTHING;
 ```
 
 > The RCA timeout is always additionally capped at runtime to the request's remaining wall-clock budget inside `maxDuration = 60`, reserving a floor for the email send + persistence — if too little budget remains, RCA is skipped and the deterministic alert is sent (never risk a mid-send serverless kill).
+
+---
+
+### Business Delete (customer surface) — `NEXT_PUBLIC_ENABLE_BUSINESS_DELETE`
+
+Gates the customer-facing "delete my business" surface (decision **D9** of the
+Business OS Data Purge requirement). **Default: off.**
+
+> ### ⚠️ This flag is NOT the security boundary. `authorizePurge()` is.
+>
+> `lib/business-os/purge/purgeAuthz.ts` performs its **own server-side read** of
+> this variable, via `isBusinessDeleteSurfaceEnabled()`, and while the flag is
+> off it restricts the customer-surface Purge to **platform admins**.
+>
+> `useBusinessDeleteSurface()` in `lib/utils/featureFlags.ts` decides only what
+> is **rendered**. A `NEXT_PUBLIC_*` value is compiled into the client bundle and
+> the purge routes are callable directly regardless of what the UI draws.
+>
+> **Do not "simplify" `authorizePurge` to call the hook.** That would move a
+> destructive-capability check into the client bundle and reopen on the customer
+> surface the same hole that server-side authorisation closed on the internal
+> one. A route test asserts the refusal, so this is enforced rather than merely
+> requested.
+
+**Two readers, on purpose:**
+
+| Caller | Question it answers | Consequence if wrong |
+|---|---|---|
+| `useBusinessDeleteSurface()` (client) | Should the section render? | A button appears that the server will refuse — cosmetic |
+| `isBusinessDeleteSurfaceEnabled()` (server) | Is the operation permitted? | **A non-admin can purge a business while the feature is "off"** |
+
+**Implementation notes**
+
+- Both readers use the shared `parseBooleanFlag()` from
+  `lib/utils/parseBooleanFlag.ts` — a **zero-import** module, so the server read
+  never pulls in the client bundle's dependency graph. Accepts `true`/`1`,
+  case-insensitive and trimmed.
+- The server read uses the **literal** `process.env.NEXT_PUBLIC_ENABLE_BUSINESS_DELETE`.
+  Next.js substitutes `NEXT_PUBLIC_*` by static analysis of literal member
+  accesses only — a computed `process.env[SOME_CONST]` is invisible to it,
+  works in the Node runtime and returns `undefined` on Edge. The failure
+  direction is "gated", so it is safe rather than dangerous, but it presents as
+  *"we set the flag, redeployed, and nothing happened."*
+- Named `ENABLE_` rather than `USE_` deliberately: `USE_*` in this project means
+  *select implementation A or B*. This flag exposes a **destructive capability**,
+  which is a different kind of decision.
+
+**Un-gating requires** the D9 checklist demonstrated on a real account:
+AC-2, AC-5, AC-10, AC-13, AC-16, AC-24, AC-37.
+
+```bash
+# .env.local — off by default; omit the line entirely for the same effect
+NEXT_PUBLIC_ENABLE_BUSINESS_DELETE=false
+```
 
 ---
 

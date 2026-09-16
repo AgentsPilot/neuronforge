@@ -21,7 +21,6 @@ import {
   Ban,
   UserCheck,
   Database,
-  Trash2,
   AlertTriangle,
   MapPin,
   XCircle,
@@ -32,6 +31,9 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'AdminUsersPage' });
 
 interface User {
   id: string;
@@ -127,10 +129,6 @@ export default function UsersPage() {
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [showTerminateModal, setShowTerminateModal] = useState(false);
-  const [userToTerminate, setUserToTerminate] = useState<User | null>(null);
-  const [terminateReason, setTerminateReason] = useState('');
-  const [isTerminating, setIsTerminating] = useState(false);
   const [auditFilters, setAuditFilters] = useState<Record<string, 'all' | 'login' | 'security' | 'settings'>>({});
 
   useEffect(() => {
@@ -157,7 +155,7 @@ export default function UsersPage() {
         search: searchTerm
       });
 
-      console.log('Fetching URL:', `/api/admin/users?${queryParams}`);
+      logger.debug({ queryParams: queryParams.toString() }, 'Fetching admin users');
 
       const response = await fetch(`/api/admin/users?${queryParams}`, {
         method: 'GET',
@@ -167,7 +165,7 @@ export default function UsersPage() {
         cache: 'no-store'
       });
 
-      console.log('Response status:', response.status, response.ok);
+      logger.debug({ status: response.status, ok: response.ok }, 'Admin users response');
 
       if (!response.ok) {
         let errorMessage = 'Failed to fetch users';
@@ -181,7 +179,7 @@ export default function UsersPage() {
       }
 
       const result = await response.json();
-      console.log('Raw API response:', result);
+      logger.debug({ result }, 'Admin users raw response');
 
       if (!result.success) {
         throw new Error(result.error || 'API returned unsuccessful response');
@@ -190,12 +188,13 @@ export default function UsersPage() {
       setUsers(result.data || []);
       setStats(result.stats || null);
 
-      console.log('Successfully processed users data:', {
-        totalUsers: result.data?.length || 0
-      });
+      logger.debug(
+        { totalUsers: result.data?.length || 0 },
+        'Processed admin users data'
+      );
 
     } catch (error) {
-      console.error('Error fetching users:', error);
+      logger.error({ err: error }, 'Failed to fetch admin users');
       setError(error instanceof Error ? error.message : 'Unknown error occurred');
       setUsers([]);
       setStats(null);
@@ -292,13 +291,13 @@ export default function UsersPage() {
       // Process detailed stats (agents, tokens, etc.)
       if (detailedStatsResponse.ok) {
         const detailedData = await detailedStatsResponse.json();
-        console.log('User detailed stats response:', detailedData);
+        logger.debug({ detailedData }, 'User detailed stats response');
         if (detailedData.success) {
-          console.log('Plugins data:', detailedData.data?.plugins);
+          logger.debug({ plugins: detailedData.data?.plugins }, 'User plugins data');
           setUserDetailedStats(prev => ({ ...prev, [user.id]: detailedData.data }));
         }
       } else {
-        console.error('Failed to fetch detailed stats:', detailedStatsResponse.status);
+        logger.error({ status: detailedStatsResponse.status }, 'Failed to fetch detailed stats');
       }
 
       // Initialize audit filter for this user
@@ -306,7 +305,7 @@ export default function UsersPage() {
         setAuditFilters(prev => ({ ...prev, [user.id]: 'all' }));
       }
     } catch (error) {
-      console.error('Error fetching user details:', error);
+      logger.error({ err: error }, 'Failed to fetch user details');
     } finally {
       setLoadingUserDetails(prev => ({ ...prev, [user.id]: false }));
     }
@@ -351,58 +350,23 @@ export default function UsersPage() {
     }
   };
 
-  const handleTerminateUser = async () => {
-    if (!userToTerminate) return;
+  /*
+   * `handleTerminateUser` / `openTerminateModal` removed, together with the
+   * terminate button and its confirmation modal.
+   *
+   * They called `POST /api/admin/users/[id]/terminate`, which hard-deleted an
+   * arbitrary `auth.users` row from the URL parameter with no authentication of
+   * any kind — no `getUser()`, no admin check, and `middleware.ts` skips all of
+   * `/api`. That route is now a 410 tombstone, so the affordance is removed
+   * rather than repointed: a delete button that fails with a toast is the same
+   * broken-delete experience the tombstone exists to end.
+   *
+   * NOT a security fix for this page. This whole admin surface is
+   * unauthenticated — no guard in middleware, in `app/admin/layout.tsx`, or on
+   * any page here — which is a separate tracked workstream. Removing one
+   * deletion affordance narrows that gap's blast radius; it does not close it.
+   */
 
-    try {
-      setIsTerminating(true);
-
-      const response = await fetch(`/api/admin/users/${userToTerminate.id}/terminate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ reason: terminateReason })
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to terminate user');
-      }
-
-      // Remove user from the list
-      setUsers(prev => prev.filter(u => u.id !== userToTerminate.id));
-
-      // Update stats
-      if (stats) {
-        setStats({
-          ...stats,
-          totalUsers: stats.totalUsers - 1
-        });
-      }
-
-      // Close modal and reset
-      setShowTerminateModal(false);
-      setUserToTerminate(null);
-      setTerminateReason('');
-
-      // If the terminated user was expanded in details, close that too
-      if (expandedUserId === userToTerminate.id) {
-        setExpandedUserId(null);
-      }
-
-    } catch (error) {
-      console.error('Error terminating user:', error);
-      alert('Failed to terminate user. Please try again.');
-    } finally {
-      setIsTerminating(false);
-    }
-  };
-
-  const openTerminateModal = (user: User) => {
-    setUserToTerminate(user);
-    setShowTerminateModal(true);
-    setTerminateReason('');
-  };
 
   // Error Display Component
   const ErrorDisplay = ({ error, onRetry }: { error: string; onRetry: () => void }) => (
@@ -759,16 +723,6 @@ export default function UsersPage() {
                               title="Toggle details"
                             >
                               {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openTerminateModal(user);
-                              }}
-                              className="text-red-400 hover:text-red-300 p-1 rounded hover:bg-red-500/20 transition-colors"
-                              title="Terminate user"
-                            >
-                              <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
                         </td>
@@ -1265,103 +1219,6 @@ export default function UsersPage() {
       </div>
 
 
-      {/* Terminate User Confirmation Modal */}
-      {showTerminateModal && userToTerminate && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-slate-800/95 backdrop-blur-xl rounded-xl border border-red-500/30 max-w-md w-full"
-          >
-            <div className="p-6 border-b border-red-500/20 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-red-500/20 rounded-lg">
-                  <AlertTriangle className="w-6 h-6 text-red-400" />
-                </div>
-                <h2 className="text-xl font-semibold text-white">Terminate User</h2>
-              </div>
-              <button
-                onClick={() => {
-                  setShowTerminateModal(false);
-                  setUserToTerminate(null);
-                  setTerminateReason('');
-                }}
-                className="text-slate-400 hover:text-white p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
-                <p className="text-red-300 text-sm font-medium mb-2">⚠️ Warning: This action cannot be undone!</p>
-                <p className="text-slate-300 text-sm">
-                  You are about to permanently terminate the account for:
-                </p>
-                <div className="mt-3 p-3 bg-slate-700/50 rounded-lg">
-                  <p className="text-white font-semibold">{userToTerminate.full_name || 'No name'}</p>
-                  <p className="text-slate-400 text-sm">{userToTerminate.email}</p>
-                  <p className="text-slate-500 text-xs font-mono mt-1">{userToTerminate.id}</p>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Reason for Termination (Optional)
-                </label>
-                <textarea
-                  value={terminateReason}
-                  onChange={(e) => setTerminateReason(e.target.value)}
-                  rows={3}
-                  placeholder="e.g., Terms of service violation, user request, etc."
-                  className="w-full bg-slate-700/50 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-red-500"
-                />
-              </div>
-
-              <div className="flex flex-col gap-2 text-xs text-slate-400">
-                <p>This will:</p>
-                <ul className="list-disc list-inside space-y-1 ml-2">
-                  <li>Delete the user's authentication account</li>
-                  <li>Remove all associated profile data</li>
-                  <li>Revoke all active sessions</li>
-                  <li>Log this action in the audit trail</li>
-                </ul>
-              </div>
-
-              <div className="flex justify-end gap-3 pt-4">
-                <button
-                  onClick={() => {
-                    setShowTerminateModal(false);
-                    setUserToTerminate(null);
-                    setTerminateReason('');
-                  }}
-                  disabled={isTerminating}
-                  className="px-4 py-2 bg-slate-600/50 text-slate-300 rounded-lg hover:bg-slate-500/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleTerminateUser}
-                  disabled={isTerminating}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                >
-                  {isTerminating ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Terminating...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      Terminate User
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      )}
     </div>
   );
 }
