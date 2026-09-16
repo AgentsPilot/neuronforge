@@ -42,6 +42,23 @@ export interface ExtractedService {
   is_scheduled?: boolean;
   collection?: 'online' | 'invoice' | null;
   /**
+   * Bought outright, or quoted per job.
+   *
+   * The extraction prompt has asked for this for a while — with worked examples
+   * in both languages — but this shape never declared it, so every answer was
+   * dropped on the way through and a service quoted per client arrived
+   * directly bookable. A field the model is asked for and the type does not
+   * carry is a question asked for nothing.
+   */
+  sale_mode?: 'direct' | 'proposal';
+  /**
+   * The gap to leave between appointments, where they asked for one.
+   *
+   * Absent means the platform's own default rather than none: a business that
+   * genuinely books back to back says so, and that arrives as 0.
+   */
+  buffer_minutes?: number | null;
+  /**
    * What they wrote the price in, when they wrote it — never inferred from the
    * language they are speaking. A Hebrew-speaking practice serving clients
    * abroad charges in dollars, and guessing from the interface language put the
@@ -58,7 +75,7 @@ export interface ExtractedService {
    */
   payment_plan?: {
     installment_count: number;
-    installment_frequency: 'weekly' | 'biweekly' | 'monthly';
+    installment_frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
   } | null;
 }
 

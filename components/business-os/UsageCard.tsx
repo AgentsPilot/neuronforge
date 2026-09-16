@@ -1,23 +1,27 @@
 'use client';
 
 /**
- * Pilot Credits consumed.
+ * Pilot Credits remaining this month.
  *
- * The total, and nothing else. This card used to break the figure down by
- * category — a coloured ring of segments over a legend naming each one — and
- * that has been removed deliberately: the split was not a decision anyone could
- * act on. Knowing the website consumed more than insights does not tell a
- * business owner to do anything differently, and it invited comparison between
- * slices that only ever moved with whatever the platform happened to run.
+ * The card counts DOWN. It used to show credits consumed inside a ring that was
+ * always a full circle — the ring framed the number rather than measuring
+ * anything, because there was no total to measure against. A figure that only
+ * ever rises answers "how much have I burned?", which nobody asked; the
+ * question an owner has is "how much is left?", and that needs a ceiling.
  *
- * The ring is now one arc in one colour. It frames the number rather than
- * dividing it, so there is no proportion to misread. It is drawn only when
- * there is consumption to represent — a full ring over an empty account would
- * read as usage that never happened.
+ * The ceiling is one parameter — `monthly_ai_allowance_usd`, default $10 —
+ * converted to Pilot Credits by the API at the same rate Stripe bills against.
+ * The ring now empties as the month is spent, so its fill IS the answer and the
+ * number at its centre is what remains.
+ *
+ * Where no allowance applies (the key set to 0, or missing) the API sends null
+ * and the card falls back to the old behaviour: consumption shown, no gauge
+ * drawn. A gauge with no ceiling would be a full ring that never moves.
  *
  * The API still returns a `breakdown` array. It is deliberately not read here;
  * if a drill-down is ever wanted again it belongs on its own surface, not
- * inside the summary tile.
+ * inside the summary tile. That reasoning has not changed: knowing the website
+ * outspent insights does not tell anyone to do anything differently.
  */
 
 import { useEffect, useState } from 'react';
@@ -29,6 +33,10 @@ const logger = createLogger({ module: 'UsageCard' });
 interface UsageData {
   credits: number;
   calls: number;
+  /** Monthly ceiling in Pilot Credits; null when none applies. */
+  allowance: number | null;
+  /** Already clamped at zero by the API — consumption can exceed the ceiling. */
+  remaining: number | null;
 }
 
 const INK = 'var(--v2-text-primary)';
@@ -36,14 +44,18 @@ const MUTED = 'var(--v2-text-secondary)';
 const TRACK = 'var(--v2-border)';
 
 /**
- * One colour. The ring frames the total rather than dividing it.
+ * One colour for the arc, and one for the last fifth of it.
  *
- * It used to carry a segment per category in its own hue, which invited the
- * reader to compare slices — a comparison the card no longer offers and one
- * that was never actionable: nothing here can be spent differently by knowing
- * the website used more than insights.
+ * Still no segment-per-category: that invited comparison between slices nobody
+ * could act on. A low-balance state is different — it is the one thing this
+ * card can tell you that changes what you do next, so it gets the platform's
+ * alert orange rather than a second arbitrary hue.
  */
 const ACCENT = '#2a78d6';
+const LOW = '#F97316';
+
+/** Below this share of the allowance the arc turns orange. */
+const LOW_THRESHOLD = 0.2;
 
 function formatCredits(credits: number): string {
   if (credits < 1000) return credits.toLocaleString();
@@ -53,6 +65,11 @@ function formatCredits(credits: number): string {
 
 const R = 15;
 const STROKE = 4;
+
+/** Circumference of the ring, for the dash maths below. Declared after R:
+ *  reading it above the declaration is a TDZ throw at module load, not a
+ *  compile error, so nothing catches it until the page is opened. */
+const CIRCUMFERENCE = 2 * Math.PI * R;
 
 export function UsageCard() {
   const { t, language } = useLanguage();
@@ -79,6 +96,25 @@ export function UsageCard() {
       }
     })();
   }, []);
+
+  /*
+   * What the ring measures.
+   *
+   * `gauged` is the whole question: with an allowance the ring is a gauge that
+   * empties, without one it is the frame it used to be. Every branch below
+   * reads this rather than re-testing the nulls, so the two modes cannot drift
+   * apart.
+   */
+  const allowance = usage?.allowance ?? null;
+  const remaining = usage?.remaining ?? null;
+  const gauged = usage !== null && allowance !== null && allowance > 0 && remaining !== null;
+
+  const share = gauged ? remaining! / allowance! : 0;
+  const isLow = gauged && share <= LOW_THRESHOLD;
+
+  // The figure at the centre: what is LEFT under an allowance, what was SPENT
+  // without one.
+  const headline = usage ? formatCredits(gauged ? remaining! : usage.credits) : '—';
 
   return (
     <div
@@ -134,13 +170,44 @@ export function UsageCard() {
               overflow: 'visible',
             }}
             role="img"
-            aria-label={`${usage ? formatCredits(usage.credits) : '0'} ${t('usage.credits')}`}
+            aria-label={
+              gauged
+                ? `${formatCredits(remaining!)} ${t('usage.credits')} ${t('usage.available')}`
+                : `${usage ? formatCredits(usage.credits) : '0'} ${t('usage.credits')}`
+            }
           >
             <circle cx="18" cy="18" r={R} fill="none" stroke={TRACK} strokeWidth={STROKE} />
 
-            {/* Drawn only once there is something to represent: a full ring
-                over an empty account reads as usage that has not happened. */}
-            {usage && usage.credits > 0 && (
+            {/*
+              The arc is what is LEFT, so it shrinks anticlockwise from full as
+              the month is spent — the track showing through is the spend.
+
+              `strokeDasharray` makes one dash the length of the whole ring and
+              `strokeDashoffset` hides the spent part of it. Offset grows with
+              consumption, which is why the two are the arithmetic inverse of
+              each other and not the same number.
+
+              No round cap here, unlike the old full ring: at a low balance a
+              rounded end overhangs its own arc and reads as more left than
+              there is. Butt ends make a 2% sliver look like 2%.
+            */}
+            {gauged && remaining! > 0 && (
+              <circle
+                cx="18"
+                cy="18"
+                r={R}
+                fill="none"
+                stroke={isLow ? LOW : ACCENT}
+                strokeWidth={STROKE}
+                strokeDasharray={CIRCUMFERENCE}
+                strokeDashoffset={CIRCUMFERENCE * (1 - share)}
+                style={{ transition: 'stroke-dashoffset 600ms ease, stroke 300ms ease' }}
+              />
+            )}
+
+            {/* No allowance configured: the ring goes back to being a frame
+                around the spend, drawn only when there is spend to frame. */}
+            {!gauged && usage && usage.credits > 0 && (
               <circle
                 cx="18"
                 cy="18"
@@ -174,16 +241,23 @@ export function UsageCard() {
                 lineHeight: 1,
               }}
             >
-              {usage ? formatCredits(usage.credits) : '—'}
+              {headline}
             </span>
             <span style={{ fontSize: '10.5px', color: MUTED, marginTop: 3 }}>
-              {t('usage.credits')}
+              {gauged ? t('usage.available') : t('usage.credits')}
             </span>
+            {/* The denominator, so the arc has a scale. Without it a half-full
+                ring is a proportion of nothing in particular. */}
+            {gauged && (
+              <span style={{ fontSize: '10px', color: MUTED, marginTop: 2 }}>
+                {t('usage.of')} {formatCredits(allowance!)}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
-      {usage && usage.credits === 0 && !error && (
+      {usage && !gauged && usage.credits === 0 && !error && (
         <p style={{ fontSize: '12px', color: MUTED, marginTop: 10, textAlign: 'center' }}>
           {t('usage.none')}
         </p>

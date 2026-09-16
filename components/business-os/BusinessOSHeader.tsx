@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import Image from 'next/image';
 import { Moon, Sun, Globe, Check, Settings, Calendar } from 'lucide-react';
-import { V2Logo } from '@/components/v2/V2Header';
 import { useV2Theme } from '@/lib/design-system-v2';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
@@ -76,7 +77,35 @@ export function BusinessOSHeader() {
   return (
     <div className="sticky top-0 z-50 border-b border-[var(--v2-border)] bg-[var(--v2-surface)]">
       <div className={`${PAGE_CONTAINER} py-3 sm:py-4 flex items-center justify-between`}>
-        <V2Logo />
+        {/*
+          * The logo, and the way back to the dashboard from any Business OS page.
+          *
+          * This rendered `V2Logo`, which is hardcoded to `/v2/dashboard` — the
+          * agent-platform home. That was the right destination when V2 was the
+          * product. Business OS is the product now, and the middleware's V2
+          * rewrite was removed on the grounds that nothing sends anyone to
+          * `/v2/*` any more; this link was the exception that still did, so
+          * clicking the logo here dropped the user onto a legacy screen with no
+          * route back.
+          *
+          * Owned here rather than fixed in `V2Logo` because that component is
+          * still the header on the `/v2/*` pages, where `/v2/dashboard` remains
+          * the correct home until they are decommissioned.
+          */}
+        <Link
+          href="/business-os"
+          className="group inline-block"
+          aria-label={t('nav.home')}
+        >
+          <Image
+            src="/images/AgentPilot_Logo.png"
+            alt="AgentsPilots"
+            width={120}
+            height={120}
+            className="group-hover:scale-105 transition-transform duration-200"
+            priority
+          />
+        </Link>
 
         {/* Calendar + Dark Mode Toggle + Language Selector + Settings */}
         <div className="flex items-center gap-2 sm:gap-3">

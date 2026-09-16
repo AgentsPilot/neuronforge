@@ -24,10 +24,50 @@ import { z } from 'zod';
 
 const logger = createLogger({ module: 'OnboardingChatAPI' });
 
+/**
+ * Services exactly as the form holds them.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The services form serialises its rows into a sentence and the server asks a
+ * model to parse them back out. When the model returns three of four, the
+ * fourth is gone and nothing counts them — the build succeeds and the business
+ * simply has fewer services than it typed.
+ *
+ * This carries the rows themselves. The sentence still goes too, because the
+ * extraction reads the rest of the turn from it — the business-wide answers
+ * that are not per service — but the services no longer depend on a round trip
+ * through prose.
+ *
+ * Same reasoning `readIntakeNeed` already applies to the intake toggle: a form
+ * is an answer, not a hint.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const StructuredServiceSchema = z.object({
+  name: z.string().min(1).max(200),
+  duration_minutes: z.number().int().positive().nullable().optional(),
+  buffer_minutes: z.number().int().min(0).max(120).nullable().optional(),
+  price: z.number().nonnegative().nullable().optional(),
+  currency: z.string().max(8).optional(),
+  is_scheduled: z.boolean().optional(),
+  sale_mode: z.enum(['direct', 'proposal']).optional(),
+  collection: z.enum(['online', 'invoice']).nullable().optional(),
+  payment_plan: z
+    .object({
+      installment_count: z.number().int().min(2),
+      // 'quarterly' too: `InstallmentFrequency` accepts it and the services
+      // form offers it, so narrowing here rejected the whole turn.
+      installment_frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']),
+    })
+    .nullable()
+    .optional(),
+});
+
 const ChatRequestSchema = z.object({
   message: z.string().min(1, 'Message is required').max(2000),
   conversationId: z.string().uuid().optional(),
-  language: z.enum(['en', 'he', 'es']).optional()
+  language: z.enum(['en', 'he', 'es']).optional(),
+  /** Present only when the turn came from the services form. */
+  services: z.array(StructuredServiceSchema).max(40).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -164,7 +204,7 @@ export async function POST(request: NextRequest) {
       message: data.message
     }, 'Processing onboarding message');
 
-    const result = await manager.processUserMessage(user.id, data.message, currentState);
+    const result = await manager.processUserMessage(user.id, data.message, currentState, data.services);
 
     // 6. Store assistant response
     const { error: assistantMessageError } = await supabaseServer
@@ -204,6 +244,17 @@ export async function POST(request: NextRequest) {
       suggestions: result.suggestions,
       multiSelect: result.multiSelect,  // Include multi-select flag for Q4
       currentStep: result.updatedState.currentStep,
+      /*
+       * Which question is outstanding WITHIN the step.
+       *
+       * The services step is a loop: it asks for details, then asks whether
+       * there are more, then asks for details again — all without
+       * `currentStep` changing. The client opened its services form from the
+       * step alone, so after the first submission the form never came back and
+       * answering "I have more" led nowhere. The step says where we are; this
+       * says what is being asked.
+       */
+      pendingQuestion: result.updatedState.pendingQuestion ?? null,
       progress: {
         completed: stepsCompleted,
         total: totalSteps

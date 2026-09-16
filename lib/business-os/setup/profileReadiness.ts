@@ -34,7 +34,20 @@ export interface OrganizationSettings {
 export type ProfileField =
   | 'company_name'
   | 'business_type'
-  | 'logo'
+  /*
+   * No 'logo'.
+   *
+   * A logo is not something a business can be incomplete for. Plenty of them
+   * do not have one — a sole practitioner, a new business, anyone who simply
+   * has not made one — and nothing on the platform stops working without it:
+   * the header falls back to the business name, the invoice PDF and the emails
+   * render perfectly well. It was counted here, so its absence made the profile
+   * "incomplete", which made the readiness step outstanding and — until this —
+   * could refuse a website publish over a missing image.
+   *
+   * Asking for one is still worth doing; it is just never a gate. That belongs
+   * in a prompt somewhere, not in a completeness test every gate reads.
+   */
   | 'industry'
   | 'company_size'
   | 'primary_goal'
@@ -86,7 +99,6 @@ export function missingProfileFields(
 
   if (!hasValue(profile?.company_name)) missing.push('company_name');
   if (!hasValue(profile?.vertical)) missing.push('business_type');
-  if (!hasValue(profile?.logo_url)) missing.push('logo');
   if (!hasValue(settings?.industry)) missing.push('industry');
   if (!hasValue(settings?.company_size)) missing.push('company_size');
   if (!hasValue(settings?.primary_goal)) missing.push('primary_goal');

@@ -34,7 +34,27 @@ export class OpsLastMinuteCancelsDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'enforce_cancellation_policy',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `enforce_cancellation_policy`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
     consentTier: 'suggest',
     eligibleForAutomation: false,
     ownerParameters: [

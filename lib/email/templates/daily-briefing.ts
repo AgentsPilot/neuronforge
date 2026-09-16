@@ -11,6 +11,7 @@ import type { Locale } from '@/lib/i18n/config';
 import {
   wrapInBrandedTemplate,
   emailButton,
+  emailPalette,
   type BrandingData,
 } from './base-template';
 import { emailTranslations } from './translations';
@@ -58,6 +59,8 @@ export function generateDailyBriefingEmail(data: DailyBriefingEmailData): {
 
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...data.branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
   const isRTL = locale === 'he';
 
   const greeting = data.ownerFirstName
@@ -69,9 +72,9 @@ export function generateDailyBriefingEmail(data: DailyBriefingEmailData): {
       line => `
         <tr>
           <td style="padding: 0 0 10px 0; vertical-align: top; width: 14px;">
-            <div style="width: 5px; height: 5px; border-radius: 50%; background: #C3C9D8; margin-top: 8px;"></div>
+            <div style="width: 5px; height: 5px; border-radius: 50%; background: ${c.inkFaint}; margin-top: 8px;"></div>
           </td>
-          <td style="padding: 0 0 10px 0; font-size: 15px; line-height: 1.5; color: #3A4256;">
+          <td style="padding: 0 0 10px 0; font-size: 15px; line-height: 1.5; color: ${c.inkMuted};">
             ${escapeHtml(line)}
           </td>
         </tr>`
@@ -79,10 +82,10 @@ export function generateDailyBriefingEmail(data: DailyBriefingEmailData): {
     .join('');
 
   const content = `
-    <h1 style="margin: 0 0 4px; font-size: 21px; font-weight: 600; color: #131A2B;">
+    <h1 style="margin: 0 0 4px; font-size: 21px; font-weight: 600; color: ${c.ink};">
       ${greeting}
     </h1>
-    <p style="margin: 0 0 18px; font-size: 13px; color: #8A91A5;">
+    <p style="margin: 0 0 18px; font-size: 13px; color: ${c.inkFaint};">
       ${escapeHtml(formattedDate)}
     </p>
 
@@ -93,9 +96,9 @@ export function generateDailyBriefingEmail(data: DailyBriefingEmailData): {
 
     ${emailButton(t.viewDashboard[locale], data.dashboardUrl, { branding: data.branding })}
 
-    <p style="margin: 24px 0 0; font-size: 12px; color: #8A91A5;">
+    <p style="margin: 24px 0 0; font-size: 12px; color: ${c.inkFaint};">
       ${t.unsubscribeHint[locale]}
-      <a href="${data.settingsUrl}" style="color: #8A91A5;">${t.unsubscribeLink[locale]}</a>
+      <a href="${data.settingsUrl}" style="color: ${c.inkFaint};">${t.unsubscribeLink[locale]}</a>
     </p>
   `;
 

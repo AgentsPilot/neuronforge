@@ -39,6 +39,15 @@ export interface OperationalItem {
 }
 
 interface PendingInsight extends Omit<InsightData, 'eligible_for_automation'> {
+  /**
+   * The process that can act on this, when one exists.
+   *
+   * Absent on an advisory insight — a website page missing a call to action, a
+   * blocked Stripe payout — where what would fix it is a different kind of
+   * thing from the message-sending the kernel can do. The card reads this to
+   * decide whether to offer the button at all.
+   */
+  paired_process_id?: string;
   projection?: InsightProjection;
   eligible_for_automation?: boolean;
   process_parameters?: Record<string, unknown>;
@@ -61,7 +70,12 @@ interface InsightAdvisorCardProps {
   automationConfig?: AutomationConfig;
   stage?: CardStage;
   onIndexChange: (index: number) => void;
-  onAction: (action: 'run' | 'snooze' | 'dismiss', insightId: string, params?: Record<string, unknown>) => Promise<void>;
+  /**
+   * Returns false when the action was refused, so the card can stop claiming it
+   * succeeded. Void is still accepted — an older caller that reports nothing is
+   * treated as "no news", not as failure.
+   */
+  onAction: (action: 'run' | 'snooze' | 'dismiss', insightId: string, params?: Record<string, unknown>) => Promise<void | boolean>;
   onAutomate: (insightId: string, params: Record<string, unknown>) => Promise<void>;
   onDeclineAutomate: () => void;
 }
@@ -187,6 +201,16 @@ export function InsightAdvisorCard({
   const steps = stepKeys.map(key => t(key));
   const canAutomate = insight?.eligible_for_automation && automationConfig;
 
+  /*
+   * Whether "handle it for me" can do anything.
+   *
+   * An operational page always can — it is an approval. An insight can only if
+   * it carries a process; thirteen detectors describe something no process
+   * implements, and offering to run one was how the card came to report success
+   * for work that never started.
+   */
+  const canRun = !!operationalItem || !!insight?.paired_process_id;
+
   // Get eyebrow text based on stage
   const getEyebrowText = () => {
     /*
@@ -245,11 +269,27 @@ export function InsightAdvisorCard({
     setCardState('running');
     setRunningStep(0);
 
+    /*
+     * The card used to announce success on a timer, whatever the server said.
+     *
+     * `onAction`'s result was awaited and discarded, while this interval marched
+     * to "completed" on its own — so an insight whose paired process does not
+     * exist (the server answers 400, `Process X not found`) still told the owner
+     * the job was done. Nothing had run, the insight was never marked acted, and
+     * it reappeared on the next load having apparently already been handled.
+     *
+     * The flag is read by the timer at fire time rather than checked before it
+     * is scheduled, because the refusal usually arrives while the animation is
+     * still playing and would otherwise land after the state it needs to stop.
+     */
+    let refused = false;
+
     const interval = setInterval(() => {
       setRunningStep(prev => {
         if (prev >= steps.length - 1) {
           clearInterval(interval);
           setTimeout(() => {
+            if (refused) return;
             setCardState(canAutomate ? 'automate_offer' : 'completed');
           }, 500);
           return prev;
@@ -258,7 +298,15 @@ export function InsightAdvisorCard({
       });
     }, 800);
 
-    await onAction('run', insight.id);
+    const ran = await onAction('run', insight.id);
+
+    if (ran === false) {
+      refused = true;
+      clearInterval(interval);
+      // Back to the offer, not to a success state: the work did not happen and
+      // the button should still be there.
+      setCardState('default');
+    }
   }, [insight, onAction, steps.length, canAutomate]);
 
   /**
@@ -465,7 +513,9 @@ export function InsightAdvisorCard({
               >
                 {t('insight.nav.position', { current: currentIndex + 1, total: totalPages })}
               </span>
-              <div style={{ display: 'flex', gap: '5px' }}>
+              {/* Gap lives in the buttons' padding now, so the space between
+                  dots is part of a hit area rather than a dead zone. */}
+              <div style={{ display: 'flex', gap: 0 }}>
                 {Array.from({ length: totalPages }, (_, i) => (
                   <button
                     key={i}
@@ -473,18 +523,37 @@ export function InsightAdvisorCard({
                     aria-label={t('insight.nav.goTo', { number: i + 1 })}
                     aria-current={i === currentIndex}
                     style={{
-                      // The active one is a stadium rather than a bigger dot:
-                      // size alone is hard to read at 6px, length is not.
-                      width: i === currentIndex ? '14px' : '6px',
-                      height: '6px',
-                      borderRadius: i === currentIndex ? '4px' : '50%',
-                      background: i === currentIndex ? '#F97316' : '#D6DAE6',
+                      /*
+                       * The button is the hit area; the dot inside it is the
+                       * picture. They used to be the same element, which made
+                       * the control for changing page a 6-pixel square — small
+                       * enough that missing it reads as the card being stuck
+                       * rather than as a missed tap. The dot is unchanged; what
+                       * changed is how much of the space around it responds.
+                       */
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      height: '22px',
+                      padding: '0 4px',
                       border: 'none',
-                      padding: 0,
+                      background: 'transparent',
                       cursor: i === currentIndex ? 'default' : 'pointer',
-                      transition: 'width 0.2s, background 0.2s',
                     }}
-                  />
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        // The active one is a stadium rather than a bigger dot:
+                        // size alone is hard to read at 6px, length is not.
+                        width: i === currentIndex ? '14px' : '6px',
+                        height: '6px',
+                        borderRadius: i === currentIndex ? '4px' : '50%',
+                        background: i === currentIndex ? '#F97316' : '#D6DAE6',
+                        transition: 'width 0.2s, background 0.2s',
+                      }}
+                    />
+                  </button>
                 ))}
               </div>
             </div>
@@ -562,7 +631,15 @@ export function InsightAdvisorCard({
               flexWrap: 'wrap',
             }}
           >
-            {/* Primary button: .adv-btn */}
+            {/*
+              Primary button: .adv-btn
+
+              Shown only where something can actually run. An advisory insight
+              names no process, the server answers "no action available", and
+              the button used to sit there anyway — an offer to handle it that
+              could only ever fail.
+            */}
+            {canRun && (
             <button
               onClick={operationalItem ? () => handleDecide(true) : handleRun}
               className="adv-btn"
@@ -583,6 +660,7 @@ export function InsightAdvisorCard({
                 ? t('automation.approve')
                 : t('insight.action.primary') || 'Handle it for me'}
             </button>
+            )}
             {/* Secondary button: .adv-lite */}
             <button
               onClick={operationalItem ? () => handleDecide(false) : handleDismiss}
@@ -599,7 +677,9 @@ export function InsightAdvisorCard({
                 fontFamily: isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif',
               }}
             >
-              {operationalItem
+              {!canRun && !operationalItem
+                ? t('insight.action.acknowledge') || 'Got it'
+                : operationalItem
                 ? t('automation.decline')
                 : t('insight.action.secondary') || 'Not now'}
             </button>

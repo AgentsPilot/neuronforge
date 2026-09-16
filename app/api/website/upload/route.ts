@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { userMediaRepository } from '@/lib/repositories/UserMediaRepository';
 
 const logger = createLogger({ module: 'WebsiteUploadAPI' });
 
@@ -42,6 +43,10 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     const folder = (formData.get('folder') as string) || user.id;
     const bucket = (formData.get('bucket') as string) || DEFAULT_BUCKET;
+    // What the picture is FOR, when the caller knows. Recorded with the row so
+    // the picker can offer a hero crop back for a hero slot.
+    const section = (formData.get('section') as string) || null;
+    const aspect = (formData.get('aspect') as string) || null;
 
     if (!file) {
       return NextResponse.json(
@@ -100,6 +105,35 @@ export async function POST(request: NextRequest) {
     const { data: urlData } = supabaseServer.storage
       .from(bucket)
       .getPublicUrl(data.path);
+
+    /*
+     * The business now OWNS this picture, so the library has to know.
+     *
+     * The file was stored and the URL handed back, and nothing was written to
+     * `user_media` — so an uploaded photograph existed only in the one block it
+     * was uploaded into. It could not be reused on another page, and it never
+     * appeared in the picker, which is the one place an owner looks for "the
+     * photo I added last week". Stock photographs found for a business were
+     * recorded from the start; the owner's own were not.
+     *
+     * Only for the website bucket. This endpoint also takes logo uploads, and a
+     * logo is not one of the pictures to offer for a hero slot.
+     *
+     * Never fatal, for the same reason `StockImageService` is not: the file is
+     * uploaded and the block is about to render it. Losing the row costs a
+     * thumbnail in the library, which is not worth failing an upload for.
+     */
+    if (bucket === DEFAULT_BUCKET) {
+      await userMediaRepository.record({
+        userId: user.id,
+        storagePath: data.path,
+        publicUrl: urlData.publicUrl,
+        source: 'upload',
+        section,
+        aspect,
+        description: file.name,
+      });
+    }
 
     requestLogger.info(
       { userId: user.id, fileName, bucket, path: data.path },

@@ -64,8 +64,15 @@ export function getStandardHomepageBlocks(): BuildingBlock[] {
         { label: 'Process', anchor: '#process' },
         { label: 'Contact', anchor: '#contact' }
       ],
-      // `#services`, not `#booking`: this scaffold no longer installs a booking
-      // section, and the booking now starts from each service's own button.
+      /*
+       * `#services`, not `#booking`: this scaffold no longer installs a booking
+       * section, and the booking now starts from each service's own button.
+       *
+       * The label and the link belong together — a header whose words and
+       * destination disagree sends a visitor somewhere they did not ask to go.
+       * `WebsiteBlockEnrichmentService` swaps both for a contact button on a
+       * business with no services to book.
+       */
       cta_button: { text: 'Book Now', link: '#services' },
       style: 'blur'
     }),

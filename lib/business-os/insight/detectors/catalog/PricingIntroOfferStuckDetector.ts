@@ -35,7 +35,13 @@ export class PricingIntroOfferStuckDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'intro_followup_sequence',
+    pairedProcessId: 'send_followup_nudge',
+    /*
+     * Runs even while this category's vector is dark, because someone on an intro offer who has not moved to full price is a countable
+     * person, while `price` gates on 42 days of bookings.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'automate',
     eligibleForAutomation: true,
     ownerParameters: [

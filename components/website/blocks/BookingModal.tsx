@@ -48,6 +48,21 @@ interface BookingModalProps {
    * is why that surface had a second booking implementation of its own.
    */
   userCode?: string;
+  /**
+   * Where on the page the button that opened this sits, in document pixels.
+   *
+   * The dialog centres itself with `position: fixed`, which anchors to the
+   * VIEWPORT — correct on a published page, wrong in the editor's preview,
+   * where the page renders inside an iframe sized to its own full height. The
+   * iframe's viewport is then the WHOLE document, so "centred" meant the middle
+   * of a page thousands of pixels tall and a button clicked halfway down opened
+   * a dialog nowhere near it.
+   *
+   * Given a value, the dialog positions itself against the document at that
+   * point instead. Null keeps the old centring, which is what every published
+   * page still wants.
+   */
+  anchorTop?: number | null;
   /** Pre-selected service - skips service selection step */
   initialService?: SelectedServiceData | null;
   /**
@@ -148,8 +163,49 @@ export function BookingModal({
   subdomain,
   userCode,
   initialService,
-  paymentsEnabled
+  paymentsEnabled,
+  anchorTop = null
 }: BookingModalProps) {
+  /*
+   * The dialog, so it can put itself in front of whoever opened it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY POSITION ALONE IS NOT ENOUGH
+   *
+   * `position: fixed` is supposed to anchor to the viewport, and in the editor's
+   * preview it does not — for two compounding reasons, both introduced by the
+   * template work:
+   *
+   *   1. The public surface declares `container-type: inline-size` so the
+   *      breakpoints can measure the page. That implies `contain: layout`, and
+   *      layout containment makes the element a CONTAINING BLOCK for fixed and
+   *      absolutely positioned descendants. The dialog stopped tracking the
+   *      viewport and started tracking `<main>`.
+   *   2. The preview renders inside an iframe sized to the page's full height,
+   *      so even a true viewport anchor would centre on a document thousands of
+   *      pixels tall.
+   *
+   * Either one alone puts the dialog far from the button. Rather than chase the
+   * geometry through two layers of containment, it is placed at the trigger and
+   * then scrolled into view — which is the thing actually being asked for, and
+   * is true whatever the containing block turns out to be.
+   */
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // Published pages pass no anchor: their dialog centres in a real viewport
+    // and must not be scrolled to.
+    if (!isOpen || anchorTop === null) return;
+
+    // After paint, so the dialog has its final height to be centred on. The
+    // iframe's own body does not scroll, so this propagates to the editor's
+    // canvas — which is the scroller the viewer is actually using.
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen, anchorTop]);
+
   /*
    * The journey belongs to the SERVICE the client just picked.
    *
@@ -296,7 +352,27 @@ export function BookingModal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed inset-4 md:inset-8 lg:inset-16 z-50 flex items-center justify-center"
+            /*
+              Anchored to the button, or centred in the viewport.
+              See `anchorTop` on the props for why a preview needs the first.
+            */
+            className={
+              anchorTop === null
+                ? 'fixed inset-4 md:inset-8 lg:inset-16 z-50 flex items-center justify-center'
+                : 'absolute z-50 flex justify-center px-4'
+            }
+            style={
+              anchorTop === null
+                ? undefined
+                : {
+                    // Slightly above the control, so the dialog opens over what
+                    // was clicked rather than pushing it out of sight — and
+                    // never above the top of the page.
+                    top: Math.max(16, anchorTop - 80),
+                    insetInlineStart: 0,
+                    insetInlineEnd: 0,
+                  }
+            }
           >
             <div
               // One direction for the whole dialog rather than per fragment.
@@ -304,19 +380,37 @@ export function BookingModal({
               // between them — the close button's side, logical padding, the
               // scroll area — was left to inherit from whatever wrapped the
               // modal, which on a preview page is not the site's language.
+              ref={dialogRef}
               dir={isRTL ? 'rtl' : 'ltr'}
               className="relative w-full max-w-2xl flex flex-col rounded-2xl shadow-2xl overflow-hidden"
               style={{
                 backgroundColor: theme?.colors?.background || '#ffffff',
                 color: theme?.colors?.text || '#1a1a1a',
-                height: '80vh',
+                /*
+                  `vh` is meaningless in the anchored case: the preview's iframe
+                  viewport is the whole page, so `80vh` would be 80% of a
+                  document thousands of pixels tall. A pixel cap instead, which
+                  is what `maxHeight` was already doing for the centred case.
+                */
+                height: anchorTop === null ? '80vh' : 'auto',
                 maxHeight: '700px',
                 minHeight: '500px'
               }}
             >
               {/* Sticky Header with Step Indicator */}
               <div
-                className="flex-shrink-0 px-6 pt-4 pb-3 border-b"
+                /*
+                  `min-h` so the bottom border clears the close button.
+                  
+                  The button is positioned absolutely — `top-3` plus `p-2`
+                  around a 20px icon, so it reaches about 48px down. The header
+                  itself is only its padding when the step indicator is hidden,
+                  which is every step that does not show one: roughly 28px, so
+                  the border ran straight through the X. Reserving the button's
+                  own height fixes it without moving the button, which has to
+                  stay in the corner.
+                */
+                className="flex-shrink-0 px-6 pt-4 pb-3 border-b min-h-[3.25rem]"
                 style={{
                   backgroundColor: theme?.colors?.background || '#ffffff',
                   borderColor: theme?.colors?.textSecondary ? `${theme.colors.textSecondary}20` : '#e5e7eb'

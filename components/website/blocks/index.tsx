@@ -11,7 +11,7 @@
  * - This ensures content persists across template changes
  */
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import type { Locale } from '@/lib/i18n/config';
 import { getDirection } from '@/lib/i18n/config';
 import type { BlockType, BlockStyles, PageTheme, FlowStep, SelectedServiceData, JourneyServiceFacts, BlockRendererProps } from './types';
@@ -149,6 +149,25 @@ interface RenderBlocksOptions {
   subdomain?: string;
   /** Preview mode - enables in-page booking modal instead of navigation */
   isPreview?: boolean;
+  /**
+   * Whether a card can actually be charged right now.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * A business can have decided in onboarding that clients pay online and still
+   * not have connected Stripe — the connection asks for an ID and a bank
+   * account, and it happens after setup. Until charges are enabled the payment
+   * step has nothing behind it.
+   *
+   * The smart link has always passed this and correctly drops the step. The
+   * website did not pass it at all, and `BookingModal` defaults an unanswered
+   * question to "yes" — deliberately, so a caller that cannot answer does not
+   * remove a step the business could honour. The website could answer and
+   * simply never did, so a client on a published site reached a payment step
+   * with no processor behind it.
+   *
+   * Left undefined, the old optimistic default still applies.
+   */
+  paymentsEnabled?: boolean;
 }
 
 export function WebsiteBlocks({
@@ -160,11 +179,46 @@ export function WebsiteBlocks({
   clientFlow: explicitClientFlow,
   bookingUrl: explicitBookingUrl,
   subdomain,
-  isPreview = false
+  isPreview = false,
+  paymentsEnabled
 }: RenderBlocksOptions): React.ReactNode {
   const isRTL = getDirection(locale) === 'rtl';
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
   const [selectedService, setSelectedService] = useState<SelectedServiceData | null>(null);
+
+  /*
+   * Where the button that opened the dialog sits on the page.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The dialog centres itself with `position: fixed`, which anchors to the
+   * VIEWPORT. On a published page that is the browser window and is right. In
+   * the editor's preview the page now renders inside an iframe sized to its own
+   * full height — so the iframe's viewport IS the whole document, and "centre
+   * of the viewport" became the middle of a page several thousand pixels tall.
+   * Clicking "explore services" halfway down opened a dialog nowhere near it.
+   *
+   * Captured on the CAPTURE phase so it is recorded before the button's own
+   * handler bubbles up and asks for the dialog. A ref rather than state: it
+   * must not cause a render of its own, and it is only read at the moment the
+   * dialog opens.
+   */
+  const triggerTopRef = useRef<number | null>(null);
+  const [anchorTop, setAnchorTop] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!isPreview) return;
+
+    const remember = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const control = target?.closest('button, a');
+      triggerTopRef.current = control
+        ? control.getBoundingClientRect().top + window.scrollY
+        : event.clientY + window.scrollY;
+    };
+
+    document.addEventListener('click', remember, true);
+    return () => document.removeEventListener('click', remember, true);
+  }, [isPreview]);
 
   // Sort by position and filter enabled
   const sortedBlocks = [...blocks]
@@ -255,6 +309,7 @@ export function WebsiteBlocks({
    */
   const handleOpenBooking = (service: SelectedServiceData | null) => {
     setSelectedService(service ?? pageService);
+    setAnchorTop(triggerTopRef.current);
     setBookingModalOpen(true);
   };
 
@@ -310,8 +365,63 @@ export function WebsiteBlocks({
         // Get anchor ID for this block type (for menu navigation)
         const anchorId = getAnchorId(block.block_type);
 
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE HEADER IS FROZEN HERE, NOT IN THE STYLESHEET.
+         *
+         * `position: sticky` on `.apc-bar` itself does nothing at all, and the
+         * reason is this wrapper: a sticky element can only travel within its
+         * own parent's box, and every block gets a wrapper exactly as tall as
+         * the block inside it. So the bar was pinned inside a container the
+         * height of the bar — correct CSS, zero visible effect, which is why it
+         * still scrolled away.
+         *
+         * Moving it to the wrapper gives it the full page to travel: the
+         * wrapper's parent is the blocks container, so the bar stays put until
+         * the page ends.
+         *
+         * Sticky and not fixed, still deliberately: the public surface declares
+         * `container-type` for its container queries, which makes it the
+         * containing block for anything fixed. A fixed bar would resolve
+         * against that element — which scrolls with the page — so it would
+         * scroll away too, and in the editor's preview frame it would sit
+         * somewhere else entirely.
+         *
+         * Inline rather than a class because these wrappers are rendered in the
+         * editor as well as on the published page, and only one of the two is
+         * guaranteed to sit inside the scoped stylesheet.
+         */
+        const isHeader = block.block_type === 'header';
+
         return (
-          <div key={block.id} id={anchorId}>
+          /*
+            `scroll-margin` so a jump from the menu does not land the section
+            underneath the sticky header that sent it there. `scrollIntoView`
+            honours it; the old `window.scrollTo` had to subtract 80px by hand,
+            which only worked for the one header height it was written against.
+          */
+          <div
+            key={block.id}
+            id={anchorId}
+            style={{
+              scrollMarginBlockStart: '88px',
+              /*
+               * `top`, not `inset-block-start`.
+               *
+               * A sticky element with no RESOLVED offset never sticks — it is
+               * not an error, it simply behaves as static, silently. The
+               * logical property is the tidier spelling and is unsupported in
+               * Safari before 14.1 and in several in-app browsers, so on those
+               * the offset dropped and the bar scrolled away exactly as if this
+               * code were not here. Stickiness is vertical and a page's writing
+               * direction never flips top for bottom, so the physical property
+               * costs nothing and is understood everywhere.
+               */
+              ...(isHeader
+                ? { position: 'sticky' as const, top: 0, zIndex: 40 }
+                : {}),
+            }}
+          >
             <BlockComponent
               content={block.content}
               styles={block.styles}
@@ -344,6 +454,8 @@ export function WebsiteBlocks({
           pageId={pageId}
           subdomain={subdomain}
           initialService={selectedService}
+          anchorTop={anchorTop}
+          paymentsEnabled={paymentsEnabled}
         />
       )}
     </div>

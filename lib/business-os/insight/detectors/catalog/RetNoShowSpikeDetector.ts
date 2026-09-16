@@ -9,7 +9,10 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
+import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+
+const logger = createLogger({ module: 'RetNoShowSpikeDetector' });
 import { COMMON_GUARDRAILS } from '../types';
 
 export class RetNoShowSpikeDetector extends BaseDetector {
@@ -129,19 +132,50 @@ export class RetNoShowSpikeDetector extends BaseDetector {
     const affectedBookings = noShows?.map((ns) => ns.entity_id) || [];
 
     // Estimate revenue impact (assume avg booking value)
-    const { data: avgBooking } = await this.supabase
-      .from('business_events')
-      .select('value_usd')
+    /*
+     * What a booking is typically worth, from the bookings themselves.
+     *
+     * This used to average `value_usd` on `booking.completed` events — a table
+     * that, until those events started being written, had nothing in it. The
+     * query succeeded, returned no rows, and every run silently fell through to
+     * a hardcoded $75 that was then shown to the owner as their own average.
+     *
+     * The event rail is still the better long-term source once it has history.
+     * Until then the answer is in the bookings: what was actually charged, or
+     * failing that what the service lists.
+     */
+    const { data: avgBooking, error: avgBookingError } = await this.supabase
+      .from('scheduling_bookings')
+      .select('payment_amount, service:scheduling_services(price)')
       .eq('user_id', userId)
-      .eq('event_type', 'booking.completed')
-      .not('value_usd', 'is', null)
+      .eq('status', 'completed')
       .limit(100);
 
-    const avgBookingValue = avgBooking && avgBooking.length > 0
-      ? avgBooking.reduce((sum, b) => sum + parseFloat(b.value_usd || '0'), 0) / avgBooking.length
-      : 75; // Default assumption
+    if (avgBookingError) {
+      logger.warn(
+        { err: avgBookingError, userId },
+        'Could not read booking values; falling back to the default estimate'
+      );
+    }
 
-    const estimatedLoss = affectedBookings.length * avgBookingValue;
+    const bookingValues = (avgBooking ?? [])
+      .map((row) => {
+        const charged = parseFloat(String((row as { payment_amount?: unknown }).payment_amount ?? '0'));
+        if (Number.isFinite(charged) && charged > 0) return charged;
+        const service = (row as { service?: { price?: unknown } | null }).service;
+        const listed = parseFloat(String(service?.price ?? '0'));
+        return Number.isFinite(listed) ? listed : 0;
+      })
+      .filter((value) => value > 0);
+
+    // Null rather than a guess — see OpsPeakUnutilizedDetector.
+    const avgBookingValue =
+      bookingValues.length > 0
+        ? bookingValues.reduce((sum, value) => sum + value, 0) / bookingValues.length
+        : null;
+
+    const estimatedLoss =
+      avgBookingValue === null ? undefined : affectedBookings.length * avgBookingValue;
 
     const result = this.createDetectionResult({
       severity,

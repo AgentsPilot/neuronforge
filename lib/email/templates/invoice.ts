@@ -6,6 +6,8 @@ import type { InvoicePaymentOptions } from '@/lib/payments/invoicePaymentOptions
 import {
   wrapInBrandedTemplate,
   emailButton,
+  emailPalette,
+  emailTone,
   formatCurrency,
   formatEmailDate,
   type BrandingData
@@ -90,6 +92,11 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
 
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...data.branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
+  // The overdue banner, and the note about how to pay.
+  const overdue = emailTone('warning', brandingWithLocale);
+  const note = emailTone('info', brandingWithLocale);
 
   // Get translations for the current locale
   // The word for this document, resolved once and used by the subject, the
@@ -120,17 +127,17 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
   // Build line items HTML
   const lineItemsHtml = data.lineItems.map(item => `
     <tr>
-      <td style="padding: 12px 0; border-bottom: 1px solid #f0f0f0;">
-        <p style="margin: 0; font-size: 14px; color: #1a1a1a;">
+      <td style="padding: 12px 0; border-bottom: 1px solid ${c.line};">
+        <p style="margin: 0; font-size: 14px; color: ${c.ink};">
           ${item.description}
         </p>
         ${item.quantity && item.unitPrice ? `
-        <p style="margin: 4px 0 0; font-size: 12px; color: #888888;">
+        <p style="margin: 4px 0 0; font-size: 12px; color: ${c.inkFaint};">
           ${item.quantity} × ${formatCurrency(item.unitPrice, data.currency)}
         </p>
         ` : ''}
       </td>
-      <td style="padding: 12px 0; border-bottom: 1px solid #f0f0f0; text-align: right; font-size: 14px; font-weight: 500; color: #1a1a1a;">
+      <td style="padding: 12px 0; border-bottom: 1px solid ${c.line}; text-align: right; font-size: 14px; font-weight: 500; color: ${c.ink};">
         ${formatCurrency(item.amount, data.currency)}
       </td>
     </tr>
@@ -138,21 +145,21 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
 
   const content = `
     <!-- Greeting -->
-    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
       ${greeting}
     </h2>
-    <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
       ${intro}
     </p>
 
     <!-- Invoice Header -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: ${c.mutedSurface}; border-radius: ${c.radius}; border: 1px solid ${c.line};">
       <tr>
         <td style="padding: 24px;">
           <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
             <tr>
               <td>
-                <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #666666; text-transform: uppercase;">
+                <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: ${c.inkMuted}; text-transform: uppercase;">
                   ${invoiceNumberLabel}
                 </p>
                 <p style="margin: 0; font-size: 18px; font-weight: 600; color: ${data.branding.primaryColor};">
@@ -160,10 +167,10 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
                 </p>
               </td>
               <td style="text-align: right;">
-                <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: #666666; text-transform: uppercase;">
+                <p style="margin: 0 0 4px; font-size: 12px; font-weight: 600; color: ${c.inkMuted}; text-transform: uppercase;">
                   ${amountDueLabel}
                 </p>
-                <p style="margin: 0; font-size: 24px; font-weight: 700; color: #1a1a1a;">
+                <p style="margin: 0; font-size: 24px; font-weight: 700; color: ${c.ink};">
                   ${formatCurrency(data.amount, data.currency)}
                 </p>
               </td>
@@ -176,11 +183,11 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
     <!-- Due Date -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px;">
       <tr>
-        <td style="padding: 16px; background-color: #fffbeb; border-radius: 8px; border: 1px solid #fcd34d;">
+        <td style="padding: 16px; background-color: ${overdue.bg}; border-radius: ${c.buttonRadius}; border: 1px solid ${overdue.border};">
           <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
             <tr>
               <td>
-                <p style="margin: 0; font-size: 14px; color: #92400e;">
+                <p style="margin: 0; font-size: 14px; color: ${overdue.text};">
                   <strong>📅 ${dueDateLabel}:</strong> ${formattedDueDate}
                 </p>
               </td>
@@ -194,8 +201,8 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
     <!-- Appointment Info -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px;">
       <tr>
-        <td style="padding: 16px; background-color: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd;">
-          <p style="margin: 0; font-size: 14px; color: #0369a1;">
+        <td style="padding: 16px; background-color: ${note.bg}; border-radius: ${c.buttonRadius}; border: 1px solid ${note.border};">
+          <p style="margin: 0; font-size: 14px; color: ${note.text};">
             <strong>📆 ${forAppointmentLabel}:</strong> ${data.serviceName || serviceLabel} on ${formattedAppointmentDate}
           </p>
         </td>
@@ -207,14 +214,14 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px;">
       <tr>
         <td>
-          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${invoiceDetailsLabel}
           </p>
-          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #fafafa; border-radius: 8px; padding: 8px 16px;">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: ${c.mutedSurface}; border-radius: ${c.buttonRadius}; padding: 8px 16px;">
             ${lineItemsHtml}
             <!-- Total Row -->
             <tr>
-              <td style="padding: 16px 0 8px; font-size: 16px; font-weight: 600; color: #1a1a1a;">
+              <td style="padding: 16px 0 8px; font-size: 16px; font-weight: 600; color: ${c.ink};">
                 ${totalLabel}
               </td>
               <td style="padding: 16px 0 8px; text-align: right; font-size: 18px; font-weight: 700; color: ${data.branding.primaryColor};">
@@ -226,10 +233,10 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
                  reader adds it on — the one misreading that changes what they
                  think they owe. -->
             <tr>
-              <td style="padding: 0 0 12px; font-size: 13px; color: #6b7280;">
+              <td style="padding: 0 0 12px; font-size: 13px; color: ${c.inkMuted};">
                 ${includesTaxLabel} ${data.taxLine.label} ${data.taxLine.rate}%
               </td>
-              <td style="padding: 0 0 12px; text-align: right; font-size: 13px; color: #6b7280;">
+              <td style="padding: 0 0 12px; text-align: right; font-size: 13px; color: ${c.inkMuted};">
                 ${formatCurrency(data.taxLine.amount, data.currency)}
               </td>
             </tr>` : ''}
@@ -249,7 +256,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
             branding: data.branding,
             fullWidth: true
           })}
-          <p style="margin: 12px 0 0; font-size: 12px; color: #888888;">
+          <p style="margin: 12px 0 0; font-size: 12px; color: ${c.inkFaint};">
             ${securePaymentLabel}
           </p>
         </td>
@@ -257,16 +264,16 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
     </table>` : ''}
 
     ${options.bank ? `
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f7f7f7; border-radius: 8px;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: ${c.mutedSurface}; border-radius: ${c.buttonRadius};">
       <tr>
         <td style="padding: 16px 20px;">
-          <p style="margin: 0 0 10px; font-size: 14px; font-weight: 600; color: #333333;">
+          <p style="margin: 0 0 10px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.bankTransferTitle[locale]}
           </p>
-          ${options.bankName ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankName[locale]}: <strong>${options.bankName}</strong></p>` : ''}
-          ${options.bankAccount ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankAccount[locale]}: <strong>${options.bankAccount}</strong></p>` : ''}
-          ${options.bankRouting ? `<p style="margin: 0 0 4px; font-size: 13px; color: #555555;">${t.bankRouting[locale]}: <strong>${options.bankRouting}</strong></p>` : ''}
-          <p style="margin: 10px 0 0; font-size: 12px; color: #888888;">
+          ${options.bankName ? `<p style="margin: 0 0 4px; font-size: 13px; color: ${c.inkMuted};">${t.bankName[locale]}: <strong>${options.bankName}</strong></p>` : ''}
+          ${options.bankAccount ? `<p style="margin: 0 0 4px; font-size: 13px; color: ${c.inkMuted};">${t.bankAccount[locale]}: <strong>${options.bankAccount}</strong></p>` : ''}
+          ${options.bankRouting ? `<p style="margin: 0 0 4px; font-size: 13px; color: ${c.inkMuted};">${t.bankRouting[locale]}: <strong>${options.bankRouting}</strong></p>` : ''}
+          <p style="margin: 10px 0 0; font-size: 12px; color: ${c.inkFaint};">
             ${t.includeInvoiceNumber[locale](data.invoiceNumber)}
           </p>
         </td>
@@ -274,13 +281,13 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
     </table>` : ''}
 
     ${options.instructions ? `
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f7f7f7; border-radius: 8px;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: ${c.mutedSurface}; border-radius: ${c.buttonRadius};">
       <tr>
         <td style="padding: 16px 20px;">
-          <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600; color: #333333;">
+          <p style="margin: 0 0 8px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.paymentInstructionsTitle[locale]}
           </p>
-          <p style="margin: 0; font-size: 13px; color: #555555; line-height: 1.6; white-space: pre-line;">${options.instructions}</p>
+          <p style="margin: 0; font-size: 13px; color: ${c.inkMuted}; line-height: 1.6; white-space: pre-line;">${options.instructions}</p>
         </td>
       </tr>
     </table>` : ''}
@@ -290,8 +297,8 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
          payment method should be. -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
-        <td style="padding: 16px 20px; background-color: #f7f7f7; border-radius: 8px;">
-          <p style="margin: 0; font-size: 13px; color: #555555;">
+        <td style="padding: 16px 20px; background-color: ${c.mutedSurface}; border-radius: ${c.buttonRadius};">
+          <p style="margin: 0; font-size: 13px; color: ${c.inkMuted};">
             ${t.contactForPayment[locale](data.branding.businessName)}
           </p>
         </td>
@@ -299,7 +306,7 @@ export function generateInvoiceEmail(data: InvoiceEmailData): {
     </table>` : ''}
 
     <!-- Final Note -->
-    <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
+    <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
       ${questionsText}
     </p>
   `;

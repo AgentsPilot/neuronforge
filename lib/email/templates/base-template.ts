@@ -3,6 +3,7 @@
 
 import type { Locale } from '@/lib/i18n/config';
 import { isRTL } from '@/lib/i18n/config';
+import { isDarkColor, mix } from '@/lib/branding/color';
 
 export interface BrandingData {
   businessName: string;
@@ -77,6 +78,109 @@ function fontLink(headingFont?: string, bodyFont?: string): string {
     .map((f) => `family=${encodeURIComponent(f.trim()).replace(/%20/g, '+')}:wght@400;600;700`)
     .join('&');
   return `\n  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?${query}&display=swap">`;
+}
+
+/**
+ * The neutrals and the geometry a template's own markup needs.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY EVERY TEMPLATE HAS TO ASK FOR THESE
+ *
+ * The SHELL was taught the business's colours; the CONTENT inside it was not.
+ * Every template wrote `color: #1a1a1a` for a heading and `color: #666666` for
+ * body copy directly into its markup, which is invisible on the dark card the
+ * shell now paints for a business on a dark theme: a reader received a message
+ * whose greeting, its closing and its every paragraph were near-black ink on a
+ * near-black ground.
+ *
+ * The values below are exactly what those templates hardcoded, so a business
+ * with no theme of its own receives the email it always received. What changes
+ * is that a business WITH one now gets ink chosen against its own ground.
+ *
+ * `inkFaint` exists because the templates used two greys, not one — `#666666`
+ * for a sentence and `#888888` for fine print — and collapsing both onto
+ * `mutedTextColor` would flatten a hierarchy that is deliberate.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export interface EmailPalette {
+  brand: string;
+  onBrand: string;
+  /** Headings and anything that must be read. */
+  ink: string;
+  /** Body copy beside a heading. */
+  inkMuted: string;
+  /** Fine print — footnotes, timestamps, the line under a label. */
+  inkFaint: string;
+  /** The card the content sits on. Panels are drawn relative to it. */
+  surface: string;
+  /** A recessed panel inside the card. */
+  mutedSurface: string;
+  line: string;
+  radius: string;
+  buttonRadius: string;
+  /** Whether the card is dark, which is what tinted panels key off. */
+  dark: boolean;
+}
+
+export function emailPalette(branding?: BrandingData): EmailPalette {
+  const surface = branding?.surfaceColor || '#ffffff';
+  const inkMuted = branding?.mutedTextColor || '#666666';
+
+  return {
+    brand: branding?.primaryColor || '#4F46E5',
+    onBrand: branding?.onBrand || '#ffffff',
+    ink: branding?.textColor || '#1a1a1a',
+    inkMuted,
+    // A quarter of the way back toward the card, which is the same relationship
+    // #888888 had to #666666 on white.
+    inkFaint: branding?.mutedTextColor ? mix(inkMuted, surface, 0.25) : '#888888',
+    surface,
+    mutedSurface: branding?.mutedSurfaceColor || '#fafafa',
+    line: branding?.borderColor || '#e5e5e5',
+    radius: branding?.radius || '12px',
+    buttonRadius: branding?.buttonRadius || '8px',
+    dark: isDarkColor(surface),
+  };
+}
+
+/** A panel that means something — a warning, a confirmation, a note. */
+export type EmailTone = 'info' | 'warning' | 'success' | 'danger';
+
+/**
+ * The tints these panels have always used on a white card.
+ *
+ * Kept exactly, because they are legible and familiar. They are only unusable
+ * in one situation — a dark card — and that is the only situation in which
+ * anything below derives a replacement.
+ */
+const TONE_ON_LIGHT: Record<EmailTone, { bg: string; border: string; text: string }> = {
+  info: { bg: '#EFF6FF', border: '#3B82F6', text: '#1E40AF' },
+  warning: { bg: '#FFFBEB', border: '#F59E0B', text: '#92400E' },
+  success: { bg: '#F0FDF4', border: '#22C55E', text: '#166534' },
+  danger: { bg: '#FEF2F2', border: '#EF4444', text: '#991B1B' },
+};
+
+/**
+ * Resolve one of those panels against the card it sits on.
+ *
+ * On a light card: the values above, unchanged. On a dark one: the same hue,
+ * carried as a wash of the card's own ground with pale ink of that hue on top —
+ * which keeps the meaning (amber warns, green confirms) without dropping a
+ * white rectangle into the middle of a dark message.
+ */
+export function emailTone(
+  tone: EmailTone,
+  branding?: BrandingData
+): { bg: string; border: string; text: string } {
+  const palette = emailPalette(branding);
+  const light = TONE_ON_LIGHT[tone];
+  if (!palette.dark) return light;
+
+  return {
+    bg: mix(palette.surface, light.border, 0.2),
+    border: light.border,
+    text: mix(light.border, '#ffffff', 0.72),
+  };
 }
 
 /**
@@ -161,7 +265,17 @@ export function wrapInBrandedTemplate(
 
           <!-- The message itself, on one panel with a hairline round it. -->
           <tr>
-            <td style="padding: 34px 32px; background-color: ${surface}; border: 1px solid ${line}; border-radius: ${radius}; text-align: ${textAlign}; direction: ${dir};">
+            <!--
+              The colour here, not only on the body element.
+
+              Gmail rewrites <body> into a <div> and several clients drop its
+              styles outright, so content that sets no colour of its own — a
+              plain paragraph composed in the chat, say — fell back to the
+              client's default black on whatever ground this card paints. On a
+              dark theme that is black on near-black. Declaring it on the cell
+              the content actually sits in survives that rewrite.
+            -->
+            <td style="padding: 34px 32px; background-color: ${surface}; border: 1px solid ${line}; border-radius: ${radius}; color: ${ink}; text-align: ${textAlign}; direction: ${dir};">
               ${content}
             </td>
           </tr>
@@ -316,14 +430,12 @@ export function emailDetailsTable(rows: string[], branding?: BrandingData): stri
  */
 export function emailNoticeBox(
   content: string,
-  type: 'info' | 'warning' | 'success' = 'info'
+  type: EmailTone = 'info',
+  branding?: BrandingData
 ): string {
-  const colors = {
-    info: { bg: '#EFF6FF', border: '#3B82F6', text: '#1E40AF' },
-    warning: { bg: '#FFFBEB', border: '#F59E0B', text: '#92400E' },
-    success: { bg: '#F0FDF4', border: '#22C55E', text: '#166534' }
-  };
-  const c = colors[type];
+  // Optional, so the five existing call sites keep working; passing it is what
+  // lets the panel sit on a dark card instead of punching a white hole in one.
+  const c = emailTone(type, branding);
 
   return `
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 16px 0;">

@@ -21,7 +21,7 @@ import {
   Plus, Loader2, Eye, Sparkles, Rocket, ExternalLink,
   Monitor, Tablet, Smartphone, Maximize2, Calendar, DollarSign,
   Target, Users, FileText, CreditCard, ClipboardList, GripVertical, User,
-  Link, MessageSquare, Copy, QrCode, Layers, Mail, Share2
+  Link, MessageSquare, Copy, QrCode, Layers, Mail, Share2, Clock, ArrowRight
 } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -33,6 +33,11 @@ import { getTranslatedTemplateName, getTranslatedVertical, getTranslatedBrandVoi
 import { ArchetypePreview, ArchetypeFontLinks } from '@/components/business-os/ArchetypePreview';
 import { ClientJourneyStrip } from '@/components/business-os/setup/ClientJourneyStrip';
 import { QRCodeSVG } from 'qrcode.react';
+import { createLogger } from '@/lib/logger';
+import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
+import { SchedulingServicesList } from '@/components/scheduling/SchedulingServicesList';
+
+const logger = createLogger({ module: 'LandingPageWizard' });
 
 // Types
 interface SchedulingService {
@@ -400,21 +405,19 @@ const LABELS = {
     journey_follows_service: 'Each service decides its own journey — a date step only where one is booked, a payment step only where it is paid by card. Change it on the service.',
     // Step 1 (Landing Page)
     step1_title: 'Select a Service',
+    add_service_title: 'Add a Service',
+    add_service_subtitle: 'Create the service this landing page will promote',
     step1_subtitle: 'Choose which service this landing page promotes',
     loading_services: 'Loading services...',
+    fix_availability: 'Set working hours',
+    fix_invoicing: 'Complete invoice details',
     no_services: 'No services yet',
     no_services_desc: 'Create your first service to get started',
     create_new_service: 'Create New Service',
-    service_name: 'Service Name',
-    service_description: 'Description',
     generation_failed: 'We could not write this page from your service. It has been filled in with a starting draft you can edit.',
     preview_building: 'Writing your page…',
     generation_timeout: 'Writing this page took too long and was stopped. It has been filled in with a starting draft you can edit.',
     service_description_placeholder: 'Describe your service in detail. The AI will use this to generate compelling landing page content...',
-    service_duration: 'Duration (minutes)',
-    service_price: 'Price',
-    create_service: 'Create Service',
-    creating: 'Creating...',
     all_services: 'All Services',
     all_services_desc: 'Let visitors choose from all your available services',
     multi_select_hint: 'Select services to include (or skip to show all)',
@@ -499,21 +502,19 @@ const LABELS = {
     journey_follows_service: 'Cada servicio define su propio recorrido — fecha solo si se reserva una, pago solo si se cobra con tarjeta. Se cambia en el servicio.',
     // Step 1 (Landing Page)
     step1_title: 'Selecciona un Servicio',
+    add_service_title: 'Añadir un Servicio',
+    add_service_subtitle: 'Crea el servicio que promoverá esta landing page',
     step1_subtitle: 'Elige qué servicio promueve esta landing page',
     loading_services: 'Cargando servicios...',
+    fix_availability: 'Configurar horario',
+    fix_invoicing: 'Completar datos de factura',
     no_services: 'Sin servicios aún',
     no_services_desc: 'Crea tu primer servicio para comenzar',
     create_new_service: 'Crear Nuevo Servicio',
-    service_name: 'Nombre del Servicio',
-    service_description: 'Descripción',
     generation_failed: 'No pudimos redactar esta página desde tu servicio. Se completó con un borrador inicial que puedes editar.',
     preview_building: 'Redactando tu página…',
     generation_timeout: 'La redacción tardó demasiado y se detuvo. Se completó con un borrador inicial que puedes editar.',
     service_description_placeholder: 'Describe tu servicio en detalle. La IA usará esto para generar contenido atractivo...',
-    service_duration: 'Duración (minutos)',
-    service_price: 'Precio',
-    create_service: 'Crear Servicio',
-    creating: 'Creando...',
     all_services: 'Todos los Servicios',
     all_services_desc: 'Dejar que los visitantes elijan de todos tus servicios disponibles',
     multi_select_hint: 'Selecciona servicios a incluir (o salta para mostrar todos)',
@@ -595,21 +596,19 @@ const LABELS = {
     journey_follows_service: 'כל שירות קובע את המסע שלו — שלב תאריך רק כשקובעים תור, שלב תשלום רק כשגובים בכרטיס. משנים את זה בשירות עצמו.',
     // Step 1 (Landing Page)
     step1_title: 'בחר שירות',
+    add_service_title: 'הוסף שירות',
+    add_service_subtitle: 'צור את השירות שדף הנחיתה יקדם',
     step1_subtitle: 'בחר איזה שירות דף הנחיתה מקדם',
     loading_services: 'טוען שירותים...',
+    fix_availability: 'הגדר שעות פעילות',
+    fix_invoicing: 'השלם פרטי חשבונית',
     no_services: 'אין שירותים עדיין',
     no_services_desc: 'צור את השירות הראשון שלך כדי להתחיל',
     create_new_service: 'צור שירות חדש',
-    service_name: 'שם השירות',
-    service_description: 'תיאור',
     generation_failed: 'לא הצלחנו לכתוב את הדף מהשירות שלכם. הוא מולא בטיוטה התחלתית שאפשר לערוך.',
     preview_building: 'כותבים את הדף שלכם…',
     generation_timeout: 'כתיבת הדף ארכה זמן רב מדי ונעצרה. הוא מולא בטיוטה התחלתית שאפשר לערוך.',
     service_description_placeholder: 'תאר את השירות שלך בפירוט. הבינה המלאכותית תשתמש בזה כדי ליצור תוכן משכנע לדף הנחיתה...',
-    service_duration: 'משך (דקות)',
-    service_price: 'מחיר',
-    create_service: 'צור שירות',
-    creating: 'יוצר...',
     all_services: 'כל השירותים',
     all_services_desc: 'אפשר למבקרים לבחור מכל השירותים הזמינים שלך',
     multi_select_hint: 'בחר שירותים לכלול (או דלג להצגת הכל)',
@@ -712,6 +711,70 @@ export function LandingPageWizard({
   // Wizard state - step 0 is creation type selection
   // If editing, start at step 2 (service selection for full journey)
   const [currentStep, setCurrentStep] = useState(isEditMode ? 2 : 0);
+  /**
+   * Why the chosen service cannot be sold yet, if it cannot.
+   *
+   * Held rather than thrown so the wizard can show the sentence the server
+   * wrote — which names the service and what is missing — beside the choice
+   * that caused it.
+   */
+  const [serviceGate, setServiceGate] = useState<{
+    ready: boolean;
+    error?: string;
+    reason?: string;
+    /** Each blocking gap on its own, so each carries the control that fixes it. */
+    gaps?: Array<{ kind: string; message: string }>;
+  } | null>(null);
+  const [checkingService, setCheckingService] = useState(false);
+
+  /**
+   * Ask the server whether this service's journey can run.
+   *
+   * The same `journeyGaps` the publish gate and the smart-link gate use, so the
+   * wizard cannot wave through something those will refuse. Returns null when
+   * the check itself fails — never block an owner on our own error.
+   *
+   * Driven by the SERVICE, not by which surface was chosen: a product needs no
+   * working hours and a free one needs no invoice details, so a landing page or
+   * a smart link selling one passes straight through.
+   */
+  const checkServiceReadiness = async (serviceIds: string[]) => {
+    try {
+      setCheckingService(true);
+      // No ids means the whole catalogue, which is what a smart link naming no
+      // service actually offers.
+      const query = serviceIds.length > 0 ? `?service_ids=${serviceIds.join(',')}` : '';
+      const response = await fetch(`/api/business-os/journey-readiness${query}`);
+      const data = await response.json();
+      if (data?.success) {
+        if (data.checkFailed) {
+          // The server could not answer and said `ready` so as not to block
+          // anyone. Worth knowing: from here it looks exactly like a pass.
+          logger.warn({ serviceIds }, 'Readiness check failed server-side and defaulted to ready');
+        }
+        return data as {
+          ready: boolean;
+          error?: string;
+          reason?: string;
+          gaps?: Array<{ kind: string; message: string }>;
+        };
+      }
+
+      /*
+       * A failed CHECK lets the owner through, deliberately — we do not block
+       * anyone on our own error. But it is indistinguishable from "nothing was
+       * wrong", so it is logged: a gate that quietly stops gating looks exactly
+       * like a gate that was never wired up.
+       */
+      logger.warn({ status: response.status, serviceIds }, 'Service readiness check did not answer');
+      return null;
+    } catch (err) {
+      logger.warn({ err, serviceIds }, 'Service readiness check failed');
+      return null;
+    } finally {
+      setCheckingService(false);
+    }
+  };
   const [loading, setLoading] = useState(false);
 
   // Step 1: Service selection
@@ -731,6 +794,124 @@ export function LandingPageWizard({
    */
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [describeServiceId, setDescribeServiceId] = useState<string | null>(null);
+
+  /*
+   * The same Configuration dialog the rest of Business OS opens.
+   *
+   * The wizard sits inside `ConfigurationDialogProvider` (see the Business OS
+   * layout), so a gap message here can offer the exact settings tab that closes
+   * it rather than telling the owner to go and find it.
+   */
+  const { openConfiguration } = useConfigurationDialog();
+
+  /**
+   * Take a service the editor just saved and make it usable by this wizard.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `SchedulingServicesList` saves a new service as a DRAFT on purpose — the
+   * onboarding chat creates them fast and stopping to write copy there is the
+   * friction it exists to avoid. The picker below lists live services only, so
+   * a draft is invisible: you add a service, and it is nowhere.
+   *
+   * Publishing needs a DESCRIPTION. That rule is not this wizard's invention —
+   * `handlePublish` enforces it, because the website writes its section from
+   * that text and publishing without one puts a paragraph the model guessed in
+   * front of clients. So a service saved without one is NOT published here;
+   * it is selected, which opens the same "describe this service" prompt the
+   * wizard already shows, and publishing happens once there is something to
+   * publish.
+   */
+  const publishAndSelectService = async (serviceId: string) => {
+    let created: (SchedulingService & { service_name?: string }) | null = null;
+
+    try {
+      const response = await fetch('/api/scheduling/services');
+      const data = await response.json();
+      created = (data?.services ?? []).find((svc: { id: string }) => svc.id === serviceId) ?? null;
+    } catch (err) {
+      logger.warn({ err, serviceId }, 'Could not read the service just created');
+    }
+
+    await fetchServices();
+    setShowCreateService(false);
+
+    if (!created) return;
+
+    /*
+     * The new service is added to the list by hand.
+     *
+     * `fetchServices` keeps only LIVE services — a landing page must not be
+     * built around one nobody can book — and this one is still a draft, so it
+     * was filtered straight back out. The owner saved a service and returned to
+     * a list that did not contain it.
+     *
+     * It is put back because this is the one service the wizard is about. Its
+     * card is also where the "describe this service" prompt renders, so without
+     * the card there was nowhere to ask for the description either.
+     */
+    const withName = { ...created, name: created.service_name || created.name };
+    setServices(prev => (prev.some(svc => svc.id === serviceId) ? prev : [...prev, withName]));
+    setSelectedServiceId(serviceId);
+    setServiceGate(null);
+
+    /*
+     * No description, no publish — and no advance.
+     *
+     * The rule is `handlePublish`'s, not this wizard's: the website writes its
+     * section from this text, and publishing without one puts a paragraph the
+     * model guessed in front of clients. So the prompt is opened instead, and
+     * `onSaved` publishes once there is something to publish.
+     */
+    if (!(created.description ?? '').trim()) {
+      setDescribeServiceId(serviceId);
+      return;
+    }
+
+    try {
+      await fetch(`/api/scheduling/services/${serviceId}/publish`, { method: 'POST' });
+      await fetchServices();
+    } catch (err) {
+      logger.warn({ err, serviceId }, 'Could not publish the new service');
+    }
+
+    setDescribeServiceId(null);
+    setSlug(generateSlug(withName.name));
+
+    const gate = await checkServiceReadiness([serviceId]);
+    if (gate && !gate.ready) {
+      setServiceGate(gate);
+      return;
+    }
+    setCurrentStep(2);
+  };
+
+  /*
+   * Whether a card can actually be charged right now.
+   *
+   * The embedded service form draws a journey strip from this, and showing an
+   * owner a payment step their clients cannot complete is the failure worth
+   * avoiding — so it starts false and turns on only when the check says so.
+   *
+   * Read from the readiness endpoint's advisory gaps: a `processor` gap means
+   * services want a card and none can be taken. No gap means it can.
+   */
+  const [processorReady, setProcessorReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch('/api/business-os/journey-readiness');
+        const data = await response.json();
+        if (!cancelled && data?.success) {
+          setProcessorReady(!(data.advisory ?? []).includes('processor'));
+        }
+      } catch {
+        // Left false: see above — the quiet failure is the safer one here.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
   /** Why the page's copy is the fallback rather than written for this service. */
   const [generationFailed, setGenerationFailed] = useState<string | null>(null);
   // Multi-select for smart links - allows selecting multiple services
@@ -739,12 +920,6 @@ export function LandingPageWizard({
     isEditMode && editingSmartLink?.metadata?.serviceIds ? editingSmartLink.metadata.serviceIds : []
   );
   const [showCreateService, setShowCreateService] = useState(false);
-  const [newServiceName, setNewServiceName] = useState('');
-  const [newServiceDescription, setNewServiceDescription] = useState('');
-  const [newServiceDuration, setNewServiceDuration] = useState(60);
-  const [newServicePrice, setNewServicePrice] = useState<number | null>(null);
-  const [creatingService, setCreatingService] = useState(false);
-  const [userCurrency, setUserCurrency] = useState('USD');
 
   // Step 2: Journey selection - custom flow builder
   // Use passed clientFlow if editing, otherwise default to scheduling + client_info + confirmation
@@ -818,20 +993,7 @@ export function LandingPageWizard({
   // Fetch services and user profile on mount
   useEffect(() => {
     fetchServices();
-    fetchUserProfile();
   }, []);
-
-  const fetchUserProfile = async () => {
-    try {
-      const response = await fetch('/api/business-os/profile');
-      const data = await response.json();
-      if (data.success && data.profile?.currency) {
-        setUserCurrency(data.profile.currency);
-      }
-    } catch {
-      // Keep default USD
-    }
-  };
 
   const fetchServices = async () => {
     try {
@@ -865,47 +1027,6 @@ export function LandingPageWizard({
     }
   };
 
-  // Create new service in the regular services table
-  const handleCreateService = async () => {
-    if (!newServiceName.trim()) return;
-
-    setCreatingService(true);
-    try {
-      const response = await fetch('/api/scheduling/services', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          service_name: newServiceName.trim(),
-          description: newServiceDescription.trim() || null,
-          duration_minutes: newServiceDuration,
-          price: newServicePrice,
-          currency: userCurrency,
-          status: 'active'
-        })
-      });
-
-      const data = await response.json();
-      if (data.success && data.service) {
-        const newService = {
-          ...data.service,
-          name: data.service.service_name
-        };
-        setServices(prev => [...prev, newService]);
-        setSelectedServiceId(newService.id);
-        setShowCreateService(false);
-        setNewServiceName('');
-        setNewServiceDescription('');
-        setNewServiceDuration(60);
-        setNewServicePrice(null);
-        // Auto-advance to next step
-        goNext();
-      }
-    } catch {
-      // Handle error
-    } finally {
-      setCreatingService(false);
-    }
-  };
 
   /**
    * A URL suggestion from the service name, or nothing.
@@ -1332,9 +1453,28 @@ export function LandingPageWizard({
           // Go to service selection
           setCurrentStep(2);
         }
-      } else {
-        // Landing page: Step 1 is service selection, auto-advance on select
-        // This is handled by handleServiceSelect
+      } else if (selectedServiceId) {
+        /*
+         * Landing page: the same advance the card click performs.
+         *
+         * This branch used to be empty — selecting a card auto-advances, so
+         * Continue was left as a no-op with a comment saying so. It is still a
+         * BUTTON on the screen, and a button that does nothing when pressed
+         * reads as a broken wizard. It is the case that matters most now: a
+         * service whose journey cannot run does not advance on selection, so
+         * the owner is left looking at a Continue button, pressing it, and
+         * getting nothing at all.
+         *
+         * Runs the same gate for the same reason, then advances the same way.
+         */
+        const gate = await checkServiceReadiness([selectedServiceId]);
+        if (gate && !gate.ready) {
+          setServiceGate(gate);
+          return;
+        }
+        setServiceGate(null);
+        setCurrentStep(2);
+        if (hasExistingTheme) await generateContent();
       }
       return;
     }
@@ -1349,6 +1489,24 @@ export function LandingPageWizard({
     // picking.
     if (creationType === 'smart-link' && journeyType === 'full-journey') {
       if (currentStep === 2) {
+        /*
+         * The same gate the landing page gets, for the same reason.
+         *
+         * A smart link goes live the moment it exists, and the API refuses by
+         * creating it INACTIVE — correct, and silent from in here: the owner
+         * finished the wizard and got a link that does not work, with the
+         * explanation on a response nobody reads.
+         *
+         * Asked of the services the link will offer. None selected means the
+         * whole catalogue, and the check widens to match.
+         */
+        const gate = await checkServiceReadiness(selectedServiceIds);
+        if (gate && !gate.ready) {
+          setServiceGate(gate);
+          return;
+        }
+        setServiceGate(null);
+
         // Service selection → create or update the link and show completion
         const destination = buildSmartLinkDestination();
         // Generate name based on number of services selected
@@ -1397,6 +1555,20 @@ export function LandingPageWizard({
         return;
       }
       if (currentStep === 1 && selectedServiceId) {
+        // The readiness gate for this path lives in `handleServiceSelect`,
+        // which is what actually advances a landing page — see the note there.
+        //
+        // Asked again here rather than trusted: this branch is reachable from
+        // anything that calls `goNext` at step 1, and a gate that depends on
+        // one entry point being the only one is a gate waiting to be walked
+        // around. The check is cheap and the answer is the same.
+        const gate = await checkServiceReadiness([selectedServiceId]);
+        if (gate && !gate.ready) {
+          setServiceGate(gate);
+          return;
+        }
+        setServiceGate(null);
+
         // Service → Style, or straight to Preview when the theme is settled.
         setCurrentStep(2);
         if (hasExistingTheme) await generateContent();
@@ -1454,6 +1626,9 @@ export function LandingPageWizard({
 
     // For landing pages: single select with auto-advance
     setSelectedServiceId(serviceId);
+    // A gap belongs to the service that had it. Leaving the message up while a
+    // different one is selected would blame the new choice for the old problem.
+    setServiceGate(null);
     // Find the selected service for slug generation
     const service = services.find(s => s.id === serviceId);
     if (!service) return;
@@ -1467,6 +1642,27 @@ export function LandingPageWizard({
 
     // Set slug from service name
     setSlug(generateSlug(service.name));
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * CAN THIS SERVICE BE SOLD AT ALL?
+     *
+     * Checked HERE, not in `goNext`. This handler advances the landing-page
+     * flow itself — `setCurrentStep(2)` on the line below — and never calls
+     * `goNext`, so a gate placed in `goNext`'s step-1 branch was simply never
+     * reached. The wizard carried on, generated a page for a service whose
+     * journey cannot run, and the first sign of trouble was the generation
+     * call failing.
+     *
+     * Only BLOCKING gaps stop them: a missing card processor is fine, because
+     * the client is invoiced instead. A service that needs none of this — a
+     * free product, say — passes straight through and sees nothing.
+     */
+    const gate = await checkServiceReadiness([serviceId]);
+    if (gate && !gate.ready) {
+      setServiceGate(gate);
+      return;
+    }
 
     // Landing page: Step 1 (service) → Step 2 (journey)
     setCurrentStep(2);
@@ -1828,6 +2024,75 @@ export function LandingPageWizard({
   // Render Step 1: Service Selection
   const renderStep1 = () => (
     <div className="space-y-4">
+      {/*
+        Why the chosen service cannot be sold yet.
+
+        Shown against the choice that caused it, because that is where it can be
+        acted on — either by picking a different service or by leaving to fill
+        the gap in. Without it the Next button simply did nothing, which reads
+        as a broken wizard rather than as a decision being blocked.
+      */}
+      {serviceGate && !serviceGate.ready && (
+        <div className="space-y-2">
+          {serviceGate.gaps && serviceGate.gaps.length > 0 ? (
+            serviceGate.gaps.map(gap => {
+              const isInvoicing = gap.kind === 'invoicing';
+              const GapIcon = isInvoicing ? FileText : Clock;
+              return (
+                <div
+                  key={gap.kind}
+                  className="flex items-start gap-3 p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                  style={{ borderRadius: 'var(--v2-radius-card)' }}
+                >
+                  <div
+                    className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                  >
+                    <GapIcon className="w-4 h-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-[var(--v2-text-primary)]">{gap.message}</p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                          /*
+                            Ask again once they come back.
+
+                            The owner has just been sent to fix the very thing
+                            this message names, so leaving it up asserts an
+                            answer that may no longer be true — and in a wizard
+                            it also blocks the step they were trying to reach.
+                          */
+                          onClose: async () => {
+                            if (!selectedServiceId) return;
+                            const again = await checkServiceReadiness([selectedServiceId]);
+                            setServiceGate(again && !again.ready ? again : null);
+                          },
+                        })
+                      }
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                    >
+                      {isInvoicing ? labels.fix_invoicing : labels.fix_availability}
+                      <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          ) : serviceGate.error ? (
+            <p
+              className="px-3 py-2.5 text-sm bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200"
+              style={{ borderRadius: 'var(--v2-radius-button)' }}
+              role="status"
+            >
+              {serviceGate.error}
+            </p>
+          ) : null}
+        </div>
+      )}
+
       {loadingServices ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-6 h-6 animate-spin text-[var(--v2-text-muted)]" />
@@ -1849,89 +2114,77 @@ export function LandingPageWizard({
           </button>
         </div>
       ) : showCreateService ? (
+        /*
+          ───────────────────────────────────────────────────────────────────
+          THE REAL SERVICE FORM, NOT A SMALLER COPY OF IT.
+
+          This was four fields — name, description, duration, price — while
+          Settings edits eleven. The four it left out are precisely the ones
+          every readiness gate reads:
+
+            is_scheduled   decides whether working hours are required
+            collection     with price, decides card-at-booking vs invoice
+            sale_mode      decides whether there is a price at all yet
+            currency       what the price is even denominated in
+
+          So a service made here arrived on DEFAULTS, and `collection: null`
+          reads as "takes cards" — meaning a service created in this wizard
+          could immediately trip the invoicing gate over a choice the form had
+          never offered. Create a service, then be blocked by a setting you were
+          never asked about.
+
+          `SchedulingServicesList` already supports being embedded this way:
+          `autoStartNewRow` opens straight into the new row, and an empty
+          `services` array means only that row is drawn — the picker below is
+          still this wizard's own.
+        */
         <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
-              {labels.service_name}
-            </label>
-            <input
-              type="text"
-              value={newServiceName}
-              onChange={(e) => setNewServiceName(e.target.value)}
-              className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-              placeholder="e.g., Private Yoga Session"
-              autoFocus
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
-              {labels.service_description}
-              <span className="text-xs text-[var(--v2-text-muted)] font-normal ms-1">
-                ({language === 'he' ? 'חשוב לתוכן AI' : language === 'es' ? 'importante para AI' : 'important for AI content'})
-              </span>
-            </label>
-            <textarea
-              value={newServiceDescription}
-              onChange={(e) => setNewServiceDescription(e.target.value)}
-              className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7] resize-none"
-              placeholder={labels.service_description_placeholder}
-              rows={4}
-            />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
-                {labels.service_duration}
-              </label>
-              <input
-                type="number"
-                value={newServiceDuration}
-                onChange={(e) => setNewServiceDuration(parseInt(e.target.value) || 60)}
-                className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                min={15}
-                step={15}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-1.5">
-                {labels.service_price}
-              </label>
-              <input
-                type="number"
-                value={newServicePrice ?? ''}
-                onChange={(e) => setNewServicePrice(e.target.value ? parseFloat(e.target.value) : null)}
-                className="w-full px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                placeholder="0.00"
-                min={0}
-                step={0.01}
-              />
-            </div>
-          </div>
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => setShowCreateService(false)}
-              className="flex-1 px-4 py-2 border border-[var(--v2-border)] text-sm text-[var(--v2-text-primary)] font-medium rounded-lg hover:bg-[var(--v2-surface-hover)] transition-all"
-            >
-              {labels.cancel}
-            </button>
-            <button
-              onClick={handleCreateService}
-              disabled={!newServiceName.trim() || creatingService}
-              className="flex-1 px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium rounded-lg hover:bg-[#3B5AE5] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {creatingService ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  {labels.creating}
-                </>
-              ) : (
-                <>
-                  <Check className="w-4 h-4" />
-                  {labels.create_service}
-                </>
-              )}
-            </button>
-          </div>
+          <SchedulingServicesList
+            /*
+              Empty on purpose: the editor then draws ONLY the row being added.
+              Handed the real catalogue it listed every existing service in an
+              editable form, inviting changes to services this wizard was never
+              about.
+            */
+            services={[]}
+            autoStartNewRow
+            showAddButton={false}
+            // Editor only: this wizard adds one service, it does not manage the
+            // catalogue — and with no services passed the column was empty.
+            hideServiceList
+            intakeEnabled={false}
+            /*
+              The journey strip on the row draws a payment step from this, and
+              showing a step clients cannot complete is the failure worth
+              avoiding — so it stays false until the check below says otherwise.
+            */
+            processorReady={processorReady}
+            /*
+              `onServiceEdited` fires when the new service is SAVED — as a
+              draft, which is what this editor creates. Left there it never
+              reached the picker below, which lists live services only, so a
+              service you had just added appeared nowhere.
+            */
+            onServiceEdited={async (serviceId) => {
+              await publishAndSelectService(serviceId);
+            }}
+            onServicePublishedWithId={async (serviceId) => {
+              await fetchServices();
+              setShowCreateService(false);
+              handleServiceSelect(serviceId);
+            }}
+            onSilentRefresh={fetchServices}
+            /*
+              The form's own Cancel is the only one.
+
+              There used to be a second below it, because the form's cancel only
+              collapsed its row — leaving the wizard still in "create" mode with
+              the list hidden, so the panel fell back to "pick one from the
+              list" and there was nothing to pick from. It reports back now, so
+              one button does the whole job.
+            */
+            onCancelNewRow={() => setShowCreateService(false)}
+          />
         </div>
       ) : (
         <>
@@ -1957,6 +2210,7 @@ export function LandingPageWizard({
                 <div key={service.id}>
                 <button
                   onClick={() => handleServiceSelect(service.id)}
+                  disabled={checkingService}
                   // `w-full`: the button used to be the grid's own child and so
                   // stretched to the column. Wrapping it in a div — needed so the
                   // description field can sit outside a button — made it size to
@@ -2019,12 +2273,49 @@ export function LandingPageWizard({
                       service={service}
                       language={language as 'en' | 'es' | 'he'}
                       autoFocus
-                      onSaved={(serviceId, description) => {
+                      onSaved={async (serviceId, description) => {
                         setServices(prev => prev.map(item =>
                           item.id === serviceId ? { ...item, description } : item
                         ));
                         setDescribeServiceId(null);
                         setSlug(generateSlug(service.name));
+
+                        /*
+                         * Now it can be published.
+                         *
+                         * A service added through the embedded editor without a
+                         * description is deliberately left as a draft — the
+                         * publish rule requires one, because the website writes
+                         * its section from that text. This is where the
+                         * description arrives, so this is where it becomes
+                         * publishable. Harmless for a service that was already
+                         * live: the endpoint is idempotent.
+                         */
+                        await fetch(`/api/scheduling/services/${serviceId}/publish`, {
+                          method: 'POST',
+                        }).catch(err => logger.warn({ err, serviceId }, 'Could not publish after describing'));
+                        await fetchServices();
+
+                        /*
+                         * The gate again — this is the THIRD way past this step.
+                         *
+                         * A service with no description never reaches the check
+                         * in `handleServiceSelect`: that returns early to ask
+                         * for one. Writing the description then advanced
+                         * straight to step 2 from here, so filling in a
+                         * description was a way of walking around a gate that
+                         * had nothing to do with descriptions.
+                         *
+                         * Three entry points to one step is the actual lesson:
+                         * the check belongs to the transition, and every route
+                         * into it has to ask.
+                         */
+                        const gate = await checkServiceReadiness([serviceId]);
+                        if (gate && !gate.ready) {
+                          setServiceGate(gate);
+                          return;
+                        }
+                        setServiceGate(null);
                         setCurrentStep(2);
                       }}
                     />
@@ -2496,6 +2787,15 @@ export function LandingPageWizard({
   const getStepTitle = () => {
     if (currentStep === 0) return labels.step0_title;
 
+    /*
+      The service step has two faces, and the heading has to follow.
+
+      While the embedded editor is open the owner is CREATING a service, not
+      choosing one — "Select a Service / Choose which service this landing page
+      promotes" described a picker that is not on screen.
+    */
+    if (showCreateService) return labels.add_service_title;
+
     if (creationType === 'smart-link') {
       if (currentStep === 1) return labels.journey_type_title;
       if (journeyType === 'contact-only' && currentStep === 2) return labels.smart_link_ready_title;
@@ -2520,6 +2820,9 @@ export function LandingPageWizard({
 
   const getStepSubtitle = () => {
     if (currentStep === 0) return labels.step0_subtitle;
+
+    // See the heading above: the editor is open, so this is not a picker.
+    if (showCreateService) return labels.add_service_subtitle;
 
     if (creationType === 'smart-link') {
       if (currentStep === 1) return labels.journey_type_subtitle;

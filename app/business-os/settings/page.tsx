@@ -283,6 +283,47 @@ function BusinessOSSettingsContent() {
   };
 
   // Get the confirmation word based on language
+  const getDeleteConfirmWord = () => {
+    if (language === 'es') return 'ELIMINAR';
+    if (language === 'he') return 'מחק';
+    return 'DELETE';
+  };
+
+  const handleDeleteAccount = async () => {
+    const confirmWord = getDeleteConfirmWord();
+    if (deleteConfirmation !== confirmWord) {
+      setErrorMessage(t('settings.security.delete_wrong_confirmation'));
+      return;
+    }
+
+    try {
+      setDeleting(true);
+      setErrorMessage('');
+
+      const response = await fetch('/api/user/delete-account', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmation: 'DELETE_MY_ACCOUNT' }),
+      });
+
+      if (response.ok) {
+        setSuccessMessage(t('settings.security.delete_success'));
+        setTimeout(async () => {
+          await supabase.auth.signOut();
+          window.location.href = '/';
+        }, 2000);
+      } else {
+        setErrorMessage(t('settings.security.delete_error'));
+      }
+    } catch (error) {
+      setErrorMessage(t('settings.security.delete_error'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Language options
+
   /**
    * Sign out, properly.
    *
@@ -386,46 +427,6 @@ function BusinessOSSettingsContent() {
     window.location.href = `${marketingUrl}/login`;
   };
 
-  const getDeleteConfirmWord = () => {
-    if (language === 'es') return 'ELIMINAR';
-    if (language === 'he') return 'מחק';
-    return 'DELETE';
-  };
-
-  const handleDeleteAccount = async () => {
-    const confirmWord = getDeleteConfirmWord();
-    if (deleteConfirmation !== confirmWord) {
-      setErrorMessage(t('settings.security.delete_wrong_confirmation'));
-      return;
-    }
-
-    try {
-      setDeleting(true);
-      setErrorMessage('');
-
-      const response = await fetch('/api/user/delete-account', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmation: 'DELETE_MY_ACCOUNT' }),
-      });
-
-      if (response.ok) {
-        setSuccessMessage(t('settings.security.delete_success'));
-        setTimeout(async () => {
-          await supabase.auth.signOut();
-          window.location.href = '/';
-        }, 2000);
-      } else {
-        setErrorMessage(t('settings.security.delete_error'));
-      }
-    } catch (error) {
-      setErrorMessage(t('settings.security.delete_error'));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Language options
   const languageOptions = [
     { code: 'en', label: 'English', flag: '🇺🇸' },
     { code: 'es', label: 'Español', flag: '🇪🇸' },
@@ -896,6 +897,7 @@ function BusinessOSSettingsContent() {
         </DialogContent>
       </Dialog>
 
+
       {/* Delete Account Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={(open) => {
         setShowDeleteDialog(open);
@@ -966,7 +968,6 @@ function BusinessOSSettingsContent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }

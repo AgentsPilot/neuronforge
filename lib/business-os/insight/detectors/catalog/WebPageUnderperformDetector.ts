@@ -44,7 +44,27 @@ export class WebPageUnderperformDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'page_optimization_review',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `page_optimization_review`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
     consentTier: 'suggest',
     eligibleForAutomation: false,
     ownerParameters: [],
@@ -185,8 +205,9 @@ export class WebPageUnderperformDetector extends BaseDetector {
     const missedLeads = Math.round(
       underperformers.reduce((sum, p) => sum + p.uniqueVisitors * expectedConversionRate, 0)
     );
-    const avgLeadValue = 300;
-    const missedRevenue = missedLeads * avgLeadValue;
+    // No measured visitor-to-lead rate and no measured lead value — see
+    // WebMissingCtaDetector. The page list is the insight.
+    const missedRevenue = undefined;
 
     const result = this.createDetectionResult({
       severity,

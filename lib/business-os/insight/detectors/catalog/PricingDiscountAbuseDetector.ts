@@ -9,7 +9,10 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
+import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+
+const logger = createLogger({ module: 'PricingDiscountAbuseDetector' });
 
 export class PricingDiscountAbuseDetector extends BaseDetector {
   definition: DetectorDefinition = {
@@ -102,29 +105,30 @@ export class PricingDiscountAbuseDetector extends BaseDetector {
       }
     });
 
-    // Also check bookings for discounts (discount info in metadata)
-    const { data: bookings } = await this.supabase
+    /*
+     * Bookings count toward the denominator, and cannot carry a discount.
+     *
+     * This pass used to read `scheduling_bookings.metadata` for discount fields.
+     * That column does not exist, so PostgREST rejected the select whole, the
+     * error went into an ignored destructure, and `bookings` was always null —
+     * which silently removed bookings from `totalTransactions` as well, inflating
+     * the discount RATE for every business that takes bookings. Counting them is
+     * the half that was always meant to work; discounts on bookings are simply
+     * not recorded anywhere in this schema, so nothing is read for them.
+     */
+    const { data: bookings, error: bookingsError } = await this.supabase
       .from('scheduling_bookings')
-      .select('id, payment_amount, metadata')
+      .select('id, payment_amount')
       .eq('user_id', userId)
       .gte('created_at', thirtyDaysAgo.toISOString())
       .in('status', ['confirmed', 'completed']);
 
-    bookings?.forEach((b) => {
-      const metadata = b.metadata as Record<string, unknown> | null;
-      const discountAmount = parseFloat((metadata?.discount_amount as string) || '0');
-      if (discountAmount > 0) {
-        discountedTransactions++;
-        totalDiscountAmount += discountAmount;
-
-        const discountType = (metadata?.discount_code as string) || 'booking_discount';
-        if (!discountBreakdown[discountType]) {
-          discountBreakdown[discountType] = { count: 0, amount: 0 };
-        }
-        discountBreakdown[discountType].count++;
-        discountBreakdown[discountType].amount += discountAmount;
-      }
-    });
+    if (bookingsError) {
+      logger.warn(
+        { err: bookingsError, userId },
+        'Could not read bookings; discount rate is computed over transactions alone'
+      );
+    }
 
     const totalTransactions = transactions.length + (bookings?.length || 0);
     const discountRate = (discountedTransactions / totalTransactions) * 100;

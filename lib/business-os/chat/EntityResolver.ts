@@ -53,6 +53,23 @@ const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{
 
 // ============== RESOLVER CLASS ==============
 
+/**
+ * A task status the repository will actually match.
+ *
+ * `filters.status` arrives from the chat, cast straight to string and handed to
+ * a column that only holds four values. Anything else — "open", "todo", a typo
+ * the model produced — filtered on a status no row has and returned nothing,
+ * which reads to the owner as "you have no tasks" rather than as a bad filter.
+ */
+const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled'] as const;
+type KnownTaskStatus = (typeof TASK_STATUSES)[number];
+
+function asTaskStatus(value: unknown): KnownTaskStatus {
+  return TASK_STATUSES.includes(value as KnownTaskStatus)
+    ? (value as KnownTaskStatus)
+    : 'pending';
+}
+
 export class EntityResolver {
   constructor(private userId: string) {}
 
@@ -103,7 +120,10 @@ export class EntityResolver {
           result = await schedulingServiceRepository.findById(id, this.userId);
           break;
         case 'bookings':
-          result = await schedulingBookingRepository.getById(id, this.userId);
+          // `findById`, as every other branch here uses. `getById` has never
+          // existed on this repository, so resolving a booking by id threw
+          // "not a function" — the chat could not open one at all.
+          result = await schedulingBookingRepository.findById(id, this.userId);
           break;
         case 'invoices':
           result = await paymentInvoiceRepository.findById(id, this.userId);
@@ -222,7 +242,7 @@ export class EntityResolver {
       limit: 10
     });
 
-    return (result.data || []) as Array<Record<string, unknown>>;
+    return (result.data || []) as unknown as Array<Record<string, unknown>>;
   }
 
   private async searchTasks(
@@ -230,7 +250,7 @@ export class EntityResolver {
     filters?: Record<string, unknown>
   ): Promise<Array<Record<string, unknown>>> {
     // Default to pending tasks if no status filter
-    const status = filters?.status as string || 'pending';
+    const status = asTaskStatus(filters?.status);
 
     const result = await crmTaskRepository.list(this.userId, {
       search: searchText,
@@ -238,7 +258,7 @@ export class EntityResolver {
       limit: 10
     });
 
-    return (result.data || []) as Array<Record<string, unknown>>;
+    return (result.data || []) as unknown as Array<Record<string, unknown>>;
   }
 
   private async searchServices(
@@ -249,7 +269,7 @@ export class EntityResolver {
     const activeOnly = filters?.is_active !== false;
 
     const result = await schedulingServiceRepository.listAll(this.userId, activeOnly);
-    const services = (result.data || []) as Array<Record<string, unknown>>;
+    const services = (result.data || []) as unknown as Array<Record<string, unknown>>;
 
     // Filter by search text
     const searchLower = searchText.toLowerCase();
@@ -264,8 +284,8 @@ export class EntityResolver {
     filters?: Record<string, unknown>
   ): Promise<Array<Record<string, unknown>>> {
     // Default to upcoming bookings
-    const result = await schedulingBookingRepository.listUpcoming(this.userId, 20);
-    const bookings = (result.data || []) as Array<Record<string, unknown>>;
+    const result = await schedulingBookingRepository.getUpcoming(this.userId, 20);
+    const bookings = (result.data || []) as unknown as Array<Record<string, unknown>>;
 
     // Filter by search (client name, service name)
     const searchLower = searchText.toLowerCase();
@@ -289,7 +309,7 @@ export class EntityResolver {
       limit: 20,
       includeContact: true
     });
-    const invoices = (result.data || []) as Array<Record<string, unknown>>;
+    const invoices = (result.data || []) as unknown as Array<Record<string, unknown>>;
 
     // Filter by search (invoice number, contact name)
     const searchLower = searchText.toLowerCase();
@@ -441,23 +461,23 @@ export class EntityResolver {
     switch (entityType) {
       case 'contacts': {
         const result = await crmContactRepository.list(this.userId, { limit });
-        entities = (result.data || []) as Array<Record<string, unknown>>;
+        entities = (result.data || []) as unknown as Array<Record<string, unknown>>;
         break;
       }
       case 'tasks': {
-        const status = filters?.status as string || 'pending';
+        const status = asTaskStatus(filters?.status);
         const result = await crmTaskRepository.list(this.userId, { status, limit });
-        entities = (result.data || []) as Array<Record<string, unknown>>;
+        entities = (result.data || []) as unknown as Array<Record<string, unknown>>;
         break;
       }
       case 'services': {
         const result = await schedulingServiceRepository.listAll(this.userId, true);
-        entities = ((result.data || []) as Array<Record<string, unknown>>).slice(0, limit);
+        entities = ((result.data || []) as unknown as Array<Record<string, unknown>>).slice(0, limit);
         break;
       }
       case 'bookings': {
-        const result = await schedulingBookingRepository.listUpcoming(this.userId, limit);
-        entities = (result.data || []) as Array<Record<string, unknown>>;
+        const result = await schedulingBookingRepository.getUpcoming(this.userId, limit);
+        entities = (result.data || []) as unknown as Array<Record<string, unknown>>;
         break;
       }
       case 'invoices': {
@@ -466,7 +486,7 @@ export class EntityResolver {
           limit,
           includeContact: true
         });
-        entities = (result.data || []) as Array<Record<string, unknown>>;
+        entities = (result.data || []) as unknown as Array<Record<string, unknown>>;
         break;
       }
     }

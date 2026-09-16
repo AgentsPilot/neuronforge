@@ -10,6 +10,7 @@ export type { KernelTriggerRequest, KernelTriggerResult, GuardrailCheckResult } 
 export {
   TRIGGERABLE_PROCESSES,
   DETECTOR_TO_PROCESS,
+  getProcess,
   getProcessForDetector,
   getAllProcesses,
   getAutomatableProcesses,

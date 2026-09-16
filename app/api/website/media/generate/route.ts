@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { generateImage } from '@/lib/services/GeneratedImageService';
+import { generateImage, generationAllowance } from '@/lib/services/GeneratedImageService';
 
 const logger = createLogger({ module: 'WebsiteMediaGenerateAPI' });
 
@@ -51,13 +51,40 @@ export async function POST(request: NextRequest) {
        * is rather than collapsing into "something went wrong": no generation
        * configured, a request for a photograph of people, or a genuine failure.
        */
-      const status = result.reason === 'depicts_people' ? 400 : 503;
+      const status =
+        result.reason === 'depicts_people' ? 400
+        : result.reason === 'limit_reached' ? 429
+        : 503;
       requestLogger.info({ userId: user.id, reason: result.reason }, 'Image generation declined');
-      return NextResponse.json({ success: false, reason: result.reason }, { status });
+      return NextResponse.json(
+        {
+          success: false,
+          reason: result.reason,
+          // The picker prints the numbers, so it has to be told them rather
+          // than left to phrase a limit it cannot see.
+          ...(result.reason === 'limit_reached'
+            ? { allowance: { used: result.used, limit: result.limit, remaining: 0 } }
+            : {}),
+        },
+        { status }
+      );
     }
 
     requestLogger.info({ userId: user.id, section: validated.section }, 'Generated a picture');
-    return NextResponse.json({ success: true, data: { url: result.url, description: result.description } });
+
+    /*
+     * The allowance travels with every successful generation.
+     *
+     * Pictures can be generated from the media picker on any block, on any
+     * page, and from the wizard — so a count held by one screen is stale as
+     * soon as another is used. Returning it here keeps whichever screen the
+     * owner is on truthful without it having to ask again.
+     */
+    return NextResponse.json({
+      success: true,
+      data: { url: result.url, description: result.description },
+      allowance: await generationAllowance(user.id),
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ success: false, error: 'Invalid request' }, { status: 400 });

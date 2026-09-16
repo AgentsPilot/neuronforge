@@ -44,9 +44,21 @@ describe('[smoke] business profile readiness', () => {
     expect(missingProfileFields({ ...FULL_PROFILE, vertical: null }, FULL_SETTINGS)).toEqual([
       'business_type',
     ]);
-    expect(missingProfileFields({ ...FULL_PROFILE, logo_url: null }, FULL_SETTINGS)).toEqual([
-      'logo',
-    ]);
+  });
+
+  /*
+   * A logo is never missing, because it is never required.
+   *
+   * Plenty of businesses do not have one — a sole practitioner, a new business,
+   * anyone who has not made one — and nothing breaks without it: the header
+   * falls back to the business name, and the invoice PDF and emails render
+   * fine. Counting it made the profile "incomplete", which made the readiness
+   * step outstanding and could refuse a website publish over a missing image.
+   */
+  it('never reports a logo as missing, however it is absent', () => {
+    expect(missingProfileFields({ ...FULL_PROFILE, logo_url: null }, FULL_SETTINGS)).toEqual([]);
+    expect(missingProfileFields({ ...FULL_PROFILE, logo_url: '   ' }, FULL_SETTINGS)).toEqual([]);
+    expect(isBusinessProfileComplete({ ...FULL_PROFILE, logo_url: null }, FULL_SETTINGS)).toBe(true);
   });
 
   it('names each organization setting that is missing', () => {
@@ -64,11 +76,12 @@ describe('[smoke] business profile readiness', () => {
     ]);
   });
 
-  it('treats an absent logo column as a missing logo, not an error', () => {
-    // Until the logo migration runs there is no column to read, so the caller
-    // passes nothing. That must read as "no logo yet" rather than throwing.
+  it('survives an account whose logo column is not there at all', () => {
+    // The column arrives with the logo migration; until it runs the caller
+    // passes nothing. That must not throw — and now reports nothing missing,
+    // because a logo is not part of being complete.
     const { logo_url, ...withoutLogo } = FULL_PROFILE;
-    expect(missingProfileFields(withoutLogo, FULL_SETTINGS)).toEqual(['logo']);
+    expect(missingProfileFields(withoutLogo, FULL_SETTINGS)).toEqual([]);
   });
 
   it('does not accept whitespace as a filled field', () => {
@@ -84,7 +97,6 @@ describe('[smoke] business profile readiness', () => {
     expect(missingProfileFields(null, null)).toEqual([
       'company_name',
       'business_type',
-      'logo',
       'industry',
       'company_size',
       'primary_goal',

@@ -56,6 +56,12 @@ import { CashPayoutBlockedDetector } from './catalog/CashPayoutBlockedDetector';
 // Phase 6: Pricing Detectors
 import { PricingDiscountAbuseDetector } from './catalog/PricingDiscountAbuseDetector';
 import { PricingIntroOfferStuckDetector } from './catalog/PricingIntroOfferStuckDetector';
+import { CashBookingUnpaidDetector } from './catalog/CashBookingUnpaidDetector';
+import { ConvNoNextStepDetector } from './catalog/ConvNoNextStepDetector';
+import { RetPackageEndingDetector } from './catalog/RetPackageEndingDetector';
+import { CashRevenueAtRiskDetector } from './catalog/CashRevenueAtRiskDetector';
+import { ConvStageDropoffDetector } from './catalog/ConvStageDropoffDetector';
+import { ConvServiceRateDropDetector } from './catalog/ConvServiceRateDropDetector';
 
 const logger = createLogger({ module: 'DetectorEngine' });
 
@@ -139,6 +145,20 @@ export class DetectorEngine {
       // Phase 6: Pricing
       new PricingDiscountAbuseDetector(supabase),
       new PricingIntroOfferStuckDetector(supabase),
+
+      /*
+       * MVP0: the three journey gaps.
+       *
+       * Each answers a question the brief asks and nothing else here could:
+       * money owed against a dated appointment, a client finishing a package,
+       * and the catch-all for people with no future at all.
+       */
+      new CashBookingUnpaidDetector(supabase),
+      new ConvNoNextStepDetector(supabase),
+      new RetPackageEndingDetector(supabase),
+      new CashRevenueAtRiskDetector(supabase),
+      new ConvStageDropoffDetector(supabase),
+      new ConvServiceRateDropDetector(supabase),
     ];
   }
 

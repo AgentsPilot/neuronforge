@@ -258,6 +258,56 @@ interface VectorThreshold {
   also?: { metric: string; threshold: number };
 }
 
+/**
+ * How many page-view rows the visitor count will scan.
+ *
+ * Uniqueness cannot be pushed into the query — PostgREST offers no DISTINCT and
+ * no COUNT(DISTINCT) — so the rows are folded here instead. The cap keeps a
+ * busy site from pulling an unbounded table into memory to answer a question
+ * whose threshold is 25; when it is hit the result is reported as a floor and
+ * logged, never silently truncated into a number that looks exact.
+ */
+const VISITOR_SCAN_LIMIT = 5000;
+
+/** One page-view row, reduced to what identifies the person who made it. */
+interface VisitorIdentityRow {
+  session_id?: string | null;
+  ip_hash?: string | null;
+  is_owner_view?: boolean | null;
+}
+
+/**
+ * How many distinct PEOPLE are in a set of page views.
+ *
+ * Identity falls back through what the row actually has. `session_id` is the
+ * real answer; `ip_hash` catches rows written before a session existed or by a
+ * client that blocked storage. A row with neither cannot be attributed to
+ * anyone, so it counts as one visitor each rather than collapsing every
+ * anonymous row in the table into a single phantom person — undercounting a
+ * real audience is the worse error of the two.
+ *
+ * Owner views are excluded in code rather than in the query because the column
+ * is nullable: `neq('is_owner_view', true)` drops NULL rows in Postgres, and
+ * NULL is what almost every row in this table currently holds — the filter
+ * would have discarded the entire audience it was meant to clean.
+ */
+function countUniqueVisitors(rows: VisitorIdentityRow[] | null | undefined): number {
+  if (!rows?.length) return 0;
+
+  const identities = new Set<string>();
+  let anonymous = 0;
+
+  for (const row of rows) {
+    if (row.is_owner_view === true) continue;
+
+    const identity = row.session_id || row.ip_hash;
+    if (identity) identities.add(identity);
+    else anonymous += 1;
+  }
+
+  return identities.size + anonymous;
+}
+
 const VECTOR_THRESHOLDS: Record<VectorKey, VectorThreshold> = {
   wins: { threshold: 1, metric: 'positive_events', note: 'Lights immediately on any good news' },
   conv: { threshold: 25, metric: 'total_visitors', note: 'Need about 25 visitors before I\'d trust what the conversion rate is telling me' },
@@ -609,6 +659,13 @@ export class InsightRepository {
         // Phase 6: Pricing
         pricing_discount_abuse: 'excessive discounting that may be eroding margins',
         pricing_intro_offer_stuck: 'customers using intro offers but not converting to full price',
+        // MVP0: the three journey gaps
+        cash_booking_unpaid: 'upcoming appointments that were supposed to be paid for in advance and have not been',
+        conv_no_next_step: 'people who had activity but now have nothing scheduled to happen next — no booking, no task, no movement',
+        ret_package_ending: 'clients on the final instalment of a package with no renewal arranged',
+        cash_revenue_at_risk: 'money that has been billed or quoted and has not arrived yet — invoices, plan instalments and unanswered quotes together',
+        conv_stage_dropoff: 'a stage in the customer journey that people reach and never move past',
+        conv_service_rate_drop: 'an entry service converting into paid work less often than it used to',
       };
 
       const issueType = detection.processParameters?.issue_type as string | undefined;
@@ -1027,6 +1084,12 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     if (language === 'he') {
       const hebrewTitles: Record<string, string> = {
         cash_ar_overdue: `${count} חשבוניות שלא שולמו - ${formatMoney(value, currency)}`,
+        cash_booking_unpaid: `${count} פגישות שטרם שולמו - ${formatMoney(impact, currency)}`,
+        conv_no_next_step: `${count} אנשים בלי המשך`,
+        ret_package_ending: `${count} חבילות מסתיימות - ${formatMoney(impact, currency)}`,
+        cash_revenue_at_risk: `${formatMoney(impact, currency)} ממתינים בצנרת`,
+        conv_stage_dropoff: `${count} אנשים נתקעו באותו שלב`,
+        conv_service_rate_drop: `שיעור ההמרה ירד ב-${Math.abs(Number(pctChange))} נקודות`,
         cash_payment_issues: this.getPaymentIssueTitleHe(issueType, detection, currency),
         ret_no_show_spike: `עלייה של ${pctChange}% באי-הגעות`,
         sales_stalled: `${count} פניות ממתינות לתגובה`,
@@ -1061,6 +1124,12 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     // English titles (default)
     const titles: Record<string, string> = {
       cash_ar_overdue: `${formatMoney(value, currency)} in Overdue Invoices`,
+      cash_booking_unpaid: `${count} Appointment${count === 1 ? '' : 's'} Not Paid For`,
+      conv_no_next_step: `${count} People With No Next Step`,
+      ret_package_ending: `${count} Package${count === 1 ? '' : 's'} Ending`,
+      cash_revenue_at_risk: `${formatMoney(impact, currency)} Sitting In Your Pipeline`,
+      conv_stage_dropoff: `${count} People Stopped At The Same Step`,
+      conv_service_rate_drop: `Conversion Fell ${Math.abs(Number(pctChange))} Points`,
       cash_payment_issues: this.getPaymentIssueTitle(issueType, detection, currency),
       ret_no_show_spike: `No-Show Rate Up ${pctChange}%`,
       sales_stalled: `${count} Enquiries Waiting for Reply`,
@@ -1140,6 +1209,18 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const value = detection.currentValue || 0;
     const baseline = detection.baselineValue || 0;
     const impact = detection.estimatedImpactUsd || 0;
+    /*
+     * The money, or nothing — never a zero.
+     *
+     * A detector that cannot price a business (no transactions, no priced
+     * services) now reports no impact at all rather than a figure someone
+     * picked. Passed through `|| 0` that becomes "$0.00", which reads as a
+     * measurement meaning nothing is at stake — the opposite of what an absent
+     * value means. Where this is null the sentence simply ends earlier.
+     */
+    const money = detection.estimatedImpactUsd && detection.estimatedImpactUsd > 0
+      ? formatMoney(detection.estimatedImpactUsd, currency)
+      : null;
     const rawPctChange = typeof detection.percentChange === 'number' ? detection.percentChange : parseFloat(String(detection.percentChange)) || 0;
     const pctChange = Math.abs(rawPctChange).toFixed(0);
     const avgDaysStuck = (detection.processParameters?.avg_days_stuck as number) || 14;
@@ -1149,23 +1230,29 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     if (language === 'he') {
       const hebrewDescriptions: Record<string, string> = {
         cash_ar_overdue: `יש לך ${count} חשבוניות בסך ${formatMoney(value, currency)} שנמצאות בפיגור של יותר מ-7 ימים.`,
+        cash_booking_unpaid: `${count} פגישות קרובות היו אמורות להיות משולמות מראש והתשלום טרם הגיע. סה\"כ ${formatMoney(impact, currency)}.`,
+        conv_no_next_step: `${count} אנשים היו פעילים אצלך ועכשיו אין להם שום דבר מתוכנן - לא פגישה, לא משימה, לא שלב הבא.`,
+        ret_package_ending: `${count} לקוחות נמצאים בתשלום האחרון של החבילה שלהם ולא נקבע המשך. שווי החבילות: ${formatMoney(impact, currency)}.`,
+        cash_revenue_at_risk: `${formatMoney(impact, currency)} חויבו או הוצעו ועדיין לא התקבלו. יש ${count} אנשים לפנות אליהם.`,
+        conv_stage_dropoff: `${count} אנשים הגיעו לאותו שלב ולא התקדמו ממנו. זו הנקודה שבה אתה מאבד הכי הרבה.`,
+        conv_service_rate_drop: `שירות הכניסה שלך ממיר פחות מבעבר - ${value}% לעומת ${baseline}% בתקופה הקודמת.`,
         cash_payment_issues: this.getPaymentIssueDescriptionHe(issueType, detection, currency),
         ret_no_show_spike: `שיעור אי-ההגעות עלה מ-${baseline.toFixed(1)}% ל-${value.toFixed(1)}%, עלייה של ${pctChange}% מהבסיס.`,
         sales_stalled: `${count} לקוחות פוטנציאליים ממתינים לתגובה יותר מ-48 שעות.`,
         sales_reply_slow: `זמן התגובה הממוצע שלך הוא ${value.toFixed(1)} שעות, איטי ב-${pctChange}% מהבסיס של ${baseline.toFixed(1)} שעות.`,
         ops_utilization_low: `היומן שלך מלא רק ב-${value.toFixed(0)}%, עם כ-${count} שעות פנויות השבוע.`,
-        crm_cold_leads: `${count} לידים לא קיבלו קשר במשך 7+ ימים. הזדמנות בסיכון: ${formatMoney(impact, currency)}.`,
+        crm_cold_leads: `${count} לידים לא קיבלו קשר במשך 7+ ימים.${money ? ` הזדמנות בסיכון: ${money}.` : ''}`,
         acq_traffic_drop: `התנועה לאתר ירדה ב-${pctChange}% בהשוואה לשבוע שעבר. ייתכן שפחות לידים נכנסים.`,
         acq_low_conversion: `רק ${value.toFixed(1)}% מהמבקרים באתר הופכים ללידים, מתחת ליעד של ${baseline.toFixed(1)}%.`,
         ret_cancellation_spike: `הביטולים עלו ב-${pctChange}% השבוע (${count} ביטולים). בדוק את הסיבות לזהות דפוסים.`,
-        conv_pipeline_stuck: `${count} אנשי קשר תקועים באותו שלב בממוצע ${avgDaysStuck} ימים. השפעה משוערת: ${formatMoney(impact, currency)}.`,
+        conv_pipeline_stuck: `${count} אנשי קשר תקועים באותו שלב בממוצע ${avgDaysStuck} ימים.${money ? ` השפעה משוערת: ${money}.` : ''}`,
         conv_followup_overdue: `${count} משימות מעקב באיחור. מעקב בזמן משפר את שיעורי ההמרה.`,
         conv_source_underperform: `מקור לידים זה ממיר ב-${value.toFixed(1)}%, מתחת לממוצע של ${baseline.toFixed(1)}%.`,
         crm_engagement_decay: `${count} לקוחות פעילים שקטים בממוצע ${avgDaysSilent} ימים. הם בסיכון לנטישה.`,
         ret_repeat_booking_low: `רק ${(100 - value).toFixed(0)}% מהלקוחות החדשים חוזרים להזמנה נוספת. היעד הוא ${(100 - baseline).toFixed(0)}%+.`,
         ops_last_minute_cancels: `${count} הזמנות בוטלו בתוך 24 שעות. הפסד הכנסות: ${formatMoney(impact, currency)}.`,
         ops_service_performance: `${count} שירותים מציגים ביצועים נמוכים משמעותית בהשוואה לשירותים המובילים.`,
-        ops_peak_unutilized: `שעות השיא ההיסטוריות שלך ${(100 - value).toFixed(0)}% ריקות. הזדמנות הכנסה: ${formatMoney(impact, currency)}.`,
+        ops_peak_unutilized: `שעות השיא ההיסטוריות שלך ${(100 - value).toFixed(0)}% ריקות.${money ? ` הזדמנות הכנסה: ${money}.` : ''}`,
         web_missing_cta: `${count} עמודים חסרים קריאה לפעולה ברורה. מבקרים עלולים לעזוב בלי לפעול.`,
         web_incomplete_content: `${count} אזורים עם תוכן לא שלם. זה עלול לפגוע באמינות.`,
         web_page_underperform: `${count} עמודים עם תנועה גבוהה ללא המרות. שקול להוסיף קריאות לפעולה חזקות יותר.`,
@@ -1184,23 +1271,29 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     const plural = count !== 1;
     const descriptions: Record<string, string> = {
       cash_ar_overdue: `You have ${count} invoice${plural ? 's' : ''} totaling ${formatMoney(value, currency)} that ${plural ? 'are' : 'is'} more than 7 days overdue.`,
+      cash_booking_unpaid: `${count} upcoming appointment${plural ? 's were' : ' was'} due to be paid for in advance and ${plural ? 'have' : 'has'} not been. ${formatMoney(impact, currency)} outstanding.`,
+      conv_no_next_step: `${count} ${plural ? 'people have' : 'person has'} had activity with you and now ${plural ? 'have' : 'has'} nothing scheduled next — no booking, no task, no stage to move to.`,
+      ret_package_ending: `${count} client${plural ? 's are' : ' is'} on the final instalment of their package with no renewal arranged. ${formatMoney(impact, currency)} of package value.`,
+      cash_revenue_at_risk: `${formatMoney(impact, currency)} has been billed or quoted and has not arrived. ${count} ${plural ? 'people' : 'person'} worth following up.`,
+      conv_stage_dropoff: `${count} ${plural ? 'people' : 'person'} reached the same step and went no further. This is where you lose the most.`,
+      conv_service_rate_drop: `Your entry service is converting less than it was — ${value}% this period against ${baseline}% last.`,
       cash_payment_issues: this.getPaymentIssueDescription(issueType, detection, currency),
       ret_no_show_spike: `Your no-show rate has increased from ${baseline.toFixed(1)}% to ${value.toFixed(1)}%, which is ${pctChange}% above your normal baseline.`,
       sales_stalled: `${count} potential client${plural ? 's' : ''} ${plural ? 'have' : 'has'} been waiting 48+ hours without a response.`,
       sales_reply_slow: `Your average reply time is ${value.toFixed(1)} hours, which is ${pctChange}% slower than your baseline of ${baseline.toFixed(1)} hours.`,
       ops_utilization_low: `Your calendar is only ${value.toFixed(0)}% utilized, with approximately ${count} hours available this week.`,
-      crm_cold_leads: `${count} lead${plural ? 's have' : ' has'} had no contact in 7+ days. Estimated opportunity at risk: ${formatMoney(impact, currency)}.`,
+      crm_cold_leads: `${count} lead${plural ? 's have' : ' has'} had no contact in 7+ days.${money ? ` Estimated opportunity at risk: ${money}.` : ''}`,
       acq_traffic_drop: `Website traffic dropped ${pctChange}% compared to last week. This could mean fewer leads coming in.`,
       acq_low_conversion: `Only ${value.toFixed(1)}% of website visitors are converting to leads, below the ${baseline.toFixed(1)}% benchmark.`,
       ret_cancellation_spike: `Cancellations increased ${pctChange}% this week (${count} cancellations). Review reasons to identify patterns.`,
-      conv_pipeline_stuck: `${count} contact${plural ? 's are' : ' is'} stuck in the same pipeline stage for an average of ${avgDaysStuck} days. Estimated impact: ${formatMoney(impact, currency)}.`,
+      conv_pipeline_stuck: `${count} contact${plural ? 's are' : ' is'} stuck in the same pipeline stage for an average of ${avgDaysStuck} days.${money ? ` Estimated impact: ${money}.` : ''}`,
       conv_followup_overdue: `${count} follow-up task${plural ? 's are' : ' is'} overdue. Staying on top of follow-ups improves conversion rates.`,
       conv_source_underperform: `This lead source is converting at ${value.toFixed(1)}%, below your average of ${baseline.toFixed(1)}%.`,
       crm_engagement_decay: `${count} active client${plural ? 's have' : ' has'} been silent for an average of ${avgDaysSilent} days. They may be at risk of churning.`,
       ret_repeat_booking_low: `Only ${(100 - value).toFixed(0)}% of first-time clients are rebooking. Target is ${(100 - baseline).toFixed(0)}%+.`,
       ops_last_minute_cancels: `${count} booking${plural ? 's were' : ' was'} cancelled within 24 hours. Lost revenue: ${formatMoney(impact, currency)}.`,
       ops_service_performance: `${count} service${plural ? 's are' : ' is'} significantly underperforming compared to your top services.`,
-      ops_peak_unutilized: `Your historically busy time slots are ${(100 - value).toFixed(0)}% empty. Potential revenue opportunity: ${formatMoney(impact, currency)}.`,
+      ops_peak_unutilized: `Your historically busy time slots are ${(100 - value).toFixed(0)}% empty.${money ? ` Potential revenue opportunity: ${money}.` : ''}`,
       web_missing_cta: `${count} page${plural ? 's are' : ' is'} missing a clear call-to-action. Visitors may leave without taking action.`,
       web_incomplete_content: `${count} section${plural ? 's have' : ' has'} incomplete content. This can hurt credibility with visitors.`,
       web_page_underperform: `${count} high-traffic page${plural ? 's have' : ' has'} zero conversions. Consider adding stronger CTAs.`,
@@ -1287,6 +1380,12 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     if (language === 'he') {
       const hebrewRecommendations: Record<string, string> = {
         cash_ar_overdue: `שלח תזכורות תשלום ללקוחות עם חשבוניות בפיגור. זה יכול לעזור לגבות עד ${formatMoney(impact, currency)}.`,
+        cash_booking_unpaid: `בקש את התשלום לפני הפגישה. מומלץ להתחיל מהפגישה הקרובה ביותר.`,
+        conv_no_next_step: `עבור על הרשימה וקבע לכל אחד צעד הבא - פגישה, משימה או פנייה.`,
+        ret_package_ending: `פנה אליהם לפני המפגש האחרון. חידוש לפני הסיום שווה עד ${formatMoney(impact, currency)}.`,
+        cash_revenue_at_risk: `התחל מהחשבוניות שכבר נשלחו - זה הכסף שכבר סוכם.`,
+        conv_stage_dropoff: `פנה לאנשים שנתקעו בשלב הזה ובדוק מה עוצר אותם.`,
+        conv_service_rate_drop: `בדוק מה השתנה - המחיר, ההצעה, או מה שקורה אחרי הפגישה הראשונה.`,
         cash_payment_issues: this.getPaymentIssueRecommendationHe(issueType, detection, currency),
         ret_no_show_spike: `שקול לשלוח תזכורות לפגישות 24 שעות לפני כל הזמנה כדי להפחית אי-הגעות.`,
         sales_stalled: `עקוב אחר הלידים האלה כדי לשמור על המומנטום. תגובות מהירות משפרות משמעותית את שיעורי ההמרה.`,
@@ -1321,6 +1420,12 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     // English recommendations (default)
     const recommendations: Record<string, string> = {
       cash_ar_overdue: `Send payment reminders to clients with overdue invoices. This could help recover up to ${formatMoney(impact, currency)}.`,
+      cash_booking_unpaid: `Request payment before the appointment, starting with the soonest one.`,
+      conv_no_next_step: `Go through the list and give each person a next step — a booking, a task, or a message.`,
+      ret_package_ending: `Reach out before their final session. Renewing before it ends is worth up to ${formatMoney(impact, currency)}.`,
+      cash_revenue_at_risk: `Start with what has already been invoiced — that money is agreed, only uncollected.`,
+      conv_stage_dropoff: `Reach out to the people stuck at this step and find out what is holding them.`,
+      conv_service_rate_drop: `Look at what changed — the price, the offer, or what happens after the first session.`,
       cash_payment_issues: this.getPaymentIssueRecommendation(issueType, detection, currency),
       ret_no_show_spike: `Consider sending appointment reminders 24 hours before each booking to reduce no-shows.`,
       sales_stalled: `Follow up with these leads to maintain momentum. Quick responses can significantly improve conversion rates.`,
@@ -2279,13 +2384,26 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           .eq('user_id', userId)
           .maybeSingle(),
 
-        // Total visitors. Page views are the raw record; one row per view, so
-        // this counts views rather than people — the conversion vector only
-        // needs enough traffic to be worth reading, not a unique-visitor figure.
+        /*
+         * Visitors, meaning PEOPLE — not page views.
+         *
+         * `website_page_views` holds one row per view, and counting those rows
+         * told a business opened this morning that 25 people had found it when
+         * the owner had reloaded their own site twenty times. The vector is the
+         * gate on whether a conversion rate is worth reading, so the number it
+         * counts has to be the denominator of that rate: sessions, not hits.
+         * Twenty views from one session is one visitor and no conversion
+         * signal whatsoever.
+         *
+         * The rows come back rather than a `count`, because PostgREST has no
+         * DISTINCT and the identity has to be resolved per row — see
+         * `countUniqueVisitors`.
+         */
         this.supabase
           .from('website_page_views')
-          .select('id', { count: 'exact', head: true })
-          .eq('user_id', userId),
+          .select('session_id, ip_hash, is_owner_view')
+          .eq('user_id', userId)
+          .limit(VISITOR_SCAN_LIMIT),
 
         // Total bookings
         this.supabase
@@ -2321,6 +2439,21 @@ Generate in ${langName}. Respond with ONLY a JSON object:
       }
       // Ensure minimum of 1 day (for newly created accounts)
       const accountAgeDays = Math.max(1, Math.floor((Date.now() - accountCreatedAt.getTime()) / (1000 * 60 * 60 * 24)));
+
+      const visitorRows = (visitorsResult.data ?? []) as VisitorIdentityRow[];
+      const uniqueVisitors = countUniqueVisitors(visitorRows);
+
+      /*
+       * A capped scan reports a floor, and says so. Silently returning the
+       * uniques found in the first 5,000 rows would read as an exact audience
+       * size while being an arbitrary fraction of one.
+       */
+      if (visitorRows.length >= VISITOR_SCAN_LIMIT) {
+        logger.warn(
+          { userId, scanned: visitorRows.length, uniqueVisitors },
+          'Visitor scan hit its row cap; unique visitors is a floor, not a total'
+        );
+      }
 
       // A query against a table that doesn't exist fails silently into a zeroed
       // metric, which reads as "no data yet" and quietly holds a vector dark
@@ -2415,7 +2548,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
         positive_events: winsResult.count || 0,
         // Contacts stand in for traffic when no page views are recorded — a
         // business can be reached without a website on this platform.
-        total_visitors: visitorsResult.count || contactsResult.count || 0,
+        total_visitors: uniqueVisitors || contactsResult.count || 0,
         total_bookings: bookingsResult.count || 0,
         total_invoices: invoicesResult.count || 0,
         total_contacts: contactsResult.count || 0,

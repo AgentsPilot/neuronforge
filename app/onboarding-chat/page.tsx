@@ -34,6 +34,24 @@ interface ServiceInput {
    * off the services rather than asked as a question of its own.
    */
   isScheduled: boolean;
+  /**
+   * The gap needed between appointments.
+   *
+   * Asked beside the duration because it is the same kind of fact and the same
+   * person is already typing one — and because it was never asked at all
+   * before, so every service set up in onboarding silently took the platform's
+   * fifteen minutes whether or not that suited the work.
+   */
+  bufferMinutes: string;
+  /**
+   * Can a client buy this outright, or is it quoted first?
+   *
+   * Asked here rather than inferred from a blank price. The inference is what
+   * this codebase had to do before the fact existed, and it gets the common
+   * case right and the important one wrong: a programme with a real figure that
+   * is still quoted per client came out directly bookable.
+   */
+  saleMode: 'direct' | 'proposal';
   collection: 'online' | 'invoice';
   /** Mirrors `scheduling_services.payment_type`. */
   paymentType: 'full' | 'installments';
@@ -74,13 +92,24 @@ interface PreviewData {
     currency?: string;
     /** Does a client pick a time? Decides the date step in this service's journey. */
     is_scheduled?: boolean;
+    /** The gap needed between appointments. Absent means the platform default. */
+    buffer_minutes?: number | null;
+    /**
+     * Can a client buy this outright, or is it quoted first?
+     *
+     * Carried through the editor because the chat can already infer it — the
+     * extraction prompt has worked examples in both languages — and rebuilding
+     * the service without it on confirm silently turned every quoted service
+     * into a directly bookable one.
+     */
+    sale_mode?: 'direct' | 'proposal';
     /** How the money arrives. Null while the service is free. */
     collection?: 'online' | 'invoice' | null;
     /** Paying over time. Independent of the price: a quoted project can still
         be three monthly payments, agreed once the figure is. */
     payment_plan?: {
       installment_count: number;
-      installment_frequency: 'weekly' | 'biweekly' | 'monthly';
+      installment_frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
     } | null;
   }>;
   businessDescription?: string;
@@ -100,9 +129,11 @@ interface PreviewData {
       currency?: string | null;
       payment_plan?: {
         installment_count: number;
-        installment_frequency: 'weekly' | 'biweekly' | 'monthly';
+        installment_frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
       } | null;
       is_scheduled?: boolean;
+      buffer_minutes?: number;
+      sale_mode?: 'direct' | 'proposal';
     }>;
     online_presence_mode?: 'full_website' | 'booking_only' | 'website_only' | 'none';
     /** How money actually arrives — the answer that decides whether Stripe is needed at all. */
@@ -136,6 +167,14 @@ export default function OnboardingChatPage() {
   const [isSending, setIsSending] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState<string>('welcome');
+  /*
+   * The question outstanding within the step.
+   *
+   * `service_details` is a loop — details, "any more?", details again — and
+   * the step does not change across it. Without this the form could only be
+   * opened once.
+   */
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   /**
    * What the conversation knows so far, in the shape the setup chain reads.
    *
@@ -194,6 +233,8 @@ export default function OnboardingChatPage() {
       price: '',
       currency: currencyForLanguage(selectedLanguage),
       isScheduled: true,
+      bufferMinutes: '15',
+      saleMode: 'direct',
       collection: 'invoice',
       paymentType: 'full',
       installmentCount: '3',
@@ -304,18 +345,44 @@ export default function OnboardingChatPage() {
     }
   }, [messages, isSending, showPreview, showServicesForm]);
 
-  // Show services form when entering service_details step, hide when leaving
+  /*
+   * The services form follows the QUESTION, not just the step.
+   *
+   * It used to key on `currentStep` alone. But `service_details` is a loop:
+   * submit rows, get asked "any more?", say yes, get asked for details again —
+   * and `currentStep` is `service_details` throughout. The effect therefore ran
+   * once, and after the first submission the form never reopened. Answering
+   * "I have more" produced a prompt with no way to respond to it, which is the
+   * dead end this fixes.
+   *
+   * `pendingQuestion` is what actually moves: it is `'more_services'` while the
+   * chips are up and cleared when the assistant asks for details again.
+   */
   useEffect(() => {
-    if (currentStep === 'service_details') {
-      // Small delay to let the assistant message appear first
-      setTimeout(() => setShowServicesForm(true), 500);
-    } else {
-      // Close the form when moving away from service_details
-      setShowServicesForm(false);
-    }
-  }, [currentStep]);
+    const askingForDetails = currentStep === 'service_details' && !pendingQuestion;
 
-  const sendMessage = async (message: string) => {
+    if (askingForDetails) {
+      // Delayed so the assistant's message lands first; the form arriving
+      // before the sentence that asks for it reads as a glitch.
+      const timer = setTimeout(() => setShowServicesForm(true), 500);
+      return () => clearTimeout(timer);
+    }
+
+    setShowServicesForm(false);
+  }, [currentStep, pendingQuestion]);
+
+  const sendMessage = async (
+    message: string,
+    /**
+     * The services form's own rows, when the turn came from it.
+     *
+     * Sent ALONGSIDE the sentence, not instead of it: the extraction still
+     * reads the business-wide answers out of the prose. What this removes is
+     * the round trip for the services themselves, where a model returning
+     * three of four lost the fourth with nothing counting them.
+     */
+    structuredServices?: Array<Record<string, unknown>>
+  ) => {
     if (!message.trim() || isSending) return;
 
     // Add user message
@@ -325,10 +392,18 @@ export default function OnboardingChatPage() {
     setIsSending(true);
 
     try {
-      const requestBody: { message: string; language: string; conversationId?: string } = {
+      const requestBody: {
+        message: string;
+        language: string;
+        conversationId?: string;
+        services?: Array<Record<string, unknown>>;
+      } = {
         message,
         language: selectedLanguage,
       };
+      if (structuredServices?.length) {
+        requestBody.services = structuredServices;
+      }
       // Only include conversationId if we have one
       if (conversationId) {
         requestBody.conversationId = conversationId;
@@ -375,6 +450,7 @@ export default function OnboardingChatPage() {
 
       // Update state
       setCurrentStep(result.currentStep);
+      setPendingQuestion(result.pendingQuestion ?? null);
 
       if (result.setup) {
         setSetupSignals(result.setup);
@@ -426,6 +502,8 @@ export default function OnboardingChatPage() {
         price: '',
         currency: prev[prev.length - 1]?.currency || currencyForLanguage(selectedLanguage),
         isScheduled: true,
+        bufferMinutes: '15',
+      saleMode: 'direct',
         collection: 'invoice',
         paymentType: 'full',
         installmentCount: '3',
@@ -444,9 +522,73 @@ export default function OnboardingChatPage() {
 
   // `isScheduled` is a boolean, so the setter can no longer take strings only.
   const updateServiceRow = (index: number, field: keyof ServiceInput, value: string | boolean) => {
-    setServicesInput(prev => prev.map((service, i) =>
-      i === index ? { ...service, [field]: value } : service
-    ));
+    setServicesInput(prev => prev.map((service, i) => {
+      if (i !== index) return service;
+
+      /*
+       * Quoting clears the money.
+       *
+       * Price, collection and payment plan all describe a figure nobody has
+       * named yet, so a value left behind a greyed cell is how a quoted job
+       * comes out with a published price on it. The services settings clear
+       * the same three, in the same words.
+       */
+      if (field === 'saleMode' && value === 'proposal') {
+        return {
+          ...service,
+          saleMode: 'proposal' as const,
+          price: '',
+          paymentType: 'full' as const,
+        };
+      }
+
+      /*
+       * Emptying the price empties the plan.
+       *
+       * The button goes dead the moment there is no figure, and a plan left
+       * behind a dead control is the same failure as a price left behind a
+       * greyed cell — it is invisible and it still gets sent.
+       */
+      if (field === 'price') {
+        const next = { ...service, price: value as string };
+        return canSplit(next.saleMode, next.price)
+          ? next
+          : { ...next, paymentType: 'full' as const };
+      }
+
+      return { ...service, [field]: value };
+    }));
+  };
+
+  /**
+   * Closing the services form, and being told why it comes back.
+   *
+   * Services decide most of what the platform can configure afterwards: which
+   * journeys exist, whether working hours are needed, whether a card processor
+   * is, what the website lists. So this step cannot be skipped — and the honest
+   * way to say that is to say it, rather than to leave a button on screen and
+   * let somebody work out for themselves that they are stuck.
+   *
+   * The form returns after the sentence lands, so the answer is visible before
+   * the thing it is answering for reappears.
+   */
+  const dismissServicesForm = () => {
+    setShowServicesForm(false);
+    setMessages(prev => [
+      ...prev,
+      {
+        role: 'assistant',
+        content:
+          selectedLanguage === 'he'
+            ? 'אני צריך את השירותים כדי להמשיך. בלעדיהם אי אפשר לדעת מה מזמינים, מה מחייבים ומה יופיע באתר. אפשר להוסיף שירות אחד עכשיו ולשנות הכל אחר כך.'
+            : selectedLanguage === 'es'
+              ? 'Necesito tus servicios para continuar. Sin ellos no puedo saber qué se reserva, qué se cobra ni qué aparece en la web. Añade uno ahora y podrás cambiarlo todo después.'
+              : 'I need your services before we can go on. Without them there is no way to know what gets booked, what gets charged, or what the website lists. Add one now and you can change all of it later.',
+      },
+    ]);
+
+    // Long enough to read the sentence, short enough not to feel stuck.
+    setTimeout(() => setShowServicesForm(true), 900);
   };
 
   const submitServices = () => {
@@ -474,8 +616,39 @@ export default function OnboardingChatPage() {
       if (s.isScheduled && s.duration) {
         parts.push(`${s.duration} ${selectedLanguage === 'he' ? 'דקות' : selectedLanguage === 'es' ? 'minutos' : 'minutes'}`);
       }
+      /*
+       * The gap, in words, where they asked for one.
+       *
+       * Only when it differs from nothing: saying "0 minutes between clients"
+       * is noise, and the extraction reads words rather than the form.
+       */
+      if (s.isScheduled && s.bufferMinutes && parseInt(s.bufferMinutes) > 0) {
+        parts.push(
+          selectedLanguage === 'he'
+            ? `${s.bufferMinutes} דקות הפסקה בין פגישות`
+            : selectedLanguage === 'es'
+              ? `${s.bufferMinutes} minutos de pausa entre citas`
+              : `${s.bufferMinutes} minutes between appointments`
+        );
+      }
       if (!s.isScheduled) {
         parts.push(selectedLanguage === 'he' ? 'ללא קביעת תור' : selectedLanguage === 'es' ? 'sin cita' : 'no appointment needed');
+      }
+      /*
+       * Quoted, in words.
+       *
+       * The extraction prompt already recognises exactly this phrasing — its
+       * worked examples are "I quote each project after a site visit" and the
+       * Hebrew equivalent — so saying it is enough to reach `sale_mode`.
+       */
+      if (s.saleMode === 'proposal') {
+        parts.push(
+          selectedLanguage === 'he'
+            ? 'מתומחר בהצעת מחיר לכל עבודה'
+            : selectedLanguage === 'es'
+              ? 'se cotiza por trabajo'
+              : 'quoted per job'
+        );
       }
       if (s.price) {
         // If they wrote a currency into the price box — "$80", "150 ש"ח" —
@@ -520,7 +693,8 @@ export default function OnboardingChatPage() {
       return parts.join(' - ');
     }).join('\n');
 
-    // Reset form and close modal
+    // Reset form and close modal. Not a dismissal: the services were sent, and
+    // the assistant's own follow-up takes it from here.
     setShowServicesForm(false);
     setServicesInput([{
       name: '',
@@ -528,6 +702,8 @@ export default function OnboardingChatPage() {
       price: '',
       currency: currencyForLanguage(selectedLanguage),
       isScheduled: true,
+      bufferMinutes: '15',
+      saleMode: 'direct',
       collection: 'invoice',
       paymentType: 'full',
       installmentCount: '3',
@@ -536,9 +712,40 @@ export default function OnboardingChatPage() {
       firstPaymentDays: '7',
     }]);
 
+    /*
+     * The rows themselves, beside the sentence describing them.
+     *
+     * Every value here was typed or chosen, so none of it needs reading back
+     * out of prose. The sentence still goes, because the business-wide answers
+     * in it — how clients pay, whether an intake form is wanted — are not per
+     * service and are still extracted.
+     */
+    const structuredServices = validServices.map(s => {
+      const scheduled = s.isScheduled !== false;
+      const quoted = s.saleMode === 'proposal';
+      const priceValue = parseFloat(s.price);
+      const installments = parseInt(s.installmentCount, 10);
+
+      return {
+        name: s.name.trim(),
+        duration_minutes: scheduled ? parseInt(s.duration, 10) || null : null,
+        buffer_minutes: scheduled ? parseInt(s.bufferMinutes, 10) || 0 : null,
+        // Null is "agreed per client"; only a typed zero is free.
+        price: quoted || s.price.trim() === '' ? null : (Number.isFinite(priceValue) ? priceValue : null),
+        currency: s.currency,
+        is_scheduled: scheduled,
+        sale_mode: s.saleMode,
+        collection: quoted || !(priceValue > 0) ? null : s.collection,
+        payment_plan:
+          !quoted && s.paymentType === 'installments' && installments >= 2
+            ? { installment_count: installments, installment_frequency: s.installmentFrequency }
+            : null,
+      };
+    });
+
     // Send as message, with the one business-wide answer appended so the
     // extraction sees it in the same turn as the services it applies to.
-    sendMessage(servicesText + intakeNote);
+    sendMessage(servicesText + intakeNote, structuredServices);
   };
 
   // Pipeline stages editor handlers
@@ -649,12 +856,35 @@ export default function OnboardingChatPage() {
 
   const updateDraftService = (
     index: number,
-    field: 'service_name' | 'duration_minutes' | 'price' | 'currency' | 'is_scheduled' | 'collection',
+    field:
+      | 'service_name'
+      | 'duration_minutes'
+      | 'buffer_minutes'
+      | 'price'
+      | 'currency'
+      | 'is_scheduled'
+      | 'collection'
+      | 'sale_mode',
     value: string | boolean
   ) => {
     setDraftServices(rows => rows.map((row, i) => {
       if (i !== index) return row;
       if (field === 'is_scheduled') return { ...row, is_scheduled: value as boolean };
+      /*
+       * Quoting clears the money — all three of it.
+       *
+       * Price, collection and payment plan describe a figure nobody has named
+       * yet, and a value left behind a greyed cell is how a quoted job comes
+       * out with a published price on it. The services settings clear exactly
+       * these three, in these words, and the two forms must not differ.
+       */
+      if (field === 'sale_mode') {
+        const mode = value as 'direct' | 'proposal';
+        // A quoted job carries neither: both are settled on the proposal.
+        return mode === 'proposal'
+          ? { ...row, sale_mode: mode, price: null, collection: null, payment_plan: null }
+          : { ...row, sale_mode: mode };
+      }
       if (field === 'collection') return { ...row, collection: value as 'online' | 'invoice' };
       if (field === 'service_name') return { ...row, service_name: value as string };
       if (field === 'currency') return { ...row, currency: value as string };
@@ -662,10 +892,27 @@ export default function OnboardingChatPage() {
       if (field === 'duration_minutes') {
         return { ...row, duration_minutes: text.trim() === '' ? null : (parseInt(text, 10) || null) };
       }
+      /*
+       * Its own branch, before the price fallback below.
+       *
+       * Zero is a real answer here — a business that books back to back — so
+       * `|| null` would be wrong: it would read "no gap" as "not answered" and
+       * hand the service the platform's fifteen minutes instead.
+       */
+      if (field === 'buffer_minutes') {
+        if (text.trim() === '') return { ...row, buffer_minutes: null };
+        const minutes = parseInt(text, 10);
+        return { ...row, buffer_minutes: Number.isFinite(minutes) ? minutes : null };
+      }
       // Empty is not zero. A blank price means the fee is agreed per client;
       // a 0 means the service is free, and publishing one as the other is how
       // a consultancy advertises its work for nothing.
-      return { ...row, price: text.trim() === '' ? null : Number(text) };
+      const nextPrice = text.trim() === '' ? null : Number(text);
+      // A plan needs a figure to split. Emptying the price empties the plan,
+      // rather than leaving one behind a button that has just gone dead.
+      return canSplit(row.sale_mode, nextPrice)
+        ? { ...row, price: nextPrice }
+        : { ...row, price: nextPrice, payment_plan: null };
     }));
   };
 
@@ -699,7 +946,25 @@ export default function OnboardingChatPage() {
             currency: service.currency,
             payment_plan: service.payment_plan ?? null,
             is_scheduled: service.is_scheduled !== false,
-            collection: (service.price || 0) > 0 ? (service.collection ?? 'invoice') : null,
+            // Only for something booked against a time — a product has no gap
+            // to leave after it, and sending one would describe a diary rule
+            // for something that never reaches the diary.
+            buffer_minutes:
+              service.is_scheduled === false ? undefined : service.buffer_minutes ?? undefined,
+            sale_mode: service.sale_mode ?? 'direct',
+            /*
+             * A quoted job has no collection method.
+             *
+             * Nobody has said what the work costs, so there is no money for a
+             * method to describe — it is settled on the proposal. Same rule as
+             * the settings dialog, which is the other place this is decided.
+             */
+            collection:
+              service.sale_mode === 'proposal'
+                ? null
+                : (service.price || 0) > 0
+                  ? (service.collection ?? 'invoice')
+                  : null,
           })),
         }
         : previewData.configuration,
@@ -1528,7 +1793,7 @@ export default function OnboardingChatPage() {
                       {selectedLanguage === 'he' ? 'הוסף שירותים' : selectedLanguage === 'es' ? 'Agregar servicios' : 'Add Services'}
                     </h3>
                     <button
-                      onClick={() => setShowServicesForm(false)}
+                      onClick={dismissServicesForm}
                       className="p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
                     >
                       <X className="w-4 h-4" />
@@ -1536,15 +1801,18 @@ export default function OnboardingChatPage() {
                   </div>
 
                   {/* Header Row */}
-                  <div className={cn('grid grid-cols-12 gap-2 mb-2 text-xs font-medium text-[var(--v2-text-secondary)]', isRTL && 'text-right')}>
+                  <div className={cn('grid grid-cols-[repeat(15,minmax(0,1fr))] gap-2 mb-2 text-xs font-medium text-[var(--v2-text-secondary)]', isRTL && 'text-right')}>
                     <div className="col-span-3">
                       {selectedLanguage === 'he' ? 'שם השירות' : selectedLanguage === 'es' ? 'Nombre del servicio' : 'Service Name'}
                     </div>
                     <div className="col-span-2">
                       {selectedLanguage === 'he' ? 'דורש תור?' : selectedLanguage === 'es' ? '¿Cita?' : 'Appointment?'}
                     </div>
-                    <div className="col-span-1">
-                      {selectedLanguage === 'he' ? 'משך' : selectedLanguage === 'es' ? 'Duración' : 'Duration'}
+                    <div className="col-span-2">
+                      {selectedLanguage === 'he' ? 'איך נמכר?' : selectedLanguage === 'es' ? '¿Cómo se vende?' : 'How sold?'}
+                    </div>
+                    <div className="col-span-2">
+                      {selectedLanguage === 'he' ? 'משך / הפסקה' : selectedLanguage === 'es' ? 'Duración / Pausa' : 'Duration / Break'}
                     </div>
                     <div className="col-span-2">
                       {selectedLanguage === 'he' ? 'מחיר' : selectedLanguage === 'es' ? 'Precio' : 'Price'}
@@ -1572,7 +1840,7 @@ export default function OnboardingChatPage() {
                   {/* Service Rows */}
                   <div className="space-y-2">
                     {servicesInput.map((service, index) => (
-                      <div key={index} className="grid grid-cols-12 gap-2">
+                      <div key={index} className="grid grid-cols-[repeat(15,minmax(0,1fr))] gap-2">
                         <input
                           type="text"
                           value={service.name}
@@ -1608,6 +1876,30 @@ export default function OnboardingChatPage() {
                           ))}
                         </div>
 
+                        {/* Bought outright, or quoted first. The same question
+                            the service settings ask, in the same words — a
+                            business must not be able to answer it one way here
+                            and another way there. */}
+                        <div className="col-span-2 flex gap-1">
+                          {(['direct', 'proposal'] as const).map(value => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => updateServiceRow(index, 'saleMode', value)}
+                              className={cn(
+                                'flex-1 px-1 py-2 text-[11px] rounded-lg border transition-colors truncate',
+                                service.saleMode === value
+                                  ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
+                                  : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                              )}
+                            >
+                              {value === 'direct'
+                                ? (selectedLanguage === 'he' ? 'ישירות' : selectedLanguage === 'es' ? 'Directo' : 'Direct')
+                                : (selectedLanguage === 'he' ? 'הצעה' : selectedLanguage === 'es' ? 'Cotizar' : 'Quote')}
+                            </button>
+                          ))}
+                        </div>
+
                         {/* Present but dead once the answer is no.
                             A service nobody books against a time has no
                             length, so the field stops accepting one — but it
@@ -1621,18 +1913,40 @@ export default function OnboardingChatPage() {
                             and the same number is live again. It is dropped on
                             the way out instead, so nothing downstream inherits
                             a length that is no longer being asked for. */}
-                        <input
-                          type="number"
-                          value={service.duration}
-                          onChange={(e) => updateServiceRow(index, 'duration', e.target.value)}
-                          disabled={service.isScheduled === false}
-                          placeholder="60"
-                          className={cn(
-                            'col-span-1 px-2 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
-                            service.isScheduled === false && 'opacity-40 cursor-not-allowed',
-                            isRTL && 'text-right'
-                          )}
-                        />
+                        <div className="col-span-2 flex gap-1">
+                          <input
+                            type="number"
+                            value={service.duration}
+                            onChange={(e) => updateServiceRow(index, 'duration', e.target.value)}
+                            disabled={service.isScheduled === false}
+                            placeholder="60"
+                            title={selectedLanguage === 'he' ? 'משך' : selectedLanguage === 'es' ? 'Duración' : 'Duration'}
+                            className={cn(
+                              'w-1/2 px-1.5 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)] tabular-nums',
+                              service.isScheduled === false && 'opacity-40 cursor-not-allowed',
+                              isRTL && 'text-right'
+                            )}
+                          />
+                          {/* The gap to leave after it. Dies with the duration:
+                              a service nobody books against a time has neither.
+                              Never asked before, so every service set up here
+                              silently took the platform's fifteen minutes. */}
+                          <input
+                            type="number"
+                            min="0"
+                            max="120"
+                            value={service.bufferMinutes}
+                            onChange={(e) => updateServiceRow(index, 'bufferMinutes', e.target.value)}
+                            disabled={service.isScheduled === false}
+                            placeholder="15"
+                            title={selectedLanguage === 'he' ? 'הפסקה בין פגישות' : selectedLanguage === 'es' ? 'Pausa entre citas' : 'Break between meetings'}
+                            className={cn(
+                              'w-1/2 px-1.5 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-muted)] tabular-nums',
+                              service.isScheduled === false && 'opacity-40 cursor-not-allowed',
+                              isRTL && 'text-right'
+                            )}
+                          />
+                        </div>
                         <div className="col-span-2 relative">
                           {/* The currency is picked here, in the row, where
                               the price is typed — not behind the payment
@@ -1654,8 +1968,12 @@ export default function OnboardingChatPage() {
                             type="number"
                             value={service.price}
                             onChange={(e) => updateServiceRow(index, 'price', e.target.value)}
+                            disabled={service.saleMode === 'proposal'}
                             placeholder="—"
                             className={cn(
+                              // Dead on a quote: the figure is named in the
+                              // proposal. Same rule as the service settings.
+                              service.saleMode === 'proposal' && 'opacity-40 cursor-not-allowed',
                               'w-full px-3 py-2 text-sm bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
                               isRTL ? 'pr-11 text-right' : 'pl-11'
                             )}
@@ -1679,7 +1997,18 @@ export default function OnboardingChatPage() {
                             // stops responding, which reads as "the send is
                             // disabled" rather than as a crash.
                             const priceText = service.price ?? '';
-                            const priced = priceText.trim() !== '' && parseFloat(priceText) > 0;
+                            /*
+                             * A quoted job has no collection method either.
+                             *
+                             * Nobody has said what the work costs, so there is
+                             * no money for a method to describe — it is settled
+                             * on the proposal. The service settings apply the
+                             * same rule, and these two must not disagree.
+                             */
+                            const priced =
+                              service.saleMode !== 'proposal' &&
+                              priceText.trim() !== '' &&
+                              parseFloat(priceText) > 0;
                             return (
                               <button
                                 key={value}
@@ -1703,11 +2032,20 @@ export default function OnboardingChatPage() {
                           })}
                         </div>
 
+                        {/* Greyed on a quote, with price and collection.
+                            A quoted service has no price yet, so a payment plan
+                            describes money that does not exist — the same rule
+                            the services settings apply, in the same words. The
+                            cell stays in place rather than disappearing: a row
+                            whose cells move as you change a toggle is harder to
+                            read than one whose cells grey out. */}
                         <button
                           type="button"
                           onClick={() => setPaymentDialogIndex(index)}
+                          disabled={!canSplit(service.saleMode, service.price)}
                           className={cn(
                             'col-span-1 px-1 py-2 text-xs rounded-lg border transition-colors truncate',
+                            !canSplit(service.saleMode, service.price) && 'opacity-40 cursor-not-allowed',
                             service.paymentType === 'installments'
                               ? 'border-[#14B8A6] text-[#14B8A6] bg-[#14B8A6]/10'
                               : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
@@ -1743,10 +2081,10 @@ export default function OnboardingChatPage() {
                       </span>
                       <span className="block text-[11px] text-[var(--v2-text-muted)] mt-0.5 leading-snug">
                         {selectedLanguage === 'he'
-                          ? 'את השאלות עצמן תבחר אחר כך — אני רק צריך לדעת אם צריך.'
+                          ? 'את השאלות עצמן תבחר אחר כך. אני רק צריך לדעת אם צריך.'
                           : selectedLanguage === 'es'
-                            ? 'Las preguntas las eliges después — solo necesito saber si hace falta.'
-                            : 'You pick the questions later — I just need to know whether to set one up.'}
+                            ? 'Las preguntas las eliges después. Solo necesito saber si hace falta.'
+                            : 'You pick the questions later. I just need to know whether to set one up.'}
                       </span>
                     </div>
                     <button
@@ -2068,15 +2406,18 @@ export default function OnboardingChatPage() {
       <div className="p-4 overflow-y-auto space-y-2">
         {/* Same three columns and the same currency control as the service
             settings, so a price is typed the one way it is typed everywhere. */}
-        <div className={cn('grid grid-cols-12 gap-2 text-xs font-medium text-[var(--v2-text-secondary)]', isRTL && 'text-right')}>
+        <div className={cn('grid grid-cols-[repeat(15,minmax(0,1fr))] gap-2 text-xs font-medium text-[var(--v2-text-secondary)]', isRTL && 'text-right')}>
           <div className="col-span-3">
             {selectedLanguage === 'he' ? 'שם השירות' : selectedLanguage === 'es' ? 'Nombre' : 'Service'}
           </div>
           <div className="col-span-2">
             {selectedLanguage === 'he' ? 'דורש תור?' : selectedLanguage === 'es' ? '¿Cita?' : 'Appointment?'}
           </div>
-          <div className="col-span-1">
-            {selectedLanguage === 'he' ? 'משך' : selectedLanguage === 'es' ? 'Duración' : 'Duration'}
+          <div className="col-span-2">
+            {selectedLanguage === 'he' ? 'איך נמכר?' : selectedLanguage === 'es' ? '¿Cómo se vende?' : 'How sold?'}
+          </div>
+          <div className="col-span-2">
+            {selectedLanguage === 'he' ? 'משך / הפסקה' : selectedLanguage === 'es' ? 'Duración / Pausa' : 'Duration / Break'}
           </div>
           <div className="col-span-2">
             {selectedLanguage === 'he' ? 'מחיר' : selectedLanguage === 'es' ? 'Precio' : 'Price'}
@@ -2094,7 +2435,7 @@ export default function OnboardingChatPage() {
         </div>
 
         {draftServices.map((service, index) => (
-          <div key={index} className="grid grid-cols-12 gap-2 items-center">
+          <div key={index} className="grid grid-cols-[repeat(15,minmax(0,1fr))] gap-2 items-center">
             <input
               type="text"
               value={service.service_name}
@@ -2125,21 +2466,67 @@ export default function OnboardingChatPage() {
               ))}
             </div>
 
+            {/* Bought outright, or quoted first. The same question the service
+                settings ask, in the same words — a business must not be able to
+                answer it one way here and another way there. */}
+            <div className="col-span-2 flex gap-1">
+              {(['direct', 'proposal'] as const).map(value => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => updateDraftService(index, 'sale_mode', value)}
+                  className={cn(
+                    'flex-1 px-1 py-2 text-[11px] rounded-lg border transition-colors truncate',
+                    (service.sale_mode ?? 'direct') === value
+                      ? 'border-[#14B8A6] bg-[#14B8A6]/10 text-[#14B8A6] font-semibold'
+                      : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
+                  )}
+                >
+                  {value === 'direct'
+                    ? (selectedLanguage === 'he' ? 'ישירות' : selectedLanguage === 'es' ? 'Directo' : 'Direct')
+                    : (selectedLanguage === 'he' ? 'הצעה' : selectedLanguage === 'es' ? 'Cotizar' : 'Quote')}
+                </button>
+              ))}
+            </div>
+
             {/* Dead, not gone — the same rule as the services row in the
                 chat above, because it is the same question asked twice and the
                 two grids must not answer it differently. */}
-            <input
-              type="number"
-              value={service.duration_minutes || ''}
-              onChange={e => updateDraftService(index, 'duration_minutes', e.target.value)}
-              disabled={service.is_scheduled === false}
-              placeholder="60"
-              className={cn(
-                'col-span-1 px-2 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
-                service.is_scheduled === false && 'opacity-40 cursor-not-allowed',
-                isRTL && 'text-right'
-              )}
-            />
+            {/* How long it runs, and the gap to leave after it.
+                Together in one cell because they are the same kind of fact and
+                die together: a service nobody books against a time has neither
+                a length nor a gap. The services settings put them side by side
+                for the same reason. */}
+            <div className="col-span-2 flex gap-1">
+              <input
+                type="number"
+                value={service.duration_minutes || ''}
+                onChange={e => updateDraftService(index, 'duration_minutes', e.target.value)}
+                disabled={service.is_scheduled === false}
+                placeholder="60"
+                title={selectedLanguage === 'he' ? 'משך' : selectedLanguage === 'es' ? 'Duración' : 'Duration'}
+                className={cn(
+                  'w-1/2 px-1.5 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)] tabular-nums',
+                  service.is_scheduled === false && 'opacity-40 cursor-not-allowed',
+                  isRTL && 'text-right'
+                )}
+              />
+              <input
+                type="number"
+                min="0"
+                max="120"
+                value={service.buffer_minutes ?? ''}
+                onChange={e => updateDraftService(index, 'buffer_minutes', e.target.value)}
+                disabled={service.is_scheduled === false}
+                placeholder="15"
+                title={selectedLanguage === 'he' ? 'הפסקה בין פגישות' : selectedLanguage === 'es' ? 'Pausa entre citas' : 'Break between meetings'}
+                className={cn(
+                  'w-1/2 px-1.5 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-muted)] tabular-nums',
+                  service.is_scheduled === false && 'opacity-40 cursor-not-allowed',
+                  isRTL && 'text-right'
+                )}
+              />
+            </div>
             <div className="col-span-2 relative">
               <div className={cn('absolute top-1/2 -translate-y-1/2 z-10', isRTL ? 'right-2.5' : 'left-2.5')}>
                 <ServiceCurrencySelect
@@ -2153,9 +2540,13 @@ export default function OnboardingChatPage() {
                 type="number"
                 value={service.price === null || service.price === undefined ? '' : service.price}
                 onChange={e => updateDraftService(index, 'price', e.target.value)}
+                disabled={service.sale_mode === 'proposal'}
                 placeholder="—"
                 className={cn(
                   'w-full px-3 py-2 text-sm bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--v2-primary)] text-[var(--v2-text-primary)]',
+                  // Dead, not gone — the same rule the duration follows, and
+                  // the same one the service settings follow for a quote.
+                  service.sale_mode === 'proposal' && 'opacity-40 cursor-not-allowed',
                   isRTL ? 'pr-11 text-right' : 'pl-11'
                 )}
               />
@@ -2166,7 +2557,16 @@ export default function OnboardingChatPage() {
                 read off exactly these answers. */}
             <div className="col-span-2 flex gap-1">
               {(['online', 'invoice'] as const).map(value => {
-                const priced = (service.price || 0) > 0;
+                /*
+                 * A quoted job has no collection method.
+                 *
+                 * Nobody has said what the work costs, so there is no money for
+                 * a method to describe — it is settled on the proposal. Same
+                 * rule the service settings apply, which is where this question
+                 * is answered the rest of the time.
+                 */
+                const priced =
+                  (service.sale_mode ?? 'direct') !== 'proposal' && (service.price || 0) > 0;
                 return (
                   <button
                     key={value}
@@ -2190,12 +2590,16 @@ export default function OnboardingChatPage() {
               })}
             </div>
 
-            {/* The same arrangement the settings dialog holds. */}
+            {/* The same arrangement the services settings hold — including
+                going dead on a quote, where price, collection and plan all
+                describe money nobody has named yet. */}
             <button
               type="button"
               onClick={() => setDraftPaymentIndex(index)}
+              disabled={!canSplit(service.sale_mode, service.price)}
               className={cn(
                 'col-span-1 px-1 py-2 text-xs rounded-lg border transition-colors truncate',
+                !canSplit(service.sale_mode, service.price) && 'opacity-40 cursor-not-allowed',
                 service.payment_plan
                   ? 'border-[#14B8A6] text-[#14B8A6] bg-[#14B8A6]/10'
                   : 'border-[var(--v2-border)] text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]'
@@ -2264,7 +2668,7 @@ export default function OnboardingChatPage() {
     currency: (service.currency as 'USD' | 'EUR' | 'ILS' | 'GBP') || currencyForLanguage(selectedLanguage),
     payment_type: (plan ? 'installments' : 'full') as 'full' | 'installments',
     installment_count: plan?.installment_count ?? 2,
-    installment_frequency: (plan?.installment_frequency ?? 'monthly') as 'weekly' | 'biweekly' | 'monthly',
+    installment_frequency: (plan?.installment_frequency ?? 'monthly') as 'weekly' | 'biweekly' | 'monthly' | 'quarterly',
     first_payment_due: 'on_booking' as const,
     first_payment_days: 7,
   };
@@ -2394,4 +2798,25 @@ export default function OnboardingChatPage() {
       </div>
     </div>
   );
+}
+
+/**
+ * Can this service's fee be split into instalments?
+ *
+ * Only where there IS a fee. Two ways there is not: the work is quoted, so the
+ * figure is named per client in the proposal; or nobody has typed one yet.
+ * Instalments of an unknown amount are not a plan — the dialog behind this
+ * button cannot even show what each payment would be.
+ *
+ * Shared by both service grids because they ask the same question, and the
+ * services settings apply the same rule: their payment section renders nothing
+ * unless the service is quoted or priced above zero.
+ */
+function canSplit(
+  saleMode: 'direct' | 'proposal' | undefined,
+  price: string | number | null | undefined
+): boolean {
+  if (saleMode === 'proposal') return false;
+  const amount = typeof price === 'string' ? parseFloat(price) : price;
+  return typeof amount === 'number' && Number.isFinite(amount) && amount > 0;
 }

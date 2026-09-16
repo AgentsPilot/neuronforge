@@ -232,6 +232,31 @@ export async function notifyOwnerOfLead(input: LeadAlertInput): Promise<LeadAler
      * record. Swallowed entirely, because an unmigrated table must never cost a
      * visitor their submission.
      */
+    /*
+     * An enquiry is recorded TWICE, under two names, and deliberately so.
+     *
+     * `form.submitted` is the website fact — a form on a page was filled in —
+     * and two acquisition detectors count it to judge how that page converts.
+     * `enquiry.received` is the sales fact: somebody asked us something, by
+     * whatever route. `SalesReplySlowDetector` reads the second and has never
+     * matched a row, because only the first was ever written.
+     *
+     * They are different questions at different levels, no detector counts
+     * both, and collapsing them would break whichever one lost its name.
+     */
+    if (input.kind === 'enquiry') {
+      void businessEventService
+        .emit(input.ownerId, {
+          eventType: 'enquiry.received',
+          category: 'sales',
+          entityType: 'contact',
+          entityId: input.contactId,
+          contactId: input.contactId,
+          sourceCapability: 'website',
+        } as Parameters<typeof businessEventService.emit>[1])
+        .catch(err => log.debug({ err }, 'Enquiry event write skipped'));
+    }
+
     void businessEventService
       .emit(input.ownerId, {
         eventType:
@@ -274,12 +299,37 @@ async function queueLeadReply(
   profile: { vertical?: string | null; sub_vertical?: string | null; user_code?: string | null } | null,
   locale: Locale
 ): Promise<void> {
+  /*
+   * Every exit below says why.
+   *
+   * These three returns were silent, and the failure they produce is invisible
+   * from both ends: the owner has approved "reply to new enquiries", no reply
+   * is ever queued, and the dashboard shows the enquiry waiting for a reply
+   * with nothing to explain it. A lead arrived, the platform decided not to
+   * answer, and said so to nobody.
+   *
+   * `info`, not `debug`: this is a lead going unanswered, which is the thing
+   * the whole feature exists to prevent — it should be findable in production
+   * logs without turning debug on after the fact.
+   */
+  const log = logger.child({ ownerId: input.ownerId, contactId: input.contactId });
+
   const bookingUrl = await resolveBookingUrl(input.ownerId, profile);
-  if (!bookingUrl) return; // Nothing bookable to point anyone at.
+  if (!bookingUrl) {
+    // Nothing bookable to point anyone at: no live page, no smart link.
+    log.info('No auto-reply queued: this business has no bookable link yet');
+    return;
+  }
 
   const services = (await schedulingServiceRepository.listAll(input.ownerId, true)).data ?? [];
   const candidates = buildLeadReplyCandidates({ services, bookingUrl });
-  if (candidates.length === 0) return;
+  if (candidates.length === 0) {
+    log.info(
+      { activeServices: services.length },
+      'No auto-reply queued: no reply candidate could be built from the active services'
+    );
+    return;
+  }
 
   const recommendation = await recommendLeadReply(
     candidates,
@@ -292,7 +342,13 @@ async function queueLeadReply(
     input.ownerId
   );
 
-  if (!recommendation) return;
+  if (!recommendation) {
+    log.info(
+      { candidates: candidates.length },
+      'No auto-reply queued: the model returned no recommendation'
+    );
+    return;
+  }
 
   await leadResponseRepository.enqueue({
     userId: input.ownerId,

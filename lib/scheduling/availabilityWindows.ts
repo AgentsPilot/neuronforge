@@ -58,9 +58,33 @@ export function windowsForDay(
   availability: unknown,
   dayName: string
 ): AvailabilityWindow[] {
-  if (!availability || typeof availability !== 'object') return [];
+  if (!availability) return [];
 
-  const raw = (availability as Record<string, unknown>)[dayName];
+  /*
+   * The column is sometimes a JSON STRING, not an object.
+   *
+   * `countOpenDays` in the stats route has always parsed for this case, and
+   * this did not — it returned no windows for a string, so the two disagreed
+   * about the same row: readiness counted open days while every caller of this
+   * (the publish gate, the booking page, the journey check) read the business
+   * as having no hours at all.
+   *
+   * Parsed here rather than at each call site, because "what are this day's
+   * windows" is exactly the question this function exists to answer, whatever
+   * shape the column came back in.
+   */
+  let source: unknown = availability;
+  if (typeof source === 'string') {
+    try {
+      source = JSON.parse(source);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!source || typeof source !== 'object') return [];
+
+  const raw = (source as Record<string, unknown>)[dayName];
   if (!raw) return [];
 
   // An array of ranges (current), or a single range object (older rows).

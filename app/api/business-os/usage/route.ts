@@ -124,6 +124,44 @@ async function readTokensPerCredit(): Promise<number> {
   }
 }
 
+/**
+ * The monthly allowance, in Pilot Credits.
+ *
+ * Stored as dollars — that is the figure a human decides — and converted here
+ * using `pilot_credit_cost_usd`, the same rate Stripe bills against. Deriving
+ * rather than storing the credit figure keeps the two from forking the first
+ * time the credit price moves.
+ *
+ * Both keys are read in ONE round trip. Two `.eq('config_key', ...)` queries
+ * would be two, and this runs on every dashboard load.
+ *
+ * Returns null when no ceiling applies — the key absent, deliberately set to 0,
+ * or a credit price of 0 that would make the division meaningless. The card
+ * reads null as "show consumption, draw no gauge", which is what it did before
+ * an allowance existed.
+ */
+async function readAllowanceCredits(): Promise<number | null> {
+  try {
+    const { data } = await supabaseServer
+      .from('ais_system_config')
+      .select('config_key, config_value')
+      .in('config_key', ['monthly_ai_allowance_usd', 'pilot_credit_cost_usd']);
+
+    const byKey = new Map((data ?? []).map((r) => [r.config_key, r.config_value]));
+
+    const allowanceUsd = parseFloat(String(byKey.get('monthly_ai_allowance_usd') ?? '10'));
+    // Same documented fallback the Stripe routes use.
+    const creditCostUsd = parseFloat(String(byKey.get('pilot_credit_cost_usd') ?? '')) || 0.00048;
+
+    if (!Number.isFinite(allowanceUsd) || allowanceUsd <= 0) return null;
+    if (!Number.isFinite(creditCostUsd) || creditCostUsd <= 0) return null;
+
+    return Math.round(allowanceUsd / creditCostUsd);
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
   const requestLogger = logger.child({ correlationId });
@@ -142,7 +180,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid range' }, { status: 400 });
     }
 
-    const [report, tokensPerCredit] = await Promise.all([
+    const [report, tokensPerCredit, allowanceCredits] = await Promise.all([
       // userId is the caller's, never a parameter — there is no way to ask for
       // somebody else's usage.
       new AIAnalyticsService(supabaseServer).getUsageAnalytics({
@@ -156,6 +194,7 @@ export async function GET(request: NextRequest) {
       // the BROWSER Supabase client, so calling it from a route throws a 500 —
       // which is exactly what happened.
       readTokensPerCredit(),
+      readAllowanceCredits(),
     ]);
 
     const toCredits = (tokens: number) => Math.round(tokens / tokensPerCredit);
@@ -218,6 +257,19 @@ export async function GET(request: NextRequest) {
         // token_usage is written by every AI call through the provider factory,
         // so it needs no per-feature wiring and cannot drift.
         credits: toCredits(report.totalTokens),
+        /*
+         * The ceiling the card counts down from, in Pilot Credits, or null
+         * when no ceiling applies.
+         *
+         * `remaining` is computed here rather than in the card so that the
+         * clamp lives in one place: consumption can exceed the allowance, and
+         * a negative remainder would draw the gauge backwards.
+         */
+        allowance: allowanceCredits,
+        remaining:
+          allowanceCredits === null
+            ? null
+            : Math.max(0, allowanceCredits - toCredits(report.totalTokens)),
         breakdown,
         daily,
         calls: report.totalCalls,

@@ -235,11 +235,22 @@ describe('[smoke] setup graph — shape', () => {
     const graph = resolveSetup(items(['services', 'availability']), CARD);
 
     expect(graph.mandatoryDone).toBe(2);
-    // services, hours, a way to book, Stripe, business details.
-    //
-    // Not invoice details: nothing this business sells is billed afterwards,
-    // and bank details exist to tell a client where to send a transfer. A card
-    // business is still offered the step, it is simply not owed it.
+    /*
+     * services, hours, a way to book, business details, invoice details.
+     *
+     * Stripe is NOT among them, though this business means to take cards. A
+     * missing processor does not stop it trading: the client books straight
+     * through and the booking is billed by invoice instead. `journeyReadiness`
+     * has always treated the processor as non-blocking for that reason, and the
+     * graph now agrees with it.
+     *
+     * Invoice details ARE owed, and this once said they were not — on the
+     * reasoning that nothing this business sells is billed afterwards. That
+     * holds only once a processor is live. Until Stripe is connected, a priced
+     * service set to collect by card falls back to being INVOICED, so the
+     * paperwork is the only way this business gets paid. It is the fallback
+     * that makes the processor optional, which is exactly why it cannot be.
+     */
     expect(graph.mandatoryTotal).toBe(5);
     expect(graph.allDone).toBe(2);
     expect(graph.allTotal).toBe(9);
@@ -342,12 +353,14 @@ describe('[smoke] setup graph — how the money is collected', () => {
       hasPricedServices: true, collection: 'mixed', appointments: true, collectsOnline: true, invoices: true, presence: 'full_website', plans: 'none',
     });
 
-    // Demanded, not merely offered. 'mixed' used to mean "cards are possible";
-    // now it means these particular services are collected by card, and those
-    // services cannot charge anybody until the processor is connected.
+    // Offered, not demanded — which is what this test has always been called.
+    // 'mixed' means these particular services are collected by card, so the
+    // processor is worth showing; but until it exists they are invoiced like
+    // everything else, and the business trades perfectly well without it.
     expect(find(graph, 'payments')).toBeDefined();
-    expect(find(graph, 'payments')?.mandatory).toBe(true);
-    // And the paperwork too, because the other half is billed afterwards.
+    expect(find(graph, 'payments')?.mandatory).toBe(false);
+    // The paperwork is the half that IS demanded: it is the route the money
+    // actually takes while there is no processor.
     expect(find(graph, 'invoicing')?.mandatory).toBe(true);
   });
 
@@ -483,7 +496,7 @@ describe('[smoke] setup graph — what the services say', () => {
   // three shapes the design was checked against, and the point of each is what
   // the setup does NOT ask for.
 
-  it('asks an appointments-and-cards business for hours and a processor', () => {
+  it('asks an appointments-and-cards business for hours, and offers a processor', () => {
     // A practice selling a paid session, a paid download and a free intro call.
     const graph = resolveSetup(items(), {
       hasPricedServices: true,
@@ -496,9 +509,20 @@ describe('[smoke] setup graph — what the services say', () => {
     });
 
     expect(find(graph, 'availability')?.mandatory).toBe(true);
-    expect(find(graph, 'payments')?.mandatory).toBe(true);
-    // Nothing is billed afterwards, so bank details are offered, not owed.
-    expect(find(graph, 'invoicing')?.mandatory).toBe(false);
+    // Shown, because they said they want cards. Not demanded, because they can
+    // invoice until the processor is connected.
+    expect(find(graph, 'payments')).toBeDefined();
+    expect(find(graph, 'payments')?.mandatory).toBe(false);
+    /*
+     * Owed, though nothing here is billed afterwards BY CHOICE.
+     *
+     * `payments` is not complete in this graph — Stripe is wanted and not yet
+     * connected — and until it is, every priced service is invoiced whatever it
+     * was set to collect. Calling the details optional here would have the
+     * chain say "not needed" about the one thing standing between this business
+     * and being paid, while the publish gate refuses the page for want of it.
+     */
+    expect(find(graph, 'invoicing')?.mandatory).toBe(true);
   });
 
   it('never mentions a card processor to a business that invoices for everything', () => {
@@ -534,7 +558,9 @@ describe('[smoke] setup graph — what the services say', () => {
 
     expect(find(graph, 'availability')).toBeUndefined();
     expect(find(graph, 'calendar')).toBeUndefined();
-    expect(find(graph, 'payments')?.mandatory).toBe(true);
+    // Offered to a business selling by card, never compulsory for one.
+    expect(find(graph, 'payments')).toBeDefined();
+    expect(find(graph, 'payments')?.mandatory).toBe(false);
   });
 
   it('demands nothing new from an account that has not said yet', () => {

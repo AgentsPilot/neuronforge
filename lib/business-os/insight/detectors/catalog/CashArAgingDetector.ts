@@ -40,7 +40,13 @@ export class CashArAgingDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'escalated_collection_sequence',
+    pairedProcessId: 'chase_overdue_invoices',
+    /*
+     * Runs even while this category's vector is dark, because an invoice crossing into an older bucket is a dated fact about that
+     * invoice, independent of how many others there have ever been.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'automate',
     eligibleForAutomation: true,
     ownerParameters: [

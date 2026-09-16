@@ -121,9 +121,26 @@ export class AcqTrafficDropDetector extends BaseDetector {
 
     // Estimate impact: lost visitors × conversion rate × avg deal value
     const lostVisitors = previousUnique - currentUnique;
-    const conversionRate = 0.02; // 2% form submission rate
-    const avgDealValue = 300;
-    const estimatedLoss = lostVisitors * conversionRate * avgDealValue;
+    /*
+     * Two rates, because this figure starts from TRAFFIC.
+     *
+     * Lost visitors are not lost leads. Applying the lead-to-paid rate straight
+     * to visitors treats a passer-by as someone who already made contact, which
+     * is the difference between a couple of percent and a third. The chain is
+     * visitors -> people who get in touch -> people who pay.
+     */
+    const visitorToLead = await this.resolveVisitorToLeadRate(userId);
+    const leadToPaid = await this.resolveLeadConversionRate(userId);
+    const conversionRate =
+      visitorToLead === null || leadToPaid === null ? null : visitorToLead * leadToPaid;
+    // This business's own figure, not a constant — see BaseDetector.
+    const avgDealValue = await this.resolveAverageDealValue(userId);
+    // Undefined, not zero: "no estimate" and "nothing at stake" are different
+    // claims, and the card omits the figure rather than printing a confident 0.
+    const estimatedLoss =
+      avgDealValue === null || conversionRate === null
+        ? undefined
+        : lostVisitors * conversionRate * avgDealValue;
 
     const result = this.createDetectionResult({
       severity,

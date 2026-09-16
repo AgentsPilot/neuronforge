@@ -106,13 +106,35 @@ const RENDERER_PATHS: Array<{ path: string; plan: Plan; why: string }> = [
   },
   {
     path: '{s1.percent_of.s2}',
-    why: 'one figure as a percentage of another',
+    why: 'a part as a percentage of the whole it came out of',
+    /*
+     * A real slice: the same entity, carrying the whole's filters plus one
+     * more. The fixture used to pair refunds with transactions — two different
+     * entities — and assert the validator accepted a percentage between them.
+     * It does not, correctly: a share needs a part and the whole it came out
+     * of, and the rule exists because the model once answered "₪34,350 out of
+     * ₪4,350, which is 790%".
+     */
     plan: {
       steps: [
-        { id: 's1', op: 'compute', entity: 'refunds', agg: { fn: 'sum', field: 'amount' } },
-        { id: 's2', op: 'compute', entity: 'transactions', agg: { fn: 'sum', field: 'net_amount' } },
+        {
+          id: 's1',
+          op: 'compute',
+          entity: 'invoices',
+          agg: { fn: 'sum', field: 'amount' },
+          where: [['status', 'eq', 'paid'], ['created_at', 'gte', '2026-01-01']],
+        },
+        {
+          id: 's2',
+          op: 'compute',
+          entity: 'invoices',
+          agg: { fn: 'sum', field: 'amount' },
+          where: [['created_at', 'gte', '2026-01-01']],
+        },
       ],
-    } as Plan,
+      // Through `unknown`: the literal's `where` widens to string[][], which no
+      // longer overlaps Plan's predicate tuple well enough for a direct cast.
+    } as unknown as Plan,
   },
   {
     path: '{= s1.value - s2.value }',

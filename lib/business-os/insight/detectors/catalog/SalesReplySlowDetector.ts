@@ -117,10 +117,14 @@ export class SalesReplySlowDetector extends BaseDetector {
       .eq('event_type', 'enquiry.received')
       .gte('created_at', weekAgo.toISOString());
 
-    const avgDealValue = 500;
-    const baseConversionRate = 0.2;
+    // This business's own figures — see BaseDetector.
+    const avgDealValue = await this.resolveAverageDealValue(userId);
+    const baseConversionRate = await this.resolveLeadConversionRate(userId);
     const enquiryCount = count || 0;
-    const estimatedLoss = enquiryCount * avgDealValue * baseConversionRate * (conversionDropPercent / 100);
+    const estimatedLoss =
+      avgDealValue === null || baseConversionRate === null
+        ? undefined
+        : enquiryCount * avgDealValue * baseConversionRate * (conversionDropPercent / 100);
 
     const result = this.createDetectionResult({
       severity,

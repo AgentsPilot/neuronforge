@@ -20,7 +20,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     name: 'Acquisition Funnel Breakdown',
     category: 'funnel',
     requiredDetectors: ['acq_traffic_drop', 'acq_low_conversion'],
-    optionalDetectors: ['crm_cold_leads', 'web_missing_cta', 'web_page_underperform'],
+    optionalDetectors: ['crm_cold_leads', 'web_missing_cta', 'web_page_underperform', 'conv_service_rate_drop'],
     minMatches: 2,
     storyTemplate:
       'Your acquisition funnel is broken at multiple points. ' +
@@ -40,7 +40,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     name: 'Revenue at Risk',
     category: 'revenue',
     requiredDetectors: ['cash_ar_overdue', 'cash_payment_issues'],
-    optionalDetectors: ['ret_cancellation_spike', 'cash_ar_aging', 'cash_refund_pattern'],
+    optionalDetectors: ['ret_cancellation_spike', 'cash_ar_aging', 'cash_refund_pattern', 'cash_booking_unpaid'],
     minMatches: 2,
     storyTemplate:
       'Revenue is at risk from multiple angles. ' +
@@ -60,7 +60,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     name: 'Client Retention Crisis',
     category: 'retention',
     requiredDetectors: ['crm_engagement_decay', 'ret_repeat_booking_low'],
-    optionalDetectors: ['ret_cancellation_spike', 'ret_no_show_spike'],
+    optionalDetectors: ['ret_cancellation_spike', 'ret_no_show_spike', 'ret_package_ending'],
     minMatches: 2,
     storyTemplate:
       'Your clients are disengaging. ' +
@@ -80,7 +80,7 @@ export const CORRELATION_PATTERNS: CorrelationPattern[] = [
     name: 'Sales Pipeline Stall',
     category: 'pipeline',
     requiredDetectors: ['crm_cold_leads', 'conv_pipeline_stuck'],
-    optionalDetectors: ['conv_followup_overdue', 'sales_stalled', 'sales_reply_slow'],
+    optionalDetectors: ['conv_followup_overdue', 'sales_stalled', 'sales_reply_slow', 'conv_no_next_step', 'conv_stage_dropoff'],
     minMatches: 2,
     storyTemplate:
       'Your sales pipeline is stalling. ' +

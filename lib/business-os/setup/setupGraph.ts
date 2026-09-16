@@ -315,7 +315,27 @@ export const SETUP_STEPS: GraphNode[] = [
     // for everything never does, and must not be asked to hand Stripe its ID
     // for an account it will not open.
     applies: shape => collectsOnline(shape),
-    mandatory: shape => collectsOnline(shape),
+    /*
+     * SHOWN to a card business, never COMPULSORY for one.
+     *
+     * A missing processor does not stop anybody trading. `journeySteps` drops
+     * the payment step when the processor is not ready, so the client books
+     * straight through, and `BookingLifecycleService` raises a `payment_invoices`
+     * row for any priced service regardless of Stripe. The business still takes
+     * the booking and still bills for it — by invoice instead of by card.
+     *
+     * `journeyReadiness.isBlockingGap` has said exactly this for some time:
+     * `hours` and `invoicing` block, `processor` does not. This node said the
+     * opposite, so the publish gate let a business go live while the readiness
+     * card told it it could not — two answers to one question, on one screen.
+     *
+     * The other half of that decision already holds below: `profile` and
+     * `invoicing` are compulsory the moment money can move. Saying "no
+     * processor is fine, we invoice instead" is only true if an invoice can
+     * actually be issued, so the fallback that makes this step harmless is
+     * itself protected. Nothing is lost by letting the processor wait.
+     */
+    mandatory: 'optional',
   },
 
   // Both become compulsory the moment money can move, by card or by invoice.
@@ -340,7 +360,34 @@ export const SETUP_STEPS: GraphNode[] = [
     // where something is actually billed afterwards, because bank details
     // exist to tell a client where to send a transfer.
     applies: shape => moneyMoves(shape),
-    mandatory: (shape, isComplete) => (isComplete('payments') ? true : needsInvoicePaperwork(shape)),
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * NO PROCESSOR MAKES THIS COMPULSORY, NOT OPTIONAL.
+     *
+     * This read `isComplete('payments') ? true : needsInvoicePaperwork(shape)`
+     * — so a business that had NOT connected Stripe was asked for invoice
+     * details only if it had chosen to invoice. That is precisely backwards:
+     * with no processor, every priced service falls back to being invoiced,
+     * whatever it was set to collect. The paperwork stops being a preference
+     * and becomes the only way the business gets paid.
+     *
+     * It also disagreed with the publish gate, which refuses to put a page live
+     * when a service will be invoiced and there is no way to issue one. The
+     * chain called those details optional while publishing demanded them.
+     *
+     * `moneyMoves` covers both routes — card or invoice — which is right here:
+     * without a processor there is no difference between them.
+     */
+    mandatory: (shape, isComplete) => {
+      if (isComplete('payments')) return true;
+
+      const moving = moneyMoves(shape);
+      if (moving === true) return true;
+      if (moving === false) return false;
+      // Unknown stays unknown: the chain shows a ghost rather than inventing an
+      // answer about somebody's money.
+      return needsInvoicePaperwork(shape);
+    },
     belongsTo: 'payments',
   },
 
@@ -547,6 +594,20 @@ export function nextStep(graph: ResolvedGraph): ResolvedStep | null {
  * no tax id on its invoices was reported as ready.
  */
 export function isReadyForClients(graph: ResolvedGraph): boolean {
+  /*
+   * An empty graph is not a ready business — it is an unanswered question.
+   *
+   * `resolveSetup` skips any step whose item was not computed, so a dashboard
+   * whose stats call failed resolves to zero steps, zero blockers, and this
+   * function said "ready". Every surface that asks it then made the same
+   * cheerful claim from no evidence at all: the status line under the greeting
+   * reported a business running quietly, and the readiness card removed itself
+   * entirely. A failed request looked exactly like success.
+   *
+   * Nothing compulsory outstanding only means something when something was
+   * examined.
+   */
+  if (graph.steps.length === 0) return false;
   return graph.blocking.length === 0;
 }
 

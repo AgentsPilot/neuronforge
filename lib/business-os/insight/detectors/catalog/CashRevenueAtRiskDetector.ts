@@ -1,0 +1,217 @@
+/**
+ * Revenue Sitting In The Pipeline
+ *
+ * One number for money the business has earned or been promised and has not
+ * received. Every part of it is already reported somewhere — invoices on the
+ * payments page, instalments on the plan, proposals in their own list — which
+ * is exactly the problem: an owner has to open three screens and add up, and
+ * nobody does that, so the total is never known.
+ *
+ * Two kinds of money, deliberately counted separately and then together:
+ *
+ *  - OWED. Work that has been priced and billed: issued invoices, and plan
+ *    instalments still to come. The client has agreed; the cash has not moved.
+ *  - QUOTED. Proposals sent and not yet answered. Nobody has agreed to this
+ *    money yet, so it is softer — but it is the half that disappears silently
+ *    if nobody follows up, and it is real enough to chase.
+ *
+ * It does NOT double-count an accepted proposal that has become an invoice:
+ * only undecided proposals are quoted revenue, and once one is accepted its
+ * invoice picks it up on the owed side.
+ *
+ * @see docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md
+ */
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { BaseDetector } from './BaseDetector';
+import { ISSUED_INVOICE_STATUSES } from '@/lib/repositories/PaymentRepository';
+import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+
+/** Instalment states that still owe money. */
+const INSTALMENT_OUTSTANDING = new Set(['pending', 'scheduled', 'overdue', 'failed']);
+
+/**
+ * Proposal states where the client has not answered.
+ *
+ * `superseded` is excluded: a replaced quote is not a second opportunity, and
+ * counting it would inflate the pipeline every time a price was revised.
+ */
+const PROPOSAL_OPEN = new Set(['sent', 'pending', 'viewed']);
+
+/** Below this the total is not worth a card of its own. */
+const MIN_REPORTABLE = 1;
+
+export class CashRevenueAtRiskDetector extends BaseDetector {
+  definition: DetectorDefinition = {
+    id: 'cash_revenue_at_risk',
+    name: 'Revenue In The Pipeline',
+    category: 'cash_flow',
+    description: 'Totals money that has been billed or quoted and has not arrived',
+
+    watchedMetrics: ['cashflow.ar_total'],
+    eventTypes: [],
+
+    baselineWindow: 'month',
+    thresholdType: 'absolute',
+    threshold: 0,
+    direction: 'above',
+    minSamples: 1,
+
+    severityFn: (total: number, owedShare: number): InsightSeverity => {
+      /*
+       * Severity follows what is OWED rather than the headline total. Quoted
+       * money not yet answered is an ordinary state of business; money already
+       * billed and not paid is the part that should raise a voice, so a large
+       * pipeline made mostly of fresh quotes does not read as a crisis.
+       */
+      if (owedShare >= 5000) return 'high';
+      if (owedShare >= 1000 || total >= 10000) return 'medium';
+      return 'low';
+    },
+
+    // Chasing what is owed is the action; the existing process does it.
+    pairedProcessId: 'chase_overdue_invoices',
+    /*
+     * Runs even while this category's vector is dark, because money owed is a sum of documents that exist, not a movement against a
+     * baseline — the first unpaid invoice is as real as the fiftieth.
+     */
+    ignoresVectorMaturity: true,
+
+    consentTier: 'automate',
+    eligibleForAutomation: false,
+    ownerParameters: [],
+    guardrails: [],
+    cooldownHours: 72,
+  };
+
+  constructor(supabase: SupabaseClient) {
+    super(supabase);
+  }
+
+  async evaluate(userId: string): Promise<DetectionResult | null> {
+    if (await this.isOnCooldown(userId)) {
+      this.logDetection(userId, null);
+      return null;
+    }
+
+    const [invoicesResult, instalmentsResult, proposalsResult] = await Promise.all([
+      this.supabase
+        .from('payment_invoices')
+        .select('id, amount, refunded_amount, currency, contact_id')
+        .eq('user_id', userId)
+        .in('status', [...ISSUED_INVOICE_STATUSES]),
+
+      this.supabase
+        .from('payment_plan_installments')
+        .select('id, amount, currency, status, contact_id')
+        .eq('user_id', userId),
+
+      this.supabase
+        .from('proposals')
+        .select('id, total, currency, status, contact_id')
+        .eq('user_id', userId),
+    ]);
+
+    /*
+     * A failed read here would understate the total, and an understated total
+     * is worse than none: the owner would be told a smaller, confident-looking
+     * figure and act on it. Nothing is reported unless every source answered.
+     */
+    for (const [source, error] of [
+      ['payment_invoices', invoicesResult.error],
+      ['payment_plan_installments', instalmentsResult.error],
+      ['proposals', proposalsResult.error],
+    ] as const) {
+      if (error) throw new Error(`revenue_at_risk: ${source} unreadable — ${error.message}`);
+    }
+
+    const contacts = new Set<string>();
+    const entityIds: string[] = [];
+
+    let invoiceOwed = 0;
+    for (const row of invoicesResult.data ?? []) {
+      const outstanding = toNumber(row.amount) - toNumber(row.refunded_amount);
+      if (outstanding <= 0) continue;
+      invoiceOwed += outstanding;
+      entityIds.push(String(row.id));
+      if (row.contact_id) contacts.add(String(row.contact_id));
+    }
+
+    let instalmentOwed = 0;
+    for (const row of instalmentsResult.data ?? []) {
+      if (!INSTALMENT_OUTSTANDING.has(String(row.status ?? '').toLowerCase())) continue;
+      const amount = toNumber(row.amount);
+      if (amount <= 0) continue;
+      instalmentOwed += amount;
+      entityIds.push(String(row.id));
+      if (row.contact_id) contacts.add(String(row.contact_id));
+    }
+
+    let quoted = 0;
+    let openProposals = 0;
+    for (const row of proposalsResult.data ?? []) {
+      if (!PROPOSAL_OPEN.has(String(row.status ?? '').toLowerCase())) continue;
+      const amount = toNumber(row.total);
+      if (amount <= 0) continue;
+      quoted += amount;
+      openProposals += 1;
+      entityIds.push(String(row.id));
+      if (row.contact_id) contacts.add(String(row.contact_id));
+    }
+
+    const owed = invoiceOwed + instalmentOwed;
+    const total = owed + quoted;
+
+    if (total < MIN_REPORTABLE || contacts.size === 0) {
+      this.logDetection(userId, null);
+      return null;
+    }
+
+    const currency =
+      (invoicesResult.data ?? [])[0]?.currency ??
+      (instalmentsResult.data ?? [])[0]?.currency ??
+      (proposalsResult.data ?? [])[0]?.currency ??
+      undefined;
+
+    const severity = this.definition.severityFn(total, owed);
+
+    const result = this.createDetectionResult({
+      severity,
+      metricKey: 'cashflow.ar_total',
+      currentValue: Math.round(total * 100) / 100,
+      baselineValue: 0,
+      thresholdValue: MIN_REPORTABLE,
+      percentChange: 100,
+      direction: 'above',
+      affectedEntityType: 'contact',
+      affectedEntityIds: entityIds,
+      // The number the owner acts on is how many PEOPLE to chase, not how many
+      // documents exist — one client with three unpaid instalments is one call.
+      affectedCount: contacts.size,
+      estimatedImpactUsd: Math.round(total * 100) / 100,
+      impactDirection: 'opportunity',
+      impactPeriod: 'monthly',
+      processParameters: {
+        currency,
+        owed_total: Math.round(owed * 100) / 100,
+        quoted_total: Math.round(quoted * 100) / 100,
+        invoice_owed: Math.round(invoiceOwed * 100) / 100,
+        instalment_owed: Math.round(instalmentOwed * 100) / 100,
+        open_proposals: openProposals,
+        people_to_chase: contacts.size,
+      },
+    });
+
+    this.logDetection(userId, result);
+    return result;
+  }
+}
+
+function toNumber(value: number | string | null | undefined): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}

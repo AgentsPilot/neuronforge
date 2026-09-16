@@ -91,6 +91,10 @@ function transformServiceForBlock(
     // Carried so the public page can describe each service's own journey.
     is_scheduled: service.is_scheduled !== false,
     collection: service.collection ?? null,
+    // And whether it is bought or quoted, which decides the price line and the
+    // button's words. Absent, a quoted service reads as 'direct' and shows an
+    // empty space where "Price on request" belongs.
+    sale_mode: service.sale_mode || 'direct',
     // Carried for the same reason: the payment step describes what the client
     // is agreeing to, and that includes the split when there is one.
     paymentPlan: plansByService[service.id]

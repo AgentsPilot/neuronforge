@@ -27,14 +27,44 @@ export class WebMissingCtaDetector extends BaseDetector {
     direction: 'above',
     minSamples: 1,
 
-    severityFn: (pageType: string): InsightSeverity => {
-      // Homepage missing CTA is critical
-      if (pageType === 'homepage') return 'critical';
-      if (pageType === 'landing' || pageType === 'services') return 'high';
-      return 'medium';
-    },
+    /*
+     * Severity here is decided by WHICH page is missing its call to action, not
+     * by how far a number moved — so the shared `(delta, baseline)` shape does
+     * not fit, and this declaration quietly contradicted it. The real logic
+     * lives in `severityForPageType` below; this satisfies the interface every
+     * detector shares and is not what runs.
+     */
+    severityFn: (): InsightSeverity => 'medium',
 
-    pairedProcessId: 'add_cta_block',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `add_cta_block`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
+    /*
+     * Runs even while this category's vector is dark, because a page with no way to get in touch is a fact about the page, not a
+     * movement in a metric — and gating it on 25 visitors is circular: the CTA
+     * is what turns visitors into enquiries, so the owner would be told why the
+     * page does not convert only once it had started converting.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'suggest',
     eligibleForAutomation: false,
     ownerParameters: [],
@@ -103,7 +133,7 @@ export class WebMissingCtaDetector extends BaseDetector {
     else if (pageTypes.includes('landing')) highestSeverityType = 'landing';
     else if (pageTypes.includes('services')) highestSeverityType = 'services';
 
-    const severity = this.definition.severityFn(highestSeverityType);
+    const severity = severityForPageType(highestSeverityType);
 
     // Get page views for affected pages to estimate impact
     const pageIds = pagesWithoutCta.map((p) => p.id);
@@ -119,10 +149,15 @@ export class WebMissingCtaDetector extends BaseDetector {
     const totalViews = pageViews?.length || 0;
 
     // Estimate lost conversions: views × expected conversion rate × avg deal value
-    const expectedConversionRate = 0.02; // 2%
-    const avgDealValue = 300;
-    const missedConversions = Math.floor(totalViews * expectedConversionRate);
-    const estimatedLoss = missedConversions * avgDealValue;
+    /*
+     * No money on this one.
+     *
+     * The figure was visitors x 2% x £300, and nothing in the platform measures
+     * either factor: visitor-to-enquiry is not recorded, and £300 was invented.
+     * A page with no way to get in touch is worth saying on its own; inventing
+     * what it costs adds nothing the owner can check.
+     */
+    const estimatedLoss = undefined;
 
     // Group by page type
     const typeBreakdown = pagesWithoutCta.reduce((acc, p) => {
@@ -148,7 +183,6 @@ export class WebMissingCtaDetector extends BaseDetector {
         pages_without_cta: pagesWithoutCta.length,
         page_type_breakdown: typeBreakdown,
         total_views_30d: totalViews,
-        missed_conversions: missedConversions,
         pages: pagesWithoutCta.map((p) => ({
           id: p.id,
           type: p.page_type,
@@ -161,4 +195,17 @@ export class WebMissingCtaDetector extends BaseDetector {
     this.logDetection(userId, result);
     return result;
   }
+}
+
+/**
+ * How bad a missing call to action is, by the page it is missing from.
+ *
+ * A homepage with no way to get in touch is a different problem from a blog
+ * post with none, and that judgement is about a page type rather than a metric
+ * — which is why it could never sit in the shared `severityFn` shape.
+ */
+function severityForPageType(pageType: string): InsightSeverity {
+  if (pageType === 'homepage') return 'critical';
+  if (pageType === 'landing' || pageType === 'services') return 'high';
+  return 'medium';
 }
