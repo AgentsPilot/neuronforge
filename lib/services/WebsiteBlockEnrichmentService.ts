@@ -185,6 +185,8 @@ export class WebsiteBlockEnrichmentService {
         return this.enrichPricingBlock(userId, templateContent as PricingBlockContent, language);
       case 'contact_form':
         return this.enrichContactFormBlock(userId, templateContent as ContactFormBlockContent, language, userEmail);
+      case 'header':
+        return this.enrichHeaderBlock(userId, templateContent, language);
       case 'process':
         return this.enrichProcessBlock(userId, templateContent as ProcessBlockContent, language);
       case 'faq':
@@ -829,6 +831,60 @@ export class WebsiteBlockEnrichmentService {
    *           2. Auto-generated from capabilities
    *           3. Template defaults
    */
+  /**
+   * The header's call to action, with its words and its destination agreed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY ENRICHMENT TOUCHES THIS AT ALL
+   *
+   * The label used to be written by the model and the link hardcoded, so pages
+   * exist right now whose header says "Contact Us" and points at `#services`.
+   * Fixing generation does nothing for them — they are already written — and
+   * this runs on every publish and on Sync with Business Data, which is where
+   * a page gets brought back in line with the business.
+   *
+   * Only ever moves the LINK, and only when the label is unmistakably about
+   * getting in touch. An owner who typed their own words keeps them; what they
+   * cannot keep is a button that goes somewhere other than where it says.
+   */
+  private async enrichHeaderBlock(
+    userId: string,
+    templateContent: Record<string, unknown>,
+    language: string
+  ): Promise<EnrichmentResult<Record<string, unknown>>> {
+    const cta = templateContent.cta_button as { text?: string; link?: string } | null | undefined;
+    const label = cta?.text?.trim().toLowerCase();
+
+    if (!cta || !label) {
+      return { content: templateContent, enriched: false, source: 'template', enrichedFields: [] };
+    }
+
+    /*
+     * Three languages, matched loosely on purpose.
+     *
+     * "Contact", "Contact us", "Get in touch", "צרו קשר", "Contáctanos" — a
+     * substring match covers the phrasings the model actually produces without
+     * trying to enumerate them. A false positive sends a visitor to the contact
+     * form, which is where a button with those words should have gone anyway.
+     */
+    const SAYS_CONTACT = /contact|get in touch|צור קשר|צרו קשר|יצירת קשר|contáct|contacta/i;
+    if (!SAYS_CONTACT.test(label) || cta.link === '#contact') {
+      return { content: templateContent, enriched: false, source: 'template', enrichedFields: [] };
+    }
+
+    logger.info(
+      { userId, language, from: cta.link },
+      'Header button says contact; pointing it at the contact section'
+    );
+
+    return {
+      content: { ...templateContent, cta_button: { ...cta, link: '#contact' } },
+      enriched: true,
+      source: 'profile',
+      enrichedFields: ['cta_button.link'],
+    };
+  }
+
   private async enrichProcessBlock(
     userId: string,
     templateContent: ProcessBlockContent,

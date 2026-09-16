@@ -104,6 +104,9 @@ export const LABELS = {
     back: 'Back',
     noServices: 'No services available at this time.',
     noSlots: 'No available times for this date',
+    noHoursOwnerTitle: 'Clients cannot pick a time yet',
+    noHoursOwnerBody: 'You have not set any working hours, so this step has an empty calendar. It also stops the website being published.',
+    noHoursOwnerCta: 'Set working hours',
     loading: 'Loading...',
     bookNow: 'Book Now',
     continueToPayment: 'Continue to Payment',
@@ -175,6 +178,9 @@ export const LABELS = {
     back: 'Volver',
     noServices: 'No hay servicios disponibles en este momento.',
     noSlots: 'No hay horarios disponibles para esta fecha',
+    noHoursOwnerTitle: 'Los clientes aún no pueden elegir hora',
+    noHoursOwnerBody: 'No has configurado tu horario, así que este paso muestra un calendario vacío. También impide publicar el sitio.',
+    noHoursOwnerCta: 'Configurar horario',
     loading: 'Cargando...',
     bookNow: 'Reservar Ahora',
     continueToPayment: 'Continuar al Pago',
@@ -246,6 +252,9 @@ export const LABELS = {
     back: 'חזרה',
     noServices: 'אין שירותים זמינים כרגע.',
     noSlots: 'אין שעות זמינות לתאריך זה',
+    noHoursOwnerTitle: 'לקוחות עדיין לא יכולים לבחור שעה',
+    noHoursOwnerBody: 'לא הגדרת שעות פעילות, ולכן השלב הזה מציג לוח ריק. זה גם מונע את פרסום האתר.',
+    noHoursOwnerCta: 'הגדר שעות פעילות',
     loading: '...טוען',
     bookNow: 'הזמן עכשיו',
     continueToPayment: 'המשך לתשלום',
@@ -304,8 +313,31 @@ export const LABELS = {
   }
 };
 
-// Helper function to format duration in days/hours/minutes
-function formatDuration(minutes: number, labels: typeof LABELS['en']): string {
+/**
+ * A duration in days / hours / minutes, or nothing at all.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT CAN RETURN NULL
+ *
+ * The parameter was typed `number` and trusted. A service that carries no
+ * duration — anything not scheduled, which is every invoiced or
+ * pay-up-front offer — reaches this with null, `null < 60` is true in
+ * JavaScript, and the template literal renders it: "null min", printed under
+ * the service name on the booking dialog's summary.
+ *
+ * Returning null rather than a tidied "0 min" is the point. A service with no
+ * duration is not a service that lasts zero minutes; it is one where the
+ * question does not apply, and the honest rendering is to say nothing. Every
+ * caller checks.
+ */
+function formatDuration(
+  minutes: number | null | undefined,
+  labels: typeof LABELS['en']
+): string | null {
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) {
+    return null;
+  }
+
   if (minutes < 60) {
     return `${minutes} ${labels.minutes}`;
   }
@@ -502,12 +534,15 @@ export function ServicesStep({ services, loading, primaryColor, onSelect, isRTL,
                   {service.description}
                 </p>
               )}
-              <div className="flex items-center gap-3 mt-2 text-sm ap-ink-3">
-                <span className="flex items-center gap-1">
-                  <Clock className="w-4 h-4" />
-                  {service.duration_minutes} {labels.minutes}
-                </span>
-              </div>
+              {/* The clock only appears for something that takes time. */}
+              {formatDuration(service.duration_minutes, labels) && (
+                <div className="flex items-center gap-3 mt-2 text-sm ap-ink-3">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-4 h-4" />
+                    {formatDuration(service.duration_minutes, labels)}
+                  </span>
+                </div>
+              )}
             </div>
             <div className="text-end flex-shrink-0">
               <span className="apc-price font-semibold" style={{ color: primaryColor }}>
@@ -547,6 +582,17 @@ interface DateTimeStepProps {
   labels: typeof LABELS.en;
   theme?: BlockRendererProps['theme'];
   locale?: string;
+  /**
+   * The editor is looking at this, not a client.
+   *
+   * The two audiences need opposite things from an empty calendar: a client is
+   * told there is nothing on this date and moves on, while the business needs
+   * to know it has set no hours AT ALL — which is a setting they have not
+   * filled in, and the one gap that stops the site being published.
+   */
+  isPreview?: boolean;
+  /** The API's reason code, when it gave one. */
+  slotsReason?: string | null;
 }
 
 export function DateTimeStep({
@@ -562,7 +608,9 @@ export function DateTimeStep({
   isRTL,
   labels,
   theme,
-  locale = 'en'
+  locale = 'en',
+  isPreview = false,
+  slotsReason = null
 }: DateTimeStepProps) {
   // Generate dates for next 14 days
   const dates = Array.from({ length: 14 }, (_, i) => {
@@ -603,7 +651,9 @@ export function DateTimeStep({
           </div>
           <div>
             <h4 className="font-medium ap-ink">{service.name}</h4>
-            <p className="text-sm ap-ink-3">{service.duration_minutes} {labels.minutes}</p>
+            {formatDuration(service.duration_minutes, labels) && (
+              <p className="text-sm ap-ink-3">{formatDuration(service.duration_minutes, labels)}</p>
+            )}
           </div>
         </div>
       </div>
@@ -647,7 +697,40 @@ export function DateTimeStep({
               <Loader2 className="w-6 h-6 animate-spin ap-ink-3" />
             </div>
           ) : slots.length === 0 ? (
-            <p className="text-center py-8 ap-ink-3">{labels.noSlots}</p>
+            /*
+              Two audiences, opposite needs.
+
+              A client is told there is nothing on this date and moves on. The
+              BUSINESS, looking at its own preview, was told the same thing —
+              and "no available times for this date" reads as a quiet day, not
+              as "you have never set any working hours", which is what it
+              actually meant and which also stops the site being published.
+            */
+            isPreview && slotsReason === 'no_availability_configured' ? (
+              <div
+                className="my-4 px-4 py-3 text-sm bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200"
+                style={{ borderRadius: 'var(--ap-radius-md)' }}
+                role="status"
+              >
+                <p className="font-semibold">{labels.noHoursOwnerTitle}</p>
+                <p className="mt-1 opacity-90">{labels.noHoursOwnerBody}</p>
+                {/*
+                  Opens the same Configuration dialog the rest of Business OS
+                  uses. The preview runs in its own document, so this is a link
+                  rather than a call into the editor's context.
+                */}
+                <a
+                  href="/business-os/settings?tab=availability"
+                  target="_top"
+                  className="mt-2 inline-flex items-center gap-1 font-medium underline underline-offset-2 hover:opacity-80"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  {labels.noHoursOwnerCta}
+                </a>
+              </div>
+            ) : (
+              <p className="text-center py-8 ap-ink-3">{labels.noSlots}</p>
+            )
           ) : (
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
               {slots.map((slot, idx) => (
@@ -774,9 +857,11 @@ export function DetailsStep({
                   {formatFullDate(slot.start)} at {formatTime(slot.start)}
                 </p>
               ) : (
-                <p className="text-sm ap-ink-3">
-                  {formatDuration(service.duration_minutes, labels)}
-                </p>
+                formatDuration(service.duration_minutes, labels) && (
+                  <p className="text-sm ap-ink-3">
+                    {formatDuration(service.duration_minutes, labels)}
+                  </p>
+                )
               )}
             </div>
           </div>
@@ -1315,7 +1400,9 @@ function PaymentStep({ service, bookingId, primaryColor, onBack, onComplete, sub
       >
         <div>
           <h4 className="font-medium ap-ink">{service.name}</h4>
-          <p className="text-sm ap-ink-3">{formatDuration(service.duration_minutes, labels)}</p>
+          {formatDuration(service.duration_minutes, labels) && (
+            <p className="text-sm ap-ink-3">{formatDuration(service.duration_minutes, labels)}</p>
+          )}
         </div>
 
         <div className="mt-3 pt-3 border-t ap-line">
@@ -1838,6 +1925,7 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
   // Slots
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
+  const [slotsReason, setSlotsReason] = useState<string | null>(null);
 
   // Contact details
   const [clientName, setClientName] = useState('');
@@ -1971,12 +2059,46 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
       );
       const data = await response.json();
       if (data.success && data.services) {
-        setServices(data.services.map((s: { id: string; service_name: string; description: string | null; duration_minutes: number; price: number | null; currency: string; paymentPlan?: ServicePaymentPlan }) => ({
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * THE SHAPE THIS ENDPOINT ACTUALLY RETURNS.
+         *
+         * `/api/website/blocks/services` exists to feed website BLOCKS, so it
+         * returns display values: `name`, a `price` already formatted as
+         * "$200", and `duration` as "60 min". This mapping read the REPOSITORY
+         * shape instead — `service_name`, a numeric `price`, `duration_minutes`
+         * — none of which the response carries.
+         *
+         * Every field therefore came back undefined, and the step rendered them
+         * anyway: a blank service name, "min" with no number, and `$200` handed
+         * to a formatter that prepends a currency symbol, giving "$$200". A
+         * service with no price gave "$undefined".
+         *
+         * The endpoint already publishes the raw values beside the pretty ones
+         * — `priceRaw` and `durationMinutes` — precisely so a caller that needs
+         * to compute rather than display can have them. That is this caller:
+         * `ServicesStep` formats the price itself, and the date step needs the
+         * duration as a number to lay out slots.
+         */
+        type ServiceResponse = {
+          id: string;
+          name: string;
+          description: string | null;
+          durationMinutes: number | null;
+          priceRaw?: number;
+          currency: string;
+          paymentPlan?: ServicePaymentPlan;
+        };
+
+        setServices((data.services as ServiceResponse[]).map(s => ({
           id: s.id,
-          name: s.service_name,
-          description: s.description,
-          duration_minutes: s.duration_minutes,
-          price: s.price,
+          name: s.name,
+          description: s.description ?? null,
+          duration_minutes: s.durationMinutes ?? 0,
+          // `null`, never `undefined`: the step reads null as "free" and shows
+          // the word, while undefined reaches the formatter and prints
+          // "$undefined". The endpoint sends undefined for an unpriced service.
+          price: s.priceRaw ?? null,
           currency: s.currency || 'USD',
           // Kept, so a service picked from the list describes its terms as
           // fully as one arrived at from a pricing card.
@@ -2014,6 +2136,9 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
             display_time: slot.display_time
           }));
           setSlots(mappedSlots);
+          // Kept so the step can tell "no hours set at all" from "nothing free
+          // on this date" — the same empty list, two different problems.
+          setSlotsReason((data.reason as string) ?? null);
           // Show message if no slots (e.g., "No availability configured")
           if (mappedSlots.length === 0 && data.message) {
             setError(data.message);
@@ -2514,6 +2639,8 @@ export function ProcessFlowSection({ content, styles, theme, isRTL, className, l
                     primaryColor={primaryColor}
                     onDateSelect={handleSelectDate}
                     onSlotSelect={handleSelectSlot}
+                    isPreview={isPreview}
+                    slotsReason={slotsReason}
                     onBack={hasInitialService ? undefined : () => goToStep('services', 'backward')}
                     isRTL={isRTL || false}
                     labels={labels}

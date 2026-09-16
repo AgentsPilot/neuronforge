@@ -1,11 +1,15 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import {
-  Users, Calendar, CreditCard, Mail, FileText, ClipboardCheck,
-  Send, CheckCircle, ArrowRight, Sparkles, type LucideIcon
-} from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
+/*
+ * No icon LIST here any more. The names a step may carry — and the icon each
+ * one draws — live in `components/website/stepIcons`, which the editor's picker
+ * reads as well. Two lists were how an owner came to pick Phone and publish an
+ * envelope.
+ */
 import type { BlockRendererProps, ProcessStep, JourneyServiceFacts } from './types';
+import { stepIconFor } from '@/components/website/stepIcons';
 import { journeySteps, type BookingStep } from '@/lib/business-os/clientJourney';
 import { getBlockTranslation } from '@/lib/i18n/website-block-translations';
 
@@ -68,39 +72,7 @@ const CLIENT_FLOW_STEPS: Record<ClientFlowStepKey, Record<string, { title: strin
 };
 
 // Map icon names to Lucide components (both PascalCase and lowercase keys)
-const ICON_REGISTRY: Record<string, LucideIcon> = {
-  // PascalCase keys
-  Users,
-  Calendar,
-  CreditCard,
-  Mail,
-  FileText,
-  ClipboardCheck,
-  Send,
-  CheckCircle,
-  ArrowRight,
-  // Lowercase keys (from AI generation)
-  users: Users,
-  calendar: Calendar,
-  creditcard: CreditCard,
-  mail: Mail,
-  filetext: FileText,
-  clipboardcheck: ClipboardCheck,
-  clipboard: ClipboardCheck,
-  send: Send,
-  checkcircle: CheckCircle,
-  check: CheckCircle,
-  arrowright: ArrowRight,
-  user: Users,
-  phone: Mail, // Fallback to Mail icon for phone
-  heart: Sparkles, // Fallback to Sparkles for heart
-  star: Sparkles, // Fallback to Sparkles for star
-};
 
-// Helper to check if string is a Lucide icon name
-const isLucideIconName = (icon: string): boolean => {
-  return icon.toLowerCase() in ICON_REGISTRY || icon in ICON_REGISTRY;
-};
 
 // Process step icon component
 interface StepIconProps {
@@ -109,23 +81,32 @@ interface StepIconProps {
   size?: 'sm' | 'md' | 'lg';
 }
 
-function StepIcon({ icon, fallback, size = 'md' }: StepIconProps) {
+export function StepIcon({ icon, fallback, size = 'md' }: StepIconProps) {
   const sizeClasses = {
     sm: 'w-5 h-5',
     md: 'w-6 h-6',
     lg: 'w-8 h-8'
   };
 
-  if (icon && isLucideIconName(icon)) {
-    // Try exact match first, then lowercase
-    const IconComponent = ICON_REGISTRY[icon] || ICON_REGISTRY[icon.toLowerCase()];
-    if (IconComponent) {
-      return <IconComponent className={sizeClasses[size]} />;
-    }
+  const IconComponent = stepIconFor(icon);
+  if (IconComponent) {
+    return <IconComponent className={sizeClasses[size]} />;
   }
 
-  // If icon is an emoji, render it
-  if (icon && !isLucideIconName(icon)) {
+  /*
+   * An emoji, or nothing.
+   *
+   * This branch used to catch every name the registry did not know — and the
+   * registry did not know four of the picker's own thirteen, so choosing
+   * Target published the word "Target" across the step's heading. A single
+   * shared list means a picked name always resolves; what reaches here now is
+   * genuinely an emoji somebody typed, or a name from data this build has
+   * never seen.
+   *
+   * A word is only ever printed when it is short enough to BE a mark. Anything
+   * longer falls through to the number, which is always correct.
+   */
+  if (icon && [...icon].length <= 2 && !/^[a-zA-Z]/.test(icon)) {
     return <span className="text-lg">{icon}</span>;
   }
 

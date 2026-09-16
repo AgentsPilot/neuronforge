@@ -190,15 +190,24 @@ export function FunnelMap({
         boxShadow: '0 6px 20px -10px rgba(16,22,42,0.25)',
       }}
     >
-      {/* Flow: .lv-flow */}
-      <div
-        className="lv-flow"
-        style={{
-          display: 'flex',
-          alignItems: 'stretch',
-        }}
-      >
-        {stations.map((station, index) => (
+      {/*
+        The flow scrolls inside its own box rather than pushing the page sideways.
+
+        The station count is not a constant — it is `found` plus every CRM
+        pipeline stage the business has configured — so the row's width is user
+        data. Eight stations need about 1,180px, which overruns a 1024px laptop
+        long before it troubles a phone.
+
+        The vertical padding is what lets a scroll box hold the tip badges:
+        `overflow-x: auto` forces the block axis to `auto` too, so a badge
+        sitting 9px above its station would either be clipped or raise a second
+        scrollbar. The padding gives it room inside the box and the negative
+        margin takes that room back out of the layout.
+      */}
+      <div className="lv-scroll">
+        {/* Flow: .lv-flow */}
+        <div className="lv-flow">
+          {stations.map((station, index) => (
           <div key={station.k} style={{ display: 'contents' }}>
             {/* Station: .lv-st */}
             <button
@@ -461,8 +470,9 @@ export function FunnelMap({
                 )}
               </button>
             )}
-          </div>
-        ))}
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Ghost projection: .lv-ghost */}
@@ -577,16 +587,152 @@ export function FunnelMap({
         </span>
       </div>
 
-      {/* Global keyframes */}
+      {/*
+        The layout rules the inline styles above cannot express.
+
+        Everything in this component is styled inline, and an inline style
+        carries no media query and outranks any stylesheet rule. That is why the
+        map had no responsive behaviour at all: there was nowhere to put it. The
+        lv- class names were carried over from the original mockup and had no
+        CSS behind them anywhere in the repo — this is the first rule that uses
+        them.
+
+        `!important` is doing real work here rather than papering over a
+        specificity fight: the declarations it overrides are inline, and inline
+        is the one origin a normal stylesheet rule cannot beat. Each one below
+        overrides a specific inline property, and only inside the phone
+        breakpoint — the desktop layout is still entirely the inline styles, so
+        nothing above 700px changes.
+      */}
       <style jsx global>{`
         @keyframes lvFlow {
           from { left: -8px; }
           to { left: 100%; }
         }
+        /* The same travel, rotated, for the vertical connectors below. */
+        @keyframes lvFlowV {
+          from { top: -8px; }
+          to { top: 100%; }
+        }
         @keyframes mkPop {
           from {
             transform: scale(0.4);
             opacity: 0;
+          }
+        }
+
+        .lv-flow {
+          display: flex;
+          align-items: stretch;
+        }
+
+        /* The flow scrolls inside its own box rather than pushing the page
+           sideways — the shape the journey timeline already uses. */
+        .lv-scroll {
+          overflow-x: auto;
+          padding-top: 11px;
+          margin-top: -11px;
+          scrollbar-width: thin;
+        }
+
+        /* ── Phone: the funnel turns vertical ──────────────────────────────
+           A horizontal scroll would work here too, but it hides stations
+           off-screen, and a funnel read one station at a time is no longer a
+           funnel — the whole point is seeing where the drop happens. Stacked,
+           every station and every connector is on screen at once, and each one
+           is a full-width row instead of a 118px target. */
+        @media (max-width: 700px) {
+          .lv-scroll {
+            overflow: visible;
+          }
+
+          .lv-flow {
+            flex-direction: column;
+          }
+
+          /* Grid, not flex, so the icon can span both text rows without a
+             wrapper element: the value and the label are siblings in the
+             markup and this keeps them that way. */
+          .lv-st {
+            width: 100% !important;
+            display: grid !important;
+            grid-template-columns: auto 1fr;
+            grid-template-areas: "ic n" "ic lb";
+            column-gap: 13px;
+            align-items: center;
+            text-align: start !important;
+            padding: 12px 15px !important;
+          }
+          .lv-ic {
+            grid-area: ic;
+            margin: 0 !important;
+          }
+          .lv-n {
+            grid-area: n;
+            font-size: 21px !important;
+          }
+          .lv-lb {
+            grid-area: lb;
+            margin-top: 0 !important;
+          }
+
+          /* The connector: a short vertical segment, indented so it lands
+             under the centre of the icon above it — 15px of station padding
+             plus half of a 34px icon is 32px, and the line is 3px wide. */
+          .lv-gap {
+            flex: 0 0 auto !important;
+            min-width: 0 !important;
+            min-height: 42px;
+            flex-direction: row !important;
+            justify-content: flex-start !important;
+            gap: 14px !important;
+            padding: 2px 0 !important;
+            padding-inline-start: 30px !important;
+          }
+          .lv-track {
+            width: 3px !important;
+            height: auto !important;
+            align-self: stretch;
+            flex: 0 0 auto;
+            /* Visible, not hidden: a 3px-wide box would clip an 8px dot to a
+               sliver. Letting it overshoot the ends by its own width reads as
+               the dot arriving from the station above and leaving for the one
+               below, which is what it means. */
+            overflow: visible !important;
+          }
+          /* The dotted states draw their line on the inline edge, not the top. */
+          .lv-gap.watch .lv-track,
+          .lv-gap.off .lv-track {
+            width: 0 !important;
+            border-top: none !important;
+            border-inline-start: 2.5px dotted #C9CEDC;
+          }
+          .lv-gap.off .lv-track {
+            border-inline-start-color: #E0E3EC;
+          }
+
+          /* Dots travel down the line rather than along it. Only the animation
+             NAME is forced. top is deliberately untouched, because an
+             animated property already outranks the inline value, and an
+             !important top would outrank the animation and freeze the dot. */
+          .lv-track > i {
+            left: 50% !important;
+            margin-inline-start: -4px;
+            animation-name: lvFlowV !important;
+          }
+
+          .lv-gap-lb {
+            text-align: start !important;
+            flex: 1;
+            min-width: 0;
+          }
+
+          /* The tip badge joins the row instead of floating over the middle
+             of a now full-width connector. */
+          .lv-gap > .lv-mk {
+            position: static !important;
+            transform: none !important;
+            flex: 0 0 auto;
           }
         }
       `}</style>

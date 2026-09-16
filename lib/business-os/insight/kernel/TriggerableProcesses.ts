@@ -190,10 +190,68 @@ export const DETECTOR_TO_PROCESS: Record<string, string> = {
   sales_stalled: 'send_followup_nudge',
   sales_reply_slow: 'draft_reply_templates',
   // ops_utilization_low has no paired process (advisory only)
+
+  /*
+   * The MVP0 detectors, each pointed at a process that EXISTS.
+   *
+   * This map and each detector's own `pairedProcessId` are two statements of
+   * the same fact, and they disagree: twenty detectors name a process that was
+   * never built (`pipeline_nudge_sequence`, `task_reminder`, `add_cta_block`),
+   * and this map covers only four. `KernelTrigger` fails a run it cannot find a
+   * process for, and `getProcessForDetector` returns null for everything absent
+   * here — so between them most "handle it for me" and "put it on autopilot"
+   * paths are dead. Reconciling the two is its own piece of work; these entries
+   * at least do not add to the pile.
+   */
+  /*
+   * Detectors whose invented process was replaced by the real one that does
+   * the same job — see each detector's own `pairedProcessId`. The parity test
+   * in kernel/__tests__ keeps this map and those declarations in step.
+   */
+  crm_cold_leads: 'send_followup_nudge',
+  conv_pipeline_stuck: 'send_followup_nudge',
+  ret_repeat_booking_low: 'send_followup_nudge',
+  crm_engagement_decay: 'send_followup_nudge',
+  pricing_intro_offer_stuck: 'send_followup_nudge',
+  cash_ar_aging: 'chase_overdue_invoices',
+  ret_cancellation_spike: 'send_reminder_sequence',
+
+  cash_booking_unpaid: 'chase_overdue_invoices',
+  cash_revenue_at_risk: 'chase_overdue_invoices',
+  conv_no_next_step: 'send_followup_nudge',
+  ret_package_ending: 'send_followup_nudge',
+  conv_stage_dropoff: 'send_followup_nudge',
+  conv_service_rate_drop: 'send_followup_nudge',
 };
 
 /**
  * Get the triggerable process for a detector
+ */
+/**
+ * The process an INSIGHT can run, from the process id the insight already
+ * carries.
+ *
+ * Preferred over `getProcessForDetector` wherever the caller holds an insight.
+ * `paired_process_id` is written onto the row from the detector's own
+ * definition at detection time, so it is the detector speaking directly —
+ * whereas the detector-id lookup goes through a second, hand-maintained map
+ * that can only ever agree or be wrong.
+ */
+export function getProcess(processId: string | null | undefined): TriggerableProcess | null {
+  if (!processId) return null;
+  return TRIGGERABLE_PROCESSES[processId] || null;
+}
+
+/**
+ * The process a DETECTOR can run, by detector id.
+ *
+ * Still needed, and the map with it: the dashboard asks this question in the
+ * browser, where the detector classes cannot be imported — they pull in a
+ * Supabase client and the baseline calculator. A static map is the only form
+ * that question can take on the client.
+ *
+ * `kernel/__tests__/detectorProcessParity.test.ts` holds the map to the
+ * detectors so the two cannot drift apart quietly.
  */
 export function getProcessForDetector(detectorId: string): TriggerableProcess | null {
   const processId = DETECTOR_TO_PROCESS[detectorId];

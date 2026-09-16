@@ -21,7 +21,22 @@ const UpdateBlockSchema = z.object({
   content: z.record(z.unknown()).optional(),
   styles: z.record(z.unknown()).nullable().optional(),
   enabled: z.boolean().optional(),
-  capability_config: z.record(z.unknown()).optional()
+  capability_config: z.record(z.unknown()).optional(),
+  /*
+   * Moving ONE block, without re-sequencing the page.
+   *
+   * The only way to change an order was `PUT /blocks` (reorder), which rewrites
+   * every row on the page: it sets all of them to negative positions, then
+   * assigns 0..n-1, then rescues any it missed — three passes, no transaction,
+   * and it depends on an RPC (`clear_block_positions`) that does not exist in
+   * any migration, so it has always taken the un-guarded fallback. Running that
+   * whole machine to nudge one block is a large risk for a small change.
+   *
+   * The caller is responsible for picking a free slot: there is a unique index
+   * on (page_id, position), so writing an occupied one fails loudly rather than
+   * overwriting anything.
+   */
+  position: z.number().int().optional()
 });
 
 interface RouteParams {
@@ -102,6 +117,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     if (validated.content !== undefined) updates.content = validated.content as WebsiteBlockUpdate['content'];
     if (validated.styles !== undefined) updates.styles = validated.styles as WebsiteBlockUpdate['styles'];
     if (validated.enabled !== undefined) updates.enabled = validated.enabled;
+    if (validated.position !== undefined) updates.position = validated.position;
     if (validated.capability_config !== undefined) {
       updates.capability_config = validated.capability_config as WebsiteBlockUpdate['capability_config'];
     }
@@ -164,6 +180,44 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const existingBlock = await blockRepo.findById(blockId);
     if (existingBlock.error || !existingBlock.data || existingBlock.data.page_id !== id) {
       return NextResponse.json({ success: false, error: 'Block not found' }, { status: 404 });
+    }
+
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE HEADER, THE FOOTER AND HOW IT WORKS CANNOT BE DELETED.
+     *
+     * Enforced here and not only in the editor, which hides their delete
+     * buttons: a page without a footer has no copyright line, no closing
+     * action, and nowhere for the contact details and opening hours to appear —
+     * and the footer is the block the recipes treat as the boundary that new
+     * sections are inserted above, so losing it silently changes where
+     * everything added afterwards lands. A page arrived in exactly that state
+     * and there was no way, anywhere in the product, to put one back.
+     *
+     * `process` is here for a second reason as well: `/api/website/booking/
+     * intake` reads `services_only` off that block to decide whether a visitor
+     * is offered an intake form. Delete the block and the setting goes with it,
+     * silently changing what the booking flow does. Hidden is fine — a hidden
+     * block still holds its content.
+     *
+     * Turning it OFF is still allowed and is the right way to take it off the
+     * site: `PUT` with `enabled: false` stops it rendering publicly and keeps
+     * the block, the owner's settings, and a way back.
+     */
+    const UNDELETABLE = new Set(['header', 'footer', 'process']);
+    if (UNDELETABLE.has(existingBlock.data.block_type)) {
+      requestLogger.warn(
+        { blockId, pageId: id, blockType: existingBlock.data.block_type },
+        'Refused to delete a required block'
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'This section cannot be deleted. Switch it off instead to hide it from your site.',
+          code: 'BLOCK_REQUIRED'
+        },
+        { status: 409 }
+      );
     }
 
     const result = await blockRepo.delete(blockId);

@@ -10,6 +10,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
+import { imageForSection } from '@/lib/services/StockImageService';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { getBusinessTemplate } from '@/lib/business-os/businessTemplate';
 import { completeTheme } from '@/lib/branding/theme';
 import { z } from 'zod';
@@ -59,7 +61,6 @@ function getBlocksForOfferingType(
   language: string = 'en'
 ): Array<{ block_type: string; defaultContent: Record<string, unknown> }> {
   const needsBooking = !offeringType || BOOKABLE_TYPES.includes(offeringType.toLowerCase());
-  const isCourse = offeringType?.toLowerCase() === 'course';
 
   // Localized CTA text
   const ctaText = {
@@ -76,7 +77,10 @@ function getBlocksForOfferingType(
         logo_text: '',
         menu_items: [],
         cta_button: {
-          text: needsBooking ? ctaText.book : (isCourse ? ctaText.enroll : ctaText.getStarted),
+          // Book where a time is picked, otherwise the neutral ask. The
+          // course/product branch guessed at what was being sold and put
+          // "Enroll Now" on things nobody enrolls in.
+          text: needsBooking ? ctaText.book : ctaText.getStarted,
           link: needsBooking ? '#booking' : '#pricing'
         },
         style: 'minimal'
@@ -88,7 +92,7 @@ function getBlocksForOfferingType(
         layout: 'center',
         headline: '',
         subheadline: '',
-        cta_text: needsBooking ? ctaText.book : (isCourse ? ctaText.enroll : ctaText.buy),
+        cta_text: needsBooking ? ctaText.book : ctaText.getStarted,
         cta_link: needsBooking ? '#booking' : '#pricing',
         background_type: 'gradient'
       }
@@ -96,18 +100,34 @@ function getBlocksForOfferingType(
     {
       block_type: 'features',
       defaultContent: {
-        title: isCourse
-          ? (language === 'he' ? 'מה תלמדו' : language === 'es' ? 'Qué Aprenderás' : 'What You Will Learn')
-          : (language === 'he' ? 'למה לבחור בנו' : language === 'es' ? 'Por Qué Elegirnos' : 'Why Choose Us'),
+        /*
+         * One heading for every offering.
+         *
+         * This was "What You Will Learn" for anything the generator had
+         * classified as a course and "Why Choose Us" otherwise — a guess that
+         * is visible when wrong, exactly as "Course Details" was on the pricing
+         * section. "What's included" is true of a course, a treatment, a
+         * package and a download alike, and needs nothing inferred.
+         *
+         * Generated copy still wins: the model reads the real description and
+         * writes a heading about THIS offering, which is better than either
+         * branch. This is only what shows when generation is skipped.
+         */
+        title: language === 'he' ? 'מה כלול' : language === 'es' ? 'Qué Incluye' : "What's Included",
         features: []
       }
     },
     {
       block_type: 'pricing',
       defaultContent: {
-        title: isCourse
-          ? (language === 'he' ? 'פרטי הקורס' : language === 'es' ? 'Detalles del Curso' : 'Course Details')
-          : (language === 'he' ? 'השקעה' : language === 'es' ? 'Inversión' : 'Investment'),
+        // Just "Pricing".
+        //
+        // This was picked from `offeringType === 'course'` — "Course Details"
+        // or "Investment" — a guess about the offering that is visible when
+        // wrong: a landing page for a training package was headed "Course
+        // Details". The section lists prices; the plainest word for it is
+        // correct for every offering and needs nothing inferred.
+        title: language === 'he' ? 'מחירון' : language === 'es' ? 'Precios' : 'Pricing',
         plans: []
       }
     },
@@ -134,13 +154,12 @@ function getBlocksForOfferingType(
     blocks.push({
       block_type: 'cta',
       defaultContent: {
-        title: isCourse
-          ? (language === 'he' ? 'מוכנים להתחיל ללמוד?' : language === 'es' ? '¿Listo para empezar a aprender?' : 'Ready to Start Learning?')
-          : (language === 'he' ? 'מוכנים להתחיל?' : language === 'es' ? '¿Listo para comenzar?' : 'Ready to Get Started?'),
-        description: isCourse
-          ? (language === 'he' ? 'הירשמו עכשיו והתחילו את המסע שלכם' : language === 'es' ? 'Inscríbete ahora y comienza tu viaje' : 'Enroll now and begin your journey')
-          : (language === 'he' ? 'קבלו גישה היום' : language === 'es' ? 'Obtén acceso hoy' : 'Get access today'),
-        cta_text: isCourse ? ctaText.enroll : ctaText.buy,
+        // One closing ask for every offering. The course branch that used to
+        // live here wrote "Ready to Start Learning?" and "Enroll now" onto
+        // pages selling treatments and packages.
+        title: language === 'he' ? 'מוכנים להתחיל?' : language === 'es' ? '¿Listo para comenzar?' : 'Ready to Get Started?',
+        description: language === 'he' ? 'קבלו גישה היום' : language === 'es' ? 'Obtén acceso hoy' : 'Get access today',
+        cta_text: ctaText.getStarted,
         cta_link: '#pricing'
       }
     });
@@ -168,7 +187,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await request.json();
+    /*
+     * The body is read as text before it is parsed.
+     *
+     * `request.json()` throws a SyntaxError on an empty or truncated body, and
+     * that landed in the catch below as a 500 with no explanation — the wizard
+     * showed a preview that never arrived and the log said "Unexpected end of
+     * JSON input". A request this route cannot read is the caller's problem and
+     * has to be answered as one.
+     */
+    const raw = await request.text();
+    if (!raw.trim()) {
+      requestLogger.warn({ userId: user.id }, 'Preview called with an empty body');
+      return NextResponse.json(
+        { success: false, error: 'Preview data could not be read' },
+        { status: 400 }
+      );
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(raw);
+    } catch (parseError) {
+      requestLogger.warn({ err: parseError, userId: user.id }, 'Preview body was not valid JSON');
+      return NextResponse.json(
+        { success: false, error: 'Preview data could not be read' },
+        { status: 400 }
+      );
+    }
+
     const validated = PreviewSchema.parse(body);
 
     // The preview must look like the published page, so the logo comes from the
@@ -178,6 +225,28 @@ export async function POST(request: NextRequest) {
     // Get offering type from AI-generated content to determine which blocks to include
     const offeringType = (validated.generatedContent?.offering_type as string) || undefined;
     const landingPageBlocks = getBlocksForOfferingType(offeringType, validated.language);
+
+    /*
+     * A picture for the hero, and nothing else.
+     *
+     * Three more were fetched for the FEATURE tiles, and every one of them was
+     * wasted: a feature cell only becomes a photo tile when it has no heading
+     * and no sentence, and this section is generated with copy in every cell.
+     * Each preview therefore paid for three searches, three downloads and three
+     * uploads to produce images nothing would ever render.
+     *
+     * Asked for only when the page actually has a hero to put one in — the
+     * business profile too, which is read solely to decide what to search for.
+     * Never fatal: null means the hero keeps the gradient it had before this
+     * existed.
+     */
+    const wantsHeroImage = landingPageBlocks.some(block => block.block_type === 'hero');
+    const previewProfile = wantsHeroImage
+      ? (await businessProfileRepository.findByUserId(user.id)).data
+      : null;
+    const heroImage = wantsHeroImage
+      ? await imageForSection(user.id, previewProfile?.vertical ?? null, 'portrait', 'hero')
+      : null;
 
     requestLogger.info({
       offeringType,
@@ -198,9 +267,15 @@ export async function POST(request: NextRequest) {
         };
       }
 
-      // For hero, set headline to service name
+      // For hero, set headline to service name — and the same photograph the
+      // published page will carry, so the preview is not a grey box the real
+      // page fills in later.
       if (block.block_type === 'hero') {
         content.headline = validated.serviceName;
+        if (heroImage) {
+          content.background_image = heroImage;
+          content.background_type = 'image';
+        }
       }
 
       // For header, set the logo flag and company name. The preview resolves
@@ -223,6 +298,19 @@ export async function POST(request: NextRequest) {
       // For pricing, add service info for booking integration
       // Default to scheduling + client_info + confirmation for bookable services
       if (block.block_type === 'pricing') {
+        /*
+         * "Pricing" is the page's word, not the model's.
+         *
+         * The merge above spreads whatever the generator returned, and the
+         * prompt asking it not to write a title is guidance, not a guarantee.
+         * A heading here is the one thing about this section that does not
+         * depend on the offering, so it is set after the merge rather than
+         * defaulted before it.
+         */
+        content.title =
+          validated.language === 'he' ? 'מחירון'
+          : validated.language === 'es' ? 'Precios'
+          : 'Pricing';
         content.serviceId = validated.serviceId;
         content.serviceName = validated.serviceName;
         content.durationMinutes = validated.serviceDuration || 60;

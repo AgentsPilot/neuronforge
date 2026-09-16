@@ -53,7 +53,17 @@ export async function GET(request: NextRequest) {
     const [profileResult, briefingPrefResult, preferencesResult] = await Promise.all([
       supabaseServer
         .from('business_profiles')
-        .select('business_name, owner_name, language, vertical, sub_vertical')
+        /*
+         * `business_profiles` has neither `owner_name` nor `business_name`.
+         *
+         * Both were asked for here from the start, and PostgREST rejects the
+         * whole select for one unknown column — so this read has always
+         * returned nothing, and `userName` has always come from the auth
+         * fallbacks below rather than from the profile. It also silently took
+         * `language` with it, which is why the briefing needs the columns named
+         * correctly now that it reads the vertical too.
+         */
+        .select('company_name, language, vertical, sub_vertical')
         .eq('user_id', user.id)
         .maybeSingle(),
       /*
@@ -78,8 +88,7 @@ export async function GET(request: NextRequest) {
 
     const profile = profileResult.data as
       | {
-          business_name?: string | null;
-          owner_name?: string | null;
+          company_name?: string | null;
           language?: string | null;
           vertical?: string | null;
           sub_vertical?: string | null;
@@ -90,7 +99,6 @@ export async function GET(request: NextRequest) {
       | null;
 
     const userName =
-      profile?.owner_name?.split(' ')[0] ||
       user.user_metadata?.full_name?.split(' ')[0] ||
       user.email?.split('@')[0] ||
       'there';
@@ -113,7 +121,7 @@ export async function GET(request: NextRequest) {
         // word for the people they serve rather than the CRM's.
         vertical: profile?.vertical,
         subVertical: profile?.sub_vertical,
-        name: profile?.business_name,
+        name: profile?.company_name,
       });
     } catch (briefingError) {
       requestLogger.warn({ err: briefingError, userId: user.id }, 'Briefing unavailable');

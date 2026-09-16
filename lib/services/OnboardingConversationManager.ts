@@ -74,7 +74,7 @@ export interface Service {
   /** Paying over time, where they said so. Carried through to the build. */
   payment_plan?: {
     installment_count: number;
-    installment_frequency: 'weekly' | 'biweekly' | 'monthly';
+    installment_frequency: 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
   } | null;
 }
 
@@ -212,6 +212,9 @@ From their response, extract:
      null when they did not say, or the service is free.
      Do NOT guess "online" — defaulting to it would force them to connect a card
      processor they may never want.
+   - buffer_minutes: the gap they need BETWEEN appointments, when they mention one.
+     Only for something booked against a time, and only where they said it —
+     never guessed. Absent means the platform's own default.
    - sale_mode: "direct" when a client can book and pay for this immediately.
      "proposal" when the business quotes each job before there is a price —
      they price after seeing the site, the scope varies per client, or they
@@ -294,6 +297,9 @@ Examples:
 - "I quote each project after a site visit" = sale_mode: "proposal", price: null
 - "תוכנית טיפול של 6 מפגשים, 2700 ש"ח, אפשר ב-3 תשלומים" = sale_mode: "proposal", price: 2700, currency: ILS, payment_plan: { installment_count: 3, installment_frequency: "monthly" }
 - "250 ש"ח לפגישה" = sale_mode: "direct" (a fixed price they can just book)
+- "אני צריך 20 דקות בין מטופלים" = buffer_minutes: 20
+- "I need twenty minutes between clients to write up notes" = buffer_minutes: 20
+- "back to back is fine" = buffer_minutes: 0
 - "50 an hour, cash when they come" = collection_method: "in_person"
 - "120 per session" (nothing about HOW) = collection_method: null
 
@@ -422,6 +428,27 @@ const CURRENCY_BY_LANGUAGE: Record<Language, string> = {
 // ONBOARDING CONVERSATION MANAGER
 // ============================================================
 
+/**
+ * Is this service still owed a price?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A quoted service never is. Its figure is decided per job, in the proposal,
+ * which is the whole meaning of `sale_mode: 'proposal'` — so there is no answer
+ * to give, and asking anyway is how a consultant ends up with an invented
+ * number on a booking page.
+ *
+ * The rule was already written down above the missing-price check, and written
+ * correctly: "it is per service — a workshop with a price, a bespoke programme
+ * without". But it was implemented per BUSINESS, off `pricing_model`, so a
+ * business whose overall model reads as fixed was still chased for a price on
+ * the one service that cannot have one. Hence: ask the service.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function needsAPrice(service: { price?: number | null; sale_mode?: 'direct' | 'proposal' }): boolean {
+  if (service.sale_mode === 'proposal') return false;
+  return service.price === null || service.price === undefined;
+}
+
 export class OnboardingConversationManager {
   private configService: OnboardingConfigurationService;
 
@@ -435,7 +462,17 @@ export class OnboardingConversationManager {
   async processUserMessage(
     userId: string,
     message: string,
-    currentState: OnboardingState
+    currentState: OnboardingState,
+    /**
+     * Services exactly as the form holds them, when the turn came from it.
+     *
+     * Taken verbatim in `service_details` instead of re-reading them out of the
+     * sentence the form wrote. A model that returns three of four services
+     * loses the fourth silently, and nothing downstream counts them — the
+     * business simply ends up with fewer services than it typed. The same
+     * reasoning `readIntakeNeed` already applies to the intake toggle.
+     */
+    submittedServices?: ExtractedService[]
   ): Promise<{
     response: string;
     suggestions?: string[];
@@ -446,7 +483,7 @@ export class OnboardingConversationManager {
     logger.debug({ userId, currentStep: currentState.currentStep, message }, 'Processing user message');
 
     // Update state based on current step
-    const updatedState = await this.updateStateFromMessage(currentState, message);
+    const updatedState = await this.updateStateFromMessage(currentState, message, submittedServices);
 
     // Generate next question or response
     const { response, suggestions, showPreview, multiSelect } = await this.getNextResponse(updatedState);
@@ -470,7 +507,9 @@ export class OnboardingConversationManager {
    */
   private async updateStateFromMessage(
     state: OnboardingState,
-    message: string
+    message: string,
+    /** The services form's own rows, when this turn came from it. */
+    submittedServices?: ExtractedService[]
   ): Promise<OnboardingState> {
     // Check if we have an old/invalid step name from a previous onboarding flow
     // If so, reset to the beginning of the new flow
@@ -605,12 +644,17 @@ export class OnboardingConversationManager {
           if (priceResponse !== null) {
             // Update services that are missing price
             const services = updatedState.collectedData.clientWorkflow?.services || [];
-            const updatedServices = services.map(s => {
-              if (s.price === null || s.price === undefined) {
-                return { ...s, price: priceResponse };
-              }
-              return s;
-            });
+            /*
+             * The figure lands only on the services it was asked about.
+             *
+             * This wrote it onto every service without one, quoted ones
+             * included — so answering "500" for a workshop put 500 on the
+             * bespoke programme beside it, which is the invented number the
+             * guard above exists to prevent.
+             */
+            const updatedServices = services.map(s =>
+              needsAPrice(s) ? { ...s, price: priceResponse } : s
+            );
             updatedState.collectedData.clientWorkflow = {
               ...updatedState.collectedData.clientWorkflow!,
               services: updatedServices,
@@ -645,8 +689,17 @@ export class OnboardingConversationManager {
           break; // Will show service_details_prompt
         }
 
-        // Extract service details from the follow-up response
-        const serviceDetails = await this.extractClientWorkflow(message);
+        /*
+         * The form's own rows where there are any, the model only where there
+         * are not.
+         *
+         * Somebody typing "I do haircuts and colour" still needs extracting.
+         * Somebody who filled in four rows has already answered exactly, and
+         * asking a model to read that answer back can only lose it.
+         */
+        const serviceDetails = submittedServices?.length
+          ? { services: submittedServices }
+          : await this.extractClientWorkflow(message);
 
         // Get existing services or start fresh
         const existingServices = updatedState.collectedData.clientWorkflow?.services || [];
@@ -654,7 +707,9 @@ export class OnboardingConversationManager {
 
         // Merge new services with existing ones, avoiding duplicates by service name
         const existingNames = new Set(existingServices.map(s => s.name?.toLowerCase().trim()));
-        const uniqueNewServices = newServices.filter(s => !existingNames.has(s.name?.toLowerCase().trim()));
+        const uniqueNewServices = newServices.filter(
+          (s: ExtractedService) => !existingNames.has(s.name?.toLowerCase().trim())
+        );
         const allServices = [...existingServices, ...uniqueNewServices];
 
         // Merge with previously collected workflow info
@@ -682,7 +737,7 @@ export class OnboardingConversationManager {
         const priceIsOptional = pricingModel === 'custom' || pricingModel === 'mixed';
         const servicesMissingPrice = priceIsOptional
           ? []
-          : allServices.filter(s => s.price === null || s.price === undefined);
+          : allServices.filter(needsAPrice);
         if (servicesMissingPrice.length > 0) {
           // Need to ask for price
           updatedState.pendingQuestion = 'need_price';
@@ -836,10 +891,12 @@ export class OnboardingConversationManager {
     // Convert services to legacy format.
     //
     // This shape is the one the build prefers, so anything dropped here is
-    // dropped for good. Three things used to be: a quoted price became free
+    // dropped for good. Four things used to be: a quoted price became free
     // (`|| 0`), the currency was replaced by a guess from the reading language,
-    // and the instalment arrangement vanished — so "6000₪ or twelve monthly
-    // payments" arrived as a free service with no plan.
+    // the instalment arrangement vanished — so "6000₪ or twelve monthly
+    // payments" arrived as a free service with no plan — and HOW the service is
+    // sold went with them, so a job quoted per client arrived as one anybody
+    // could book and pay for on the spot.
     if (clientWorkflow.services && clientWorkflow.services.length > 0) {
       const fallbackCurrency = CURRENCY_BY_LANGUAGE[state.language];
       state.collectedData.services = clientWorkflow.services.map(s => {
@@ -859,7 +916,18 @@ export class OnboardingConversationManager {
           is_scheduled: scheduled,
           // Never 'online' by default: that is the one value that makes a card
           // processor mandatory, and nobody has asked for one yet.
-          collection: priced ? (s.collection === 'online' ? 'online' : 'invoice') : null,
+          collection:
+            s.sale_mode === 'proposal'
+              ? null
+              : priced
+                ? (s.collection === 'online' ? 'online' : 'invoice')
+                : null,
+          // Quoted or bought outright. Dropping this was how a bespoke
+          // programme arrived directly bookable.
+          sale_mode: s.sale_mode === 'proposal' ? 'proposal' : 'direct',
+          // The gap between appointments, where they asked for one. Only
+          // meaningful for something booked against a time.
+          buffer_minutes: scheduled ? s.buffer_minutes ?? undefined : undefined,
           payment_plan: s.payment_plan || null,
         };
       });
@@ -1544,9 +1612,8 @@ export class OnboardingConversationManager {
       case 'service_details':
         // Check if we need to ask for price specifically
         if (state.pendingQuestion === 'need_price') {
-          const servicesMissingPrice = state.collectedData.clientWorkflow?.services?.filter(
-            s => s.price === null || s.price === undefined
-          ) || [];
+          const servicesMissingPrice =
+            state.collectedData.clientWorkflow?.services?.filter(needsAPrice) || [];
           const serviceNames = servicesMissingPrice.map(s => s.name).join(', ');
           return {
             response: responses.need_price_prompt.replace('{services}', serviceNames),

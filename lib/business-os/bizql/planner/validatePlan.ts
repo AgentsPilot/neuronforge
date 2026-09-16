@@ -1971,7 +1971,16 @@ function validateAnswer(plan: Plan, problems: string[], userMessage?: string): v
     reads.length > 0 &&
     !hasWrite &&
     !hasAnalyse &&
-    !/\{s\d/.test(text)
+    /*
+     * `{s1…}` OR `{= … s1 … }`.
+     *
+     * The bare form was the only one recognised, so every answer that used a
+     * formula — `{= s1.value - s2.value }`, with an `=` and a space before the
+     * step id — was rejected as citing nothing at all. Expressions were added
+     * to the renderer and this check was never told, which made the whole
+     * feature unusable on the live path while reading as a planning error.
+     */
+    !/\{=?[^}]*\bs\d/.test(text)
   ) {
     problems.push(
       `answer.text cites no step. This plan only READS, and the steps have not run yet — ` +

@@ -30,6 +30,11 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { stripeConnectRepository } from '@/lib/repositories/PaymentRepository';
 import { hasAnyAvailability } from '@/lib/scheduling/availabilityWindows';
 import { collectsOnline } from '@/lib/business-os/clientJourney';
+import {
+  missingProfileFields,
+  missingInvoiceFields,
+  type OrganizationSettings,
+} from '@/lib/business-os/setup/profileReadiness';
 
 const logger = createLogger({ module: 'JourneyReadiness' });
 
@@ -41,12 +46,59 @@ export interface JourneyReadinessService {
   price?: number | null;
 }
 
-export type JourneyGapKind = 'hours' | 'processor';
+export type JourneyGapKind = 'hours' | 'processor' | 'invoicing';
 
 export interface JourneyGap {
   kind: JourneyGapKind;
   /** The services that need it, for a message that names them. */
   services: string[];
+  /**
+   * The specific fields still outstanding, for an `invoicing` gap.
+   *
+   * "Your business and invoice details are incomplete" is true and useless: an
+   * owner who has just filled in their company name and tax id reads it, opens
+   * the tab, sees fields with values in them, closes it, and finds the same
+   * message — because what was actually missing was the bank details or the
+   * address. Naming them is the difference between a message they can act on
+   * and one they conclude is broken.
+   */
+  missing?: string[];
+}
+
+/**
+ * Does this gap make the journey impossible, or merely worse?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Only `hours` blocks, and the difference is whether the client can still get
+ * to the end.
+ *
+ * NO WORKING HOURS is fatal. The journey keeps its `datetime` step — the
+ * service says it is scheduled — and the calendar behind it is empty, so the
+ * client reaches a screen with nothing to pick and stops. There is no version
+ * of that page worth publishing.
+ *
+ * NO PROCESSOR is not. `journeySteps` already DROPS the payment step when the
+ * processor is not ready, so the client books straight through, and
+ * `BookingLifecycleService` raises a `payment_invoices` row for any priced
+ * service regardless of Stripe — the Stripe invoice is an enrichment on top of
+ * that row, not a precondition for it. So a business with no processor still
+ * takes the booking and still bills for it; it just collects by invoice instead
+ * of by card.
+ *
+ * Blocking on it meant refusing to publish a site that works, over a step the
+ * client would never have seen. It stays a gap so the advice still shows — a
+ * business that MEANT to take cards should be told it is not — but it no longer
+ * stands between them and a live page.
+ *
+ * MISSING INVOICE DETAILS blocks, and it is the other half of that same
+ * decision. Saying "no processor is fine, we invoice instead" is only true if
+ * an invoice can actually be issued — which needs the business's own details
+ * and its invoicing fields. Without them the client books, the booking
+ * completes, and the money has no way of being asked for. The fallback that
+ * makes the processor gap harmless is the thing that has to work.
+ */
+export function isBlockingGap(gap: JourneyGap): boolean {
+  return gap.kind === 'hours' || gap.kind === 'invoicing';
 }
 
 /** A service asks the client to pick a time. */
@@ -92,12 +144,103 @@ export async function journeyGaps(
     }
   }
 
+  /*
+   * Whether a card can be charged decides TWO things, so it is resolved once.
+   *
+   * It names the advisory processor gap, and it decides which services fall
+   * back to being invoiced — which is what the blocking invoicing gap below is
+   * about.
+   */
+  let processorReady = true;
   if (charged.length > 0) {
     const connect = await stripeConnectRepository.findByUserId(userId);
-    if (connect.data?.charges_enabled !== true) {
+    processorReady = connect.data?.charges_enabled === true;
+
+    if (!processorReady) {
       gaps.push({
         kind: 'processor',
         services: charged.map(s => s.name || 'a service').filter(Boolean),
+      });
+    }
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHO WILL BE BILLED RATHER THAN CHARGED — AND CAN THEY BE?
+   *
+   * Two routes end in an invoice: a service the business chose to invoice, and
+   * a service set to collect by card on an account with no processor connected.
+   * The second is the fallback that makes the processor gap harmless, and it is
+   * only harmless if an invoice can actually be issued.
+   *
+   * Issuing one needs the business's own details and its invoicing fields —
+   * company name, tax id, address, a payment method for the client to use.
+   * Without them the client books, the booking completes, an invoice row is
+   * created, and nothing can be sent. The money is simply never asked for, and
+   * the first person to notice is the owner, weeks later.
+   *
+   * Asked through `profileReadiness`, the same functions the readiness chain
+   * uses for its "business details" and "invoice details" rows, so the gate and
+   * the chain cannot disagree about whether they are filled in.
+   */
+  const invoiced = services.filter(
+    service =>
+      (service.price || 0) > 0 &&
+      (service.collection === 'invoice' || (collectsOnline(service.collection) && !processorReady))
+  );
+
+  if (invoiced.length > 0) {
+    /*
+     * Fields the readiness chain asks for that an INVOICE does not need.
+     *
+     * `missingProfileFields` describes a complete business profile, which is a
+     * broader idea than "can issue an invoice" — it includes things the chain
+     * nudges for because they improve the product, not because a document is
+     * invalid without them.
+     *
+     * A company name, a tax id and an address are what make an invoice a legal
+     * document, and without a payment method the client is not told where to
+     * send the money. Those stay. The rest are profile polish.
+     *
+     * The LOGO is not listed here because it is no longer reported missing at
+     * all — see `profileReadiness`: it is not part of being complete anywhere
+     * on the platform.
+     */
+    const NOT_NEEDED_TO_INVOICE = new Set([
+      'industry',
+      'company_size',
+      'primary_goal',
+      'technical_level',
+      'business_type',
+    ]);
+
+    const { data: profile } = await supabaseServer
+      .from('business_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    const { data: org } = await supabaseServer
+      .from('organizations')
+      .select('settings')
+      .eq('owner_user_id', userId)
+      .maybeSingle();
+
+    const settings = (org?.settings as OrganizationSettings) ?? null;
+    /*
+     * BOTH sets of fields, because the gate asks for both and an owner told
+     * only "details are incomplete" cannot know which half is short.
+     */
+    const missing = [
+      ...missingProfileFields(profile, settings),
+      ...missingInvoiceFields(profile),
+    ].filter(field => !NOT_NEEDED_TO_INVOICE.has(field));
+
+    if (missing.length > 0) {
+      gaps.push({
+        kind: 'invoicing',
+        services: invoiced.map(s => s.name || 'a service').filter(Boolean),
+        missing,
       });
     }
   }
@@ -116,15 +259,86 @@ export async function journeyGaps(
  * smart link cannot describe the same gap three different ways.
  */
 export function describeJourneyGaps(gaps: JourneyGap[]): string {
-  return gaps
-    .map(gap => {
-      const named = gap.services.slice(0, 3).join(', ');
-      const more = gap.services.length > 3 ? ` and ${gap.services.length - 3} more` : '';
-      return gap.kind === 'hours'
-        ? `${named}${more} ${gap.services.length === 1 ? 'asks' : 'ask'} clients to pick a time, but you have no working hours set.`
-        : `${named}${more} ${gap.services.length === 1 ? 'is' : 'are'} paid by card, but no payment processor is connected.`;
-    })
-    .join(' ');
+  return gaps.map(describeJourneyGap).join(' ');
+}
+
+/**
+ * One gap, as one sentence.
+ *
+ * Separate from the joined version because a reader needs them apart: each gap
+ * is fixed somewhere different, so a card showing two of them needs two
+ * messages with two controls. Joined into one string they arrived as a wall of
+ * text with a single link that addressed half of it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY IT NO LONGER NAMES THE SERVICES
+ *
+ * It used to open with "Training 60 min, Custom Training, Intro ask clients to
+ * pick a time…", which made the sentence long, put the least useful part first,
+ * and repeated a name across gaps whenever one service had two problems. The
+ * owner does not need to be told which services are affected: the fix is the
+ * same one setting either way, and they are about to go and set it.
+ *
+ * `gap.services` is still collected and still carried on the gap — it is real
+ * information and a caller that wants to list them can — it simply is not in
+ * the sentence a person reads before clicking.
+ */
+/**
+ * Field codes into the words on the form.
+ *
+ * The same words the readiness chain uses for its "business details" and
+ * "invoice details" rows — an owner should not be sent looking for a field
+ * named one thing here and another there.
+ */
+const FIELD_LABELS = (field: string): string =>
+  ({
+    company_name: 'business name',
+    business_type: 'business type',
+    logo: 'logo',
+    industry: 'industry',
+    company_size: 'company size',
+    primary_goal: 'main goal',
+    technical_level: 'technical level',
+    tax_id: 'tax ID',
+    address: 'business address',
+    payment_method: 'bank details',
+  } as Record<string, string>)[field] ?? field;
+
+export function describeJourneyGap(gap: JourneyGap): string {
+  switch (gap.kind) {
+    case 'hours':
+      return 'Your services ask clients to pick a time, but you have no working hours set.';
+
+    case 'invoicing': {
+      // Names the consequence, because "invoice details are incomplete" sounds
+      // like paperwork rather than money that cannot be collected.
+      const base =
+        'Some services are billed by invoice, but there would be no way to send one.';
+
+      /*
+       * And names the fields, because the owner has to know WHICH.
+       *
+       * Without them this said "your business and invoice details are
+       * incomplete" — read by someone who had just filled in their company name
+       * and tax id as a message that had not updated, when what was actually
+       * outstanding was the address or the bank details. They would close the
+       * tab, see the same sentence, and conclude the check was broken.
+       *
+       * Deduplicated: `company_name` is asked for by both the profile and the
+       * invoice checks, and naming it twice reads as a mistake.
+       */
+      const fields = Array.from(new Set(gap.missing ?? []));
+      if (fields.length === 0) return base;
+
+      return `${base} Still needed: ${fields.map(FIELD_LABELS).join(', ')}.`;
+    }
+
+    default:
+      // Says what will happen, not just what is missing — because something
+      // sensible does happen: the card step is skipped and the client is
+      // invoiced instead.
+      return 'Some services are set to be paid by card, but no payment processor is connected — clients will be invoiced instead.';
+  }
 }
 
 

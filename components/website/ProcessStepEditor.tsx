@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Trash2, GripVertical, CheckCircle, Calendar, CreditCard, Users, Heart, Star, Target, Sparkles, Clock, FileText, Mail, Phone, MessageCircle } from 'lucide-react';
+import { Plus, Trash2, GripVertical } from 'lucide-react';
+import { STEP_ICONS, DEFAULT_STEP_ICON } from '@/components/website/stepIcons';
 import type { ProcessStep } from './blocks/types';
 
 interface ProcessStepEditorProps {
@@ -11,21 +12,6 @@ interface ProcessStepEditorProps {
 }
 
 // Available icons for process steps
-const STEP_ICONS = [
-  { key: 'CheckCircle', icon: CheckCircle, label: 'Check' },
-  { key: 'Calendar', icon: Calendar, label: 'Calendar' },
-  { key: 'CreditCard', icon: CreditCard, label: 'Payment' },
-  { key: 'Users', icon: Users, label: 'Users' },
-  { key: 'Heart', icon: Heart, label: 'Heart' },
-  { key: 'Star', icon: Star, label: 'Star' },
-  { key: 'Target', icon: Target, label: 'Target' },
-  { key: 'Sparkles', icon: Sparkles, label: 'Sparkles' },
-  { key: 'Clock', icon: Clock, label: 'Clock' },
-  { key: 'FileText', icon: FileText, label: 'Form' },
-  { key: 'Mail', icon: Mail, label: 'Email' },
-  { key: 'Phone', icon: Phone, label: 'Phone' },
-  { key: 'MessageCircle', icon: MessageCircle, label: 'Chat' },
-];
 
 const LABELS = {
   en: {
@@ -109,7 +95,7 @@ export function ProcessStepEditor({ steps, onChange, language }: ProcessStepEdit
 
   const getIconComponent = (iconKey: string) => {
     const iconDef = STEP_ICONS.find(i => i.key === iconKey);
-    return iconDef?.icon || CheckCircle;
+    return iconDef?.icon || DEFAULT_STEP_ICON;
   };
 
   return (

@@ -34,7 +34,7 @@ export class RetRepeatBookingLowDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'rebooking_reminder_sequence',
+    pairedProcessId: 'send_followup_nudge',
     consentTier: 'automate',
     eligibleForAutomation: true,
     ownerParameters: [

@@ -180,7 +180,16 @@ async function dispatchOne(
   const [profile, preferences, authUser] = await Promise.all([
     supabaseServer
       .from('business_profiles')
-      .select('owner_name, language, business_name, vertical, sub_vertical')
+      /*
+       * `business_profiles` has no `owner_name` and no `business_name`.
+       *
+       * Both were asked for here for as long as this file has existed, and
+       * PostgREST rejects a whole select for one unknown column — so this read
+       * has always returned nothing at all, taking `language` down with it and
+       * quietly sending every briefing in English with no name on it. The
+       * trading name is `company_name`; the owner's name is not on this table.
+       */
+      .select('language, company_name, vertical, sub_vertical')
       .eq('user_id', userId)
       .maybeSingle(),
     supabaseServer
@@ -213,7 +222,7 @@ async function dispatchOne(
   const briefing = await getBriefing(userId, facts, language, {
     vertical: profile.data?.vertical as string | null,
     subVertical: profile.data?.sub_vertical as string | null,
-    name: profile.data?.business_name as string | null,
+    name: profile.data?.company_name as string | null,
   });
   const lines = briefingLines(briefing.narrative);
   if (lines.length === 0) return { sent: false, reason: 'nothing_to_say' };
@@ -225,7 +234,12 @@ async function dispatchOne(
     lines,
     date: day.date,
     timezone: day.timezone,
-    ownerFirstName: (profile.data?.owner_name as string | null)?.split(' ')[0],
+    /*
+     * From the auth account, since `business_profiles` carries no owner name.
+     * The same source the dashboard greeting already falls back to, so the
+     * email and the screen address the person by the same name.
+     */
+    ownerFirstName: (authUser.data?.user?.user_metadata?.full_name as string | undefined)?.split(' ')[0],
     dashboardUrl: `${appUrl}/business-os`,
     settingsUrl: `${appUrl}/business-os/settings?section=preferences`,
     branding,

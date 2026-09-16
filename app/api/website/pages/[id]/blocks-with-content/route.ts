@@ -17,7 +17,9 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { mergeCentralContent } from '@/lib/website-builder/mergeCentralContent';
 import { resolveBusinessLogo } from '@/lib/branding/businessLogo';
+import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { withProfileContact } from '@/lib/branding/contactBlockContent';
+import { withProfileFooter } from '@/lib/branding/footerBlockContent';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsitePageRepository } from '@/lib/repositories/WebsitePageRepository';
@@ -167,6 +169,22 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const businessLogoPromise = headerShowsLogo ? resolveBusinessLogo(user.id) : null;
 
     /*
+     * Whether a card can actually be charged right now.
+     *
+     * A business can have chosen "clients pay online" in onboarding and still
+     * not have connected Stripe — that asks for an ID and a bank account, and
+     * happens after setup. Until charges are enabled the payment step has
+     * nothing behind it.
+     *
+     * The smart link has always resolved this and drops the step accordingly.
+     * The editor's preview never asked, and `BookingModal` defaults an
+     * unanswered question to "yes" — so the preview walked a client through a
+     * payment step this business cannot take, and disagreed with both booking
+     * pages, which get it right.
+     */
+    const paymentCapabilityPromise = resolvePaymentCollectionCapability(supabaseServer, user.id);
+
+    /*
      * The contact section's details, from the profile.
      *
      * The published site already resolved these and this route did not, so the
@@ -178,8 +196,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
      * Only fetched when there is a contact section to fill, and started here so
      * it overlaps the reads around it rather than adding a round trip.
      */
-    const hasContactForm = blocks.some(b => b.block_type === 'contact_form');
-    const contactProfilePromise = hasContactForm
+    /*
+     * The footer needs the same row, for the same reason.
+     *
+     * It now states opening hours, the registered name and number, and the
+     * business's contact details — none of which are stored on the block. The
+     * editor that could not show a contact panel's details could not show any
+     * of these either, so the owner would edit a footer that looked half empty
+     * and publish one that was full.
+     */
+    const needsProfile = blocks.some(
+      b => b.block_type === 'contact_form' || b.block_type === 'footer'
+    );
+    const contactProfilePromise = needsProfile
       ? businessProfileRepository.findByUserId(user.id)
       : null;
 
@@ -250,6 +279,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
              */
             is_scheduled: s.is_scheduled !== false,
             collection: s.collection ?? null,
+            /*
+             * Whether this service is bought or quoted.
+             *
+             * The PUBLIC route already carried it and this one did not, so a
+             * quoted service showed "Price on request" on the live site and a
+             * blank space in the editor — `ServicesBlock` reads `sale_mode` to
+             * decide both the price line and the button's words, and an absent
+             * value reads as 'direct'. Same divergence, and the same fix, as
+             * `is_scheduled` and `collection` above.
+             */
+            sale_mode: s.sale_mode || 'direct',
             // Undefined where the business offers no plan, which is most of
             // them — the widgets then show a single price as they always have.
             paymentPlan: plansByService[s.id],
@@ -263,6 +303,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const businessLogoUrl = businessLogoPromise ? await businessLogoPromise : null;
     const contactProfile = contactProfilePromise ? (await contactProfilePromise).data : null;
+    const paymentsEnabled = (await paymentCapabilityPromise).canCollect;
 
     /*
      * ─────────────────────────────────────────────────────────────────────────
@@ -325,8 +366,37 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           ...block,
           content: withProfileContact(
             block.content as Record<string, unknown>,
-            contactProfile as unknown as Record<string, unknown> | null
+            contactProfile as unknown as Record<string, unknown> | null,
+            page.website_language ?? 'en'
           ),
+        };
+      }
+
+      if (block.block_type === 'footer') {
+        const footerContent = block.content as Record<string, unknown>;
+        return {
+          ...block,
+          content: {
+            ...withProfileFooter(
+              footerContent,
+              contactProfile as unknown as Record<string, unknown> | null,
+              page.website_language ?? 'en'
+            ),
+            /*
+             * The mark, unless the owner has switched it off.
+             *
+             * The header is opt-IN (`show_logo === true`) because a header can
+             * show a wordmark instead, and an owner choosing between them is
+             * making a design decision. A footer has no such alternative — it
+             * simply ends the page — and no footer block written before today
+             * carries the flag at all, so requiring it meant a business with a
+             * logo got a footer without one and no control anywhere to say why.
+             *
+             * Opt-OUT instead: any business with a logo wears it here until it
+             * explicitly says otherwise.
+             */
+            logo_url: footerContent?.show_logo !== false && businessLogoUrl ? businessLogoUrl : undefined,
+          },
         };
       }
 
@@ -606,7 +676,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         theme: completeTheme(pageResult.data.theme, pageResult.data.template_id),
       },
       blocks: normalizedBlocks,
-      centralContentId: centralContent?.id || null
+      centralContentId: centralContent?.id || null,
+      // See the resolution above: the preview must describe the journey the
+      // same way the booking pages do.
+      paymentsEnabled
     });
   } catch (error) {
     requestLogger.error({ err: error, pageId }, 'Failed to get blocks with content');

@@ -14,6 +14,7 @@ import {
   emailDetailRow,
   emailDetailsTable,
   formatCurrency,
+  emailPalette,
   type BrandingData,
 } from './base-template';
 import { emailTranslations } from './translations';
@@ -58,6 +59,8 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
 
   // RTL comes from the branding, as it does for every other template.
   const brandingWithLocale = { ...data.branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
 
   const greeting = data.clientFirstName
     ? t.greetingNamed[locale].replace('{name}', escapeHtml(data.clientFirstName))
@@ -71,11 +74,11 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
       })
     : null;
 
-  const rows = [emailDetailRow(t.totalLabel[locale], formatCurrency(data.total, data.currency))];
+  const rows = [emailDetailRow(t.totalLabel[locale], formatCurrency(data.total, data.currency), brandingWithLocale)];
 
   if (data.dueOnAccept && data.dueOnAccept > 0 && data.dueOnAccept !== data.total) {
     rows.push(
-      emailDetailRow(t.dueOnAcceptLabel[locale], formatCurrency(data.dueOnAccept, data.currency))
+      emailDetailRow(t.dueOnAcceptLabel[locale], formatCurrency(data.dueOnAccept, data.currency), brandingWithLocale)
     );
   }
   if (typeof data.termsDays === 'number') {
@@ -84,13 +87,12 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
         t.paymentTermsLabel[locale],
         data.termsDays === 0
           ? t.dueOnReceipt[locale]
-          : t.netDays[locale].replace('{days}', String(data.termsDays))
-      )
+          : t.netDays[locale].replace('{days}', String(data.termsDays)), brandingWithLocale)
     );
   }
 
   if (validLine) {
-    rows.push(emailDetailRow(t.validUntilLabel[locale], escapeHtml(validLine)));
+    rows.push(emailDetailRow(t.validUntilLabel[locale], escapeHtml(validLine), brandingWithLocale));
   }
 
   /*
@@ -103,7 +105,7 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
   const stagesBlock =
     data.stages && data.stages.length > 1
       ? `
-    <p style="margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: #131A2B;">
+    <p style="margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: ${c.ink};">
       ${t.stagesTitle[locale]}
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom: 6px;">
@@ -111,8 +113,8 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
         .map(
           stage => `
         <tr>
-          <td style="padding: 6px 0; font-size: 14px; color: #3A4256;">${escapeHtml(stage.label)}</td>
-          <td style="padding: 6px 0; font-size: 14px; color: #131A2B; text-align: ${locale === 'he' ? 'left' : 'right'}; font-weight: 600;">
+          <td style="padding: 6px 0; font-size: 14px; color: ${c.inkMuted};">${escapeHtml(stage.label)}</td>
+          <td style="padding: 6px 0; font-size: 14px; color: ${c.ink}; text-align: ${locale === 'he' ? 'left' : 'right'}; font-weight: 600;">
             ${formatCurrency(stage.amount, data.currency)}
           </td>
         </tr>`
@@ -134,8 +136,8 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
     ? `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top: 20px;">
       <tr>
-        <td style="padding: 12px 14px; background: #F6F7FB; border-radius: 8px;">
-          <p style="margin: 0; font-size: 14px; color: #3A4256; line-height: 1.5;">
+        <td style="padding: 12px 14px; background: ${c.mutedSurface}; border-radius: ${c.buttonRadius};">
+          <p style="margin: 0; font-size: 14px; color: ${c.inkMuted}; line-height: 1.5;">
             📎 ${t.attachmentNote[locale]}
             ${data.documentName ? `<strong>${escapeHtml(data.documentName)}</strong>` : ''}
           </p>
@@ -145,25 +147,25 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
     : '';
 
   const content = `
-    <h1 style="margin: 0 0 6px; font-size: 21px; font-weight: 600; color: #131A2B;">
+    <h1 style="margin: 0 0 6px; font-size: 21px; font-weight: 600; color: ${c.ink};">
       ${greeting}
     </h1>
-    <p style="margin: 0 0 18px; font-size: 15px; color: #3A4256; line-height: 1.6;">
+    <p style="margin: 0 0 18px; font-size: 15px; color: ${c.inkMuted}; line-height: 1.6;">
       ${data.isRevision ? t.revisedIntro[locale] : t.intro[locale]}
     </p>
 
-    <p style="margin: 0 0 6px; font-size: 16px; font-weight: 600; color: #131A2B;">
+    <p style="margin: 0 0 6px; font-size: 16px; font-weight: 600; color: ${c.ink};">
       ${escapeHtml(data.title)}
     </p>
     ${
       data.description
-        ? `<p style="margin: 0 0 18px; font-size: 14px; color: #555555; line-height: 1.6; white-space: pre-line;">${escapeHtml(
+        ? `<p style="margin: 0 0 18px; font-size: 14px; color: ${c.inkMuted}; line-height: 1.6; white-space: pre-line;">${escapeHtml(
             data.description
           )}</p>`
         : ''
     }
 
-    ${emailDetailsTable(rows)}
+    ${emailDetailsTable(rows, brandingWithLocale)}
     ${stagesBlock}
     ${attachmentBlock}
 
@@ -171,7 +173,7 @@ export function generateProposalEmail(data: ProposalEmailData): { subject: strin
       ${emailButton(t.viewCta[locale], data.viewUrl, { branding: data.branding })}
     </div>
 
-    <p style="margin: 22px 0 0; font-size: 12px; color: #8A91A5;">
+    <p style="margin: 22px 0 0; font-size: 12px; color: ${c.inkFaint};">
       ${t.footerNote[locale]}
     </p>
   `;

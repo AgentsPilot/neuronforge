@@ -16,6 +16,8 @@ interface ServicePerformance {
   name: string;
   bookings: number;
   revenue: number;
+  /** Time actually sold, in hours — the denominator that makes services comparable. */
+  hours: number;
 }
 
 export class OpsServicePerformanceDetector extends BaseDetector {
@@ -41,7 +43,27 @@ export class OpsServicePerformanceDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'service_promotion_campaign',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `service_promotion_campaign`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
     consentTier: 'suggest',
     eligibleForAutomation: false,
     ownerParameters: [],
@@ -66,7 +88,7 @@ export class OpsServicePerformanceDetector extends BaseDetector {
     // Get all services for user
     const { data: services, error: servicesError } = await this.supabase
       .from('scheduling_services')
-      .select('id, service_name, price')
+      .select('id, service_name, price, duration_minutes')
       .eq('user_id', userId)
       .eq('is_active', true);
 
@@ -100,12 +122,20 @@ export class OpsServicePerformanceDetector extends BaseDetector {
     // Calculate performance per service
     const servicePerformance: Record<string, ServicePerformance> = {};
 
+    const serviceDurations: Record<string, number> = {};
+    services.forEach((service) => {
+      serviceDurations[service.id] = Number(
+        (service as { duration_minutes?: unknown }).duration_minutes ?? 0
+      );
+    });
+
     services.forEach((service) => {
       servicePerformance[service.id] = {
         id: service.id,
         name: service.service_name,
         bookings: 0,
         revenue: 0,
+        hours: 0,
       };
     });
 
@@ -113,6 +143,18 @@ export class OpsServicePerformanceDetector extends BaseDetector {
       if (booking.service_id && servicePerformance[booking.service_id]) {
         servicePerformance[booking.service_id].bookings++;
         servicePerformance[booking.service_id].revenue += parseFloat(booking.payment_amount || '0');
+
+        /*
+         * Hours sold, from the service's own duration.
+         *
+         * Total revenue alone ranks services by how often they are booked,
+         * which is a popularity contest: a £40 half-hour booked thirty times
+         * beats a £300 full day booked four, and the owner is told to sell more
+         * of the one that earns less per hour of their life. Revenue per hour
+         * is the comparison that answers "what is actually making me money".
+         */
+        const minutes = Number(serviceDurations[booking.service_id] ?? 0);
+        servicePerformance[booking.service_id].hours += Number.isFinite(minutes) ? minutes / 60 : 0;
       }
     });
 
@@ -195,6 +237,20 @@ export class OpsServicePerformanceDetector extends BaseDetector {
         avg_bookings_per_service: Math.round(avgBookingsPerService * 10) / 10,
         total_services: services.length,
         potential_revenue: Math.round(potentialRevenue),
+        /*
+         * Ranked by what an hour of the owner's time earns, which can invert
+         * the revenue ranking entirely. Services with no recorded duration are
+         * omitted rather than shown as infinite.
+         */
+        revenue_per_hour: performers
+          .filter((s) => s.hours > 0)
+          .map((s) => ({
+            id: s.id,
+            name: s.name,
+            per_hour: Math.round((s.revenue / s.hours) * 100) / 100,
+            hours: Math.round(s.hours * 10) / 10,
+          }))
+          .sort((a, b) => b.per_hour - a.per_hour),
       },
     });
 

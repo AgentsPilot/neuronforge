@@ -59,7 +59,6 @@ import { AboutSection } from './shapes/About';
 import { FeaturesSection } from './shapes/Features';
 import { ProcessSection } from './shapes/Process';
 import { GallerySection } from './shapes/Gallery';
-import { TestimonialsSection } from './shapes/Testimonials';
 import { StatsSection } from './shapes/Stats';
 import { TeamSection } from './shapes/Team';
 import { FAQSection } from './shapes/FAQ';
@@ -75,9 +74,12 @@ type Renderer = React.ComponentType<BlockRendererProps>;
  * The sections every template draws, and the shape each one uses.
  *
  * All six currently agree on which shape a section takes — what separates them
- * is the stylesheet, which is what the mockups show for these fifteen. The two
- * that genuinely diverge, services and pricing, diverge inside their own
- * components via theme.layouts, and the note above says why.
+ * is the stylesheet, which is what the mockups show for these fourteen. The
+ * three that do not appear here — services, pricing and testimonials — are
+ * sections whose BEHAVIOUR is part of their design: two layout choices driven
+ * by `theme.layouts`, and one carousel. They keep their own components and are
+ * styled by the composition through the shared `apc-` classes, which is all the
+ * theming ever needed.
  *
  * When a template needs its own arrangement of a section, give it an entry in
  * OVERRIDES below rather than editing this.
@@ -89,7 +91,20 @@ const SHAPES: Partial<Record<BlockType, Renderer>> = {
   features: FeaturesSection,
   process: ProcessSection,
   gallery: GallerySection,
-  testimonials: TestimonialsSection,
+  /*
+   * NOT testimonials.
+   *
+   * `TestimonialsBlock` is stateful — `layout` defaults to 'carousel', with
+   * auto-play, RTL-aware prev/next controls and dot indicators — and a shape
+   * here shadowed all of it with a static stack. Several quotes that used to
+   * rotate became a column, which is why a section that had been a carousel
+   * started rendering as one line of text per quote.
+   *
+   * It belongs with services and pricing for exactly the reason stated above:
+   * a section whose behaviour is part of its design keeps its own component.
+   * It already carries the `apc-` vocabulary, so the composition still styles
+   * it — theming never required taking the section over.
+   */
   stats: StatsSection,
   team: TeamSection,
   faq: FAQSection,

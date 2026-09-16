@@ -13,7 +13,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { InsightRepository } from '@/lib/business-os/insight/repository';
 import { ImpactProjector } from '@/lib/business-os/insight/projection';
-import { getProcessForDetector } from '@/lib/business-os/insight/kernel';
+import { getProcess } from '@/lib/business-os/insight/kernel';
 
 const logger = createLogger({ module: 'InsightDetailAPI' });
 
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest, context: RouteParams) {
 
     // Get process details if available
     const process = insight.paired_process_id
-      ? getProcessForDetector(insight.detector_id)
+      ? getProcess(insight.paired_process_id)
       : null;
 
     // Mark as surfaced

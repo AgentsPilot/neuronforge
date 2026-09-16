@@ -1,10 +1,11 @@
 'use client';
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
+import { Bot } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 import { resolveGap, gapStateFor, pickLeak, type FunnelWindow } from '@/lib/business-os/insight/funnelGap';
 import { buildJourney, daysSince } from '@/lib/business-os/insight/journeyTimeline';
-import { getProcessForDetector } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
+import { getProcess } from '@/lib/business-os/insight/kernel/TriggerableProcesses';
 import { localizeStageLabel } from '@/lib/business-os/stageLabels';
 import {
   resolveSetup,
@@ -27,6 +28,7 @@ import { VectorsStrip } from './VectorsStrip';
 import type { HandledEntry } from './HandledSection';
 import { DailyBriefingCard } from './DailyBriefingCard';
 import { NeedsYouCard, type GapView } from './NeedsYouCard';
+import { ClientReachJourney } from './ClientReachJourney';
 import type { OperationalItem } from './InsightAdvisorCard';
 import { briefingLines } from '@/lib/business-os/briefing/BriefingNarrator';
 import { InsightAdvisorCard } from './InsightAdvisorCard';
@@ -150,7 +152,24 @@ export interface PipelineStage {
   stage_key: string;
   stage_label: string;
   color: string;
+  /** How many sit here now. What the station shows. */
   count: number;
+  /**
+   * What happened to the people who reached this stage — what the CONNECTOR
+   * below it shows.
+   *
+   * The station is a queue and the connector is a flow, and they are different
+   * questions: "three people are in Consultation" says nothing about whether
+   * Consultation leaks. Dividing one station's count by the next used to be how
+   * the map decided, which reported seventeen people still waiting as seventeen
+   * who had dropped out.
+   *
+   * Absent when the business has no recorded stage history, in which case the
+   * connector says it cannot judge rather than guessing.
+   */
+  arrived?: number;
+  moved_on?: number;
+  stuck?: number;
 }
 
 export interface MilestoneData {
@@ -245,9 +264,25 @@ interface LiveDashboardProps {
   } | null;
   onConfigureClick?: (stepId: string) => void;
   onAction?: (action: string, data?: unknown) => void;
-  // Collapse state
-  collapsed?: boolean;
-  onToggleCollapse?: () => void;
+  /*
+   * The assistant panel, which lives below this card on the page.
+   *
+   * The button is here rather than on the panel itself because the panel is
+   * hidden by default and a control you can only reach by finding the thing it
+   * reveals is not a control. The card owns the button; the page owns the
+   * panel and the flag.
+   */
+  assistantOpen?: boolean;
+  onToggleAssistant?: () => void;
+  /*
+   * The assistant panel, rendered by the page and placed here.
+   *
+   * Passed in rather than built here because the page owns the chat — its ref,
+   * its handlers, and the thirty-odd places that write into it. This card only
+   * decides WHERE it sits, which is directly below the journey, where the
+   * button that opens it can still be seen.
+   */
+  assistantSlot?: React.ReactNode;
 }
 
 /**
@@ -386,8 +421,9 @@ export function LiveDashboard({
   briefing,
   onConfigureClick,
   onAction,
-  collapsed = false,
-  onToggleCollapse,
+  assistantOpen = false,
+  onToggleAssistant,
+  assistantSlot,
 }: LiveDashboardProps) {
   const { t, isRTL, formatCurrency, language } = useLanguage();
 
@@ -406,7 +442,7 @@ export function LiveDashboard({
     afternoon: 'Good afternoon',
     evening: 'Good evening'
   }[greeting];
-  const { insights, vectorMaturity, autonomousWork, runAction, refresh: refreshInsights } = useInsights();
+  const { insights, vectorMaturity, autonomousWork, healthSummary, runAction, refresh: refreshInsights, loading: insightsLoading } = useInsights();
 
   // What the detection engine currently has to say. Anything already acted on,
   // snoozed or dismissed is not pending, so it never reaches the card.
@@ -424,7 +460,9 @@ export function LiveDashboard({
    */
   const automatableNow = useMemo(
     () => pendingInsights.filter(
-      insight => getProcessForDetector(insight.detector_id)?.eligibleForAutomation
+      // The insight's own paired process, not a second lookup by detector id:
+      // the row already carries what its detector declared.
+      insight => getProcess(insight.paired_process_id)?.eligibleForAutomation
     ).length,
     [pendingInsights]
   );
@@ -469,12 +507,25 @@ export function LiveDashboard({
     suggestedParams: Record<string, unknown>;
   } | undefined>(undefined);
 
-  // Insights come and go as the engine runs; keep the pointer inside the list.
+  /*
+   * Insights come and go as the engine runs; keep the pointer inside the list.
+   *
+   * The list is BOTH lists. The advisor card runs one position across insights
+   * and then the automations waiting to be approved — `totalPages` there is
+   * `insights.length + operational.length`, and an operational page is
+   * addressed by the tail of that range. Clamping against the insights alone
+   * meant every one of those positions looked out of bounds the instant it was
+   * selected: the dot set the index, this effect immediately reset it to 0, and
+   * the card snapped back. An account with automations but no insights could
+   * not move off the first page at all, because EVERY page was in the tail.
+   */
+  const advisorPageCount = pendingInsights.length + operationalPending.length;
+
   useEffect(() => {
-    if (currentInsightIndex >= pendingInsights.length) {
+    if (currentInsightIndex >= advisorPageCount) {
       setCurrentInsightIndex(0);
     }
-  }, [pendingInsights.length, currentInsightIndex]);
+  }, [advisorPageCount, currentInsightIndex]);
 
   const handleInsightAction = useCallback(async (
     action: 'run' | 'snooze' | 'dismiss',
@@ -482,7 +533,9 @@ export function LiveDashboard({
     params?: Record<string, unknown>
   ) => {
     const success = await runAction(insightId, action, params);
-    if (!success) return;
+    // Reported back so the card can stop its "done" animation rather than
+    // narrating a job the server refused to start.
+    if (!success) return false;
 
     if (action === 'run') {
       // A process that can be automated is offered right after it is run once.
@@ -494,6 +547,8 @@ export function LiveDashboard({
         });
       }
     }
+
+    return true;
   }, [runAction, pendingInsights]);
 
   const handleInsightAutomate = useCallback(async (insightId: string, params: Record<string, unknown>) => {
@@ -773,6 +828,29 @@ export function LiveDashboard({
    * had already declined. The step is the same — give clients a way to reach
    * you — but the thing to do, and the words for it, are not.
    */
+  /**
+   * The readiness graph, resolved ONCE for the whole card.
+   *
+   * It was resolved inside the status memo, and `SystemReadiness` resolves it
+   * again from the same two inputs. That was survivable while the second copy
+   * only fed a sentence; the reach journey above now renders from it too, and
+   * three resolutions of the same question are three chances to disagree on one
+   * screen — the exact failure the status line's own comment below describes.
+   */
+  const setupGraph = useMemo(
+    () => resolveSetup(setupItems, setupShape),
+    [setupItems, setupShape]
+  );
+
+  /**
+   * Is the reach journey showing above?
+   *
+   * The same test in one place, read by both the slot at the top and the
+   * readiness card below, so the path and the list can never both claim the
+   * screen — or both leave it empty.
+   */
+  const showReachJourney = setupGraph.steps.length > 0 && !isReadyForClients(setupGraph);
+
   const reachesByLink = setupShape.presence === 'booking_only' || setupShape.presence === 'none';
   const hasHours = setupItems.some(item => item.id === 'availability' && item.completed);
   const hasPayments = setupItems.some(item => item.id === 'payments' && item.completed);
@@ -792,17 +870,16 @@ export function LiveDashboard({
    * for what has actually happened since. It moves when the business moves.
    */
   const status = useMemo((): { key: string; vars: Record<string, string | number> } => {
-    const graph = resolveSetup(setupItems, setupShape);
     const reached = (key: string) =>
       journey.nodes.some(node => node.key === key && node.state === 'reached');
 
     // Reachability is a fact about what is live; readiness is a fact about
     // what is configured. A business can be fully configured and still have
     // nothing a client can open, and that is still setup.
-    if (!isReadyForClients(graph) || !hasPublished) {
+    if (!isReadyForClients(setupGraph) || !hasPublished) {
       return {
         key: 'liveDashboard.status.setup',
-        vars: { done: graph.mandatoryDone, total: graph.mandatoryTotal },
+        vars: { done: setupGraph.mandatoryDone, total: setupGraph.mandatoryTotal },
       };
     }
     if (reached('handover')) return { key: 'liveDashboard.status.handover', vars: {} };
@@ -811,7 +888,7 @@ export function LiveDashboard({
       return { key: 'liveDashboard.status.arriving', vars: { found: stats.found } };
     }
     return { key: 'liveDashboard.status.live_quiet', vars: {} };
-  }, [setupItems, setupShape, hasPublished, journey, stats.found]);
+  }, [setupGraph, hasPublished, journey, stats.found]);
 
   /**
    * The funnel as one ordered list, visitors first.
@@ -826,7 +903,15 @@ export function LiveDashboard({
    * so those tips pointed at a station that did not exist.
    */
   const funnelNodes = useMemo(() => {
-    const nodes: { key: string; label: string; count: number; color?: string; window: FunnelWindow }[] = [];
+    const nodes: {
+      key: string;
+      label: string;
+      count: number;
+      color?: string;
+      window: FunnelWindow;
+      /** Cohort flow for the connector BELOW this station, where it is known. */
+      flow?: { arrived: number; movedOn: number };
+    }[] = [];
 
     // Present whenever the business has a website at all, published or not.
     // Before publishing the map draws every station as a dash rather than a
@@ -853,6 +938,9 @@ export function LiveDashboard({
           count: stage.count ?? 0,
           color: stage.color,
           window: 'pipeline',
+          ...(typeof stage.arrived === 'number' && typeof stage.moved_on === 'number'
+            ? { flow: { arrived: stage.arrived, movedOn: stage.moved_on } }
+            : {}),
         });
       }
       return nodes;
@@ -896,13 +984,52 @@ export function LiveDashboard({
     });
   }, [funnelNodes, hasPublished]);
 
+  /**
+   * The two numbers a connector compares.
+   *
+   * A cohort where the stage has one — arrived, and of those, moved on — and
+   * the two stations themselves where it does not. Defined once and handed to
+   * both the connector and the drawer below, because they must reach the same
+   * verdict: the map drawing red above a panel calling the same gap healthy is
+   * the failure this shape exists to prevent.
+   */
+  const gapEndsFor = useCallback(
+    (from: { count: number; window: FunnelWindow; flow?: { arrived: number; movedOn: number } },
+     to: { count: number; window: FunnelWindow }) =>
+      from.flow
+        ? {
+            from: { count: from.flow.arrived, window: 'flow' as const },
+            to: { count: from.flow.movedOn, window: 'flow' as const },
+          }
+        : { from, to },
+    []
+  );
+
   // Gap gN sits between funnelNodes[N-1] and funnelNodes[N] — same array the
   // stations come from, so the two can't drift out of step. resolveGap decides
   // what may be claimed; this only puts words to it.
   const funnelGaps: FunnelGap[] = useMemo(() => {
     return funnelNodes.slice(0, -1).map((from, i) => {
       const to = funnelNodes[i + 1];
-      const verdict = resolveGap(from, to, hasPublished);
+
+      /*
+       * Of everyone who reached this station, how many got further.
+       *
+       * The two ends handed to `resolveGap` used to be the two stations' own
+       * headcounts, which made the rate a comparison of queue lengths: twenty
+       * waiting in Lead and three in Consultation read as "17 dropped off",
+       * though every one of those seventeen was still in play and everybody who
+       * had already passed through was counted in neither.
+       *
+       * A cohort answers the question the connector has always been drawn to
+       * ask. Both ends are marked `flow`, so they compare cleanly, and the
+       * `dropped` figure becomes people who are genuinely still there.
+       *
+       * Without recorded history the old behaviour stands — which for a real
+       * pipeline means `incomparable`, and the connector honestly says so.
+       */
+      const ends = gapEndsFor(from, to);
+      const verdict = resolveGap(ends.from, ends.to, hasPublished);
 
       let lb: string | undefined;
       if (verdict.kind === 'tooEarly') lb = t('gap.tooEarly') || 'too early to tell';
@@ -911,7 +1038,7 @@ export function LiveDashboard({
 
       return { k: `g${i + 1}`, state: gapStateFor(verdict), lb };
     });
-  }, [hasPublished, funnelNodes, t]);
+  }, [hasPublished, funnelNodes, gapEndsFor, t]);
 
   // Build tips from REAL data (actionable suggestions)
   const tips: Tip[] = useMemo(() => {
@@ -977,6 +1104,9 @@ export function LiveDashboard({
     (window: FunnelWindow): string => {
       if (window === 'visitors') return t('window.visitors') || 'last 30 days';
       if (window === 'period') return t('window.period') || 'this month';
+      // A cohort is not a moment: these are the people who ARRIVED in the
+      // window, which is a different claim from how many are standing there.
+      if (window === 'flow') return t('window.flow') || 'reached this step';
       return t('window.pipeline') || 'right now';
     },
     [t]
@@ -1004,14 +1134,20 @@ export function LiveDashboard({
     // The rule lives in pickLeak, where it is tested: a leak opens this panel
     // whether or not anyone clicked it, a clicked leak wins over a worse one,
     // and with several leaks the worst shows rather than the first.
-    const leak = pickLeak(funnelNodes, hasPublished, selectedNode);
+    const leak = pickLeak(funnelNodes, hasPublished, selectedNode, gapEndsFor);
     if (!leak) return null;
 
     const { from, to } = leak;
 
     // resolveGap returns 'empty' at from.count 0 and 'tooEarly' below
     // MIN_TO_JUDGE, both before 'leaking' — so this cannot divide by zero.
-    const rate = Math.round((to.count / from.count) * 100);
+    /*
+     * The same two numbers the connector used, not the stations' own counts —
+     * otherwise this panel would print a different percentage from the gap it
+     * was opened by.
+     */
+    const ends = gapEndsFor(from, to);
+    const rate = Math.round((ends.to.count / ends.from.count) * 100);
 
     return {
       ey: `${t('drawer.gap.between') || 'Between'} ${from.label} ${t('drawer.gap.and') || 'and'} ${to.label}`,
@@ -1019,14 +1155,20 @@ export function LiveDashboard({
       p: t('drawer.gap.dropped.desc') || 'Some contacts didn\'t move to the next stage.',
       hero: true,
       stats: [
-        // Each figure wears its own period. The two ends of a gap can be counted
-        // over different spans, and an unlabelled pair invites the reader to
-        // treat them as one flow.
-        { v: from.count.toString(), l: from.label, s: windowLabel(from.window) },
-        { v: to.count.toString(), l: to.label, s: `${rate}%`, bad: true },
+        /*
+         * The figures the RATE was computed from, not the stations' own counts.
+         *
+         * Each wears its own period, because the two ends of a gap can be
+         * counted over different spans and an unlabelled pair invites the
+         * reader to treat them as one flow. Showing the stations here while the
+         * percentage came from a cohort would print two numbers that do not
+         * divide into the number beside them.
+         */
+        { v: ends.from.count.toString(), l: from.label, s: windowLabel(ends.from.window) },
+        { v: ends.to.count.toString(), l: to.label, s: `${rate}%`, bad: true },
       ],
     };
-  }, [selectedNode, funnelNodes, hasPublished, windowLabel, t]);
+  }, [selectedNode, funnelNodes, hasPublished, windowLabel, gapEndsFor, t]);
 
 
   /*
@@ -1043,6 +1185,15 @@ export function LiveDashboard({
     milestoneData?.firstEnquiry ||
     milestoneData?.firstBooking
   );
+
+  /**
+   * One line about the week, from the weekly health summary.
+   *
+   * `summary_title` rather than the full narrative: this is the sub-line of a
+   * card whose content is four figures, and a paragraph under them would bury
+   * the numbers the card exists to state.
+   */
+  const weeklyHeadline = healthSummary?.summary_title?.trim() || '';
 
   // Build verdict from REAL data
   const verdict = useMemo<VerdictContent>(() => {
@@ -1118,13 +1269,20 @@ export function LiveDashboard({
          */
         highlight: weekly.revenue > 0 ? formatCurrency(weekly.revenue) : undefined,
         /*
-         * No closing line. "Everything's running" is a verdict on the platform,
-         * not a fact about the business — printed whenever a booking existed,
-         * with nothing checked behind it. The three beats above already say
+         * The week's closing line, when the engine has one.
+         *
+         * "Everything's running" used to sit here: a verdict on the platform
+         * rather than a fact about the business, printed whenever a booking
+         * existed with nothing checked behind it. This is the opposite — the
+         * weekly summary the insight engine computes from the week's actual
+         * detections, which until now was written to `business_health_summaries`,
+         * served by the API, exposed by `useInsights`, and read by nothing.
+         *
+         * Still empty when there is no summary. The beats above already say
          * what the week held, and the card omits an empty sub rather than
          * leaving a blank row.
          */
-        sub: '',
+        sub: weeklyHeadline,
         when: t('verdict.running.when') || 'This week',
       };
     }
@@ -1197,7 +1355,7 @@ export function LiveDashboard({
         when: t('verdict.running.when') || 'This week',
       };
     }
-  }, [hasPublished, reachesByLink, hasEverTraded, setupShape, weekly, topLeadChannel, formatCurrency, t]);
+  }, [hasPublished, reachesByLink, hasEverTraded, setupShape, weekly, weeklyHeadline, topLeadChannel, formatCurrency, t]);
 
   /*
    * Today's briefing, ready for the card.
@@ -1214,6 +1372,26 @@ export function LiveDashboard({
    */
   const briefingForCard = useMemo(() => {
     if (!briefing?.narrative) return undefined;
+
+    /*
+     * Hold until maturity is KNOWN, not merely "not cold start".
+     *
+     * The two halves of this gate arrive from different fetches: `briefing`
+     * comes from the page's my-day call, `vectorMaturity` from this component's
+     * own `useInsights`. The briefing usually wins. And while maturity was
+     * still in flight, `undefined?.maturityLevel === 'cold_start'` evaluates to
+     * false — so the gate read as "not a cold start", the card rendered, and
+     * then vanished the moment the real answer landed.
+     *
+     * A card that appears and then removes itself looks like a bug even when
+     * the final state is right. Waiting costs a beat; flashing costs trust.
+     *
+     * Deliberately keyed on loading rather than on `vectorMaturity` being null:
+     * if the insights call FAILS, loading ends with maturity still null, and
+     * the briefing should still show. An insights outage is not a reason to
+     * hide today's briefing.
+     */
+    if (insightsLoading) return undefined;
     if (vectorMaturity?.maturityLevel === 'cold_start') return undefined;
 
     const lines = briefingLines(briefing.narrative);
@@ -1238,7 +1416,7 @@ export function LiveDashboard({
       emailEnabled: briefing.emailEnabled,
       timezone: briefing.timezone,
     };
-  }, [briefing, vectorMaturity?.maturityLevel, language]);
+  }, [briefing, vectorMaturity?.maturityLevel, insightsLoading, language]);
 
   // Ghost projection (only in setup mode)
   const ghost: GhostProjection | undefined = useMemo(() => {
@@ -1302,8 +1480,8 @@ export function LiveDashboard({
         }}
       />
 
-      {/* Page header with greeting + collapse button */}
-      <div className={collapsed ? 'mb-0' : 'mb-6'}>
+      {/* Page header: the greeting, the date, and the assistant. */}
+      <div className="mb-6">
         <div className="flex items-start justify-between gap-4 mb-1">
           {/* Greeting */}
           <div className="flex-1">
@@ -1317,6 +1495,172 @@ export function LiveDashboard({
               }}
             >
               {greetingText}, {userName}
+              {/*
+                Ask the assistant.
+
+                Inline with the greeting, so it reads as part of the sentence
+                that addresses you rather than another control competing with
+                the date and the chevron on the right.
+
+                The SAME mark the chat panel wears in its own header — the Bot
+                glyph on a tinted orange tile — at a smaller size. A sparkle sat
+                here first and read as "AI something"; it never said assistant.
+                A button that is a miniature of the thing it opens does not have
+                to be guessed at.
+
+                It blinks only while the chat is closed: the pulse is an
+                invitation, and an invitation to something already open is just
+                a distracting icon. It also stops for anyone who has asked the
+                system for reduced motion.
+              */}
+              {onToggleAssistant && (
+                <button
+                  onClick={onToggleAssistant}
+                  aria-expanded={assistantOpen}
+                  aria-label={t('chat.title')}
+                  title={t('chat.title')}
+                  className={`lv-ask${assistantOpen ? ' on' : ''}`}
+                >
+                  <span className="lv-ask-tile">
+                    <Bot strokeWidth={2} />
+                  </span>
+                  <span className="lv-ask-lb">{t('chat.ask')}</span>
+                </button>
+              )}
+              {/*
+                Here, not in the stylesheet at the foot of this component:
+                the stylesheet at the foot of this component only renders with
+                the body of the card, and these rules belong to the header.
+              */}
+              <style jsx>{`
+                /* font:inherit is the whole reason this icon was invisible.
+                   A button does NOT inherit font-size; browsers set their own
+                   ~13px on it. The em-sized svg below was therefore 0.62 of
+                   13px — an 8px mark beside a 31px heading — rather than 0.62
+                   of the greeting. Sized in em deliberately: the heading is a
+                   clamp() that grows with the viewport, and a fixed-pixel icon
+                   would drift out of proportion at one end or the other. */
+                /* The button is the tile AND the words. An icon cannot say
+                   "chat" on its own — a bot glyph reads as "AI something" — so
+                   the label carries the meaning and the tile carries the
+                   attention. */
+                .lv-ask {
+                  font: inherit;
+                  position: relative;
+                  display: inline-flex;
+                  align-items: center;
+                  vertical-align: baseline;
+                  /* Padding and a pill radius so the halo has an outline to
+                     follow; without them it would trace the text's own ragged
+                     box and sit tight against the letters. */
+                  gap: 0.2em;
+                  padding: 0.2em 0.5em 0.2em 0.36em;
+                  border-radius: 999px;
+                  /* One unit, not a tile with a caption beside it.
+                     The glyph used to carry its own tinted square and the words
+                     sat outside it, which read as two objects that happened to
+                     be adjacent. The wash belongs to the whole chip; the glyph
+                     and the label simply live inside it. */
+                  background: rgba(249, 115, 22, 0.12);
+                  /* Clearance for the HALO, which spreads 0.6em past the chip
+                     on every edge. At the 0.38em that used to sit here it
+                     washed over the last letter of the name. */
+                  margin-inline-start: 0.8em;
+                  border: none;
+                  color: #F97316;
+                  cursor: pointer;
+                  line-height: 0;
+                  transition: transform 0.15s, background 0.15s;
+                }
+
+                /* The halo, around the WHOLE button — tile and words together.
+                   A box-shadow spread rather than a scaled pseudo-element: this
+                   button is a wide pill, and scaling one expands it far more
+                   sideways than vertically, which reads as a stretching blob
+                   rather than a ring. A spreading shadow grows the same amount
+                   on every edge and follows the pill exactly. */
+                .lv-ask:not(.on) {
+                  animation: lvHalo 3.4s ease-out infinite;
+                }
+                /*
+                 * One slow ring with a pause, not a strobe.
+                 *
+                 * This ran at 1.9s over a glyph that was simultaneously fading
+                 * and shrinking — two competing animations on one small target,
+                 * which is what made it feel urgent rather than inviting. The
+                 * glyph is steady now and this is the only movement left.
+                 *
+                 * The ring finishes expanding at 45% and the rest of the cycle
+                 * is deliberately empty: nearly two seconds of stillness between
+                 * pulses. A pulse that restarts the moment it ends reads as an
+                 * alarm; one that waits reads as a nudge.
+                 */
+                @keyframes lvHalo {
+                  0% {
+                    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.28);
+                  }
+                  45% {
+                    box-shadow: 0 0 0 0.45em rgba(249, 115, 22, 0);
+                  }
+                  100% {
+                    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0);
+                  }
+                }
+
+                /* Just the glyph's box now — the chip around it carries the
+                   wash that the glyph used to carry alone. */
+                .lv-ask-tile {
+                  display: inline-flex;
+                  align-items: center;
+                  justify-content: center;
+                  flex: 0 0 auto;
+                }
+
+                /* Sized to sit UNDER the greeting rather than beside it as an
+                   equal: it is an invitation, not a second headline. */
+                .lv-ask-lb {
+                  font-size: 0.42em;
+                  font-weight: 600;
+                  line-height: 1;
+                  letter-spacing: 0;
+                  white-space: nowrap;
+                }
+                .lv-ask-tile svg {
+                  position: relative;
+                  /* Above the ring, which is painted behind it. */
+                  z-index: 1;
+                  width: 0.66em;
+                  height: 0.66em;
+                }
+
+                /* Below this the greeting owns the line; the tile and its
+                   accessible name carry on alone. */
+                @media (max-width: 560px) {
+                  .lv-ask-lb {
+                    display: none;
+                  }
+                }
+
+                .lv-ask:hover {
+                  background: rgba(249, 115, 22, 0.22);
+                  transform: scale(1.04);
+                }
+                /* Open: steady, and the tile fills in so the button reads as
+                   pressed rather than merely stopping its blink. */
+                /* Open: the chip deepens and the halo stops. It was there to
+                   be found, and it has been. */
+                .lv-ask.on {
+                  background: rgba(249, 115, 22, 0.22);
+                }
+                /* Both animations stop for anyone who has asked the system for
+                   reduced motion. A pulsing ring is precisely what that setting
+                   exists to switch off; the tile alone still marks the button. */
+                @media (prefers-reduced-motion: reduce) {
+                  .lv-ask:not(.on) {
+                    animation: none;
+                  }
+                }
+              `}</style>
             </h1>
           </div>
           {/* Date + Collapse button */}
@@ -1334,32 +1678,9 @@ export function LiveDashboard({
               </b>
               <span className="text-xs text-[var(--v2-text-muted)]">{dateStr}</span>
             </div>
-            {/* Collapse/Expand button */}
-            {onToggleCollapse && (
-              <button
-                onClick={onToggleCollapse}
-                className="p-2 rounded-lg hover:bg-[var(--v2-bg-secondary)] transition-colors"
-                title={collapsed ? (t('insight.expand') || 'Expand') : (t('insight.collapse') || 'Collapse')}
-              >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="text-[var(--v2-text-muted)]"
-                  style={{ transform: collapsed ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}
-                >
-                  <polyline points="18 15 12 9 6 15"></polyline>
-                </svg>
-              </button>
-            )}
           </div>
         </div>
-        {!collapsed && (
+        {(
           <p
             className="text-[var(--v2-text-muted)]"
             style={{ fontSize: '15px', maxWidth: '52rem' }}
@@ -1369,9 +1690,39 @@ export function LiveDashboard({
         )}
       </div>
 
-      {/* Collapsible content - everything below the header */}
-      {!collapsed && (
+      {(
         <>
+      {/*
+        Which journey belongs in this slot.
+
+        This is the first block under the greeting — the place the eye lands
+        before anything else — and it was always the lifecycle rail: account
+        created, first visitor, first booking, first client. For a business that
+        has not launched, every one of those nodes is unlit. The best position
+        on the dashboard was spent on a timeline of things that had not happened,
+        directly above a briefing that is deliberately withheld from a cold-start
+        account. Two pieces of emptiness, stacked.
+
+        So while nothing compulsory is outstanding the rail stays exactly as it
+        was; until then the slot shows the journey that actually matters to
+        someone who has not opened yet — whether a client can reach them at all.
+        Same position, same card, same word. Nothing new to find.
+
+        `isReadyForClients` is the graph's own test, the same one the status
+        line above uses, so the sentence and the card cannot contradict.
+
+        The length test is not redundant with it. `isReadyForClients` now
+        reports false for an EMPTY graph — an unanswered question is not a ready
+        business — and a reach journey drawn from no steps would show three
+        green stations and no next action, which is the same false all-clear
+        wearing the opposite colour. With no data, neither claim is ours to
+        make, so the lifecycle rail stays and the readiness card below says the
+        check could not run.
+      */}
+      {showReachJourney ? (
+        <ClientReachJourney graph={setupGraph} onAction={onAction} />
+      ) : (
+      <>
       {/*
           The journey — every node a fact about this business.
 
@@ -1610,6 +1961,17 @@ export function LiveDashboard({
           </div>
         </div>
       </div>
+
+      </>
+      )}
+
+      {/* The assistant, directly under the journey.
+
+          It used to sit at the foot of the page, below every card here. Now
+          that it is hidden until asked for, it opens where the button that
+          opened it is still on screen — a panel that appears eleven sections
+          further down reads as nothing having happened. */}
+      {assistantSlot}
 
       {/* System readiness — sits directly under the timeline, ahead of every
           metric, because an unconfigured system makes the numbers below it moot.

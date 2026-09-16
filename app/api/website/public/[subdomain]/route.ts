@@ -10,6 +10,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withProfileContact } from '@/lib/branding/contactBlockContent';
+import { withProfileFooter } from '@/lib/branding/footerBlockContent';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { completeTheme } from '@/lib/branding/theme';
 import { createLogger } from '@/lib/logger';
@@ -234,12 +235,22 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
      * than none.
      *
      * Injected the same way the logo is, and for the same reason: the profile
-     * is the single source, changing it once changes it everywhere, and a value
-     * typed on the block still wins so an owner can override a detail for one
-     * page without editing their business.
+     * is the single source and changing it once changes it everywhere. It is
+     * authoritative rather than a default, so the contact form and the footer
+     * on one page cannot state two different phone numbers.
      */
-    const hasContactForm = blocks.some(b => b.block_type === 'contact_form');
-    const contactProfile = hasContactForm
+    /*
+     * The footer reads the same row.
+     *
+     * It states opening hours, the registered name and number, and the contact
+     * details — all of it resolved here rather than stored, because hours are a
+     * CLAIM: baked into the block at generation, a page goes on telling clients
+     * to come on a day the business has since stopped working.
+     */
+    const needsProfile = blocks.some(
+      b => b.block_type === 'contact_form' || b.block_type === 'footer'
+    );
+    const contactProfile = needsProfile
       ? (await businessProfileRepository.findByUserId(userId)).data
       : null;
 
@@ -297,8 +308,37 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           ...block,
           content: withProfileContact(
             block.content as Record<string, unknown>,
-            contactProfile as unknown as Record<string, unknown>
+            contactProfile as unknown as Record<string, unknown>,
+            pageResult.data.website_language ?? 'en'
           ),
+        };
+      }
+
+      if (block.block_type === 'footer') {
+        const footerContent = block.content as Record<string, unknown>;
+        return {
+          ...block,
+          content: {
+            ...withProfileFooter(
+              footerContent,
+              contactProfile as unknown as Record<string, unknown> | null,
+              pageResult.data.website_language ?? 'en'
+            ),
+            /*
+             * The mark, unless the owner has switched it off.
+             *
+             * The header is opt-IN (`show_logo === true`) because a header can
+             * show a wordmark instead, and an owner choosing between them is
+             * making a design decision. A footer has no such alternative — it
+             * simply ends the page — and no footer block written before today
+             * carries the flag at all, so requiring it meant a business with a
+             * logo got a footer without one and no control anywhere to say why.
+             *
+             * Opt-OUT instead: any business with a logo wears it here until it
+             * explicitly says otherwise.
+             */
+            logo_url: footerContent?.show_logo !== false && businessLogoUrl ? businessLogoUrl : undefined,
+          },
         };
       }
 

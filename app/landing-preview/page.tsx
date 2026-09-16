@@ -16,6 +16,9 @@ import { DEFAULT_PUBLIC_THEME } from '@/lib/branding/theme';
 import type { PageTheme } from '@/components/website/blocks/types';
 import type { Locale } from '@/lib/i18n/config';
 import { getDirection, isValidLocale, defaultLocale } from '@/lib/i18n/config';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'LandingPreviewPage' });
 
 // Translations for loading/error states
 const LABELS = {
@@ -98,6 +101,20 @@ function LandingPreviewContent() {
 
       const previewInput = JSON.parse(storedData);
 
+      /*
+       * Nothing to preview is not a request worth making.
+       *
+       * `JSON.stringify(undefined)` is `undefined`, which fetch sends as NO
+       * BODY — so a stored value that parsed to nothing produced a POST the
+       * server could only answer with "Unexpected end of JSON input". The
+       * failure looked like a broken endpoint and was an empty hand.
+       */
+      if (!previewInput || typeof previewInput !== 'object') {
+        logger.warn({ dataKey }, 'Preview data was stored but held nothing usable');
+        setErrorKey('previewDataNotFound');
+        return;
+      }
+
       // Call API to get rendered blocks
       const response = await fetch('/api/website/landing-pages/preview', {
         method: 'POST',
@@ -120,7 +137,7 @@ function LandingPreviewContent() {
         subdomain: result.subdomain
       });
     } catch (err) {
-      console.error('Failed to load preview:', err);
+      logger.error({ err }, 'Failed to load preview');
       setErrorKey('failedToLoad');
     } finally {
       setLoading(false);

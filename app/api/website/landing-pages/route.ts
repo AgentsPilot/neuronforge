@@ -37,7 +37,6 @@ function getBlocksForOfferingType(
   // hero at `#pricing` instead of `#booking`, so nothing is left without a
   // destination.
   const needsBooking = !!offeringType && BOOKABLE_TYPES.includes(offeringType.toLowerCase());
-  const isCourse = offeringType?.toLowerCase() === 'course';
 
   // Localized CTA text
   const ctaText = {
@@ -72,7 +71,10 @@ function getBlocksForOfferingType(
          */
         menu_items: [],
         cta_button: {
-          text: needsBooking ? ctaText.book : (isCourse ? ctaText.enroll : ctaText.getStarted),
+          // Book where a time is picked, otherwise the neutral ask. The
+          // course/product branch guessed at what was being sold and put
+          // "Enroll Now" on things nobody enrolls in.
+          text: needsBooking ? ctaText.book : ctaText.getStarted,
           link: needsBooking ? '#booking' : '#pricing'
         },
         style: 'minimal'
@@ -84,7 +86,7 @@ function getBlocksForOfferingType(
         layout: 'center',
         headline: '',
         subheadline: '',
-        cta_text: needsBooking ? ctaText.book : (isCourse ? ctaText.enroll : ctaText.buy),
+        cta_text: needsBooking ? ctaText.book : ctaText.getStarted,
         cta_link: needsBooking ? '#booking' : '#pricing',
         background_type: 'gradient'
       }
@@ -92,18 +94,34 @@ function getBlocksForOfferingType(
     {
       block_type: 'features',
       defaultContent: {
-        title: isCourse
-          ? (language === 'he' ? 'מה תלמדו' : language === 'es' ? 'Qué Aprenderás' : 'What You Will Learn')
-          : (language === 'he' ? 'למה לבחור בנו' : language === 'es' ? 'Por Qué Elegirnos' : 'Why Choose Us'),
+        /*
+         * One heading for every offering.
+         *
+         * This was "What You Will Learn" for anything the generator had
+         * classified as a course and "Why Choose Us" otherwise — a guess that
+         * is visible when wrong, exactly as "Course Details" was on the pricing
+         * section. "What's included" is true of a course, a treatment, a
+         * package and a download alike, and needs nothing inferred.
+         *
+         * Generated copy still wins: the model reads the real description and
+         * writes a heading about THIS offering, which is better than either
+         * branch. This is only what shows when generation is skipped.
+         */
+        title: language === 'he' ? 'מה כלול' : language === 'es' ? 'Qué Incluye' : "What's Included",
         features: []
       }
     },
     {
       block_type: 'pricing',
       defaultContent: {
-        title: isCourse
-          ? (language === 'he' ? 'פרטי הקורס' : language === 'es' ? 'Detalles del Curso' : 'Course Details')
-          : (language === 'he' ? 'השקעה' : language === 'es' ? 'Inversión' : 'Investment'),
+        // Just "Pricing".
+        //
+        // This was picked from `offeringType === 'course'` — "Course Details"
+        // or "Investment" — a guess about the offering that is visible when
+        // wrong: a landing page for a training package was headed "Course
+        // Details". The section lists prices; the plainest word for it is
+        // correct for every offering and needs nothing inferred.
+        title: language === 'he' ? 'מחירון' : language === 'es' ? 'Precios' : 'Pricing',
         plans: []
       }
     },
@@ -130,13 +148,18 @@ function getBlocksForOfferingType(
     blocks.push({
       block_type: 'cta',
       defaultContent: {
-        title: isCourse
-          ? (language === 'he' ? 'מוכנים להתחיל ללמוד?' : language === 'es' ? '¿Listo para empezar a aprender?' : 'Ready to Start Learning?')
-          : (language === 'he' ? 'מוכנים להתחיל?' : language === 'es' ? '¿Listo para comenzar?' : 'Ready to Get Started?'),
-        description: isCourse
-          ? (language === 'he' ? 'הירשמו עכשיו והתחילו את המסע שלכם' : language === 'es' ? 'Inscríbete ahora y comienza tu viaje' : 'Enroll now and begin your journey')
-          : (language === 'he' ? 'קבלו גישה היום' : language === 'es' ? 'Obtén acceso hoy' : 'Get access today'),
-        cta_text: isCourse ? ctaText.enroll : ctaText.buy,
+        /*
+         * The closing ask, without guessing what is being sold.
+         *
+         * "Ready to Start Learning?" and "Enroll now" were shown for anything
+         * classified as a course — wrong, and prominently, on a page selling a
+         * training package or a treatment. The plain version is right for all
+         * of them, and the model overwrites it with something specific whenever
+         * generation runs.
+         */
+        title: language === 'he' ? 'מוכנים להתחיל?' : language === 'es' ? '¿Listo para comenzar?' : 'Ready to Get Started?',
+        description: language === 'he' ? 'קבלו גישה היום' : language === 'es' ? 'Obtén acceso hoy' : 'Get access today',
+        cta_text: ctaText.getStarted,
         cta_link: '#pricing'
       }
     });
@@ -378,20 +401,26 @@ export async function POST(request: NextRequest) {
     }, 'Generating landing page blocks based on offering type');
 
     /*
-     * A photograph for the hero, chosen the same way the website's is.
+     * A picture for the hero, and nothing else.
      *
-     * A landing page is one offer on one screen, so its hero is doing more work
-     * than a website's — and `HeroBlock` disables the split layout without an
-     * image, which is the layout both Warm and Bold ask for. Never fatal: null
-     * means the hero keeps the gradient it had before this existed.
+     * Three more were fetched for the FEATURE tiles, and every one of them was
+     * wasted: a feature cell only becomes a photo tile when it has no heading
+     * and no sentence, and this section is generated with copy in every cell.
+     * Each page therefore paid for three searches, three downloads and three
+     * uploads to produce images nothing would ever render.
+     *
+     * Asked for only when the page actually has a hero to put one in — the
+     * business profile too, which is read solely to decide what to search for.
+     * Never fatal: null means the hero keeps the gradient it had before this
+     * existed, which is what every landing page looked like until recently.
      */
-    const { data: businessProfile } = await businessProfileRepository.findByUserId(user.id);
-    const heroImage = await imageForSection(
-      user.id,
-      businessProfile?.vertical ?? null,
-      'portrait',
-      'hero'
-    );
+    const wantsHeroImage = landingPageBlocks.some(block => block.block_type === 'hero');
+    const businessProfile = wantsHeroImage
+      ? (await businessProfileRepository.findByUserId(user.id)).data
+      : null;
+    const heroImage = wantsHeroImage
+      ? await imageForSection(user.id, businessProfile?.vertical ?? null, 'portrait', 'hero')
+      : null;
 
     // Create blocks with generated content
     const blocksToCreate: WebsiteBlockInsert[] = landingPageBlocks.map((block, index) => {
@@ -404,37 +433,37 @@ export async function POST(request: NextRequest) {
         };
       }
 
-      // For header, record whether to show the logo and the company name. The
-      // logo URL is injected at read time from the business profile.
       if (block.block_type === 'hero' && heroImage) {
         content.background_image = heroImage;
         content.background_type = 'image';
       }
 
+      // For header, record whether to show the logo and the company name. The
+      // logo URL is injected at read time from the business profile.
       if (block.block_type === 'header') {
         content.show_logo = validated.showLogo ?? false;
         content.logo_text = validated.companyName || '';
 
         /*
-         * A menu of this page's own sections.
+         * ─────────────────────────────────────────────────────────────────────
+         * NO MENU ON A LANDING PAGE.
          *
-         * Built from the blocks actually being created, so it can never point
-         * at a section that is not there — the reason it is assembled here
-         * rather than in the defaults above.
+         * This built a menu of the page's own sections — Pricing, FAQ, Book —
+         * which is website thinking applied to a page with the opposite job. A
+         * website's header helps someone navigate to the part they want; a
+         * landing page exists to carry one visitor down one path to one action.
+         *
+         * Section links are escape hatches from that path. They invite a reader
+         * to jump to the price before anything has given them a reason to care
+         * about it, or to the FAQ before they know what is on offer — skipping
+         * the argument the page was written to make. And they are anchors
+         * within the same page, so they are barely navigation at all: the
+         * content is already there, one scroll away.
+         *
+         * What the header keeps is what earns its place — the logo, and the
+         * single action the whole page is driving at.
          */
-        const sectionLinks: Array<{ label: string; anchor: string }> = [];
-        const has = (type: string) =>
-          landingPageBlocks.some((b: { block_type: string }) => b.block_type === type);
-
-        const lang = validated.language ?? 'en';
-        const label = (he: string, es: string, en: string) =>
-          lang === 'he' ? he : lang === 'es' ? es : en;
-
-        if (has('pricing')) sectionLinks.push({ label: label('מחירים', 'Precios', 'Pricing'), anchor: '#pricing' });
-        if (has('faq')) sectionLinks.push({ label: label('שאלות נפוצות', 'Preguntas', 'FAQ'), anchor: '#faq' });
-        if (has('booking_widget')) sectionLinks.push({ label: label('לקביעת תור', 'Reservar', 'Book'), anchor: '#booking' });
-
-        content.menu_items = sectionLinks;
+        content.menu_items = [];
       }
 
       // For hero, always set headline to service name (AI only generates subheadline)
@@ -451,6 +480,19 @@ export async function POST(request: NextRequest) {
 
       // For pricing, add the service info for booking integration
       if (block.block_type === 'pricing') {
+        /*
+         * "Pricing" is the page's word, not the model's.
+         *
+         * The merge above spreads whatever the generator returned, and the
+         * prompt asking it not to write a title is guidance, not a guarantee.
+         * A heading here is the one thing about this section that does not
+         * depend on the offering, so it is set after the merge rather than
+         * defaulted before it.
+         */
+        content.title =
+          validated.language === 'he' ? 'מחירון'
+          : validated.language === 'es' ? 'Precios'
+          : 'Pricing';
         content.serviceId = validated.serviceId;
         content.serviceName = validated.serviceName;
         content.durationMinutes = validated.serviceDuration || 60;

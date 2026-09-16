@@ -364,7 +364,22 @@ function resolvePlaceholder(
       referenced.length > 0 &&
       referenced.every((step) => step && isMoneyAggregate(step));
 
-    const sigil = explicit || (allMoney ? '$' : '');
+    /*
+     * Only ADDING and SUBTRACTING amounts leaves you with an amount.
+     *
+     * The inference above reasons that "adding two amounts can only produce an
+     * amount", which is true — and was then applied to every operator, so
+     * `{= s1.value / s2.value }` over two money totals rendered "$1.28" for
+     * what is a RATIO: revenue 1.28 times last month's, not one dollar
+     * twenty-eight. Dividing money by money cancels the units; multiplying two
+     * amounts produces nothing anybody wants a symbol on either.
+     *
+     * The explicit sigil still wins, so `{=$ ... }` can force it where an
+     * author knows better than this rule does.
+     */
+    const purelyAdditive = !/[/*]/.test(source);
+
+    const sigil = explicit || (allMoney && purelyAdditive ? '$' : '');
 
     const value = evaluateExpression(source, (ref: string) => {
       const [stepId, path] = ref.split('.');

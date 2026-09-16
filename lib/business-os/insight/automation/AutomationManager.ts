@@ -10,7 +10,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 import { KernelTrigger } from '../kernel/KernelTrigger';
-import { TRIGGERABLE_PROCESSES, getProcessForDetector } from '../kernel/TriggerableProcesses';
+import { TRIGGERABLE_PROCESSES, getProcess, getProcessForDetector } from '../kernel/TriggerableProcesses';
 import { DetectorEngine } from '../detectors/DetectorEngine';
 import type { Insight } from '../repository/InsightRepository';
 
@@ -90,7 +90,9 @@ export class AutomationManager {
     insight: Insight,
     params: Partial<CreateAutomationParams> = {}
   ): Promise<InsightAutomation | null> {
-    const process = getProcessForDetector(insight.detector_id);
+    // From the insight's own `paired_process_id` — the detector speaking
+    // directly, rather than through a second map that can only agree or be wrong.
+    const process = getProcess(insight.paired_process_id);
 
     if (!process || !process.eligibleForAutomation) {
       logger.warn(

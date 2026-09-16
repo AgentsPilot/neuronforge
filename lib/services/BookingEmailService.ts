@@ -11,6 +11,7 @@
 import { createLogger } from '@/lib/logger';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import { activitySentence, activityMoment, activityRecord } from '@/lib/business-os/activityText';
+import { BOOKING_LINK_ACTIVITY } from '@/lib/services/LeadBookingLinkService';
 import { sendEmail, SendEmailResult } from '@/lib/notifications/emailTransport';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
@@ -162,6 +163,50 @@ async function getBusinessLocale(userId: string): Promise<Locale> {
  * Log a sent email to the email_sends table for tracking
  * Non-blocking - catches and logs any errors
  */
+/**
+ * Mark a contact as having been given a booking link.
+ *
+ * The same row `LeadBookingLinkService` writes, so the gap, the detector and
+ * that service's own idempotency claim all agree about one fact. Deliberately
+ * the same `activity_type`, because they are the same event: a client was given
+ * a way to book.
+ *
+ * Checked before inserting rather than relying on a constraint — the claim is a
+ * plain activity row with no uniqueness on it, and a welcome email re-sent after
+ * a retry should not put a second one on the contact's timeline.
+ */
+async function recordBookingLinkSent(
+  userId: string,
+  contactId: string,
+  bookingUrl: string,
+  /** The RECIPIENT's language, as the rest of this send already resolved it. */
+  locale: Locale
+): Promise<void> {
+  const { data: existing } = await supabaseServer
+    .from('crm_activities')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('contact_id', contactId)
+    .eq('activity_type', BOOKING_LINK_ACTIVITY)
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) return;
+
+  const { error } = await supabaseServer.from('crm_activities').insert({
+    user_id: userId,
+    contact_id: contactId,
+    activity_type: BOOKING_LINK_ACTIVITY,
+    title: activitySentence(BOOKING_LINK_ACTIVITY, {}, locale),
+    description: bookingUrl,
+    activity_date: new Date().toISOString(),
+    auto_logged: true,
+    source_capability: 'website',
+  });
+
+  if (error) throw error;
+}
+
 async function logEmailSend(params: {
   userId: string;
   contactId: string | null;
@@ -948,6 +993,33 @@ export class BookingEmailService {
         requestLogger.info({ provider: result.provider, email: formData.email }, 'Welcome email sent');
       } else {
         requestLogger.warn({ error: result.error }, 'Failed to send welcome email');
+      }
+
+      /*
+       * Record that this client now HAS a way to book.
+       *
+       * The welcome email carries a "Book a Call" button whenever a booking URL
+       * resolves, and until now the only trace was an `email` activity titled
+       * with the subject line. Three places ask "has this person been given a
+       * booking link", and all three read `booking_link_sent`:
+       *
+       *  - the `enquiry_unanswered` gap, which kept telling the owner to send a
+       *    link the client already had;
+       *  - `SalesStalledDetector`, which counted the enquiry as unanswered;
+       *  - `LeadBookingLinkService`, which uses the row as its idempotency
+       *    claim — so pressing "Send booking link" would send a SECOND one.
+       *
+       * Written here rather than by widening what counts as an answer: a plain
+       * email is not a booking link, and step 1 of the website sequence proves
+       * it — same subject line, no link in the body at all.
+       *
+       * Only when a link actually went out and the send succeeded. Non-blocking,
+       * and guarded against a duplicate row the same way the other writer is.
+       */
+      if (result.sent && bookingUrl && contactId) {
+        void recordBookingLinkSent(userId, contactId, bookingUrl, locale).catch(err =>
+          requestLogger.warn({ err }, 'Could not record the booking link send (non-blocking)')
+        );
       }
 
       // Log email to email_sends table (non-blocking)

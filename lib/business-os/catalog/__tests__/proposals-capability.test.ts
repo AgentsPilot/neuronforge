@@ -122,7 +122,14 @@ describe('what a quote is connected to', () => {
 
 describe('what the chat may do with one', () => {
   it('drafts, sends and withdraws — three separate decisions', () => {
-    expect(Object.keys(proposals.actions ?? {}).sort()).toEqual(['create', 'send', 'withdraw']);
+    // `create_and_send` is the fourth: drafting and sending in one decision,
+    // for the common case where the owner has already decided to quote.
+    expect(Object.keys(proposals.actions ?? {}).sort()).toEqual([
+      'create',
+      'create_and_send',
+      'send',
+      'withdraw',
+    ]);
   });
 
   it('confirms every one of them before anything happens', () => {

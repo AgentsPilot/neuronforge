@@ -63,6 +63,16 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
 
   // Where this page's "book" button leads: the modal in preview, the booking
   // URL when published, and the stored anchor only if neither exists.
+  /*
+   * The same rule the template shapes follow: an in-page anchor that is not the
+   * booking section is the owner saying where to go, so it is obeyed rather
+   * than replaced by the booking dialog. A "Contact Us" button over `#contact`
+   * must reach the contact form.
+   */
+  const ctaAnchor = cta_button?.link?.trim();
+  const ctaJumpsToSection =
+    Boolean(ctaAnchor) && ctaAnchor!.startsWith('#') && ctaAnchor !== '#' && ctaAnchor !== '#booking';
+
   const headerBooking = resolveBookingAction({
     isPreview,
     onOpenBooking,
@@ -210,11 +220,17 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
             <div className={`hidden md:flex items-center ${layout === 'centered' ? `absolute ${isRTL ? 'left-4 sm:left-6 lg:left-8' : 'right-4 sm:right-6 lg:right-8'}` : ''}`}>
               {cta_button && (
                 <a
-                  href={headerBooking.kind === 'link' ? headerBooking.href : cta_button.link}
+                  href={ctaJumpsToSection ? ctaAnchor : (headerBooking.kind === 'link' ? headerBooking.href : cta_button.link)}
                   onClick={(e) => {
-                    // Start the booking rather than scroll toward it. This was
-                    // an anchor to `#booking`, a section the page no longer
-                    // installs, so the button did nothing at all.
+                    // The owner's own destination wins.
+                    if (ctaJumpsToSection) {
+                      e.preventDefault();
+                      handleNavClick(ctaAnchor!);
+                      return;
+                    }
+                    // Otherwise start the booking rather than scroll toward it.
+                    // This was an anchor to `#booking`, a section the page no
+                    // longer installs, so the button did nothing at all.
                     if (headerBooking.kind === 'open') {
                       e.preventDefault();
                       headerBooking.onClick();
@@ -334,12 +350,18 @@ export function HeaderBlock({ content, styles, theme, isRTL, className, locale =
                     className="mt-6 pt-6 border-t ap-line"
                   >
                     <a
-                      href={headerBooking.kind === 'link' ? headerBooking.href : cta_button.link}
+                      href={ctaJumpsToSection ? ctaAnchor : (headerBooking.kind === 'link' ? headerBooking.href : cta_button.link)}
                       onClick={(e) => {
                         // The mobile menu's copy of the same button. It kept the
                         // dead `#booking` anchor after the desktop one was
                         // fixed, which is exactly the drift a shared resolver
-                        // exists to prevent.
+                        // exists to prevent — so the section rule is applied
+                        // here too, not only on the desktop control.
+                        if (ctaJumpsToSection) {
+                          e.preventDefault();
+                          handleNavClick(ctaAnchor!);
+                          return;
+                        }
                         if (headerBooking.kind === 'open') {
                           e.preventDefault();
                           headerBooking.onClick();

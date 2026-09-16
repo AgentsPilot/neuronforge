@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { userMediaRepository } from '@/lib/repositories/UserMediaRepository';
+import { generationAllowance } from '@/lib/services/GeneratedImageService';
 
 const logger = createLogger({ module: 'WebsiteMediaAPI' });
 
@@ -65,6 +66,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      /*
+       * How many generations are left today, sent with the library itself.
+       *
+       * The picker opens on this request, so the allowance is on screen before
+       * the owner reaches for Generate rather than after they are refused.
+       */
+      allowance: await generationAllowance(user.id),
       data: ordered.map(item => ({
         id: item.id,
         url: item.public_url,

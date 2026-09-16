@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
-import { journeyGapsForSmartLink, describeJourneyGaps } from '@/lib/business-os/journeyReadiness';
+import { journeyGapsForSmartLink, describeJourneyGaps, isBlockingGap } from '@/lib/business-os/journeyReadiness';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { z } from 'zod';
 
@@ -77,9 +77,25 @@ export async function GET(request: NextRequest) {
       'Listed smart links'
     );
 
+    /*
+     * How many PEOPLE reached each link, not how many clicks it took.
+     *
+     * The rows carry `click_count`, which counts every visit — one person
+     * opening a link five times reads as five. Uniques were only available from
+     * the per-link stats endpoint, so a list would have needed a request per
+     * row; this asks once for all of them.
+     */
+    const uniques = await smartLinkRepository.uniqueVisitorsByLink(
+      user.id,
+      (result.data || []).map(link => link.id)
+    );
+
     return NextResponse.json({
       success: true,
-      links: result.data || [],
+      links: (result.data || []).map(link => ({
+        ...link,
+        unique_visitors: uniques.data?.[link.id] ?? 0,
+      })),
       ...(defaultLinks ? { defaultLinks } : {})
     });
   } catch (error) {
@@ -134,11 +150,25 @@ export async function POST(request: NextRequest) {
       destination_url: destinationUrl,
     });
 
+    /*
+     * Only a gap that makes the journey IMPOSSIBLE holds the link back.
+     *
+     * A missing card processor does not: the payment step is dropped and the
+     * client is invoiced instead, which is the same reasoning that stopped it
+     * blocking a website publish. Deactivating a link over it took a working
+     * route to the business off the air for a step the client would never have
+     * seen.
+     *
+     * Missing working hours and missing invoice details both still hold — see
+     * `isBlockingGap`.
+     */
+    const blocking = gaps.filter(isBlockingGap);
+
     const result = await smartLinkRepository.create(user.id, {
       name: validated.name,
       destination_url: destinationUrl,
       destination_type: validated.destination_type,
-      is_active: gaps.length === 0,
+      is_active: blocking.length === 0,
       source: validated.source,
       medium: validated.medium,
       campaign: validated.campaign,

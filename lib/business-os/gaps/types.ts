@@ -62,6 +62,17 @@ export interface GapItem {
   since: string;
   /** The proposal, booking or invoice this is about, for the action. */
   entityId?: string;
+  /**
+   * What this one is worth, where money is involved.
+   *
+   * Typed rather than folded into `note` as text. `invoice_unpaid` used to put
+   * "250 ILS" into the note, which reads as a raw database value and cannot be
+   * totalled — so the morning briefing could say five people were waiting and
+   * never say what they were worth, which is the figure that decides which one
+   * the owner starts with.
+   */
+  value?: number;
+  currency?: string;
 }
 
 export interface GapDefinition {

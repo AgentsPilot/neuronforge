@@ -9,7 +9,7 @@
 import { Metadata } from 'next';
 import { ContactFormBlock } from '@/components/website/blocks/ContactFormBlock';
 import type { Locale } from '@/lib/i18n/config';
-import { BusinessInfoPanel } from '@/components/public/BusinessInfoPanel';
+import { BusinessInfoPanel, hasBusinessInfo } from '@/components/public/BusinessInfoPanel';
 import { PublicErrorScreen } from '@/components/public/PublicErrorScreen';
 import { PublicFooter } from '@/components/public/PublicFooter';
 import { PublicHeader } from '@/components/public/PublicHeader';
@@ -117,6 +117,7 @@ export default async function StandaloneContactPage({ params }: PageProps) {
 
   const language = brand.locale as Locale;
   const isRTL = brand.dir === 'rtl';
+  const showInfo = hasBusinessInfo(brand, ['contact', 'address', 'hours', 'links']);
 
   return (
     <main
@@ -137,11 +138,18 @@ export default async function StandaloneContactPage({ params }: PageProps) {
 
           The page offered only the form, which is the wrong answer for a client
           who would rather phone — and it is exactly the client who cannot find
-          a number who gives up. The panel renders nothing when the business has
-          not filled any of it in, so this collapses to a single column on the
-          accounts where that is all there is.
+          a number who gives up.
+
+          The column is reserved only when there is something to put in it. The
+          panel returning null is not enough on its own: the grid still held a
+          20rem track, so a business that had filled none of this in got a form
+          two thirds of the width under a full-width header, with empty space
+          beside it. `hasBusinessInfo` is the panel's own test, exported so the
+          layout and the panel cannot disagree about whether it will draw.
         */}
-        <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
+        <div
+          className={`grid gap-6 ${showInfo ? 'lg:grid-cols-[1fr_20rem]' : 'grid-cols-1'}`}
+        >
           <div>
             <ContactFormBlock
               content={{
@@ -154,7 +162,15 @@ export default async function StandaloneContactPage({ params }: PageProps) {
                   { name: 'message', type: 'textarea', label: 'Message', required: true },
                 ],
               }}
-              styles={{ padding: 'py-0', background: '' }}
+              /*
+                `py-8`, not `py-0`.
+                
+                Zero padding put "Get in Touch" hard against the top edge of its
+                card and the Send button hard against the bottom, while every
+                other edge had room — which reads as a rendering fault rather
+                than a tight design.
+              */
+              styles={{ padding: 'py-8', background: '' }}
               /*
                * The business's real theme.
                *
@@ -170,13 +186,15 @@ export default async function StandaloneContactPage({ params }: PageProps) {
             />
           </div>
 
-          <aside>
-            <BusinessInfoPanel
-              brand={brand}
-              variant="card"
-              show={['contact', 'address', 'hours', 'links']}
-            />
-          </aside>
+          {showInfo && (
+            <aside>
+              <BusinessInfoPanel
+                brand={brand}
+                variant="card"
+                show={['contact', 'address', 'hours', 'links']}
+              />
+            </aside>
+          )}
         </div>
 
         <PublicFooter brand={brand} showContact={false} />

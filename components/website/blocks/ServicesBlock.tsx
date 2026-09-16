@@ -858,7 +858,17 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
 
         {/* Cards Layout - Enhanced with hover effects */}
         {layout === 'cards' && (
-          <div className={`grid ${gridColsClass} gap-6 ${gridContainerClass}`}>
+          /*
+            `auto-rows-fr` so every ROW is the same height, not just every card
+            within a row.
+            
+            A grid stretches its items to the tallest in their own row and
+            nothing more, so three cards lined up and a fourth on the next row
+            sat noticeably shorter. Equal rows make the whole grid one size,
+            which is what a catalogue of services should look like however much
+            any one of them has to say.
+          */
+          <div className={`grid ${gridColsClass} auto-rows-fr gap-6 ${gridContainerClass}`}>
             {services.map((service, index) => (
               <motion.div
                 key={index}
@@ -867,7 +877,16 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.1 }}
                 whileHover={{ y: -10 }}
-                className="group relative overflow-hidden rounded-2xl border backdrop-blur-xl"
+                /*
+                  `h-full flex flex-col` so every card fills its grid row.
+                  
+                  Cards were sized by their own content, so a service with a
+                  description stood taller than one without and their buttons
+                  landed at different heights — a row that reads as broken
+                  rather than as varied. The grid already stretches its items;
+                  the card simply never claimed the height.
+                */
+                className="group relative overflow-hidden rounded-2xl border backdrop-blur-xl h-full flex flex-col"
                 style={getCardStyle()}
               >
                 {/* Top gradient bar */}
@@ -878,7 +897,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                   }}
                 />
 
-                <div className="p-8">
+                <div className="p-8 flex-1 flex flex-col">
                   {service.icon && (
                     <div
                       className="apc-icon w-16 h-16 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300"
@@ -900,8 +919,17 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     {service.name}
                   </h3>
 
+                  {/*
+                    The slot is kept whether or not there is a description.
+                    
+                    An empty paragraph collapses to nothing, so one service
+                    without a description pulled its whole card shorter than its
+                    neighbours. Two lines are reserved — the length these
+                    descriptions actually run to — and a longer one simply grows
+                    the row, which every card now matches.
+                  */}
                   <p
-                    className="text-sm leading-relaxed mb-6"
+                    className="text-sm leading-relaxed mb-6 min-h-[2.5rem]"
                     style={{
                       fontFamily: 'var(--ap-font-body)',
                       color: isDark ? '#9ca3af' : '#6b7280'
@@ -910,25 +938,47 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                     {service.description}
                   </p>
 
-                  {priceFor(service) && (
-                    <div className="flex items-baseline gap-1 mb-6">
+                  {/*
+                    Price and duration, each shown when it exists.
+                    
+                    Duration used to be nested INSIDE the price test, so a
+                    service with no price — a quoted one, or a free one — could
+                    not show its length either. Two independent facts, tested
+                    independently.
+                    
+                    `min-h` keeps the row's height whether the service has one,
+                    both or neither, so the button below stays level across the
+                    grid.
+                  */}
+                  <div className="flex items-baseline gap-1 mb-6 min-h-[2.75rem]">
+                    {priceFor(service) && (
                       <span
-                        className="text-3xl font-bold"
-                        style={{
-                          color: 'var(--ap-text)'
-                        }}
+                        /*
+                          "Price on request" is a sentence, not a figure. At the
+                          same 3xl weight as "$200" it dominated the card and
+                          wrapped; it gets a size that fits what it is.
+                        */
+                        className={
+                          isQuoted(service.sale_mode)
+                            ? 'text-lg font-semibold'
+                            : 'text-3xl font-bold'
+                        }
+                        style={{ color: 'var(--ap-text)' }}
                       >
                         {priceFor(service)}
                       </span>
-                      {formatDuration(service) && (
-                        <span className="text-sm" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>
-                          / {formatDuration(service)}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                    )}
+                    {formatDuration(service) && (
+                      <span className="text-sm" style={{ color: isDark ? '#6b7280' : '#9ca3af' }}>
+                        {priceFor(service) ? `/ ${formatDuration(service)}` : formatDuration(service)}
+                      </span>
+                    )}
+                  </div>
 
-                  {/* CTA Button */}
+                  {/* CTA Button — `mt-auto` pins it to the bottom of the
+                      column, so it is level across the row whatever the copy
+                      above it ran to. */}
+                  <div className="mt-auto">
                   {hasBookingFlow && (
                     isPreview && onOpenBooking && service.id ? (
                       <button
@@ -968,6 +1018,7 @@ export function ServicesBlock({ content, styles, theme, isRTL, className, client
                       </button>
                     )
                   )}
+                  </div>
                 </div>
 
                 {/* Hover glow effect */}

@@ -38,6 +38,38 @@ function formatWindows(day: BusinessDayHours, closedLabel: string): string {
  * us" — and a "Contact" heading over three blank lines is worse than no
  * heading. This returning null is the contract, not an optimisation.
  */
+/**
+ * Will the panel draw anything for this business?
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * The panel returns null when a business has filled none of this in, which is
+ * the right thing for the panel and leaves its LAYOUT wrong: the smart link's
+ * contact page reserved a 20rem column for it unconditionally, so an account
+ * with no phone, email or address got a form squeezed into two thirds of the
+ * width beneath a full-width header, with nothing beside it.
+ *
+ * A caller that lays out around the panel has to ask before rendering it, and
+ * it has to ask the SAME question the panel answers — which is why this is
+ * exported from here and derived from the same fields, rather than being a
+ * second guess written at the call site.
+ */
+export function hasBusinessInfo(
+  brand: PublicBrand,
+  show: Section[] = ['contact', 'address', 'hours', 'links']
+): boolean {
+  const { info } = brand;
+  if (!info.hasAny) return false;
+
+  const wants = (section: Section) => show.includes(section);
+
+  return Boolean(
+    (wants('contact') && (info.phone || info.whatsappUrl || info.email)) ||
+    (wants('address') && info.address) ||
+    (wants('links') && info.websiteUrl) ||
+    (wants('hours') && info.hours)
+  );
+}
+
 export function BusinessInfoPanel({
   brand,
   variant = 'card',

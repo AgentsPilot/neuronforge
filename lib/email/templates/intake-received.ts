@@ -34,6 +34,8 @@ import {
   emailDetailsTable,
   emailNoticeBox,
   formatEmailDate,
+  emailPalette,
+  emailTone,
   type BrandingData
 } from './base-template';
 import { emailTranslations } from './translations';
@@ -75,6 +77,8 @@ export function generateIntakeReceivedEmail(data: IntakeReceivedData): {
 
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
 
   // Split date and time the same way the request email does, so the two read
   // alike in every locale.
@@ -94,10 +98,10 @@ export function generateIntakeReceivedEmail(data: IntakeReceivedData): {
 
   const content = `
     <!-- Greeting -->
-    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
       ${t.greeting[locale]}
     </h2>
-    <p style="margin: 0 0 24px; font-size: 15px; color: #666666; line-height: 1.6;">
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted}; line-height: 1.6;">
       ${
         isScheduled
           ? t.introScheduled[locale](firstName, branding.businessName)
@@ -106,34 +110,34 @@ export function generateIntakeReceivedEmail(data: IntakeReceivedData): {
     </p>
 
     <!-- Received Notice -->
-    ${emailNoticeBox(t.receivedNotice[locale], 'success')}
+    ${emailNoticeBox(t.receivedNotice[locale], 'success', brandingWithLocale)}
 
     <!-- Details Card -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: ${c.mutedSurface}; border-radius: ${c.radius}; border: 1px solid ${c.line};">
       <tr>
         <td style="padding: 24px;">
           <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; color: ${branding.primaryColor}; text-transform: uppercase; letter-spacing: 0.5px;">
             ${isScheduled ? t.appointmentDetails[locale] : t.orderDetails[locale]}
           </p>
-          <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: #1a1a1a;">
+          <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: ${c.ink};">
             ${serviceName}
           </h3>
 
           ${emailDetailsTable([
-            isScheduled ? emailDetailRow(t.dateLabel[locale], dateStr) : '',
-            isScheduled && timeStr ? emailDetailRow(t.timeLabel[locale], timeStr) : '',
-            emailDetailRow(t.submittedLabel[locale], formattedCompleted)
-          ].filter(Boolean))}
+            isScheduled ? emailDetailRow(t.dateLabel[locale], dateStr, brandingWithLocale) : '',
+            isScheduled && timeStr ? emailDetailRow(t.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            emailDetailRow(t.submittedLabel[locale], formattedCompleted, brandingWithLocale)
+          ].filter(Boolean), brandingWithLocale)}
         </td>
       </tr>
     </table>
 
     ${showManageLinks ? `
     <!-- Manage Booking Section -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid #e5e5e5;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid ${c.line};">
       <tr>
         <td>
-          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.needChanges[locale]}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
@@ -145,7 +149,7 @@ export function generateIntakeReceivedEmail(data: IntakeReceivedData): {
               ` : ''}
               ${cancelUrl ? `
               <td>
-                ${emailOutlineButton(t.cancel[locale], cancelUrl, { color: '#DC2626' })}
+                ${emailOutlineButton(t.cancel[locale], cancelUrl, { color: emailTone('danger', brandingWithLocale).text })}
               </td>
               ` : ''}
             </tr>
@@ -156,7 +160,7 @@ export function generateIntakeReceivedEmail(data: IntakeReceivedData): {
     ` : ''}
 
     <!-- Final Note -->
-    <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
+    <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
       ${t.questionsHelp[locale](branding.businessName)}
     </p>
   `;

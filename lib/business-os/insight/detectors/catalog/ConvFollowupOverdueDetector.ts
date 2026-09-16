@@ -34,9 +34,36 @@ export class ConvFollowupOverdueDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'task_reminder',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `task_reminder`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
+    /*
+     * Runs even while this category's vector is dark, because an overdue task is the owner's own note to themselves, and the `conv`
+     * vector gates on website visitors — silencing this for every business that
+     * takes its work by phone or referral.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'automate',
-    eligibleForAutomation: true,
+    eligibleForAutomation: false,
     ownerParameters: [],
     guardrails: [],
     cooldownHours: 24,
@@ -108,9 +135,15 @@ export class ConvFollowupOverdueDetector extends BaseDetector {
     }
 
     // Estimate impact: each overdue task represents missed opportunity
-    const avgDealValue = 300;
-    const conversionRate = 0.1;
-    const estimatedLoss = overdueTasks.length * avgDealValue * conversionRate;
+    // This business's own figure, not a constant — see BaseDetector.
+    const avgDealValue = await this.resolveAverageDealValue(userId);
+    // This business's own rate, from who has actually paid it — null when
+    // there is too little history to divide. See BaseDetector.
+    const conversionRate = await this.resolveLeadConversionRate(userId);
+    const estimatedLoss =
+      avgDealValue === null || conversionRate === null
+        ? undefined
+        : overdueTasks.length * avgDealValue * conversionRate;
 
     // Group by priority
     const priorityBreakdown = overdueTasks.reduce((acc, t) => {

@@ -35,7 +35,13 @@ export class CrmColdLeadsDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'send_warmup_sequence',
+    pairedProcessId: 'send_followup_nudge',
+    /*
+     * Runs even while this category's vector is dark, because a lead going cold is about that lead, not about site traffic — and a
+     * business with a full CRM and no website would never hear about it.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'automate',
     eligibleForAutomation: true,
     ownerParameters: [
@@ -128,9 +134,15 @@ export class CrmColdLeadsDetector extends BaseDetector {
     const severity = this.definition.severityFn(coldLeads.length, 0);
 
     // Estimate impact: avg deal value × conversion rate × cold leads
-    const avgDealValue = 300;
-    const conversionRate = 0.15;
-    const estimatedLoss = coldLeads.length * avgDealValue * conversionRate;
+    // This business's own figure, not a constant — see BaseDetector.
+    const avgDealValue = await this.resolveAverageDealValue(userId);
+    // This business's own rate, from who has actually paid it — null when
+    // there is too little history to divide. See BaseDetector.
+    const conversionRate = await this.resolveLeadConversionRate(userId);
+    const estimatedLoss =
+      avgDealValue === null || conversionRate === null
+        ? undefined
+        : coldLeads.length * avgDealValue * conversionRate;
 
     const result = this.createDetectionResult({
       severity,

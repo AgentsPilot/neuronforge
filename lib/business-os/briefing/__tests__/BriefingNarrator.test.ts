@@ -18,6 +18,7 @@ function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
       total: 6,
       ready: 5,
       awaitingIntake: [{ name: 'Sarah', timeLocal: '11:00' }],
+      awaitingPayment: [],
       first: { name: 'Michael', timeLocal: '09:00', serviceName: 'Assessment 1' },
       cancelled: [{ name: 'Dana', timeLocal: '15:00' }],
     },
@@ -112,7 +113,8 @@ describe('composeFallback', () => {
 
   it('gets Hebrew singular and plural right', () => {
     const one = facts({
-      appointments: { total: 1, ready: 1, awaitingIntake: [], cancelled: [], first: undefined },
+      appointments: { total: 1, ready: 1, awaitingIntake: [],
+      awaitingPayment: [], cancelled: [], first: undefined },
     });
 
     // "1 פגישות" would read as machine output to any Hebrew speaker.
@@ -135,7 +137,8 @@ describe('composeFallback', () => {
 
   it('says something rather than nothing on a quiet day', () => {
     const quiet = facts({
-      appointments: { total: 0, ready: 0, awaitingIntake: [], cancelled: [], first: undefined },
+      appointments: { total: 0, ready: 0, awaitingIntake: [],
+      awaitingPayment: [], cancelled: [], first: undefined },
       money: { owed: [], totalOwed: 0, currency: 'USD', mixedCurrency: false },
       isQuiet: true,
     });
@@ -159,6 +162,7 @@ describe('findUntranslatedWords', () => {
         total: 2,
         ready: 2,
         awaitingIntake: [],
+      awaitingPayment: [],
         cancelled: [],
         first: { name: 'דויד המלך', timeLocal: '09:00' },
       },
