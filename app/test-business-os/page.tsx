@@ -36,12 +36,14 @@ import { useAuth } from '@/components/UserProvider';
 import { BosModuleTester, type BosModule } from '@/components/test-business-os/BosModuleTester';
 import type { ActionSchema } from '@/lib/plugins/tester/tester-types';
 import type { ExecutionResult } from '@/lib/types/plugin-types';
+import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'modules', label: 'Modules' },
+  { id: 'danger-zone', label: 'Danger Zone' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -451,6 +453,18 @@ export default function TestBusinessOSPage() {
           >
             {JSON.stringify(lastResponse, null, 2)}
           </pre>
+        </div>
+      )}
+
+      {/* Tab: Danger Zone — dry-run purge preview (T22, preview-only slice) */}
+      {activeTab === 'danger-zone' && (
+        <div style={{ padding: '15px', border: '1px solid #ccc', borderRadius: '5px', marginBottom: '20px' }}>
+          <h2 style={{ marginTop: 0 }}>Danger Zone — Business Data Reset &amp; Purge</h2>
+          <p style={{ fontSize: '13px', color: '#666' }}>
+            Counts what a Reset or Purge <strong>would</strong> delete for the signed-in
+            account. This build has no delete capability at all — see the banner below.
+          </p>
+          <PurgeDangerZone onLog={addDebugLog} onResponse={setLastResponse} />
         </div>
       )}
 
