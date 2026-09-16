@@ -34,7 +34,7 @@ export class RetCancellationSpikeDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'analyze_cancellation_reasons',
+    pairedProcessId: 'send_reminder_sequence',
     consentTier: 'suggest',
     eligibleForAutomation: false,
     ownerParameters: [],
@@ -124,13 +124,14 @@ export class RetCancellationSpikeDetector extends BaseDetector {
 
     const avgBookingValue = completedBookings && completedBookings.length > 0
       ? completedBookings.reduce((sum, b) => sum + parseFloat(b.payment_amount || '0'), 0) / completedBookings.length
-      : 75; // Default assumption
+      : null; // No priced booking to average — report no money rather than a guess
 
     // Calculate severity
     const severity = this.definition.severityFn(percentChange, currentCount);
 
     // Estimate impact
-    const estimatedLoss = currentCount * avgBookingValue;
+    const estimatedLoss =
+      avgBookingValue === null ? undefined : currentCount * avgBookingValue;
 
     // Analyze cancellation reasons
     const reasons = currentWeek?.reduce((acc, b) => {

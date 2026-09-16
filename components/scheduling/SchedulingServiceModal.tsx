@@ -200,6 +200,14 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
            * here would put a payment step on the half of the journey that ends
            * at a request.
            */
+          /*
+           * A quoted service carries no price and no collection method.
+           *
+           * Both are settled on the proposal. Saving the last figure the field
+           * held before it went dead is how a quoted job ends up with a
+           * published price nobody agreed to.
+           */
+          price: formData.sale_mode === 'proposal' ? null : formData.price,
           collection: formData.sale_mode === 'proposal'
             ? null
             : (formData.price > 0 ? formData.collection : null),
@@ -212,7 +220,8 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
           onServiceCreated({
             name: formData.service_name,
             duration: formData.duration_minutes,
-            price: formData.price,
+            // Nothing to quote back: the figure is named in the proposal.
+            price: formData.sale_mode === 'proposal' ? 0 : formData.price,
             currency: formData.currency,
           });
         }
@@ -451,11 +460,18 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
               </div>
             </div>
 
-            {/* How the money arrives — only where there is money.
+            {/* How the money arrives — only where there is money, and only
+                where the figure is settled.
                 This is what replaces asking the business, once, whether it
                 "needs a card processor": a question nobody could answer about
-                everything they sell at the same time. */}
-            {formData.price > 0 && (
+                everything they sell at the same time.
+
+                Hidden for a quoted service as well as an unpriced one. The save
+                below already writes `null` for a proposal — nobody has said
+                what the work costs, so there is no money for a method to
+                describe — so showing the control meant offering a choice that
+                was then discarded, which is worse than not offering it. */}
+            {formData.price > 0 && formData.sale_mode !== 'proposal' && (
               <div>
                 <label className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
                   {t('scheduling.modal.collection')}
@@ -506,8 +522,11 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
               <ClientJourneyStrip
                 service={{
                   scheduled: formData.is_scheduled,
-                  collection: formData.price > 0 ? formData.collection : null,
-                  price: formData.price,
+                  collection:
+                    formData.sale_mode !== 'proposal' && formData.price > 0
+                      ? formData.collection
+                      : null,
+                  price: formData.sale_mode === 'proposal' ? null : formData.price,
                   saleMode: formData.sale_mode,
                 }}
                 intakeEnabled={intakeEnabled}
@@ -539,6 +558,12 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
                   </span>
                 </div>
               </div>
+              {/* A quoted job has no price to type.
+                  The figure is named in the proposal, per client, which is what
+                  choosing "quoted first" means — so the field goes dead rather
+                  than inviting a number that would be discarded on save. Dead
+                  and visible, not removed: a field that vanishes mid-form moves
+                  everything under the reader's eye. */}
               <div>
                 <label htmlFor="price" className="block text-sm font-medium text-[var(--v2-text-primary)] mb-2">
                   {t('scheduling.modal.price')}
@@ -550,9 +575,13 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
                       type="number"
                       min="0"
                       step="0.01"
-                      value={formData.price}
+                      value={formData.sale_mode === 'proposal' ? '' : formData.price}
                       onChange={(e) => setFormData(prev => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
-                      className="w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all"
+                      disabled={formData.sale_mode === 'proposal'}
+                      placeholder={formData.sale_mode === 'proposal' ? t('scheduling.modal.price.quoted') : undefined}
+                      className={`w-full px-4 py-2.5 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm focus:outline-none focus:border-[#14B8A6] focus:ring-2 focus:ring-[#14B8A6]/20 transition-all ${
+                        formData.sale_mode === 'proposal' ? 'opacity-40 cursor-not-allowed' : ''
+                      }`}
                       style={{ borderRadius: 'var(--v2-radius-button)' }}
                     />
                   </div>

@@ -17,7 +17,16 @@ const logger = createLogger({ service: 'PaymentPlanRepository' });
 
 // ==================== TYPES ====================
 
-export type InstallmentFrequency = 'weekly' | 'biweekly' | 'monthly';
+/**
+ * How often an instalment falls due.
+ *
+ * Four, matching `scheduling_services.installment_frequency`, whose CHECK
+ * constraint has always allowed quarterly. This type listed three while the
+ * service offering the plan could be quarterly — so a plan somebody chose was
+ * refused by the compiler on the way to a column that would have taken it
+ * (`payment_plans.installment_frequency` is plain TEXT with no constraint).
+ */
+export type InstallmentFrequency = 'weekly' | 'biweekly' | 'monthly' | 'quarterly';
 export type InstallmentStatus = 'pending' | 'paid' | 'overdue' | 'cancelled';
 
 export interface PaymentPlan {

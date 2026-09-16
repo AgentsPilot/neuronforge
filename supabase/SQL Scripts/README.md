@@ -2,6 +2,11 @@
 
 This directory contains SQL migration files for the AgentsPilot database schema.
 
+> **User / business deletion is not done from this directory.** It is handled by the Business OS
+> Reset & Purge feature — see
+> [BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md).
+> Do not add ad-hoc deletion scripts here.
+
 ## Running Migrations
 
 ### Option 1: Supabase CLI (Recommended)

@@ -262,7 +262,20 @@ export async function GET(request: NextRequest) {
         date,
         service_id,
         slots: [],
-        message: 'No availability configured'
+        message: 'No availability configured',
+        /*
+         * A code, because the message is English prose and the caller has to
+         * branch on this.
+         *
+         * "No hours have been set at all" and "nothing free on this particular
+         * day" are the same empty list to a client and completely different
+         * things to the business: the first is a setting they have not filled
+         * in, and it is the one gap that stops a website being published. The
+         * editor's preview uses this to say so and offer the settings, rather
+         * than showing the client-facing "no times for this date" to the person
+         * who can fix it.
+         */
+        reason: 'no_availability_configured'
       });
     }
 

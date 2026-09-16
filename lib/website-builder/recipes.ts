@@ -67,9 +67,22 @@ export const RECIPES: Record<RecipeId, readonly BlockType[]> = {
     'testimonials', 'faq', 'booking_widget', 'contact_form', 'cta', 'footer',
   ],
 
-  /** Sold rather than offered: numbers early, prices present, booking at the end. */
+  /*
+   * Sold rather than offered: numbers early, booking at the end.
+   *
+   * `pricing` used to sit directly after `services` here, and that was the same
+   * catalogue printed twice — the services block already carries each service's
+   * name, description, duration AND price. The pricing block was built for
+   * TIERS (per-plan feature lists, a highlighted plan, a comparison table), and
+   * almost nothing on this platform is sold that way: it is always sourced from
+   * the service catalogue, which makes it a second view of the section above
+   * it.
+   *
+   * It stays in `landing` below, where there is no services block and it is the
+   * only place the offer's price and its booking button appear.
+   */
   offer_led: [
-    'header', 'hero', 'stats', 'services', 'pricing', 'testimonials', 'process',
+    'header', 'hero', 'stats', 'services', 'testimonials', 'process',
     'faq', 'booking_widget', 'contact_form', 'cta', 'footer',
   ],
 

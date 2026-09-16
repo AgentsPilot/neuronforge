@@ -86,8 +86,6 @@ export function SystemReadiness({
     return () => clearTimeout(timer);
   }, [pointingAt]);
 
-  if (!items.length) return null;
-
   const missing = items.filter(item => !item.completed);
   /**
    * "Ready" means nothing compulsory is outstanding.
@@ -104,6 +102,37 @@ export function SystemReadiness({
   const ready = isReadyForClients(graph);
   const bodyFont = isRTL ? '"Heebo", system-ui, sans-serif' : '"Inter", system-ui, sans-serif';
   const displayFont = isRTL ? '"Heebo", system-ui, sans-serif' : '"Space Grotesk", system-ui, sans-serif';
+
+  /*
+   * No items means the check did not run, not that there is nothing to do.
+   *
+   * This used to `return null`, so a failed stats call removed the card from
+   * the page without a word — and the greeting above went on describing a
+   * business that was running fine. Saying so costs one line and is the
+   * difference between a broken request and a silent lie.
+   */
+  if (!items.length) {
+    return (
+      <div
+        style={{
+          direction: isRTL ? 'rtl' : 'ltr',
+          background: 'var(--v2-surface)',
+          border: '1px solid var(--v2-border)',
+          borderRadius: '18px',
+          padding: '18px 16px',
+          fontFamily: bodyFont,
+          fontSize: '13px',
+          color: 'var(--v2-text-secondary)',
+          height: '100%',
+        }}
+      >
+        {t('readiness.unknown') === 'readiness.unknown'
+          ? "We couldn't check your setup just now. Reload to try again."
+          : t('readiness.unknown')}
+      </div>
+    );
+  }
+
 
   const steps = allSteps(graph);
 
@@ -137,8 +166,22 @@ export function SystemReadiness({
 
   /** Compulsory work, and the compulsory work underneath it. */
   const essential = capabilities.filter(step => step.mandatory || step.state === 'done');
-  /** Everything that improves things without blocking them. */
-  const recommended = steps.filter(step => !step.mandatory && step.state !== 'done');
+  /**
+   * Everything that improves things without blocking them.
+   *
+   * Ghosts are excluded deliberately. A ghost is a step whose applicability is
+   * UNKNOWN — the shape has not answered whether this business collects online,
+   * or takes appointments at all — and `resolveSetup` gives it `mandatory:
+   * false`, which put it straight in here. So a business we knew nothing about
+   * was being recommended to connect a card processor and fill in invoice
+   * details, as though we had considered its situation and formed a view.
+   *
+   * We had not. `setupGraph.ts:407-409` says a ghost should never reach the
+   * dashboard; this is the line that was letting it through.
+   */
+  const recommended = steps.filter(
+    step => !step.mandatory && step.state !== 'done' && step.state !== 'ghost'
+  );
   const completed = steps.filter(step => step.state === 'done');
 
 

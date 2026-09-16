@@ -10,6 +10,8 @@ import {
   emailDetailsTable,
   emailNoticeBox,
   formatEmailDate,
+  emailPalette,
+  emailTone,
   type BrandingData
 } from './base-template';
 import { emailTranslations } from './translations';
@@ -67,6 +69,8 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
 
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
 
   // Split date and time (handle different locale formats)
   const dateParts = formattedDate.split(locale === 'he' ? ' בשעה ' : ' at ');
@@ -75,15 +79,15 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
 
   const content = `
     <!-- Greeting -->
-    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
       ${isReminder ? t.reminderGreeting[locale] : t.greeting[locale]}
     </h2>
-    <p style="margin: 0 0 24px; font-size: 15px; color: #666666; line-height: 1.6;">
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted}; line-height: 1.6;">
       ${t.intro[locale](firstName, branding.businessName)}
     </p>
 
     <!-- Important Notice -->
-    ${emailNoticeBox(t.importantNotice[locale], 'warning')}
+    ${emailNoticeBox(t.importantNotice[locale], 'warning', brandingWithLocale)}
 
     <!-- Complete Intake Form CTA -->
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; text-align: center;">
@@ -98,22 +102,22 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
     </table>
 
     <!-- Appointment Details Card -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; background-color: ${c.mutedSurface}; border-radius: ${c.radius}; border: 1px solid ${c.line};">
       <tr>
         <td style="padding: 24px;">
           <p style="margin: 0 0 12px; font-size: 12px; font-weight: 600; color: ${branding.primaryColor}; text-transform: uppercase; letter-spacing: 0.5px;">
             ${t.appointmentDetails[locale]}
           </p>
-          <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: #1a1a1a;">
+          <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: ${c.ink};">
             ${serviceName}
           </h3>
 
           ${emailDetailsTable([
-            emailDetailRow(t.dateLabel[locale], dateStr),
-            timeStr ? emailDetailRow(t.timeLabel[locale], timeStr) : '',
-            emailDetailRow(t.durationLabel[locale], `${duration} ${t.minutes[locale]}`),
-            location ? emailDetailRow(t.locationLabel[locale], location) : ''
-          ].filter(Boolean))}
+            emailDetailRow(t.dateLabel[locale], dateStr, brandingWithLocale),
+            timeStr ? emailDetailRow(t.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            emailDetailRow(t.durationLabel[locale], `${duration} ${t.minutes[locale]}`, brandingWithLocale),
+            location ? emailDetailRow(t.locationLabel[locale], location, brandingWithLocale) : ''
+          ].filter(Boolean), brandingWithLocale)}
         </td>
       </tr>
     </table>
@@ -122,13 +126,13 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
         <td>
-          <h4 style="margin: 0 0 12px; font-size: 15px; font-weight: 600; color: #1a1a1a;">
+          <h4 style="margin: 0 0 12px; font-size: 15px; font-weight: 600; color: ${c.ink};">
             ${t.whatsOnForm[locale]}
           </h4>
-          <ul style="margin: 0; padding: 0 0 0 20px; font-size: 14px; color: #666666; line-height: 1.8;${locale === 'he' ? ' direction: rtl; text-align: right;' : ''}">
+          <ul style="margin: 0; padding: 0 0 0 20px; font-size: 14px; color: ${c.inkMuted}; line-height: 1.8;${locale === 'he' ? ' direction: rtl; text-align: right;' : ''}">
             ${t.formItems[locale].map(item => `<li>${item}</li>`).join('\n            ')}
           </ul>
-          <p style="margin: 16px 0 0; font-size: 13px; color: #888888;">
+          <p style="margin: 16px 0 0; font-size: 13px; color: ${c.inkFaint};">
             ${t.formDuration[locale]}
           </p>
         </td>
@@ -137,10 +141,10 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
 
     ${(rescheduleUrl || cancelUrl) ? `
     <!-- Manage Booking Section -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid #e5e5e5;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid ${c.line};">
       <tr>
         <td>
-          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.needChanges[locale]}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
@@ -152,7 +156,7 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
               ` : ''}
               ${cancelUrl ? `
               <td>
-                ${emailOutlineButton(t.cancel[locale], cancelUrl, { color: '#DC2626' })}
+                ${emailOutlineButton(t.cancel[locale], cancelUrl, { color: emailTone('danger', brandingWithLocale).text })}
               </td>
               ` : ''}
             </tr>
@@ -163,7 +167,7 @@ export function generateIntakeRequestEmail(data: IntakeRequestData): {
     ` : ''}
 
     <!-- Final Note -->
-    <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
+    <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
       ${t.questionsHelp[locale](branding.businessName)}
     </p>
   `;

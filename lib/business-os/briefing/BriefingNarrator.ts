@@ -181,6 +181,8 @@ function buildPrompt(
     '- payments: money someone STILL OWES the business. It has NOT been paid.',
     '  Never describe it as paid, received, settled or collected. The owner needs to chase it.',
     '- awaitingIntake: these people have NOT returned their intake form yet.',
+    '- awaitingPayment: these people have an appointment today they have NOT paid for,',
+    '  where payment was due before the appointment. Not the same as an unpaid invoice.',
     '- cancelled: appointments that were cancelled, freeing that slot.',
     '- allReady: every appointment today is ready; nothing is outstanding on them.',
     '- newLeads: people who got in touch for the first time today. `count` is how',
@@ -193,6 +195,9 @@ function buildPrompt(
     '- quotesOut: quotes already sent that the client has not answered in three',
     '  days or more. The owner has done their part — report it, never imply a',
     '  chore. Do not confuse this with quotesWaiting; they are opposites.',
+    '- quotesWaitingValue / quotesOutValue: what those quotes are worth in total.',
+    '  Say the amount with the count when it is given — it is what tells the owner',
+    '  which line to start with. Copy the string exactly; never re-derive it.',
     '',
     /*
      * Vocabulary is the model's job, not a lookup table's.
@@ -270,6 +275,9 @@ function toPromptShape(facts: BriefingFacts) {
       ...(appointments.awaitingIntake.length > 0 && {
         awaitingIntake: appointments.awaitingIntake.map(p => ({ name: p.name, time: p.timeLocal })),
       }),
+      ...(appointments.awaitingPayment.length > 0 && {
+        awaitingPayment: appointments.awaitingPayment.map(p => ({ name: p.name, time: p.timeLocal })),
+      }),
       ...(appointments.first && {
         first: {
           name: appointments.first.name,
@@ -331,10 +339,28 @@ function toPromptShape(facts: BriefingFacts) {
 
   if (facts.outlook.quotesWaiting.count > 0) {
     shape.quotesWaiting = facts.outlook.quotesWaiting.count;
+    /*
+     * Sent pre-formatted, as a string, for the same reason the owed amounts
+     * are: handing over a bare number and a currency code produced "200 USD"
+     * where a reader expects "$200". It also registers the figure as allowed,
+     * so the guardrail does not mistake the owner's own money for invention.
+     */
+    if (facts.outlook.quotesWaiting.value && facts.outlook.quotesWaiting.currency) {
+      shape.quotesWaitingValue = formatMoney(
+        facts.outlook.quotesWaiting.value,
+        facts.outlook.quotesWaiting.currency
+      );
+    }
   }
 
   if (facts.outlook.quotesOut.count > 0) {
     shape.quotesOut = facts.outlook.quotesOut.count;
+    if (facts.outlook.quotesOut.value && facts.outlook.quotesOut.currency) {
+      shape.quotesOutValue = formatMoney(
+        facts.outlook.quotesOut.value,
+        facts.outlook.quotesOut.currency
+      );
+    }
   }
 
   return shape;
@@ -489,6 +515,10 @@ export function composeFallback(facts: BriefingFacts, language: BriefingLanguage
     lines.push(phrase.awaitingIntake(person.name));
   }
 
+  for (const person of appointments.awaitingPayment.slice(0, 3)) {
+    lines.push(phrase.awaitingPayment(person.name));
+  }
+
   for (const entry of money.owed.slice(0, 3)) {
     lines.push(phrase.owes(entry.name, formatAmount(entry.amount, entry.currency)));
   }
@@ -524,7 +554,14 @@ export function composeFallback(facts: BriefingFacts, language: BriefingLanguage
   }
 
   if (outlook.quotesWaiting.count > 0) {
-    lines.push(phrase.quotesWaiting(outlook.quotesWaiting.count));
+    lines.push(
+      phrase.quotesWaiting(
+        outlook.quotesWaiting.count,
+        outlook.quotesWaiting.value && outlook.quotesWaiting.currency
+          ? formatMoney(outlook.quotesWaiting.value, outlook.quotesWaiting.currency)
+          : undefined
+      )
+    );
   }
 
   if (outlook.quotesOut.count > 0) {
@@ -607,6 +644,8 @@ interface FallbackPhrases {
   allReady: (n: number) => string;
   someReady: (n: number) => string;
   awaitingIntake: (name: string) => string;
+  /** Coming today and hasn't paid, where payment was due before the appointment. */
+  awaitingPayment: (name: string) => string;
   owes: (name: string, amount: string) => string;
   cancelledAt: (time: string) => string;
   cancelled: () => string;
@@ -622,7 +661,8 @@ interface FallbackPhrases {
    */
   newLeads: (n: number, people: Array<{ name: string; note?: string }>) => string;
   /** People owed a price — unwritten or written and unsent. The owner's move. */
-  quotesWaiting: (n: number) => string;
+  /** `money` is the group's total, already formatted; absent on mixed currencies. */
+  quotesWaiting: (n: number, money?: string) => string;
   /** Quotes out with the client and unanswered. Reported, never a chore. */
   quotesOut: (n: number) => string;
 }
@@ -661,6 +701,7 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     allReady: n => (n === 1 ? 'They are ready.' : `All ${n} are ready.`),
     someReady: n => (n === 1 ? 'One client is ready.' : `${n} clients are ready.`),
     awaitingIntake: name => `${name} hasn't completed intake.`,
+    awaitingPayment: name => `${name} hasn't paid yet.`,
     owes: (name, amount) => `${name} still owes ${amount}.`,
     cancelledAt: time => `Your ${time} appointment was cancelled, leaving an opening.`,
     cancelled: () => 'An appointment was cancelled, leaving an opening.',
@@ -677,8 +718,9 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
       return `${named} got in touch today${note}.`;
     },
-    quotesWaiting: n =>
-      n === 1 ? 'Someone is waiting on a price from you.' : `${n} people are waiting on a price from you.`,
+    quotesWaiting: (n, money) =>
+      (n === 1 ? 'Someone is waiting on a price from you' : `${n} people are waiting on a price from you`) +
+      (money ? ` — ${money}.` : '.'),
     quotesOut: n =>
       n === 1 ? 'One quote is out and still unanswered.' : `${n} quotes are out and still unanswered.`,
   },
@@ -687,6 +729,7 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     allReady: n => (n === 1 ? 'Está listo.' : `Los ${n} están listos.`),
     someReady: n => (n === 1 ? 'Un cliente está listo.' : `${n} clientes están listos.`),
     awaitingIntake: name => `${name} no ha completado el formulario.`,
+    awaitingPayment: name => `${name} todavía no ha pagado.`,
     owes: (name, amount) => `${name} todavía debe ${amount}.`,
     cancelledAt: time => `Tu cita de las ${time} se canceló y dejó un hueco libre.`,
     cancelled: () => 'Se canceló una cita y dejó un hueco libre.',
@@ -701,8 +744,9 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
       return `${named} te ${n === 1 ? 'contactó' : 'contactaron'} hoy${note}.`;
     },
-    quotesWaiting: n =>
-      n === 1 ? 'Alguien espera un precio tuyo.' : `${n} personas esperan un precio tuyo.`,
+    quotesWaiting: (n, money) =>
+      (n === 1 ? 'Alguien espera un precio tuyo' : `${n} personas esperan un precio tuyo`) +
+      (money ? ` — ${money}.` : '.'),
     quotesOut: n =>
       n === 1 ? 'Un presupuesto sigue sin respuesta.' : `${n} presupuestos siguen sin respuesta.`,
   },
@@ -711,6 +755,7 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
     allReady: n => (n === 1 ? 'הוא מוכן.' : `כל ${n} מוכנים.`),
     someReady: n => (n === 1 ? 'לקוח אחד מוכן.' : `${n} לקוחות מוכנים.`),
     awaitingIntake: name => `${name} לא השלים את הטופס.`,
+    awaitingPayment: name => `${name} עדיין לא שילם.`,
     owes: (name, amount) => `${name} עדיין חייב ${amount}.`,
     cancelledAt: time => `הפגישה שלך ב-${time} בוטלה ונפתח חלון פנוי.`,
     cancelled: () => 'פגישה בוטלה ונפתח חלון פנוי.',
@@ -725,8 +770,9 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
       const note = people.length === 1 && people[0].note ? ` — ${people[0].note}` : '';
       return `${named} ${n === 1 ? 'פנה/תה' : 'פנו'} אליך היום${note}.`;
     },
-    quotesWaiting: n =>
-      n === 1 ? 'מישהו מחכה לך להצעת מחיר.' : `${n} אנשים מחכים לך להצעת מחיר.`,
+    quotesWaiting: (n, money) =>
+      (n === 1 ? 'מישהו מחכה לך להצעת מחיר' : `${n} אנשים מחכים לך להצעת מחיר`) +
+      (money ? ` — ${money}.` : '.'),
     quotesOut: n =>
       n === 1 ? 'הצעת מחיר אחת נשלחה ועדיין ללא מענה.' : `${n} הצעות מחיר נשלחו ועדיין ללא מענה.`,
   },

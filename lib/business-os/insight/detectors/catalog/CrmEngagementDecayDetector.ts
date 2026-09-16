@@ -36,7 +36,7 @@ export class CrmEngagementDecayDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'client_checkin_sequence',
+    pairedProcessId: 'send_followup_nudge',
     consentTier: 'automate',
     eligibleForAutomation: true,
     ownerParameters: [
@@ -182,9 +182,9 @@ export class CrmEngagementDecayDetector extends BaseDetector {
     const severity = this.definition.severityFn(silentClients.length, avgDaysSilent);
 
     // Estimate impact: each silent client represents LTV at risk
-    const avgClientLtv = 1000; // Rough estimate
-    const churnProbability = 0.3; // 30% likely to churn if not re-engaged
-    const estimatedLoss = silentClients.length * avgClientLtv * churnProbability;
+    const avgClientValue = await this.resolveAverageDealValue(userId);
+    const estimatedLoss =
+      avgClientValue === null ? undefined : silentClients.length * avgClientValue;
 
     const result = this.createDetectionResult({
       severity,

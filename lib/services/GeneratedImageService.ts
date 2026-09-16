@@ -69,7 +69,52 @@ export interface GenerateImageResult {
 export type GenerateImageFailure =
   | { ok: false; reason: 'unavailable' }
   | { ok: false; reason: 'depicts_people' }
+  | { ok: false; reason: 'limit_reached'; used: number; limit: number }
   | { ok: false; reason: 'failed' };
+
+/**
+ * Generated pictures allowed per business per day.
+ *
+ * Every call to `images.generate` is billed, and nothing above this function
+ * stops a finger on the Enter key. Ten is generous for the real job — replacing
+ * a handful of stock photographs on one site — and cheap enough that a stuck
+ * key costs pennies rather than an invoice nobody sees until month end.
+ *
+ * A DAY, not a month, on purpose: a daily cap is self-healing. Someone who hits
+ * it is working again tomorrow with no support ticket, while a monthly one
+ * locks a paying business out for weeks.
+ *
+ * This is an interim guard. The real accounting is per-package monthly
+ * allowance, and when that exists this becomes its floor rather than the whole
+ * story.
+ */
+export const DAILY_GENERATION_LIMIT = 10;
+
+/**
+ * What this business has left today.
+ *
+ * Exported because the allowance has to be VISIBLE, not only enforced. A
+ * picture can be generated from the media picker on any block, on any page, and
+ * from the wizard — so a counter kept by any one of those screens would be
+ * wrong the moment a second one is used. Every surface asks here.
+ *
+ * `null` for an unreadable count, matching the repository: a caller must be
+ * able to tell "none used" from "unknown" and say so, rather than promising an
+ * allowance it cannot verify.
+ */
+export async function generationAllowance(
+  userId: string
+): Promise<{ used: number; limit: number; remaining: number } | null> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const used = await userMediaRepository.countGeneratedSince(userId, since);
+  if (used === null) return null;
+
+  return {
+    used,
+    limit: DAILY_GENERATION_LIMIT,
+    remaining: Math.max(0, DAILY_GENERATION_LIMIT - used),
+  };
+}
 
 export type GenerateImageOutcome = ({ ok: true } & GenerateImageResult) | GenerateImageFailure;
 
@@ -103,8 +148,39 @@ export async function generateImage(
    * charged twice, and a rebuild should not redraw what it already has.
    */
   const sourceRef = `openai:${hash(`${prompt}|${aspect}`)}`;
+
+  /*
+   * The reuse check comes FIRST, and stays first.
+   *
+   * A picture this business already generated costs nothing to hand back, so it
+   * must not consume a day's allowance. Putting the limit above this would
+   * charge an owner for scrolling their own library.
+   */
   const existing = await userMediaRepository.findBySourceRef(userId, sourceRef);
   if (existing) return { ok: true, url: existing.public_url, description: existing.description ?? prompt };
+
+  /*
+   * Only now, with a real generation about to be billed, is the day counted.
+   *
+   * A count that cannot be read refuses rather than allows. The alternative —
+   * treating an unreadable count as zero — turns every database hiccup into
+   * unlimited spending, which is the exact failure this exists to prevent.
+   */
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const usedToday = await userMediaRepository.countGeneratedSince(userId, since);
+
+  if (usedToday === null) {
+    logger.error({ userId }, 'Could not read today\'s generation count; refusing to generate');
+    return { ok: false, reason: 'failed' };
+  }
+
+  if (usedToday >= DAILY_GENERATION_LIMIT) {
+    logger.warn(
+      { userId, usedToday, limit: DAILY_GENERATION_LIMIT },
+      'Daily image generation limit reached'
+    );
+    return { ok: false, reason: 'limit_reached', used: usedToday, limit: DAILY_GENERATION_LIMIT };
+  }
 
   try {
     const openai = new OpenAI({ apiKey });
@@ -148,7 +224,16 @@ export async function generateImage(
       description: prompt,
     });
 
-    logger.info({ userId, section, aspect }, 'Generated a picture for a business');
+    /*
+     * The count goes in the log line so spending is visible from the logs
+     * alone. `usedToday` is the count BEFORE this one, so the running total is
+     * `+ 1` — recorded explicitly rather than left to be worked out later by
+     * whoever is looking at an unexpected invoice.
+     */
+    logger.info(
+      { userId, section, aspect, generatedToday: usedToday + 1, dailyLimit: DAILY_GENERATION_LIMIT },
+      'Generated a picture for a business'
+    );
     return { ok: true, url: data.publicUrl, description: prompt };
   } catch (error) {
     logger.error({ err: error, userId, section }, 'Could not generate a picture');

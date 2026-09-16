@@ -9,7 +9,10 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BaseDetector } from './BaseDetector';
+import { createLogger } from '@/lib/logger';
 import type { DetectorDefinition, DetectionResult, InsightSeverity } from '../types';
+
+const logger = createLogger({ module: 'OpsPeakUnutilizedDetector' });
 
 interface TimeSlotStats {
   dayOfWeek: number;
@@ -42,9 +45,29 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'send_availability_blast',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `send_availability_blast`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
     consentTier: 'automate',
-    eligibleForAutomation: true,
+    eligibleForAutomation: false,
     ownerParameters: [
       {
         id: 'target_contacts',
@@ -162,25 +185,58 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
     // Calculate severity
     const severity = this.definition.severityFn(utilizationDrop, underutilized.length);
 
-    // Get average booking value
-    const { data: avgValue } = await this.supabase
+    /*
+     * Average booking value, for the missed-revenue figure below.
+     *
+     * `scheduling_bookings.price` does not exist and never has, so this select
+     * was rejected whole by PostgREST, the error was discarded with the rest of
+     * the destructured result, and every run fell through to the $75 default —
+     * which then reported a hardcoded number to the owner as their own average.
+     * The price lives in two real places: what was actually charged against the
+     * booking, and failing that what the service costs.
+     */
+    const { data: avgValue, error: avgValueError } = await this.supabase
       .from('scheduling_bookings')
-      .select('price')
+      .select('payment_amount, service:scheduling_services(price)')
       .eq('user_id', userId)
       .gte('start_time', thirtyDaysAgo.toISOString())
       .in('status', ['completed']);
 
+    if (avgValueError) {
+      logger.warn(
+        { err: avgValueError, userId },
+        'Could not read booking values; missed revenue will use the fallback estimate'
+      );
+    }
+
+    const bookingValues = (avgValue ?? [])
+      .map((row) => {
+        const charged = parseFloat(String((row as { payment_amount?: unknown }).payment_amount ?? '0'));
+        if (Number.isFinite(charged) && charged > 0) return charged;
+        const service = (row as { service?: { price?: unknown } | null }).service;
+        const listed = parseFloat(String(service?.price ?? '0'));
+        return Number.isFinite(listed) ? listed : 0;
+      })
+      .filter((value) => value > 0);
+
+    /*
+     * Null when nothing completed carries a price. There is no sensible default
+     * for what an hour of someone else's business is worth, and the $75 that
+     * used to sit here was printed to owners as their own average.
+     */
     const avgBookingValue =
-      avgValue && avgValue.length > 0
-        ? avgValue.reduce((sum, b) => sum + parseFloat(b.price || '0'), 0) / avgValue.length
-        : 75; // Default estimate
+      bookingValues.length > 0
+        ? bookingValues.reduce((sum, value) => sum + value, 0) / bookingValues.length
+        : null;
 
     // Calculate missed revenue
     const missedBookings = underutilized.reduce(
       (sum, slot) => sum + (slot.historicalBookings - slot.recentBookings),
       0
     );
-    const missedRevenue = missedBookings * avgBookingValue;
+    // No price data means no revenue claim — not a revenue claim of zero.
+    const missedRevenue =
+      avgBookingValue === null ? undefined : missedBookings * avgBookingValue;
 
     // Day names for display
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -196,7 +252,7 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
       affectedEntityType: 'time_slot',
       affectedEntityIds: underutilized.map((s) => `${s.dayOfWeek}-${s.hour}`),
       affectedCount: underutilized.length,
-      estimatedImpactUsd: Math.round(missedRevenue),
+      estimatedImpactUsd: missedRevenue === undefined ? undefined : Math.round(missedRevenue),
       impactDirection: 'loss',
       impactPeriod: 'monthly',
       processParameters: {
@@ -204,7 +260,7 @@ export class OpsPeakUnutilizedDetector extends BaseDetector {
         avg_utilization: Math.round(avgUtilization),
         utilization_drop: Math.round(utilizationDrop),
         missed_bookings: missedBookings,
-        avg_booking_value: Math.round(avgBookingValue),
+        avg_booking_value: avgBookingValue === null ? undefined : Math.round(avgBookingValue),
         underutilized_slots: underutilized.map((slot) => ({
           day: dayNames[slot.dayOfWeek],
           hour: slot.hour,

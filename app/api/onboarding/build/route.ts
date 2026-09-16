@@ -77,9 +77,19 @@ const computedConfigurationSchema = z.object({
     currency: z.string().nullable().optional(),
     payment_plan: z.object({
       installment_count: z.number(),
-      installment_frequency: z.enum(['weekly', 'biweekly', 'monthly']),
+      installment_frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']),
     }).nullable().optional(),
     is_scheduled: z.boolean().optional(),
+    /*
+     * The gap needed between appointments, where the business named one.
+     *
+     * Null is a real answer, exactly as it is for `duration_minutes` above: a
+     * service that is not booked against a time has no gap to leave after it,
+     * and the services form says so explicitly rather than omitting the field.
+     * Rejecting null took the whole build down with a 400 for any catalogue
+     * holding one product.
+     */
+    buffer_minutes: z.number().int().min(0).max(120).nullable().optional(),
     sale_mode: z.enum(['direct', 'proposal']).optional(),
     collection: z.enum(['online', 'invoice']).nullable().optional(),
   })),
@@ -136,9 +146,19 @@ const buildRequestSchema = z.object({
     // from the schema here was stripped and the service built without it.
     payment_plan: z.object({
       installment_count: z.number(),
-      installment_frequency: z.enum(['weekly', 'biweekly', 'monthly']),
+      installment_frequency: z.enum(['weekly', 'biweekly', 'monthly', 'quarterly']),
     }).nullable().optional(),
     is_scheduled: z.boolean().optional(),
+    /*
+     * The gap needed between appointments, where the business named one.
+     *
+     * Null is a real answer, exactly as it is for `duration_minutes` above: a
+     * service that is not booked against a time has no gap to leave after it,
+     * and the services form says so explicitly rather than omitting the field.
+     * Rejecting null took the whole build down with a 400 for any catalogue
+     * holding one product.
+     */
+    buffer_minutes: z.number().int().min(0).max(120).nullable().optional(),
     sale_mode: z.enum(['direct', 'proposal']).optional(),
     collection: z.enum(['online', 'invoice']).nullable().optional(),
   })).optional(),
@@ -475,18 +495,45 @@ export async function POST(request: NextRequest) {
     const serviceCurrency = (code: string | null | undefined) =>
       code === 'USD' || code === 'EUR' || code === 'ILS' || code === 'GBP' ? code : currency;
 
-    // Check if user already has services (prevents duplication on page refresh)
+    /*
+     * What this business already sells, by name.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * This used to be a count, and the build skipped service creation ENTIRELY
+     * whenever it was above zero. That stops a page refresh duplicating things,
+     * which is real — and it also means running onboarding a second time throws
+     * away every service described in it. An account with two services from a
+     * previous run described four new ones, got none of them, and was told the
+     * build succeeded; the dashboard then showed the old two, which is the
+     * hardest kind of wrong to notice because nothing is missing, it is just
+     * not what you typed.
+     *
+     * Matching on the NAME keeps the refresh protection — the same submission
+     * replayed names the same services and creates nothing — while letting a
+     * genuinely new service through. Lowercased and trimmed, the same
+     * comparison `OnboardingConversationManager` makes when merging services
+     * across turns, so the two cannot disagree about what counts as the same
+     * service.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const existingServices = await schedulingServiceRepository.listAll(user.id);
-    const hasExistingServices = existingServices.data && existingServices.data.length > 0;
+    const existingServiceNames = new Set(
+      (existingServices.data || []).map(s => s.service_name?.toLowerCase().trim()).filter(Boolean)
+    );
+    const isNewService = (name: string | null | undefined) =>
+      !!name?.trim() && !existingServiceNames.has(name.toLowerCase().trim());
 
-    if (hasExistingServices) {
-      // User already has services, skip creation to prevent duplicates
-      requestLogger.info({ userId: user.id, existingCount: existingServices.data?.length }, 'User already has services, skipping creation');
-    } else if (services && services.length > 0) {
+    if (services && services.length > 0) {
       // Legacy format: use services array directly (preferred - has currency)
       requestLogger.info({ userId: user.id, serviceCount: services.length }, 'Creating services from legacy format');
 
       for (const service of services) {
+        // Already sells this one — a replayed submission, not a new service.
+        if (!isNewService(service.service_name)) {
+          requestLogger.info({ serviceName: service.service_name }, 'Service already exists; not creating it again');
+          continue;
+        }
+
         const plan = service.payment_plan;
 
         const scheduled = service.is_scheduled !== false;
@@ -495,6 +542,16 @@ export async function POST(request: NextRequest) {
           user_id: user.id,
           service_name: service.service_name,
           duration_minutes: service.duration_minutes ?? null,
+          /*
+           * The gap between appointments, where they asked for one.
+           *
+           * Undefined rather than a figure: the repository defaults to 15
+           * minutes, and writing a number nobody chose would put a gap in the
+           * diary of a business that books back to back. This branch is the
+           * one the build PREFERS and it dropped the field entirely — the same
+           * silent loss the payment_plan comment on the schema records.
+           */
+          buffer_minutes: service.buffer_minutes ?? undefined,
           price: service.price,
           currency: serviceCurrency(service.currency),
           is_scheduled: scheduled,
@@ -542,6 +599,11 @@ export async function POST(request: NextRequest) {
       // while the priced half looked fine, which is the hardest kind of wrong
       // to notice.
       for (const service of configuration.services) {
+        if (!isNewService(service.name)) {
+          requestLogger.info({ serviceName: service.name }, 'Service already exists; not creating it again');
+          continue;
+        }
+
         const quoted = service.price === null || service.price === undefined;
         const plan = service.payment_plan;
 
@@ -552,6 +614,14 @@ export async function POST(request: NextRequest) {
           // length itself is independent of whether a time is booked.
           duration_minutes: service.duration_minutes ?? null,
           is_scheduled: service.is_scheduled !== false,
+          /*
+           * The gap between appointments, where they asked for one.
+           *
+           * Undefined rather than a number: the repository's own default is 15
+           * minutes, and writing a figure nobody chose would put a gap in the
+           * diary of a business that books back to back.
+           */
+          buffer_minutes: service.buffer_minutes ?? undefined,
           /*
            * The chat's own answer, where it gave one.
            *

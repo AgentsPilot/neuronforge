@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl';
+import { createLogger } from '@/lib/logger';
 import { LiveDashboard, GapView, OperationalItem, SetupItem, FunnelStats, WeeklyStats, MilestoneData, PipelineStage, ChannelPerformance } from '@/components/business-os/insight';
 import { shapeFromProfile, UNKNOWN_SHAPE, type BusinessShape } from '@/lib/business-os/setup/setupGraph';
 import { ChatCommandPanel, ChatCommandPanelRef } from '@/components/business-os/ChatCommandPanel';
@@ -21,6 +22,8 @@ import { PAGE_CONTAINER } from '@/lib/business-os/pageContainer';
 import type { DialogAction } from '@/lib/business-os/DraftManagerTypes';
 import type { CRMContact } from '@/lib/repositories/CRMContactRepository';
 import type { CRMPipelineStage } from '@/lib/repositories/CRMPipelineStagesRepository';
+
+const logger = createLogger({ module: 'BusinessOSDashboard' });
 
 export interface DayBriefing {
   narrative: string;
@@ -53,7 +56,20 @@ function BusinessOSContent() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const { t, language } = useLanguage();
+  /** The assistant panel is hidden until the button on the insight card is pressed. */
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const chatPanelRef = useRef<ChatCommandPanelRef>(null);
+
+  /**
+   * Why a readiness action failed, shown on the card that ran it.
+   *
+   * `SystemReadiness` has always accepted an `actionError` and rendered it; the
+   * dashboard simply never passed one, so publish results went into the CHAT
+   * instead — a panel that is also on My Day and does not clear, leaving "your
+   * website is now live 🎉" hanging over an unrelated screen.
+   */
+  const [publishActionError, setPublishActionError] =
+    useState<{ action: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   // The dashboard keeps its OWN dialog instance for the chat-driven flows
   // (prefilled services, single visible tab, callbacks into the conversation).
@@ -94,7 +110,6 @@ function BusinessOSContent() {
   const [isMyDayCollapsed, setIsMyDayCollapsed] = useState(false);
 
   // Insight card collapsed state
-  const [isInsightCollapsed, setIsInsightCollapsed] = useState(false);
 
 
   // My Day data - use time-based greeting as initial state
@@ -295,10 +310,25 @@ function BusinessOSContent() {
           // item, concluded it was live and started reporting on a funnel with
           // no entrance.
           if (!s.website?.is_reachable) {
+            /*
+             * A site already built and sitting in draft is its own case.
+             *
+             * The generic words — "give clients a way to book", "a website, a
+             * landing page or a smart link, any one of them works" — describe
+             * work this business has already done. It has a site; it has not
+             * published it. Told the generic thing, an owner goes looking for
+             * something to build and never learns that what is left is to look
+             * at what was built and decide it is ready.
+             *
+             * Named from what the dashboard already knows: pages exist, none is
+             * live.
+             */
+            const hasDraftOnly = (s.website?.page_count ?? 0) > 0 && !s.website?.has_live_pages;
+
             computedSetupItems.push({
               id: 'website',
-              title: t('setup.website.todo'),
-              description: t('setup.website.why'),
+              title: hasDraftOnly ? t('setup.website.todo_publish') : t('setup.website.todo'),
+              description: hasDraftOnly ? t('setup.website.why_publish') : t('setup.website.why'),
               completed: false,
               // Two different pieces of work behind one step: publishing a
               // site, or creating the link that stands in for one.
@@ -316,9 +346,10 @@ function BusinessOSContent() {
                 s.website?.url ||
                 (s.website?.has_smart_links ? t('setup.website.via_smart_link') : ''),
               completed: true,
-              // NOT 'publish_website': that action publishes a draft when one
-              // exists, so clicking a node that already reads "clients can
-              // reach you" would push a page live that nobody asked to publish.
+              // Still not 'publish_website'. That no longer publishes anything
+              // — it opens the website page to be reviewed — but the two mean
+              // different things to a reader, and a step that already reads
+              // "clients can reach you" is not asking anyone to publish.
               action: 'open_website'
             });
           }
@@ -1179,36 +1210,61 @@ function BusinessOSContent() {
       const data = await response.json();
 
       if (data.success) {
-        // Refresh dashboard to update setup items
+        /*
+         * The readiness step turning green IS the confirmation.
+         *
+         * This used to post "Your website is now live! 🎉" into the chat panel,
+         * which is not where the action happened and not something that clears:
+         * the chat sits on this page for My Day too, so a publish left a
+         * celebration hanging over an unrelated screen long afterwards. The
+         * chat is a place to ask for things, not a log of what buttons did.
+         *
+         * Refreshing turns the "put your online presence live" row into
+         * "clients can reach you", in the card the owner just clicked — which
+         * is the feedback, in the right place, and it goes away on its own.
+         */
+        setPublishActionError(null);
         fetchDashboardData();
-        // Show success message in chat if available
-        if (chatPanelRef.current) {
-          const message = language === 'he'
-            ? 'האתר שלך פורסם בהצלחה! 🎉'
-            : 'Your website is now live! 🎉';
-          chatPanelRef.current.addMessage('success', message);
-        }
       } else {
-        // Show error in chat
-        if (chatPanelRef.current) {
-          const message = language === 'he'
-            ? 'שגיאה בפרסום האתר. נסה שוב.'
-            : 'Failed to publish website. Please try again.';
-          chatPanelRef.current.addMessage('ai', message);
-        }
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * SAY WHAT IS WRONG, AND GO WHERE IT CAN BE FIXED.
+         *
+         * This posted "Failed to publish website. Please try again." and threw
+         * `data.error` away. Two things wrong with that: the server had already
+         * worked out which services were holding it up and written a sentence
+         * naming them, and "try again" is advice that cannot work — a publish
+         * refused for want of working hours is refused identically every time.
+         *
+         * It also stayed on the dashboard. The website page is where the
+         * refusal is shown on the card, beside a control that opens the exact
+         * settings tab that fixes it — so a refusal now lands the owner there
+         * rather than leaving them on a card with a button that did nothing.
+         *
+         * The chat message is attempted but never relied on: `chatPanelRef` is
+         * null whenever the panel is closed, which is how this could fail in
+         * complete silence.
+         */
+        setPublishActionError({
+          action: 'publish_website',
+          message: data.error || (language === 'he'
+            ? 'לא ניתן לפרסם את האתר.'
+            : 'Could not publish the website.'),
+        });
+        router.push('/business-os/website');
       }
     } catch (error) {
-      console.error('Failed to publish website:', error);
-      if (chatPanelRef.current) {
-        const message = language === 'he'
-          ? 'שגיאה בפרסום האתר. נסה שוב.'
-          : 'Failed to publish website. Please try again.';
-        chatPanelRef.current.addMessage('ai', message);
-      }
+      logger.error({ err: error, pageId: draftPageId }, 'Failed to publish website');
+      setPublishActionError({
+        action: 'publish_website',
+        message: language === 'he'
+          ? 'לא ניתן לפרסם את האתר.'
+          : 'Could not publish the website.',
+      });
     } finally {
       setPublishingWebsite(false);
     }
-  }, [draftPageId, publishingWebsite, language]);
+  }, [draftPageId, publishingWebsite, language, router]);
 
   if (loading) {
     return (
@@ -1237,6 +1293,25 @@ function BusinessOSContent() {
         {/* Live Dashboard - Mockup-based Insight Section */}
         <div className="relative">
           <LiveDashboard
+            assistantOpen={assistantOpen}
+            onToggleAssistant={() => setAssistantOpen((open) => !open)}
+            /*
+              Hidden, not unmounted. Unmounting would throw away the
+              conversation every time the panel is closed, and null the ref the
+              rest of this page writes into.
+            */
+            assistantSlot={
+              <div className="mb-4" style={{ display: assistantOpen ? undefined : 'none' }}>
+                <ChatCommandPanel
+                  ref={chatPanelRef}
+                  onAction={handleChatAction}
+                  onPublishDraft={pendingDraftService ? publishDraftService : undefined}
+                  onConfirmUpdate={pendingServiceUpdate ? confirmServiceUpdate : undefined}
+                  onCancelUpdate={pendingServiceUpdate ? cancelServiceUpdate : undefined}
+                  expanded={isMyDayCollapsed}
+                />
+              </div>
+            }
             userName={myDay.userName}
             gaps={gaps}
             automations={automations}
@@ -1260,18 +1335,26 @@ function BusinessOSContent() {
             pipelineStages={pipelineStages}
             milestoneData={milestoneData}
             onConfigureClick={handleQuickSetupClick}
-            collapsed={isInsightCollapsed}
-            onToggleCollapse={() => setIsInsightCollapsed(!isInsightCollapsed)}
+            actionError={publishActionError}
             onAction={(action) => {
               // Handle actions from LiveDashboard
               if (action === 'publish_website') {
-                // Publish website directly if we have a draft page ID
-                if (draftPageId) {
-                  handlePublishWebsite();
-                } else {
-                  // Fallback to website page if no draft page ID
-                  router.push('/business-os/website');
-                }
+                /*
+                 * Take them to the website, never publish it for them.
+                 *
+                 * This used to call `handlePublishWebsite()` the moment a draft
+                 * existed, so one click from the dashboard put a generated page
+                 * in front of the public with nobody having read it. That page
+                 * is the business's face — its wording, its prices, its photo —
+                 * and publishing is not one action anyway: there is copy to
+                 * check, a look to choose and a link to settle before it is
+                 * anyone's to see.
+                 *
+                 * So the dashboard's job ends at taking them to the place where
+                 * all of that happens. The page publishes itself, once its owner
+                 * has looked at it.
+                 */
+                router.push('/business-os/website');
               } else if (action === 'add_services') {
                 handleQuickSetupClick('services');
               } else if (action === 'set_hours') {
@@ -1330,21 +1413,6 @@ function BusinessOSContent() {
                 router.push('/business-os/crm');
               }
             }}
-          />
-        </div>
-
-        {/* Row 3: Chat Panel.
-            Was a two-column grid whose second column held the four capability
-            cards. With those gone the grid has one child, so the panel is the
-            row. */}
-        <div className="mt-5">
-          <ChatCommandPanel
-            ref={chatPanelRef}
-            onAction={handleChatAction}
-            onPublishDraft={pendingDraftService ? publishDraftService : undefined}
-            onConfirmUpdate={pendingServiceUpdate ? confirmServiceUpdate : undefined}
-            onCancelUpdate={pendingServiceUpdate ? cancelServiceUpdate : undefined}
-            expanded={isMyDayCollapsed}
           />
         </div>
 

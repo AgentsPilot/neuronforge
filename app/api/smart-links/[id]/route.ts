@@ -9,7 +9,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
-import { journeyGapsForSmartLink, describeJourneyGaps } from '@/lib/business-os/journeyReadiness';
+import {
+  journeyGapsForSmartLink,
+  describeJourneyGaps,
+  describeJourneyGap,
+  isBlockingGap,
+} from '@/lib/business-os/journeyReadiness';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { z } from 'zod';
 
@@ -145,10 +150,24 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         // A PATCH need not carry the URL; the stored one is what would go live.
         destination_url: destinationUrl ?? existingResult.data.destination_url,
       });
-      if (gaps.length > 0) {
-        requestLogger.info({ linkId: id, gaps: gaps.map(g => g.kind) }, 'Refused to activate a link whose journey cannot run');
+      // Same rule as the website publish: a missing processor is an advisory
+      // gap, because the client is invoiced instead. See `isBlockingGap`.
+      const blocking = gaps.filter(isBlockingGap);
+      if (blocking.length > 0) {
+        requestLogger.info({ linkId: id, gaps: blocking.map(g => g.kind) }, 'Refused to activate a link whose journey cannot run');
         return NextResponse.json(
-          { success: false, error: describeJourneyGaps(gaps), reason: gaps[0].kind },
+          {
+            success: false,
+            error: describeJourneyGaps(blocking),
+            reason: blocking[0].kind,
+            /*
+             * Each gap apart, so the links page can show one row per problem
+             * with the control that fixes it — the same shape the website
+             * publish refusal uses. Joined into one sentence they arrived as a
+             * paragraph with nowhere to go.
+             */
+            gaps: blocking.map(gap => ({ kind: gap.kind, message: describeJourneyGap(gap) })),
+          },
           { status: 400 }
         );
       }

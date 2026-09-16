@@ -169,7 +169,8 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
     );
     const actualConversions = underperformers.reduce((sum, s) => sum + s.convertedLeads, 0);
     const missedConversions = Math.max(0, expectedConversions - actualConversions);
-    const opportunityCost = missedConversions * avgDealValue;
+    const opportunityCost =
+      avgDealValue === null ? undefined : missedConversions * avgDealValue;
 
     // Find best performing source for comparison
     const bestSource = validSources.reduce((best, s) =>
@@ -189,7 +190,7 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
       affectedEntityType: 'lead_source',
       affectedEntityIds: underperformers.map((s) => s.source),
       affectedCount: totalUnderperformingLeads,
-      estimatedImpactUsd: Math.round(opportunityCost),
+      estimatedImpactUsd: opportunityCost === undefined ? undefined : Math.round(opportunityCost),
       impactDirection: 'loss',
       impactPeriod: 'monthly',
       processParameters: {
@@ -225,51 +226,4 @@ export class ConvSourceUnderperformDetector extends BaseDetector {
     return result;
   }
 
-  /**
-   * What this business typically earns per converted client.
-   *
-   * Prefers real collected revenue; falls back to the average price of the
-   * services on offer; and only if neither exists uses a generic figure — a new
-   * business with no history still needs a number to reason with, but it should
-   * be the last resort, not the default.
-   */
-  private async resolveAverageDealValue(userId: string): Promise<number> {
-    const FALLBACK = 300;
-
-    try {
-      const { data: transactions } = await this.supabase
-        .from('payment_transactions')
-        .select('amount')
-        .eq('user_id', userId)
-        .eq('status', 'succeeded')
-        .limit(200);
-
-      const amounts = (transactions || [])
-        .map((t: { amount: number | string | null }) => Number(t.amount) || 0)
-        .filter((n: number) => n > 0);
-
-      if (amounts.length >= 3) {
-        return amounts.reduce((sum: number, n: number) => sum + n, 0) / amounts.length;
-      }
-
-      // Too little history to average — use what the business charges instead.
-      const { data: services } = await this.supabase
-        .from('scheduling_services')
-        .select('price')
-        .eq('user_id', userId)
-        .eq('is_active', true);
-
-      const prices = (services || [])
-        .map((s: { price: number | string | null }) => Number(s.price) || 0)
-        .filter((n: number) => n > 0);
-
-      if (prices.length > 0) {
-        return prices.reduce((sum: number, n: number) => sum + n, 0) / prices.length;
-      }
-    } catch {
-      // A pricing lookup must never take down the detection itself.
-    }
-
-    return FALLBACK;
-  }
 }

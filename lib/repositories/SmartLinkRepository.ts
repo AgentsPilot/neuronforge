@@ -503,6 +503,85 @@ export class SmartLinkRepository {
   /**
    * Get click stats for a smart link
    */
+  /**
+   * Unique visitors per link, for a whole list in one query.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `getClickStats` answers this for ONE link, and the links list needs it for
+   * every row — which would be a request per row. This asks once and folds the
+   * rows here, because PostgREST offers no COUNT(DISTINCT) to push the work
+   * into the database.
+   *
+   * Folding client-side means reading the click rows, so the read is capped.
+   * When the cap is hit the count is a FLOOR and says so in the log rather than
+   * being silently truncated into a number that looks exact.
+   */
+  async uniqueVisitorsByLink(
+    userId: string,
+    linkIds: string[],
+    days = 30
+  ): Promise<SmartLinkRepositoryResult<Record<string, number>>> {
+    try {
+      if (linkIds.length === 0) return { data: {}, error: null };
+
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+
+      const CAP = 20000;
+      const { data, error } = await this.supabase
+        .from('smart_link_clicks')
+        .select('smart_link_id, ip_hash')
+        .in('smart_link_id', linkIds)
+        .gte('clicked_at', since.toISOString())
+        .limit(CAP);
+
+      if (error) throw error;
+
+      if ((data?.length ?? 0) >= CAP) {
+        logger.warn(
+          { userId, cap: CAP },
+          'Unique visitor counts are a floor: the click read hit its cap'
+        );
+      }
+
+      /*
+       * Who a click belongs to, counted the way the WEBSITE counts it.
+       *
+       * `WebsiteAnalyticsRepository` does `view.ip_hash || 'unknown'` and adds
+       * that to the set, so every click with no identifier collapses into ONE
+       * bucket: a single visitor nobody can name. Two figures on the same
+       * screen must not be arrived at differently.
+       *
+       * It is also the only answer that survives scrutiny. This got it wrong
+       * twice first: skipping unidentified clicks reported zero visitors for a
+       * link that had clicks, and counting each as its own visitor turned one
+       * person clicking twice into two people. `session_id` is no help either —
+       * `buildAttributionFromRequest` generates a fresh one per request, so
+       * grouping by it makes uniques equal clicks exactly.
+       *
+       * `ip_hash` comes from the forwarded client address, which a local server
+       * does not send — so in development everything lands in `unknown` and the
+       * count is 1. Note also that the hash is salted with the DATE, so the
+       * same visitor tomorrow counts again: this is distinct visitors per day.
+       */
+      const seen = new Map<string, Set<string>>();
+
+      (data ?? []).forEach(row => {
+        const id = row.smart_link_id as string;
+        if (!seen.has(id)) seen.set(id, new Set());
+        seen.get(id)!.add((row.ip_hash as string | null) || 'unknown');
+      });
+
+      const counts: Record<string, number> = {};
+      for (const id of linkIds) counts[id] = seen.get(id)?.size ?? 0;
+      return { data: counts, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Could not count unique visitors for links');
+      // Never fatal: the list renders without the figure rather than not at all.
+      return { data: {}, error: null };
+    }
+  }
+
   async getClickStats(
     linkId: string,
     userId: string,
@@ -711,6 +790,23 @@ export class SmartLinkRepository {
           name,
           destination_url: `${destinationUrl}${flow}`,
           destination_type: destinationType,
+          /*
+           * The booking link is born OFF.
+           *
+           * A smart link has no publish step — `/go/{code}` serves it the
+           * moment it exists — so `is_active` is its only gate. Links made
+           * through `POST /api/smart-links` are checked against `journeyGaps`;
+           * these defaults call the repository directly and skip that, so
+           * onboarding handed out a LIVE booking link with no working hours
+           * behind it.
+           *
+           * Created off rather than gap-checked here: a repository has no
+           * business reading profiles and Stripe accounts, and turning it on
+           * should be the owner's decision rather than a default's.
+           *
+           * The contact form stays on — it sells nothing and cannot dead-end.
+           */
+          ...(destinationType === 'booking' ? { is_active: false } : {}),
           ...(flow ? { metadata: { flow: options!.bookingFlow } } : {})
         });
         return created;

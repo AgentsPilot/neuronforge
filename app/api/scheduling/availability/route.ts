@@ -109,31 +109,35 @@ export async function POST(request: NextRequest) {
 
     requestLogger.info({ userId: user.id }, 'Saving business availability');
 
-    // 3. Check if profile exists, then update or insert
-    const { data: existingProfile } = await supabaseServer
+    /*
+     * 3. Write it — update first, insert only if there was nothing to update.
+     *
+     * This used to SELECT the profile to decide between update and insert,
+     * which made every save two round trips instead of one for the case that is
+     * almost always true: the profile exists. The update reports whether it
+     * matched, so the question the select was asking is already answered by the
+     * write itself.
+     *
+     * NOT an upsert, though `user_id` is unique: an upsert would have to carry
+     * `vertical`, which is NOT NULL, and would overwrite the real vertical of
+     * every existing profile with the 'other' placeholder meant for accounts
+     * that never finished onboarding.
+     *
+     * `.select('id')` rather than `.select()`: only the id is used, for the
+     * audit entry below, and the full row is wide — several JSON blobs among
+     * them — so returning it was pure transfer.
+     */
+    let { data, error } = await supabaseServer
       .from('business_profiles')
-      .select('id')
+      .update({
+        scheduling_availability: validated.availability,
+        updated_at: new Date().toISOString()
+      })
       .eq('user_id', user.id)
-      .single();
+      .select('id')
+      .maybeSingle();
 
-    let data;
-    let error;
-
-    if (existingProfile) {
-      // Update existing profile
-      const result = await supabaseServer
-        .from('business_profiles')
-        .update({
-          scheduling_availability: validated.availability,
-          updated_at: new Date().toISOString()
-        })
-        .eq('user_id', user.id)
-        .select()
-        .single();
-      data = result.data;
-      error = result.error;
-    } else {
-      // Insert new profile with required 'vertical' field
+    if (!error && !data) {
       const result = await supabaseServer
         .from('business_profiles')
         .insert({
@@ -141,7 +145,7 @@ export async function POST(request: NextRequest) {
           vertical: 'other', // Default for users who haven't completed onboarding
           scheduling_availability: validated.availability
         })
-        .select()
+        .select('id')
         .single();
       data = result.data;
       error = result.error;
@@ -162,7 +166,19 @@ export async function POST(request: NextRequest) {
         userId: user.id,
         entityType: 'business_profile',
         entityId: data.id,
-        details: { availability: validated.availability },
+        /*
+         * A summary, not the blob.
+         *
+         * The whole weekly availability object was written into every audit
+         * row — the same seven arrays, on every save, for a record nobody reads
+         * back field by field. The day count is what makes an entry meaningful
+         * in a list: it says whether hours were added or cleared.
+         */
+        details: {
+          openDays: Object.values(validated.availability).filter(
+            slots => Array.isArray(slots) && slots.length > 0
+          ).length,
+        },
         request
       })
       .catch(err => requestLogger.error({ err }, 'Audit failed'));

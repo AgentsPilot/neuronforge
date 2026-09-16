@@ -32,7 +32,34 @@ export class CashPayoutBlockedDetector extends BaseDetector {
       return 'critical';
     },
 
-    pairedProcessId: 'complete_stripe_onboarding',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `complete_stripe_onboarding`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
+    /*
+     * Runs even while this category's vector is dark, because payouts being blocked means money cannot reach the business at all. It is
+     * the most urgent thing this module can say, and it does not become more
+     * true after the first invoice.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'observe', // User must take action
     eligibleForAutomation: false,
     ownerParameters: [],

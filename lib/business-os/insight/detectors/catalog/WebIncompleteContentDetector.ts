@@ -27,7 +27,7 @@ export class WebIncompleteContentDetector extends BaseDetector {
     category: 'acquisition',
     description: 'Detects empty or incomplete key sections on live pages',
 
-    watchedMetrics: ['acquisition.content_completeness'],
+    watchedMetrics: ['acquisition.incomplete_content'],
     eventTypes: [],
 
     baselineWindow: 'week',
@@ -43,7 +43,34 @@ export class WebIncompleteContentDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'content_completion_wizard',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `content_completion_wizard`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
+    /*
+     * Runs even while this category's vector is dark, because unfinished copy is true whether or not anybody has read it, and the `conv`
+     * vector gates on visitors — so the page would be fixed only after the
+     * traffic it was costing had already arrived and left.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'suggest',
     eligibleForAutomation: false,
     ownerParameters: [],
@@ -222,7 +249,7 @@ export class WebIncompleteContentDetector extends BaseDetector {
 
     const result = this.createDetectionResult({
       severity,
-      metricKey: 'acquisition.content_completeness',
+      metricKey: 'acquisition.incomplete_content',
       currentValue: issues.length,
       baselineValue: 0,
       thresholdValue: 0,

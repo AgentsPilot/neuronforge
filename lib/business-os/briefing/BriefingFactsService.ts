@@ -44,6 +44,15 @@ export interface BriefingFacts {
     ready: number;
     /** Intake was sent and has not come back. These are the ones worth naming. */
     awaitingIntake: BriefedPerson[];
+    /**
+     * Coming today and not paid for, where payment was due up front.
+     *
+     * The other half of "is this appointment ready". Intake and payment are the
+     * two things that can be outstanding on a booking, and an owner checking
+     * their day wants both in one glance rather than one on the card and the
+     * other buried in the payments page.
+     */
+    awaitingPayment: BriefedPerson[];
     first?: {
       name: string;
       timeLocal: string;
@@ -109,6 +118,9 @@ export interface BriefingFacts {
     quotesWaiting: {
       count: number;
       people: Array<{ name: string; note?: string }>;
+      /** What the group is worth, when every one of them is in the same currency. */
+      value?: number;
+      currency?: string;
     };
 
     /**
@@ -121,6 +133,8 @@ export interface BriefingFacts {
     quotesOut: {
       count: number;
       people: Array<{ name: string; note?: string }>;
+      value?: number;
+      currency?: string;
     };
   };
 
@@ -256,9 +270,14 @@ export function isQuietDay(
 
 /* ------------------------------------------------------------------------- */
 
+/** Payment states that mean the money arrived. */
+const SETTLED_PAYMENT = new Set(['paid', 'refunded', 'partially_refunded']);
+
 type BookingRow = {
   start_time?: string | null;
   status?: string | null;
+  payment_status?: string | null;
+  payment_amount?: number | string | null;
   cancellation_reason?: string | null;
   intake_sent_at?: string | null;
   intake_completed_at?: string | null;
@@ -266,7 +285,7 @@ type BookingRow = {
   internal_notes?: string | null;
   client_name?: string | null;
   contact?: { first_name?: string | null; last_name?: string | null; email?: string | null } | null;
-  service?: { service_name?: string | null } | null;
+  service?: { service_name?: string | null; collection?: string | null } | null;
 };
 
 function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFacts['appointments'] {
@@ -280,7 +299,24 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
    * intake forms as unprepared.
    */
   const awaiting = live.filter(r => r.intake_sent_at && !r.intake_completed_at);
-  const ready = live.length - awaiting.length;
+
+  /*
+   * Payment counts the same way intake does: outstanding only where it was
+   * actually expected before the appointment. A service billed afterwards is
+   * not unready — see the booking-unpaid detector, which draws the same line.
+   */
+  const awaitingPay = live.filter(
+    r => !SETTLED_PAYMENT.has((r.payment_status ?? '').toLowerCase()) &&
+         (toNumber(r.payment_amount) > 0 || r.service?.collection === 'online')
+  );
+
+  /*
+   * Ready means nothing outstanding of EITHER kind. Counting only intake here
+   * would let the card say "all 8 are ready" on a morning when one of them
+   * hasn't paid — and the unpaid line directly beneath would contradict it.
+   */
+  const unready = new Set([...awaiting, ...awaitingPay]);
+  const ready = live.length - unready.size;
 
   const ordered = [...live].sort(
     (a, b) => Date.parse(a.start_time ?? '') - Date.parse(b.start_time ?? '')
@@ -291,6 +327,10 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
     total: live.length,
     ready,
     awaitingIntake: awaiting.map(r => ({
+      name: displayName(r),
+      timeLocal: timeIn(r.start_time, day.timezone),
+    })),
+    awaitingPayment: awaitingPay.map(r => ({
       name: displayName(r),
       timeLocal: timeIn(r.start_time, day.timezone),
     })),
@@ -366,14 +406,37 @@ function summariseOutlook(
 function fromGaps(
   gaps: GapResult[],
   ids: GapId[]
-): { count: number; people: Array<{ name: string; note?: string }> } {
+): { count: number; people: Array<{ name: string; note?: string }>; value?: number; currency?: string } {
   const matching = gaps.filter(gap => ids.includes(gap.id));
+  const items = matching.flatMap(gap => gap.items);
+
+  /*
+   * What the group is worth, where the gap carries money.
+   *
+   * A count on its own — "3 quotes waiting" — does not tell the owner which
+   * line to start with on a morning that has four of them. The total does, and
+   * it is the figure the brief asks for.
+   *
+   * Summed in ONE currency only: the dominant one, with mixed sets reported
+   * without a total rather than adding shekels to dollars. This dashboard has
+   * shipped that bug once already, printing a ₪ symbol over USD amounts.
+   */
+  const byCurrency = new Map<string, number>();
+  for (const item of items) {
+    if (!item.value || item.value <= 0) continue;
+    const currency = (item.currency || '').toUpperCase();
+    byCurrency.set(currency, (byCurrency.get(currency) ?? 0) + item.value);
+  }
+
+  const dominant = [...byCurrency.entries()].sort((a, b) => b[1] - a[1])[0];
+  const singleCurrency = byCurrency.size === 1 && dominant;
+
   return {
     count: matching.reduce((sum, gap) => sum + gap.count, 0),
-    people: matching
-      .flatMap(gap => gap.items)
+    people: items
       .slice(0, NEW_LEAD_NAMES)
       .map(item => ({ name: item.name, note: item.note })),
+    ...(singleCurrency ? { value: Math.round(dominant[1] * 100) / 100, currency: dominant[0] } : {}),
   };
 }
 

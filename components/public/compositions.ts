@@ -164,6 +164,28 @@ function skeleton(s: string): string {
   return `
     ${s} .apc-decor { display: none; }
     ${s} .apc-idx { display: none; }
+    /*
+     * A step's icon, where the step has one.
+     *
+     * The index box is set in each template's own numeral style — sizes from
+     * 11px to 34px across the six — and an SVG left to inherit that would be
+     * anything from a speck to a slab. Pinned to the em box instead, so it
+     * reads at the weight the number reads at whatever the template says, and
+     * takes the same colour.
+     */
+    ${s} .apc-idx svg {
+      width: 1em; height: 1em; display: block;
+      stroke: currentColor; fill: none;
+      /*
+       * Lighter than the default 2.
+       *
+       * The index is set at 12px in Stone and at 34px inside a Warm bento
+       * cell, in a 300 weight. A 2px stroke at that size is a much heavier
+       * mark than the numeral it stands in for, and the whole point is that
+       * one can replace the other without the row changing character.
+       */
+      stroke-width: 1.5;
+    }
 
     /*
      * The coloured rounded badge behind an icon.
@@ -194,9 +216,21 @@ function skeleton(s: string): string {
     /* The bar: wordmark at the start, links in the middle, one control at the
        end. It had padding and a measure but no layout, so all three stacked
        vertically and the header rendered as three rows. */
+    /*
+     * The bar's height is set ONCE, by the bar.
+     *
+     * This carried padding-block: 20px while every composition also gives
+     * .apc-bar its own — and the nav is inside the bar, so the two stacked:
+     * 40px above and 40px below the logo on Warm, before the logo's own 36px.
+     * A header nearly 120px tall, and nothing in either rule looked wrong on
+     * its own.
+     *
+     * Layout only here. What the bar is worth vertically is a decision each
+     * composition makes, below.
+     */
     ${s} .apc-nav {
       display: flex; align-items: center; justify-content: space-between;
-      gap: 18px; padding-block: 20px;
+      gap: 18px;
     }
     /* The links take the slack so the control stays pinned to the end. */
     ${s} .apc-menu { flex: 1 1 auto; justify-content: center; }
@@ -212,11 +246,48 @@ function skeleton(s: string): string {
        numbers are set in. Putting the scaffolding here is what stops a section
        rendering unstyled under any template that has not restated it. */
 
-    ${s} .apc-bar { width: 100%; }
+    /*
+     * THE BAR STAYS — and it is pinned in blocks/index.tsx, not here.
+     *
+     * Putting position: sticky on this rule looks right and does nothing: a
+     * sticky element only travels within its own parent's box, and every block
+     * is wrapped in a div exactly as tall as the block inside it. The bar was
+     * pinned inside a container its own height. It is pinned on that WRAPPER
+     * instead, which has the whole page to travel.
+     *
+     * What belongs here is the background. The bar now passes over the sections
+     * beneath it, which would otherwise read straight through. Compositions
+     * that dress it differently (Bold sets it to the surface tone) restate this
+     * afterwards and win, which is the intended order.
+     *
+     * The horizontal overflow rule above is clip rather than hidden partly for
+     * this: hidden on an ancestor silently kills sticky inside it.
+     */
+    ${s} .apc-bar {
+      width: 100%;
+      background: var(--ap-bg);
+    }
     ${s} .apc-menu { display: none; gap: 26px; align-items: baseline; }
     @container apc (min-width: 880px) { ${s} .apc-menu { display: flex; } }
     ${s} .apc-menu-item { display: inline-flex; align-items: baseline; gap: 7px; }
-    ${s} .apc-wm-img { height: 30px; width: auto; display: block; }
+    /*
+     * One size for every logo, whatever shape it is.
+     *
+     * This set a height and left the width to the file, so the space a logo
+     * took depended entirely on its aspect ratio: a wide wordmark ran across
+     * half the bar and pushed the menu out, while a square mark sat tiny beside
+     * it. Two businesses on the same template had headers that did not look
+     * related.
+     *
+     * A fixed box with object-fit: contain gives every logo the same footprint
+     * and lets each one use as much of it as its shape allows. 36px rather than
+     * 30 because a logo that has to hold a name as well as a mark was
+     * unreadable at the old height, and the bar has the room.
+     */
+    ${s} .apc-wm-img {
+      display: block; height: 36px; width: auto;
+      max-width: 180px; object-fit: contain; object-position: center;
+    }
 
     ${s} .apc-hero-shot { display: block; margin-block-start: 44px; aspect-ratio: 16 / 9; }
 
@@ -243,10 +314,65 @@ function skeleton(s: string): string {
     ${s} .apc-stat-n { display: block; line-height: 1; font-variant-numeric: tabular-nums; }
     ${s} .apc-stat-l { display: block; margin-block-start: 8px; }
 
-    ${s} .apc-team { display: grid; gap: 20px; }
+    /*
+     * ── Team ──────────────────────────────────────────────────────────────
+     *
+     * This declared a grid with NO columns and then jumped straight to three at
+     * 820px. Everything below that width — a phone, a tablet, a narrow window,
+     * and the editor's own preview frame — got ONE column, so each portrait
+     * became a full-width square. A team of four rendered as four enormous
+     * photographs stacked down the page with a name under each, which reads as
+     * a section with no design rather than as a design at a small size.
+     *
+     * auto-fit with a floor fixes the whole middle range without inventing
+     * breakpoints: as many columns as fit at 200px each. The 820px rule then
+     * pins it to exactly three, which is the arrangement the mockups use.
+     */
+    ${s} .apc-team {
+      display: grid; gap: 20px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
     @container apc (min-width: 820px) { ${s} .apc-team { grid-template-columns: repeat(3, 1fr); } }
     ${s} .apc-member { display: grid; gap: 12px; }
-    ${s} .apc-member-shot { aspect-ratio: 1; }
+    /*
+     * A square, and never a poster.
+     *
+     * The aspect ratio alone means the portrait is as tall as its column is
+     * wide — so the narrower the page, the LARGER the picture, and a section
+     * with one member had a single square the width of the page. The cap keeps
+     * a portrait a portrait however few members there are.
+     */
+    /*
+     * A FACE, NOT A POSTER.
+     *
+     * Round, because that is what a portrait in a team section is everywhere a
+     * visitor has seen one, and because a circle crops to the head while a
+     * rectangle keeps whatever else was in the frame.
+     *
+     * The size cap matters as much as the shape: aspect-ratio: 1 alone makes
+     * the picture as tall as its column is wide, so the narrower the page the
+     * LARGER the portrait, and a team of one filled the screen with a single
+     * square. 200px is a face; the column can be wider without the photograph
+     * following it.
+     *
+     * .apc-shot above already sets background-position: 50% 30%, which is
+     * where a head sits in a portrait rather than the centre of the frame.
+     *
+     * TWO classes in the selector, deliberately. The element carries .apc-shot
+     * as well, and flavours restate .apc-shot to set their own corner — Bloom
+     * rounds every shot to 26px — which lands AFTER this layer and at equal
+     * specificity, so a single-class rule here loses and the portrait stops
+     * being a circle. Matching both classes puts this above anything a flavour
+     * says about shots in general, which is correct: a face is not a
+     * photograph of a room.
+     */
+    ${s} .apc-shot.apc-member-shot {
+      aspect-ratio: 1; width: 100%; max-width: 200px;
+      border-radius: 999px;
+      /* Centred in its column, or a 200px circle sits at the start edge of a
+         380px cell and the row reads as ragged. */
+      margin-inline: auto;
+    }
     ${s} .apc-member h3, ${s} .apc-member p { margin: 0; }
 
     ${s} .apc-gal { display: grid; gap: 10px; grid-template-columns: repeat(2, 1fr); }
@@ -266,7 +392,12 @@ function skeleton(s: string): string {
     ${s} .apc-logos {
       display: flex; flex-wrap: wrap; gap: 38px; align-items: center; justify-content: center;
     }
-    ${s} .apc-logo-img { height: 26px; width: auto; filter: grayscale(1); opacity: .7; }
+    /* A partner's logo is a mark, not a picture: one height for all of them,
+       and a width cap so a long wordmark cannot take the row on its own. */
+    ${s} .apc-logo-img {
+      height: 26px; width: auto; max-width: 160px; object-fit: contain;
+      filter: grayscale(1); opacity: .7;
+    }
 
     ${s} .apc-video { position: relative; aspect-ratio: 16 / 9; overflow: hidden; }
     ${s} .apc-video iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
@@ -278,8 +409,103 @@ function skeleton(s: string): string {
       display: flex; flex-wrap: wrap; gap: 18px 40px; align-items: baseline;
       justify-content: space-between;
     }
-    ${s} .apc-footer-who { display: grid; gap: 4px; }
-    ${s} .apc-footer-contact, ${s} .apc-footer-links { display: flex; flex-wrap: wrap; gap: 18px; }
+    /*
+     * The brand OPENS the row, whichever way the row runs.
+     *
+     * The left in English and Spanish, the right in Hebrew — one rule for both,
+     * because the footer element carries dir and flex order is resolved against
+     * the writing direction rather than against the screen. Everything else in
+     * the row then flows away from it, and the auto inline-start margin moves to
+     * the LAST group so the row still reaches both edges.
+     */
+    ${s} .apc-footer-who {
+      display: grid; gap: 4px; order: 0;
+      justify-items: start; text-align: start;
+    }
+    /* Whatever ends up last takes the slack, so the row spans the full measure
+       instead of bunching against the opening edge. */
+    ${s} .apc-footer-row > :last-child { margin-inline-start: auto; }
+    /*
+     * The tagline is a SENTENCE, and it was the only thing here without a
+     * measure.
+     *
+     * Left uncapped it grew the brand column until it consumed the row, which
+     * is what made it look shifted rather than aligned: the sentence ran across
+     * the footer beneath the logo and ended nowhere in particular. Capped, the
+     * column stays compact and both lines start flush against the same edge —
+     * the left in English and Spanish, the right in Hebrew.
+     *
+     * The alignment is restated here rather than left to inherit, because two
+     * compositions give this element its own rule and a future one setting
+     * text-align would silently break the column.
+     */
+    ${s} .apc-footer-tag { max-width: 38ch; text-align: start; }
+    ${s} .apc-footer-links { display: flex; flex-wrap: wrap; gap: 18px; }
+
+    /*
+     * The social row: marks, not words.
+     *
+     * A touch-sized target with the mark centred in it, cornered with the
+     * template's own radius rather than a hardcoded circle — so it is a
+     * squircle in Stone, a soft pill in Bloom, and consistent with every other
+     * control on the page without the markup knowing which template it is in.
+     *
+     * Quiet until pointed at, because the footer is the one place on the page
+     * that must not compete with the closing call to action above it. The
+     * hover moves to the brand colour, which is the only colour a visitor has
+     * been taught means "this business" by the time they reach the bottom.
+     */
+    ${s} .apc-footer-social { display: flex; flex-wrap: wrap; gap: 10px; }
+    ${s} .apc-footer-social a {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; border-radius: var(--ap-radius-md);
+      border: 1px solid var(--ap-border); color: var(--ap-text-muted);
+      transition: color .18s ease, border-color .18s ease, background-color .18s ease;
+    }
+    ${s} .apc-footer-social a:hover,
+    ${s} .apc-footer-social a:focus-visible {
+      color: var(--ap-on-brand); background: var(--ap-brand); border-color: var(--ap-brand);
+    }
+    /* Solid marks on currentColor, so one rule above colours all four. */
+    ${s} .apc-footer-social svg { width: 17px; height: 17px; fill: currentColor; display: block; }
+
+    /*
+     * Contact and hours became COLUMNS when they gained headings.
+     *
+     * Both used to be a single wrapping line of items, which works for three
+     * loose values and not for a labelled group — a heading in a flex row sits
+     * beside its own content rather than above it, and the two groups then run
+     * together into one undifferentiated strip.
+     */
+    ${s} .apc-footer-contact,
+    ${s} .apc-footer-hours { display: grid; gap: 4px; align-content: start; }
+    ${s} .apc-footer-hours-row { display: flex; gap: 10px; }
+    /* A column for the day range, so the times line up under each other rather
+       than starting wherever the day name happened to end. */
+    ${s} .apc-footer-days { min-width: 4.5em; }
+
+    /*
+     * The small print, on its own row under a rule.
+     *
+     * A registered name and a company number are not the same kind of thing as
+     * a phone number — nobody reads them in passing, and putting them in the
+     * main row makes the footer look like a form. Separated, they are findable
+     * by anyone deliberately looking and invisible to everyone else.
+     */
+    ${s} .apc-footer-fine {
+      display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: space-between;
+      max-width: 1180px; margin-inline: auto;
+      margin-block-start: 18px; padding-block-start: 14px;
+      border-block-start: 1px solid var(--ap-border);
+    }
+    ${s} .apc-footer-head {
+      font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase;
+      opacity: .65; margin-block-end: 2px;
+    }
+    ${s} .apc-footer-legal { font-size: 12.5px; opacity: .8; }
+    /* The one control down here should not read as loudly as the closing
+       block's — it is a second chance, not the main ask. */
+    ${s} .apc-footer-cta { align-self: center; }
 
     /* Two classes, so the modifier outranks the compositions' own .apc-cta-row
        rule whatever the source order. With one class it lost to
@@ -405,7 +631,7 @@ function stone(s: string): string {
 
     ${s} .apc-btn {
       border: 1px solid var(--ap-text); border-radius: 9999px;
-      padding-block: 9px; padding-inline: 20px;
+      padding-block: 10px; padding-inline: 28px;
       font-size: 13px; font-weight: 600; background: transparent; color: var(--ap-text);
     }
     ${s} .apc-btn--solid { background: var(--ap-text); color: var(--ap-bg); border-color: var(--ap-text); }
@@ -575,10 +801,20 @@ function stone(s: string): string {
     }
 
     /* ── Team ────────────────────────────────────────────────────────────── */
-    ${s} .apc-team { display: grid; gap: 20px; }
-    @container apc (min-width: 820px) { ${s} .apc-team { grid-template-columns: repeat(3, 1fr); } }
+    /*
+     * The grid and the portrait shape come from the skeleton.
+     *
+     * This restated .apc-team with a gap and NO columns, and because a
+     * composition is emitted after the skeleton it won — undoing the
+     * auto-fit floor and dropping every width below 820px back to a single
+     * column of full-width squares. That is the "team images are huge" bug,
+     * fixed once in the skeleton and silently reverted here.
+     *
+     * The portrait radius is gone for the same reason: the skeleton makes it
+     * round, and a template that wants a different shape should say so
+     * deliberately rather than by restating a rule it did not mean to change.
+     */
     ${s} .apc-member { display: grid; gap: 12px; }
-    ${s} .apc-member-shot { aspect-ratio: 1; border-radius: var(--ap-radius-lg); }
     ${s} .apc-member h3 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
     ${s} .apc-member p { margin: 0; font-size: 13.5px; color: var(--ap-text-muted); font-weight: 300; }
     ${s} .apc-member-bio { line-height: 1.7; }
@@ -590,15 +826,14 @@ function stone(s: string): string {
     }
     ${s} .apc-gal .apc-shot { border-radius: var(--ap-radius-lg); }
     /* Stone numbers its navigation the way it numbers everything else. */
-    ${s} .apc-menu-idx {
-      font-style: normal; font-size: 11px; color: var(--ap-text-muted);
-      font-variant-numeric: tabular-nums;
-    }
     ${s} .apc-menu { color: var(--ap-text-muted); font-size: 13.5px; }
-    ${s} .apc-bar { padding-block: 20px; }
+    /* Trimmed with the bar now frozen: this height is spent on every screen
+       of every page, not only at the top. */
+    ${s} .apc-bar { padding-block: 14px; }
     ${s} .apc-logo { font-size: 17px; font-weight: 600; color: var(--ap-text-muted); }
     ${s} .apc-footer-tag { color: var(--ap-text-muted); font-size: 13.5px; font-weight: 300; }
     ${s} .apc-footer-year { color: var(--ap-text-muted); font-size: 12.5px; }
+    ${s} .apc-footer-legal, ${s} .apc-footer-head { color: var(--ap-text-muted); }
     ${s} .apc-member-bio { font-size: 13.5px; line-height: 1.7; }
     ${s} .apc-field {
       border: 1px solid var(--ap-border); border-radius: 9999px;
@@ -658,7 +893,7 @@ function warm(s: string): string {
 
     ${s} .apc-btn {
       border: 1px solid var(--ap-text); border-radius: 9999px;
-      padding-block: 11px; padding-inline: 24px; font-size: 14px; font-weight: 500;
+      padding-block: 12px; padding-inline: 32px; font-size: 14px; font-weight: 500;
       background: transparent; color: var(--ap-text);
     }
     ${s} .apc-btn--solid { background: var(--ap-brand); border-color: var(--ap-brand); color: var(--ap-on-brand); }
@@ -704,6 +939,25 @@ function warm(s: string): string {
       border-radius: 18px; padding-block: 64px; padding-inline: 34px; text-align: center;
     }
     ${s} .apc-close h2 { color: var(--ap-bg); margin: 12px auto 16px; max-width: 17ch; }
+    /*
+     * Space between the sentence and the control.
+     *
+     * Warm was the only one of the three compositions with no rule here —
+     * Stone closes its paragraph with 28px and Bold with 30px — so the button
+     * sat directly under the copy with nothing but the paragraph's own bottom
+     * margin beneath it, inside a panel padded 64px top and bottom. The result
+     * read as a button with no room around it, and it showed worst in Bloom,
+     * whose close is a pale tint rather than ink and hides nothing.
+     *
+     * The colour treatment matches Stone's for the same reason: this panel is
+     * inverted, so the supporting line has to step back from the heading
+     * without losing legibility. Bloom's own rule comes after this one and
+     * replaces both the colour and the opacity, which is what it is for.
+     */
+    ${s} .apc-close p {
+      color: var(--ap-bg); opacity: .72; margin: 0 auto 26px; max-width: 38ch;
+      font-size: 16.5px; font-weight: 300;
+    }
     ${s} .apc-close .apc-btn { background: var(--ap-bg); border-color: var(--ap-bg); color: var(--ap-text); }
 
     ${s} .apc-shot { border-radius: 18px; }
@@ -772,8 +1026,7 @@ function warm(s: string): string {
        on every element. Nothing is inverted except the closing block. */
 
     ${s} .apc-menu { color: var(--ap-text-muted); font-size: 14px; }
-    ${s} .apc-menu-idx { color: var(--ap-brand); font-weight: 600; font-size: 12px; font-style: normal; }
-    ${s} .apc-bar { padding-block: 18px; border-block-end: 1px solid var(--ap-border); }
+    ${s} .apc-bar { padding-block: 12px; border-block-end: 1px solid var(--ap-border); }
 
     ${s} .apc-hero-shot { border-radius: 18px; }
     ${s} .apc-split-shot { border-radius: 18px; }
@@ -798,7 +1051,6 @@ function warm(s: string): string {
 
     /* Warm's portraits are round — the one design in the set that softens a
        face rather than cropping it square. */
-    ${s} .apc-member-shot { border-radius: 999px; }
     ${s} .apc-member h3 { font-family: var(--ap-font-heading); font-weight: 500; font-size: 18px; }
     ${s} .apc-member p { font-size: 13.5px; color: var(--ap-text-muted); font-weight: 300; }
     ${s} .apc-member-bio { line-height: 1.75; }
@@ -819,6 +1071,7 @@ function warm(s: string): string {
     ${s} .apc-footer-tag { color: var(--ap-text-muted); font-size: 13.5px; font-weight: 300; }
     ${s} .apc-btn--ghost { background: transparent; color: var(--ap-bg); border-color: var(--ap-bg); }
     ${s} .apc-footer-year { color: var(--ap-text-muted); font-size: 12.5px; }
+    ${s} .apc-footer-legal, ${s} .apc-footer-head { color: var(--ap-text-muted); }
     /* ── Transcribed from warm-archetype.html ────────────────────────────
        The bento: cells rather than rows, the opening one inverted to night, any
        cell carrying a picture becoming the picture, and the index set in the
@@ -914,7 +1167,7 @@ function bold(s: string): string {
 
     ${s} .apc-btn {
       border: 1px solid var(--ap-border); border-radius: 9999px;
-      padding-block: 12px; padding-inline: 24px; font-size: 14px; font-weight: 600;
+      padding-block: 13px; padding-inline: 32px; font-size: 14px; font-weight: 600;
       background: transparent; color: var(--ap-text);
     }
     ${s} .apc-btn--solid { background: var(--ap-brand); border-color: var(--ap-brand); color: var(--ap-on-brand); }
@@ -1050,9 +1303,8 @@ function bold(s: string): string {
        label and figure is mono, and the accent marks the one thing on each
        screen the visitor is meant to do. Nothing is round. */
 
-    ${s} .apc-bar { padding-block: 16px; background: var(--ap-surface); }
+    ${s} .apc-bar { padding-block: 12px; background: var(--ap-surface); }
     ${s} .apc-menu { color: var(--ap-text-muted); font-size: 13.5px; }
-    ${s} .apc-menu-idx { display: none; }
 
     ${s} .apc-hero-shot { border-radius: 20px; }
     ${s} .apc-split-shot { border-radius: 20px; }
@@ -1086,7 +1338,6 @@ function bold(s: string): string {
       font-size: 12px; color: var(--ap-text-muted); letter-spacing: .06em;
     }
 
-    ${s} .apc-member-shot { border-radius: var(--ap-radius-md); }
     ${s} .apc-member h3 { font-size: 18px; font-weight: 700; }
     ${s} .apc-member p { font-size: 13px; color: var(--ap-text-muted); font-weight: 300; }
 
@@ -1111,7 +1362,9 @@ function bold(s: string): string {
       font-size: 12px; color: var(--ap-text-muted);
     }
     ${s} .apc-btn--ghost { background: transparent; color: var(--ap-on-brand); border-color: var(--ap-on-brand); }
-    ${s} .apc-footer-year {
+    ${s} .apc-footer-year,
+    ${s} .apc-footer-legal,
+    ${s} .apc-footer-head {
       font-family: "IBM Plex Mono", ui-monospace, monospace;
       font-size: 11.5px; color: var(--ap-text-muted);
     }
@@ -1151,7 +1404,7 @@ function bold(s: string): string {
 
     /* Controls are pills at the mockup's measure, in the heading face. */
     ${s} .apc-btn {
-      border-radius: 9999px; padding-block: 15px; padding-inline: 30px;
+      border-radius: 9999px; padding-block: 15px; padding-inline: 36px;
       font-size: 15px; font-family: var(--ap-font-heading);
     }
     ${s} .apc-btn--solid { font-weight: 600; }

@@ -2,6 +2,7 @@
 // Booking confirmation email template with calendar invite generation
 
 import type { Locale } from '@/lib/i18n/config';
+import { mix } from '@/lib/branding/color';
 import {
   wrapInBrandedTemplate,
   emailButton,
@@ -9,6 +10,8 @@ import {
   emailDetailRow,
   emailDetailsTable,
   emailNoticeBox,
+  emailPalette,
+  emailTone,
   formatCurrency,
   formatEmailDate,
   type BrandingData
@@ -178,6 +181,11 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
 
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...data.branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
+  // Google's and Microsoft's own blues, lifted where the card is dark — the
+  // hue is the point of these two buttons, the exact shade is not.
+  const vendor = (hex: string) => (c.dark ? mix(hex, '#ffffff', 0.35) : hex);
 
   // Split date and time (handle different locale formats)
   const dateParts = formattedDate.split(locale === 'he' ? ' בשעה ' : ' at ');
@@ -187,17 +195,17 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
   // Build the email content
   const content = `
     <!-- Greeting -->
-    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
       ${data.hasSchedule === false ? t.unscheduledGreeting[locale] : t.greeting[locale]}
     </h2>
-    <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
       ${data.hasSchedule === false
         ? t.unscheduledIntro[locale](data.clientName, data.branding.businessName)
         : t.intro[locale](data.clientName, data.branding.businessName)}
     </p>
 
     <!-- Appointment Details Card -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: ${c.mutedSurface}; border-radius: ${c.radius}; border: 1px solid ${c.line};">
       <tr>
         <td style="padding: 24px;">
           <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: ${data.branding.primaryColor};">
@@ -208,19 +216,19 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
             // Date, time and duration exist only because something was
             // scheduled. On a product they described the moment of purchase as
             // if it were an appointment, with a duration in minutes.
-            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr),
-            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr) : '',
-            data.hasSchedule === false ? '' : emailDetailRow(tIntake.durationLabel[locale], `${data.duration} ${tIntake.minutes[locale]}`),
-            data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location) : '',
-            data.price && data.price > 0 ? emailDetailRow(t.priceLabel[locale], formatCurrency(data.price, data.currency || 'USD')) : ''
-          ].filter(Boolean))}
+            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
+            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            data.hasSchedule === false ? '' : emailDetailRow(tIntake.durationLabel[locale], `${data.duration} ${tIntake.minutes[locale]}`, brandingWithLocale),
+            data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location, brandingWithLocale) : '',
+            data.price && data.price > 0 ? emailDetailRow(t.priceLabel[locale], formatCurrency(data.price, data.currency || 'USD'), brandingWithLocale) : ''
+          ].filter(Boolean), brandingWithLocale)}
         </td>
       </tr>
     </table>
 
     ${hasPendingPayment ? `
     <!-- Payment Pending Notice -->
-    ${emailNoticeBox((data.hasSchedule === false ? t.unscheduledPaymentRequired : t.paymentRequired)[locale](formatCurrency(data.price!, data.currency || 'USD')), 'warning')}
+    ${emailNoticeBox((data.hasSchedule === false ? t.unscheduledPaymentRequired : t.paymentRequired)[locale](formatCurrency(data.price!, data.currency || 'USD')), 'warning', brandingWithLocale)}
     ${data.paymentUrl ? emailButton(t.payNow[locale], data.paymentUrl, { branding: data.branding }) : ''}
     ` : ''}
 
@@ -230,24 +238,24 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
         <td>
-          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.addToCalendar[locale]}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
             <tr>
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
-                <a href="${calendarLinks.google}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: #4285F4; text-decoration: none; border: 1px solid #4285F4; border-radius: 6px;">
+                <a href="${calendarLinks.google}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: ${vendor('#4285F4')}; text-decoration: none; border: 1px solid ${vendor('#4285F4')}; border-radius: 6px;">
                   ${t.googleCalendar[locale]}
                 </a>
               </td>
               <td>
-                <a href="${calendarLinks.outlook}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: #0078D4; text-decoration: none; border: 1px solid #0078D4; border-radius: 6px;">
+                <a href="${calendarLinks.outlook}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: ${vendor('#0078D4')}; text-decoration: none; border: 1px solid ${vendor('#0078D4')}; border-radius: 6px;">
                   ${t.outlookCalendar[locale]}
                 </a>
               </td>
             </tr>
           </table>
-          <p style="margin: 12px 0 0; font-size: 12px; color: #888888;">
+          <p style="margin: 12px 0 0; font-size: 12px; color: ${c.inkFaint};">
             ${t.icsNote[locale]}
           </p>
         </td>
@@ -256,10 +264,10 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
     `}
 
     <!-- Manage Booking Section -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid #e5e5e5;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid ${c.line};">
       <tr>
         <td>
-          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.needChanges[locale]}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
@@ -270,7 +278,7 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
               </td>
               `}
               <td>
-                ${emailOutlineButton(tIntake.cancel[locale], data.cancelUrl, { color: '#DC2626' })}
+                ${emailOutlineButton(tIntake.cancel[locale], data.cancelUrl, { color: emailTone('danger', brandingWithLocale).text })}
               </td>
             </tr>
           </table>
@@ -279,7 +287,7 @@ export function generateBookingConfirmationEmail(data: BookingConfirmationData):
     </table>
 
     <!-- Final Note -->
-    <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
+    <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
       ${t.questions[locale](data.branding.businessName)}
     </p>
   `;
@@ -322,6 +330,10 @@ export function generateBookingCancellationEmail(data: {
 
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...data.branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
+  // The appointment that is no longer happening.
+  const cancelled = emailTone('danger', brandingWithLocale);
 
   // Split date and time
   const dateParts = formattedDate.split(locale === 'he' ? ' בשעה ' : ' at ');
@@ -330,42 +342,42 @@ export function generateBookingCancellationEmail(data: {
 
   const content = `
     <!-- Greeting -->
-    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
       ${data.hasSchedule === false ? t.unscheduledGreeting[locale] : t.greeting[locale]}
     </h2>
-    <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
       ${(data.hasSchedule === false ? t.unscheduledIntro : t.intro)[locale](data.clientName)}
     </p>
 
     <!-- What was cancelled -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: #fef2f2; border-radius: 12px; border: 1px solid #fecaca;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: ${cancelled.bg}; border-radius: ${c.radius}; border: 1px solid ${cancelled.border};">
       <tr>
         <td style="padding: 24px;">
-          <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: #991b1b; text-decoration: line-through;">
+          <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: ${cancelled.text}; text-decoration: line-through;">
             ${data.serviceName}
           </h3>
 
           ${emailDetailsTable([
             // No date or time when none was booked: they would describe the
             // moment of purchase as an appointment that had been struck out.
-            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr),
-            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr) : '',
-            data.reason ? emailDetailRow(t.reasonLabel[locale], data.reason) : ''
-          ].filter(Boolean))}
+            data.hasSchedule === false ? '' : emailDetailRow(tIntake.dateLabel[locale], dateStr, brandingWithLocale),
+            data.hasSchedule !== false && timeStr ? emailDetailRow(tIntake.timeLabel[locale], timeStr, brandingWithLocale) : '',
+            data.reason ? emailDetailRow(t.reasonLabel[locale], data.reason, brandingWithLocale) : ''
+          ].filter(Boolean), brandingWithLocale)}
         </td>
       </tr>
     </table>
 
     ${data.bookAgainUrl ? `
     <!-- Book Again -->
-    <p style="margin: 0 0 16px; font-size: 14px; color: #666666;">
+    <p style="margin: 0 0 16px; font-size: 14px; color: ${c.inkMuted};">
       ${t.bookAgainPrompt[locale]}
     </p>
     ${emailButton(t.bookAgain[locale], data.bookAgainUrl, { branding: data.branding })}
     ` : ''}
 
     <!-- Final Note -->
-    <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
+    <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
       ${t.questions[locale](data.branding.businessName)}
     </p>
   `;
@@ -408,6 +420,15 @@ export function generateBookingRescheduledEmail(data: {
 
   // Set locale on branding for RTL support
   const brandingWithLocale = { ...data.branding, locale };
+  // Ink and panels against THIS business's card, not against a white one.
+  const c = emailPalette(brandingWithLocale);
+  // Google's and Microsoft's own blues, lifted where the card is dark — the
+  // hue is the point of these two buttons, the exact shade is not.
+  const vendor = (hex: string) => (c.dark ? mix(hex, '#ffffff', 0.35) : hex);
+  // The appointment that is no longer happening.
+  const cancelled = emailTone('danger', brandingWithLocale);
+  // And the one that replaces it.
+  const confirmed = emailTone('success', brandingWithLocale);
 
   // Split date and time
   const newDateParts = newFormattedDate.split(locale === 'he' ? ' בשעה ' : ' at ');
@@ -422,21 +443,21 @@ export function generateBookingRescheduledEmail(data: {
 
   const content = `
     <!-- Greeting -->
-    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: #1a1a1a;">
+    <h2 style="margin: 0 0 8px; font-size: 22px; font-weight: 600; color: ${c.ink};">
       ${t.greeting[locale]}
     </h2>
-    <p style="margin: 0 0 24px; font-size: 15px; color: #666666;">
+    <p style="margin: 0 0 24px; font-size: 15px; color: ${c.inkMuted};">
       ${t.intro[locale](data.clientName, data.branding.businessName)}
     </p>
 
     <!-- Previous Time (struck through) -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 16px; background-color: #fef2f2; border-radius: 8px; border: 1px solid #fecaca;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 16px; background-color: ${cancelled.bg}; border-radius: ${c.buttonRadius}; border: 1px solid ${cancelled.border};">
       <tr>
         <td style="padding: 16px;">
-          <p style="margin: 0; font-size: 12px; font-weight: 600; color: #991b1b; text-transform: uppercase;">
+          <p style="margin: 0; font-size: 12px; font-weight: 600; color: ${cancelled.text}; text-transform: uppercase;">
             ${t.previousTime[locale]}
           </p>
-          <p style="margin: 8px 0 0; font-size: 15px; color: #666666; text-decoration: line-through;">
+          <p style="margin: 8px 0 0; font-size: 15px; color: ${c.inkMuted}; text-decoration: line-through;">
             ${oldFormattedDate}
           </p>
         </td>
@@ -444,10 +465,10 @@ export function generateBookingRescheduledEmail(data: {
     </table>
 
     <!-- New Appointment Details -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: #f0fdf4; border-radius: 12px; border: 1px solid #bbf7d0;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 0 0 24px; background-color: ${confirmed.bg}; border-radius: ${c.radius}; border: 1px solid ${confirmed.border};">
       <tr>
         <td style="padding: 24px;">
-          <p style="margin: 0 0 8px; font-size: 12px; font-weight: 600; color: #166534; text-transform: uppercase;">
+          <p style="margin: 0 0 8px; font-size: 12px; font-weight: 600; color: ${confirmed.text}; text-transform: uppercase;">
             ${t.newTime[locale]}
           </p>
           <h3 style="margin: 0 0 16px; font-size: 18px; font-weight: 600; color: ${data.branding.primaryColor};">
@@ -455,11 +476,11 @@ export function generateBookingRescheduledEmail(data: {
           </h3>
 
           ${emailDetailsTable([
-            emailDetailRow(tIntake.dateLabel[locale], newDateStr),
-            newTimeStr ? emailDetailRow(tIntake.timeLabel[locale], newTimeStr) : '',
-            emailDetailRow(tIntake.durationLabel[locale], `${data.duration} ${tIntake.minutes[locale]}`),
-            data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location) : ''
-          ].filter(Boolean))}
+            emailDetailRow(tIntake.dateLabel[locale], newDateStr, brandingWithLocale),
+            newTimeStr ? emailDetailRow(tIntake.timeLabel[locale], newTimeStr, brandingWithLocale) : '',
+            emailDetailRow(tIntake.durationLabel[locale], `${data.duration} ${tIntake.minutes[locale]}`, brandingWithLocale),
+            data.location ? emailDetailRow(tIntake.locationLabel[locale], data.location, brandingWithLocale) : ''
+          ].filter(Boolean), brandingWithLocale)}
         </td>
       </tr>
     </table>
@@ -468,18 +489,18 @@ export function generateBookingRescheduledEmail(data: {
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0;">
       <tr>
         <td>
-          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.updateCalendar[locale]}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
             <tr>
               <td style="padding-${locale === 'he' ? 'left' : 'right'}: 8px;">
-                <a href="${calendarLinks.google}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: #4285F4; text-decoration: none; border: 1px solid #4285F4; border-radius: 6px;">
+                <a href="${calendarLinks.google}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: ${vendor('#4285F4')}; text-decoration: none; border: 1px solid ${vendor('#4285F4')}; border-radius: 6px;">
                   ${tConfirm.googleCalendar[locale]}
                 </a>
               </td>
               <td>
-                <a href="${calendarLinks.outlook}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: #0078D4; text-decoration: none; border: 1px solid #0078D4; border-radius: 6px;">
+                <a href="${calendarLinks.outlook}" target="_blank" style="display: inline-block; padding: 10px 16px; font-size: 13px; font-weight: 500; color: ${vendor('#0078D4')}; text-decoration: none; border: 1px solid ${vendor('#0078D4')}; border-radius: 6px;">
                   ${tConfirm.outlookCalendar[locale]}
                 </a>
               </td>
@@ -490,10 +511,10 @@ export function generateBookingRescheduledEmail(data: {
     </table>
 
     <!-- Manage Booking Section -->
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid #e5e5e5;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin: 24px 0; padding-top: 24px; border-top: 1px solid ${c.line};">
       <tr>
         <td>
-          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: #1a1a1a;">
+          <p style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: ${c.ink};">
             ${t.needMoreChanges[locale]}
           </p>
           <table role="presentation" cellspacing="0" cellpadding="0" border="0">
@@ -502,7 +523,7 @@ export function generateBookingRescheduledEmail(data: {
                 ${emailOutlineButton(t.rescheduleAgain[locale], data.rescheduleUrl, { branding: data.branding })}
               </td>
               <td>
-                ${emailOutlineButton(tIntake.cancel[locale], data.cancelUrl, { color: '#DC2626' })}
+                ${emailOutlineButton(tIntake.cancel[locale], data.cancelUrl, { color: emailTone('danger', brandingWithLocale).text })}
               </td>
             </tr>
           </table>
@@ -511,7 +532,7 @@ export function generateBookingRescheduledEmail(data: {
     </table>
 
     <!-- Final Note -->
-    <p style="margin: 24px 0 0; font-size: 13px; color: #888888; line-height: 1.5;">
+    <p style="margin: 24px 0 0; font-size: 13px; color: ${c.inkFaint}; line-height: 1.5;">
       ${tConfirm.questions[locale](data.branding.businessName)}
     </p>
   `;

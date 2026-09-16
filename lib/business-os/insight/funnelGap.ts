@@ -9,8 +9,16 @@
  * Returns a verdict rather than a sentence — the component owns the wording.
  */
 
-/** Which period a funnel number covers. */
-export type FunnelWindow = 'visitors' | 'pipeline' | 'period';
+/**
+ * Which period a funnel number covers.
+ *
+ * `flow` is the odd one out and the only one that can honestly produce a
+ * conversion rate: the other three are counts of who is somewhere, and dividing
+ * one by another compares two queue lengths. A `flow` pair is a cohort and what
+ * became of it — arrived, and of those, moved on — so the division means what
+ * the map has always claimed it meant.
+ */
+export type FunnelWindow = 'visitors' | 'pipeline' | 'period' | 'flow';
 
 export interface GapEnd {
   count: number;
@@ -81,14 +89,27 @@ export interface Leak<T extends GapEnd> {
 export function pickLeak<T extends GapEnd>(
   nodes: T[],
   isLive: boolean,
-  selectedKey?: string
+  selectedKey?: string,
+  /**
+   * How to turn a pair of stations into the two ends being compared.
+   *
+   * The default compares the stations themselves, which is a comparison of two
+   * queue lengths. Callers that know what actually FLOWED between them pass a
+   * mapper instead — see the funnel map, which supplies a cohort. It is a
+   * parameter rather than a rewrite because the drawer and the connector must
+   * reach the same verdict: two implementations of "is this leaking" would
+   * eventually disagree on screen, with the map drawing red above a panel
+   * calling the same gap healthy.
+   */
+  endsFor?: (from: T, to: T) => { from: GapEnd; to: GapEnd }
 ): Leak<T> | null {
   const leaks: Leak<T>[] = [];
 
   for (let i = 0; i < nodes.length - 1; i++) {
     const from = nodes[i];
     const to = nodes[i + 1];
-    const verdict = resolveGap(from, to, isLive);
+    const ends = endsFor ? endsFor(from, to) : { from, to };
+    const verdict = resolveGap(ends.from, ends.to, isLive);
 
     if (verdict.kind === 'leaking') {
       leaks.push({ key: `g${i + 1}`, from, to, dropped: verdict.dropped });

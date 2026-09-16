@@ -35,9 +35,35 @@ export class CashCardsExpiringDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'update_payment_method_request',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `update_payment_method_request`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
+    /*
+     * Runs even while this category's vector is dark, because a card expiring before the next charge is a date on that card. Waiting for
+     * a baseline means finding out after the payment has already failed.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'automate',
-    eligibleForAutomation: true,
+    eligibleForAutomation: false,
     ownerParameters: [
       {
         id: 'days_before',

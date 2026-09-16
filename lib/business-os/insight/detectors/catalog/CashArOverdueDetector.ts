@@ -37,6 +37,12 @@ export class CashArOverdueDetector extends BaseDetector {
     },
 
     pairedProcessId: 'chase_overdue_invoices',
+    /*
+     * Runs even while this category's vector is dark, because an invoice past its due date is a document that exists, not a rate — the
+     * first one is as overdue as the fiftieth.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'automate',
     eligibleForAutomation: true,
     ownerParameters: [

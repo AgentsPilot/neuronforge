@@ -142,6 +142,8 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
   const [availability, setAvailability] = useState<WeeklyAvailability>(DEFAULT_AVAILABILITY);
   const [savingAvailability, setSavingAvailability] = useState(false);
   const [availabilitySaved, setAvailabilitySaved] = useState(false);
+  /** Why the last availability save did not take. See `saveAvailability`. */
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null);
 
   // Stripe state
   const [stripeConnected, setStripeConnected] = useState(false);
@@ -308,11 +310,26 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       });
       const data = await response.json();
       if (data.success) {
+        setAvailabilityError(null);
         setAvailabilitySaved(true);
         setTimeout(() => setAvailabilitySaved(false), 3000);
+        return;
       }
+
+      /*
+       * A refused save was silent.
+       *
+       * Only the success branch did anything, so a save that failed looked
+       * exactly like one that worked minus a brief "Saved" flash — and the
+       * hours the owner had just cleared or entered were still on screen,
+       * which reads as saved. They would leave believing it was done, and
+       * every gate downstream would disagree with them.
+       */
+      logger.warn({ error: data.error }, 'Availability save refused');
+      setAvailabilityError(data.error || t('common.error') || 'Could not save');
     } catch (error) {
       logger.error({ err: error }, 'Failed to save availability');
+      setAvailabilityError(t('common.error') || 'Could not save');
     } finally {
       setSavingAvailability(false);
     }
@@ -767,7 +784,11 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
                   daysToAdd={availabilityDaysToAdd}
                 />
                 <TabFooter
-                  message={availabilitySaved && (
+                  message={availabilityError ? (
+                    <span className="text-sm font-medium text-red-600 dark:text-red-400">
+                      {availabilityError}
+                    </span>
+                  ) : availabilitySaved && (
                     <span className="text-sm font-medium flex items-center gap-1.5" style={{ color: CONFIG_COLOR }}>
                       <Check className="h-4 w-4" />
                       {t('scheduling.availability.saved') || 'Saved'}

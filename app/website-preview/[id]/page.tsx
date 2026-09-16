@@ -107,6 +107,17 @@ export default function WebsitePreviewPage() {
   } | null>(null);
   const [blocks, setBlocks] = useState<BlockData[]>([]);
   /*
+   * Whether this business can actually take a card.
+   *
+   * The preview showed a payment step for a business with no Stripe connection,
+   * because it never asked and `BookingModal` defaults an unanswered question
+   * to "yes" — deliberately, so a caller that cannot answer does not remove a
+   * step the business could honour. Both real booking pages DO resolve it and
+   * drop the step; only the preview disagreed, which made it the one surface
+   * showing a journey no client would ever walk.
+   */
+  const [paymentsEnabled, setPaymentsEnabled] = useState<boolean | undefined>(undefined);
+  /*
    * The height the embedded document reported, for the device frame.
    *
    * A starting value rather than 0 so the frame has a sensible size during the
@@ -249,6 +260,8 @@ export default function WebsitePreviewPage() {
         return;
       }
 
+      setPaymentsEnabled(result.paymentsEnabled === true);
+
       setPageData({
         title: result.page.title,
         theme: result.page.theme,
@@ -361,8 +374,18 @@ export default function WebsitePreviewPage() {
         */}
         <style>{[
           'html, body { margin: 0; padding: 0; background: ' + pageTheme.colors.background + '; }',
-          isAutoHeight ? 'html { scrollbar-width: none; }' : '',
-          isAutoHeight ? 'html::-webkit-scrollbar { display: none; }' : '',
+          /*
+            No visible bar, in either mode.
+            It used to be hidden only in auto-height embeds, where the frame
+            could not scroll anyway. Now that the page scrolls inside the frame
+            — which is what lets its header freeze — the bar would appear down
+            the middle of the canvas, inside the device outline, where the
+            published site does not have one. Hidden by styling the scrollbar
+            rather than with `overflow: hidden`, which would silently kill the
+            sticky header this arrangement exists to show.
+          */
+          'html { scrollbar-width: none; }',
+          'html::-webkit-scrollbar { display: none; }',
         ].join('\n')}</style>
 
         <main
@@ -386,6 +409,7 @@ export default function WebsitePreviewPage() {
               bookingUrl={pageData?.subdomain ? `/site/${pageData.subdomain}/book` : undefined}
               subdomain={pageData?.subdomain || undefined}
               isPreview={true}
+              paymentsEnabled={paymentsEnabled}
             />
           ) : (
             <div className="min-h-[400px] flex items-center justify-center text-gray-400">
@@ -485,7 +509,23 @@ export default function WebsitePreviewPage() {
         chrome's colour keeps both properties: never a white surround, and
         always a visible boundary, for a template of any colour.
       */}
-      <div className="flex-1 overflow-auto scrollbar-none p-4 flex justify-center bg-gray-800">
+      {/*
+        The canvas no longer scrolls — the PAGE inside the frame does.
+
+        It used to: the iframe was sized to its own reported content height and
+        this container scrolled it as one tall image. That gives one scrollbar
+        in a natural place, and it makes a frozen header impossible. A sticky
+        element sticks to its nearest scrollport, and in an auto-height iframe
+        the scrollport is the whole document — it never moves, so the header
+        never pins. What the owner saw was a preview disagreeing with production
+        about the one thing they were checking.
+
+        `overflow-hidden` and a frame that fills the height put the scroll back
+        inside the page, where production has it. The preview is then not an
+        approximation of the published site's scrolling behaviour; it is the
+        same behaviour.
+      */}
+      <div className="flex-1 overflow-hidden p-4 flex justify-center bg-gray-800">
         {/*
           ───────────────────────────────────────────────────────────────────────
           WHY THE DEVICE FRAME IS AN IFRAME
@@ -513,7 +553,11 @@ export default function WebsitePreviewPage() {
         */}
         <iframe
           key={deviceMode}
-          src={`/website-preview/${pageId}?embedded=true&autoheight=1&lang=${uiLocale}`}
+          /*
+            No `autoheight`: the frame takes the canvas's height and the page
+            scrolls within it, which is what lets the site's own header freeze.
+          */
+          src={`/website-preview/${pageId}?embedded=true&lang=${uiLocale}`}
           title={pageData?.title || labels.previewMode}
           className="shadow-2xl transition-all duration-300"
           style={{
@@ -521,13 +565,12 @@ export default function WebsitePreviewPage() {
             width: DEVICE_WIDTHS[deviceMode],
             maxWidth: '100%',
             /*
-              The frame IS the height of the page, reported from inside it, so
-              the canvas around it does the scrolling and the iframe never grows
-              its own scrollbar — one scrollbar, in the place the page would
-              have put it. A floor as well, or a short page would leave the
-              canvas looking broken.
+              The frame is the height of the CANVAS, not of the page.
+              The document inside it scrolls, exactly as the published site
+              does, which is the only arrangement in which its header can
+              freeze.
             */
-            height: Math.max(frameHeight, 480),
+            height: '100%',
             borderRadius: deviceMode !== 'desktop' ? '16px' : '0',
             /*
               The page bounds, drawn thin.

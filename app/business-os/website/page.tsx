@@ -5,7 +5,7 @@ import { intakeReachesClient } from '@/lib/business-os/intakeReach';
 import { wantsWebsite } from '@/lib/business-os/onlinePresence';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Globe, Layout, Settings, Eye, EyeOff, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, type LucideIcon } from 'lucide-react';
+import { Globe, Layout, Settings, Eye, EyeOff, Palette, ExternalLink, Copy, Check, Loader2, Rocket, PenLine, LayoutTemplate, RefreshCw, Plus, FileText, Trash2, X, Target, List, Megaphone, MessageCircle, Mail, DollarSign, HelpCircle, User, Sparkles, Calendar, CreditCard, Users, RotateCcw, Image as ImageIcon, Newspaper, Video, BarChart3, Package, ChevronDown, ChevronUp, Save, Wand2, Link2, Brain, Dumbbell, Hand, Flower2, Camera, Scale, Code, BookOpen, Music, Scissors, Heart, Briefcase, GraduationCap, Stethoscope, Calculator, PenTool, Mic, Utensils, Wrench, Car, Home, ShieldCheck, Plane, Dog, Baby, Leaf, Clock, TrendingUp, ShoppingCart, Apple, Star, Building, GripVertical, ArrowRight, type LucideIcon } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
@@ -25,6 +25,10 @@ import { ProcessStepEditor } from '@/components/website/ProcessStepEditor';
 import type { TestimonialItem, ProcessStep } from '@/components/website/blocks/types';
 import { ConfigurationDialog } from '@/components/business-os/ConfigurationDialog';
 import { MediaUploader } from '@/components/website/MediaUploader';
+import { FontPicker } from '@/components/website/FontPicker';
+import { Switch } from '@/components/ui/switch';
+import { HEADING_FONTS, BODY_FONTS, carriesHebrew } from '@/lib/website-builder/fontCatalogue';
+import { openingHoursRows } from '@/lib/branding/openingHours';
 import { WebsiteSetupWizard, type WizardResult } from '@/components/business-os/WebsiteSetupWizard';
 import { LandingPageWizard, type LandingPageWizardResult } from '@/components/business-os/LandingPageWizard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -135,42 +139,6 @@ function SortableBlockItem({ id, children }: { id: string; children: React.React
   );
 }
 
-// Sortable item for landing page journey steps
-function SortableLandingPageJourneyStep({ id, children, disabled }: { id: string; children: React.ReactNode; disabled?: boolean }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging
-  } = useSortable({ id, disabled });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 1000 : 'auto' as const
-  };
-
-  return (
-    <div ref={setNodeRef} style={style} {...attributes}>
-      <div className="relative group">
-        {/* Drag handle - only show for non-disabled steps */}
-        {!disabled && (
-          <button
-            {...listeners}
-            className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-full pr-2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing text-purple-400 hover:text-purple-600"
-            aria-label="Drag to reorder"
-          >
-            <GripVertical className="w-4 h-4" />
-          </button>
-        )}
-        {children}
-      </div>
-    </div>
-  );
-}
 
 // Website theme color: Blue (matching CRM's purple pattern)
 const WEBSITE_COLOR = '#4F6EF7';
@@ -205,6 +173,9 @@ interface SmartLink {
   destination_type: string | null;
   click_count: number;
   conversion_count: number;
+  /** Distinct visitors, counted by the list route the way the website counts
+   *  them: clicks with no identifier collapse into one unknown visitor. */
+  unique_visitors?: number;
   is_active: boolean;
   created_at: string;
   metadata?: {
@@ -270,15 +241,34 @@ interface BusinessProfile {
    * the copywriting prompt gets.
    */
   description?: string | null;
+  /**
+   * When this business works — the one place it says so.
+   *
+   * The same column the booking calendar runs on. The editor reads it to show
+   * the opening hours the footer and contact section will publish, so nobody
+   * has to guess what a visitor will be told.
+   */
+  scheduling_availability?: Record<string, Array<{ start: string; end: string }>> | null;
 }
 
 // Localized strings
 const LABELS = {
   en: {
-    title: 'Website',
-    subtitle: 'Manage your professional website',
-    tab_overview: 'Overview',
+    /*
+     * "Online presence", not "Website".
+     *
+     * This screen has not been about one website for a long time: it holds the
+     * site, the landing pages and the smart links, and a business reaching
+     * clients by link alone has no website here at all. Calling it Website told
+     * that owner the page was not for them — and "Overview" named a summary the
+     * tab has never been. It is the page you come back to.
+     */
+    title: 'Online presence',
+    subtitle: 'Your website, landing pages and smart links, in one place',
+    tab_overview: 'Online presence',
     landing_page_failed: 'We could not create that landing page. Nothing was saved — try again.',
+    landing_page_creating: 'Building your landing page…',
+    font_latin_only: 'Latin only',
     journey_no_services: 'No services on this page yet, so there is no journey to show.',
     journey_edit_in_services: 'Change a journey by editing its service →',
     delete_website_title: 'Delete this website',
@@ -315,6 +305,10 @@ const LABELS = {
     status_coming_soon: 'Coming Soon',
     publish: 'Publish',
     unpublish: 'Unpublish',
+    publish_failed: 'Could not publish the website.',
+    unpublish_failed: 'Could not unpublish the website.',
+    publish_fix_availability: 'Set working hours',
+    publish_fix_invoicing: 'Complete invoice details',
     publishing: 'Publishing...',
     view_site: 'View Site',
     copy_link: 'Copy Link',
@@ -329,6 +323,9 @@ const LABELS = {
     subdomain: 'Subdomain',
     subdomain_desc: 'Your website will be available at',
     subdomain_taken: 'This subdomain is already taken',
+    checking: 'Checking…',
+    publish_address_title: 'Choose your web address',
+    publish_address_subtitle: 'This is the address clients will see. You can change it now — afterwards it is what you will have shared.',
     subdomain_available: 'Available',
     save_changes: 'Save Changes',
     saving: 'Saving...',
@@ -444,10 +441,12 @@ const LABELS = {
     journey_lead_capture: 'Lead Capture'
   },
   es: {
-    title: 'Sitio Web',
-    subtitle: 'Gestiona tu sitio web profesional',
-    tab_overview: 'General',
+    title: 'Presencia online',
+    subtitle: 'Tu sitio web, landing pages y smart links, en un solo lugar',
+    tab_overview: 'Presencia online',
     landing_page_failed: 'No pudimos crear esa landing page. No se guardó nada — inténtalo de nuevo.',
+    landing_page_creating: 'Creando tu landing page…',
+    font_latin_only: 'Solo latino',
     journey_no_services: 'Aún no hay servicios en esta página, así que no hay recorrido que mostrar.',
     journey_edit_in_services: 'Cambia un recorrido editando su servicio →',
     delete_website_title: 'Eliminar este sitio',
@@ -484,6 +483,10 @@ const LABELS = {
     status_coming_soon: 'Próximamente',
     publish: 'Publicar',
     unpublish: 'Despublicar',
+    publish_failed: 'No se pudo publicar el sitio.',
+    unpublish_failed: 'No se pudo despublicar el sitio.',
+    publish_fix_availability: 'Configurar horario',
+    publish_fix_invoicing: 'Completar datos de factura',
     publishing: 'Publicando...',
     view_site: 'Ver Sitio',
     copy_link: 'Copiar Enlace',
@@ -498,6 +501,9 @@ const LABELS = {
     subdomain: 'Subdominio',
     subdomain_desc: 'Tu sitio web estará disponible en',
     subdomain_taken: 'Este subdominio ya está ocupado',
+    checking: 'Comprobando…',
+    publish_address_title: 'Elige tu dirección web',
+    publish_address_subtitle: 'Esta es la dirección que verán tus clientes. Puedes cambiarla ahora — después será la que ya hayas compartido.',
     subdomain_available: 'Disponible',
     save_changes: 'Guardar Cambios',
     saving: 'Guardando...',
@@ -613,10 +619,12 @@ const LABELS = {
     journey_lead_capture: 'Captura de Leads'
   },
   he: {
-    title: 'נוכחות אונליין',
-    subtitle: 'נהל את הנוכחות אונליין שלך',
-    tab_overview: 'סקירה',
+    title: 'נוכחות דיגיטלית',
+    subtitle: 'האתר, דפי הנחיתה והקישורים החכמים שלך — במקום אחד',
+    tab_overview: 'נוכחות דיגיטלית',
     landing_page_failed: 'לא הצלחנו ליצור את דף הנחיתה. שום דבר לא נשמר — נסו שוב.',
+    landing_page_creating: 'בונים את דף הנחיתה…',
+    font_latin_only: 'ללא עברית',
     journey_no_services: 'אין עדיין שירותים בדף הזה, ולכן אין מסע להציג.',
     journey_edit_in_services: 'לשינוי מסע — ערכו את השירות שלו ←',
     delete_website_title: 'מחיקת האתר',
@@ -653,6 +661,10 @@ const LABELS = {
     status_coming_soon: 'בקרוב',
     publish: 'פרסם',
     unpublish: 'הסר מפרסום',
+    publish_failed: 'לא ניתן לפרסם את האתר.',
+    unpublish_failed: 'לא ניתן להסיר את האתר מפרסום.',
+    publish_fix_availability: 'הגדר שעות פעילות',
+    publish_fix_invoicing: 'השלם פרטי חשבונית',
     publishing: '...מפרסם',
     view_site: 'צפה באתר',
     copy_link: 'העתק קישור',
@@ -667,6 +679,9 @@ const LABELS = {
     subdomain: 'תת-דומיין',
     subdomain_desc: 'האתר שלך יהיה זמין ב',
     subdomain_taken: 'תת-דומיין זה כבר תפוס',
+    checking: 'בודק…',
+    publish_address_title: 'בחר את כתובת האתר שלך',
+    publish_address_subtitle: 'זו הכתובת שהלקוחות יראו. אפשר לשנות אותה עכשיו — אחר כך זו הכתובת שכבר שיתפת.',
     subdomain_available: 'זמין',
     save_changes: 'שמור שינויים',
     saving: '...שומר',
@@ -803,7 +818,55 @@ export default function WebsiteManagementPage() {
    * preview and the business saw a finished-looking site made of English
    * placeholders, with nothing anywhere saying the writing had not happened.
    */
-  const [generationNotice, setGenerationNotice] = useState<{ kind: 'error' | 'warning'; message: string } | null>(null);
+  const [generationNotice, setGenerationNotice] = useState<{ kind: 'error' | 'warning' | 'progress'; message: string } | null>(null);
+  /**
+   * Why the last publish or unpublish was refused.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Its own state, rendered on the website card, because the two notices that
+   * already exist appear somewhere else: `saveMessage` renders in the design
+   * panel and the block editor's save bar, and `generationNotice` sits above
+   * the page header. The Publish button is on the card, and the answer to a
+   * click belongs where the click was.
+   *
+   * Before this the handler had no else branch at all — a 400 was parsed,
+   * discarded, and the button simply stopped spinning, while the server had
+   * already worked out which services were holding it up and said so.
+   */
+  const [publishError, setPublishError] = useState<string | null>(null);
+  /**
+   * The address dialog shown before a website goes live.
+   *
+   * The prefix is generated — `3k1ila.agentpilot.io` — and publishing put that
+   * on the internet without ever showing it to the owner. It is the address
+   * they will print, send and be found at, and the one moment they are certain
+   * to care about it is the moment before it becomes real.
+   *
+   * Only for the FIRST publish of a site. Re-publishing an address that is
+   * already in use is not the time to invite a change: the old one is already
+   * written down somewhere.
+   */
+  const [publishAddressOpen, setPublishAddressOpen] = useState(false);
+  const [publishAddressValue, setPublishAddressValue] = useState('');
+  /*
+   * Which blocker it was, so the link beneath the message goes somewhere that
+   * can fix it.
+   *
+   * Two things stop a publish now — no working hours, and a service that will
+   * be invoiced with no invoice details behind it — and they are fixed on
+   * different tabs. A single hardcoded link sent half of those businesses to a
+   * screen with nothing wrong on it.
+   */
+  /**
+   * Each thing blocking the publish, separately.
+   *
+   * A page can be held up by more than one — no working hours AND no invoice
+   * details — and they are fixed on different tabs. Joined into one paragraph
+   * with a single link, the second problem was stated and then offered no way
+   * to act on it.
+   */
+  const [publishGaps, setPublishGaps] = useState<Array<{ kind: string; message: string }>>([]);
+  const [previewChecking, setPreviewChecking] = useState(false);
 
   /**
    * Why a smart link could not be switched on, against the link it belongs to.
@@ -813,7 +876,12 @@ export default function WebsiteManagementPage() {
    * hours behind it, or no card processor — the button became one that silently
    * does nothing. A refusal the person cannot see is worse than no gate at all.
    */
-  const [smartLinkNotice, setSmartLinkNotice] = useState<{ id: string; message: string } | null>(null);
+  const [smartLinkNotice, setSmartLinkNotice] = useState<{
+    id: string;
+    message: string;
+    /** Each blocking gap on its own, so each can carry the control that fixes it. */
+    gaps: Array<{ kind: string; message: string }>;
+  } | null>(null);
 
   const [deleteWebsiteOpen, setDeleteWebsiteOpen] = useState(false);
   const [deletingWebsite, setDeletingWebsite] = useState(false);
@@ -978,7 +1046,6 @@ export default function WebsiteManagementPage() {
   const [creatingPage, setCreatingPage] = useState(false);
   const [smartLinksRefreshTrigger, setSmartLinksRefreshTrigger] = useState(0);
   const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
-  const [showInactiveSmartLinks, setShowInactiveSmartLinks] = useState(false);
   const [editingSmartLink, setEditingSmartLink] = useState<{
     id: string;
     name: string | null;
@@ -1045,7 +1112,6 @@ export default function WebsiteManagementPage() {
   // Legacy 'booking' = scheduling + client_info combined
   const [clientFlow, setClientFlow] = useState<FlowStepKey[]>(['scheduling', 'client_info', 'confirmation']);
   const [servicesOnly, setServicesOnly] = useState(false);
-  const [savingJourney, setSavingJourney] = useState(false);
   const [processTitle, setProcessTitle] = useState('');
   const [processSubtitle, setProcessSubtitle] = useState('');
 
@@ -1292,7 +1358,11 @@ export default function WebsiteManagementPage() {
         // Fetch blocks for this page (with content from central store)
         const blocksData = settled(await blocksPromise!);
         if (blocksData.success) {
-          setBlocks(blocksData.blocks || []);
+          // Repaired here too: this is the path that runs on opening the page,
+          // so a site missing its footer regains one without the owner having
+          // to click into a section first.
+          const withFooter = await ensureRequiredBlock(homepage.id, homepage.page_type, 'footer', blocksData.blocks || [], profile?.company_name);
+          setBlocks(await ensureRequiredBlock(homepage.id, homepage.page_type, 'process', withFooter));
           // Extract client flow from process block
           const processBlock = (blocksData.blocks || []).find((b: WebsiteBlock) => b.block_type === 'process');
           if (processBlock?.content) {
@@ -1815,76 +1885,6 @@ export default function WebsiteManagementPage() {
   };
 
   // Handle client journey save
-  const handleSaveJourney = async () => {
-    if (!page) return;
-
-    setSavingJourney(true);
-    try {
-      // Find or create process block
-      const processBlock = blocks.find(b => b.block_type === 'process');
-
-      /*
-       * No `client_flow` is written any more.
-       *
-       * This screen used to author one — a single set of steps for the whole
-       * page — and every surface now resolves the journey per service instead,
-       * so anything saved here was overridden the moment it was read. Writing
-       * it kept a stale second answer alive in the block, which is what made
-       * the editor and the site disagree.
-       *
-       * Whatever is already stored is left untouched by the spread below: it is
-       * still the fallback for a page whose services carry no journey facts.
-       */
-      const contentToSave = {
-        ...(processBlock?.content || {}),
-        services_only: servicesOnly,
-        // Always save title/subtitle - empty string means use default translation
-        title: processTitle,
-        subtitle: processSubtitle
-      };
-
-      if (processBlock) {
-        // Update existing process block - use correct API path with page.id
-        logger.info({ blockId: processBlock.id, contentToSave }, 'Updating process block');
-        const response = await fetch(`/api/website/pages/${page.id}/blocks/${processBlock.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: contentToSave })
-        });
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Failed to update process block');
-        }
-        const result = await response.json();
-        logger.info({ result }, 'Process block updated successfully');
-      } else {
-        // Create new process block if none exists - use correct API path with page.id
-        logger.info({ contentToSave }, 'Creating new process block');
-        const response = await fetch(`/api/website/pages/${page.id}/blocks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            block_type: 'process',
-            position: blocks.length,
-            content: contentToSave
-          })
-        });
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || 'Failed to create process block');
-        }
-        const result = await response.json();
-        logger.info({ result }, 'Process block created successfully');
-      }
-
-      // Refresh blocks to update local state
-      await fetchData();
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to save journey');
-    } finally {
-      setSavingJourney(false);
-    }
-  };
 
   // Toggle a step in the client journey
   const toggleJourneyStep = (step: FlowStepKey) => {
@@ -1957,53 +1957,6 @@ export default function WebsiteManagementPage() {
   };
 
   // Save landing page client journey - can be stored in booking_widget, pricing, or cta block
-  const handleSaveLandingPageJourney = async () => {
-    if (!page || page.page_type !== 'landing') return;
-
-    setSavingLandingPageJourney(true);
-    try {
-      // Find a block to save the journey to (priority order: booking_widget > pricing > cta)
-      const targetBlock = blocks.find(b => b.block_type === 'booking_widget')
-        || blocks.find(b => b.block_type === 'pricing')
-        || blocks.find(b => b.block_type === 'cta');
-
-      if (!targetBlock) {
-        logger.warn({ pageId: page.id }, 'No target block found for client journey (need booking_widget, pricing, or cta)');
-        return;
-      }
-
-      const contentToSave = {
-        ...targetBlock.content,
-        client_flow: landingPageClientFlow
-      };
-
-      logger.info({ blockId: targetBlock.id, blockType: targetBlock.block_type, clientFlow: landingPageClientFlow }, 'Saving landing page client journey');
-
-      const response = await fetch(`/api/website/pages/${page.id}/blocks/${targetBlock.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: contentToSave })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to update landing page journey');
-      }
-
-      // Update local state
-      setBlocks(prev => prev.map(b =>
-        b.id === targetBlock.id
-          ? { ...b, content: contentToSave }
-          : b
-      ));
-
-      logger.info({ pageId: page.id }, 'Landing page client journey saved successfully');
-    } catch (error) {
-      logger.error({ err: error }, 'Failed to save landing page journey');
-    } finally {
-      setSavingLandingPageJourney(false);
-    }
-  };
 
   // Handle drag end for landing page journey reorder
   const handleLandingPageJourneyDragEnd = (event: DragEndEvent) => {
@@ -2150,7 +2103,8 @@ export default function WebsiteManagementPage() {
       const blocksResponse = await fetch(`/api/website/pages/${selectedPage.id}/blocks-with-content`);
       const blocksData = await blocksResponse.json();
       if (blocksData.success) {
-        setBlocks(blocksData.blocks || []);
+        const repaired = await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'footer', blocksData.blocks || []);
+        setBlocks(await ensureRequiredBlock(selectedPage.id, selectedPage.page_type, 'process', repaired));
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch blocks for page');
@@ -2282,21 +2236,163 @@ export default function WebsiteManagementPage() {
     }
   };
 
+  /**
+   * Open the preview — unless the flow it would show cannot run.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * Gated on exactly what Publish is gated on, and refusing with the same
+   * sentence. A booking step with no working hours behind it shows an empty
+   * calendar, and an owner sent into that reads it as a broken preview rather
+   * than as a setting they have not filled in — so they hunt for a bug that is
+   * not there, and the thing that IS wrong stays invisible until they try to
+   * publish.
+   *
+   * It asks the server rather than deciding here, because the answer depends on
+   * which services this page offers and whether the business has hours — two
+   * facts the editor does not hold. `pagePublishBlocker` is the same function
+   * the publish uses, so the two can never disagree about whether a site is
+   * ready.
+   */
+  /**
+   * Ask again whether the page can go live.
+   *
+   * Run when the settings dialog closes, because the owner has just been sent
+   * there to fix the very thing the message names. Without it the refusal and
+   * its button sat there after the gap was closed — still telling them to set
+   * working hours they had just set — and the only way to clear it was to try
+   * publishing again.
+   */
+  const recheckPublishReadiness = async () => {
+    if (!page) return;
+    try {
+      const response = await fetch(`/api/website/pages/${page.id}/publish`);
+      const data = await response.json();
+
+      if (data.ready) {
+        setPublishError(null);
+        setPublishGaps([]);
+        return;
+      }
+
+      // Still blocked, but possibly by something else now: one gap closed and
+      // another still open must not keep showing the one that was fixed.
+      setPublishGaps(Array.isArray(data.gaps) ? data.gaps : []);
+      setPublishError(data.error || labels.publish_failed);
+    } catch (err) {
+      logger.warn({ err }, 'Could not re-check publish readiness');
+    }
+  };
+
+  const handlePreview = async (pageId?: string) => {
+    /*
+     * Any page, not just the website.
+     *
+     * A landing page sells the same services through the same journey, and its
+     * preview opened as a plain link — so the one surface most likely to be
+     * built for a single paid service was the one that could still walk an
+     * owner into a booking flow with no hours behind it. Publishing a landing
+     * page already went through this check; previewing one did not.
+     */
+    const target = pageId ?? page?.id;
+    if (!target) return;
+
+    const open = () =>
+      window.open(`/website-preview/${target}?lang=${language}`, '_blank', 'noopener,noreferrer');
+
+    try {
+      setPreviewChecking(true);
+      const response = await fetch(`/api/website/pages/${target}/publish`);
+      const data = await response.json();
+
+      if (data.ready === false) {
+        logger.warn({ pageId: target, reason: data.reason }, 'Preview refused');
+        setPublishGaps(Array.isArray(data.gaps) ? data.gaps : []);
+        setPublishError(data.error || labels.publish_failed);
+        return;
+      }
+
+      setPublishError(null);
+      setPublishGaps([]);
+      open();
+    } catch (error) {
+      // A failed CHECK must not stand between an owner and their preview.
+      logger.error({ err: error }, 'Could not check preview readiness');
+      open();
+    } finally {
+      setPreviewChecking(false);
+    }
+  };
+
+  /**
+   * Publish — asking about the address first, once.
+   *
+   * The generated prefix goes live as-is unless the owner is shown it, and the
+   * moment before it becomes the address they print and send is the moment they
+   * care. Asked only when the site has never been live: re-publishing is not
+   * the time to offer a change, because the old address is already written down
+   * somewhere.
+   */
   const handlePublish = async () => {
     if (!page) return;
 
+    if (!page.published && !publishAddressOpen) {
+      setPublishAddressValue(page.subdomain || subdomain || '');
+      setSubdomainAvailable(null);
+      setPublishAddressOpen(true);
+      return;
+    }
+
     try {
       setPublishing(true);
+
+      /*
+       * The address first: publishing at the wrong URL and correcting it after
+       * means the wrong one was live, however briefly.
+       */
+      const wanted = publishAddressValue.trim();
+      if (wanted && wanted !== page.subdomain) {
+        const addressed = await fetch(`/api/website/pages/${page.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subdomain: wanted }),
+        });
+        const addressedData = await addressed.json().catch(() => ({}));
+        if (!addressed.ok) {
+          setPublishError(addressedData?.error || labels.publish_failed);
+          setPublishing(false);
+          return;
+        }
+        setPage(prev => (prev ? { ...prev, subdomain: wanted } : prev));
+        setSubdomain(wanted);
+      }
+
       const response = await fetch(`/api/website/pages/${page.id}/publish`, {
         method: 'POST'
       });
       const data = await response.json();
 
       if (data.success) {
-        setPage({ ...page, status: 'live', published: true });
+        setPage(prev => (prev ? { ...prev, status: 'live', published: true } : prev));
+        setPublishError(null);
+        setPublishGaps([]);
+        setPublishAddressOpen(false);
+        return;
       }
+
+      /*
+       * Say why it was refused.
+       *
+       * The route sends a sentence naming the services holding it up — "X asks
+       * clients to pick a time, but you have no working hours set" — which is
+       * the entire point of resolving the gap before publishing. It was being
+       * discarded on arrival.
+       */
+      logger.warn({ pageId: page.id, reason: data.reason }, 'Publish refused');
+      setPublishGaps(Array.isArray(data.gaps) ? data.gaps : []);
+      setPublishError(data.error || labels.publish_failed);
     } catch (error) {
       logger.error({ err: error }, 'Failed to publish website');
+      setPublishError(labels.publish_failed);
     } finally {
       setPublishing(false);
     }
@@ -2314,9 +2410,18 @@ export default function WebsiteManagementPage() {
 
       if (data.success) {
         setPage({ ...page, status: 'draft', published: false });
+        setPublishError(null);
+        setPublishGaps([]);
+        return;
       }
+
+      // Silence is worse on the way down: the owner believes the site is off
+      // the air while it is still being served.
+      logger.warn({ pageId: page.id }, 'Unpublish refused');
+      setPublishError(data.error || labels.unpublish_failed);
     } catch (error) {
       logger.error({ err: error }, 'Failed to unpublish website');
+      setPublishError(labels.unpublish_failed);
     } finally {
       setPublishing(false);
     }
@@ -2401,8 +2506,22 @@ export default function WebsiteManagementPage() {
     }
   };
 
-  // Required blocks that cannot be deleted
-  const REQUIRED_BLOCKS: BlockType[] = ['header'];
+  /*
+   * Blocks a page cannot be without.
+   *
+   * The footer joins the header here. A page with no footer is not a page
+   * somebody chose to end abruptly — it is a page missing its ending, with no
+   * copyright line, no closing action, and nowhere for the contact details and
+   * opening hours to appear. It is also the block every recipe treats as the
+   * boundary that new sections are inserted above, so losing it changes where
+   * everything added afterwards lands.
+   *
+   * Not deletable is not the same as not removable from the site: the switch on
+   * every row still turns it off, and a disabled footer does not render on the
+   * public page. What that keeps is the block — and with it the owner's
+   * settings, and a way back.
+   */
+  const REQUIRED_BLOCKS: BlockType[] = ['header', 'footer', 'process'];
 
   // Delete block modal state
   const [deleteBlockModal, setDeleteBlockModal] = useState<{ isOpen: boolean; blockId: string | null; blockType: string | null }>({
@@ -2546,8 +2665,52 @@ export default function WebsiteManagementPage() {
     'intake_form': 'intake_form'
   };
 
-  // Block types that should save directly to the block (page-specific, not shared)
-  const SAVE_DIRECTLY_TO_BLOCK = ['services', 'header', 'process'];
+  /*
+   * Block types that save straight to the block, not to the shared store.
+   *
+   * The footer belongs here for the same reason the header does: what it holds
+   * is PAGE-specific. A company name, a logo switch, the menu links, the
+   * platform credit — none of it is prose that should follow the business
+   * across templates, which is what the central content store is for.
+   *
+   * It was in neither list, and that was not a preference, it was a hole. With
+   * no entry in `BLOCK_TO_SECTION` either, `sectionName` came back undefined
+   * and the branch below wrote `sections: { undefined: ... }` to the content
+   * store — a section literally named "undefined" — while the block itself was
+   * never touched. Saving the footer appeared to work and stored nothing.
+   */
+  const SAVE_DIRECTLY_TO_BLOCK = ['services', 'header', 'process', 'footer'];
+
+  /**
+   * Store "services only" where the booking flow reads it.
+   *
+   * The control now sits in the services section, but the value belongs to the
+   * process block: `/api/website/booking/intake` looks it up there by block
+   * type and refuses to serve an intake form when it is true. Written on toggle
+   * rather than on a Save button, because the services section's own save
+   * writes the services list and this is not part of it.
+   */
+  const persistServicesOnly = async (checked: boolean) => {
+    const processBlock = blocks.find(b => b.block_type === 'process');
+    if (!page || !processBlock) return;
+
+    try {
+      await fetch(`/api/website/pages/${page.id}/blocks/${processBlock.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: { ...(processBlock.content || {}), services_only: checked },
+        }),
+      });
+      setBlocks(prev => prev.map(b =>
+        b.id === processBlock.id
+          ? { ...b, content: { ...(b.content || {}), services_only: checked } as WebsiteBlock['content'] }
+          : b
+      ));
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to store the services-only setting');
+    }
+  };
 
   const handleSaveBlockContent = async (blockId: string) => {
     if (!editingBlockContent) return;
@@ -2581,6 +2744,63 @@ export default function WebsiteManagementPage() {
         if (!response.ok) {
           throw new Error(`Failed to save ${block.block_type}`);
         }
+
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * HOW IT WORKS: THE STEPS ALSO GO ON THE BUSINESS.
+         *
+         * Saving them to the block alone is not durable.
+         * `WebsiteBlockEnrichmentService` re-derives this section's steps every
+         * time the site is PUBLISHED, and it prefers
+         * `business_profiles.process_steps` over anything already in the block.
+         * With that field empty — as it is on every account today — the
+         * owner's words are replaced by generated ones at the moment they go
+         * live, which is the worst possible time to lose them.
+         *
+         * The endpoint and the repository methods for this have existed all
+         * along and nothing has ever called them. This is that call.
+         *
+         * Not fatal: the block is saved and the section already reads correctly
+         * in the editor. What fails here is durability across a publish, which
+         * is worth a log rather than an error the owner cannot act on.
+         */
+        if (block.block_type === 'process') {
+          const steps = (editingBlockContent.steps as Array<{ title?: string; description?: string; icon?: string }> | undefined) ?? [];
+          const durable = steps
+            .filter(step => step.title?.trim())
+            .map((step, index) => ({
+              title: step.title!.trim(),
+              // The endpoint requires a description; a step with none would
+              // fail validation and take the whole list with it.
+              description: step.description?.trim() || step.title!.trim(),
+              icon: step.icon,
+              number: index + 1,
+            }));
+
+          if (durable.length > 0) {
+            try {
+              const stepsResponse = await fetch('/api/website/process-steps', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ steps: durable }),
+              });
+              if (!stepsResponse.ok) {
+                logger.warn({ status: stepsResponse.status }, 'Saved the section but could not store its steps on the business');
+              }
+            } catch (stepsError) {
+              logger.warn({ err: stepsError }, 'Saved the section but could not store its steps on the business');
+            }
+          }
+        }
+      } else if (!sectionName) {
+        /*
+         * A block type with no section mapping cannot be saved to the shared
+         * store — there is nowhere to put it. This used to fall through and
+         * write `{ undefined: content }`, which the owner experienced as a save
+         * button that did nothing and left no trace.
+         */
+        logger.error({ blockType: block.block_type, blockId }, 'No content section for this block type; refusing to save');
+        throw new Error(`No content section mapped for ${block.block_type}`);
       } else {
         // Homepage/main website: Save to central content store (content persists across templates)
         const contentResponse = await fetch('/api/website/content', {
@@ -2680,6 +2900,16 @@ export default function WebsiteManagementPage() {
   const handleAddSection = async (blockType: string) => {
     if (!page) return;
 
+    /*
+     * Guarded here as well as in the picker.
+     *
+     * The tile is disabled, but a handler that trusts its own UI is one
+     * refactor from writing a second block of a type the page already has —
+     * and the cost of that is two elements sharing one anchor id, which breaks
+     * menu navigation silently rather than loudly.
+     */
+    if (blocks.some(b => b.block_type === blockType)) return;
+
     try {
       setAddingSection(true);
 
@@ -2702,8 +2932,86 @@ export default function WebsiteManagementPage() {
 
       const data = await response.json();
       if (data.success && data.block) {
-        setBlocks([...blocks, data.block]);
+        /*
+         * ─────────────────────────────────────────────────────────────────────
+         * A NEW SECTION GOES ABOVE THE FOOTER, NEVER BELOW IT.
+         *
+         * Blocks were appended at `maxPosition + 1`, which on any real page is
+         * after the footer — so adding Testimonials put them under the
+         * copyright line. The footer closes the page by definition; nothing
+         * belongs after it.
+         *
+         * ─────────────────────────────────────────────────────────────────────
+         * WHY THIS MOVES ONE BLOCK AND NOT THE WHOLE PAGE
+         *
+         * The first version of this called the REORDER endpoint, which rewrites
+         * every row on the page: all of them to negative positions, then
+         * 0..n-1, then a rescue pass for any it missed. Three passes, no
+         * transaction, and it depends on an RPC (`clear_block_positions`) that
+         * exists in no migration — so it has always run the un-guarded
+         * fallback. Adding a section is not worth putting every other block on
+         * the page through that, and a footer went missing in exactly this
+         * window.
+         *
+         * Two writes now, each into a slot nothing occupies, and no other block
+         * is touched at all:
+         *
+         *   the new block  lands at maxPosition + 1  (free: it is past the end)
+         *   the footer     moves to maxPosition + 2  (free for the same reason)
+         *
+         * The unique index on (page_id, position) means a mistake here fails
+         * loudly instead of overwriting a row. The gap left where the footer
+         * used to sit is harmless — order is decided by comparing positions,
+         * never by them being contiguous.
+         */
+        const footer = blocks.find(b => b.block_type === 'footer');
+        const footerPosition = maxPosition + 2;
+
+        /*
+         * The footer's NEW position goes into local state, not its old one.
+         *
+         * This kept the footer object exactly as it was loaded while moving the
+         * real row on the server, so `blocks` carried a stale position — and
+         * the next add computed `maxPosition` from that stale number, asked for
+         * a slot the footer already occupied, and the insert failed on the
+         * unique index with "Key (page_id, position)=(…, 13) already exists".
+         * Adding one section worked; adding a second never did.
+         */
+        const ordered = footer
+          ? [...blocks.filter(b => b.id !== footer.id), data.block, { ...footer, position: footerPosition }]
+          : [...blocks, data.block];
+
+        setBlocks(ordered);
         setShowAddSectionModal(false);
+
+        if (footer) {
+          try {
+            const moved = await fetch(`/api/website/pages/${page.id}/blocks/${footer.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ position: footerPosition })
+            });
+            const result = await moved.json();
+            if (!result.success) {
+              logger.warn({ error: result.error, blockType }, 'Added a section but could not move the footer below it');
+              /*
+               * Put the footer's real position back in state. Claiming a move
+               * that did not happen is what produced the collision above, one
+               * add later.
+               */
+              setBlocks(prev => prev.map(b => (b.id === footer.id ? { ...b, position: footer.position } : b)));
+            }
+          } catch (moveError) {
+            /*
+             * Not fatal, and deliberately not retried. The section exists and
+             * is on screen in the right place; the worst case is that it sits
+             * after the footer on the next load, which is the behaviour this
+             * replaced rather than a new breakage.
+             */
+            logger.warn({ err: moveError, blockType }, 'Added a section but could not move the footer below it');
+            setBlocks(prev => prev.map(b => (b.id === footer.id ? { ...b, position: footer.position } : b)));
+          }
+        }
       }
     } catch (error) {
       logger.error({ err: error, blockType }, 'Failed to add section');
@@ -2803,6 +3111,109 @@ export default function WebsiteManagementPage() {
   };
 
   // Reset block order to defaults (Hero, Services, Process, About, etc.)
+  /**
+   * A page with no footer block gets one back.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS IS A REPAIR AND NOT A FEATURE
+   *
+   * Every recipe in `lib/website-builder/recipes.ts` ends with `footer`, and
+   * `orderByRecipe` treats it as the boundary that new sections are inserted
+   * ABOVE. A page without one is not a page that chose to have no footer — it
+   * is a page missing the section that defines its end, and the symptom is the
+   * one that showed up here: no footer row in the section list, so no way to
+   * reach the logo switch, the credit line or anything else the footer holds.
+   *
+   * Created on load rather than offered in the Add Section dialog, because
+   * nobody should have to know their page is missing its own ending in order to
+   * fix it. Idempotent by construction: it only ever runs when there is no
+   * footer block at all.
+   *
+   * Contact details, opening hours and the registered name are deliberately not
+   * written here — those resolve from the business profile on every render, so
+   * a repaired footer says exactly what an original one says.
+   */
+  const ensureRequiredBlock = async (
+    pageId: string,
+    pageType: string | undefined,
+    blockType: 'footer' | 'process',
+    loaded: WebsiteBlock[],
+    /*
+     * Passed in, not read from state.
+     *
+     * The main loader calls this in the same pass that sets `businessProfile`,
+     * and React state does not update mid-function — reading it here would give
+     * the previous render's value, which on first load is null. A footer
+     * restored with an empty company name shows no wordmark at all.
+     */
+    companyName?: string | null
+  ) => {
+    // Landing pages carry neither of these by design: a landing page is one
+    // offer on one screen, with no "how it works" and no footer.
+    if (pageType === 'landing') return loaded;
+    if (loaded.some(b => b.block_type === blockType)) return loaded;
+
+    try {
+      const response = await fetch(`/api/website/pages/${pageId}/blocks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          block_type: blockType,
+          content: blockType === 'process' ? {
+            /*
+             * Steps are deliberately absent. `WebsiteBlockEnrichmentService`
+             * fills them on the next publish — from the business's own
+             * `process_steps` when it has them, and from its capabilities when
+             * it does not. Inventing steps here would put words on the page
+             * that nobody wrote and that enrichment would then have to
+             * second-guess.
+             */
+            title: language === 'he' ? 'איך זה עובד' : language === 'es' ? 'Cómo Funciona' : 'How It Works',
+            services_only: false,
+          } : {
+            company_name: companyName || businessProfile?.company_name || '',
+            copyright_year: new Date().getFullYear(),
+            /*
+             * The links a generated footer carries — and only to sections this
+             * page actually has.
+             *
+             * An empty list was written here first, which quietly cost every
+             * repaired footer its navigation: generation gives a footer About,
+             * Services and Contact links, and a restored one arrived with none.
+             * Built from the page's own blocks rather than assumed, so a page
+             * with no About section does not offer a link to one.
+             */
+            menu_items: [
+              { type: 'about', anchor: '#about', label: language === 'he' ? 'אודות' : language === 'es' ? 'Acerca de' : 'About' },
+              { type: 'services', anchor: '#services', label: language === 'he' ? 'שירותים' : language === 'es' ? 'Servicios' : 'Services' },
+              { type: 'contact_form', anchor: '#contact', label: language === 'he' ? 'יצירת קשר' : language === 'es' ? 'Contacto' : 'Contact' },
+            ]
+              .filter(item => loaded.some(b => b.block_type === item.type))
+              .map(({ label, anchor }) => ({ label, anchor })),
+            show_logo: true,
+            show_powered_by: false
+          },
+          position: Math.max(...loaded.map(b => b.position), -1) + 1,
+          enabled: true
+        })
+      });
+
+      const data = await response.json();
+      if (data.success && data.block) {
+        logger.info({ pageId, blockType }, 'Restored a missing required block');
+        return [...loaded, data.block];
+      }
+
+      logger.warn({ pageId, blockType, error: data.error }, 'Could not restore a missing required block');
+    } catch (error) {
+      // Non-fatal: the page still edits, it simply still has no footer. Worth a
+      // log because a page repeatedly failing to gain one is a real defect.
+      logger.warn({ err: error, pageId, blockType }, 'Could not restore a missing required block');
+    }
+
+    return loaded;
+  };
+
   const handleResetBlockOrder = async () => {
     if (!page) return;
 
@@ -2844,9 +3255,7 @@ export default function WebsiteManagementPage() {
     if (!over || active.id === over.id || !page) return;
 
     // Get filtered and sorted blocks (excluding process block for drag UI)
-    const sortedBlocks = blocks
-      .filter(b => b.block_type !== 'process')
-      .sort((a, b) => a.position - b.position);
+    const sortedBlocks = blocks.sort((a, b) => a.position - b.position);
 
     const oldIndex = sortedBlocks.findIndex(b => b.id === active.id);
     const newIndex = sortedBlocks.findIndex(b => b.id === over.id);
@@ -3007,20 +3416,155 @@ export default function WebsiteManagementPage() {
   };
 
   /**
-   * What this contact field shows.
+   * When this business is open, shown but not edited here.
    *
-   * The business profile's value, as a real value rather than a placeholder.
-   * A greyed-out hint reads as "nothing here" — the owner cannot tell whether
-   * the page will show their phone number or nothing at all, and the obvious
-   * response is to type it in again. The value they already gave the platform
-   * belongs in the field.
-   *
-   * Anything typed here still wins, for this page only.
+   * Typed into the block, opening hours are a claim that goes stale silently:
+   * the owner changes their availability, the booking calendar moves, and this
+   * section goes on telling clients to come on a day nobody is working. Derived
+   * from `scheduling_availability`, there is one answer and it moves with the
+   * calendar — which is also why the footer below can state the same hours
+   * without the two disagreeing.
    */
-  const contactValue = (field: string, column: 'email' | 'phone' | 'address'): string => {
-    const own = editingBlockContent?.[field];
-    if (typeof own === 'string' && own.trim()) return own;
-    return contactFromProfile(column);
+  /**
+   * The website's own brand colour, for controls that speak about the website.
+   *
+   * The saved theme first, the design form second: while an owner is choosing a
+   * colour the form is ahead of the row, and a switch that only catches up
+   * after a save reads as broken.
+   */
+  const renderProfileHours = () => {
+    const rows = openingHoursRows(businessProfile?.scheduling_availability, language);
+
+    return (
+      <div
+        className="p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)] space-y-2"
+        style={{ borderRadius: 'var(--v2-radius-card)' }}
+      >
+        {rows.length > 0 ? (
+          rows.map(row => (
+            <div key={row.days} className="flex items-baseline gap-3 text-sm">
+              <span className="w-20 shrink-0 text-[var(--v2-text-muted)]">{row.days}</span>
+              <span className="text-[var(--v2-text-primary)]" dir="ltr">{row.hours}</span>
+            </div>
+          ))
+        ) : (
+          <p className="text-sm text-[var(--v2-text-muted)] italic">
+            {language === 'he'
+              ? 'טרם הוגדרו שעות פעילות.'
+              : language === 'es'
+                ? 'Aún no has definido tu disponibilidad.'
+                : 'No availability set yet.'}
+          </p>
+        )}
+
+        <button
+          type="button"
+          /* Silent: the owner is standing in the block editor looking at
+             these values, and dropping the whole page to a spinner to
+             collect one changed field loses their place and reads as the
+             edit having gone wrong. The values update underneath them. */
+          onClick={() => openConfiguration('availability', { onClose: () => fetchData({ silent: true }) })}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
+          style={{ borderRadius: 'var(--v2-radius-button)' }}
+        >
+          {language === 'he'
+            ? 'עריכת שעות הפעילות'
+            : language === 'es'
+              ? 'Editar disponibilidad'
+              : 'Edit availability'}
+          <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+    );
+  };
+
+  /**
+   * How to reach this business, shown but not edited here.
+   *
+   * These were three editable inputs, in the contact block AND again in the
+   * footer — two places to type a phone number onto one page, with no way for a
+   * visitor to tell which of the two was real. The public pages now read all
+   * three from the business profile and nothing else, so leaving editable boxes
+   * here would promise an override that no longer happens.
+   *
+   * Shown rather than hidden: "where does this come from?" is the first
+   * question an owner asks of a footer they cannot edit, and the answer has to
+   * be on screen next to the values, with the way to change them.
+   *
+   * A render function rather than a component so it does not remount — and so
+   * it can read `businessProfile` and `language` straight from the closure.
+   */
+  const renderProfileContactFields = () => {
+    const rows: Array<{ label: string; value: string; ltr?: boolean }> = [
+      {
+        // Shown first: it is the name the footer signs the copyright with, and
+        // the one people most expect to be able to change from here.
+        label: language === 'he' ? 'שם העסק' : language === 'es' ? 'Nombre' : 'Business name',
+        value: businessProfile?.company_name || '',
+      },
+      {
+        label: language === 'he' ? 'אימייל' : language === 'es' ? 'Email' : 'Email',
+        value: contactFromProfile('email'),
+        ltr: true,
+      },
+      {
+        label: language === 'he' ? 'טלפון' : language === 'es' ? 'Teléfono' : 'Phone',
+        value: contactFromProfile('phone'),
+        ltr: true,
+      },
+      {
+        label: language === 'he' ? 'כתובת' : language === 'es' ? 'Dirección' : 'Address',
+        value: contactFromProfile('address'),
+      },
+    ];
+
+    const missing =
+      language === 'he' ? 'לא הוגדר' : language === 'es' ? 'Sin definir' : 'Not set';
+
+    return (
+      <div
+        className="p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)] space-y-2"
+        style={{ borderRadius: 'var(--v2-radius-card)' }}
+      >
+        <p className="text-xs text-[var(--v2-text-muted)]">
+          {language === 'he'
+            ? 'פרטי הקשר מגיעים מפרופיל העסק, כך שהם זהים בכל העמודים.'
+            : language === 'es'
+              ? 'Los datos de contacto vienen del perfil del negocio, para que sean los mismos en todas las páginas.'
+              : 'Contact details come from your business profile, so they are the same on every page.'}
+        </p>
+
+        {rows.map(row => (
+          <div key={row.label} className="flex items-baseline gap-3 text-sm">
+            <span className="w-20 shrink-0 text-[var(--v2-text-muted)]">{row.label}</span>
+            <span
+              className={row.value ? 'text-[var(--v2-text-primary)]' : 'text-[var(--v2-text-muted)] italic'}
+              dir={row.ltr && row.value ? 'ltr' : undefined}
+            >
+              {row.value || missing}
+            </span>
+          </div>
+        ))}
+
+        <button
+          type="button"
+          /* Silent: the owner is standing in the block editor looking at
+             these values, and dropping the whole page to a spinner to
+             collect one changed field loses their place and reads as the
+             edit having gone wrong. The values update underneath them. */
+          onClick={() => openConfiguration('business', { onClose: () => fetchData({ silent: true }) })}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
+          style={{ borderRadius: 'var(--v2-radius-button)' }}
+        >
+          {language === 'he'
+            ? 'עריכה בפרופיל העסק'
+            : language === 'es'
+              ? 'Editar en el perfil del negocio'
+              : 'Edit in business profile'}
+          <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+    );
   };
 
   // Save design settings
@@ -3039,9 +3583,27 @@ export default function WebsiteManagementPage() {
           text: page?.theme?.colors?.text || '#111827',
           textSecondary: page?.theme?.colors?.textSecondary || '#6B7280'
         },
+        /*
+         * The chosen face, on the Hebrew pages too.
+         *
+         * `completeTheme` fills an absent `hebrewHeading` from the ARCHETYPE's
+         * stand-in, and `PublicThemeStyle` prefers that stand-in whenever the
+         * page is Hebrew. So a business on Bloom that chose Rubik — a face with
+         * full Hebrew — kept rendering Varela Round on every Hebrew page, which
+         * is to say the choice had no visible effect on the only pages that
+         * business serves.
+         *
+         * Stated explicitly here, one way or the other: a face that carries
+         * Hebrew sets itself as the Hebrew face and beats the stand-in; a face
+         * that does not leaves the field absent, and the archetype's stand-in
+         * is then exactly right — falling back to a system face would be worse
+         * than the substitution it exists to prevent.
+         */
         fonts: {
           heading: designForm.headingFont,
-          body: designForm.bodyFont
+          body: designForm.bodyFont,
+          hebrewHeading: carriesHebrew(designForm.headingFont) ? designForm.headingFont : undefined,
+          hebrewBody: carriesHebrew(designForm.bodyFont) ? designForm.bodyFont : undefined
         },
         borderRadius: page?.theme?.borderRadius || '0.5rem',
         spacing: page?.theme?.spacing || 'normal'
@@ -3203,7 +3765,10 @@ export default function WebsiteManagementPage() {
           setGenerationNotice({ kind: 'error', message: labels.template_change_failed });
           return;
         }
-        await fetchData();
+        // Silent, the same as the path below. A full reload here dropped the
+        // gallery to a spinner and came back with the tab reset, which reads as
+        // the choice having failed.
+        await fetchData({ silent: true });
       } catch (error) {
         logger.error({ err: error, templateId }, 'Failed to set the business template');
         setGenerationNotice({ kind: 'error', message: labels.template_change_failed });
@@ -3230,7 +3795,16 @@ export default function WebsiteManagementPage() {
         setPage(data.page);
         // The route applies this business-wide, so the tab's mark follows it.
         setCurrentTemplateId(templateId);
-        setViewMode('overview');
+
+        /*
+         * Stay where the choosing happens.
+         *
+         * This jumped to the overview the moment a template was applied, so
+         * changing one's mind meant navigating back to the gallery every time —
+         * and comparing two looks meant doing that round trip for each. Nobody
+         * picks a template once. The tab already marks the current choice, so
+         * staying put shows the result and leaves the alternatives in reach.
+         */
 
         /*
          * Everything else this page shows, refreshed without a spinner.
@@ -3254,6 +3828,17 @@ export default function WebsiteManagementPage() {
       setApplyingTemplate(false);
     }
   };
+
+  /**
+   * Whether a specific page is open for editing, rather than just loaded.
+   *
+   * The website's homepage sits in `page` from the moment this screen opens —
+   * the overview card reads from it — so "is there a page?" is not the same
+   * question as "is the owner inside one?". The editing views are the answer:
+   * sections, design and settings all act on one page, while the overview and
+   * the template gallery are about the whole online presence.
+   */
+  const editingPage = Boolean(page) && ['sections', 'design', 'settings'].includes(viewMode);
 
   const getWebsiteUrl = () => {
     if (page?.subdomain) {
@@ -3361,31 +3946,6 @@ export default function WebsiteManagementPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Filter toggle for inactive smart links */}
-            {smartLinks.some(l => !l.is_active) && (
-              <button
-                onClick={() => setShowInactiveSmartLinks(!showInactiveSmartLinks)}
-                className={`flex items-center gap-2 px-3 py-2 text-sm border transition-all ${
-                  showInactiveSmartLinks
-                    ? 'bg-[#4F6EF7]/10 border-[#4F6EF7]/30 text-[#4F6EF7]'
-                    : 'bg-[var(--v2-surface)] border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:border-[var(--v2-text-muted)]'
-                }`}
-                style={{ borderRadius: 'var(--v2-radius-button)' }}
-              >
-                {showInactiveSmartLinks ? (
-                  <EyeOff className="w-4 h-4" />
-                ) : (
-                  <Eye className="w-4 h-4" />
-                )}
-                <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                  showInactiveSmartLinks
-                    ? 'bg-[#4F6EF7]/20 text-[#4F6EF7]'
-                    : 'bg-[var(--v2-surface-hover)] text-[var(--v2-text-muted)]'
-                }`}>
-                  {smartLinks.filter(l => !l.is_active).length}
-                </span>
-              </button>
-            )}
             <button
               onClick={() => setShowLandingPageWizard(true)}
               className="flex items-center gap-2 px-4 py-2 text-[#4F6EF7] text-sm font-medium border border-[#4F6EF7] bg-[#4F6EF7]/10 hover:bg-[#4F6EF7]/20 transition-all"
@@ -3400,7 +3960,17 @@ export default function WebsiteManagementPage() {
         {/* Combined Landing Pages & Smart Links List */}
         <div className="space-y-3">
           {/* Smart Links */}
-          {smartLinks.filter(link => link.is_active || showInactiveSmartLinks).map((link) => (
+          {/*
+            Every link, whatever its state.
+
+            Inactive ones used to be filtered out behind a toggle, so
+            deactivating a link made it DISAPPEAR — indistinguishable from
+            deleting it, and leaving the owner no way back to the thing they had
+            just switched off. The "Inactive" badge and the Activate button on
+            the row are what tell the two states apart; hiding the row said
+            something stronger and untrue.
+          */}
+          {smartLinks.map((link) => (
             <div
               key={`smart-${link.id}`}
               className={`p-4 bg-[var(--v2-bg)] rounded-lg border ${!link.is_active ? 'border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-900/10' : 'border-[var(--v2-border)]'}`}
@@ -3410,15 +3980,63 @@ export default function WebsiteManagementPage() {
                   a service asking for a time with no hours set, or for a card
                   with no processor connected. */}
               {smartLinkNotice?.id === link.id && (
-                <p
-                  className="mb-3 px-3 py-2 text-xs bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
-                  style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  role="status"
-                >
-                  {smartLinkNotice.message}
-                </p>
+                <div className="mb-3 space-y-2">
+                  {smartLinkNotice.gaps.length > 0 ? (
+                    smartLinkNotice.gaps.map(gap => {
+                      const isInvoicing = gap.kind === 'invoicing';
+                      const GapIcon = isInvoicing ? FileText : Clock;
+                      return (
+                        <div
+                          key={gap.kind}
+                          className="flex items-start gap-3 p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                          style={{ borderRadius: 'var(--v2-radius-card)' }}
+                        >
+                          <div
+                            className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                            style={{ borderRadius: 'var(--v2-radius-button)' }}
+                          >
+                            <GapIcon className="w-4 h-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-[var(--v2-text-primary)]">{gap.message}</p>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                                  // Cleared rather than re-asked: activation is a
+                                  // deliberate click, and it answers freshly.
+                                  onClose: () => setSmartLinkNotice(null),
+                                })
+                              }
+                              className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
+                              style={{ borderRadius: 'var(--v2-radius-button)' }}
+                            >
+                              {isInvoicing
+                                ? labels.publish_fix_invoicing
+                                : labels.publish_fix_availability}
+                              <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p
+                      className="px-3 py-2 text-xs bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300"
+                      style={{ borderRadius: 'var(--v2-radius-button)' }}
+                      role="status"
+                    >
+                      {smartLinkNotice.message}
+                    </p>
+                  )}
+                </div>
               )}
-              <div className="flex items-center justify-between mb-3">
+              {/* Content and stats side by side; the refusal notice above stays
+                  full width, because it is about the link rather than a reading
+                  of it. The stats lead — left in English, right in Hebrew — and
+                  the side is chosen because the document is dir="ltr". */}
+              <div className={`flex items-start gap-4 ${language === 'he' ? '' : 'flex-row-reverse'}`}>
+              <div className="flex-1 min-w-0 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
                     <Link2 className="w-5 h-5" style={{ color: '#4F6EF7' }} />
@@ -3474,6 +4092,7 @@ export default function WebsiteManagementPage() {
                             setSmartLinkNotice({
                               id: link.id,
                               message: data.error || (language === 'he' ? 'לא ניתן להפעיל את הקישור.' : language === 'es' ? 'No se pudo activar el enlace.' : 'This link could not be activated.'),
+                              gaps: Array.isArray(data.gaps) ? data.gaps : [],
                             });
                           }
                         } catch (err) {
@@ -3592,34 +4211,43 @@ export default function WebsiteManagementPage() {
                 </div>
               </div>
 
-              {/* Smart Link Analytics - Compact row */}
-              <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--v2-text-muted)]">
-                    {language === 'he' ? 'קליקים:' : language === 'es' ? 'Clics:' : 'Clicks:'}
-                  </span>
-                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.click_count}</span>
+              {/*
+                The numbers, as a card at the end of the row — the left in Hebrew, the
+                right in English — matching where the website keeps its own stats
+                card. They were a full-width strip under a rule, which read as
+                part of the link rather than as a reading of it.
+              */}
+              <div
+                className="flex-shrink-0 self-start p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                style={{ borderRadius: 'var(--v2-radius-card)' }}
+              >
+                {/* Headed the same as the website's own stats card, in the same
+                    words — a reader moving between them should not have to work
+                    out that they are the same kind of thing. */}
+                <h3 className="text-[10px] font-medium text-[var(--v2-text-muted)] uppercase tracking-wider mb-2">
+                  {labels.page_views}
+                </h3>
+                <div className="flex gap-2">
+                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
+                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{link.click_count}</p>
+                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{language === 'he' ? 'קליקים' : language === 'es' ? 'Clics' : 'Clicks'}</p>
+                  </div>
+                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
+                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{link.conversion_count}</p>
+                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{language === 'he' ? 'המרות' : language === 'es' ? 'Conversiones' : 'Conversions'}</p>
+                  </div>
+                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
+                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{link.click_count > 0 ? `${((link.conversion_count / link.click_count) * 100).toFixed(0)}%` : '—'}</p>
+                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{language === 'he' ? 'אחוז המרה' : language === 'es' ? 'Tasa' : 'Rate'}</p>
+                  </div>
                 </div>
-                <div className="w-px h-4 bg-[var(--v2-border)]" />
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--v2-text-muted)]">
-                    {language === 'he' ? 'המרות:' : language === 'es' ? 'Conversiones:' : 'Conversions:'}
-                  </span>
-                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{link.conversion_count}</span>
+                {/* Unique visitors, under a rule — the same summary line the
+                    website's stats card carries, so the two read alike. */}
+                <div className="mt-2 pt-2 border-t border-[var(--v2-border)] flex justify-between items-center gap-4">
+                  <span className="text-[10px] text-[var(--v2-text-muted)]">{labels.unique_visitors}</span>
+                  <span className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums">{link.unique_visitors ?? 0}</span>
                 </div>
-                {link.click_count > 0 && (
-                  <>
-                    <div className="w-px h-4 bg-[var(--v2-border)]" />
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-[var(--v2-text-muted)]">
-                        {language === 'he' ? 'אחוז המרה:' : language === 'es' ? 'Tasa:' : 'Rate:'}
-                      </span>
-                      <span className="text-sm font-semibold text-[var(--v2-text-primary)]">
-                        {((link.conversion_count / link.click_count) * 100).toFixed(1)}%
-                      </span>
-                    </div>
-                  </>
-                )}
+              </div>
               </div>
             </div>
           ))}
@@ -3628,9 +4256,22 @@ export default function WebsiteManagementPage() {
           {allPages.filter(p => p.page_type === 'landing').map((p) => (
             <div
               key={p.id}
-              className="p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]"
+              /* `flex` so the stats card below sits at the END of the row —
+                 the left in Hebrew — rather than under it. */
+              className={`p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)] flex items-start gap-4 ${
+                /* The stats lead, in whichever direction the reader is going:
+                   the left in English and Spanish, the right in Hebrew — the
+                   side each language starts from.
+
+                   Chosen rather than inherited: the document is hardcoded
+                   dir="ltr" (app/layout.tsx) and RTL is handled per component,
+                   so flex start/end never mirrors on its own. The DOM order is
+                   content-then-stats, so reversing is what puts the stats on
+                   the left. */
+                language === 'he' ? '' : 'flex-row-reverse'
+              }`}
             >
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex-1 min-w-0 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#22C58B20' }}>
                     <FileText className="w-5 h-5" style={{ color: '#22C58B' }} />
@@ -3697,15 +4338,15 @@ export default function WebsiteManagementPage() {
                     {labels.publish_landing}
                   </button>
                 )}
-                <a
-                  href={`/website-preview/${p.id}?lang=${language}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors"
+                <button
+                  type="button"
+                  onClick={() => handlePreview(p.id)}
+                  disabled={previewChecking}
+                  className="p-1.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)] transition-colors disabled:opacity-50"
                   title={labels.preview}
                 >
                   <Eye className="h-4 w-4" />
-                </a>
+                </button>
                 <button
                   onClick={() => handleDeletePageClick(p.id, p.title)}
                   disabled={checkingActivity}
@@ -3721,21 +4362,38 @@ export default function WebsiteManagementPage() {
               </div>
             </div>
 
-              {/* Landing Page Analytics - Compact row */}
-              <div className="flex items-center gap-4 pt-3 border-t border-[var(--v2-border)]">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_today}:</span>
-                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_today ?? 0}</span>
+              {/*
+                The same stats card as the smart links above, for the same reason.
+              */}
+              <div
+                className="flex-shrink-0 self-start p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
+                style={{ borderRadius: 'var(--v2-radius-card)' }}
+              >
+                {/* Headed the same as the website's own stats card, in the same
+                    words — a reader moving between them should not have to work
+                    out that they are the same kind of thing. */}
+                <h3 className="text-[10px] font-medium text-[var(--v2-text-muted)] uppercase tracking-wider mb-2">
+                  {labels.page_views}
+                </h3>
+                <div className="flex gap-2">
+                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
+                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{landingPagesAnalytics[p.id]?.visitors_today ?? 0}</p>
+                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{labels.visitors_today}</p>
+                  </div>
+                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
+                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{landingPagesAnalytics[p.id]?.visitors_30d ?? 0}</p>
+                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{labels.visitors_30d}</p>
+                  </div>
+                  <div className="text-center px-2.5 py-1.5 bg-[var(--v2-bg)] rounded-lg min-w-[4rem]">
+                    <p className="text-lg font-bold text-[var(--v2-text-primary)] tabular-nums leading-tight">{landingPagesAnalytics[p.id]?.total_views ?? 0}</p>
+                    <p className="text-[10px] text-[var(--v2-text-muted)] whitespace-nowrap">{labels.total_views}</p>
+                  </div>
                 </div>
-                <div className="w-px h-4 bg-[var(--v2-border)]" />
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--v2-text-muted)]">{labels.visitors_30d}:</span>
-                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.visitors_30d ?? 0}</span>
-                </div>
-                <div className="w-px h-4 bg-[var(--v2-border)]" />
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--v2-text-muted)]">{labels.total_views}:</span>
-                  <span className="text-sm font-semibold text-[var(--v2-text-primary)]">{landingPagesAnalytics[p.id]?.total_views ?? 0}</span>
+                {/* Unique visitors, under a rule — the same summary line the
+                    website's stats card carries, so the two read alike. */}
+                <div className="mt-2 pt-2 border-t border-[var(--v2-border)] flex justify-between items-center gap-4">
+                  <span className="text-[10px] text-[var(--v2-text-muted)]">{labels.unique_visitors}</span>
+                  <span className="text-sm font-semibold text-[var(--v2-text-primary)] tabular-nums">{landingPagesAnalytics[p.id]?.unique_visitors ?? 0}</span>
                 </div>
               </div>
             </div>
@@ -3780,7 +4438,9 @@ export default function WebsiteManagementPage() {
             className={`px-4 py-3 text-sm border ${
               generationNotice.kind === 'error'
                 ? 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300'
-                : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+                : generationNotice.kind === 'progress'
+                  ? 'bg-[#4F6EF7]/10 border-[#4F6EF7]/30 text-[#4F6EF7]'
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
             }`}
             style={{ borderRadius: 'var(--v2-radius-card)' }}
             role="status"
@@ -3807,12 +4467,46 @@ export default function WebsiteManagementPage() {
               )}
             </div>
             <div className="min-w-0">
+              {/*
+                The heading names what is open, not the screen.
+
+                A landing page already did this; the website did not — so
+                editing a site's sections left the header saying "Online
+                presence", which is the name of the LIST this page came from.
+                With a page open the only useful answer to "where am I?" is
+                which page.
+
+                `editingPage` is a page being worked on rather than merely
+                loaded: the website's homepage is held in `page` from the moment
+                the screen opens, so keying off `page` alone would rename the
+                overview of the list to the name of one item in it.
+              */}
               <h1 className="text-xl sm:text-2xl font-semibold text-[var(--v2-text-primary)] truncate">
-                {page?.page_type === 'landing' ? page.title : labels.title}
+                {editingPage
+                  ? (page!.page_type === 'landing'
+                      ? (page!.title || labels.title)
+                      /*
+                       * "Acme: Website", not the page's own title.
+                       *
+                       * A homepage's `title` is its SEO title — "David KPMG
+                       * Personal Training Studio: Transform Your Fitness" —
+                       * written for a search result, not for a header. It
+                       * clipped, and what survived the clip was whichever half
+                       * came first rather than the name of the thing being
+                       * edited. A landing page keeps its own title because that
+                       * IS its name: short, chosen by the owner, and the only
+                       * way to tell two landing pages apart.
+                       */
+                      : `${businessProfile?.company_name || labels.title}: ${
+                          language === 'he' ? 'אתר' : language === 'es' ? 'Sitio Web' : 'Website'
+                        }`)
+                  : labels.title}
               </h1>
               <p className="text-xs sm:text-sm text-[var(--v2-text-secondary)] mt-0.5 sm:mt-1 hidden sm:block">
-                {page?.page_type === 'landing'
-                  ? (language === 'he' ? 'עריכת דף נחיתה' : language === 'es' ? 'Editando Página de Destino' : 'Editing Landing Page')
+                {editingPage
+                  ? (page!.page_type === 'landing'
+                      ? (language === 'he' ? 'עריכת דף נחיתה' : language === 'es' ? 'Editando Página de Destino' : 'Editing Landing Page')
+                      : (language === 'he' ? 'עריכת האתר' : language === 'es' ? 'Editando el Sitio' : 'Editing Website'))
                   : labels.subtitle}
               </p>
             </div>
@@ -3851,7 +4545,7 @@ export default function WebsiteManagementPage() {
                   style={{ borderRadius: 'var(--v2-radius-card)' }}
                 >
                   {[
-                    { id: 'overview', icon: Eye, title: labels.tab_overview, needsPage: false },
+                    { id: 'overview', icon: Globe, title: labels.tab_overview, needsPage: false },
                     { id: 'design', icon: Palette, title: labels.tab_design, needsPage: false },
                     // Moved up from the website section's own tab row. Choosing
                     // a template is a change to the whole site, like design and
@@ -3881,7 +4575,16 @@ export default function WebsiteManagementPage() {
                           ? { duration: 2.5, repeat: Infinity, ease: 'easeInOut' }
                           : { duration: 0 }
                       }
-                      className={`p-1.5 sm:p-2 transition-all border ${
+                      /* Icon AND word.
+                         These were four unlabelled glyphs with a `title`
+                         tooltip — an eye, a palette, a page and a cog — which
+                         asks the reader to guess, and a tooltip only answers
+                         for someone who already suspected there was something
+                         to hover. The label is what makes the row legible on
+                         first sight; the icon stays because it is what makes it
+                         findable on the tenth. Hidden below `sm`, where four
+                         words will not fit and the header already collapses. */
+                      className={`px-1.5 py-1.5 sm:px-2.5 sm:py-2 inline-flex items-center gap-1.5 transition-all border ${
                         viewMode === tab.id
                           ? 'text-[#4F6EF7] border-[#4F6EF7] bg-[#4F6EF7]/10'
                           : !currentTemplateId && tab.id === 'templates'
@@ -3907,7 +4610,10 @@ export default function WebsiteManagementPage() {
                       }}
                       title={tab.title}
                     >
-                      <tab.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      <tab.icon className="h-3.5 w-3.5 sm:h-4 sm:w-4 shrink-0" />
+                      <span className="hidden sm:inline text-sm font-medium whitespace-nowrap">
+                        {tab.title}
+                      </span>
                     </motion.button>
                   ))}
                 </div>
@@ -4097,13 +4803,28 @@ export default function WebsiteManagementPage() {
                         style={{ borderRadius: 'var(--v2-radius-card)' }}
                       >
                         {[
-                          { id: 'sections', icon: Layout, title: labels.tab_sections },
-                          { id: 'journey', icon: Target, title: labels.tab_journey }
+                          /*
+                            The Client Journey tab is gone.
+                            Its three jobs moved to where each belongs: the
+                            "How It Works" section is now a section like any
+                            other, "show services without booking flow" sits in
+                            the services section it governs, and each service's
+                            journey is drawn on that service's own row. Nothing
+                            navigated here but this button.
+                          */
+                          { id: 'sections', icon: Layout, title: labels.tab_sections }
                           // Templates moved to the global tab row above.
                         ].map((tab) => (
                           <button
                             key={tab.id}
-                            className={`p-1.5 transition-all border ${
+                            /* Icon AND word, like the tabs in the page header.
+                               A lone glyph asks the reader to guess, and the
+                               tooltip only answers for someone who already
+                               suspected there was something to hover — which is
+                               doubly true now that this is the only button left
+                               in the row and has no siblings to give it
+                               context. */
+                            className={`px-2.5 py-1.5 inline-flex items-center gap-1.5 transition-all border ${
                               viewMode === tab.id
                                 ? 'text-[#4F6EF7] border-[#4F6EF7] bg-[#4F6EF7]/10'
                                 : 'text-[var(--v2-text-secondary)] border-transparent hover:text-[var(--v2-text-primary)]'
@@ -4112,7 +4833,8 @@ export default function WebsiteManagementPage() {
                             onClick={() => setViewMode(tab.id as ViewMode)}
                             title={tab.title}
                           >
-                            <tab.icon className="h-4 w-4" />
+                            <tab.icon className="h-4 w-4 shrink-0" />
+                            <span className="text-sm font-medium whitespace-nowrap">{tab.title}</span>
                           </button>
                         ))}
                       </div>
@@ -4133,16 +4855,19 @@ export default function WebsiteManagementPage() {
 
                       {/* Preview Button - only when NOT live (draft) */}
                       {page.status !== 'live' && (
-                        <a
-                          href={`/website-preview/${page.id}?lang=${language}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-2 px-3 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all"
+                        <button
+                          onClick={() => handlePreview()}
+                          disabled={previewChecking}
+                          className="flex items-center gap-2 px-3 py-2 text-[var(--v2-text-secondary)] text-sm font-medium bg-[var(--v2-bg)] border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
                           style={{ borderRadius: 'var(--v2-radius-button)' }}
                         >
-                          <Eye className="h-4 w-4" />
+                          {previewChecking ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
                           {labels.preview}
-                        </a>
+                        </button>
                       )}
 
                       {/* Publish/Unpublish Button */}
@@ -4197,6 +4922,95 @@ export default function WebsiteManagementPage() {
                         {labels.delete_website_action}
                       </button>
                     </div>
+
+                    {/*
+                      Why the last publish was refused, on the card that carries
+                      the button.
+
+                      The route already names the services holding it up — "X
+                      asks clients to pick a time, but you have no working hours
+                      set" — and the handler used to discard it, so the button
+                      stopped spinning and said nothing.
+
+                      The control beneath it is the Configuration dialog this
+                      page already opens elsewhere, pointed at its availability
+                      tab: the one gap that blocks a publish is working hours,
+                      so the message and the place to fix it sit together.
+                    */}
+                    {/*
+                      What is stopping the publish, and where to fix it.
+
+                      One CARD per problem rather than a paragraph of them.
+                      Each states the issue in a sentence, and carries the
+                      control that fixes it — availability or invoice details,
+                      which live on different tabs.
+
+                      The earlier version joined every gap into one block of red
+                      text under a single link, so a page held up by two things
+                      named both and offered a route to one. It also opened with
+                      the list of affected services, which pushed the actual
+                      problem to the end of a long sentence.
+
+                      `publishGaps` is empty when the refusal was something else
+                      — no address, no sections — and then the plain message is
+                      shown on its own, because there is no per-gap action to
+                      offer.
+                    */}
+                    {publishError && (
+                      <div className="mt-4 space-y-2">
+                        {publishGaps.length > 0 ? (
+                          publishGaps.map(gap => {
+                            const isInvoicing = gap.kind === 'invoicing';
+                            const GapIcon = isInvoicing ? FileText : Clock;
+                            return (
+                              <div
+                                key={gap.kind}
+                                className="flex items-start gap-3 p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]"
+                                style={{ borderRadius: 'var(--v2-radius-card)' }}
+                              >
+                                <div
+                                  className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                >
+                                  <GapIcon className="w-4 h-4" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-[var(--v2-text-primary)]">
+                                    {gap.message}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      openConfiguration(isInvoicing ? 'invoice' : 'availability', {
+                                        // The owner has just been sent to fix the very
+                                        // thing this names; ask again rather than leave
+                                        // the refusal asserting the old answer.
+                                        onClose: recheckPublishReadiness,
+                                      })
+                                    }
+                                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-colors"
+                                    style={{ borderRadius: 'var(--v2-radius-button)' }}
+                                  >
+                                    {isInvoicing
+                                      ? labels.publish_fix_invoicing
+                                      : labels.publish_fix_availability}
+                                    <ArrowRight className={`w-3.5 h-3.5 ${language === 'he' ? 'rotate-180' : ''}`} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <p
+                            className="p-3 text-sm bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300"
+                            style={{ borderRadius: 'var(--v2-radius-card)' }}
+                            role="status"
+                          >
+                            {publishError}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -4206,174 +5020,6 @@ export default function WebsiteManagementPage() {
               </div>
             )}
 
-            {/* Client Journey Tab */}
-            {viewMode === 'journey' && (
-              <div
-                className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
-                style={{ borderRadius: 'var(--v2-radius-card)' }}
-              >
-                <div className="mb-6 flex items-start justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
-                      {labels.journey_title}
-                    </h3>
-                    <p className="text-sm text-[var(--v2-text-muted)] mt-1">
-                      {labels.journey_desc}
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleSaveJourney}
-                    disabled={savingJourney}
-                    className="flex items-center gap-2 px-4 py-2 bg-[#4F6EF7] text-white text-sm font-medium hover:bg-[#4F6EF7]/90 transition-all disabled:opacity-50"
-                    style={{ borderRadius: 'var(--v2-radius-button)' }}
-                  >
-                    {savingJourney ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
-                    {savingJourney ? labels.journey_saving : labels.journey_save}
-                  </button>
-                </div>
-
-                {/* Process Block Title & Subtitle */}
-                <div className="mb-6 p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]">
-                  <h4 className="text-sm font-medium text-[var(--v2-text-primary)] mb-3">
-                    {language === 'he' ? 'כותרת ותיאור הסקשן' : language === 'es' ? 'Título y descripción de la sección' : 'Section Title & Description'}
-                  </h4>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-1">
-                        {labels.section_title}
-                      </label>
-                      <input
-                        type="text"
-                        value={processTitle}
-                        onChange={(e) => setProcessTitle(e.target.value)}
-                        placeholder={language === 'he' ? 'איך זה עובד' : language === 'es' ? 'Cómo Funciona' : 'How It Works'}
-                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-[var(--v2-text-secondary)] mb-1">
-                        {labels.section_subtitle}
-                      </label>
-                      <input
-                        type="text"
-                        value={processSubtitle}
-                        onChange={(e) => setProcessSubtitle(e.target.value)}
-                        placeholder={language === 'he' ? 'צעדים פשוטים להתחלה' : language === 'es' ? 'Pasos simples para comenzar' : 'Simple steps to get started'}
-                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Services Only Toggle */}
-                <div className="mb-6 p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)]">
-                  <label className="flex items-start gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={servicesOnly}
-                      onChange={(e) => {
-                        setServicesOnly(e.target.checked);
-                        if (e.target.checked) {
-                          setClientFlow([]);
-                        } else {
-                          // Restore saved flow from process block, or use default
-                          const processBlock = blocks.find(b => b.block_type === 'process');
-                          const savedFlow = processBlock?.content?.client_flow as FlowStepKey[] | undefined;
-                          if (savedFlow && savedFlow.length > 0) {
-                            const flowWithConfirmation: FlowStepKey[] = savedFlow.includes('confirmation')
-                              ? savedFlow
-                              : [...savedFlow.filter(s => s !== 'confirmation'), 'confirmation'];
-                            setClientFlow(flowWithConfirmation);
-                          } else {
-                            setClientFlow(['booking', 'confirmation']);
-                          }
-                        }
-                      }}
-                      className="mt-1 h-4 w-4 text-[#4F6EF7] border-[var(--v2-border)] rounded focus:ring-[#4F6EF7]"
-                    />
-                    <div>
-                      <span className="font-medium text-[var(--v2-text-primary)]">
-                        {labels.journey_services_only}
-                      </span>
-                      <p className="text-sm text-[var(--v2-text-muted)] mt-0.5">
-                        {labels.journey_services_only_desc}
-                      </p>
-                    </div>
-                  </label>
-                </div>
-
-                {/*
-                  What the journey IS, not a place to define one.
-
-                  This was a step picker — tick scheduling, payment, intake for
-                  the whole site. That is not how the journey works any more: it
-                  belongs to each service, decided by whether the service is
-                  booked against a time and how its money arrives, and every
-                  surface already resolves it that way. A page-level editor here
-                  could only disagree with the services, and did.
-
-                  So the steps are shown per service, read-only, from the same
-                  resolver the public site uses. Editing them means editing the
-                  service, which is a link away.
-                */}
-                {!servicesOnly && (
-                  <div className="space-y-3">
-                    {journeyServices.length === 0 ? (
-                      <p className="text-sm text-[var(--v2-text-muted)] py-4">
-                        {labels.journey_no_services}
-                      </p>
-                    ) : (
-                      journeyServices.map((service: PublicServiceRow) => (
-                        <div
-                          key={service.id}
-                          className="p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)]"
-                          style={{ borderRadius: 'var(--v2-radius-card)' }}
-                        >
-                          <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-2">
-                            {service.name}
-                          </p>
-                          <ClientJourneyStrip
-                            compact
-                            intakeEnabled={intakeEnabled}
-                            // The website preview must show the journey a real
-                            // client would walk, which drops the payment step
-                            // when no card can be charged.
-                            processorReady={processorReady}
-                            service={{
-                              scheduled: service.is_scheduled !== false,
-                              collection: service.collection ?? null,
-                              price: service.priceRaw ?? null,
-                            }}
-                          />
-                        </div>
-                      ))
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => openConfiguration('services')}
-                      className="text-xs font-medium text-[#4F6EF7] hover:underline"
-                    >
-                      {labels.journey_edit_in_services}
-                    </button>
-                  </div>
-                )}
-
-                {/* Empty state when services only is selected */}
-                {servicesOnly && (
-                  <div className="text-center py-8 text-[var(--v2-text-muted)]">
-                    <Target className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                    <p>{labels.journey_services_only_info}</p>
-                    <p className="text-sm mt-1">{labels.journey_services_only_info2}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Sections Tab */}
             {viewMode === 'sections' && (
               <div
                 className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6"
@@ -4397,16 +5043,16 @@ export default function WebsiteManagementPage() {
                   <div className="flex items-center gap-3">
                     {/* Preview Button for Landing Pages - "View Landing Page" */}
                     {page?.page_type === 'landing' && (
-                      <a
-                        href={`/website-preview/${page.id}?lang=${language}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all"
+                      <button
+                        type="button"
+                        onClick={() => handlePreview(page.id)}
+                        disabled={previewChecking}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-[#4F6EF7] hover:bg-[#3D5BD9] transition-all disabled:opacity-50"
                         style={{ borderRadius: 'var(--v2-radius-button)' }}
                       >
                         <Eye className="w-4 h-4" />
                         {language === 'he' ? 'צפה בדף הנחיתה' : language === 'es' ? 'Ver Página' : 'View Landing Page'}
-                      </a>
+                      </button>
                     )}
                     {/* The way back is the Overview tab in the header row. */}
                     {/* Main Website specific buttons */}
@@ -4490,14 +5136,21 @@ export default function WebsiteManagementPage() {
                 >
                   <SortableContext
                     items={blocks
-                      .filter((block) => block.block_type !== 'process')
                       .sort((a, b) => a.position - b.position)
                       .map(b => b.id)}
                     strategy={verticalListSortingStrategy}
                   >
                     <div className="space-y-3 pl-8">
+                      {/*
+                        Every block, including `process`.
+
+                        "How It Works" was hidden from this list and edited in a
+                        tab of its own, which gave it a different shape from
+                        every other section — no enable switch, no drag handle,
+                        no place in the order — while still rendering publicly
+                        between Services and Testimonials.
+                      */}
                       {blocks
-                        .filter((block) => block.block_type !== 'process') // Process block is managed in Client Journey tab
                         .sort((a, b) => a.position - b.position)
                         .map((block) => {
                           const isExpanded = expandedBlockId === block.id;
@@ -4952,6 +5605,64 @@ export default function WebsiteManagementPage() {
                                 {/* Services Block - Special handling (linked to Scheduling) */}
                                 {block.block_type === 'services' && (
                                   <>
+                                    {/*
+                                      ─────────────────────────────────────────
+                                      "SHOW SERVICES WITHOUT BOOKING FLOW"
+
+                                      It lived on the Client Journey tab, which
+                                      is the wrong place to look for it: it is a
+                                      decision about how THIS list behaves, and
+                                      an owner asking "why is there no book
+                                      button?" opens the services section.
+
+                                      Still STORED on the process block, because
+                                      `/api/website/booking/intake` reads it
+                                      there with an explicit
+                                      `.eq('block_type','process')` and the
+                                      booking widget depends on the answer.
+                                      Moving the storage would mean changing
+                                      that route and migrating every existing
+                                      row for no gain — the control moves, the
+                                      field stays.
+                                    */}
+                                    <label className="flex items-center justify-between gap-3 p-3 bg-[var(--v2-bg)] border border-[var(--v2-border)] rounded-lg cursor-pointer">
+                                      <span>
+                                        <span className="block text-sm font-medium text-[var(--v2-text-primary)]">
+                                          {labels.journey_services_only}
+                                        </span>
+                                        <span className="block text-xs text-[var(--v2-text-muted)] mt-0.5">
+                                          {labels.journey_services_only_desc}
+                                        </span>
+                                      </span>
+                                      {/*
+                                        The website capability's blue, as an
+                                        INLINE style.
+
+                                        A className override does not work here:
+                                        `cn` in `lib/utils.ts` is a plain
+                                        `.join(' ')`, not tailwind-merge — so a
+                                        passed `data-[state=checked]:bg-…` does
+                                        not replace the component's own
+                                        `bg-[var(--v2-primary)]`, it sits beside
+                                        it at equal specificity and loses or
+                                        wins on whatever order Tailwind happened
+                                        to emit them in. Inline beats both.
+
+                                        Worth knowing beyond this switch: every
+                                        `className` passed to a `components/ui`
+                                        component to change a colour it already
+                                        sets is a coin toss for the same reason.
+                                      */}
+                                      <Switch
+                                        style={servicesOnly ? { backgroundColor: WEBSITE_COLOR } : undefined}
+                                        checked={servicesOnly}
+                                        onCheckedChange={(checked) => {
+                                          setServicesOnly(checked);
+                                          void persistServicesOnly(checked);
+                                        }}
+                                      />
+                                    </label>
+
                                     <div>
                                       <div className="flex items-center justify-between mb-1">
                                         <label className="block text-sm font-medium text-[var(--v2-text-secondary)]">
@@ -5058,42 +5769,9 @@ export default function WebsiteManagementPage() {
                                                   <ServiceIconRenderer icon={service.icon} />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
-                                                  <div className="flex items-center justify-between gap-2">
-                                                    <h4 className={`font-medium truncate ${service.hidden ? 'text-[var(--v2-text-secondary)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
-                                                      {service.name}
-                                                    </h4>
-                                                    <div className="flex items-center gap-2">
-                                                      {service.price && !service.hidden && (
-                                                        <span className="text-sm font-semibold text-green-600 dark:text-green-400 whitespace-nowrap">
-                                                          {service.price}
-                                                        </span>
-                                                      )}
-                                                      {/* Show/Hide Toggle Button */}
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                          const services = [...(editingBlockContent.services as Array<{ name: string; description?: string; price?: string; duration?: string; icon?: string; hidden?: boolean }>)];
-                                                          services[idx] = { ...services[idx], hidden: !services[idx].hidden };
-                                                          updateBlockField('services', services);
-                                                        }}
-                                                        className={`p-1.5 rounded-lg transition-all ${
-                                                          service.hidden
-                                                            ? 'bg-gray-100 dark:bg-gray-700/50 text-gray-400 dark:text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'
-                                                            : 'bg-[#4F6EF7]/10 text-[#4F6EF7] hover:bg-[#4F6EF7]/20'
-                                                        }`}
-                                                        title={service.hidden
-                                                          ? (language === 'he' ? 'הצג באתר' : language === 'es' ? 'Mostrar en web' : 'Show on website')
-                                                          : (language === 'he' ? 'הסתר מהאתר' : language === 'es' ? 'Ocultar de web' : 'Hide from website')
-                                                        }
-                                                      >
-                                                        {service.hidden ? (
-                                                          <EyeOff className="w-4 h-4" />
-                                                        ) : (
-                                                          <Eye className="w-4 h-4" />
-                                                        )}
-                                                      </button>
-                                                    </div>
-                                                  </div>
+                                                  <h4 className={`font-medium truncate ${service.hidden ? 'text-[var(--v2-text-secondary)] line-through' : 'text-[var(--v2-text-primary)]'}`}>
+                                                    {service.name}
+                                                  </h4>
                                                   {service.description && !service.hidden && (
                                                     <p className="text-xs text-[var(--v2-text-secondary)] mt-1 line-clamp-2">
                                                       {service.description}
@@ -5111,6 +5789,117 @@ export default function WebsiteManagementPage() {
                                                     </p>
                                                   )}
                                                 </div>
+
+                                                {/*
+                                                  What this service puts a client
+                                                  through — its own column, in the
+                                                  middle of the row.
+
+                                                  It was stacked under the
+                                                  description, which pushed every
+                                                  row taller while the right half
+                                                  of the card sat empty. A journey
+                                                  is a horizontal thing: given a
+                                                  column of its own it reads
+                                                  across at a glance and costs no
+                                                  height at all.
+
+                                                  Dropped below `lg`, where the
+                                                  chips would wrap into something
+                                                  worse than absent. Same resolver
+                                                  the public site uses, so it
+                                                  cannot drift from the journey a
+                                                  visitor actually walks.
+                                                */}
+                                                {/*
+                                                  Price and visibility, in a
+                                                  column of their own at the
+                                                  row's end.
+
+                                                  They used to sit inside the
+                                                  title line, pushed right by a
+                                                  `justify-between` — so their
+                                                  x position depended on how long
+                                                  the service NAME was, and the
+                                                  journey chips beside them
+                                                  started somewhere different on
+                                                  every row. Three columns of
+                                                  fixed order line up instead:
+                                                  what it is, what it does, what
+                                                  it costs.
+                                                */}
+                                                <div className="order-last flex items-center gap-2 shrink-0 self-center">
+                                                      {service.price && !service.hidden && (
+                                                        <span className="text-sm font-semibold text-green-600 dark:text-green-400 whitespace-nowrap">
+                                                          {service.price}
+                                                        </span>
+                                                      )}
+                                                      {/* Show/Hide Toggle Button */}
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                          const services = [...(editingBlockContent.services as Array<{ name: string; description?: string; price?: string; duration?: string; icon?: string; hidden?: boolean }>)];
+                                                          services[idx] = { ...services[idx], hidden: !services[idx].hidden };
+                                                          updateBlockField('services', services);
+                                                        }}
+                                                        /*
+                                                          This screen's colour.
+
+                                                          Tried the SITE's brand
+                                                          first, which sounds
+                                                          right and is not: this
+                                                          business is on Bold,
+                                                          whose primary is flame
+                                                          `#FC5F2B`, so every
+                                                          switch in the editor
+                                                          turned orange. A
+                                                          control that acts on
+                                                          the editor belongs to
+                                                          the editor — the site's
+                                                          palette is for things
+                                                          that PREVIEW the site,
+                                                          not for its chrome.
+                                                        */
+                                                        className={`p-1.5 rounded-lg transition-all ${
+                                                          service.hidden
+                                                            ? 'bg-[var(--v2-surface-2)] hover:bg-[var(--v2-surface-hover)]'
+                                                            : 'hover:brightness-95'
+                                                        }`}
+                                                        style={
+                                                          service.hidden
+                                                            ? undefined
+                                                            : {
+                                                                backgroundColor: `color-mix(in srgb, ${WEBSITE_COLOR} 12%, transparent)`,
+                                                                color: WEBSITE_COLOR,
+                                                              }
+                                                        }
+                                                        title={service.hidden
+                                                          ? (language === 'he' ? 'הצג באתר' : language === 'es' ? 'Mostrar en web' : 'Show on website')
+                                                          : (language === 'he' ? 'הסתר מהאתר' : language === 'es' ? 'Ocultar de web' : 'Hide from website')
+                                                        }
+                                                      >
+                                                        {service.hidden ? (
+                                                          <EyeOff className="w-4 h-4 text-[var(--v2-text-muted)]" />
+                                                        ) : (
+                                                          <Eye className="w-4 h-4" />
+                                                        )}
+                                                      </button>
+                                                </div>
+
+                                                {!service.hidden && !servicesOnly && (
+                                                  <div className="hidden lg:flex shrink-0 items-center self-center">
+                                                    <ClientJourneyStrip
+                                                      compact
+                                                      intakeEnabled={intakeEnabled}
+                                                      processorReady={processorReady}
+                                                      service={{
+                                                        scheduled: (service as { is_scheduled?: boolean }).is_scheduled !== false,
+                                                        collection: (service as { collection?: string | null }).collection ?? null,
+                                                        price: (service as { priceRaw?: number | null }).priceRaw ?? null,
+                                                      }}
+                                                    />
+                                                  </div>
+                                                )}
                                               </div>
                                             </div>
                                           ))}
@@ -5136,114 +5925,17 @@ export default function WebsiteManagementPage() {
 
                                 {/* Process Block - Booking Flow + Custom Steps */}
                                 {block.block_type === 'process' && (() => {
-                                  // Flow step definitions with default content for each language
-                                  const flowStepDefs = [
-                                    {
-                                      key: 'booking',
-                                      icon: Calendar,
-                                      iconName: 'Calendar',
-                                      label: { en: 'Book a time', he: 'קביעת תור', es: 'Reservar hora' },
-                                      color: '#14B8A6',
-                                      defaultTitle: { en: 'Book Your Session', he: 'קבע את הפגישה שלך', es: 'Reserva tu Sesión' },
-                                      defaultDesc: { en: 'Choose a time that works best for you', he: 'בחר זמן שנוח לך', es: 'Elige un horario que te convenga' }
-                                    },
-                                    {
-                                      key: 'payment',
-                                      icon: CreditCard,
-                                      iconName: 'CreditCard',
-                                      label: { en: 'Pay online', he: 'תשלום אונליין', es: 'Pagar online' },
-                                      color: '#10B981',
-                                      defaultTitle: { en: 'Secure Payment', he: 'תשלום מאובטח', es: 'Pago Seguro' },
-                                      defaultDesc: { en: 'Pay safely with credit card or other methods', he: 'שלם בבטחה עם כרטיס אשראי', es: 'Paga de forma segura con tarjeta' }
-                                    },
-                                    {
-                                      key: 'intake',
-                                      icon: FileText,
-                                      iconName: 'FileText',
-                                      label: { en: 'Fill intake form', he: 'מילוי שאלון', es: 'Llenar formulario' },
-                                      color: '#8B5CF6',
-                                      defaultTitle: { en: 'Complete Intake Form', he: 'מלא שאלון קליטה', es: 'Completa el Formulario' },
-                                      defaultDesc: { en: 'Help us understand your needs better', he: 'עזור לנו להבין את הצרכים שלך', es: 'Ayúdanos a entender tus necesidades' }
-                                    },
-                                    {
-                                      key: 'confirmation',
-                                      icon: Mail,
-                                      iconName: 'Mail',
-                                      label: { en: 'Get confirmation email', he: 'קבלת אישור במייל', es: 'Recibir confirmación' },
-                                      color: '#F59E0B',
-                                      defaultTitle: { en: 'Confirmation Email', he: 'אישור במייל', es: 'Correo de Confirmación' },
-                                      defaultDesc: { en: 'Receive booking details and reminders', he: 'קבל פרטי הזמנה ותזכורות', es: 'Recibe detalles y recordatorios' }
-                                    },
-                                  ];
-
-                                  const flow = (editingBlockContent.flow as string[]) || ['booking', 'confirmation'];
+                                  /*
+                                   * Everything the flow builder needed is gone
+                                   * with it: the step catalogue, the add/remove
+                                   * helpers, and `syncStepsWithFlow`, which
+                                   * rewrote the public steps from a page-level
+                                   * flow. The steps are edited as text below
+                                   * and filled by enrichment from the business
+                                   * when it has none.
+                                   */
                                   const currentSteps = (editingBlockContent.steps as ProcessStep[]) || [];
                                   const lang = (settingsForm.website_language || 'en') as 'en' | 'es' | 'he';
-
-                                  // Get active and inactive steps
-                                  const activeFlowSteps = flow.map(key => flowStepDefs.find(d => d.key === key)!).filter(Boolean);
-                                  const inactiveFlowSteps = flowStepDefs.filter(d => !flow.includes(d.key));
-
-                                  // Function to sync steps with flow
-                                  const syncStepsWithFlow = (newFlow: string[]) => {
-                                    // Build new steps array based on flow order
-                                    const newSteps: ProcessStep[] = newFlow.map((flowKey, index) => {
-                                      const def = flowStepDefs.find(d => d.key === flowKey);
-                                      // Check if we already have a customized step for this flow key
-                                      const existingStep = currentSteps.find(s => (s as any).flowKey === flowKey);
-
-                                      if (existingStep) {
-                                        // Keep existing customizations but update number
-                                        return { ...existingStep, number: index + 1 };
-                                      }
-
-                                      // Create new step from defaults
-                                      return {
-                                        number: index + 1,
-                                        title: def?.defaultTitle[lang] || '',
-                                        description: def?.defaultDesc[lang] || '',
-                                        icon: def?.iconName || 'CheckCircle',
-                                        flowKey: flowKey,
-                                        auto_generated: false
-                                      } as ProcessStep;
-                                    });
-
-                                    // Update both flow and steps
-                                    updateBlockField('flow', newFlow);
-                                    updateBlockField('steps', newSteps);
-                                  };
-
-                                  // Add step to flow
-                                  const addToFlow = (key: string) => {
-                                    // Insert before confirmation (always last)
-                                    const newFlow = [...flow.filter(f => f !== 'confirmation'), key, 'confirmation'];
-                                    syncStepsWithFlow(newFlow);
-                                  };
-
-                                  // Remove step from flow
-                                  const removeFromFlow = (key: string) => {
-                                    if (key === 'confirmation') return; // Can't remove confirmation
-                                    const newFlow = flow.filter(f => f !== key);
-                                    syncStepsWithFlow(newFlow);
-                                  };
-
-                                  // Move step in flow
-                                  const moveInFlow = (key: string, direction: 'up' | 'down') => {
-                                    const currentIndex = flow.indexOf(key);
-                                    if (currentIndex === -1) return;
-
-                                    // Can't move confirmation
-                                    if (key === 'confirmation') return;
-
-                                    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-
-                                    // Can't move before first or after confirmation (last)
-                                    if (newIndex < 0 || newIndex >= flow.length - 1) return;
-
-                                    const newFlow = [...flow];
-                                    [newFlow[currentIndex], newFlow[newIndex]] = [newFlow[newIndex], newFlow[currentIndex]];
-                                    syncStepsWithFlow(newFlow);
-                                  };
 
                                   return (
                                   <>
@@ -5272,98 +5964,47 @@ export default function WebsiteManagementPage() {
                                       />
                                     </div>
 
-                                    {/* Booking Flow Pipeline */}
-                                    <div className="mt-4 p-4 bg-gradient-to-br from-[#4F6EF7]/5 to-transparent rounded-xl border border-[#4F6EF7]/20">
-                                      <p className="text-sm font-medium text-[var(--v2-text-primary)] mb-4">
-                                        {language === 'he' ? 'מה קורה אחרי שלקוח בוחר שירות?' : language === 'es' ? '¿Qué pasa después de elegir un servicio?' : 'What happens after a client picks a service?'}
-                                      </p>
+                                    {/*
+                                      ─────────────────────────────────────────
+                                      THE BOOKING-FLOW BUILDER IS GONE.
 
-                                      {/* Active Flow Steps - Ordered list with reorder controls */}
-                                      <div className="space-y-2 mb-4">
-                                        {activeFlowSteps.map((step, index) => {
-                                          const StepIcon = step.icon;
-                                          const isConfirmation = step.key === 'confirmation';
-                                          const canMoveUp = index > 0 && !isConfirmation;
-                                          const canMoveDown = index < activeFlowSteps.length - 2 && !isConfirmation; // -2 because confirmation is always last
+                                      It asked "what happens after a client
+                                      picks a service?" and let the owner
+                                      compose one answer — book a time, pay
+                                      online, fill an intake form — for the
+                                      whole page.
 
-                                          return (
-                                            <div
-                                              key={step.key}
-                                              className="flex items-center gap-2 p-3 rounded-lg border-2 shadow-sm bg-[var(--v2-surface)]"
-                                              style={{ borderColor: step.color }}
-                                            >
-                                              {/* Reorder buttons */}
-                                              <div className="flex flex-col gap-0.5">
-                                                <button
-                                                  onClick={() => moveInFlow(step.key, 'up')}
-                                                  disabled={!canMoveUp}
-                                                  className={`p-0.5 rounded ${canMoveUp ? 'hover:bg-[var(--v2-surface-hover)] text-[var(--v2-text-secondary)]' : 'text-[var(--v2-text-muted)] cursor-not-allowed'}`}
-                                                >
-                                                  <ChevronUp className="w-3 h-3" />
-                                                </button>
-                                                <button
-                                                  onClick={() => moveInFlow(step.key, 'down')}
-                                                  disabled={!canMoveDown}
-                                                  className={`p-0.5 rounded ${canMoveDown ? 'hover:bg-[var(--v2-surface-hover)] text-[var(--v2-text-secondary)]' : 'text-[var(--v2-text-muted)] cursor-not-allowed'}`}
-                                                >
-                                                  <ChevronDown className="w-3 h-3" />
-                                                </button>
-                                              </div>
+                                      That question has no single answer any
+                                      more. Every surface resolves the journey
+                                      PER SERVICE, from the service's own facts:
+                                      whether it is scheduled, how it collects
+                                      payment, whether an intake form exists. A
+                                      page-level flow composed here was
+                                      overridden the moment it was read, and
+                                      writing it kept a stale second answer
+                                      alive in the block — which is precisely
+                                      what used to make the editor and the live
+                                      site disagree.
 
-                                              {/* Step number */}
-                                              <div
-                                                className="w-7 h-7 rounded-full flex items-center justify-center text-white text-sm font-bold"
-                                                style={{ backgroundColor: step.color }}
-                                              >
-                                                {index + 1}
-                                              </div>
+                                      The same builder was removed from the
+                                      Client Journey tab for this reason. It
+                                      came back into reach when this block
+                                      stopped being hidden from the section
+                                      list, and it would have reintroduced the
+                                      same bug.
 
-                                              {/* Step icon and label */}
-                                              <StepIcon className="w-4 h-4" style={{ color: step.color }} />
-                                              <span className="flex-1 text-sm font-medium text-[var(--v2-text-primary)]">
-                                                {step.label[language] || step.label.en}
-                                              </span>
+                                      The stored `client_flow` is deliberately
+                                      NOT deleted: `components/website/blocks/
+                                      index.tsx` still falls back to it for
+                                      pages written before services carried
+                                      their own journey facts. It is a legacy
+                                      answer worth keeping and not worth
+                                      offering to author.
 
-                                              {/* Remove button (not for confirmation) */}
-                                              {!isConfirmation && (
-                                                <button
-                                                  onClick={() => removeFromFlow(step.key)}
-                                                  className="p-1 rounded hover:bg-[var(--v2-surface-hover)] text-[var(--v2-text-secondary)] hover:text-red-500"
-                                                  title={language === 'he' ? 'הסר' : language === 'es' ? 'Eliminar' : 'Remove'}
-                                                >
-                                                  <X className="w-4 h-4" />
-                                                </button>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-
-                                      {/* Inactive Steps - Click to add */}
-                                      {inactiveFlowSteps.length > 0 && (
-                                        <div className="pt-3 border-t border-[var(--v2-border)]">
-                                          <p className="text-xs text-[var(--v2-text-secondary)] mb-2">
-                                            {language === 'he' ? 'לחץ להוסיף:' : language === 'es' ? 'Clic para agregar:' : 'Click to add:'}
-                                          </p>
-                                          <div className="flex flex-wrap gap-2">
-                                            {inactiveFlowSteps.map((step) => {
-                                              const StepIcon = step.icon;
-                                              return (
-                                                <button
-                                                  key={step.key}
-                                                  onClick={() => addToFlow(step.key)}
-                                                  className="flex items-center gap-2 px-3 py-1.5 rounded-full border-2 border-dashed border-[var(--v2-border)] bg-[var(--v2-surface)]/50 hover:border-[var(--v2-text-muted)] hover:bg-[var(--v2-surface)] transition-all text-sm text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)]"
-                                                >
-                                                  <StepIcon className="w-4 h-4" />
-                                                  {step.label[language] || step.label.en}
-                                                  <Plus className="w-3 h-3" />
-                                                </button>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                      )}
-                                    </div>
+                                      What each service puts a client through is
+                                      shown, read-only, on that service's row in
+                                      the services section.
+                                    */}
 
                                     {/* Custom Process Steps Editor */}
                                     <div className="mt-4">
@@ -5994,57 +6635,22 @@ export default function WebsiteManagementPage() {
                                         {language === 'he' ? 'פרטי התקשרות (סרגל צד)' : language === 'es' ? 'Información de Contacto (Barra lateral)' : 'Contact Info (Sidebar)'}
                                       </h4>
                                       <div className="space-y-3">
-                                        <div>
-                                          <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                                            {language === 'he' ? 'אימייל עסקי' : language === 'es' ? 'Email de Negocio' : 'Business Email'}
-                                          </label>
-                                          <input
-                                            type="email"
-                                            value={contactValue('business_email', 'email')}
-                                            onChange={(e) => updateBlockField('business_email', e.target.value)}
-                                            placeholder="contact@example.com"
-                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                          />
-                                        </div>
-                                        <div>
-                                          <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                                            {language === 'he' ? 'טלפון עסקי' : language === 'es' ? 'Teléfono de Negocio' : 'Business Phone'}
-                                          </label>
-                                          <input
-                                            type="tel"
-                                            dir="ltr"
-                                            value={contactValue('business_phone', 'phone')}
-                                            onChange={(e) => updateBlockField('business_phone', e.target.value)}
-                                            /* The profile value, shown rather than copied: an empty field means
-                                               "use my business profile", which is what the public page does. Typing
-                                               here overrides it for this page only. */
-                                            placeholder="+1 (555) 123-4567"
-                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                          />
-                                        </div>
-                                        <div>
-                                          <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                                            {language === 'he' ? 'כתובת' : language === 'es' ? 'Dirección' : 'Address'}
-                                          </label>
-                                          <input
-                                            type="text"
-                                            value={contactValue('business_address', 'address')}
-                                            onChange={(e) => updateBlockField('business_address', e.target.value)}
-                                            placeholder={"language === 'he' ? 'רחוב הראשי 123, תל אביב' : language === 'es' ? 'Calle Principal 123' : '123 Main Street, City'"}
-                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                          />
-                                        </div>
+                                        {/* Sourced, not typed. The public page
+                                            reads these from the business profile
+                                            and nothing else, so an editable box
+                                            here would promise an override that no
+                                            longer happens. */}
+                                        {renderProfileContactFields()}
                                         <div>
                                           <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                             {language === 'he' ? 'שעות פעילות' : language === 'es' ? 'Horario de Atención' : 'Business Hours'}
                                           </label>
-                                          <input
-                                            type="text"
-                                            value={(editingBlockContent.business_hours as string) || ''}
-                                            onChange={(e) => updateBlockField('business_hours', e.target.value)}
-                                            placeholder={language === 'he' ? 'א-ה: 9:00-18:00' : language === 'es' ? 'Lun-Vie: 9:00-18:00' : 'Mon-Fri: 9:00 AM - 6:00 PM'}
-                                            className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                          />
+                                          {/* Derived from the availability the
+                                              booking calendar runs on, so this
+                                              section and the footer cannot give
+                                              two different answers about when
+                                              the business opens. */}
+                                          {renderProfileHours()}
                                         </div>
                                       </div>
                                       <p className="mt-2 text-xs text-[var(--v2-text-muted)]">
@@ -6593,17 +7199,10 @@ export default function WebsiteManagementPage() {
                                 {/* Footer Block */}
                                 {block.block_type === 'footer' && (
                                   <>
-                                    <div>
-                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                                        {language === 'he' ? 'שם העסק' : language === 'es' ? 'Nombre del Negocio' : 'Company Name'}
-                                      </label>
-                                      <input
-                                        type="text"
-                                        value={(editingBlockContent.company_name as string) || ''}
-                                        onChange={(e) => updateBlockField('company_name', e.target.value)}
-                                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                      />
-                                    </div>
+                                    {/* The name is the business's, not this
+                                        page's — it is shown with the rest of
+                                        the profile-sourced details below, and
+                                        changed in one place. */}
                                     <div>
                                       <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                         {language === 'he' ? 'תיאור קצר' : language === 'es' ? 'Descripción Breve' : 'Tagline'}
@@ -6616,45 +7215,36 @@ export default function WebsiteManagementPage() {
                                         className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                       />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
+                                    {/* The footer wears the logo unless told not
+                                        to — the opposite of the header, which can
+                                        show a wordmark instead and so has to be
+                                        asked. A footer has no such alternative. */}
+                                    {businessProfile?.logo_url && (
                                       <div>
-                                        <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                                          {language === 'he' ? 'אימייל' : language === 'es' ? 'Email' : 'Email'}
+                                        <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
+                                          {language === 'he' ? 'לוגו' : 'Logo'}
                                         </label>
-                                        <input
-                                          type="email"
-                                          value={(editingBlockContent.email as string) || ''}
-                                          onChange={(e) => updateBlockField('email', e.target.value)}
-                                          placeholder="contact@example.com"
-                                          className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                        />
-                                      </div>
-                                      <div>
-                                        <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                                          {language === 'he' ? 'טלפון' : language === 'es' ? 'Teléfono' : 'Phone'}
+                                        <label className="flex items-center gap-3 p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={editingBlockContent.show_logo !== false}
+                                            onChange={(e) => updateBlockField('show_logo', e.target.checked)}
+                                            className="w-4 h-4 accent-[#4F6EF7]"
+                                          />
+                                          <img src={businessProfile.logo_url as string} alt="" className="h-8 w-auto object-contain" />
+                                          <span className="text-sm text-[var(--v2-text-secondary)]">
+                                            {language === 'he' ? 'הצג את הלוגו בתחתית העמוד' : language === 'es' ? 'Mostrar el logo en el pie de página' : 'Show the logo in the footer'}
+                                          </span>
                                         </label>
-                                        <input
-                                          type="tel"
-                                          value={(editingBlockContent.phone as string) || ''}
-                                          onChange={(e) => updateBlockField('phone', e.target.value)}
-                                          placeholder="+1 (555) 123-4567"
-                                          dir="ltr"
-                                          className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                        />
                                       </div>
-                                    </div>
-                                    <div>
-                                      <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
-                                        {language === 'he' ? 'כתובת' : language === 'es' ? 'Dirección' : 'Address'}
-                                      </label>
-                                      <input
-                                        type="text"
-                                        value={(editingBlockContent.address as string) || ''}
-                                        onChange={(e) => updateBlockField('address', e.target.value)}
-                                        placeholder={language === 'he' ? 'כתובת העסק...' : language === 'es' ? 'Dirección del negocio...' : 'Business address...'}
-                                        className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
-                                      />
-                                    </div>
+                                    )}
+
+                                    {/* One source of truth. These were three
+                                        editable boxes here AND three more in the
+                                        contact block, so one page could carry two
+                                        different phone numbers with nothing to say
+                                        which was real. */}
+                                    {renderProfileContactFields()}
                                     <div>
                                       <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
                                         {language === 'he' ? 'רשתות חברתיות' : language === 'es' ? 'Redes Sociales' : 'Social Links'}
@@ -6718,18 +7308,31 @@ export default function WebsiteManagementPage() {
                                         </div>
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-3">
-                                      <input
-                                        type="checkbox"
-                                        id="show_powered_by"
-                                        checked={(editingBlockContent.show_powered_by as boolean) ?? false}
-                                        onChange={(e) => updateBlockField('show_powered_by', e.target.checked)}
-                                        className="w-4 h-4 rounded border-[var(--v2-border)] text-[#4F6EF7] focus:ring-[#4F6EF7]"
-                                      />
-                                      <label htmlFor="show_powered_by" className="text-sm text-[var(--v2-text-secondary)]">
+                                    {/* A switch, like every other on/off in the
+                                        platform. A bare checkbox beside styled
+                                        controls read as a form field rather than
+                                        a setting. */}
+                                    <label
+                                      htmlFor="show_powered_by"
+                                      className="flex items-center justify-between gap-3 p-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg cursor-pointer"
+                                    >
+                                      <span className="text-sm text-[var(--v2-text-secondary)]">
                                         {language === 'he' ? 'הצג "מופעל על ידי AgentsPilot"' : language === 'es' ? 'Mostrar "Desarrollado por AgentsPilot"' : 'Show "Powered by AgentsPilot"'}
-                                      </label>
-                                    </div>
+                                      </span>
+                                      <Switch
+                                        id="show_powered_by"
+                                        /* Inline for the same reason as the
+                                           services switch above: `cn` does not
+                                           merge conflicting Tailwind classes. */
+                                        style={
+                                          (editingBlockContent.show_powered_by as boolean)
+                                            ? { backgroundColor: WEBSITE_COLOR }
+                                            : undefined
+                                        }
+                                        checked={(editingBlockContent.show_powered_by as boolean) ?? false}
+                                        onCheckedChange={(checked) => updateBlockField('show_powered_by', checked)}
+                                      />
+                                    </label>
                                   </>
                                 )}
 
@@ -6835,51 +7438,31 @@ export default function WebsiteManagementPage() {
                     </div>
                   </div>
 
-                  {/* Heading Font */}
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
-                      {labels.font_heading}
-                    </label>
-                    <Select
-                      value={designForm.headingFont}
-                      onValueChange={(value) => setDesignForm(prev => ({ ...prev, headingFont: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={labels.font_heading} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Inter">Inter</SelectItem>
-                        <SelectItem value="Playfair Display">Playfair Display</SelectItem>
-                        <SelectItem value="Montserrat">Montserrat</SelectItem>
-                        <SelectItem value="Lora">Lora</SelectItem>
-                        <SelectItem value="Poppins">Poppins</SelectItem>
-                        <SelectItem value="Merriweather">Merriweather</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {/*
+                    * Both faces, shown rather than named.
+                    *
+                    * These were two literal lists of six families, and not one
+                    * of them was a face any template uses — so a business on
+                    * Bloom (Josefin Sans) opened this tab and found an empty
+                    * dropdown, because Radix had no item matching the saved
+                    * value. The font was saved and rendering correctly the
+                    * whole time; only the control could not describe it.
+                    */}
+                  <FontPicker
+                    label={labels.font_heading}
+                    value={designForm.headingFont}
+                    choices={HEADING_FONTS}
+                    latinOnlyLabel={labels.font_latin_only}
+                    onChange={(value) => setDesignForm(prev => ({ ...prev, headingFont: value }))}
+                  />
 
-                  {/* Body Font */}
-                  <div>
-                    <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-2">
-                      {labels.font_body}
-                    </label>
-                    <Select
-                      value={designForm.bodyFont}
-                      onValueChange={(value) => setDesignForm(prev => ({ ...prev, bodyFont: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={labels.font_body} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Inter">Inter</SelectItem>
-                        <SelectItem value="Open Sans">Open Sans</SelectItem>
-                        <SelectItem value="Roboto">Roboto</SelectItem>
-                        <SelectItem value="Source Sans Pro">Source Sans Pro</SelectItem>
-                        <SelectItem value="Lato">Lato</SelectItem>
-                        <SelectItem value="Nunito">Nunito</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <FontPicker
+                    label={labels.font_body}
+                    value={designForm.bodyFont}
+                    choices={BODY_FONTS}
+                    latinOnlyLabel={labels.font_latin_only}
+                    onChange={(value) => setDesignForm(prev => ({ ...prev, bodyFont: value }))}
+                  />
                 </div>
 
                 {/* Save Message */}
@@ -7410,6 +7993,91 @@ export default function WebsiteManagementPage() {
         </div>
       )}
 
+      {/*
+        The address, confirmed before the site goes live.
+
+        The prefix is generated, and publishing used to put it on the internet
+        without ever showing it — yet it is what the owner prints, sends and is
+        found at. Shown once, on the first publish only: re-publishing is not
+        the moment to invite a change, because the old address is already
+        written down somewhere.
+      */}
+      {publishAddressOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setPublishAddressOpen(false)} />
+          <div
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-md mx-4 p-6"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
+              {labels.publish_address_title}
+            </h3>
+            <p className="mt-1 text-sm text-[var(--v2-text-muted)]">
+              {labels.publish_address_subtitle}
+            </p>
+
+            <div className="mt-4 flex items-center gap-2">
+              <input
+                type="text"
+                value={publishAddressValue}
+                autoFocus
+                onChange={(e) => {
+                  const next = e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '');
+                  setPublishAddressValue(next);
+                  checkSubdomainAvailability(next);
+                }}
+                className="flex-1 px-3 py-2 bg-[var(--v2-bg)] border border-[var(--v2-border)] text-[var(--v2-text-primary)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
+              />
+              <span className="text-sm text-[var(--v2-text-muted)]">.agentpilot.io</span>
+            </div>
+
+            {/* Said plainly rather than left to a red border: the owner is about
+                to commit this address. */}
+            <p className="mt-2 text-xs min-h-[1rem]">
+              {checkingSubdomain ? (
+                <span className="text-[var(--v2-text-muted)]">{labels.checking}</span>
+              ) : publishAddressValue && publishAddressValue !== page?.subdomain && subdomainAvailable === false ? (
+                <span className="text-red-600 dark:text-red-400">{labels.subdomain_taken}</span>
+              ) : (
+                <span className="text-[var(--v2-text-muted)]">
+                  https://{publishAddressValue || 'your-business'}.agentpilot.io
+                </span>
+              )}
+            </p>
+
+            {publishError && (
+              <p className="mt-3 px-3 py-2 text-sm bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300 rounded-lg">
+                {publishError}
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                onClick={() => setPublishAddressOpen(false)}
+                disabled={publishing}
+                className="px-4 py-2 text-[var(--v2-text-secondary)] text-sm font-medium border border-[var(--v2-border)] hover:bg-[var(--v2-surface-hover)] transition-all disabled:opacity-50"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {labels.cancel}
+              </button>
+              <button
+                onClick={handlePublish}
+                disabled={
+                  publishing ||
+                  !publishAddressValue.trim() ||
+                  (publishAddressValue !== page?.subdomain && subdomainAvailable === false)
+                }
+                className="flex items-center gap-2 px-4 py-2 text-white text-sm font-medium bg-[#4F6EF7] hover:bg-[#3B5AE5] transition-all disabled:opacity-50"
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
+                {labels.publish}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Configuration Dialog (for services editing) */}
       <ConfigurationDialog
         isOpen={isConfigOpen}
@@ -7422,11 +8090,28 @@ export default function WebsiteManagementPage() {
       {showAddSectionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowAddSectionModal(false)} />
+          {/*
+            Scrolls the way every other dialog in the platform scrolls.
+
+            This one scrolled its WHOLE body — header included — and pinned the
+            header back with `position: sticky`. Two things followed from that,
+            both visible: a sticky element with no z-index creates no stacking
+            context, so the tiles below it in the DOM painted straight over it
+            and the solid header looked transparent while scrolling; and the
+            scrollbar ran the full height of the dialog rather than the height
+            of the list, which is what made it feel unlike the others.
+
+            The platform pattern — `overflow-hidden` on the shell, a column
+            layout, and `flex-1 overflow-auto` on the body alone — is what the
+            landing-page wizard and the configuration dialog already use. The
+            header simply does not move, so it needs neither sticky nor a
+            stacking context.
+          */}
           <div
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-2xl max-h-[80vh] overflow-y-auto mx-4"
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col mx-4"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
-            <div className="sticky top-0 bg-[var(--v2-surface)] border-b border-[var(--v2-border)] p-4 flex items-center justify-between">
+            <div className="shrink-0 bg-[var(--v2-surface)] border-b border-[var(--v2-border)] p-4 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
                 {language === 'he' ? 'הוסף חלק חדש' : language === 'es' ? 'Agregar Nueva Sección' : 'Add New Section'}
               </h3>
@@ -7438,7 +8123,7 @@ export default function WebsiteManagementPage() {
               </button>
             </div>
 
-            <div className="p-4">
+            <div className="flex-1 overflow-y-auto p-4">
               <p className="text-sm text-[var(--v2-text-muted)] mb-4">
                 {language === 'he' ? 'בחר סוג חלק להוספה לאתר שלך' : language === 'es' ? 'Selecciona el tipo de sección para agregar a tu sitio' : 'Choose a section type to add to your website'}
               </p>
@@ -7451,36 +8136,91 @@ export default function WebsiteManagementPage() {
                   { type: 'cta', icon: Megaphone, label: { en: 'Call to Action', es: 'Llamada a Acción', he: 'קריאה לפעולה' }, desc: { en: 'Action prompt', es: 'Invitación a actuar', he: 'הנעה לפעולה' } },
                   { type: 'testimonials', icon: MessageCircle, label: { en: 'Testimonials', es: 'Testimonios', he: 'המלצות' }, desc: { en: 'Client reviews', es: 'Reseñas de clientes', he: 'חוות דעת' } },
                   { type: 'faq', icon: HelpCircle, label: { en: 'FAQ', es: 'Preguntas', he: 'שאלות נפוצות' }, desc: { en: 'Common questions', es: 'Preguntas frecuentes', he: 'שאלות ותשובות' } },
-                  { type: 'pricing', icon: DollarSign, label: { en: 'Pricing', es: 'Precios', he: 'מחירון' }, desc: { en: 'Pricing plans', es: 'Planes de precios', he: 'תוכניות מחיר' } },
+                  /*
+                   * Pricing is withheld too, and for a different reason from
+                   * Booking and Intake above: it is not unconfigured, it is
+                   * duplicated. The services section on this same page already
+                   * lists every service with its price, its duration and a hide
+                   * toggle. Pricing belongs to landing pages, where there is no
+                   * services section and it is the only place the offer's price
+                   * and booking button appear.
+                   */
                   { type: 'features', icon: Sparkles, label: { en: 'Features', es: 'Características', he: 'תכונות' }, desc: { en: 'Key features', es: 'Características clave', he: 'יתרונות' } },
                   { type: 'team', icon: Users, label: { en: 'Team', es: 'Equipo', he: 'צוות' }, desc: { en: 'Team members', es: 'Miembros del equipo', he: 'חברי הצוות' } },
                   { type: 'stats', icon: BarChart3, label: { en: 'Stats', es: 'Estadísticas', he: 'סטטיסטיקות' }, desc: { en: 'Key metrics', es: 'Métricas clave', he: 'נתונים' } },
                   { type: 'gallery', icon: ImageIcon, label: { en: 'Gallery', es: 'Galería', he: 'גלריה' }, desc: { en: 'Image gallery', es: 'Galería de imágenes', he: 'גלריית תמונות' } },
                   { type: 'video', icon: Video, label: { en: 'Video', es: 'Video', he: 'וידאו' }, desc: { en: 'Embedded video', es: 'Video incrustado', he: 'סרטון' } },
                   { type: 'contact_form', icon: Mail, label: { en: 'Contact Form', es: 'Formulario', he: 'טופס יצירת קשר' }, desc: { en: 'Contact form', es: 'Formulario de contacto', he: 'טופס פנייה' } },
-                  { type: 'intake_form', icon: FileText, label: { en: 'Intake Form', es: 'Formulario Inicial', he: 'טופס קליטה' }, desc: { en: 'Client intake', es: 'Formulario de admisión', he: 'שאלון התחלתי' } },
-                  { type: 'booking_widget', icon: Calendar, label: { en: 'Booking', es: 'Reservas', he: 'הזמנת תור' }, desc: { en: 'Book appointments', es: 'Reservar citas', he: 'קביעת פגישות' } },
-                  { type: 'payment_button', icon: CreditCard, label: { en: 'Payment', es: 'Pago', he: 'תשלום' }, desc: { en: 'Payment button', es: 'Botón de pago', he: 'כפתור תשלום' } },
+                  /*
+                   * Booking, Intake and Payment are withheld from this picker.
+                   *
+                   * Not deleted: pages already carrying one keep rendering it,
+                   * the editor still edits it, and `getDefaultBlockContent`
+                   * still knows their shapes. Only the way to ADD a new one is
+                   * closed, because each of the three depends on configuration
+                   * this dialog cannot see — a bookable service with
+                   * availability, an intake form that exists, a connected
+                   * processor — and dropped onto a page without it, they render
+                   * as a dead control on the owner's live site.
+                   *
+                   * Restore a row here once the picker can check that gate and
+                   * say so, rather than letting the section fail quietly.
+                   */
                   { type: 'newsletter', icon: Newspaper, label: { en: 'Newsletter', es: 'Boletín', he: 'ניוזלטר' }, desc: { en: 'Email signup', es: 'Suscripción', he: 'הרשמה לעדכונים' } },
                   { type: 'logo_cloud', icon: Briefcase, label: { en: 'Logo Cloud', es: 'Logos', he: 'לוגואים' }, desc: { en: 'Partner logos', es: 'Logos de socios', he: 'לוגואים של שותפים' } },
-                ].map(({ type, icon: Icon, label, desc }) => (
+                ].map(({ type, icon: Icon, label, desc }) => {
+                  /*
+                   * A SECTION THE PAGE ALREADY HAS CANNOT BE ADDED AGAIN.
+                   *
+                   * Not merely tidiness. Menu navigation resolves an anchor per
+                   * BLOCK TYPE — `getAnchorId(block.block_type)` in
+                   * blocks/index.tsx — so a second Services section gives the
+                   * page two elements with id="services". That is invalid HTML,
+                   * and `document.querySelector` answers with the first one, so
+                   * the menu link silently stops reaching whichever the owner
+                   * meant. The duplicate also arrives empty, beneath a section
+                   * of the same name that is full, which reads as the editor
+                   * having lost the content.
+                   *
+                   * Shown as taken rather than hidden: an owner looking for
+                   * Testimonials needs to find out it is already on the page,
+                   * not conclude the platform does not offer it.
+                   */
+                  const alreadyOnPage = blocks.some(b => b.block_type === type);
+
+                  return (
                   <button
                     key={type}
                     onClick={() => handleAddSection(type)}
-                    disabled={addingSection}
-                    className="flex flex-col items-center gap-2 p-4 border border-[var(--v2-border)] rounded-lg hover:border-[#4F6EF7] hover:bg-[#4F6EF7]/5 transition-all disabled:opacity-50"
+                    disabled={addingSection || alreadyOnPage}
+                    title={
+                      alreadyOnPage
+                        ? (language === 'he' ? 'החלק הזה כבר קיים בעמוד' : language === 'es' ? 'Esta sección ya está en la página' : 'This section is already on the page')
+                        : undefined
+                    }
+                    className={`relative flex flex-col items-center gap-2 p-4 border rounded-lg transition-all ${
+                      alreadyOnPage
+                        ? 'border-[var(--v2-border)] opacity-55 cursor-not-allowed'
+                        : 'border-[var(--v2-border)] hover:border-[#4F6EF7] hover:bg-[#4F6EF7]/5 disabled:opacity-50'
+                    }`}
                   >
-                    <div className="w-10 h-10 rounded-lg bg-[#4F6EF7]/10 flex items-center justify-center">
-                      <Icon className="w-5 h-5 text-[#4F6EF7]" />
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${alreadyOnPage ? 'bg-[var(--v2-surface-2)]' : 'bg-[#4F6EF7]/10'}`}>
+                      <Icon className={`w-5 h-5 ${alreadyOnPage ? 'text-[var(--v2-text-muted)]' : 'text-[#4F6EF7]'}`} />
                     </div>
                     <span className="text-sm font-medium text-[var(--v2-text-primary)]">
                       {label[language] || label.en}
                     </span>
                     <span className="text-xs text-[var(--v2-text-muted)] text-center">
-                      {desc[language] || desc.en}
+                      {alreadyOnPage
+                        ? (language === 'he' ? 'כבר בעמוד' : language === 'es' ? 'Ya en la página' : 'Already added')
+                        : (desc[language] || desc.en)}
                     </span>
+                    {alreadyOnPage && (
+                      <Check className="absolute top-2 end-2 w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
+                    )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -7545,6 +8285,17 @@ export default function WebsiteManagementPage() {
               return;
             }
 
+            /*
+             * Say that something is happening.
+             *
+             * The dialog closes the instant this handler starts, and the
+             * request behind it takes as long as it takes — it writes the page
+             * and its blocks, and now fetches four photographs. Until this
+             * notice existed, that whole window looked identical to the wizard
+             * having thrown the work away: no dialog, no row, no message.
+             */
+            setGenerationNotice({ kind: 'progress', message: labels.landing_page_creating });
+
             // Handle Landing Page creation
             setCreatingPage(true);
             try {
@@ -7595,10 +8346,43 @@ export default function WebsiteManagementPage() {
                  * `allPages.filter(page_type === 'landing')`, and the wizard was
                  * opened from beside it.
                  */
-                const pagesResponse = await fetch('/api/website/pages');
-                const pagesData = await pagesResponse.json();
-                if (pagesData.success) {
-                  setAllPages(pagesData.pages || []);
+                /*
+                 * The row appears from the answer we already have.
+                 *
+                 * This used to depend entirely on a SECOND request, whose
+                 * failure was swallowed by a bare `if (pagesData.success)` with
+                 * no else — so a page that was created perfectly well could
+                 * leave the list exactly as it was, with the dialog gone and
+                 * nothing to say anything had happened. Saving a draft looked
+                 * like saving nothing.
+                 *
+                 * The created page is in `data.landingPage`. Using it puts the
+                 * row on screen the moment the server answers, and makes the
+                 * refetch below a reconciliation rather than the only hope.
+                 */
+                setGenerationNotice(null);
+
+                if (data.landingPage) {
+                  setAllPages(prev =>
+                    prev.some(item => item.id === data.landingPage.id)
+                      ? prev.map(item => (item.id === data.landingPage.id ? data.landingPage : item))
+                      : [data.landingPage, ...prev]
+                  );
+                }
+
+                // Reconciliation: ordering, and anything the server changed on
+                // the way in. It must never be able to empty a list it failed
+                // to read — hence the explicit failure branch this lacked.
+                try {
+                  const pagesResponse = await fetch('/api/website/pages');
+                  const pagesData = await pagesResponse.json();
+                  if (pagesData.success && Array.isArray(pagesData.pages)) {
+                    setAllPages(pagesData.pages);
+                  } else {
+                    logger.warn({ error: pagesData.error }, 'Could not re-read the page list after creating a landing page');
+                  }
+                } catch (refreshError) {
+                  logger.warn({ err: refreshError }, 'Could not re-read the page list after creating a landing page');
                 }
 
                 // This page may have just established the business template.

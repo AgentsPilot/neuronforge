@@ -126,6 +126,43 @@ export class UserMediaRepository {
   }
 
   /**
+   * How many pictures this business has GENERATED since a given moment.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY THIS COUNTS ROWS RATHER THAN KEEPING A TALLY
+   *
+   * Every generated picture already writes a row here, with its source and its
+   * timestamp. A separate counter would be a second source of truth that can
+   * drift from the thing it counts — and the first time it drifts, an owner is
+   * either billed for pictures they do not have or locked out of ones they
+   * never made.
+   *
+   * `head: true` asks PostgREST for the count alone, so this stays one cheap
+   * query regardless of how many pictures a business has accumulated.
+   *
+   * Returns `null` when the count cannot be read. That is deliberately NOT
+   * zero: a caller enforcing a limit must be able to tell "none today" from "I
+   * do not know", and treating the second as the first hands out free
+   * generations whenever the database hiccups.
+   */
+  async countGeneratedSince(userId: string, since: Date): Promise<number | null> {
+    try {
+      const { count, error } = await this.supabase
+        .from('user_media')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
+        .eq('source', 'generated')
+        .gte('created_at', since.toISOString());
+
+      if (error) throw error;
+      return count ?? 0;
+    } catch (error) {
+      this.logger.error({ err: error, userId }, 'Could not count generated pictures');
+      return null;
+    }
+  }
+
+  /**
    * This business's pictures, newest first, for the editor's own-images picker.
    *
    * `null` means the list could not be read; an empty array means there are

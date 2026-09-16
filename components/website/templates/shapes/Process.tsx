@@ -9,11 +9,22 @@
  */
 
 import type { BlockRendererProps } from '@/components/website/blocks/types';
+import { StepIcon } from '@/components/website/blocks/ProcessBlock';
 
 interface Step {
   title?: string;
   description?: string;
   label?: string;
+  /*
+   * The mark the owner chose for this step.
+   *
+   * Generated steps carry one, the editor offers a picker for it, and this
+   * shape rendered the index and nothing else — so the icon was stored,
+   * editable, and invisible on every published page. The legacy `ProcessBlock`
+   * has always drawn it, falling back to the number; the template shapes
+   * dropped that when they took the section over.
+   */
+  icon?: string;
 }
 
 interface ProcessShape {
@@ -47,8 +58,17 @@ export function ProcessSection({ content, styles, isRTL, className }: BlockRende
           <ol className="apc-steps">
             {steps.map((step, index) => (
               <li key={index} className="apc-step">
+                {/*
+                  The icon where there is one, the number where there is not —
+                  the same rule `ProcessBlock` uses, so the two renderers agree.
+                  The number stays the default: the counting is what carries the
+                  sequence in these designs, and a step with no icon must not
+                  lose its place in the order.
+                */}
                 <span className="apc-idx" aria-hidden="true">
-                  {String(index + 1).padStart(2, '0')}
+                  {step.icon
+                    ? <StepIcon icon={step.icon} fallback={index + 1} size="sm" />
+                    : String(index + 1).padStart(2, '0')}
                 </span>
                 <div>
                   {(step.title || step.label) && <h3>{step.title ?? step.label}</h3>}

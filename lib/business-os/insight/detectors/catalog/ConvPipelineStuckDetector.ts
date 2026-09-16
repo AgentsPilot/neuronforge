@@ -36,7 +36,13 @@ export class ConvPipelineStuckDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'pipeline_nudge_sequence',
+    pairedProcessId: 'send_followup_nudge',
+    /*
+     * Runs even while this category's vector is dark, because a named person sitting in a stage is true regardless of how much traffic
+     * the website has had, which is what `conv` actually measures.
+     */
+    ignoresVectorMaturity: true,
+
     consentTier: 'automate',
     eligibleForAutomation: true,
     ownerParameters: [
@@ -133,9 +139,15 @@ export class ConvPipelineStuckDetector extends BaseDetector {
     const severity = this.definition.severityFn(stuckContacts.length, avgDaysStuck);
 
     // Estimate impact: stuck deals × avg deal value × probability decay
-    const avgDealValue = 300;
-    const probabilityDecay = 0.5; // 50% less likely to close after being stuck
-    const estimatedLoss = stuckContacts.length * avgDealValue * probabilityDecay;
+    // This business's own figure, not a constant — see BaseDetector.
+    const avgDealValue = await this.resolveAverageDealValue(userId);
+    // This business's own rate, from who has actually paid it — null when
+    // there is too little history to divide. See BaseDetector.
+    const conversionRate = await this.resolveLeadConversionRate(userId);
+    const estimatedLoss =
+      avgDealValue === null || conversionRate === null
+        ? undefined
+        : stuckContacts.length * avgDealValue * conversionRate;
 
     // Group by stage for analysis
     const stageBreakdown = stuckContacts.reduce((acc, c) => {

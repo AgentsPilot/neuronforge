@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolvePaymentCollectionCapability } from '@/lib/payments/stripeAccountContext';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
+import { computeStageFlow, parseStageMove } from '@/lib/business-os/insight/stageFlow';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteAnalyticsRepository } from '@/lib/repositories/WebsiteAnalyticsRepository';
@@ -56,7 +57,24 @@ interface PipelineStageCount {
   stage_key: string;
   stage_label: string;
   color: string;
+  /** How many contacts sit at this stage RIGHT NOW. A queue length. */
   count: number;
+  /**
+   * What happened to the people who reached this stage — a flow, not a queue.
+   *
+   * `count` cannot answer whether a stage leaks. Twenty people in Lead and three
+   * in Consultation is not a 15% conversion rate; it is seventeen people who
+   * have not moved YET, and everyone who already passed through is counted in
+   * neither. The funnel map drew its connectors from that ratio and called the
+   * difference "dropped off".
+   *
+   * These come from recorded stage changes instead: of everyone who arrived
+   * here and has had time to move on, how many did. Absent when the business
+   * has no stage history to read.
+   */
+  arrived?: number;
+  moved_on?: number;
+  stuck?: number;
 }
 
 /**
@@ -432,7 +450,7 @@ export async function GET(request: NextRequest) {
       // Website pages
       { data: websitePages },
       // Active smart links
-      { count: activeSmartLinks },
+      { data: activeSmartLinkRows },
       // Payment plan templates
       { data: paymentPlans },
       // Website bookings (bookings from website source)
@@ -651,11 +669,20 @@ export async function GET(request: NextRequest) {
         .from('website_pages')
         .select('id, status, subdomain, custom_domain, page_type, theme')
         .eq('user_id', user.id),
-      // A smart link is the third way a client can reach a booking page, and
-      // the only one that needs no site at all.
+      /*
+       * A smart link is the third way a client can reach a booking page, and
+       * the only one that needs no site at all.
+       *
+       * The DESTINATION is selected, not just counted. A link is only a way to
+       * reach this business if it leads somewhere a client can actually get to,
+       * and a 'landing' or 'website' link points at a page that may still be in
+       * draft — in which case the link resolves to nothing. Counting rows alone
+       * reported such a business as reachable, so the readiness chain said
+       * "Clients can reach you" while every route to them was shut.
+       */
       supabaseServer
         .from('smart_links')
-        .select('*', { count: 'exact', head: true })
+        .select('id, destination_type')
         .eq('user_id', user.id)
         .eq('is_active', true),
       // Payment plans defined on services — the offer, not any one client's
@@ -1337,13 +1364,49 @@ export async function GET(request: NextRequest) {
       stageCountMap[contact.stage] = (stageCountMap[contact.stage] || 0) + 1;
     });
 
+    /*
+     * What actually moved between stages, for the funnel map's connectors.
+     *
+     * Read from recorded stage changes rather than from the occupancy above —
+     * see `PipelineStageCount.arrived`. Best-effort: a business with no stage
+     * history simply gets no flow figures, and the map falls back to saying it
+     * cannot judge rather than inventing a rate.
+     */
+    const { data: stageChangeRows, error: stageChangeError } = await supabaseServer
+      .from('crm_activities')
+      .select('contact_id, description, activity_date')
+      .eq('user_id', user.id)
+      .eq('activity_type', 'stage_changed')
+      .gte('activity_date', new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000).toISOString())
+      .order('activity_date', { ascending: true })
+      .limit(2000);
+
+    if (stageChangeError) {
+      requestLogger.warn(
+        { err: stageChangeError },
+        'Could not read stage history; funnel connectors will show as unjudged'
+      );
+    }
+
+    const stageMoves = (stageChangeRows || [])
+      .map(row => parseStageMove(row as { contact_id?: unknown; description?: unknown; activity_date?: unknown }))
+      .filter((move): move is NonNullable<typeof move> => move !== null);
+
+    const flowByStage = new Map(
+      computeStageFlow(stageMoves, { now: now.getTime() }).map(flow => [flow.stageKey, flow])
+    );
+
     // Build pipeline_stages array with counts
-    const pipelineStagesWithCounts: PipelineStageCount[] = (pipelineStages || []).map((stage: any) => ({
-      stage_key: stage.stage_key,
-      stage_label: stage.stage_label,
-      color: stage.color || '#94A3B8',
-      count: stageCountMap[stage.stage_key] || 0
-    }));
+    const pipelineStagesWithCounts: PipelineStageCount[] = (pipelineStages || []).map((stage: any) => {
+      const flow = flowByStage.get(stage.stage_key);
+      return {
+        stage_key: stage.stage_key,
+        stage_label: stage.stage_label,
+        color: stage.color || '#94A3B8',
+        count: stageCountMap[stage.stage_key] || 0,
+        ...(flow ? { arrived: flow.arrived, moved_on: flow.movedOn, stuck: flow.stuck } : {}),
+      };
+    });
 
     // Count open days from business profile availability
     const countOpenDays = (availabilityRaw: Record<string, any> | string | null): number => {
@@ -1452,7 +1515,38 @@ export async function GET(request: NextRequest) {
     // one of the three ways: a live landing page or an active smart link sells
     // just as well, and a business that took the smart-link route was being
     // told to build a site it does not need.
-    const hasSmartLinks = (activeSmartLinks || 0) > 0;
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * A SMART LINK ONLY COUNTS IF IT LEADS SOMEWHERE.
+     *
+     * `booking`, `form` and `payment` links are served by the platform itself —
+     * `/go/{code}` resolves them whether or not the business has a website, so
+     * they are a genuine way to be reached.
+     *
+     * A `landing` or `website` link points at one of this business's own pages,
+     * and a page in draft is not served. Such a link is a dead end, and
+     * counting it made the readiness chain state something it could not know:
+     * "Clients can reach you", for a business whose site was never published
+     * and whose only link led to it.
+     *
+     * `journeyReadiness` already names this case and declines to handle it —
+     * "a link to an unpublished page is a different problem with a different
+     * message" — and the message was never written. This is where it belongs,
+     * because reachability is exactly the question being answered here.
+     *
+     * A null destination_type is treated as reachable: older links predate the
+     * column, and calling a business unreachable on the strength of a missing
+     * value is the worse error.
+     */
+    const PAGE_BACKED = new Set(['landing', 'website']);
+    const smartLinkRows = activeSmartLinkRows || [];
+
+    const reachableSmartLinks = smartLinkRows.filter((link: { destination_type?: string | null }) =>
+      PAGE_BACKED.has(link.destination_type ?? '') ? hasLivePages : true
+    );
+
+    const activeSmartLinks = smartLinkRows.length;
+    const hasSmartLinks = reachableSmartLinks.length > 0;
 
     // Does any plan actually intend to charge by itself?
     //
@@ -1474,6 +1568,33 @@ export async function GET(request: NextRequest) {
 
       return chargesItself ? 'automatic' : 'manual';
     })();
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * ANY LIVE ROUTE IN COUNTS: a published site, a live landing page, or a
+     * working smart link.
+     *
+     * This read `hasLivePages || (!wantsWebsite && hasSmartLinks)` — a smart
+     * link only counted for a business that had DECLINED a website. The
+     * intention was to keep nudging someone mid-build towards the site they
+     * were working on rather than calling them done on the strength of a link.
+     *
+     * It misfired, because `wantsWebsite` is true the moment any page row
+     * exists and onboarding creates a draft homepage for almost everybody. So a
+     * business that published a booking link and never wanted a site at all was
+     * told nobody could reach it — with a live, working link in its hands.
+     * Reachability is a question about the client, and the client had a door.
+     *
+     * The case the old guard was written to prevent is already handled, one
+     * block up: `reachableSmartLinks` drops any `landing`/`website` link whose
+     * page is unpublished. A business whose every route in is shut therefore
+     * has `hasSmartLinks === false` and is still, correctly, unreachable. The
+     * `wantsWebsite` test was doing nothing for correctness and quite a lot of
+     * harm.
+     *
+     * Finishing the site remains worth doing — but that is advice, and this
+     * flag is a fact.
+     * ─────────────────────────────────────────────────────────────────────────
+     */
     const isReachable = hasLivePages || hasSmartLinks;
 
     // Get website URL from first page with subdomain/custom_domain
@@ -1484,8 +1605,22 @@ export async function GET(request: NextRequest) {
         (pageWithDomain.subdomain ? `${pageWithDomain.subdomain}.agentspilot.site` : undefined);
     }
 
-    // Get draft page ID for quick publish from dashboard
-    const draftPage = allPages.find((p: any) => p.status === 'draft' && p.subdomain);
+    /*
+     * The draft WEBSITE, for the dashboard's one-click publish.
+     *
+     * `page_type === 'homepage'` matters: `allPages` holds landing pages too,
+     * and without it the first draft landing page with a subdomain became what
+     * the readiness card's "publish your website" published. A business with a
+     * drafted campaign page and a drafted site would have put the campaign live
+     * and reported the website done.
+     *
+     * A subdomain is still required — a page with no address cannot be served —
+     * and when there is no such page the dashboard falls back to opening the
+     * website editor, which is the right place to sort out an address anyway.
+     */
+    const draftPage = allPages.find(
+      (p: any) => p.page_type === 'homepage' && p.status === 'draft' && p.subdomain
+    );
     const draftPageId = draftPage?.id;
 
     // Has the business chosen a look of its own? The homepage carries the theme

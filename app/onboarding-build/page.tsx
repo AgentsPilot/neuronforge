@@ -577,14 +577,25 @@ function OnboardingBuildContent() {
   };
 
   /**
-   * The only way out of this screen, and the only thing that throws the
-   * onboarding data away. Everything else — a refresh, an OAuth round trip
-   * through Stripe — comes back to the last mile where it left off.
+   * The only way out of this screen.
+   *
+   * The preview payload and the build-complete marker go: both describe work
+   * that is finished, and keeping them would send a returning user back into a
+   * build that has already run.
+   *
+   * `onboarding_build_settled` STAYS. It records which of the owner-only steps
+   * were actually done here, and it used to be thrown away at this exact line —
+   * so a user who set their hours, skipped Stripe and clicked through arrived
+   * at a dashboard that had to work the whole question out again from the
+   * database, and the screen's own knowledge of what was left died at the door.
+   * Coming back to finish the last mile then started from nothing.
+   *
+   * It is a small key and it expires with the session; the cost of keeping it
+   * is nil next to re-deriving what this screen already knew.
    */
   const leaveForDashboard = () => {
     sessionStorage.removeItem('onboarding_preview_data');
     sessionStorage.removeItem('onboarding_build_complete');
-    sessionStorage.removeItem('onboarding_build_settled');
     router.push('/business-os');
   };
 

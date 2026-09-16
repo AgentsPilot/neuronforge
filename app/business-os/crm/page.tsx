@@ -46,6 +46,31 @@ export default function CRMPage() {
     fetchCapabilities();
   }, []);
 
+  /*
+   * On a narrow screen the CRM opens on Contacts, not the board.
+   *
+   * The pipeline is six columns sharing one row: they are `flex-1` with
+   * `truncate`, so they never overflow — they just get narrower, and on a phone
+   * each stage has about 60px. The labels degrade to "Disc…" / "Prop…", the
+   * flow segments become slivers, and dragging a card to a stage you cannot
+   * see is not a gesture anyone can complete. The list shows the same contacts
+   * with their stage written out.
+   *
+   * Only the DEFAULT moves. The Pipeline tab is still there and still works;
+   * this runs once on mount and never again, so tapping back to the board
+   * sticks for the rest of the session.
+   *
+   * Mount, not render: `window` does not exist server-side, and reading it
+   * during render would make the server and client disagree about which tab is
+   * active. There is no flash — the view is behind the `loading` gate until
+   * the first fetch resolves, and this has run long before then.
+   */
+  useEffect(() => {
+    if (window.matchMedia('(max-width: 700px)').matches) {
+      setViewMode('contacts');
+    }
+  }, []);
+
   // Handle contact query parameter - open specific contact drawer
   useEffect(() => {
     const contactId = searchParams.get('contact');

@@ -313,8 +313,7 @@ STEP 2: CONTENT GENERATION INSTRUCTIONS
    - Don't use generic benefits - be specific to THIS offering
 
 3. PRICING SECTION:
-   - Title for courses: "${language === 'hebrew' ? 'פרטי הקורס' : language === 'spanish' ? 'Detalles del Curso' : 'Course Details'}"
-   - Title for services: "${l.investment}"
+   - Do NOT write a title for this section. The page sets it.
    - List 4-5 specific inclusions from the description
 
 4. FAQ SECTION (create 4 questions a real customer would ask):

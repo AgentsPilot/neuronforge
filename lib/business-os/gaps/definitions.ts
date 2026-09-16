@@ -153,7 +153,7 @@ const quoteUnsent: GapDefinition = {
     safely('quote_unsent', async () => {
       const { data } = await supabaseServer
         .from('proposals')
-        .select('id, contact_id, title, created_at, contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, title, total, currency, created_at, contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .eq('status', 'draft')
         .order('created_at', { ascending: true })
@@ -167,6 +167,8 @@ const quoteUnsent: GapDefinition = {
           note: str(row.title),
           since: row.created_at as string,
           entityId: row.id as string,
+          value: Number(row.total) || undefined,
+          currency: str(row.currency) || undefined,
         };
       });
     }),
@@ -188,7 +190,7 @@ const quoteAwaitingClient: GapDefinition = {
     safely('quote_awaiting_client', async () => {
       const { data } = await supabaseServer
         .from('proposals')
-        .select('id, contact_id, title, sent_at, contact:crm_contacts(first_name, last_name, email)')
+        .select('id, contact_id, title, total, currency, sent_at, contact:crm_contacts(first_name, last_name, email)')
         .eq('user_id', userId)
         .in('status', ['sent', 'viewed'])
         .lt('sent_at', hoursAgo(now, 72))
@@ -203,6 +205,8 @@ const quoteAwaitingClient: GapDefinition = {
           note: str(row.title),
           since: (row.sent_at as string) || new Date().toISOString(),
           entityId: row.id as string,
+          value: Number(row.total) || undefined,
+          currency: str(row.currency) || undefined,
         };
       });
     }),
@@ -274,9 +278,10 @@ const invoiceUnpaid: GapDefinition = {
         .map(row => ({
           contactId: row.contact_id as string,
           name: str(row.client_name) || 'Someone',
-          note: `${row.amount} ${row.currency ?? ''}`.trim(),
           since: (row.due_date as string) || (row.created_at as string),
           entityId: row.id as string,
+          value: Number(row.amount) || undefined,
+          currency: str(row.currency) || undefined,
         }));
     }),
 };

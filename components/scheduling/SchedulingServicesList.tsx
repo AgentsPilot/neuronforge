@@ -46,6 +46,23 @@ interface SchedulingServicesListProps {
    * connected Stripe sees it appear as soon as the caller says so.
    */
   processorReady?: boolean;
+  /**
+   * Draw only the editor, without the catalogue column beside it.
+   *
+   * For a caller embedding this to add ONE service — the landing-page wizard —
+   * rather than to manage the list.
+   */
+  hideServiceList?: boolean;
+  /**
+   * The owner backed out of adding a new service.
+   *
+   * Only meaningful to a caller that OPENED this to add one. Cancelling clears
+   * the row and returns to the list — which is the right thing in Settings and
+   * a dead end for the landing-page wizard, where the list is hidden: the panel
+   * falls back to "pick one from the list", pointing at something not on
+   * screen. The caller is told so it can close its own editor instead.
+   */
+  onCancelNewRow?: () => void;
 }
 
 
@@ -60,7 +77,7 @@ interface SchedulingServicesListProps {
  */
 const COLUMN_WIDTHS = ['19%', '13%', '12%', '14%', '12%', '12%', '8%', '10%'] as const;
 
-export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false, processorReady = false }: SchedulingServicesListProps) {
+export function SchedulingServicesList({ services, onServiceClick, onServicePublished, onServicePublishedWithId, onSilentRefresh, showAddButton = false, autoStartNewRow, newRowPrefill, onAutoStartConsumed, onServiceCreatedFromChat, autoEditServiceId, onAutoEditConsumed, onServiceEdited, intakeEnabled = false, processorReady = false, hideServiceList = false, onCancelNewRow }: SchedulingServicesListProps) {
   const { t, formatCurrency, currencyCode } = useLanguage();
   const [publishingId, setPublishingId] = useState<string | null>(null);
   /**
@@ -695,6 +712,9 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
 
   const cancelNewRow = () => {
     setIsAddingNewRow(false);
+    // A caller that opened this to add a service needs to know it was
+    // abandoned; see `onCancelNewRow`.
+    onCancelNewRow?.();
     setNewRowValues({
       name: '',
       description: '',
@@ -1707,9 +1727,22 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
           on the right in Hebrew and on the left in English, with no `isRTL`
           branch anywhere. */}
       {(services.length > 0 || isAddingNewRow) && (
-        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)] gap-3">
+        <div
+          className={`flex-1 min-h-0 grid gap-3 ${
+            hideServiceList ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]'
+          }`}
+        >
 
           {/* ── The list ─────────────────────────────────────────────────── */}
+          {/*
+            Hidden where the caller is not managing a catalogue.
+
+            The landing-page wizard embeds this to add ONE service, and passes
+            no services on purpose — it does not want the owner rewriting
+            existing ones mid-wizard — so this column drew an empty 300px panel
+            beside the editor. Settings is unaffected.
+          */}
+          {!hideServiceList && (
           <div
             className="bg-[var(--v2-surface)] border border-[var(--v2-border)] overflow-hidden flex flex-col min-h-0"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
@@ -1806,6 +1839,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
               </div>
             )}
           </div>
+          )}
 
           {/* ── The panel ────────────────────────────────────────────────── */}
           <div

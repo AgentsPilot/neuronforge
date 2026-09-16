@@ -35,7 +35,27 @@ export class AcqLowConversionDetector extends BaseDetector {
       return 'low';
     },
 
-    pairedProcessId: 'review_website_forms',
+    /*
+
+     * Advisory: nothing can run this yet.
+
+     *
+
+     * It used to name `review_website_forms`, a process that was never built — so the card
+
+     * offered "handle it for me", the server answered 404 on the process, and the
+
+     * insight was never marked acted. Whatever fixes this is a different KIND of
+
+     * action from the four that exist, which all send a message.
+
+     *
+
+     * Declaring nothing is honest: the card shows the finding without a button
+
+     * that cannot work.
+
+     */
     consentTier: 'suggest',
     eligibleForAutomation: false,
     ownerParameters: [
@@ -129,9 +149,15 @@ export class AcqLowConversionDetector extends BaseDetector {
     // Estimate missed opportunities
     const expectedSubmissions = Math.floor(uniqueVisitors * (this.definition.threshold / 100));
     const missedSubmissions = expectedSubmissions - formSubmissions;
-    const avgDealValue = 300;
-    const conversionToClient = 0.15;
-    const estimatedLoss = missedSubmissions * avgDealValue * conversionToClient;
+    // This business's own figure, not a constant — see BaseDetector.
+    const avgDealValue = await this.resolveAverageDealValue(userId);
+    // This business's own rate, from who has actually paid it — null when
+    // there is too little history to divide. See BaseDetector.
+    const conversionToClient = await this.resolveLeadConversionRate(userId);
+    const estimatedLoss =
+      avgDealValue === null || conversionToClient === null
+        ? undefined
+        : missedSubmissions * avgDealValue * conversionToClient;
 
     const result = this.createDetectionResult({
       severity,

@@ -27,8 +27,8 @@
  * @module components/website/MediaLibraryPicker
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { ImageIcon, Loader2, Sparkles, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ImageIcon, Loader2, Sparkles, Upload, X } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
 
 interface LibraryItem {
@@ -67,6 +67,25 @@ export function MediaLibraryPicker({
   const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  /*
+   * How many generations are left today.
+   *
+   * Held here and refreshed from every answer the server gives, because a
+   * picture can be generated from this picker on any block, on any page, and
+   * from the wizard. A count this component worked out for itself would be
+   * wrong the moment a second surface was used; the server is the only place
+   * that knows.
+   *
+   * `null` means not yet known or not readable — the row simply is not drawn,
+   * rather than promising an allowance nobody has verified.
+   */
+  const [allowance, setAllowance] = useState<{ used: number; limit: number; remaining: number } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  // The picture just added, so it can be pointed at in a grid it has only just
+  // joined — the owner needs to find it before they can choose it.
+  const [justAdded, setJustAdded] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +94,7 @@ export function MediaLibraryPicker({
       const result = await response.json();
       if (result.success) {
         setItems(result.data as LibraryItem[]);
+        if (result.allowance) setAllowance(result.allowance);
       } else {
         setUnavailable(true);
         setItems([]);
@@ -98,6 +118,63 @@ export function MediaLibraryPicker({
     t(`media.library.source_${source}`);
 
   /*
+   * THE OWNER'S OWN PHOTOGRAPH, FROM INSIDE THE PICKER.
+   *
+   * This offered a business its existing pictures and offered to generate a new
+   * one, and had no way to add a file. An owner looking at a stock photo of
+   * somebody else's treatment room, holding a photograph of their own, had to
+   * close the picker to use it — which is the single most valuable edit anyone
+   * makes to a generated site, put behind the most obscure path to it.
+   *
+   * Straight to `/api/website/upload`, the same endpoint the drag-and-drop
+   * field uses, so one validation and one bucket policy still cover every way a
+   * file arrives. The section and crop go with it, so the picture comes back
+   * for the right slot next time.
+   */
+  const upload = async (file: File) => {
+    if (uploading) return;
+    setUploading(true);
+    setUploadError(null);
+
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      if (section) form.append('section', section);
+      form.append('aspect', aspect);
+
+      const response = await fetch('/api/website/upload', { method: 'POST', body: form });
+      const result = await response.json();
+
+      if (response.ok && result.success && result.url) {
+        /*
+         * UPLOADING IS NOT CHOOSING.
+         *
+         * The picture joins the grid and the owner picks it, the same as every
+         * other picture here. Applying it and closing on their behalf takes the
+         * decision away at the exact moment they most want it: adding two
+         * photographs and comparing them is the ordinary case, and so is
+         * uploading one, seeing it against the stock shot, and keeping the
+         * stock shot.
+         *
+         * Reloaded rather than pushed onto the list, so what they see is the
+         * stored row — the same picture the grid will show on every later open,
+         * not an optimistic stand-in that might differ from it.
+         */
+        setJustAdded(result.url as string);
+        await load();
+        return;
+      }
+      setUploadError(result.error || t('media.upload.failed'));
+    } catch {
+      setUploadError(t('media.upload.failed'));
+    } finally {
+      setUploading(false);
+      // So choosing the same file twice in a row still fires a change event.
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  /*
    * Generation is the fallback, not the default.
    *
    * Stock covers the common case for free and in a fifth of a second; this is
@@ -117,12 +194,21 @@ export function MediaLibraryPicker({
       });
       const result = await response.json();
 
+      // Both answers carry the allowance — a refusal is exactly when the
+      // number matters most.
+      if (result.allowance) setAllowance(result.allowance);
+
       if (result.success) {
         onSelect(result.data.url as string);
         onClose();
         return;
       }
-      setGenerateError(t(`media.generate.${result.reason ?? 'failed'}`));
+
+      setGenerateError(
+        result.reason === 'limit_reached'
+          ? t('media.generate.limit_reached', { limit: String(result.allowance?.limit ?? '') })
+          : t(`media.generate.${result.reason ?? 'failed'}`)
+      );
     } catch {
       setGenerateError(t('media.generate.failed'));
     } finally {
@@ -186,7 +272,11 @@ export function MediaLibraryPicker({
                     onSelect(item.url);
                     onClose();
                   }}
-                  className="group relative aspect-[4/3] overflow-hidden rounded-xl border border-[var(--v2-border)] hover:border-[#4F6EF7] transition-colors"
+                  className={`group relative aspect-[4/3] overflow-hidden rounded-xl border transition-colors hover:border-[#4F6EF7] ${
+                    item.url === justAdded
+                      ? 'border-[#4F6EF7] ring-2 ring-[#4F6EF7]/40'
+                      : 'border-[var(--v2-border)]'
+                  }`}
                   title={item.description ?? ''}
                 >
                   <img
@@ -205,6 +295,58 @@ export function MediaLibraryPicker({
         </div>
 
         <div className="border-t border-[var(--v2-border)] p-5 space-y-2">
+          {/* Upload first: it is the likeliest thing an owner wants and the
+              only one of the three that produces a picture of their actual
+              business. */}
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/svg+xml"
+            className="hidden"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              if (file) void upload(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={uploading}
+            className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-[var(--v2-border)] text-[var(--v2-text-primary)] text-sm hover:bg-[var(--v2-surface-2)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {uploading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {t('media.upload.working')}
+              </>
+            ) : (
+              <>
+                <Upload className="w-4 h-4" />
+                {t('media.library.upload')}
+              </>
+            )}
+          </button>
+          {uploadError && <p className="text-sm text-red-500">{uploadError}</p>}
+
+          {/*
+            The allowance, where the owner is about to spend it.
+
+            Generated pictures are billed per image, and until now nothing said
+            so — the button looked as free as Upload beside it. Shown as what
+            REMAINS rather than what has been used, because the only question
+            being asked here is "can I do this again".
+          */}
+          {allowance && (
+            <p className={`text-xs ${allowance.remaining === 0 ? 'text-amber-600 dark:text-amber-400' : 'text-[var(--v2-text-muted)]'}`}>
+              {allowance.remaining > 0
+                ? t('media.generate.remaining', {
+                    remaining: String(allowance.remaining),
+                    limit: String(allowance.limit),
+                  })
+                : t('media.generate.limit_reached', { limit: String(allowance.limit) })}
+            </p>
+          )}
+
           <div className="flex gap-2">
             <input
               type="text"
@@ -212,7 +354,7 @@ export function MediaLibraryPicker({
               onChange={event => setPrompt(event.target.value)}
               placeholder={t('media.generate.prompt')}
               maxLength={300}
-              disabled={generating}
+              disabled={generating || allowance?.remaining === 0}
               autoFocus={focusGenerate}
               className="flex-1 px-3 py-2 bg-[var(--v2-surface-2)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
               onKeyDown={event => {
@@ -225,7 +367,7 @@ export function MediaLibraryPicker({
             <button
               type="button"
               onClick={() => void generate()}
-              disabled={!prompt.trim() || generating}
+              disabled={!prompt.trim() || generating || allowance?.remaining === 0}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#4F6EF7] text-white text-sm hover:bg-[#3B5AE5] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {generating ? (

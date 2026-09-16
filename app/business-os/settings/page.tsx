@@ -281,7 +281,6 @@ function BusinessOSSettingsContent() {
     }
   };
 
-  // Get the confirmation word based on language
   /**
    * Sign out, properly.
    *
@@ -871,6 +870,7 @@ function BusinessOSSettingsContent() {
         </DialogContent>
       </Dialog>
 
+
       {/* Delete Account Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={(open) => {
         setShowDeleteDialog(open);
@@ -916,7 +916,6 @@ function BusinessOSSettingsContent() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
     </div>
   );
 }

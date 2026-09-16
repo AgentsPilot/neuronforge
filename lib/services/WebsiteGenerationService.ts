@@ -1044,9 +1044,31 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
            * that service actually has. A CTA that says "book" must land
            * somewhere a booking can start.
            */
+          /*
+           * ───────────────────────────────────────────────────────────────────
+           * THE LABEL AND THE DESTINATION ARE DECIDED TOGETHER.
+           *
+           * The model wrote this button's words while the code hardcoded its
+           * link, so the two could disagree — and did: a header reading
+           * "Contact Us" pointing at `#services`. The words are the promise a
+           * visitor acts on, and no amount of fixing the button's behaviour
+           * helps while its text describes a different destination from its
+           * href.
+           *
+           * So this button is no longer the model's to name, for the same
+           * reason the pricing section's heading is not: one field, two
+           * authors, and the visible half was wrong. A business with something
+           * to book says "Book Now" and goes to the services; a business
+           * without says "Get in Touch" and goes to the form.
+           *
+           * A header with no button at all was the previous answer for a
+           * business with no services, which left those businesses — the ones
+           * reaching clients by conversation rather than a catalogue — with no
+           * call to action anywhere above the fold.
+           */
           cta_button: services.length > 0
-            ? { text: button(content.buttons?.headerCta, menu('bookNow')), link: '#services' }
-            : null,
+            ? { text: menu('bookNow'), link: '#services' }
+            : { text: t('ctaGetInTouch'), link: '#contact' },
           style: 'blur',
         },
       },
@@ -1304,6 +1326,21 @@ ${language === 'he' ? 'זכור: כל התוכן חייב להיות בעברי�
             { label: menu('services'), anchor: '#services' },
             { label: menu('contact'), anchor: '#contact' },
           ],
+          /*
+           * The mark, and one last ask.
+           *
+           * The footer wore neither. It closed a page that had spent its whole
+           * length persuading somebody with a copyright line — no way to act,
+           * and no sign of whose site they had just read.
+           *
+           * Contact details, opening hours and the registered number are NOT
+           * set here on purpose: they are resolved on every render from the
+           * business profile, because hours baked in at generation go on
+           * naming days the business stopped working months ago.
+           */
+          show_logo: true,
+          cta_text: t('ctaGetInTouch'),
+          cta_link: '#contact',
           show_powered_by: true,
         },
       },

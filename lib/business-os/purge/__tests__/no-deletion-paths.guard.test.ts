@@ -62,18 +62,26 @@ const SKIP_DIRS = new Set(['node_modules', '.next', '.git', 'dist', 'build', 'co
  * argued for in a diff. Adding a line here should feel like a decision.
  */
 const ALLOW_LIST: ReadonlyArray<{ file: string; why: string }> = [
-  {
-    file: 'app/api/auth/cleanup-incomplete/route.ts',
-    why:
-      'E1 — the one live `auth.admin.deleteUser` remaining. It deletes accounts older ' +
-      'than 24h whose `user_metadata.onboarding_completed` is not true, a flag the CURRENT ' +
-      'onboarding flow never writes (middleware checks `business_profiles` and says so in a ' +
-      'comment; `markLegacyOnboardingComplete()` has zero callers). So every onboarded ' +
-      'business is a deletion candidate. It is dormant only because CRON_SECRET is unset, ' +
-      'and setting that secret — the pending Vercel task — arms all eleven crons at once. ' +
-      'Listed here rather than omitted so the exception is visible IN the guard. ' +
-      'Tracked in T32; not this cycle\'s to fix.',
-  },
+  /*
+   * Empty, and that is the correct state.
+   *
+   * This list held one entry: `app/api/auth/cleanup-incomplete/route.ts`, the
+   * last live `auth.admin.deleteUser` in the repo. It deleted accounts older
+   * than 24h whose `user_metadata.onboarding_completed` was not true — a flag
+   * the current onboarding flow never writes, so every onboarded business was
+   * a deletion candidate. It was dormant only because CRON_SECRET is unset,
+   * and setting that secret would have armed it along with every other cron.
+   *
+   * PR #42 deleted that route outright, so the exemption is removed here as
+   * part of merging main: an allow-list entry for a file that no longer exists
+   * is a stale exemption that would silently cover a future file re-created at
+   * the same path — which is what the existence assertion below is for. The
+   * hazard is resolved rather than deferred; the T32 hand-off about that cron
+   * no longer has a subject.
+   *
+   * An empty allow-list means no file anywhere may contain a deletion
+   * primitive. Adding a line back should feel like a decision.
+   */
 ];
 
 const ALLOWED_FILES = new Set(ALLOW_LIST.map((a) => a.file));

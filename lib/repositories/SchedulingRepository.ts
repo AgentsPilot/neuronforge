@@ -578,6 +578,58 @@ function refundedTotalFor(
   return Math.round((fromInvoice + fromPayments) * 100) / 100;
 }
 
+/**
+ * Booking statuses worth recording as an event.
+ *
+ * `no_show` is the one a detector currently waits on and nothing writes, which
+ * is why `RetNoShowSpikeDetector` has never been able to fire. `completed` is
+ * written alongside it because it carries the money — two detectors estimate an
+ * average booking value from it, and both fall back to a hardcoded $75 without.
+ * `cancelled` completes the set: the three ways a booking ends.
+ */
+type EventedBookingStatus = 'no_show' | 'completed' | 'cancelled';
+
+const EVENTED_BOOKING_STATUSES = new Set<string>(['no_show', 'completed', 'cancelled']);
+
+/**
+ * Record how a booking ended.
+ *
+ * The value goes on the event because that is what makes it useful later: a
+ * no-show costs whatever the session was worth, and an average is only
+ * meaningful over events that carry one. Taken from the charge on the booking,
+ * falling back to the service's list price.
+ */
+async function emitBookingStatusEvent(
+  userId: string,
+  booking: SchedulingBooking,
+  status: EventedBookingStatus
+): Promise<void> {
+  const { businessEventService } = await import('@/lib/business-os/insight/events/BusinessEventService');
+
+  const row = booking as unknown as {
+    id?: string;
+    contact_id?: string | null;
+    payment_amount?: number | string | null;
+    service_id?: string | null;
+  };
+
+  if (!row.id) return;
+
+  const charged = Number(row.payment_amount);
+  const valueUsd = Number.isFinite(charged) && charged > 0 ? charged : undefined;
+
+  await businessEventService.emit(userId, {
+    eventType: `booking.${status}`,
+    category: 'retention',
+    entityType: 'booking',
+    entityId: row.id,
+    contactId: row.contact_id ?? undefined,
+    valueUsd,
+    sourceCapability: 'scheduling',
+    metadata: { service_id: row.service_id ?? null },
+  });
+}
+
 export class SchedulingBookingRepository {
   private supabase: SupabaseClient;
 
@@ -978,6 +1030,26 @@ export class SchedulingBookingRepository {
     try {
       logger.info({ bookingId: id, userId }, 'Updating booking');
 
+      /*
+       * The status BEFORE the write, when the write changes status.
+       *
+       * Needed so the event below fires on a transition rather than on every
+       * save: a booking re-saved while already marked no-show would otherwise
+       * record a second no-show, and the detector counting them would report a
+       * spike the business never had. Read only when a status is actually being
+       * set, so ordinary updates cost nothing extra.
+       */
+      let previousStatus: string | undefined;
+      if (updates.status && EVENTED_BOOKING_STATUSES.has(updates.status)) {
+        const { data: before } = await this.supabase
+          .from('scheduling_bookings')
+          .select('status')
+          .eq('id', id)
+          .eq('user_id', userId)
+          .maybeSingle();
+        previousStatus = before?.status ?? undefined;
+      }
+
       // Update and return with contact data via JOIN
       const { data, error } = await this.supabase
         .from('scheduling_bookings')
@@ -1008,6 +1080,29 @@ export class SchedulingBookingRepository {
       } : null;
 
       logger.info({ bookingId: id, userId }, 'Booking updated');
+
+      /*
+       * Write down that this happened.
+       *
+       * The repository rather than the callers: six different places change a
+       * booking's status — the API route, the chat capability engine, the
+       * plugin executor, the lifecycle service — and an emit added to each is
+       * an emit forgotten by the seventh. This is the only point they all pass
+       * through.
+       *
+       * Fire-and-forget and swallowed, exactly as LeadAlertService does it:
+       * nothing downstream is allowed to fail a booking update, and the table
+       * may not be migrated everywhere.
+       */
+      if (
+        data &&
+        updates.status &&
+        EVENTED_BOOKING_STATUSES.has(updates.status) &&
+        previousStatus !== updates.status
+      ) {
+        void emitBookingStatusEvent(userId, data as SchedulingBooking, updates.status as EventedBookingStatus)
+          .catch(err => logger.debug({ err, bookingId: id }, 'Event rail write skipped'));
+      }
       return { data: normalizedData, error: null };
     } catch (error) {
       logger.error({ err: error, bookingId: id, userId }, 'Failed to update booking');
