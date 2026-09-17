@@ -38,6 +38,7 @@
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { EmbeddingService } from '@/lib/services/EmbeddingService';
+import { buildBosCallContext, toEmbeddingAttribution } from '@/lib/business-os/llm/callCatalog';
 import type { Query } from '../types';
 
 const logger = createLogger({ module: 'BizQLVerifiedQuestions' });
@@ -71,18 +72,24 @@ function normalize(question: string): string {
   return question.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 400);
 }
 
+/**
+ * @param callName Lookup and store are different calls with different costs
+ *   per turn, so each is recorded under its own name.
+ */
 async function embed(
   text: string,
   userId: string,
-  turnId?: string
+  turnId: string | undefined,
+  callName: 'verified_question_embedding' | 'verified_question_store_embedding'
 ): Promise<number[] | null> {
   try {
     const service = new EmbeddingService(process.env.OPENAI_API_KEY!, supabaseServer);
-    const { embedding } = await service.generateEmbedding(text, {
-      userId,
-      feature: 'business-os-chat',
-      turnId,
-    });
+    const { embedding } = await service.generateEmbedding(
+      text,
+      toEmbeddingAttribution(
+        buildBosCallContext({ userId, area: 'chat', callName, groupId: turnId })
+      )
+    );
 
     return embedding;
   } catch (err) {
@@ -133,7 +140,12 @@ export class VerifiedQuestions {
   }): Promise<VerifiedExample[]> {
     if (!(await this.has(args.userId))) return [];
 
-    const embedding = await embed(args.question, args.userId, args.turnId);
+    const embedding = await embed(
+      args.question,
+      args.userId,
+      args.turnId,
+      'verified_question_embedding'
+    );
     if (!embedding) return [];
 
     try {
@@ -194,7 +206,12 @@ export class VerifiedQuestions {
 
     if (steps.length === 0) return;
 
-    const embedding = await embed(args.question, args.userId, args.turnId);
+    const embedding = await embed(
+      args.question,
+      args.userId,
+      args.turnId,
+      'verified_question_store_embedding'
+    );
     if (!embedding) return;
 
     try {

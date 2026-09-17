@@ -29,6 +29,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { BOS_CHAT_FEATURE } from '@/lib/business-os/llm/callCatalog';
 
 const logger = createLogger({ module: 'BizQLUsageReport' });
 
@@ -184,7 +185,7 @@ export async function getChatUsage(args: {
     .select(
       'session_id, activity_type, activity_name, model_name, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at'
     )
-    .eq('feature', 'business-os-chat')
+    .eq('feature', BOS_CHAT_FEATURE)
     .gte('created_at', args.from.toISOString())
     .lte('created_at', to.toISOString())
     .order('created_at', { ascending: false })
@@ -355,7 +356,7 @@ export async function getChatPricing(args: {
     .select(
       'user_id, session_id, activity_type, activity_name, model_name, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at'
     )
-    .eq('feature', 'business-os-chat')
+    .eq('feature', BOS_CHAT_FEATURE)
     .gte('created_at', from.toISOString())
     .order('created_at', { ascending: false })
     .limit(50000);

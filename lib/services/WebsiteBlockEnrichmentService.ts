@@ -15,6 +15,7 @@ import { CRMContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { BusinessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { UserCapabilityRepository } from '@/lib/repositories/UserCapabilityRepository';
 import { websiteAIContentService, type WebsiteLanguage } from './WebsiteAIContentService';
+import { newBosGroupId, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 
 const logger = createLogger({ service: 'WebsiteBlockEnrichmentService' });
 
@@ -150,6 +151,9 @@ export class WebsiteBlockEnrichmentService {
    * @param language - Target language for AI-generated content
    * @param useAI - Whether to use AI for content generation (default: false for backwards compatibility)
    * @param userEmail - Optional user email address for contact info enrichment
+   * @param groupId - Usage grouping id of the owner action this belongs to.
+   *   When absent (a direct caller), one is minted for this block the moment
+   *   AI is actually used.
    */
   async enrichBlock(
     userId: string,
@@ -158,22 +162,29 @@ export class WebsiteBlockEnrichmentService {
     language: WebsiteLanguage = 'en',
     useAI: boolean = false,
     userEmail?: string,
-    isSingleServicePage: boolean = false
+    isSingleServicePage: boolean = false,
+    groupId?: string
   ): Promise<EnrichmentResult<Record<string, unknown>>> {
     logger.info({ userId, blockType, language, useAI }, 'Enriching block');
+
+    // Resolved lazily, so a block that makes no AI call mints no group.
+    const aiOwner = (): BosLlmOwner => ({
+      userId,
+      groupId: groupId ?? this.mintGroupId({ userId, blockType }),
+    });
 
     switch (blockType) {
       case 'services':
         return this.enrichServicesBlock(userId, templateContent as ServiceBlockContent, language);
       case 'about':
         return useAI
-          ? this.enrichAboutBlockWithAI(userId, templateContent as AboutBlockContent, language)
+          ? this.enrichAboutBlockWithAI(userId, templateContent as AboutBlockContent, language, aiOwner())
           : this.enrichAboutBlock(userId, templateContent as AboutBlockContent, language);
       case 'stats':
         return this.enrichStatsBlock(userId, templateContent as StatsBlockContent, language);
       case 'hero':
         return useAI
-          ? this.enrichHeroBlockWithAI(userId, templateContent as HeroBlockContent, language)
+          ? this.enrichHeroBlockWithAI(userId, templateContent as HeroBlockContent, language, aiOwner())
           : this.enrichHeroBlock(userId, templateContent as HeroBlockContent, language);
       case 'pricing':
         // A landing page's pricing is the one service it is about. Its plans
@@ -191,11 +202,11 @@ export class WebsiteBlockEnrichmentService {
         return this.enrichProcessBlock(userId, templateContent as ProcessBlockContent, language);
       case 'faq':
         return useAI
-          ? this.enrichFAQBlockWithAI(userId, templateContent, language)
+          ? this.enrichFAQBlockWithAI(userId, templateContent, language, aiOwner())
           : { content: templateContent, enriched: false, source: 'template', enrichedFields: [] };
       case 'features':
         return useAI
-          ? this.enrichFeaturesBlockWithAI(userId, templateContent, language)
+          ? this.enrichFeaturesBlockWithAI(userId, templateContent, language, aiOwner())
           : { content: templateContent, enriched: false, source: 'template', enrichedFields: [] };
       default:
         // For blocks without enrichment, return template content as-is
@@ -223,6 +234,8 @@ export class WebsiteBlockEnrichmentService {
    *   has and marked an unrelated one "popular" — and because those injected
    *   plans carry no `serviceId`, their buttons fell back to a plain link
    *   instead of opening the booking modal the real plan opens.
+   * @param groupId Usage grouping id of the owner action. When absent and AI is
+   *   on, one id is minted here and shared by every block in this build.
    */
   async enrichBlocks(
     userId: string,
@@ -230,11 +243,15 @@ export class WebsiteBlockEnrichmentService {
     language: WebsiteLanguage = 'en',
     useAI: boolean = false,
     userEmail?: string,
-    isSingleServicePage: boolean = false
+    isSingleServicePage: boolean = false,
+    groupId?: string
   ): Promise<Array<{ block_type: string; content: Record<string, unknown>; position: number; enriched: boolean }>> {
+    const sharedGroupId =
+      groupId ?? (useAI ? this.mintGroupId({ userId, blockCount: blocks.length }) : undefined);
+
     const enrichedBlocks = await Promise.all(
       blocks.map(async (block) => {
-        const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI, userEmail, isSingleServicePage);
+        const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI, userEmail, isSingleServicePage, sharedGroupId);
         return {
           ...block,
           content: result.content,
@@ -247,6 +264,13 @@ export class WebsiteBlockEnrichmentService {
     logger.info({ userId, totalBlocks: blocks.length, enrichedCount, language, useAI }, 'Blocks enrichment complete');
 
     return enrichedBlocks;
+  }
+
+  /** A fresh usage group for an enrichment the caller did not group. Logged so it can be traced. */
+  private mintGroupId(fields: { userId: string; blockType?: string; blockCount?: number }): string {
+    const groupId = newBosGroupId();
+    logger.debug({ ...fields, groupId }, 'Minted usage group for block enrichment');
+    return groupId;
   }
 
   /**
@@ -401,7 +425,8 @@ export class WebsiteBlockEnrichmentService {
   private async enrichAboutBlockWithAI(
     userId: string,
     templateContent: AboutBlockContent,
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<EnrichmentResult<AboutBlockContent>> {
     try {
       const profileResult = await this.profileRepo.findByUserId(userId);
@@ -426,7 +451,7 @@ export class WebsiteBlockEnrichmentService {
           website_analysis: profileResult.data.website_analysis
         },
         existingContent: templateContent
-      });
+      }, owner);
 
       return {
         content: { ...templateContent, ...generatedContent } as AboutBlockContent,
@@ -607,7 +632,8 @@ export class WebsiteBlockEnrichmentService {
   private async enrichHeroBlockWithAI(
     userId: string,
     templateContent: HeroBlockContent,
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<EnrichmentResult<HeroBlockContent>> {
     try {
       const profileResult = await this.profileRepo.findByUserId(userId);
@@ -632,7 +658,7 @@ export class WebsiteBlockEnrichmentService {
           website_analysis: profileResult.data.website_analysis
         },
         existingContent: templateContent
-      });
+      }, owner);
 
       return {
         content: { ...templateContent, ...generatedContent } as HeroBlockContent,
@@ -998,7 +1024,8 @@ export class WebsiteBlockEnrichmentService {
   private async enrichFAQBlockWithAI(
     userId: string,
     templateContent: Record<string, unknown>,
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<EnrichmentResult<Record<string, unknown>>> {
     try {
       const [profileResult, servicesResult] = await Promise.all([
@@ -1033,7 +1060,7 @@ export class WebsiteBlockEnrichmentService {
           duration_minutes: s.duration_minutes
         })),
         existingContent: templateContent
-      });
+      }, owner);
 
       return {
         content: { ...templateContent, ...generatedContent },
@@ -1058,7 +1085,8 @@ export class WebsiteBlockEnrichmentService {
   private async enrichFeaturesBlockWithAI(
     userId: string,
     templateContent: Record<string, unknown>,
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<EnrichmentResult<Record<string, unknown>>> {
     try {
       const [profileResult, servicesResult] = await Promise.all([
@@ -1093,7 +1121,7 @@ export class WebsiteBlockEnrichmentService {
           duration_minutes: s.duration_minutes
         })),
         existingContent: templateContent
-      });
+      }, owner);
 
       return {
         content: { ...templateContent, ...generatedContent },

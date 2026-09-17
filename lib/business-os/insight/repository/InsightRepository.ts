@@ -16,6 +16,7 @@ import type { PrioritizedInsight } from '../prioritizer/InsightPrioritizer';
 import type { BusinessEventCategory } from '../events/types';
 import type { CorrelatedInsight, CorrelationSummary } from '../correlation/types';
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 import { getVerticalConfig, buildTerminologyInstruction, getVerticalDescriptor } from '../vertical-config';
 
 const logger = createLogger({ service: 'InsightRepository' });
@@ -375,7 +376,11 @@ export interface CreateInsightParams {
   userId: string;
   detection: DetectionResult;
   priorityScore: number;
-  runId?: string;
+  /**
+   * The detection run this insight came from. Required: it is also the
+   * grouping id every LLM call in the run is recorded under.
+   */
+  runId: string;
 }
 
 // ===========================
@@ -449,7 +454,8 @@ export class InsightRepository {
       const { title, description, recommendation } = await this.generateLocalizedContent(
         detection,
         userId,
-        businessContext
+        businessContext,
+        runId
       );
 
       const { data, error } = await this.supabase
@@ -606,7 +612,8 @@ export class InsightRepository {
   private async generateLocalizedContent(
     detection: DetectionResult,
     userId: string,
-    businessContext: BusinessContext
+    businessContext: BusinessContext,
+    runId: string
   ): Promise<{ title: string; description: string; recommendation: string }> {
     try {
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
@@ -721,11 +728,13 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
           temperature: 0.3,
           max_tokens: 300,
         },
-        {
-          userId: 'system',
-          feature: 'insight-generation',
-          component: 'InsightRepository',
-        }
+        // Recorded against the business analysed, grouped by the detection run.
+        buildBosCallContext({
+          userId,
+          area: 'insights',
+          callName: 'insight_content',
+          groupId: runId,
+        })
       );
 
       const content = response.choices[0]?.message?.content?.trim() || '';
@@ -770,7 +779,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   async createBatch(
     userId: string,
     insights: PrioritizedInsight[],
-    runId?: string
+    runId: string
   ): Promise<RepositoryResult<Insight[]>> {
     try {
       const results: Insight[] = [];
@@ -1505,7 +1514,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     userId: string,
     correlatedInsight: CorrelatedInsight,
     childInsightIds: string[],
-    runId?: string
+    runId: string
   ): Promise<RepositoryResult<Insight>> {
     try {
       const detectorId = `correlated_${correlatedInsight.patternId}`;
@@ -1577,7 +1586,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
       const { story, title, recommendation } = await this.generateCorrelatedContent(
         correlatedInsight,
         userId,
-        businessContext
+        businessContext,
+        runId
       );
 
       const { data, error } = await this.supabase
@@ -1657,7 +1667,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
   private async generateCorrelatedContent(
     correlatedInsight: CorrelatedInsight,
     userId: string,
-    businessContext: BusinessContext
+    businessContext: BusinessContext,
+    runId: string
   ): Promise<{ story: string; title: string; recommendation: string }> {
     try {
       const provider = ProviderFactory.getProvider(PROVIDERS.OPENAI);
@@ -1732,11 +1743,12 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
           temperature: 0.4,
           max_tokens: 400,
         },
-        {
-          userId: 'system',
-          feature: 'correlated-insight-generation',
-          component: 'InsightRepository',
-        }
+        buildBosCallContext({
+          userId,
+          area: 'insights',
+          callName: 'correlated_insight',
+          groupId: runId,
+        })
       );
 
       const content = response.choices[0]?.message?.content?.trim() || '';
@@ -1848,7 +1860,7 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     userId: string,
     correlationSummary: CorrelationSummary,
     allInsights: Insight[],
-    runId?: string
+    runId: string
   ): Promise<RepositoryResult<BusinessHealthSummary>> {
     try {
       const language = await this.getUserLanguage(userId);
@@ -1895,7 +1907,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
         scores,
         correlationSummary,
         allInsights,
-        language
+        language,
+        runId
       );
 
       // Upsert the summary
@@ -2032,7 +2045,8 @@ Generate in ${langName} language. Respond with ONLY a JSON object (no markdown, 
     categoryScores: Record<string, number>,
     correlationSummary: CorrelationSummary,
     allInsights: Insight[],
-    language: string
+    language: string,
+    runId: string
   ): Promise<{
     title: string;
     narrative: string;
@@ -2117,11 +2131,12 @@ Generate in ${langName}. Respond with ONLY a JSON object:
           temperature: 0.5,
           max_tokens: 800,
         },
-        {
+        buildBosCallContext({
           userId,
-          feature: 'health-summary-generation',
-          component: 'InsightRepository',
-        }
+          area: 'insights',
+          callName: 'health_summary',
+          groupId: runId,
+        })
       );
 
       const content = response.choices[0]?.message?.content?.trim() || '';
@@ -2286,7 +2301,7 @@ Generate in ${langName}. Respond with ONLY a JSON object:
     userId: string,
     correlationSummary: CorrelationSummary,
     standaloneInsightIds: Map<string, string>, // detectorId -> insightId
-    runId?: string
+    runId: string
   ): Promise<RepositoryResult<{ correlatedInsights: Insight[]; healthSummary: BusinessHealthSummary | null }>> {
     try {
       const createdCorrelatedInsights: Insight[] = [];

@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { WebsiteAIContentService } from '@/lib/services/WebsiteAIContentService';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'EnhanceTestimonialAPI' });
@@ -29,10 +30,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const validated = EnhanceTestimonialSchema.parse(body);
 
-    requestLogger.info({ userId: user.id, language: validated.language }, 'Enhancing testimonial');
+    // One usage group per enhancement request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, language: validated.language, groupId }, 'Enhancing testimonial');
 
     const aiService = new WebsiteAIContentService();
-    const enhancedQuote = await aiService.enhanceTestimonial(validated.quote, validated.language);
+    const enhancedQuote = await aiService.enhanceTestimonial(validated.quote, validated.language, {
+      userId: user.id,
+      groupId,
+    });
 
     requestLogger.info({ userId: user.id }, 'Testimonial enhanced successfully');
 

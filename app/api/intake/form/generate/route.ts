@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { intakeGenerationService } from '@/lib/services/IntakeGenerationService';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 
 const logger = createLogger({ module: 'IntakeGenerateAPI' });
 
@@ -44,7 +45,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid request' }, { status: 400 });
     }
 
+    // One group per generation request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, groupId }, 'Generating intake form');
+
     const result = await intakeGenerationService.generateIntakeForm(user.id, {
+      groupId,
       regenerate: parsed.data.regenerate,
     });
 

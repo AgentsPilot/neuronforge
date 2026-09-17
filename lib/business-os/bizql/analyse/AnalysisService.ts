@@ -31,6 +31,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { buildAnalysisPayload, type AnalysisPayload } from './payload';
@@ -134,13 +135,13 @@ export async function analyse(request: AnalysisRequest): Promise<string | null> 
         frequency_penalty: 0.3,
         max_tokens: 300,
       } as never,
-      {
+      // Separable from planning, the way repair calls already are.
+      buildBosCallContext({
         userId: request.userId,
-        feature: 'business-os-chat',
-        // Separable from planning, the way repair calls already are.
-        component: 'BizQLAnalysis',
-        sessionId: request.turnId,
-      } as never
+        area: 'chat',
+        callName: 'analysis',
+        groupId: request.turnId,
+      }) as never
     );
 
     const text = (

@@ -24,6 +24,7 @@ import { createLogger } from '@/lib/logger';
  * `complete()` exists only on the SimpleProvider wrapper this returns.
  */
 import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 
 const logger = createLogger({ service: 'WebsiteAIContentService' });
 
@@ -225,7 +226,15 @@ export class WebsiteAIContentService {
   /**
    * Generate content for a specific block type
    */
-  async generateBlockContent(request: ContentGenerationRequest): Promise<Record<string, unknown>> {
+  /**
+   * @param owner The account this content is generated for and the owner
+   *   action it belongs to. Passed explicitly: the business profile has no
+   *   account field to derive it from.
+   */
+  async generateBlockContent(
+    request: ContentGenerationRequest,
+    owner: BosLlmOwner
+  ): Promise<Record<string, unknown>> {
     const { blockType, targetLanguage, businessProfile, services, userCapabilities } = request;
 
     logger.info({ blockType, targetLanguage, companyName: businessProfile.company_name }, 'Generating block content');
@@ -233,10 +242,10 @@ export class WebsiteAIContentService {
     try {
       switch (blockType) {
         case 'hero':
-          return await this.generateHeroContent(businessProfile, targetLanguage);
+          return await this.generateHeroContent(businessProfile, targetLanguage, owner);
 
         case 'about':
-          return await this.generateAboutContent(businessProfile, targetLanguage);
+          return await this.generateAboutContent(businessProfile, targetLanguage, owner);
 
         case 'services':
           return this.generateServicesContent(services || [], targetLanguage);
@@ -245,10 +254,10 @@ export class WebsiteAIContentService {
           return this.generatePricingContent(services || [], targetLanguage);
 
         case 'faq':
-          return await this.generateFAQContent(businessProfile, services || [], targetLanguage);
+          return await this.generateFAQContent(businessProfile, services || [], targetLanguage, owner);
 
         case 'features':
-          return await this.generateFeaturesContent(businessProfile, services || [], targetLanguage);
+          return await this.generateFeaturesContent(businessProfile, services || [], targetLanguage, owner);
 
         case 'process':
           return this.generateProcessContent(userCapabilities || [], targetLanguage);
@@ -275,7 +284,12 @@ export class WebsiteAIContentService {
   /**
    * Regenerate a single field within a block
    */
-  async regenerateField(request: ContentGenerationRequest): Promise<string> {
+  /**
+   * @param owner A separate argument, not a request field: one caller casts its
+   *   request object, which would hide a missing field but cannot hide a
+   *   missing argument.
+   */
+  async regenerateField(request: ContentGenerationRequest, owner: BosLlmOwner): Promise<string> {
     const { blockType, fieldToRegenerate, targetLanguage, businessProfile } = request;
 
     if (!fieldToRegenerate) {
@@ -306,7 +320,12 @@ export class WebsiteAIContentService {
       ],
       temperature: 0.7,
       max_tokens: 300
-    });
+    }, buildBosCallContext({
+      userId: owner.userId,
+      area: 'website',
+      callName: 'field_regenerate',
+      groupId: owner.groupId,
+    }));
 
     return response.content.trim();
   }
@@ -314,7 +333,11 @@ export class WebsiteAIContentService {
   /**
    * Enhance a testimonial with AI
    */
-  async enhanceTestimonial(text: string, language: WebsiteLanguage): Promise<string> {
+  async enhanceTestimonial(
+    text: string,
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
+  ): Promise<string> {
     logger.info({ language, textLength: text.length }, 'Enhancing testimonial');
 
     const provider = getProviderFactory();
@@ -342,7 +365,12 @@ Enhanced testimonial (just the text, no quotes):`;
       ],
       temperature: 0.5,
       max_tokens: 200
-    });
+    }, buildBosCallContext({
+      userId: owner.userId,
+      area: 'website',
+      callName: 'testimonial_enhance',
+      groupId: owner.groupId,
+    }));
 
     return response.content.trim();
   }
@@ -351,7 +379,8 @@ Enhanced testimonial (just the text, no quotes):`;
 
   private async generateHeroContent(
     profile: BusinessProfileData,
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<Record<string, unknown>> {
     const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
@@ -373,7 +402,12 @@ Return ONLY valid JSON, no markdown.`;
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
         max_tokens: 200
-      });
+      }, buildBosCallContext({
+        userId: owner.userId,
+        area: 'website',
+        callName: 'hero_content',
+        groupId: owner.groupId,
+      }));
 
       const parsed = JSON.parse(response.content.trim());
       return {
@@ -395,7 +429,8 @@ Return ONLY valid JSON, no markdown.`;
 
   private async generateAboutContent(
     profile: BusinessProfileData,
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<Record<string, unknown>> {
     const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
@@ -416,7 +451,12 @@ Return ONLY valid JSON, no markdown.`;
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
         max_tokens: 300
-      });
+      }, buildBosCallContext({
+        userId: owner.userId,
+        area: 'website',
+        callName: 'about_content',
+        groupId: owner.groupId,
+      }));
 
       return JSON.parse(response.content.trim());
     } catch {
@@ -525,7 +565,8 @@ Return ONLY valid JSON, no markdown.`;
   private async generateFAQContent(
     profile: BusinessProfileData,
     services: SchedulingServiceData[],
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<Record<string, unknown>> {
     const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
@@ -548,7 +589,12 @@ Return ONLY valid JSON, no markdown.`;
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
         max_tokens: 600
-      });
+      }, buildBosCallContext({
+        userId: owner.userId,
+        area: 'website',
+        callName: 'faq_content',
+        groupId: owner.groupId,
+      }));
 
       return JSON.parse(response.content.trim());
     } catch {
@@ -582,7 +628,8 @@ Return ONLY valid JSON, no markdown.`;
   private async generateFeaturesContent(
     profile: BusinessProfileData,
     services: SchedulingServiceData[],
-    language: WebsiteLanguage
+    language: WebsiteLanguage,
+    owner: BosLlmOwner
   ): Promise<Record<string, unknown>> {
     const provider = getProviderFactory();
     const langName = { en: 'English', es: 'Spanish', he: 'Hebrew' }[language];
@@ -604,7 +651,12 @@ Return ONLY valid JSON, no markdown.`;
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.7,
         max_tokens: 500
-      });
+      }, buildBosCallContext({
+        userId: owner.userId,
+        area: 'website',
+        callName: 'features_content',
+        groupId: owner.groupId,
+      }));
 
       return JSON.parse(response.content.trim());
     } catch {

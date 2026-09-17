@@ -7,8 +7,12 @@ import { AnthropicProvider } from './providers/anthropicProvider';
 import { KimiProvider } from './providers/kimiProvider';
 import { GroqProvider } from './providers/groqProvider';
 import { BaseAIProvider } from './providers/baseProvider';
+import type { CallContext } from './providers/baseProvider';
 import { AIAnalyticsService } from '../analytics/aiAnalytics';
 import { createClient } from '@supabase/supabase-js';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'ProviderFactory' });
 
 /**
  * Provider name constants
@@ -54,7 +58,7 @@ export class ProviderFactory {
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
       this.aiAnalytics = new AIAnalyticsService(supabase);
-      console.log('📊 Initialized AIAnalyticsService for providers');
+      logger.debug('Initialized AIAnalyticsService for providers');
     }
     return this.aiAnalytics;
   }
@@ -103,7 +107,7 @@ export class ProviderFactory {
         );
       }
 
-      console.log('🔧 Initializing OpenAI Provider with analytics tracking');
+      logger.debug({ provider: 'openai' }, 'Initializing provider with analytics tracking');
       const analytics = this.getAnalytics();
       this.openaiInstance = new OpenAIProvider(apiKey, analytics);
     }
@@ -130,7 +134,7 @@ export class ProviderFactory {
         );
       }
 
-      console.log('🔧 Initializing Anthropic Provider with analytics tracking');
+      logger.debug({ provider: 'anthropic' }, 'Initializing provider with analytics tracking');
       const analytics = this.getAnalytics();
       this.anthropicInstance = new AnthropicProvider(apiKey, analytics);
     }
@@ -157,7 +161,7 @@ export class ProviderFactory {
         );
       }
 
-      console.log('🔧 Initializing Kimi Provider with analytics tracking');
+      logger.debug({ provider: 'kimi' }, 'Initializing provider with analytics tracking');
       const analytics = this.getAnalytics();
       this.kimiInstance = new KimiProvider(apiKey, analytics);
     }
@@ -183,7 +187,7 @@ export class ProviderFactory {
         );
       }
 
-      console.log('🔧 Initializing Groq Provider with analytics tracking');
+      logger.debug({ provider: 'groq' }, 'Initializing provider with analytics tracking');
       const analytics = this.getAnalytics();
       this.groqInstance = new GroqProvider(apiKey, analytics);
     }
@@ -197,7 +201,7 @@ export class ProviderFactory {
    * Useful for testing or when API keys change
    */
   static clearInstances(): void {
-    console.log('🧹 Clearing provider instances');
+    logger.debug('Clearing provider instances');
     this.openaiInstance = null;
     this.anthropicInstance = null;
     this.kimiInstance = null;
@@ -274,14 +278,22 @@ export class ProviderFactory {
  * Used by services for easy LLM chat completions
  */
 export interface SimpleProvider {
-  complete(params: {
-    model: string;
-    messages: Array<{ role: string; content: string }>;
-    response_format?: { type: string };
-    temperature?: number;
-    /** Callers cap their own output; without this the cap was silently dropped. */
-    max_tokens?: number;
-  }): Promise<{ content: string }>;
+  complete(
+    params: {
+      model: string;
+      messages: Array<{ role: string; content: string }>;
+      response_format?: { type: string };
+      temperature?: number;
+      /** Callers cap their own output; without this the cap was silently dropped. */
+      max_tokens?: number;
+    },
+    /**
+     * Who the call's usage is recorded against. When omitted, the call is
+     * recorded on the platform account (`system` / `onboarding` /
+     * `simple-complete`), as it always has been.
+     */
+    context?: CallContext
+  ): Promise<{ content: string }>;
   getProvider(name: ProviderName): BaseAIProvider;
 }
 
@@ -293,13 +305,16 @@ export function getProviderFactory(): SimpleProvider {
     getProvider(name: ProviderName): BaseAIProvider {
       return ProviderFactory.getProvider(name);
     },
-    async complete(params: {
-      model: string;
-      messages: Array<{ role: string; content: string }>;
-      response_format?: { type: string };
-      temperature?: number;
-      max_tokens?: number;
-    }): Promise<{ content: string }> {
+    async complete(
+      params: {
+        model: string;
+        messages: Array<{ role: string; content: string }>;
+        response_format?: { type: string };
+        temperature?: number;
+        max_tokens?: number;
+      },
+      context?: CallContext
+    ): Promise<{ content: string }> {
       const provider = ProviderFactory.getProvider('openai') as any;
 
       // Build chat completion params
@@ -320,8 +335,9 @@ export function getProviderFactory(): SimpleProvider {
         chatParams.max_tokens = params.max_tokens;
       }
 
-      // Call chatCompletion with a minimal context (no tracking for simple calls)
-      const result = await provider.chatCompletion(chatParams, {
+      // Every call is tracked by the provider. Without a caller-supplied
+      // context it is recorded on the platform account.
+      const result = await provider.chatCompletion(chatParams, context ?? {
         userId: 'system',
         feature: 'onboarding',
         component: 'simple-complete'

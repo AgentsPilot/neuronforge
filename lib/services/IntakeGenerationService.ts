@@ -35,6 +35,7 @@ import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { createLogger } from '@/lib/logger';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { intakeFormRepository } from '@/lib/repositories/IntakeFormRepository';
@@ -122,9 +123,14 @@ export class IntakeGenerationService {
    * edited it, and regeneration is a deliberate act rather than a side effect
    * of opening a screen.
    */
+  /**
+   * @param opts.groupId The grouping id of the owner action this generation
+   *   belongs to, minted by the entry point. Required so usage is never
+   *   recorded without one.
+   */
   async generateIntakeForm(
     userId: string,
-    opts: { regenerate?: boolean } = {}
+    opts: { groupId: string; regenerate?: boolean }
   ): Promise<GenerateIntakeResult> {
     try {
       const existing = await intakeFormRepository.getDraft(userId);
@@ -147,6 +153,7 @@ export class IntakeGenerationService {
       const serviceList = services ?? [];
 
       const generated = await this.callLLM(
+        { userId, groupId: opts.groupId },
         profile as unknown as Record<string, unknown>,
         serviceList as unknown as Record<string, unknown>[]
       );
@@ -234,6 +241,7 @@ export class IntakeGenerationService {
   }
 
   private async callLLM(
+    owner: BosLlmOwner,
     profile: Record<string, unknown>,
     services: ReadonlyArray<Record<string, unknown>>
   ): Promise<{ questions: IntakeQuestion[]; source: 'llm' | 'fallback'; reason?: string }> {
@@ -256,7 +264,12 @@ export class IntakeGenerationService {
         // Lower than the website copywriter's 0.7: this is an operational form,
         // and inventiveness in what a client is asked is not a virtue.
         temperature: 0.3,
-      });
+      }, buildBosCallContext({
+        userId: owner.userId,
+        area: 'intake',
+        callName: 'form_generation',
+        groupId: owner.groupId,
+      }));
 
       const parsed = GeneratedFormSchema.safeParse(JSON.parse(response.content));
 

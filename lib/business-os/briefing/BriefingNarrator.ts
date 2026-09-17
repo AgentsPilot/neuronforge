@@ -15,6 +15,7 @@
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
 import { createLogger } from '@/lib/logger';
+import { bosBriefingGroupId, buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 import type { BriefingFacts } from './BriefingFactsService';
 
 const logger = createLogger({ service: 'BriefingNarrator' });
@@ -81,7 +82,8 @@ const LANGUAGE_NAMES: Record<BriefingLanguage, string> = {
 export async function narrateBriefing(
   facts: BriefingFacts,
   language: BriefingLanguage = 'en',
-  userId?: string,
+  /** Required: the briefing's usage belongs to this business, never to a placeholder account. */
+  userId: string,
   businessType: BusinessType = {}
 ): Promise<Narration> {
   if (facts.isQuiet) {
@@ -89,6 +91,10 @@ export async function narrateBriefing(
     // one case where the templates are strictly better.
     return { narrative: composeFallback(facts, language), source: 'fallback' };
   }
+
+  // Deterministic per business and business-local day, so re-narrations the
+  // same day (after the facts change) share one group.
+  const groupId = bosBriefingGroupId(userId, facts.day.date);
 
   try {
     const provider = ProviderFactory.getProvider('openai');
@@ -112,12 +118,10 @@ export async function narrateBriefing(
         temperature: 0.3,
         max_tokens: 320,
       },
-      {
-        userId: userId ?? 'unknown',
-        feature: 'business-os',
-        component: 'daily-briefing',
-        activity_type: 'narration',
-      }
+      buildBosCallContext(
+        { userId, area: 'briefing', callName: 'daily_narration', groupId },
+        { activity_type: 'narration' }
+      )
     );
 
     const narrative = cleanNarrative(completion.choices[0]?.message?.content ?? '');
@@ -145,7 +149,10 @@ export async function narrateBriefing(
 
     return { narrative, source: 'llm' };
   } catch (error) {
-    logger.warn({ err: error, date: facts.day.date }, 'Narration failed; using the deterministic composer');
+    logger.warn(
+      { err: error, date: facts.day.date, groupId },
+      'Narration failed; using the deterministic composer'
+    );
     return { narrative: composeFallback(facts, language), source: 'fallback' };
   }
 }

@@ -41,6 +41,7 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { summariseUsageByCategory } from '@/lib/business-os/usage/usageCategories';
 
 
 const logger = createLogger({ module: 'BusinessOsUsageAPI' });
@@ -49,51 +50,13 @@ const QuerySchema = z.object({
   range: z.enum(['last_24h', 'last_7d', 'last_30d', 'last_90d']).default('last_30d'),
 });
 
-/**
- * Internal feature tags → what the user would call it.
- *
- * The tags accumulated over time and are not user-facing language
- * (`ai_processing`, `agentkit_execution`, `prompt_enhancement`). Building an
- * automation and running one are kept apart on purpose: building is expensive
- * and happens once, running is cheap and repeats, and someone looking at a large
- * number needs to know which it was.
- *
- * Anything unmapped falls through to "Other" rather than being dropped, so a
- * feature added elsewhere in the product can never quietly disappear from a
- * total the user is shown. The parts always sum to the whole.
- */
-const CATEGORIES: Array<{ key: string; features: string[] }> = [
-  { key: 'chat', features: ['business-os-chat', 'chat-v3'] },
-  { key: 'automations_built', features: [
-      'agent_creation',
-      'agent_generation',
-      'intent_generation',
-      'prompt_analysis',
-      'prompt_enhancement',
-      'clarification_questions',
-      'calibration',
-      'effort_estimator',
-    ],
-  },
-  { key: 'automations_run', features: ['agentkit_execution', 'ai_processing', 'pilot', 'orchestration', 'memory_system'],
-  },
-  { key: 'website', features: ['landing-page-generation'] },
-  { key: 'insights', features: ['health-summary-generation'] },
-  { key: 'documents', features: ['document-extraction'] },
-  { key: 'help', features: ['help_bot_v2', 'input_help_bot', 'helpbot', 'onboarding'],
-  },
-];
-
+// Category mapping lives in lib/business-os/usage/usageCategories.ts so it can be
+// tested (a route module may only export handlers and route config).
+//
 // The label is NOT resolved here. The client owns the translation dictionary,
 // and a label written server-side ships in one language — which is how
 // "Assistant" and "Website & pages" appeared untranslated on a Hebrew dashboard.
 // Same rule as `choice` and `needs` in the chat route: the server sends facts.
-const FEATURE_TO_CATEGORY = new Map<string, string>();
-for (const category of CATEGORIES) {
-  for (const feature of category.features) {
-    FEATURE_TO_CATEGORY.set(feature, category.key);
-  }
-}
 
 const RANGE_DAYS: Record<string, number> = {
   last_24h: 1,
@@ -349,16 +312,7 @@ export async function GET(request: NextRequest) {
 
     const toCredits = (tokens: number) => Math.round(tokens / tokensPerCredit);
 
-    const byCategory = new Map<string, { tokens: number; calls: number }>();
-
-    for (const [feature, stats] of usage.byFeature) {
-      const key = FEATURE_TO_CATEGORY.get(feature) ?? 'other';
-      const existing = byCategory.get(key) ?? { tokens: 0, calls: 0 };
-
-      existing.tokens += stats.tokens;
-      existing.calls += stats.calls;
-      byCategory.set(key, existing);
-    }
+    const byCategory = summariseUsageByCategory(usage.byFeature);
 
     const breakdown = [...byCategory.entries()]
       .filter(([, v]) => v.tokens > 0)

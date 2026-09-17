@@ -26,6 +26,7 @@ import { DEFAULT_ARCHETYPE } from '@/lib/website-builder/archetypes';
 import { recipeFor, orderByRecipe, recommendArchetypeId } from '@/lib/website-builder/recipes';
 import { imageForSection, imagesForSection } from '@/lib/services/StockImageService';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteContentRepository } from '@/lib/repositories/WebsiteContentRepository';
 import { z } from 'zod';
@@ -165,6 +166,11 @@ export class WebsiteGenerationService {
    * one and overruling the choice with the model's colours.
    */
   async generateWebsite(userId: string, options: {
+    /**
+     * Usage grouping id of the owner action this generation belongs to,
+     * minted by the entry point. Required so usage is never recorded without one.
+     */
+    groupId: string;
     /** Fill this page instead of creating one. Its blocks are replaced. */
     pageId?: string;
     /** The owner's chosen template. Its theme wins over the model's. */
@@ -182,7 +188,7 @@ export class WebsiteGenerationService {
      * come from the business.
      */
     focus?: { title: string; description?: string };
-  } = {}): Promise<{
+  }): Promise<{
     success: boolean;
     homepageId?: string;
     blocksCreated?: number;
@@ -237,7 +243,13 @@ export class WebsiteGenerationService {
         Array.isArray((existingContent.data?.testimonials as { items?: unknown[] } | undefined)?.items) &&
         ((existingContent.data?.testimonials as { items?: unknown[] }).items?.length ?? 0) > 0;
 
-      const generated = await this.callLLM(profile, services, hasRealTestimonials, options.focus);
+      const generated = await this.callLLM(
+        { userId, groupId: options.groupId },
+        profile,
+        services,
+        hasRealTestimonials,
+        options.focus
+      );
       const websiteContent = generated.content;
 
       // 3. Use user_code as subdomain (or generate one if missing)
@@ -524,6 +536,7 @@ export class WebsiteGenerationService {
    * Call LLM to generate website content
    */
   private async callLLM(
+    owner: BosLlmOwner,
     profile: any,
     services: any[],
     hasRealTestimonials = false,
@@ -551,7 +564,12 @@ export class WebsiteGenerationService {
         ],
         response_format: { type: 'json_object' },
         temperature: 0.7,
-      });
+      }, buildBosCallContext({
+        userId: owner.userId,
+        area: 'website',
+        callName: 'full_site',
+        groupId: owner.groupId,
+      }));
 
       const parsed = WebsiteContentSchema.safeParse(JSON.parse(response.content));
 

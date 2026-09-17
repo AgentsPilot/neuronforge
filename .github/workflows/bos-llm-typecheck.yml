@@ -1,0 +1,58 @@
+# Business OS LLM Attribution Type Check
+#
+# The call catalog (lib/business-os/llm/callCatalog.ts) turns a wrong area or
+# call name, or a missing account, into a TYPE error. Nothing else enforces
+# types: next.config.js ignores build errors, Jest is transpile-only, and the
+# repo carries pre-existing tsc errors. This job fails only on NEW type errors
+# in the attribution scope (see scripts/typecheck-bos-llm.ts for how the scope
+# is derived and how the committed baseline works).
+#
+# No path filter on purpose: the scope is derived from the import graph (the
+# catalog, its importers, barrels, and their direct callers), so a new file
+# anywhere that starts using the catalog or an attributed service is covered
+# automatically.
+
+name: Business OS LLM Type Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: the job only checks out and type-checks.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running check.
+concurrency:
+  group: bos-llm-typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  typecheck-bos-llm:
+    name: Type check (Business OS LLM attribution)
+    runs-on: ubuntu-latest
+    # The check takes ~1-2 minutes after install; fail fast if something hangs.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run scoped type check
+        env:
+          # The program covers the whole repo so types resolve as in the editor.
+          NODE_OPTIONS: '--max-old-space-size=6144'
+        run: npm run typecheck:bos-llm
