@@ -10,7 +10,9 @@ This investigation maps how LLM calls are metered (tokens, dollar cost, Pilot Cr
 - **Round 2** (sections F–G) looks at the AgentsPilot AI Agents side to answer the open questions about real dollar cost and audit granularity, and to find what can be reused.
 - **Round 3** (section I) checks whether existing reporting can serve as Layer 1's "tracking is complete" proof.
 
-Requirements are written layer by layer (see [Decisions & Direction](#e-decisions--direction)). Layer 1 (SA approved, ready for Dev workplan): [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md).
+Requirements are written layer by layer (see [Decisions & Direction](#e-decisions--direction)):
+- Layer 1 (merged, PR #47): [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md).
+- Layer 1.1 (SA approved, ready for Dev workplan): [BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md).
 
 **Status:** Draft — BA investigation. Line numbers were accurate on 2026-09-16 (branch `feature/business-os-purge-slice-2`). Findings refined by SA code checks are recorded in the Layer 1 requirement's SA Review and in the Layer 1 workplan §13.
 
@@ -26,7 +28,7 @@ Requirements are written layer by layer (see [Decisions & Direction](#e-decision
 - [E. Decisions & Direction](#e-decisions--direction)
 - [F. Q1 — Actual Dollar Cost (AgentsPilot AI Agents side)](#f-q1--actual-dollar-cost-agentspilot-ai-agents-side)
 - [G. Q4 — Audit Trail on the AgentsPilot AI Agents side](#g-q4--audit-trail-on-the-agentspilot-ai-agents-side)
-- [H. Reuse, Gaps and Suggested First Layer](#h-reuse-gaps-and-suggested-first-layer)
+- [H. Reuse, Gaps and Layers](#h-reuse-gaps-and-layers)
 - [I. Existing Reporting vs. the Layer 1 Verification Report](#i-existing-reporting-vs-the-layer-1-verification-report)
 - [J. Known Issues Found (not in scope)](#j-known-issues-found-not-in-scope)
 - [K. Open Questions and Open Items](#k-open-questions-and-open-items)
@@ -41,7 +43,7 @@ Requirements are written layer by layer (see [Decisions & Direction](#e-decision
 | 1. Model in DB + admin entry | 3 of 18 Business OS call sites read a DB key. None of those keys can be edited in any admin page. |
 | 2. Credit cost tracked | Partly. Every call through the provider layer writes a `token_usage` row with tokens and `cost_usd`. Business OS credits are only derived when the usage screen is read, and nothing is deducted. Only agent runs deduct credits. AI image generation isn't recorded at all. |
 | 3. Every call in the audit trail | No. There is no LLM-call event, and the provider layer never writes to `audit_trail`. The agents side audits per run and per step, not per call. |
-| 4. Real user ID | 8 of the 18 Business OS sites don't pass one, and they land on the system user. The same gap exists on the agents side for V6 intent generation and in the onboarding conversation (4 calls per session). |
+| 4. Real user ID | 8 of the 18 Business OS sites didn't pass one and landed on the system user (fixed by Layer 1). The same gap exists on the agents side for V6 intent generation and in the onboarding conversation (4 calls per session, Layer 1.5). |
 
 **Urgent finding (section I.3):** most `/api/admin/**` routes have **no authentication**. Middleware skips every `/api` path and the admin layout has no gate. This is being handled as a separate security fix outside this effort.
 
@@ -77,11 +79,11 @@ Requirements are written layer by layer (see [Decisions & Direction](#e-decision
 
 `app/api/business-os/usage/route.ts`:
 
-- Reads `token_usage` through `getUsageAnalytics({ userId })` (`:186`) and converts tokens to credits at read time (`:112-125`, `:200`).
+- Reads `token_usage` through `getUsageAnalytics({ userId })` (`:186`) and converts tokens to credits at read time (`:112-125`, `:200`). *(On `main` after Layer 1 it reads per-feature totals from the `business_os_usage_summary` database function, falling back to reading rows. Layer 1.1 extracts this into `lib/business-os/usage/usageSummary.ts` with no behaviour change.)*
 - The allowance is `monthly_ai_allowance_usd / pilot_credit_cost_usd` (`:143-163`). It is **display only**.
 - The card counts **down** "credits remaining" against that allowance (`components/business-os/UsageCard.tsx:1-24`), and doesn't render the category breakdown (`:21-24`).
 - The route's own comment says the `user_subscriptions` ledger understates real consumption 13x (`:250-258`).
-- Feature-to-category mapping is at `:49-69` (at `:65-89` on the Layer 1 branch base).
+- Feature-to-category mapping is at `:49-69` (extracted to `lib/business-os/usage/usageCategories.ts` by Layer 1).
 - The only hard stop is the chat daily budget (`lib/business-os/bizql/telemetry/ChatBudget.ts:149-189`), keyed on `feature='business-os-chat'`.
 
 ### A.5 Embeddings
@@ -131,7 +133,7 @@ Requirements are written layer by layer (see [Decisions & Direction](#e-decision
 
 ## D. Business OS LLM Calls — Current Behaviour
 
-All calls go to OpenAI. The required after-state is in the Layer 1 requirement.
+All calls go to OpenAI. The after-state is in the Layer 1 requirement.
 
 | # | Call | Model source | userId passed | feature / component | Area |
 |---|---|---|---|---|---|
@@ -201,12 +203,12 @@ All calls go to OpenAI. The required after-state is in the Layer 1 requirement.
 2. Legacy and broken calls stay excluded from Layer 1: chat v2, chat v1, the story route, WebsiteAnalyzer. The LeadReplyRecommender bug stays parked.
 3. No backfill of past system-attributed usage.
 4. V6 intent-generation attribution is a separate item.
-5. A data-only proof is acceptable (Q11). The extended chat usage report is moved **out of Layer 1 into Layer 1.5**; Layer 1 is proven by QA test evidence.
+5. A data-only proof is acceptable (Q11). The extended chat usage report is moved **out of Layer 1 into Layer 1.5**; Layer 1 is proven by QA test evidence. *(Superseded 2026-09-17 by E.10: the report moved again, to Layer 1.1.)*
 6. Admin API route authentication (Q12) is handled as a separate security fix.
 
 ### E.8 Layer 1 finalisation decisions (2026-09-17)
 
-1. **Onboarding conversation LLM calls** (4 per session, `OnboardingConversationManager.ts`, still on the platform account) are **not in Layer 1**. They are added to **Layer 1.5**, next to the extended usage report.
+1. **Onboarding conversation LLM calls** (4 per session, `OnboardingConversationManager.ts`, still on the platform account) are **not in Layer 1**. They are added to **Layer 1.5**.
 2. **"Credits remaining" dropping from background work** is not solved now. It is recorded as an open item to handle later, layer TBD (K, OI-1).
 3. **The cross-tenant read in the website block regenerate route** is recorded as an open issue to handle later, out of Layer 1 scope (J, OI-2).
 
@@ -215,10 +217,27 @@ SA's required changes RC-1 to RC-15 were applied to the Layer 1 requirement on t
 ### E.9 Decisions after the SA workplan review (2026-09-17)
 
 1. **Service generator** (`ServiceGeneratorService.ts:304`) is excluded from Layer 1. It is broken and makes no LLM spend (RQ-1).
-2. **AI image generation** (`GeneratedImageService.ts:186`) is excluded from Layer 1 and **moved to Layer 1.5**, next to the extended usage report and the onboarding conversation calls (user decision). Open business question for then: should AI images count against monthly credits, and how many credits is one image worth? (K, OQ-7)
+2. **AI image generation** (`GeneratedImageService.ts:186`) is excluded from Layer 1 and **moved to Layer 1.5**, next to the onboarding conversation calls (user decision). Open business question for then: should AI images count against monthly credits, and how many credits is one image worth? (K, OQ-7)
 3. **Pino conversion** of `lib/ai/providerFactory.ts` (6 real `console.*` calls) and `lib/services/EmbeddingService.ts` (16) is **approved by the user for this cycle**, as part of Layer 1 delivery.
 4. Requirement refinements from the workplan review: the verified-question store embedding gets its own call name (RQ-2), and chat analysis always uses the turn id (RQ-3). Both are in the Layer 1 requirement.
 5. **SA code review CR-1 (docs only):** the Layer 1 requirement had described WebsiteAnalyzer as a working caller outside Business OS. It is dead and broken, as row 18 already said, so the onboarding conversation is the only live one. Corrected in the requirement (FR-12, AC-7, Excluded calls). No scope change.
+
+### E.10 Layer 1.1 decisions (2026-09-17, after Layer 1 merged as PR #47)
+
+1. **A verification tab now.** Platform admins need to confirm Layer 1 attribution without SQL. So a read-only **LLM Usage** tab on the internal Business OS test page (`/test-business-os`) shows, for a chosen business and start time:
+   - its Business OS calls;
+   - calls on the platform account;
+   - legacy labels;
+   - calls grouped by action;
+   - the usage-card category view.
+2. **Merge with the Layer 1.5 report.** Layer 1.1 takes over the "extended usage report" (I.5). It builds the report API now, and the tab is its first UI. Layer 1.5 keeps only the onboarding conversation calls and AI image tracking.
+3. **Admins only,** checked on the server through `AdminAccessService` / `admin_users`, never `profiles.role`. The page being internal is not a protection.
+4. **Start now,** on top of merged `main`.
+5. **One business at a time is enough (OQ-U1, user decision 2026-09-17).**
+   - One selected business per view, plus the platform-wide "nothing on the platform account" check, replaces the planned all-businesses × areas report **for now**.
+   - An all-businesses overview may come later if needed. It would need a database change: a read-only function for per-area totals, SA follow-up F-2, because PostgREST aggregates are disabled and paging every account's rows doesn't scale.
+
+Requirement: [BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md). SA approved with changes (RC-1 to RC-14 applied), ready for Dev workplan; 24 FRs, 24 ACs; no migration.
 
 ---
 
@@ -296,7 +315,7 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
 
 ---
 
-## H. Reuse, Gaps and Suggested First Layer
+## H. Reuse, Gaps and Layers
 
 ### H.1 What exists and can be reused
 
@@ -307,41 +326,36 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
 | Per-action audit events carrying token totals | Yes, as the pattern |
 | DB-driven provider + model per purpose | Yes, as the pattern |
 | Admin price table | Yes, once read reliably |
-| Admin-gated chat usage report (`/api/admin/chat-usage` + `usageReport.ts`) | Base for the Layer 1.5 report |
+| Admin-gated chat usage report (`/api/admin/chat-usage` + `usageReport.ts`) | Pattern for the Layer 1.1 report API (admin gate, Zod, Pino) |
 
 ### H.2 What's missing
 
-1. Correct attribution (Layer 1; onboarding conversation and AI images Layer 1.5; V6 separate).
-2. A stable naming scheme (Layer 1).
+1. Correct attribution (Layer 1, merged; onboarding conversation and AI images Layer 1.5; V6 separate).
+2. A stable naming scheme (Layer 1, merged).
 3. A reliable dollar figure.
 4. Per-call model configuration (Layer 2).
 5. Per-action audit events.
-6. A completeness report (Layer 1.5).
+6. A completeness report (**Layer 1.1**, moved from Layer 1.5 on 2026-09-17; single business at a time, E.10.5).
 7. Admin identity on pricing and config changes, and authentication on `/api/admin/**` (separate security fix).
 8. Image-generation tracking: an image method in the provider layer, image pricing, and a credits rule (Layer 1.5).
 
-### H.3 First layer (as decided)
+### H.3 Layers (as decided)
 
-The Layer 1 requirement is [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md) (26 FRs, 24 ACs; SA approved, ready for Dev workplan).
+> Indicative. Each layer gets its own requirement.
 
-- **Layer 1:** every in-scope Business OS AI call is recorded against the right business, with area, call name and UUID grouping id, through a new call catalog and attribution builder. The usage category mapping is updated in the same release. `providerFactory.ts` and `EmbeddingService.ts` are converted to Pino. Proof is QA test evidence and code review.
-- **Layer 1.5:**
-  - (a) the extended admin data report (I.5);
-  - (b) onboarding conversation attribution (E.8.1);
-  - (c) AI image generation brought into usage tracking, with the open question of whether and how images count against credits (E.9.2, OQ-7).
-- **Layer 2:** JSON model configuration per area.
-- **Later:**
-  - cost accuracy;
-  - per-action audit events;
-  - admin UI;
-  - deduction and enforcement;
-  - "credits remaining" treatment of background work (OI-1, layer TBD).
+| Layer | Delivers | Status |
+|---|---|---|
+| **1** | Every in-scope Business OS AI call recorded against the right business, with area, call name and UUID grouping id, through a call catalog and attribution builder. Usage category mapping updated in the same release. `providerFactory.ts` and `EmbeddingService.ts` converted to Pino. Proof by QA test evidence and code review. [Requirement](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md) (26 FRs, 24 ACs) | Merged (PR #47) |
+| **1.1** | **LLM Usage verification tab and report API.** An admin-only, read-only tab on `/test-business-os`. Choose **one business** and a start time, refresh, and see five checks: calls, nothing on the platform account (platform-wide), no legacy labels, grouped by action, usage-card view. Also area totals, display caps, and an Incomplete status when the 5,000-row read ceiling is hit. Takes over the extended usage report (I.5) (E.10). One business at a time is enough for now (E.10.5). Adds `TokenUsageRepository`, `usageSummary.ts` and shared catalog constants; no migration. [Requirement](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md) (24 FRs, 24 ACs) | SA approved, ready for Dev workplan |
+| **1.5** | (a) Onboarding conversation attribution (E.8.1). (b) AI image generation brought into usage tracking, with the open question of whether and how images count against credits (E.9.2, OQ-7) | Planned |
+| **2** | JSON model configuration per area, keyed by the Layer 1 call names | Planned |
+| **Later** | Cost accuracy; per-action audit events; admin UI; deduction and enforcement; "credits remaining" treatment of background work (OI-1, layer TBD); an all-businesses usage overview if needed (needs a database function, Layer 1.1 F-2) | Planned |
 
 ---
 
 ## I. Existing Reporting vs. the Layer 1 Verification Report
 
-**Required at the time (now Layer 1.5):** per business × area, for a period, calls, tokens and estimated cost, plus proof that no Business OS rows land on the system user.
+**Required at the time (now Layer 1.1):** per business × area, for a period, calls, tokens and estimated cost, plus proof that no Business OS rows land on the system user. **Layer 1.1 delivers it one business at a time** (E.10.5).
 
 ### I.1 `lib/business-os/bizql/telemetry/usageReport.ts`
 
@@ -373,7 +387,7 @@ The Layer 1 requirement is [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.
 ### I.3 Admin API authentication (security)
 
 - `middleware.ts:84` skips `/api`, and `app/admin/layout.tsx` has no gate. The token-usage, stats, drill-down, user stats, dashboard, system-config, pricing, helpbot-config and agent-generation-config routes are unauthenticated.
-- **Status:** separate security fix (E.7.6).
+- **Status:** separate security fix (E.7.6). The Layer 1.1 routes must gate themselves in the route, not rely on middleware.
 
 ### I.4 Naming gotcha for Layer 1
 
@@ -384,7 +398,10 @@ The Layer 1 requirement is [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.
 
 ### I.5 Conclusion
 
-Existing screens can't serve as the proof. The smallest option is extending the chat usage report. **Decided: Layer 1.5.**
+- Existing screens can't serve as the proof. The smallest option is extending the chat usage report.
+- Decided: Layer 1.5 (2026-09-16). **Moved to Layer 1.1 on 2026-09-17** (E.10).
+- It is delivered as an admin-only report API behind the LLM Usage tab on `/test-business-os`, one business at a time. It reuses the `chat-usage` admin-gate pattern, the call catalog and `summariseUsageByCategory`.
+- The SA chose a new `TokenUsageRepository` over extending `usageReport.ts`, which stays as follow-up F-1.
 
 ---
 
@@ -402,7 +419,7 @@ Existing screens can't serve as the proof. The smallest option is extending the 
 | Plan cache store may not run (fire-and-forget on serverless) | `Planner.ts:640-648` | Pre-existing; noted in Layer 1 (KI-2) |
 | Block-content AI generation (hero/about/FAQ/features) has no production trigger | All callers pass `useAI = false`: `app/api/website/pages/route.ts:172`, `pages/[id]/enrich/route.ts:80`, `WebsitePublishService.ts:367` | Informational (Layer 1 KI-3) |
 | Drill-down "System" bucket never matches real system-attributed rows | `drill-down/route.ts:216-223` vs `aiAnalytics.ts:120-126` | Open |
-| Drill-down and usage reports truncate silently | `drill-down/route.ts:202-241`; `usageReport.ts:191`, `:361` | Open (usage report part in Layer 1.5) |
+| Drill-down and usage reports truncate silently | `drill-down/route.ts:202-241`; `usageReport.ts:191`, `:361` | Open (the Layer 1.1 report is exact with display caps and an Incomplete status; `usageReport.ts`'s two silent failures are Layer 1.1 follow-up F-1) |
 | Drill-down comparison ignores feature/component/request_type/endpoint filters | `drill-down/route.ts:331-353` | Open |
 | Pricing audit events have no admin identity | `pricing/route.ts:102`, `:167`, `:234` | Open |
 | V6 intent-contract route trusts `x-user-id` header | `app/api/v6/generate-ir-intent-contract/route.ts:41-43` | Needs SA check |
@@ -421,11 +438,12 @@ Existing screens can't serve as the proof. The smallest option is extending the 
 - [x] **Q8 — Legacy and broken calls** (raised by: BA | status: **resolved 2026-09-16**) Excluded from Layer 1 with reasons. Extended 2026-09-17 with the service generator. WebsiteAnalyzer's reason was sharpened by CR-1 (dead and broken, no LLM spend).
 - [x] **Q9 — Past usage recorded under the system user** (raised by: BA | status: **resolved 2026-09-16**) Left as is, no backfill.
 - [x] **Q10 — V6 intent-generation attribution** (raised by: BA | status: **resolved 2026-09-16**) Separate item.
-- [x] **Q11 — Where the Layer 1 proof is read** (raised by: BA | status: **resolved 2026-09-16**) Data-only proof accepted; report moved to Layer 1.5; Layer 1 proven by QA evidence.
+- [x] **Q11 — Where the Layer 1 proof is read** (raised by: BA | status: **resolved 2026-09-16**) Data-only proof accepted for Layer 1. The report moved to Layer 1.5, then to **Layer 1.1** as an admin-only tab plus report API (2026-09-17, E.10).
 - [x] **Q12 — Admin API authentication** (raised by: BA | status: **handled separately**) Separate security fix.
 - [x] **Onboarding conversation attribution** (raised by: SA | status: **resolved 2026-09-17**) Not in Layer 1; Layer 1.5.
 - [x] **AI image generation spend in Layer 1?** (raised by: SA | status: **resolved 2026-09-17**) No; excluded and moved to Layer 1.5.
 - [x] **Pino conversion of `providerFactory.ts` / `EmbeddingService.ts`** (raised by: SA | status: **approved by the user 2026-09-17**) In Layer 1.
+- [x] **Layer 1.1 OQ-U1 — Is one business at a time enough to replace the all-businesses report?** (raised by: BA | status: **resolved 2026-09-17**) Yes, for now: one business plus the platform-wide check. An all-businesses overview may come later and would need a database change (F-2) (E.10.5).
 
 **Open items (handle later):**
 
@@ -442,6 +460,8 @@ Existing screens can't serve as the proof. The smallest option is extending the 
 - [ ] **Q4 — Audit granularity** (raised by: BA | status: open, deferred to the audit layer). *BA suggestion:* per action.
 - [ ] **Q6 — Should failed or discarded attempts count?** (raised by: BA | status: deferred to the deduction layer).
 
+Layer 1.1's open questions are all resolved; the SA's decisions and follow-ups (F-1 to F-4) are in the [Layer 1.1 requirement](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md#sa-review).
+
 ---
 
 ## Change History
@@ -455,3 +475,5 @@ Existing screens can't serve as the proof. The smallest option is extending the 
 | 2026-09-17 | Layer 1 finalised (SA approved) | Added E.8 (onboarding conversation → Layer 1.5; "credits remaining" drop → OI-1, layer TBD; block regenerate cross-tenant read → OI-2); D notes the onboarding conversation and block-content no-trigger finding; J adds OI-2, KI-1, onboarding conversation, plan-cache store and block-content rows, Pino flags; K renamed "Open Questions and Open Items" with OI-1/OI-2; H.3 updated with Layer 1.5 contents and final counts (26 FRs, 24 ACs); sections B–I condensed where the requirement is now the source of detail |
 | 2026-09-17 | SA workplan review follow-up (RQ-1) + user decisions | Added E.9: service generator (`ServiceGeneratorService.ts:304`, broken, no spend) excluded; AI image generation (`GeneratedImageService.ts:186`, direct SDK, not in `token_usage`, per-image pricing, own daily cap) excluded and moved to Layer 1.5 with open business question OQ-7 (do images count against monthly credits, credits per image); Pino conversion of `providerFactory.ts` (6 calls) and `EmbeddingService.ts` (16) approved for Layer 1. D gains a "found at SA reviews" table; A.2/F.4/F.6 note image spend isn't representable; H.2/H.3 Layer 1.5(c); J adds image and service-generator rows and updates the Pino row; K adds OQ-7 and the two resolved items. Refreshed line refs noted (`Planner.ts:444`, usage mapping `:65-89`) |
 | 2026-09-17 | SA code review CR-1 mirrored (docs only) | No contradiction existed: row 18 already listed WebsiteAnalyzer as dead and broken. Sharpened the evidence (calls non-existent `getDefaultModel` and `complete` on the wrong type; LLM call always fails; no spend) in D row 18 and J. A.6 now states the onboarding conversation is the only live non-Business OS caller of `getProviderFactory().complete()`. Added E.9.5 and the Q8 note, matching the Layer 1 requirement's corrected FR-12/AC-7 |
+| 2026-09-17 | Layer 1.1 added to the layers (user decisions) | Added E.10 (verification tab now; merge with the Layer 1.5 report; admins only; start on merged main). H renamed "Reuse, Gaps and Layers"; H.3 is now a layers table with Layer 1 merged (PR #47), Layer 1.1 (LLM Usage tab + report API, draft) and Layer 1.5 reduced to onboarding conversation + AI images. I intro, I.3 and I.5 point at Layer 1.1; J truncation row and K Q11 updated; overview links the Layer 1.1 requirement; A.4 notes the post-Layer-1 usage summary function and extracted category mapping |
+| 2026-09-17 | Layer 1.1 SA approved + OQ-U1 decided | Added E.10.5 (user decision OQ-U1: one business at a time plus the platform-wide check is enough for now; an all-businesses overview may come later and needs a database function, F-2). H.3 Layer 1.1 row → SA approved, ready for Dev workplan (24 FRs, 24 ACs, no migration, `TokenUsageRepository`, `usageSummary.ts`, catalog constants, Incomplete status); "Later" row adds the optional all-businesses overview. H.2, I intro, I.5, J truncation row and K updated (OQ-U1 resolved; `usageReport.ts` → F-1); A.4 notes the `usageSummary.ts` extraction |

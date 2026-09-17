@@ -200,7 +200,7 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
    - A missing account is prevented at compile time: the attribution type (FR-26) requires the account.
    - If the runtime account value is not a valid UUID, the attribution builder emits an **error-level** structured log naming the area, call name and the request correlation id (or the grouping id where the call has no request correlation id, e.g. insights, briefing, leads).
    - The call still completes, and user-facing behaviour is unchanged.
-   - The ledger row is still written. The existing tracker fallback (`aiAnalytics.ts:120-130`) places it on the system user, where the Layer 1.5 system-user count will catch it.
+   - The ledger row is still written. The existing tracker fallback (`aiAnalytics.ts:120-130`) places it on the system user, where the platform-account check will catch it. *(2026-09-17: that check is now delivered by Layer 1.1, Check 2, rather than Layer 1.5.)*
    - Spend is never dropped.
    - `lib/analytics/aiAnalytics.ts` is **not** modified.
 
@@ -386,7 +386,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 
 | Item | Where it goes |
 |---|---|
-| Extended usage report (all Business OS areas + system-user count + truncation warning) | Layer 1.5 (user decision 2026-09-16) |
+| Extended usage report (all Business OS areas + system-user count + truncation warning) | **Layer 1.1** (user decision 2026-09-17: moved from Layer 1.5; delivered as the admin-only LLM Usage tab on `/test-business-os` and its report API — see [Layer 1.1 requirement](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md)) |
 | Onboarding conversation attribution (4 calls per session, `OnboardingConversationManager.ts`) | Layer 1.5 (user decision 2026-09-17) |
 | AI image generation spend (`GeneratedImageService.ts`): tracking images, and whether and how they count toward credits | Layer 1.5 (user decision 2026-09-17); business question OQ-7 |
 | Model, provider, temperature and on/off configuration per call (JSON per area in DB config) | Layer 2 |
@@ -413,7 +413,8 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 | Layer | Delivers | Depends on |
 |---|---|---|
 | **1 (this)** | Every in-scope Business OS LLM call recorded against the right business, with area, call name and grouping id | — |
-| **1.5** | (a) Admin data report proving completeness: per business × area, for a period, calls, tokens and estimated cost; count of Business OS calls on the system user; warning when results were capped. (b) Onboarding conversation LLM calls (4 per session) attributed to the new owner's account, with area and call names. (c) AI image generation (`GeneratedImageService.ts`) brought into usage tracking and attributed to the business. Needs an image method in the provider layer and image pricing. Open business question: should AI images count against monthly credits, and how many credits is one image worth (OQ-7)? | Layer 1 |
+| **1.1** | **LLM Usage verification tab and report API** (user decision 2026-09-17; takes over the Layer 1.5 extended usage report). An admin-only, read-only tab on `/test-business-os`: pick a business and a start time, refresh, and see: (1) its Business OS calls; (2) Business OS calls on the platform account (Pass if 0); (3) legacy labels; (4) calls grouped by action; (5) the usage-card category view. Also area totals (calls, tokens, estimated cost) and truncation warnings. Requirement: [BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md) | Layer 1 |
+| **1.5** | (a) Onboarding conversation LLM calls (4 per session) attributed to the new owner's account, with area and call names. (b) AI image generation (`GeneratedImageService.ts`) brought into usage tracking and attributed to the business. Needs an image method in the provider layer and image pricing. Open business question: should AI images count against monthly credits, and how many credits is one image worth (OQ-7)? *(The extended usage report previously listed here moved to Layer 1.1, 2026-09-17.)* | Layer 1 |
 | **2** | Model, provider, temperature and on/off per call, stored as one JSON configuration per area, keyed by the Layer 1 call names; no hardcoded models | Layer 1 call names |
 | **Later** | Cost accuracy; per-action audit events; admin UI (usage + model config); credits deduction and enforcement; "credits remaining" treatment of background work (OI-1, layer TBD) | Layers 1–2 |
 
@@ -442,7 +443,7 @@ These were found during the investigation and SA reviews. **None is fixed in Lay
 All six were resolved by SA on 2026-09-16 (details in the [SA Review](#open-question-decisions)).
 
 - [x] **OQ-1 — Ledger fields.** Resolved: `feature` = `business-os-<area>`, `component` = call name, `session_id` = UUID grouping id; `activity_*` / `category` unchanged. Applied in FR-7, FR-8.
-- [x] **OQ-2 — Consumers of renamed values.** Resolved: only the owner usage API mapping is affected. Legacy values map into the new categories (FR-21). The admin drill-down will show old and new values as separate buckets for historical periods (accepted; consolidated view in Layer 1.5).
+- [x] **OQ-2 — Consumers of renamed values.** Resolved: only the owner usage API mapping is affected. Legacy values map into the new categories (FR-21). The admin drill-down will show old and new values as separate buckets for historical periods (accepted; consolidated view in Layer 1.1, moved from Layer 1.5 on 2026-09-17).
 - [x] **OQ-3 — Mandatory attribution on the simple helper.** Resolved: optional on the shared helper, required at the Business OS service layer through the typed builder. Applied in FR-11, FR-12, FR-26.
 - [x] **OQ-4 — Insight run id.** Resolved: the cron `runId` exists and reaches all three insight calls; the group key is (account, `runId`); `runId` becomes required on the public repository methods on that path. Applied in FR-16.
 - [x] **OQ-5 — Account source for website block content.** Resolved: passed explicitly from each caller, never derived from the profile. Applied in FR-19.
@@ -515,7 +516,7 @@ The search covered `app`, `lib`, `components`, `scripts`, `supabase` (SQL) and a
 - No tests, scripts, migrations or SQL functions use the old values.
 - `UsageCard.tsx` doesn't read the breakdown (`:20-24`).
 
-**Consequence (accepted):** the admin drill-down will show old and new values as separate buckets for historical periods. No backfill (FR-25). The consolidated view is Layer 1.5.
+**Consequence (accepted):** the admin drill-down will show old and new values as separate buckets for historical periods. No backfill (FR-25). The consolidated view is Layer 1.5. *(2026-09-17: moved to Layer 1.1.)*
 
 #### OQ-3 — Simple helper: optional context, required for Business OS through a typed builder
 
@@ -644,7 +645,7 @@ The attribution is passed down to the private generators (`:352`, `:396`, `:525`
 
 ### Items needing a user decision
 
-1. **Onboarding conversation.** When a new owner chats through onboarding, 4 AI calls per session are still recorded on the platform account, not the business. They aren't in the Layer 1 list. **SA recommendation:** leave them out of Layer 1 to keep scope tight, and list them as an explicit exclusion. — **User decision 2026-09-17:** not in Layer 1; added to Layer 1.5 in the roadmap, next to the extended usage report. Applied to Excluded calls, Out of Scope and Layers Roadmap.
+1. **Onboarding conversation.** When a new owner chats through onboarding, 4 AI calls per session are still recorded on the platform account, not the business. They aren't in the Layer 1 list. **SA recommendation:** leave them out of Layer 1 to keep scope tight, and list them as an explicit exclusion. — **User decision 2026-09-17:** not in Layer 1; added to Layer 1.5 in the roadmap, next to the extended usage report. Applied to Excluded calls, Out of Scope and Layers Roadmap. *(The extended usage report later moved to Layer 1.1, 2026-09-17.)*
 2. **"Credits remaining" on the usage card.** The card shows credits **remaining** against the monthly allowance, not credits used. After release, automatic work (the daily insight run and the daily briefing) lowers "remaining" even on days the owner does nothing, and some businesses may show zero remaining. It is display-only: nothing is blocked. The 2026-09-16 acceptance says "totals may rise". Please confirm it also covers "remaining may drop, possibly to zero, from automatic work." — **User decision 2026-09-17:** don't solve now; record as an open item to handle later, layer TBD. Applied as OI-1 and FR-22.
 
 **Also recorded (user decision 2026-09-17):** the cross-tenant read in the website block regenerate route is an open issue to handle later, out of Layer 1 scope → OI-2.
@@ -653,7 +654,7 @@ The attribution is passed down to the private generators (`:352`, `:396`, `:525`
 
 Source: [workplan §13](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_WORKPLAN.md), "Requirement text changes for BA (non-blocking)".
 
-- **RQ-1 — Excluded calls.** `ServiceGeneratorService.ts:304` (broken, no LLM spend) and `GeneratedImageService.ts:186` (direct SDK image generation, not in the ledger). — **Applied 2026-09-17:** Excluded calls table, KI-4, KI-5, AC-21, AC-24, Out of Scope, Integration Points. User decision 2026-09-17: image generation moved to **Layer 1.5** (Layers Roadmap 1.5(c)), with open business question OQ-7.
+- **RQ-1 — Excluded calls.** `ServiceGeneratorService.ts:304` (broken, no LLM spend) and `GeneratedImageService.ts:186` (direct SDK image generation, not in the ledger). — **Applied 2026-09-17:** Excluded calls table, KI-4, KI-5, AC-21, AC-24, Out of Scope, Integration Points. User decision 2026-09-17: image generation moved to **Layer 1.5** (Layers Roadmap 1.5(b), previously 1.5(c)), with open business question OQ-7.
 - **RQ-2 — Verified question store embedding.** Separate call name for `VerifiedQuestions.remember()`. — **Applied 2026-09-17:** catalog `verified_question_store_embedding` (lookup reworded as "match (look up)"), per-call row 4b, AC-8, AC-9, Integration Points.
 - **RQ-3 — Chat analysis always uses the turn id** (ruling (b), T14). — **Applied 2026-09-17:** FR-9, per-call row 2, AC-9.
 - **RQ-4 (optional) — Stale line references.** — **Applied 2026-09-17:** row 1 `Planner.ts:444`; usage mapping `:65-89` (FR-5, FR-21, Integration Points); onboarding build `:840` / `:881` (grouping table, Integration Points, RC-11 annotation); providerFactory 6 `console.*` calls (NFR Logging, Other checks annotation). SA evidence text elsewhere is kept as reviewed.
@@ -692,3 +693,4 @@ Source: [workplan §13](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_
 | 2026-09-17 | BA applied SA code-review correction CR-1 (docs only) | FR-12 no longer treats `WebsiteAnalyzer.ts` as a working non-BOS caller of `getProviderFactory().complete()`: SA verified it is dead and broken (calls non-existent `getDefaultModel` and `complete` on the wrong type; its LLM call always fails). The onboarding conversation is the only live non-BOS caller. AC-7 narrowed to that caller. Excluded calls reason for WebsiteAnalyzer set to "dead and broken, no LLM spend; fix vs retire decided separately"; AC-21, AC-24 and Integration Points name it; OQ-3 and RC-9 annotated. No scope change; 26 FRs, 24 ACs |
 | 2026-09-17 | QA finding parked | Added KI-6: AI intake form generation always falls back because validation rejects the model's questions (QA P-1, workplan §14). Pre-existing, not caused by Layer 1; parked per user decision 2026-09-17. No scope change |
 | 2026-09-17 | Open issue added | Added OI-3: the `bos-llm-typecheck` CI check is not yet a required status check on `main`, so a failure warns but does not block a merge. Needs GitHub admin (SA S-6); recorded as open per user decision 2026-09-17. No scope change |
+| 2026-09-17 | Roadmap: Layer 1.1 added (user decision) | Added Layer 1.1, the admin-only LLM Usage verification tab on `/test-business-os` and its report API ([Layer 1.1 requirement](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md)). It takes over the extended usage report, removed from Layer 1.5 (now: onboarding conversation calls, AI image tracking). Out of Scope row, FR-3 note, OQ-2 and SA-review annotations updated to point at Layer 1.1. Layer 1 scope unchanged; 26 FRs, 24 ACs |
