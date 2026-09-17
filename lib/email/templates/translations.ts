@@ -512,6 +512,17 @@ export const emailTranslations = {
       es: '📝 Motivo',
       he: '📝 סיבה'
     },
+    /*
+     * The reason when the business itself is closing, sent as the account is
+     * deleted. It has to say two things the ordinary cancellation does not: the
+     * business is gone, and the owner is still the person to ask. No rebooking
+     * invitation goes with it — see `offerRebooking` in BookingEmailService.
+     */
+    closedReason: {
+      en: 'This business has ceased operating, so your appointment has been cancelled. Please contact the owner directly with any questions.',
+      es: 'Este negocio ha cesado su actividad, por lo que tu cita ha sido cancelada. Por favor, contacta directamente con el propietario si tienes alguna pregunta.',
+      he: 'העסק הפסיק את פעילותו, ולכן הפגישה שלך בוטלה. לכל שאלה, אנא צרו קשר ישירות עם בעל העסק.'
+    },
     bookAgainPrompt: {
       en: 'Would you like to book a new appointment?',
       es: '¿Te gustaría reservar una nueva cita?',

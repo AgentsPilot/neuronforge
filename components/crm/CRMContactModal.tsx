@@ -226,7 +226,7 @@ export function CRMContactModal({ contact, stages, isOpen, onClose, onContactUpd
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-full sm:max-w-3xl h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden">
+      <DialogContent className="w-full sm:max-w-3xl h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden">
         {/* Sticky Header */}
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 bg-[var(--v2-bg)]">
           <DialogHeader className="rtl:text-right">

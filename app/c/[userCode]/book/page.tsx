@@ -174,10 +174,41 @@ export default async function StandaloneBookingPage({ params, searchParams }: Pa
   const { userCode } = await params;
   const { service: initialServiceId, services: servicesParam } = await searchParams;
 
-  const [businessData, brand] = await Promise.all([
-    getBusinessData(userCode),
-    resolvePublicBranding({ by: 'userCode', userCode }),
-  ]);
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * CAUGHT, BECAUSE A LATE THROW HERE CANNOT BE RENDERED.
+   *
+   * These two awaits reach the database and, through branding, the network.
+   * Either can fail — a dropped connection, a timeout under load, a row that
+   * has gone away mid-request. Uncaught, the throw lands after the segment
+   * layout has already flushed the response shell, and there is no render pass
+   * left to put an error page into. Next defers its error boundary onto a timer
+   * and that boundary then calls `usePathname` outside a render:
+   *
+   *   TypeError: Cannot read properties of null (reading 'useContext')
+   *     at usePathname (next/dist/client/components/navigation.js)
+   *     at ErrorBoundary (next/dist/client/components/error-boundary.js)
+   *     at Timeout._onTimeout
+   *
+   * That trace names the SECONDARY crash and says nothing about what actually
+   * failed, which is why this page has been hard to diagnose from its logs. The
+   * same shape was fixed for `notFound()` below; the fetches were left exposed.
+   *
+   * Catching turns an unreadable 500 into the business's own error screen, and
+   * — the part that matters for anyone debugging this next — logs the REAL
+   * error instead of losing it behind the boundary's own failure.
+   */
+  let businessData: Awaited<ReturnType<typeof getBusinessData>> | null = null;
+  let brand: Awaited<ReturnType<typeof resolvePublicBranding>> | null = null;
+
+  try {
+    [businessData, brand] = await Promise.all([
+      getBusinessData(userCode),
+      resolvePublicBranding({ by: 'userCode', userCode }),
+    ]);
+  } catch (error) {
+    logger.error({ err: error, userCode }, 'Failed to load the standalone booking page');
+  }
 
   /*
    * ───────────────────────────────────────────────────────────────────────────

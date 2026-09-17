@@ -215,7 +215,7 @@ export function AgentSetupWizard({
   if (currentStep === 'selection') {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-        <Card className="w-full max-w-3xl max-h-[90vh] flex flex-col border-[var(--v2-border)] bg-[var(--v2-surface)]">
+        <Card className="w-full max-w-3xl max-h-[90dvh] flex flex-col border-[var(--v2-border)] bg-[var(--v2-surface)]">
           <CardHeader className="border-b border-[var(--v2-border)] flex-shrink-0">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">

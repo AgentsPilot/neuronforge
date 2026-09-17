@@ -513,7 +513,7 @@ export default function AdminMessages() {
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-slate-800/95 backdrop-blur-xl rounded-xl border border-white/10 max-w-4xl w-full max-h-[90vh] overflow-y-auto"
+            className="bg-slate-800/95 backdrop-blur-xl rounded-xl border border-white/10 max-w-4xl w-full max-h-[90dvh] overflow-y-auto"
           >
             <div className="p-6 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-4">

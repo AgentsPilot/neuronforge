@@ -146,7 +146,7 @@ export default function QueueManagerV2() {
 
   const ExecutionDetailsModal = ({ execution, onClose }: { execution: AgentExecution; onClose: () => void }) => (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-slate-800/95 backdrop-blur-xl rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-white/10">
+      <div className="bg-slate-800/95 backdrop-blur-xl rounded-xl shadow-2xl max-w-4xl w-full max-h-[90dvh] overflow-y-auto border border-white/10">
         <div className="sticky top-0 bg-slate-800/95 backdrop-blur-xl px-6 py-4 border-b border-white/10 flex justify-between items-center">
           <div>
             <h2 className="text-xl font-semibold text-white">Execution Details</h2>

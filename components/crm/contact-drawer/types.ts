@@ -127,6 +127,14 @@ export interface SessionPaymentPlan {
     trigger: 'date' | 'manual' | null;
     invoiceId: string | null;
     dueDate: string | null;
+    /**
+     * When the money actually arrived.
+     *
+     * The row could say a stage was paid and never when, which is the first
+     * thing an owner reconciling a bank statement needs. Selected by the
+     * proposals API all along and dropped at the mapping.
+     */
+    paidAt?: string | null;
   }>;
 }
 

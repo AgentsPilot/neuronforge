@@ -54,7 +54,7 @@ export function RemoveStepModal({
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-300">
+      <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto animate-in zoom-in-95 duration-300">
         {/* Modal Header */}
         <div className="px-6 py-5 bg-gradient-to-r from-red-500 to-rose-600">
           <div className="flex items-center gap-3 text-white">

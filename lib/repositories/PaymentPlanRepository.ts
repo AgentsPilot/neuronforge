@@ -108,8 +108,25 @@ export interface PaymentPlanInstallmentInsert {
   installment_number: number;
   amount: number;
   currency: string;
-  due_date: string;
+  /**
+   * When this stage falls due, or NULL when nothing decides that yet.
+   *
+   * A milestone plan bills its later stages when the owner says the work
+   * happened, so they have no date until then — see `trigger`. Typed as
+   * required-and-non-null before, which is why the one caller that writes
+   * milestones bypassed this repository and inserted directly.
+   */
+  due_date: string | null;
   status?: InstallmentStatus;
+  /** The quote this stage came from, when it came from one. */
+  proposal_id?: string | null;
+  /** What the client sees on the invoice for this stage, e.g. "Deposit". */
+  label?: string | null;
+  /**
+   * 'date' bills on `due_date`; 'manual' waits for the owner to mark the work
+   * done. Milestone plans use both — a dated deposit, then manual stages.
+   */
+  trigger?: 'date' | 'manual' | null;
 }
 
 export interface PaymentPlanInstallmentUpdate {
@@ -534,6 +551,46 @@ export class PaymentPlanRepository {
   /**
    * Update an installment
    */
+  /**
+   * Write a whole schedule of stages at once.
+   *
+   * One statement rather than a loop: a half-written schedule bills a client
+   * for part of what they agreed, and there is no sensible way to unwind it
+   * afterwards. A single insert either records the plan or records nothing.
+   *
+   * `createInstallmentsForBooking` above cannot serve this: it DERIVES the
+   * schedule from a plan and a start date, which suits a recurring plan and
+   * cannot express milestones the owner priced individually. This takes rows
+   * that have already been decided.
+   */
+  async createInstallments(
+    rows: PaymentPlanInstallmentInsert[]
+  ): Promise<PaymentPlanRepositoryResult<PaymentPlanInstallment[]>> {
+    try {
+      if (rows.length === 0) return { data: [], error: null };
+
+      logger.info(
+        { userId: rows[0].user_id, planId: rows[0].payment_plan_id, count: rows.length },
+        'Creating installments'
+      );
+
+      const { data, error } = await this.supabase
+        .from('payment_plan_installments')
+        .insert(rows)
+        .select();
+
+      if (error) throw error;
+
+      return { data: data ?? [], error: null };
+    } catch (error) {
+      logger.error(
+        { err: error, userId: rows[0]?.user_id, planId: rows[0]?.payment_plan_id },
+        'Failed to create installments'
+      );
+      return { data: null, error: error as Error };
+    }
+  }
+
   async updateInstallment(
     installmentId: string,
     userId: string,

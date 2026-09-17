@@ -26,12 +26,14 @@
  */
 
 import { createLogger } from '@/lib/logger';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
+import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import {
   dueDateFromTerms,
   resolveTermsDays,
   termsValueForDays,
 } from '@/lib/payments/paymentTerms';
-import { supabaseServer } from '@/lib/supabaseServer';
 import { paymentInvoiceRepository } from '@/lib/repositories/PaymentRepository';
 import type { Proposal, PaymentShape } from '@/lib/repositories/ProposalRepository';
 
@@ -146,10 +148,8 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
     status: 'pending',
   }));
 
-  const { data: stageRows, error: stageError } = await supabaseServer
-    .from('payment_plan_installments')
-    .insert(rows)
-    .select('id, installment_number');
+  const { data: stageRows, error: stageError } =
+    await paymentPlanRepository.createInstallments(rows);
   if (stageError) {
     logger.error({ err: stageError, proposalId: proposal.id, planId }, 'Could not create the stages');
     return { invoiceId: null, planId, dueNow: 0 };
@@ -177,10 +177,19 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
       (a, b) => (a.installment_number ?? 0) - (b.installment_number ?? 0)
     )[0];
 
-    const { error: linkError } = await supabaseServer
-      .from('payment_plan_installments')
-      .update({ invoice_id: invoiceId })
-      .eq('id', first.id);
+    /*
+     * Through the repository, which also scopes the write to the owner.
+     *
+     * The direct update matched on `id` alone. An id is not a permission — it
+     * is a guess away from another business's stage — and this path runs as the
+     * service role, so RLS was not going to catch it either. The repository
+     * carries `.eq('user_id', …)`, so the scope is no longer optional.
+     */
+    const { error: linkError } = await paymentPlanRepository.updateInstallment(
+      first.id,
+      proposal.user_id,
+      { invoice_id: invoiceId }
+    );
 
     if (linkError) {
       logger.error(
@@ -213,13 +222,20 @@ export async function applyAcceptance(proposal: Proposal): Promise<AcceptanceRes
  * terms somebody already signed.
  */
 async function termsDaysFor(proposal: Proposal): Promise<number> {
-  const { data: profile } = await supabaseServer
-    .from('business_profiles')
-    .select('invoice_payment_terms_days')
-    .eq('user_id', proposal.user_id)
-    .maybeSingle();
+  /*
+   * Through the repository, not a direct query.
+   *
+   * This read the table itself and discarded the error along with it — the
+   * destructure took `data` only, so a failed read was indistinguishable from a
+   * business that had set no terms, and both quietly produced 30-day invoices.
+   * The repository logs the failure; the fallback below is then a decision
+   * rather than an accident.
+   */
+  const { data: businessDays } = await businessProfileRepository.getPaymentTermsDays(
+    proposal.user_id
+  );
 
-  return resolveTermsDays(proposal.payment_terms_days, profile?.invoice_payment_terms_days);
+  return resolveTermsDays(proposal.payment_terms_days, businessDays);
 }
 
 function dueDateFor(shape: PaymentShape, index: number, from: string): string {
@@ -237,9 +253,7 @@ async function createPlan(
   amounts: number[]
 ): Promise<string | null> {
   try {
-    const { data, error } = await supabaseServer
-      .from('payment_plans')
-      .insert({
+    const { data, error } = await paymentPlanRepository.create({
         user_id: proposal.user_id,
         service_id: proposal.service_id,
         name: proposal.title,
@@ -250,9 +264,7 @@ async function createPlan(
         // stages carry their own; this is the headline, not the source of truth.
         installment_amount: amounts[0],
         installment_frequency: 'monthly',
-      })
-      .select('id')
-      .single();
+    });
 
     if (error) throw error;
     return data.id as string;
@@ -279,12 +291,10 @@ async function raiseInvoice(
   try {
     // The terms this client agreed to, falling back to the business's default.
     const termsDays = await termsDaysFor(proposal);
-    const { data: contact } = await supabaseServer
-      .from('crm_contacts')
-      .select('first_name, last_name, email')
-      .eq('id', proposal.contact_id)
-      .eq('user_id', proposal.user_id)
-      .maybeSingle();
+    const { data: contact } = await crmContactRepository.findById(
+      proposal.contact_id,
+      proposal.user_id
+    );
 
     const numberResult = await paymentInvoiceRepository.getNextInvoiceNumber(proposal.user_id);
 

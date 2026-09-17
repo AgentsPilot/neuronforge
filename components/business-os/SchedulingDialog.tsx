@@ -8,6 +8,8 @@ import { SchedulingBookingModal } from '@/components/scheduling/SchedulingBookin
 import { Calendar, Plus, Loader2, X, Search, UserPlus } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { businessDayFor, wallClockToUtc } from '@/lib/business-os/businessDay';
+import { safeTimezone, toBusinessLocalInput, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import { DEFAULT_AVAILABILITY, parseAvailability, type WeeklyAvailability } from '@/components/scheduling/AvailabilityEditor';
 import type { SchedulingService, SchedulingBooking } from '@/lib/repositories/SchedulingRepository';
 
@@ -26,20 +28,32 @@ const LOCALE_MAP: Record<string, string> = {
   he: 'he-IL'
 };
 
-// Format a Date to local datetime-local input format (YYYY-MM-DDTHH:MM)
-function formatDateTimeLocal(date: Date): string {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+/**
+ * Format a Date for a `datetime-local` input (YYYY-MM-DDTHH:MM).
+ *
+ * The input has no concept of a zone — it shows exactly the string it is given
+ * — so the string must already be the BUSINESS's wall clock. This was built
+ * from `getFullYear`/`getHours`, which is the browser's, so an owner away from
+ * the business's zone opened the form pre-filled with the wrong hour and, near
+ * midnight, the wrong day.
+ */
+function formatDateTimeLocal(date: Date, timezone: string): string {
+  return toBusinessLocalInput(date, timezone);
 }
 
-// Format date for display (e.g., "Mon, Jan 15")
-function formatDateShort(date: Date, language: string = 'en'): string {
+/**
+ * The DAY a slot falls on, where the business is.
+ *
+ * Without `timeZone` this answers in the reader's zone, and near either end of
+ * the day the two disagree about the date itself — a nine o'clock Monday
+ * appointment in New York is Monday afternoon in Jerusalem, but a six o'clock
+ * evening one is already Tuesday. Getting the hour right and the weekday wrong
+ * is a worse failure than getting both wrong, because it looks correct.
+ */
+function formatDateShort(date: Date, language: string = 'en', timezone?: string): string {
   const locale = LOCALE_MAP[language] || 'en-US';
   return date.toLocaleDateString(locale, {
+    ...(timezone ? { timeZone: timezone } : {}),
     weekday: 'short',
     month: 'short',
     day: 'numeric'
@@ -87,32 +101,49 @@ function isSlotBooked(
   });
 }
 
-// Generate next available slots based on availability
-// CRITICAL: Availability times are in LOCAL timezone (business hours like "09:00" = 9am local)
-// Bookings in DB are stored in UTC, so we must convert for comparison
+/**
+ * The next bookable slots, in the BUSINESS's timezone.
+ *
+ * Availability is stored as wall-clock strings — "09:00" means nine in the
+ * morning where the business is — so turning one into a real moment needs that
+ * zone and nothing else. This built them with `setHours` instead, which uses
+ * whichever zone the reader's browser is in: a New York business viewed from
+ * Jerusalem was offered 09:00–17:00 Israel time, which is 02:00–10:00 at home,
+ * almost entirely outside the hours it actually works.
+ *
+ * Bookings are stored as UTC instants, so comparison needs no conversion once
+ * the slot is a real instant rather than a browser-local guess.
+ */
 function getNextAvailableSlots(
   availability: WeeklyAvailability | undefined,
   serviceDurationMinutes: number,
   maxSlots: number = 4,
-  existingBookings: SchedulingBooking[] = []
+  existingBookings: SchedulingBooking[] = [],
+  timezone: string = 'UTC'
 ): QuickPickSlot[] {
   if (!availability) return [];
 
   const slots: QuickPickSlot[] = [];
   const now = new Date();
-  const today = now.getDay();
 
   for (let dayOffset = 0; dayOffset < 14 && slots.length < maxSlots; dayOffset++) {
-    const dayIndex = (today + dayOffset) % 7;
-    const dayKey = DAY_KEYS[dayIndex];
+    /*
+     * Which day this is WHERE THE BUSINESS IS.
+     *
+     * `now.getDay()` gave the browser's answer, so for most of the evening a
+     * Jerusalem reader was looking up tomorrow's opening hours against a New
+     * York business still working today.
+     *
+     * The weekday is read off the business's own date string at midday UTC —
+     * far enough from either boundary that no offset can push it onto the
+     * neighbouring day.
+     */
+    const day = businessDayFor(now, timezone, dayOffset);
+    const [dayYear, dayMonth, dayDate] = day.date.split('-').map(Number);
+    const dayKey = DAY_KEYS[new Date(`${day.date}T12:00:00Z`).getUTCDay()];
     const daySlots = availability[dayKey] || [];
 
     if (daySlots.length === 0) continue;
-
-    // Create date in LOCAL timezone for this day
-    const targetDate = new Date(now);
-    targetDate.setDate(now.getDate() + dayOffset);
-    targetDate.setHours(0, 0, 0, 0);
 
     for (const slot of daySlots) {
       if (slots.length >= maxSlots) break;
@@ -120,19 +151,21 @@ function getNextAvailableSlots(
       const [startHour, startMinute] = slot.start.split(':').map(Number);
       const [endHour, endMinute] = slot.end.split(':').map(Number);
 
-      // Create time slots in LOCAL timezone
-      let currentStart = new Date(targetDate);
-      currentStart.setHours(startHour, startMinute, 0, 0);
-
-      const slotEnd = new Date(targetDate);
-      slotEnd.setHours(endHour, endMinute, 0, 0);
+      let currentStart = wallClockToUtc(dayYear, dayMonth, dayDate, startHour, startMinute, timezone);
+      const slotEnd = wallClockToUtc(dayYear, dayMonth, dayDate, endHour, endMinute, timezone);
 
       // For today, skip past time slots
       if (dayOffset === 0) {
-        const roundedNow = new Date(now);
-        const minutes = roundedNow.getMinutes();
-        roundedNow.setMinutes(minutes < 30 ? 30 : 60, 0, 0);
-        if (minutes >= 30) roundedNow.setHours(roundedNow.getHours());
+        /*
+         * Now, rounded up to the next half hour.
+         *
+         * Done on the epoch rather than with `setMinutes`, which reads and
+         * writes the BROWSER's clock — and whose `setMinutes(60)` rollover also
+         * quietly moved the date near midnight. Rounding an instant to a
+         * 30-minute boundary needs no zone at all.
+         */
+        const HALF_HOUR = 30 * 60 * 1000;
+        const roundedNow = new Date(Math.ceil(now.getTime() / HALF_HOUR) * HALF_HOUR);
         if (roundedNow > currentStart) {
           currentStart = roundedNow;
         }
@@ -169,6 +202,57 @@ export function SchedulingDialog({
   const [services, setServices] = useState<SchedulingService[]>([]);
   const [bookings, setBookings] = useState<SchedulingBooking[]>([]);
   const [availability, setAvailability] = useState<WeeklyAvailability>(DEFAULT_AVAILABILITY);
+  /*
+   * The zone the business works in — not the one the reader is sitting in.
+   *
+   * Availability is wall-clock ("09:00" = nine where the business is) and every
+   * displayed time is read against this, so both the slots offered and the
+   * hours shown are meaningless without it.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THIS USED TO BE TWO STATES, AND THEY DISAGREED
+   *
+   * There was a `bookingTimezone` fed from the availability API, which reads
+   * `user_preferences.timezone`, AND a `timezone` seeded from the BROWSER and
+   * then replaced from `/api/user/profile`, which reads `profiles.timezone`.
+   * Two columns, two fetches, one component: the slot builder used one and the
+   * modals were handed the other.
+   *
+   * The two columns had genuinely drifted — three accounts read
+   * `profiles = Asia/Jerusalem` against `user_preferences = UTC` — so this was
+   * not a theoretical hazard. `/api/user/profile` now mirrors a timezone change
+   * into `user_preferences`, and this component reads that one source, arriving
+   * with the availability it describes.
+   *
+   * `UTC` until it arrives rather than the browser's zone, deliberately: a
+   * placeholder that happens to be right for an owner sitting in the office is
+   * one that hides the bug until they travel.
+   */
+  const [timezone, setTimezone] = useState<string>('UTC');
+  /**
+   * Has the real zone arrived yet?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE PLACEHOLDER WAS BEING USED AS AN ANSWER
+   *
+   * `timezone` starts at `UTC` and is replaced a moment later by the value the
+   * availability fetch carries. For DISPLAY that placeholder is harmless — a
+   * label is briefly wrong and then corrects itself.
+   *
+   * The quick-pick builder is different: it uses the zone to decide WHICH DAY
+   * IS TODAY, and then labels its slots "Today" and "Tomorrow" from that. At
+   * 9pm in New York it is already the next day in UTC, so the placeholder run
+   * produced slots stamped `dayOffset: 0` whose real date was tomorrow. The
+   * chip read "Today" while the Start Time field beneath it — correctly zoned —
+   * read tomorrow. Two controls, one slot, two different days.
+   *
+   * The memo re-runs when the zone lands, but the form is initialised from the
+   * FIRST result, so the wrong day was already in the inputs.
+   *
+   * So the builder waits. A placeholder is fine to show and not fine to compute
+   * with.
+   */
+  const [timezoneReady, setTimezoneReady] = useState(false);
 
   // Side panel booking form state
   /** The slot a click landed on, handed to the shared modal as its start time. */
@@ -254,6 +338,10 @@ export function SchedulingDialog({
           todaySlots: parsed[DAY_KEYS[new Date().getDay()]]
         });
         setAvailability(parsed);
+        if (availabilityData?.timezone) setTimezone(safeTimezone(availabilityData.timezone as string));
+        // Ready even when the response carried no zone: UTC is then the real
+        // answer for this business, not a placeholder standing in for one.
+        setTimezoneReady(true);
       }
     } catch (error) {
       logger.error({ err: error }, 'Failed to fetch scheduling data');
@@ -300,24 +388,50 @@ export function SchedulingDialog({
     let endTime: string;
 
     if (prefillDate && prefillHour !== undefined) {
-      const startDate = new Date(prefillDate);
-      startDate.setHours(prefillHour, 0, 0, 0);
+      /*
+       * The cell the owner clicked, as the instant it means.
+       *
+       * `prefillHour` is the grid's hour, and the grid's hours are the
+       * BUSINESS's — they come from its availability. `setHours` wrote that
+       * number onto the browser's clock instead, so clicking the 2pm cell from
+       * another zone created a booking at 2pm THERE.
+       *
+       * The date comes off `prefillDate`'s calendar fields rather than by
+       * converting it: it is a browser-local midnight standing for a column, so
+       * the fields are the day meant and the instant is not.
+       */
+      const cellKey = `${prefillDate.getFullYear()}-${String(prefillDate.getMonth() + 1).padStart(2, '0')}-${String(prefillDate.getDate()).padStart(2, '0')}`;
+      const startDate = businessInstant(cellKey, `${String(prefillHour).padStart(2, '0')}:00`, timezone);
       const endDate = new Date(startDate.getTime() + serviceDuration * 60 * 1000);
-      startTime = formatDateTimeLocal(startDate);
-      endTime = formatDateTimeLocal(endDate);
+      startTime = formatDateTimeLocal(startDate, timezone);
+      endTime = formatDateTimeLocal(endDate, timezone);
     } else {
-      // Default to first available slot
-      const quickSlots = getNextAvailableSlots(availability, serviceDuration, 1, bookings);
+      /*
+       * Default to the first available slot — but only once the zone is known.
+       *
+       * Same reason the quick-pick memo waits: this builder decides which day
+       * is today from the zone, and against the UTC placeholder it pre-filled
+       * the form with the wrong day. See `timezoneReady`.
+       */
+      const quickSlots = timezoneReady
+        ? getNextAvailableSlots(availability, serviceDuration, 1, bookings, timezone)
+        : [];
+
       if (quickSlots.length > 0) {
-        startTime = formatDateTimeLocal(quickSlots[0].start);
-        endTime = formatDateTimeLocal(quickSlots[0].end);
+        startTime = formatDateTimeLocal(quickSlots[0].start, timezone);
+        endTime = formatDateTimeLocal(quickSlots[0].end, timezone);
       } else {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(9, 0, 0, 0);
+        /*
+         * Nine tomorrow, on the BUSINESS's calendar.
+         *
+         * `setDate`/`setHours` built that on the browser's, which near midnight
+         * is a different day and, for a travelling owner, a different hour.
+         */
+        const tomorrowKey = shiftBusinessDateKey(businessDateKey(new Date(), timezone), 1);
+        const tomorrow = businessInstant(tomorrowKey, '09:00', timezone);
         const endDate = new Date(tomorrow.getTime() + serviceDuration * 60 * 1000);
-        startTime = formatDateTimeLocal(tomorrow);
-        endTime = formatDateTimeLocal(endDate);
+        startTime = formatDateTimeLocal(tomorrow, timezone);
+        endTime = formatDateTimeLocal(endDate, timezone);
       }
     }
 
@@ -369,6 +483,17 @@ export function SchedulingDialog({
   };
 
   const handleBookingClick = (booking: SchedulingBooking) => {
+    /*
+     * A backstop, not the gate.
+     *
+     * The calendar already refuses the click and drops the pointer cursor for a
+     * completed booking, which is what the reader actually experiences. This is
+     * here so that a future caller of `onBookingClick` — another view, a
+     * keyboard handler — cannot reopen an editor over a settled meeting just by
+     * forgetting the rule.
+     */
+    if (booking.status === 'completed') return;
+
     setEditingBooking(booking);
     setShowEditModal(true);
   };
@@ -451,7 +576,7 @@ export function SchedulingDialog({
       setFormData(prev => ({
         ...prev,
         service_id: serviceId,
-        end_time: formatDateTimeLocal(end)
+        end_time: formatDateTimeLocal(end, timezone)
       }));
     }
   };
@@ -487,7 +612,10 @@ export function SchedulingDialog({
           client_phone: formData.client_phone || undefined,
           start_time: new Date(formData.start_time).toISOString(),
           end_time: new Date(formData.end_time).toISOString(),
-          timezone: 'UTC',
+          /* The zone these times were composed in. It said 'UTC' regardless,
+             so every confirmation email and client-facing page downstream
+             presented the appointment at the wrong hour. */
+          timezone,
           notes: formData.notes || undefined
         })
       });
@@ -530,50 +658,35 @@ export function SchedulingDialog({
   const selectedService = services.find(s => s.id === formData.service_id);
   const serviceDuration = selectedService?.duration_minutes || 60;
   const quickSlots = React.useMemo(() => {
-    const slots = getNextAvailableSlots(availability, serviceDuration, 4, bookings);
+    /*
+     * Nothing until the zone is known. See `timezoneReady`: the builder decides
+     * which day is "today" from the zone, so running it against the UTC
+     * placeholder produced chips labelled Today whose real date was tomorrow.
+     */
+    if (!timezoneReady) return [];
 
-    // Debug timezone information
-    const now = new Date();
-    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const timezoneOffset = -now.getTimezoneOffset() / 60; // Hours from UTC
-
-    console.log('🌍 TIMEZONE DEBUG:', {
-      userTimezone,
-      timezoneOffset: `UTC${timezoneOffset >= 0 ? '+' : ''}${timezoneOffset}`,
-      currentTime: {
-        iso: now.toISOString(),
-        local: now.toLocaleString(),
-        hours: now.getHours(),
-        minutes: now.getMinutes()
-      },
-      availability: Object.entries(availability).filter(([_, slots]) => slots.length > 0),
-      generatedSlots: slots.length,
-      slotsDetail: slots.map(s => ({
-        dayOffset: s.dayOffset,
-        start: {
-          iso: s.start.toISOString(),
-          local: s.start.toLocaleString(),
-          hours: s.start.getHours()
-        },
-        end: {
-          iso: s.end.toISOString(),
-          local: s.end.toLocaleString()
-        }
-      }))
-    });
-
-    return slots;
-  }, [availability, serviceDuration, bookings]);
+    return getNextAvailableSlots(availability, serviceDuration, 4, bookings, timezone);
+    // `timezone` matters: it arrives a moment after mount, and without it here
+    // the slots stay as first computed.
+  }, [availability, serviceDuration, bookings, timezone, timezoneReady]);
 
   const getDayLabel = (offset: number, date: Date): string => {
     if (offset === 0) return language === 'he' ? 'היום' : 'Today';
     if (offset === 1) return language === 'he' ? 'מחר' : 'Tomorrow';
-    return formatDateShort(date, language);
+    return formatDateShort(date, language, timezone);
   };
 
+  /*
+   * Rendered in the BUSINESS's zone.
+   *
+   * Without `timeZone` this formats in the reader's, so a nine o'clock New York
+   * appointment read as four in the afternoon from Jerusalem — the booking was
+   * right, the label was not.
+   */
   const getTimeLabel = (date: Date): string => {
     const locale = LOCALE_MAP[language] || 'en-US';
     return date.toLocaleTimeString(locale, {
+      timeZone: timezone,
       hour: 'numeric',
       minute: '2-digit',
       hour12: language !== 'he'
@@ -583,7 +696,12 @@ export function SchedulingDialog({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="flex flex-col p-0 overflow-hidden w-full sm:w-[95vw] max-w-full sm:max-w-[1200px] h-[100vh] sm:h-[85vh] max-h-[100vh] sm:max-h-[90vh]"
+        /* `100dvh`, not `100vh`. A phone reports `vh` against the viewport
+           WITHOUT the address bar, so a full-height sheet ran under the browser
+           chrome — the toolbar at the foot of the calendar sat below the fold
+           with nothing to scroll. The `max-h` already said `dvh`; the `h` did
+           not, and the taller of the two is what pushed the content down. */
+        className="flex flex-col p-0 overflow-hidden w-full sm:w-[95vw] max-w-full sm:max-w-[1200px] h-[100dvh] sm:h-[85dvh] max-h-[100dvh] sm:max-h-[90dvh]"
       >
         {/* Header */}
         <div
@@ -660,6 +778,7 @@ export function SchedulingDialog({
           setPrefilledSlot(undefined);
         }}
         availability={availability}
+        timezone={timezoneReady ? timezone : undefined}
         existingBookings={bookings}
       />
     </Dialog>

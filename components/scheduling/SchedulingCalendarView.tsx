@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, ChevronRight, Clock, Calendar, Phone, Mail, CheckCircle, XCircle, AlertCircle, Trash2, Loader2, LayoutGrid, List } from 'lucide-react';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { businessClock, businessDateKey, businessInstant, shiftBusinessDateKey } from '@/lib/scheduling/businessTime';
 import type { SchedulingBooking, SchedulingService } from '@/lib/repositories/SchedulingRepository';
 import type { WeeklyAvailability } from './AvailabilityEditor';
 
@@ -98,7 +99,7 @@ export function SchedulingCalendarView({
   availability,
   externalEventsRefreshTrigger
 }: SchedulingCalendarViewProps) {
-  const { t, language, formatCurrency } = useLanguage();
+  const { t, language, formatCurrency, timezone, timeZoneOptions } = useLanguage();
 
   // CRITICAL DEBUG: Check if bookings prop is actually populated
   console.log('🔍 SchedulingCalendarView RENDER:', {
@@ -282,61 +283,47 @@ export function SchedulingCalendarView({
     });
   }, [bookings, filteredBookings, statusFilter, currentWeek, weekDates]);
 
+  /**
+   * Which calendar day a column stands for, as a date key.
+   *
+   * `weekDates` are built with `setDate` and so are browser-local midnights.
+   * Their calendar FIELDS are the day the column means; the instant they sit
+   * at is not, which is why this reads the fields rather than converting.
+   */
+  const columnDateKey = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
   const getBookingsForDay = (date: Date) => {
-    // Create start and end of the day in local timezone
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
-
-    const dayBookings = filteredBookings.filter(booking => {
-      // booking.start_time is UTC string (e.g., "2026-08-07T14:00:00+00:00")
-      // new Date() converts it to local timezone
-      const bookingStart = new Date(booking.start_time);
-      const bookingEnd = new Date(booking.end_time);
-      // Check if booking overlaps with this day (handles timezone edge cases)
-      const overlaps = bookingStart < dayEnd && bookingEnd > dayStart;
-
-      // Log first booking to understand timezone conversion
-      if (booking === filteredBookings[0]) {
-        console.log('📅 First booking timezone check:', {
-          utcStart: booking.start_time,
-          utcEnd: booking.end_time,
-          localStart: bookingStart.toLocaleString(),
-          localEnd: bookingEnd.toLocaleString(),
-          checkingDay: date.toDateString(),
-          dayRange: `${dayStart.toLocaleString()} - ${dayEnd.toLocaleString()}`,
-          overlaps
-        });
-      }
-
-      return overlaps;
-    });
-
-    if (dayBookings.length > 0) {
-      console.log('✅ Bookings for day', date.toDateString(), ':', dayBookings.map(b => ({
-        id: b.id.substring(0, 8),
-        client: b.client_first_name,
-        startUTC: b.start_time,
-        startLocal: new Date(b.start_time).toLocaleString(),
-        status: b.status
-      })));
-    }
-
-    return dayBookings;
+    /*
+     * A booking belongs to the column whose date it falls on ON THE BUSINESS'S
+     * CLOCK.
+     *
+     * This built the day's bounds with `setHours(0,0,0,0)` — the browser's
+     * midnight — and tested overlap against them. For an owner away from the
+     * business's zone those bounds are offset by hours, so a late evening
+     * appointment showed in the next column and an early one in the previous.
+     * Comparing date KEYS asks the question actually being asked: is this
+     * booking on that day, where the business is.
+     */
+    const key = columnDateKey(date);
+    return filteredBookings.filter(
+      booking => businessDateKey(new Date(booking.start_time), timezone) === key
+    );
   };
 
   const getWeekBookings = () => {
     // Set weekStart to beginning of day and weekEnd to end of day
-    const weekStart = new Date(weekDates[0]);
-    weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekDates[6]);
-    weekEnd.setHours(23, 59, 59, 999);
+    // Same reasoning as getBookingsForDay: the week is a range of business
+    // days, and string keys compare exactly without a midnight to get wrong.
+    const firstKey = columnDateKey(weekDates[0]);
+    const lastKey = columnDateKey(weekDates[6]);
 
-    return filteredBookings.filter(booking => {
-      const bookingDate = new Date(booking.start_time);
-      return bookingDate >= weekStart && bookingDate <= weekEnd;
-    }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+    return filteredBookings
+      .filter(booking => {
+        const key = businessDateKey(new Date(booking.start_time), timezone);
+        return key >= firstKey && key <= lastKey;
+      })
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   };
 
   const getServiceName = (serviceId: string) => {
@@ -349,33 +336,28 @@ export function SchedulingCalendarView({
 
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
-    // Always use 12-hour format with AM/PM for better readability
-    // new Date() automatically converts UTC to local timezone
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    // Always use 12-hour format with AM/PM for better readability.
+    // The zone is the BUSINESS's, not the browser's: an owner checking the week
+    // from abroad must read the hours their clients turn up at.
+    return date.toLocaleTimeString('en-US', timeZoneOptions({ hour: 'numeric', minute: '2-digit', hour12: true }));
   };
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    return date.toLocaleDateString(currentLocale, { weekday: 'short', month: 'short', day: 'numeric' });
+    return date.toLocaleDateString(currentLocale, timeZoneOptions({ weekday: 'short', month: 'short', day: 'numeric' }));
   };
 
   const getBookingPosition = (startTime: string) => {
-    // IMPORTANT: new Date() converts UTC string to local timezone automatically
-    const date = new Date(startTime);
-    const hour = date.getHours(); // This is LOCAL hour
-    const minutes = date.getMinutes(); // This is LOCAL minutes
-
-    console.log(`📍 Booking position for ${startTime}:`, {
-      utc: startTime,
-      localTime: date.toLocaleString(),
-      localHour: hour,
-      localMinutes: minutes,
-      calendarStartHour,
-      position: ((hour - calendarStartHour) * ROW_HEIGHT) + (minutes / 60 * ROW_HEIGHT)
-    });
-
-    // Calendar starts at the first visible hour
-    return ((hour - calendarStartHour) * ROW_HEIGHT) + (minutes / 60 * ROW_HEIGHT);
+    /*
+     * The row a booking sits in is its hour ON THE BUSINESS'S CLOCK.
+     *
+     * This read `getHours()`, which is the browser's. The grid's hour labels
+     * come from the business's availability, so the two disagreed the moment
+     * the owner was not in the business's zone: a 2pm appointment drew in the
+     * 7am row, on top of whatever was genuinely at 7am.
+     */
+    const { hour, minute } = businessClock(new Date(startTime), timezone);
+    return ((hour - calendarStartHour) * ROW_HEIGHT) + (minute / 60 * ROW_HEIGHT);
   };
 
   const getBookingHeight = (startTime: string, endTime: string) => {
@@ -468,26 +450,28 @@ export function SchedulingCalendarView({
 
   // Get external busy slots for a specific day
   const getExternalBusySlotsForDay = (date: Date): ExternalBusySlot[] => {
-    // Create start and end of the day in local timezone
-    const dayStart = new Date(date);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date);
-    dayEnd.setHours(23, 59, 59, 999);
+    // The day's true bounds on the business's clock, so a slot lands in the
+    // column a client would say it is in. Kept as an overlap test rather than
+    // a key match because an external event can span days.
+    const key = columnDateKey(date);
+    const dayStart = businessInstant(key, '00:00', timezone);
+    const dayEnd = businessInstant(shiftBusinessDateKey(key, 1), '00:00', timezone);
 
-    return externalBusySlots.filter(slot => {
-      const slotStart = new Date(slot.start);
-      const slotEnd = new Date(slot.end);
-      // Check if slot overlaps with this day (handles multi-day and timezone edge cases)
-      return slotStart < dayEnd && slotEnd > dayStart;
-    });
+    return externalBusySlots.filter(slot => new Date(slot.start) < dayEnd && new Date(slot.end) > dayStart);
   };
 
   // Check if an hour is blocked by an external event
   const isHourBlockedByExternal = (date: Date, hour: number): boolean => {
-    const hourStart = new Date(date);
-    hourStart.setHours(hour, 0, 0, 0);
-    const hourEnd = new Date(date);
-    hourEnd.setHours(hour + 1, 0, 0, 0);
+    /*
+     * The cell's own hour, as an instant on the business's clock.
+     *
+     * `setHours` made it the browser's hour, so a cell labelled 9am was
+     * compared against a busy slot as though it were 9am somewhere else: an
+     * owner abroad saw the wrong hours greyed out.
+     */
+    const key = columnDateKey(date);
+    const hourStart = businessInstant(key, `${String(hour).padStart(2, '0')}:00`, timezone);
+    const hourEnd = businessInstant(key, `${String(hour + 1).padStart(2, '0')}:00`, timezone);
 
     return externalBusySlots.some(slot => {
       const slotStart = new Date(slot.start);
@@ -499,9 +483,7 @@ export function SchedulingCalendarView({
 
   // Get the position (top offset) for an external busy slot
   const getExternalSlotPosition = (slot: ExternalBusySlot): number => {
-    const start = new Date(slot.start);
-    const hour = start.getHours();
-    const minutes = start.getMinutes();
+    const { hour, minute: minutes } = businessClock(new Date(slot.start), timezone);
     // Clamp to calendar start time
     const clampedHour = Math.max(hour, calendarStartHour);
     const clampedMinutes = hour < calendarStartHour ? 0 : minutes;
@@ -514,9 +496,21 @@ export function SchedulingCalendarView({
     const end = new Date(slot.end);
     const lastVisibleHour = visibleHours[visibleHours.length - 1] || 22;
     // Clamp start to first visible hour if earlier
-    const clampedStart = start.getHours() < calendarStartHour ? new Date(start.setHours(calendarStartHour, 0, 0, 0)) : start;
-    // Clamp end to last visible hour if later
-    const clampedEnd = end.getHours() >= lastVisibleHour ? new Date(end.setHours(lastVisibleHour, 0, 0, 0)) : end;
+    /*
+     * Clamped against the business's hours, and `businessInstant` builds the
+     * clamp rather than `setHours` — which wrote the browser's clock back onto
+     * the date AND mutated it in place, so the same slot measured differently
+     * on a second render.
+     */
+    const startKey = businessDateKey(start, timezone);
+    const clampedStart =
+      businessClock(start, timezone).hour < calendarStartHour
+        ? businessInstant(startKey, `${String(calendarStartHour).padStart(2, '0')}:00`, timezone)
+        : start;
+    const clampedEnd =
+      businessClock(end, timezone).hour >= lastVisibleHour
+        ? businessInstant(businessDateKey(end, timezone), `${String(lastVisibleHour).padStart(2, '0')}:00`, timezone)
+        : end;
     const durationMs = clampedEnd.getTime() - clampedStart.getTime();
     const durationHours = durationMs / (1000 * 60 * 60);
     return Math.max(durationHours * ROW_HEIGHT, 20);
@@ -528,7 +522,7 @@ export function SchedulingCalendarView({
     const end = new Date(slot.end);
     const lastVisibleHour = visibleHours[visibleHours.length - 1] || 22;
     // Slot is visible if it overlaps with visible hours range
-    return start.getHours() < lastVisibleHour && end.getHours() >= calendarStartHour;
+    return businessClock(start, timezone).hour < lastVisibleHour && businessClock(end, timezone).hour >= calendarStartHour;
   };
 
   const totalBookings = weekDates.reduce((acc, date) => acc + getBookingsForDay(date).length, 0);
@@ -615,7 +609,13 @@ export function SchedulingCalendarView({
         {/* Calendar Grid - Glass morphism */}
         <div
           className="overflow-auto scroll-smooth [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full hover:[&::-webkit-scrollbar-thumb]:bg-white/30"
-          style={{ maxHeight: '75vh' }}
+          /*
+            `dvh`, not `vh`. This sits inside a dialog that is itself a
+            full-height sheet on a phone, so a cap measured against a viewport
+            that includes the address bar put the last hours of the day below
+            the fold of a panel that cannot scroll any further.
+          */
+          style={{ maxHeight: '75dvh' }}
         >
           <div className="min-w-[500px]">
             {/* Modern Day Headers */}
@@ -751,17 +751,30 @@ export function SchedulingCalendarView({
                     }
                     {dayBookings.map(booking => {
                       const statusStyle = STATUS_COLORS[booking.status] || STATUS_COLORS.pending;
+                      /*
+                       * A completed meeting opens nothing.
+                       *
+                       * It is a record: it cannot be moved, reassigned or
+                       * turned into a different service, so an edit dialog has
+                       * nothing to offer but the discovery that everything in
+                       * it is locked. Hovering already shows what it was, and
+                       * that is the whole of what there is to know.
+                       *
+                       * The cursor says so too — a pointer over something that
+                       * does not respond is the part that reads as broken.
+                       */
+                      const isRecord = booking.status === 'completed';
                       const height = getBookingHeight(booking.start_time, booking.end_time);
                       const service = getServiceDetails(booking.service_id);
                       const isHovered = hoveredBooking === booking.id;
                       return (
                         <div
                           key={booking.id}
-                          onClick={() => onBookingClick(booking)}
+                          onClick={isRecord ? undefined : () => onBookingClick(booking)}
                           onMouseEnter={() => handleBookingMouseEnter(booking.id)}
                           onMouseLeave={handleBookingMouseLeave}
                           className={`
-                            absolute inset-x-1 cursor-pointer
+                            absolute inset-x-1 ${isRecord ? 'cursor-default' : 'cursor-pointer'}
                             ${statusStyle.bg} ${statusStyle.border} border
                             rounded-lg
                             transition-all duration-200
@@ -938,12 +951,19 @@ export function SchedulingCalendarView({
                 const statusStyle = STATUS_COLORS[booking.status] || STATUS_COLORS.pending;
                 const isConfirmed = booking.status === 'confirmed';
                 const service = getServiceDetails(booking.service_id);
+                /* Same rule as the grid above: a completed meeting is a record,
+                   and a record does not open an editor. */
+                const isRecord = booking.status === 'completed';
 
                 return (
                   <div
                     key={booking.id}
-                    onClick={() => onBookingClick(booking)}
-                    className="p-4 cursor-pointer transition-all duration-200 group relative overflow-hidden hover:border-teal-500/50 active:scale-[0.995]"
+                    onClick={isRecord ? undefined : () => onBookingClick(booking)}
+                    className={`p-4 transition-all duration-200 group relative overflow-hidden ${
+                      isRecord
+                        ? 'cursor-default'
+                        : 'cursor-pointer hover:border-teal-500/50 active:scale-[0.995]'
+                    }`}
                     style={{
                       borderRadius: '16px',
                       backgroundColor: 'var(--v2-surface)',

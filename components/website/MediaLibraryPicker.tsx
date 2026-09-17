@@ -224,7 +224,7 @@ export function MediaLibraryPicker({
       role="presentation"
     >
       <div
-        className="w-full max-w-3xl max-h-[80vh] overflow-hidden rounded-2xl bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl flex flex-col"
+        className="w-full max-w-3xl max-h-[80dvh] overflow-hidden rounded-2xl bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl flex flex-col"
         onClick={event => event.stopPropagation()}
         role="dialog"
         aria-modal="true"

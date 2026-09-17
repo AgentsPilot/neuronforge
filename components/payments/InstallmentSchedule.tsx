@@ -15,6 +15,7 @@ import {
 import { ManualPaymentModal } from './ManualPaymentModal';
 import { PaymentCheckoutButton } from './PaymentCheckoutButton';
 import { useLanguage } from '@/lib/business-os/LanguageContext';
+import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
 
 interface Installment {
   id: string;
@@ -68,7 +69,7 @@ export function InstallmentSchedule({
   onPaymentSuccess,
   readOnly = false
 }: InstallmentScheduleProps) {
-  const { currencyCode } = useLanguage();
+  const { currencyCode, timeZoneOptions, t } = useLanguage();
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [showManualPayment, setShowManualPayment] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,11 +82,11 @@ export function InstallmentSchedule({
   };
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return new Date(dateStr).toLocaleDateString('en-US', timeZoneOptions({
       month: 'short',
       day: 'numeric',
       year: 'numeric'
-    });
+    }));
   };
 
   const isOverdue = (dueDate: string, status: string) => {
@@ -127,12 +128,16 @@ export function InstallmentSchedule({
     }
   };
 
-  // Calculate summary
-  const totalAmount = installments.reduce((sum, i) => sum + i.amount, 0);
-  const paidAmount = installments
-    .filter(i => i.status === 'paid')
-    .reduce((sum, i) => sum + i.amount, 0);
-  const pendingCount = installments.filter(i => i.status === 'pending').length;
+  /*
+   * Only what this component still decides for itself.
+   *
+   * The totals moved to `PaymentPlanTotals`, which derives them from the same
+   * stages — keeping local copies here is how three surfaces ended up summing
+   * the same money in three slightly different ways.
+   *
+   * `overdueCount` stays: it is a judgement about DATES, which the shared
+   * summary takes as an input rather than computing.
+   */
   const overdueCount = installments.filter(i => i.status === 'overdue' || isOverdue(i.due_date, i.status)).length;
   const currency = installments[0]?.currency || currencyCode;
 
@@ -158,29 +163,20 @@ export function InstallmentSchedule({
         )}
       </div>
 
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-lg bg-gray-50 p-3 dark:bg-gray-800">
-          <div className="text-xs text-gray-500 dark:text-gray-400">Total</div>
-          <div className="text-lg font-semibold">
-            {formatCurrency(totalAmount, currency)}
-          </div>
-        </div>
-        <div className="rounded-lg bg-green-50 p-3 dark:bg-green-900/20">
-          <div className="text-xs text-green-600 dark:text-green-400">Paid</div>
-          <div className="text-lg font-semibold text-green-700 dark:text-green-300">
-            {formatCurrency(paidAmount, currency)}
-          </div>
-        </div>
-        <div className={`rounded-lg p-3 ${overdueCount > 0 ? 'bg-red-50 dark:bg-red-900/20' : 'bg-blue-50 dark:bg-blue-900/20'}`}>
-          <div className={`text-xs ${overdueCount > 0 ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'}`}>
-            {overdueCount > 0 ? 'Overdue' : 'Remaining'}
-          </div>
-          <div className={`text-lg font-semibold ${overdueCount > 0 ? 'text-red-700 dark:text-red-300' : 'text-blue-700 dark:text-blue-300'}`}>
-            {formatCurrency(totalAmount - paidAmount, currency)}
-          </div>
-        </div>
-      </div>
+      {/* The same three figures the payment dialog and the booking journey
+          show, from the same component — three hand-rolled versions of one
+          summary is how they drifted into disagreeing. */}
+      <PaymentPlanTotals
+        stages={installments}
+        currency={currency}
+        overdue={overdueCount > 0}
+        overdueLabel={t('crm.payment.overdue')}
+        labels={{
+          total: t('crm.payment.total'),
+          collected: t('crm.payment.collected'),
+          outstanding: t('crm.payment.outstanding'),
+        }}
+      />
 
       {/* Error */}
       {error && (

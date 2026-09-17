@@ -176,7 +176,7 @@ export function LedgerExportModal({ isOpen, onClose, defaultFrom, defaultTo }: P
   return (
     <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
       <DialogContent
-        className="flex w-full sm:max-w-md h-[100vh] sm:h-auto max-h-[100vh] sm:max-h-[90vh] flex-col rounded-none sm:rounded-lg p-0 overflow-hidden"
+        className="flex w-full sm:max-w-md h-[100vh] sm:h-auto max-h-[100dvh] sm:max-h-[90dvh] flex-col rounded-none sm:rounded-lg p-0 overflow-hidden"
         dir={isRTL ? 'rtl' : 'ltr'}
       >
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-5 py-5">

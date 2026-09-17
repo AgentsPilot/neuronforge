@@ -347,7 +347,7 @@ export default function V2AgentDetailPageRedesign() {
               </span>
             </div>
 
-            <div className="space-y-3 max-h-[70vh] overflow-y-auto">
+            <div className="space-y-3 max-h-[70dvh] overflow-y-auto">
               {executions.slice(0, 20).map((exec) => (
                 <div
                   key={exec.id}
@@ -592,7 +592,7 @@ export default function V2AgentDetailPageRedesign() {
             className="fixed inset-0 bg-black/50 z-50"
             onClick={() => setShowInsightsModal(false)}
           />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-3xl max-h-[90vh] bg-[var(--v2-background)] rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col">
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] max-w-3xl max-h-[90dvh] bg-[var(--v2-background)] rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col">
             <div className="p-6 border-b border-[var(--v2-border)] flex items-center justify-between">
               <h2 className="text-xl font-bold text-[var(--v2-text-primary)]">
                 Business Insights & Recommendations

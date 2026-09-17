@@ -489,7 +489,7 @@ function DocumentUploadModal({ isOpen, onClose, onUpload, uploading, t }: Docume
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50">
-      <div className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-6 max-w-lg w-full mx-4" style={{ borderRadius: 'var(--v2-radius-card)' }}>
+      <div className="bg-[var(--v2-bg)] border border-[var(--v2-border)] p-4 sm:p-6 max-w-lg w-full mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto" style={{ borderRadius: 'var(--v2-radius-card)' }}>
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
             {t('crm.document.upload_title')}
@@ -646,7 +646,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
     if (enabledCapabilities.length === 0) return true; // Show all if not configured
     return enabledCapabilities.includes(capability);
   };
-  const { t, isRTL, language } = useLanguage();
+  const { t, isRTL, language, timeZoneOptions } = useLanguage();
   const [activeTab, setActiveTab] = useState<string>(defaultTab || 'details');
   const [intakeTemplates, setIntakeTemplates] = useState<Record<string, IntakeTemplate>>({});
   const [expandedIntake, setExpandedIntake] = useState<string | null>(null);
@@ -697,6 +697,13 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
   const [editingBooking, setEditingBooking] = useState<SchedulingBooking | undefined>(undefined);
   const [services, setServices] = useState<SchedulingService[]>([]);
   const [availability, setAvailability] = useState<Record<string, { start: string; end: string }[]> | undefined>(undefined);
+  /* The zone the hours above are written in: the booking dialog renders every
+     time on the business's clock, not the browser's. */
+  // `undefined` until the availability fetch lands: the booking modal reads an
+  // absent zone as "not known yet" and holds its Today/Tomorrow chips until it
+  // is. A 'UTC' placeholder would be taken for a real answer.
+  const [bookingTimezone, setBookingTimezone] = useState<string | undefined>(undefined);
+
   const [appointmentSort, setAppointmentSort] = useState<'date_desc' | 'date_asc' | 'service'>('date_desc');
 
   // Email history state
@@ -981,6 +988,15 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
       const data = await response.json();
       if (data.success && data.availability) {
         setAvailability(data.availability);
+        /*
+         * Settled either way once the fetch returns.
+         *
+         * `if (data.timezone)` alone would leave it `undefined` for ever on a
+         * response that carried none, and the booking modal reads `undefined`
+         * as "still loading" — so its quick-pick chips would never appear. UTC
+         * is the right answer when the server has no better one.
+         */
+        setBookingTimezone(typeof data.timezone === 'string' && data.timezone ? data.timezone : 'UTC');
       }
     } catch (error) {
       console.error('Failed to fetch availability:', error);
@@ -1832,11 +1848,11 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                           <div className="flex items-center gap-3 text-[var(--v2-text-muted)] text-xs">
                             <span className="flex items-center gap-1">
                               <Calendar className="h-3 w-3" />
-                              {activityDate.toLocaleDateString()}
+                              {activityDate.toLocaleDateString(undefined, timeZoneOptions())}
                             </span>
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
-                              {activityDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {activityDate.toLocaleTimeString([], timeZoneOptions({ hour: '2-digit', minute: '2-digit' }))}
                             </span>
                           </div>
                         </div>
@@ -1892,13 +1908,13 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                             </span>
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
-                              {sentDate.toLocaleDateString()} {sentDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {sentDate.toLocaleDateString(undefined, timeZoneOptions())} {sentDate.toLocaleTimeString([], timeZoneOptions({ hour: '2-digit', minute: '2-digit' }))}
                             </span>
                           </div>
                           {email.opened_at && (
                             <div className="mt-2 text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
                               <Eye className="h-3 w-3" />
-                              {t('crm.email.opened_at')} {new Date(email.opened_at).toLocaleString()}
+                              {t('crm.email.opened_at')} {new Date(email.opened_at).toLocaleString(undefined, timeZoneOptions())}
                             </div>
                           )}
                         </div>
@@ -2059,11 +2075,11 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                       <div className="flex items-center gap-3 text-[var(--v2-text-muted)] text-xs">
                         <span className="flex items-center gap-1">
                           <Calendar className="h-3 w-3" />
-                          {startDate.toLocaleDateString()}
+                          {startDate.toLocaleDateString(undefined, timeZoneOptions())}
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {startDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {startDate.toLocaleTimeString([], timeZoneOptions({ hour: '2-digit', minute: '2-digit' }))}
                         </span>
                         <span>{duration} {t('scheduling.service.minutes')}</span>
                       </div>
@@ -2207,12 +2223,12 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
                         <div className="flex items-center gap-3 text-[var(--v2-text-muted)] text-xs mb-3">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
-                            {t('crm.drawer.intake_from_booking')} {startDate.toLocaleDateString()}
+                            {t('crm.drawer.intake_from_booking')} {startDate.toLocaleDateString(undefined, timeZoneOptions())}
                           </span>
                           {completedDate && (
                             <span className="flex items-center gap-1">
                               <Check className="h-3 w-3" />
-                              {completedDate.toLocaleDateString()}
+                              {completedDate.toLocaleDateString(undefined, timeZoneOptions())}
                             </span>
                           )}
                         </div>
@@ -2757,6 +2773,7 @@ export function CRMContactDrawer({ contact, stages, enabledCapabilities = [], is
         setEditingBooking(undefined);
       }}
       availability={availability}
+      timezone={bookingTimezone}
       prefilledContact={{
         id: contact.id,
         first_name: contact.first_name,

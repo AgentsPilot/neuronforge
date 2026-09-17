@@ -2197,7 +2197,7 @@ export default function OnboardingChatPage() {
     neither. */}
 {showPipelineEditor && (
   <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-    <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full max-h-[80vh] overflow-hidden" dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-md w-full max-h-[80dvh] overflow-hidden" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-[var(--v2-border)]">
         <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
@@ -2212,7 +2212,7 @@ export default function OnboardingChatPage() {
       </div>
 
       {/* Stages List */}
-      <div className="p-4 space-y-2 overflow-y-auto max-h-[50vh]">
+      <div className="p-4 space-y-2 overflow-y-auto max-h-[50dvh]">
         {editingPipelineStages.map((stage, index) => (
           <div
             key={stage.stage_key}
@@ -2393,7 +2393,7 @@ export default function OnboardingChatPage() {
         Five columns of content in a 32rem dialog left the name field about
         160px, so anything longer than two words scrolled inside its own box —
         and the whole point of the editor is checking what it says. */}
-    <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col" dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="bg-[var(--v2-surface)] rounded-2xl shadow-2xl max-w-4xl w-full max-h-[80dvh] overflow-hidden flex flex-col" dir={isRTL ? 'rtl' : 'ltr'}>
       <div className="flex items-center justify-between p-4 border-b border-[var(--v2-border)]">
         <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
           {selectedLanguage === 'he' ? 'מה שאתה מוכר' : selectedLanguage === 'es' ? 'Lo que vendes' : 'What you sell'}

@@ -160,7 +160,7 @@ export function UsageCard() {
       {error && <p style={{ fontSize: '11.5px', color: '#F97316', marginTop: 6 }}>{error}</p>}
 
       <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14, marginBottom: 4 }}>
-        <div style={{ position: 'relative', width: 132, height: 132 }}>
+        <div style={{ position: 'relative', width: 156, height: 156 }}>
           <svg
             viewBox="0 0 36 36"
             style={{
@@ -233,7 +233,7 @@ export function UsageCard() {
           >
             <span
               style={{
-                fontSize: '24px',
+                fontSize: '29px',
                 fontWeight: 700,
                 color: INK,
                 fontVariantNumeric: 'tabular-nums',
@@ -243,13 +243,13 @@ export function UsageCard() {
             >
               {headline}
             </span>
-            <span style={{ fontSize: '10.5px', color: MUTED, marginTop: 3 }}>
+            <span style={{ fontSize: '12px', color: MUTED, marginTop: 4 }}>
               {gauged ? t('usage.available') : t('usage.credits')}
             </span>
             {/* The denominator, so the arc has a scale. Without it a half-full
                 ring is a proportion of nothing in particular. */}
             {gauged && (
-              <span style={{ fontSize: '10px', color: MUTED, marginTop: 2 }}>
+              <span style={{ fontSize: '11px', color: MUTED, marginTop: 2 }}>
                 {t('usage.of')} {formatCredits(allowance!)}
               </span>
             )}

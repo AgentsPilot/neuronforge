@@ -50,6 +50,7 @@ export async function GET(request: NextRequest) {
       { data: pluginConnections },
       { data: stripeConnectAccount },
       { data: websitePage },
+      { data: liveBookingLinks },
     ] = await Promise.all([
       // Business profile - includes availability and dismissed steps
       // Using * to ensure we get all columns including newly added ones
@@ -84,6 +85,22 @@ export async function GET(request: NextRequest) {
         .eq('user_id', user.id)
         .eq('page_type', 'homepage')
         .maybeSingle(),
+      /*
+       * A live BOOKING link is also a way to be reached.
+       *
+       * Only `booking`, and only active. The contact form is created live on
+       * day one and can never dead-end, so counting it would mark this step
+       * done for every account the moment it was made — being messageable is
+       * not being bookable. A booking link is switched on deliberately, after
+       * the same gaps a website has to clear, which is what makes it evidence.
+       */
+      supabaseServer
+        .from('smart_links')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('destination_type', 'booking')
+        .eq('is_active', true)
+        .limit(1),
     ]);
 
     // Debug: Log the full businessProfile and stripe account to see all fields
@@ -114,7 +131,24 @@ export async function GET(request: NextRequest) {
     // a real plugin key, so the step stayed incomplete however many calendars
     // the user connected. The query was corrected; this check was missed.
     const hasCalendar = CALENDAR_PLUGIN_KEYS.some(key => connectedPlugins.has(key));
-    const hasWebsite = !!(websitePage?.published && websitePage?.subdomain);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE STEP IS "CLIENTS CAN REACH YOU", NOT "YOU HAVE A WEBSITE".
+     *
+     * `setupGraph` describes it as "a way for a client to reach and book: a
+     * published site, a landing page or a…" and marks it `mandatory: 'always'`
+     * — but this only ever tested for a published homepage. So a business that
+     * declined a website and switched on a booking link was told, permanently,
+     * that nobody could reach it, with no action available that would ever
+     * clear the step short of building the site it had just refused.
+     *
+     * Either answer is a real address a client can act on, so either satisfies
+     * it. Nothing here is weakened: an unpublished site plus an unpublished
+     * booking link still fails, which is the state a new account starts in.
+     */
+    const hasPublishedSite = !!(websitePage?.published && websitePage?.subdomain);
+    const hasLiveBookingLink = (liveBookingLinks?.length ?? 0) > 0;
+    const hasWebsite = hasPublishedSite || hasLiveBookingLink;
 
     // The look of the business: the same theme drives the site, the invoice PDF
     // and every transactional email, so it is worth prompting for even before a

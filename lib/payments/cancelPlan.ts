@@ -35,6 +35,7 @@ import type Stripe from 'stripe';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { PaymentPlanSubscriptionRepository } from '@/lib/repositories/PaymentPlanSubscriptionRepository';
+import { isPlanStopped } from '@/lib/payments/planStatus';
 import { refundGroup, resolveRefundTargets, type GroupRefundOutcome } from './RefundService';
 import { syncBookingsForTransactions } from './syncBookingPaymentState';
 
@@ -111,7 +112,9 @@ export async function cancelPlan(input: {
     return { ok: false, code: 'NOT_FOUND', message: 'This payment plan could not be found.' };
   }
 
-  const alreadyStopped = plan.status === 'cancelled' || plan.status === 'completed';
+  // Same predicate the deletion check reads, so the two cannot disagree about
+  // whether a plan may still be charged.
+  const alreadyStopped = isPlanStopped(plan.status);
 
   if (!plan.stripe_schedule_id && !plan.stripe_subscription_id && !alreadyStopped) {
     /*

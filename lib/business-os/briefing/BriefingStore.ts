@@ -13,7 +13,7 @@
 import { createHash } from 'crypto';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
-import { narrateBriefing, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
+import { narrateBriefing, PROMPT_VERSION, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
 import type { BriefingFacts } from './BriefingFactsService';
 
 const logger = createLogger({ service: 'BriefingStore' });
@@ -73,6 +73,13 @@ export function hashFacts(
   const material = JSON.stringify({
     language,
     /*
+     * The instructions are part of the output, so they are part of the key.
+     * Without this a change to the narrator's rules reaches only users who
+     * have no cached briefing yet — everyone else keeps the old wording until
+     * the next day, with nothing to indicate why.
+     */
+    prompt: PROMPT_VERSION,
+    /*
      * The business type is part of the fingerprint because it now decides the
      * words. A trainer whose vertical is corrected from 'other' should not keep
      * being served the briefing that called their trainees "clients".
@@ -87,6 +94,31 @@ export function hashFacts(
       : null,
     cancelled: appointments.cancelled.map(c => [c.name, c.timeLocal, c.reason]),
     owed: money.owed.map(o => [o.name, o.amount, o.currency, o.overdue]),
+    /*
+     * Everything the text can say has to be in the fingerprint.
+     *
+     * These three were added to the facts and not to this hash, so each could
+     * change the briefing's words without changing its key — and the cached
+     * version from earlier in the day would be served instead. The money one
+     * was the visible failure: an invoice settled at 14:49 produced a new
+     * "$500 came in today" line that no reader ever saw, because nothing about
+     * the fingerprint had moved.
+     *
+     * The rule this keeps breaking: a fact the narrator may read is a fact this
+     * function must hash. Adding one without the other is silent — no error,
+     * just yesterday's sentence.
+     */
+    completed: appointments.completed,
+    awaitingPayment: appointments.awaitingPayment.map(p => [p.name, p.timeLocal]),
+    received: [money.receivedToday, money.receivedCount],
+    /*
+     * The currency is hashed separately from the amounts because it can move
+     * on its own. With nothing owed it is taken from the day's takings, so
+     * $500 and ₪500 produce identical amounts and counts but different text —
+     * and the symbol on a money figure is not a detail this dashboard gets to
+     * be casual about, having already shipped a ₪ on USD once.
+     */
+    currency: money.currency,
     /*
      * The outlook is part of the fingerprint because it is part of the text.
      * On an otherwise empty day it is the ONLY content, so leaving it out would

@@ -711,13 +711,25 @@ export class SmartLinkRepository {
     payment: SmartLink | null;
   }>> {
     try {
-      // Get existing default links
+      /*
+       * Does a link of this type EXIST — not, is one currently live.
+       *
+       * This filtered on `is_active`, and the booking link is created inactive
+       * by design a few lines below. So the lookup meant to stop this function
+       * recreating a link could never see the one link it always creates off:
+       * every call minted another. And it is called from onboarding AND from
+       * `GET /api/smart-links`, so opening the smart-links page accumulated
+       * duplicates, and any link an owner deliberately switched off came back
+       * on their next visit.
+       *
+       * Deactivating is not deleting. A switched-off link still occupies its
+       * slot, and the only question here is whether that slot is taken.
+       */
       const { data: existing } = await this.supabase
         .from('smart_links')
         .select('*')
         .eq('user_id', userId)
-        .in('destination_type', ['booking', 'form', 'payment'])
-        .eq('is_active', true);
+        .in('destination_type', ['booking', 'form', 'payment']);
 
       const result: {
         booking: SmartLink | null;

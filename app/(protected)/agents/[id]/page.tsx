@@ -82,7 +82,7 @@ const Modal = ({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => 
         className="absolute inset-0 bg-black/30 backdrop-blur-md"
         onClick={onClose}
       />
-      <div className="relative bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 max-w-lg w-full mx-auto max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 max-w-lg w-full mx-auto max-h-[90dvh] overflow-y-auto">
         {children}
       </div>
     </div>,

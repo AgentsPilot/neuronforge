@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 type Language = 'en' | 'es' | 'he';
 export type CurrencyCode = 'USD' | 'EUR' | 'ILS' | 'GBP';
@@ -46,6 +47,37 @@ interface LanguageContextType {
   setCurrency: (code: CurrencyCode) => void;
   availableCurrencies: typeof CURRENCY_CONFIGS;
   formatCurrency: (amount: number | null, options?: { showFree?: boolean; currencyOverride?: CurrencyCode }) => string;
+
+  /**
+   * The business's clock — the one every displayed time must be read against.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHY IT LIVES HERE
+   *
+   * It belongs beside `language` and `currency` for the same reason those do:
+   * it is a fact about the BUSINESS that every screen needs and no screen
+   * should fetch for itself. The alternative was what the codebase actually
+   * had — each list, card and dialog calling `toLocaleTimeString()` with no
+   * zone, which silently means THE BROWSER, so the same booking read one hour
+   * in the drawer, another in the calendar and a third in the email.
+   *
+   * This provider was already fetching `user_preferences` on mount for the
+   * language. Reading one more column off that same row costs nothing and
+   * gives every consumer of `useLanguage()` the right clock for free.
+   *
+   * `UTC` until the row arrives, never the browser's zone: a placeholder that
+   * happens to be right for the owner sitting in the office is a placeholder
+   * that hides the bug until they travel.
+   */
+  timezone: string;
+  /**
+   * `toLocale*` options with the business clock already in them.
+   *
+   * The whole failure mode here is an omitted `timeZone`, which is invisible
+   * at the call site and wrong only for readers elsewhere. Spreading this
+   * makes the zone the default rather than the thing you must remember.
+   */
+  timeZoneOptions: (options?: Intl.DateTimeFormatOptions) => Intl.DateTimeFormatOptions;
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
@@ -98,7 +130,7 @@ const translations = {
 
     // Capabilities
     'capability.website.name': 'Your website',
-    'capability.crm.name': 'Client list',
+    'capability.crm.name': 'Contacts list',
     'capability.scheduling.name': 'Booking calendar',
     'capability.payments.name': 'Payment collection',
     'capability.emails.name': 'Automated emails',
@@ -871,6 +903,11 @@ const translations = {
     'setup.field.tax_id': 'Tax ID',
     'setup.field.address': 'Business address',
     'setup.field.payment_method': 'Bank details',
+    'invoice.gate.title': 'Add your invoice details first',
+    'invoice.gate.body': 'An invoice has to say who is billing and where the money goes. Add these once and every invoice after this one is ready to send.',
+    'invoice.gate.still_needs': 'Still needed',
+    'invoice.gate.action': 'Complete invoice details',
+    'invoice.gate.checking': 'Checking your invoice details…',
     'journey.step.service': 'Service',
     'journey.step.booking': 'Booking',
     'journey.step.details': 'Details',
@@ -2002,6 +2039,24 @@ const translations = {
     'crm.payment.service': 'Service',
     'crm.payment.contact': 'Contact',
     'crm.payment.mark_paid': 'Mark as Paid',
+    // The plan's own arithmetic, shown wherever a plan appears: the payment
+    // dialog, the booking journey and the installment list.
+    'crm.payment.total': 'Total',
+    'crm.payment.collected': 'Collected',
+    'crm.payment.due': 'due',
+    'crm.payment.outstanding': 'Outstanding',
+    'crm.payment.overdue': 'Overdue',
+    // The one stage an action will settle, tagged in the list so the figure
+    // on screen and the figure in the button are visibly the same money.
+    'crm.payment.due_now': 'Due now',
+    'crm.payment.status_paid': 'Paid',
+    'crm.payment.status_invoiced': 'Invoiced',
+    'crm.payment.status_not_billed': 'Not billed yet',
+    'crm.payment.record_payment': 'Record payment',
+    // Says what it does. "Refund" alone, on a plan, could mean either the
+    // money collected or the money still owed.
+    'crm.payment.refund_collected': 'Refund money already collected',
+    'crm.payment.installment': 'Payment',
     'crm.payment.marked_paid_success': 'Payment marked as paid',
     'crm.payment.refund': 'Refund Payment',
     'crm.payment.refund_success': 'Refund processed successfully',
@@ -2967,6 +3022,17 @@ const translations = {
     'media.library.loading': 'Loading your pictures…',
     'media.library.close': 'Close',
     'media.library.upload': 'Upload a picture',
+    "presence.guide.title": "How clients find you",
+    "presence.guide.reachable": "Clients can find you and book you. Everything below is optional from here: a landing page if you want to promote one service on its own, or another link to share somewhere different.",
+    "presence.guide.publish_website": "We wrote your website during setup, from your services, your prices and your hours. It is saved but still private, so nobody can open it yet. Press Edit on the card below and read every section the way a client would, then press Publish. Publishing puts it online at your own address, and from then on it is the first thing a new client sees.",
+    "presence.guide.create_website": "You do not have a website yet. Press Create website below and we will write a first draft for you from what you told us during setup. You can change every word afterwards, and nothing is online until you have read it and pressed Publish.",
+    "presence.guide.publish_landing": "You have a landing page written but not live. A landing page sells one service on its own, so publishing it is enough for clients to find that service and book it. Open it from the list below, read it through, then press Publish on its row.",
+    "presence.guide.activate_link": "You chose to reach clients with a link instead of a website, so your booking link is your front door. It is ready and it is switched off. Open it first to see what a client sees, then use the switch on its row to turn it on. Once it is on, anyone you send it to can pick a service and book a time. Put it in WhatsApp, in your Instagram bio, or at the end of your emails.",
+    "presence.guide.no_route": "There is no way for a client to reach you yet. Either create a website below, or switch on a booking link, and clients will be able to find you and book a time.",
+    "presence.guide.contact_note": "Your contact form is already on, so people can send you a message. It cannot take a booking, which is what the booking link is for.",
+    "presence.guide.also_link": "There is a quicker way as well. Your booking link at the bottom of this page already lists your services and takes bookings, with nothing to write. Turn on its switch and send it to someone today.",
+    "presence.review.title": "This becomes public",
+    "presence.review.body": "Read it as a client would before you publish: the words, the prices, the photographs and the contact details. Anyone with the link will see it.",
     'media.upload.working': 'Uploading…',
     'media.library.source_stock': 'Stock',
     'media.library.source_generated': 'Generated',
@@ -3208,6 +3274,15 @@ const translations = {
     'ledger.export_subtitle': 'A file your accountant can reconcile',
     'ledger.export_action': 'Export',
     'ledger.export_failed': 'The export could not be created. Please try again.',
+    'payments.export.nothing': 'Nothing to export yet',
+    'gap.fix.invoicing': 'Complete invoice details',
+    'settings.security.delete_blocked': 'This account cannot be deleted while money is still owed:',
+    'settings.security.blocker.unpaid_invoices': 'unpaid invoices',
+    'settings.security.blocker.active_payment_plans': 'active payment plans',
+    'settings.security.blocker.scheduled_installments': 'scheduled payments not yet collected',
+    'gap.fix.availability': 'Set your working hours',
+    'payments.stripe.unsupported_title': 'Stripe cannot take card payments here',
+    'payments.stripe.unsupported_desc': 'Stripe does not offer card payments to businesses registered in this country, so a payment account cannot be created. You can still bill clients by invoice — add your invoice details and every booking will be billed that way.',
     'ledger.period': 'Period',
     'ledger.range_this_month': 'This month',
     'ledger.range_last_month': 'Last month',
@@ -4197,6 +4272,11 @@ const translations = {
     'setup.field.tax_id': 'NIF / CIF',
     'setup.field.address': 'Dirección del negocio',
     'setup.field.payment_method': 'Datos bancarios',
+    'invoice.gate.title': 'Primero completa tus datos de factura',
+    'invoice.gate.body': 'Una factura tiene que decir quién cobra y a dónde va el dinero. Complétalos una vez y todas las facturas siguientes estarán listas para enviar.',
+    'invoice.gate.still_needs': 'Todavía falta',
+    'invoice.gate.action': 'Completar datos de factura',
+    'invoice.gate.checking': 'Comprobando tus datos de factura…',
     'journey.step.service': 'Servicio',
     'journey.step.booking': 'Reserva',
     'journey.step.details': 'Datos',
@@ -5304,6 +5384,18 @@ const translations = {
     'crm.payment.service': 'Servicio',
     'crm.payment.contact': 'Contacto',
     'crm.payment.mark_paid': 'Marcar como Pagado',
+    'crm.payment.total': 'Total',
+    'crm.payment.collected': 'Cobrado',
+    'crm.payment.due': 'vence',
+    'crm.payment.outstanding': 'Pendiente',
+    'crm.payment.overdue': 'Vencido',
+    'crm.payment.due_now': 'A cobrar ahora',
+    'crm.payment.status_paid': 'Pagado',
+    'crm.payment.status_invoiced': 'Facturado',
+    'crm.payment.status_not_billed': 'Aún sin facturar',
+    'crm.payment.record_payment': 'Registrar pago',
+    'crm.payment.refund_collected': 'Reembolsar el dinero ya cobrado',
+    'crm.payment.installment': 'Pago',
     'crm.payment.marked_paid_success': 'Pago marcado como pagado',
     'crm.payment.refund': 'Reembolsar Pago',
     'crm.payment.refund_success': 'Reembolso procesado con éxito',
@@ -6265,6 +6357,17 @@ const translations = {
     'media.library.loading': 'Cargando tus imágenes…',
     'media.library.close': 'Cerrar',
     'media.library.upload': 'Subir una imagen',
+    "presence.guide.title": "Cómo te encuentran los clientes",
+    "presence.guide.reachable": "Los clientes pueden encontrarte y reservar. Todo lo de abajo es opcional a partir de aquí: una landing page si quieres promocionar un servicio por separado, u otro enlace para compartir en otro sitio.",
+    "presence.guide.publish_website": "Escribimos tu web durante la configuración, a partir de tus servicios, tus precios y tu horario. Está guardada pero sigue siendo privada, así que nadie puede abrirla todavía. Pulsa Editar en la tarjeta de abajo y lee cada sección como la leería un cliente, y después pulsa Publicar. Al publicar queda online en tu propia dirección, y desde ese momento es lo primero que ve un cliente nuevo.",
+    "presence.guide.create_website": "Todavía no tienes web. Pulsa Crear web abajo y escribiremos un primer borrador con lo que nos contaste en la configuración. Puedes cambiar cada palabra después, y nada está online hasta que lo hayas leído y pulsado Publicar.",
+    "presence.guide.publish_landing": "Tienes una landing page escrita pero sin publicar. Una landing page vende un solo servicio, así que publicarla basta para que los clientes encuentren ese servicio y lo reserven. Ábrela desde la lista de abajo, léela entera y pulsa Publicar en su fila.",
+    "presence.guide.activate_link": "Elegiste llegar a tus clientes con un enlace en vez de una web, así que tu enlace de reserva es tu puerta de entrada. Está listo y está desactivado. Ábrelo primero para ver lo que ve un cliente, y luego actívalo con el interruptor de su fila. Una vez activo, cualquiera a quien se lo envíes puede elegir un servicio y reservar hora. Ponlo en WhatsApp, en tu bio de Instagram o al final de tus correos.",
+    "presence.guide.no_route": "Todavía no hay forma de que un cliente llegue a ti. Crea una web abajo o activa un enlace de reserva, y los clientes podrán encontrarte y reservar hora.",
+    "presence.guide.contact_note": "Tu formulario de contacto ya está activo, así que pueden escribirte. No puede tomar una reserva: para eso está el enlace de reserva.",
+    "presence.guide.also_link": "También hay un camino más rápido. Tu enlace de reserva, al final de esta página, ya muestra tus servicios y acepta reservas, sin nada que escribir. Activa su interruptor y mándaselo hoy a alguien.",
+    "presence.review.title": "Esto se hace público",
+    "presence.review.body": "Léelo como lo leería un cliente antes de publicar: los textos, los precios, las fotos y los datos de contacto. Cualquiera con el enlace lo verá.",
     'media.upload.working': 'Subiendo…',
     'media.library.source_stock': 'Banco',
     'media.library.source_generated': 'Generada',
@@ -6499,6 +6602,15 @@ const translations = {
     'ledger.export_subtitle': 'Un archivo que tu contable puede conciliar',
     'ledger.export_action': 'Exportar',
     'ledger.export_failed': 'No se pudo crear la exportación. Inténtalo de nuevo.',
+    'payments.export.nothing': 'Todavía no hay nada que exportar',
+    'gap.fix.invoicing': 'Completar datos de factura',
+    'settings.security.delete_blocked': 'No se puede eliminar esta cuenta mientras haya dinero pendiente:',
+    'settings.security.blocker.unpaid_invoices': 'facturas sin pagar',
+    'settings.security.blocker.active_payment_plans': 'planes de pago activos',
+    'settings.security.blocker.scheduled_installments': 'pagos programados sin cobrar',
+    'gap.fix.availability': 'Definir tu horario',
+    'payments.stripe.unsupported_title': 'Stripe no puede cobrar con tarjeta aquí',
+    'payments.stripe.unsupported_desc': 'Stripe no ofrece pagos con tarjeta a negocios registrados en este país, así que no se puede crear una cuenta de pagos. Puedes seguir facturando a tus clientes — añade tus datos de factura y cada reserva se cobrará así.',
     'ledger.period': 'Período',
     'ledger.range_this_month': 'Este mes',
     'ledger.range_last_month': 'Mes pasado',
@@ -7147,6 +7259,18 @@ const translations = {
     'crm.payment.service': 'שירות',
     'crm.payment.contact': 'איש קשר',
     'crm.payment.mark_paid': 'סמן כשולם',
+    'crm.payment.total': 'סה\u05f4כ',
+    'crm.payment.collected': 'נגבה',
+    'crm.payment.due': 'לתשלום עד',
+    'crm.payment.outstanding': 'נותר לגבייה',
+    'crm.payment.overdue': 'באיחור',
+    'crm.payment.due_now': 'לגבייה עכשיו',
+    'crm.payment.status_paid': 'שולם',
+    'crm.payment.status_invoiced': 'הופקה חשבונית',
+    'crm.payment.status_not_billed': 'טרם הופקה חשבונית',
+    'crm.payment.record_payment': 'רישום תשלום',
+    'crm.payment.refund_collected': 'החזר על כסף שנגבה',
+    'crm.payment.installment': 'תשלום',
     'crm.payment.marked_paid_success': 'התשלום סומן כשולם',
     'crm.payment.refund': 'החזר תשלום',
     'crm.payment.refund_success': 'ההחזר בוצע בהצלחה',
@@ -8305,6 +8429,17 @@ const translations = {
     'media.library.loading': 'טוען את התמונות שלך…',
     'media.library.close': 'סגירה',
     'media.library.upload': 'העלאת תמונה',
+    "presence.guide.title": "איך לקוחות מוצאים אתכם",
+    "presence.guide.reachable": "לקוחות יכולים למצוא אתכם ולהזמין. כל מה שלמטה הוא רשות מכאן: דף נחיתה אם תרצו לקדם שירות אחד בנפרד, או עוד קישור לשיתוף במקום אחר.",
+    "presence.guide.publish_website": "כתבנו את האתר שלכם בזמן ההקמה, מתוך השירותים, המחירים ושעות הפעילות שמסרתם. הוא שמור אבל עדיין פרטי, ואף אחד לא יכול לפתוח אותו. לחצו על עריכה בכרטיס שלמטה, עברו על כל חלק כמו שלקוח יקרא אותו, ואז לחצו על פרסום. הפרסום מעלה אותו לאוויר בכתובת שלכם, ומאותו רגע זה הדבר הראשון שלקוח חדש רואה.",
+    "presence.guide.create_website": "עדיין אין לכם אתר. לחצו על יצירת אתר למטה ונכתוב עבורכם טיוטה ראשונה ממה שסיפרתם לנו בהקמה. אפשר לשנות כל מילה אחר כך, ושום דבר לא עולה לאוויר עד שתקראו ותלחצו על פרסום.",
+    "presence.guide.publish_landing": "יש לכם דף נחיתה כתוב שעדיין לא פורסם. דף נחיתה מוכר שירות אחד בלבד, ולכן פרסום שלו מספיק כדי שלקוחות ימצאו את השירות הזה ויזמינו אותו. פתחו אותו מהרשימה שלמטה, עברו עליו, ולחצו על פרסום בשורה שלו.",
+    "presence.guide.activate_link": "בחרתם להגיע ללקוחות דרך קישור ולא דרך אתר, ולכן קישור ההזמנות הוא דלת הכניסה שלכם. הוא מוכן והוא כבוי. פתחו אותו קודם כדי לראות מה הלקוח רואה, ואז הפעילו אותו עם המתג בשורה שלו. מרגע שהוא פעיל, כל מי שתשלחו לו יכול לבחור שירות ולקבוע מועד. שימו אותו בוואטסאפ, בביו באינסטגרם, או בסוף המיילים שלכם.",
+    "presence.guide.no_route": "עדיין אין דרך שלקוח יגיע אליכם. צרו אתר למטה או הפעילו קישור הזמנות, ולקוחות יוכלו למצוא אתכם ולקבוע מועד.",
+    "presence.guide.contact_note": "טופס יצירת הקשר שלכם כבר פעיל, אז אפשר לשלוח לכם הודעה. הוא לא יכול לקבל הזמנה, ולשם כך יש את קישור ההזמנות.",
+    "presence.guide.also_link": "יש גם דרך מהירה יותר. קישור ההזמנות שלכם, בתחתית העמוד הזה, כבר מציג את השירותים ומקבל הזמנות, בלי שצריך לכתוב כלום. הפעילו את המתג שלו ושלחו אותו למישהו היום.",
+    "presence.review.title": "זה הופך לציבורי",
+    "presence.review.body": "קראו את זה כמו שלקוח יקרא לפני הפרסום: הטקסטים, המחירים, התמונות ופרטי הקשר. כל מי שיש לו את הקישור יראה את זה.",
     'media.upload.working': 'מעלה…',
     'media.library.source_stock': 'מאגר',
     'media.library.source_generated': 'נוצרה',
@@ -8539,6 +8674,15 @@ const translations = {
     'ledger.export_subtitle': 'קובץ שרואה החשבון שלך יכול להתאים',
     'ledger.export_action': 'ייצוא',
     'ledger.export_failed': 'לא ניתן היה ליצור את הקובץ. נסו שוב.',
+    'payments.export.nothing': 'אין עדיין מה לייצא',
+    'gap.fix.invoicing': 'להשלמת פרטי החשבונית',
+    'settings.security.delete_blocked': 'לא ניתן למחוק את החשבון כל עוד יש כסף פתוח:',
+    'settings.security.blocker.unpaid_invoices': 'חשבוניות שלא שולמו',
+    'settings.security.blocker.active_payment_plans': 'תוכניות תשלום פעילות',
+    'settings.security.blocker.scheduled_installments': 'תשלומים עתידיים שטרם נגבו',
+    'gap.fix.availability': 'להגדרת שעות הפעילות',
+    'payments.stripe.unsupported_title': 'סטרייפ לא מאפשרת גבייה בכרטיס במדינה הזו',
+    'payments.stripe.unsupported_desc': 'סטרייפ לא מציעה תשלומי כרטיס לעסקים הרשומים במדינה הזו, ולכן לא ניתן לפתוח חשבון תשלומים. עדיין אפשר לחייב לקוחות בחשבונית — משלימים את פרטי החשבונית וכל הזמנה תחויב כך.',
     'ledger.period': 'תקופה',
     'ledger.range_this_month': 'החודש',
     'ledger.range_last_month': 'החודש שעבר',
@@ -9299,6 +9443,11 @@ const translations = {
     'setup.field.tax_id': 'ח.פ. / עוסק',
     'setup.field.address': 'כתובת העסק',
     'setup.field.payment_method': 'פרטי בנק',
+    'invoice.gate.title': 'קודם נשלים את פרטי החשבונית',
+    'invoice.gate.body': 'חשבונית צריכה לומר מי גובה ולאן הכסף מועבר. משלימים פעם אחת, וכל החשבוניות מכאן והלאה מוכנות לשליחה.',
+    'invoice.gate.still_needs': 'עדיין חסר',
+    'invoice.gate.action': 'להשלמת פרטי החשבונית',
+    'invoice.gate.checking': 'בודקים את פרטי החשבונית…',
     'journey.step.service': 'שירות',
     'journey.step.booking': 'קביעת תור',
     'journey.step.details': 'פרטים',
@@ -9973,6 +10122,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [currencyCode, setCurrencyCode] = useState<CurrencyCode>('USD');
   const [currencyInitialized, setCurrencyInitialized] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  // Deliberately not the browser's zone as the initial value. See `timezone`
+  // on LanguageContextType.
+  const [timezone, setTimezone] = useState<string>('UTC');
 
   // Load language and currency from localStorage and database on mount
   useEffect(() => {
@@ -9997,12 +10149,18 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         if (user) {
           setUserId(user.id);
 
-          // Load language preference from database (source of truth for emails)
+          // Language AND clock off one row: both are business-level facts that
+          // every screen needs, and fetching them separately is what let the
+          // two drift apart per surface.
           const { data: prefs } = await supabase
             .from('user_preferences')
-            .select('preferred_language')
+            .select('preferred_language, timezone')
             .eq('user_id', user.id)
             .single();
+
+          if (prefs?.timezone) {
+            setTimezone(safeTimezone(prefs.timezone));
+          }
 
           if (prefs?.preferred_language && (prefs.preferred_language === 'en' || prefs.preferred_language === 'es' || prefs.preferred_language === 'he')) {
             setLanguageState(prefs.preferred_language);
@@ -10139,6 +10297,21 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       : `${formattedAmount}${activeCurrency.symbol}`;
   };
 
+  /*
+   * `timeZone` last, so it cannot be overridden by a caller's options object.
+   *
+   * That is the point: a call site that passes its own `timeZone` is either
+   * re-introducing the bug or doing something deliberate enough to format
+   * directly with `Intl`.
+   */
+  const timeZoneOptions = useCallback(
+    (options: Intl.DateTimeFormatOptions = {}): Intl.DateTimeFormatOptions => ({
+      ...options,
+      timeZone: timezone,
+    }),
+    [timezone]
+  );
+
   return (
     <LanguageContext.Provider value={{
       language,
@@ -10149,7 +10322,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
       currencyCode,
       setCurrency,
       availableCurrencies: CURRENCY_CONFIGS,
-      formatCurrency
+      formatCurrency,
+      timezone,
+      timeZoneOptions
     }}>
       {children}
     </LanguageContext.Provider>
@@ -10162,4 +10337,36 @@ export function useLanguage() {
     throw new Error('useLanguage must be used within a LanguageProvider');
   }
   return context;
+}
+
+/**
+ * The business's clock, for a component that may render outside the provider.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A SECOND HOOK
+ *
+ * `useLanguage` THROWS without a provider, which is right for a component whose
+ * every string comes from it. The clock is needed by cards and lists that are
+ * also mounted from public pages and standalone dialogs, where no provider is
+ * mounted — reaching for `useLanguage` there would turn a formatting detail
+ * into a blank screen.
+ *
+ * `UTC` when there is no provider, matching the provider's own initial value,
+ * so the fallback is the same wrong-but-consistent answer everywhere rather
+ * than the browser's zone, which is wrong differently for every viewer.
+ */
+export function useBusinessTimezone(): {
+  timezone: string;
+  timeZoneOptions: (options?: Intl.DateTimeFormatOptions) => Intl.DateTimeFormatOptions;
+} {
+  const context = useContext(LanguageContext);
+  const timezone = context?.timezone ?? 'UTC';
+
+  return {
+    timezone,
+    timeZoneOptions: useCallback(
+      (options: Intl.DateTimeFormatOptions = {}) => ({ ...options, timeZone: timezone }),
+      [timezone]
+    ),
+  };
 }

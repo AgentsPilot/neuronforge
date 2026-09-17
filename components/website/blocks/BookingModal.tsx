@@ -392,9 +392,31 @@ export function BookingModal({
                   document thousands of pixels tall. A pixel cap instead, which
                   is what `maxHeight` was already doing for the centred case.
                 */
-                height: anchorTop === null ? '80vh' : 'auto',
-                maxHeight: '700px',
-                minHeight: '500px'
+                /*
+                  ───────────────────────────────────────────────────────────
+                  THREE HEIGHTS, AND TWO OF THEM COULD EXCEED THE SCREEN.
+
+                  `80vh` is not 80% of what a phone shows. Mobile browsers
+                  report `vh` against the viewport WITHOUT the address bar, so
+                  a `vh`-sized panel is taller than the visible area until the
+                  chrome scrolls away — which it cannot here, because the page
+                  behind a modal does not scroll.
+
+                  `minHeight: 500px` was the worse one: a floor, obeyed even
+                  when the screen is shorter than it. A phone in landscape is
+                  often under 400px tall, and the panel is centred, so it
+                  overflowed equally top and bottom with the step indicator and
+                  the Continue button both off-screen and unreachable. A client
+                  could not finish a booking.
+
+                  Both are now bounded by the viewport itself. The floor still
+                  applies whenever there is room for it — this dialog looks
+                  wrong at 300px on a desktop — it simply stops winning against
+                  a screen that is smaller.
+                */
+                height: anchorTop === null ? '80dvh' : 'auto',
+                maxHeight: anchorTop === null ? 'min(700px, calc(100dvh - 2rem))' : '700px',
+                minHeight: 'min(500px, calc(100dvh - 2rem))'
               }}
             >
               {/* Sticky Header with Step Indicator */}

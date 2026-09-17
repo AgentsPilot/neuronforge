@@ -10,6 +10,7 @@ import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { z } from 'zod';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'SchedulingAvailabilityAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -67,10 +68,30 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    /*
+     * The business's clock travels with its hours.
+     *
+     * Availability is a set of wall-clock windows, and a wall clock means
+     * nothing without the zone it belongs to. The booking modal had no way to
+     * ask for that zone, so it fell back to the BROWSER's — which is how one
+     * appointment came to read 12:00 AM in the drawer, 4:00 AM in the client's
+     * email and 7:00 AM where the work actually happens.
+     *
+     * Read from `user_preferences`, which is where the settings page writes it
+     * and where the public booking page already reads it. Returned beside the
+     * hours because every caller that needs one needs the other.
+     */
+    const { data: prefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
     // 3. Return availability (or default empty)
     return NextResponse.json({
       success: true,
-      availability: data?.scheduling_availability || null
+      availability: data?.scheduling_availability || null,
+      timezone: safeTimezone(prefs?.timezone)
     });
 
   } catch (error) {

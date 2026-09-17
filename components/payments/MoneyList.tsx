@@ -54,7 +54,31 @@ interface MoneyListProps {
    * Hands the page a handle on the list's own actions, so Export can live in
    * the page header — where it was — while the data it exports stays here.
    */
-  onReady?: (api: { exportCsv: () => void }) => void;
+  onReady?: (api: {
+    exportCsv: () => void;
+    /**
+     * Whether the CURRENT VIEW has anything to put in a file.
+     *
+     * Carried to the page because the Export button lives in the header and the
+     * rows live here, and a header button that writes a headings-only CSV looks
+     * like a broken export rather than an empty ledger. Export takes what is on
+     * screen, so the filtered count is the right one for it.
+     */
+    hasRows: boolean;
+    /**
+     * Whether this business has no money records AT ALL.
+     *
+     * A different question from `hasRows`, and the ledger needs this one. The
+     * ledger spans its own date range and ignores the page's search and filter
+     * entirely, so disabling it because somebody typed a search term that
+     * matched nothing would be wrong.
+     *
+     * Only true when we can actually tell: no search, no filter, and nothing
+     * came back. Under any filter the honest answer is "unknown", and unknown
+     * leaves the button alone.
+     */
+    knownEmpty: boolean;
+  }) => void;
 }
 
 export function MoneyList({
@@ -63,7 +87,7 @@ export function MoneyList({
   refreshKey,
   onReady,
 }: MoneyListProps) {
-  const { t, language, isRTL } = useLanguage();
+  const { t, language, isRTL, timeZoneOptions } = useLanguage();
 
   const [items, setItems] = useState<MoneyItem[]>([]);
   const [totals, setTotals] = useState<MoneyTotals>({
@@ -222,9 +246,9 @@ export function MoneyList({
     (date: string) =>
       new Date(date).toLocaleDateString(
         language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US',
-        { year: 'numeric', month: 'short', day: 'numeric' }
+        timeZoneOptions({ year: 'numeric', month: 'short', day: 'numeric' })
       ),
-    [language]
+    [language, timeZoneOptions]
   );
 
   /**
@@ -313,6 +337,11 @@ export function MoneyList({
    * not be combined without double-counting every settled invoice.
    */
   const exportCsv = () => {
+    // Belt and braces for the button state below: a file containing nothing but
+    // column headings is indistinguishable from a failed download.
+    const chosen = selected.size > 0 ? items.filter(i => selected.has(i.key)) : items;
+    if (chosen.length === 0) return;
+
     const rows = [
       [
         t('payments.export.item') || 'Item',
@@ -325,7 +354,7 @@ export function MoneyList({
       ],
       // The picked rows, or all of them when nothing is picked. "Export"
       // meaning "export everything" stays true if you never enter select mode.
-      ...(selected.size > 0 ? items.filter(i => selected.has(i.key)) : items).map(item => [
+      ...chosen.map(item => [
         item.title,
         item.method,
         item.status,
@@ -352,10 +381,21 @@ export function MoneyList({
   exportRef.current = exportCsv;
 
   useEffect(() => {
-    // A stable wrapper: the page keeps one function, and it always calls the
-    // latest closure rather than one captured on first render with an empty list.
-    onReady?.({ exportCsv: () => exportRef.current() });
-  }, [onReady]);
+    /*
+     * A stable wrapper: the page keeps one function, and it always calls the
+     * latest closure rather than one captured on first render with an empty
+     * list.
+     *
+     * Re-announced when the row count crosses in or out of zero — not on every
+     * change — so the header's Export button can disable itself without this
+     * firing on each keystroke of the search box.
+     */
+    onReady?.({
+      exportCsv: () => exportRef.current(),
+      hasRows: items.length > 0,
+      knownEmpty: items.length === 0 && !searchQuery.trim() && filter === 'all',
+    });
+  }, [onReady, items.length > 0, searchQuery, filter]);
 
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'}>

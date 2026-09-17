@@ -40,7 +40,26 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
 
   const [searchQuery, setSearchQuery] = useState('');
   /** The money list's own actions, so Export can sit in the page header. */
-  const [moneyApi, setMoneyApi] = useState<{ exportCsv: () => void } | null>(null);
+  const [moneyApi, setMoneyApi] = useState<{
+    exportCsv: () => void;
+    hasRows: boolean;
+    knownEmpty: boolean;
+  } | null>(null);
+
+  /*
+   * Both exports are switched off when there is nothing to put in the file.
+   *
+   * They answer different questions, so they read different signals. Export
+   * saves WHAT IS ON SCREEN, so an empty view is an empty file. The ledger
+   * spans its own date range and ignores this page's search and filter, so it
+   * only goes dark when the business genuinely has no money records — never
+   * because somebody typed a search term that matched nothing.
+   *
+   * Both stay live until the list has reported, so neither flickers off and on
+   * while the first page loads.
+   */
+  const canExportView = !moneyApi || moneyApi.hasRows;
+  const canExportLedger = !moneyApi || !moneyApi.knownEmpty;
   const [showInvoiceModal, setShowInvoiceModal] = useState(openCreate);
   const [showLedgerExport, setShowLedgerExport] = useState(false);
   const [invoiceListKey, setInvoiceListKey] = useState(0);
@@ -96,9 +115,14 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
             {moneyApi && (
               <button
                 onClick={() => moneyApi.exportCsv()}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all"
+                disabled={!canExportView}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--v2-surface)] disabled:hover:text-[var(--v2-text-secondary)]"
                 style={{ borderRadius: 'var(--v2-radius-button)' }}
-                title={t('payments.export.all_tooltip') || 'Export'}
+                title={
+                  canExportView
+                    ? t('payments.export.all_tooltip') || 'Export'
+                    : t('payments.export.nothing')
+                }
               >
                 <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                 <span className="hidden sm:inline">{t('payments.bulk.export') || 'Export'}</span>
@@ -111,9 +135,10 @@ export function PaymentsView({ highlightId = null, openCreate = false }: Payment
                 wherever the question is asked. */}
             <button
               onClick={() => setShowLedgerExport(true)}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all"
+              disabled={!canExportLedger}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-[var(--v2-surface)] border border-[var(--v2-border)] text-[var(--v2-text-secondary)] hover:text-[var(--v2-text-primary)] hover:bg-[var(--v2-border)] transition-all disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[var(--v2-surface)] disabled:hover:text-[var(--v2-text-secondary)]"
               style={{ borderRadius: 'var(--v2-radius-button)' }}
-              title={t('ledger.export_title')}
+              title={canExportLedger ? t('ledger.export_title') : t('payments.export.nothing')}
             >
               <FileSpreadsheet className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               <span className="hidden lg:inline">{t('ledger.export_title')}</span>

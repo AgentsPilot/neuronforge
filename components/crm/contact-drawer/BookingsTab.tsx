@@ -14,6 +14,8 @@ import { CollapsibleSection } from '../CollapsibleSection';
 import type { SessionCardData, BookingJourneyData, BookingJourneyStep } from './types';
 import type { IntakeQuestion } from '@/lib/business-os/intake/types';
 import { groupJourneyByDay } from '@/lib/business-os/journeyDays';
+import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
+import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
 
 interface BookingsTabProps {
   sessions: SessionCardData[];
@@ -226,6 +228,17 @@ export function BookingsTab({
   // Invoice email sending state
   const [sendingInvoiceBookingId, setSendingInvoiceBookingId] = useState<string | null>(null);
 
+  // The business's clock, so this tab, the calendar and the client's email all
+  // name the same hour for one booking.
+  const { timeZoneOptions } = useBusinessTimezone();
+
+  /** A payment stage's date, short, on the business's clock. */
+  const stageDate = (value: string) =>
+    new Date(value).toLocaleDateString(
+      isRTL ? 'he-IL' : 'en-US',
+      timeZoneOptions({ day: 'numeric', month: 'short' })
+    );
+
   const toggleBooking = (id: string) => {
     setExpandedBookings(prev => {
       const next = new Set(prev);
@@ -267,39 +280,39 @@ export function BookingsTab({
   // Format helpers
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString(language, {
+    return date.toLocaleDateString(language, timeZoneOptions({
       weekday: 'short',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
-    });
+    }));
   };
 
   const formatShortDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString(language, {
+    return date.toLocaleDateString(language, timeZoneOptions({
       month: 'short',
       day: 'numeric'
-    });
+    }));
   };
 
   /** Just the clock: the day already has its own marker above the entries. */
   const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString(language, {
+    return new Date(dateString).toLocaleTimeString(language, timeZoneOptions({
       hour: '2-digit',
       minute: '2-digit'
-    });
+    }));
   };
 
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleString(language, {
+    return date.toLocaleString(language, timeZoneOptions({
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
-    });
+    }));
   };
 
   const formatAmount = (amount: number, currency: string) => {
@@ -1700,10 +1713,34 @@ export function BookingsTab({
                                           part is the whole reason this renders.
                                         */}
                                         {isPaymentStep && payment?.plan?.stages?.length ? (
+                                          <div className="mt-2 flex flex-col gap-2" style={{ gridColumn: 3 }}>
+                                            {/*
+                                              What the whole job is worth, before the
+                                              stages that make it up.
+
+                                              The list alone says a deposit was paid
+                                              and something else is invoiced; it does
+                                              not say whether the business is half
+                                              collected or finished. Shared with the
+                                              payment dialog so both name the same
+                                              three figures.
+                                            */}
+                                            <PaymentPlanTotals
+                                              stages={payment.plan.stages}
+                                              currency={payment.currency}
+                                              totalAmount={payment.plan.totalAmount}
+                                              locale={isRTL ? 'he-IL' : 'en-US'}
+                                              size="compact"
+                                              labels={{
+                                                total: t('crm.payment.total') || 'Total',
+                                                collected: t('crm.payment.collected') || 'Collected',
+                                                outstanding: t('crm.payment.outstanding') || 'Outstanding',
+                                              }}
+                                            />
+
                                           <div
-                                            className="mt-2 flex flex-col gap-px overflow-hidden"
+                                            className="flex flex-col gap-px overflow-hidden"
                                             style={{
-                                              gridColumn: 3,
                                               borderRadius: '10px',
                                               border: '1px solid var(--v2-border)',
                                             }}
@@ -1760,6 +1797,32 @@ export function BookingsTab({
                                                   >
                                                     {amountText}
                                                   </span>
+
+                                                  {/*
+                                                    WHEN, not just how much.
+                                                    ───────────────────────────
+                                                    A row saying a stage is paid
+                                                    and never when is the wrong
+                                                    half of the answer for anyone
+                                                    reconciling a statement; an
+                                                    invoiced one with no date does
+                                                    not say whether it is late.
+                                                    Both dates are already on the
+                                                    stage. On the business's clock,
+                                                    like every other time here.
+                                                  */}
+                                                  {(stage.paidAt || stage.dueDate) && (
+                                                    <span
+                                                      className="text-[11.5px] tabular-nums whitespace-nowrap"
+                                                      style={{ color: 'var(--v2-text-muted)' }}
+                                                    >
+                                                      {paid && stage.paidAt
+                                                        ? stageDate(stage.paidAt)
+                                                        : stage.dueDate
+                                                          ? `${t('crm.payment.due')} ${stageDate(stage.dueDate)}`
+                                                          : ''}
+                                                    </span>
+                                                  )}
 
                                                   {/*
                                                     The document for THIS stage.
@@ -1842,6 +1905,7 @@ export function BookingsTab({
                                                 </div>
                                               );
                                             })}
+                                          </div>
                                           </div>
                                         ) : null}
 

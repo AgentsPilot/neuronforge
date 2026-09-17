@@ -230,7 +230,7 @@ function EntityCardMessage({
   onSendInvoice?: (invoiceId: string) => void;
   onMarkInvoicePaid?: (invoiceId: string) => void;
 }) {
-  const { currency: userCurrency } = useLanguage();
+  const { currency: userCurrency, timeZoneOptions } = useLanguage();
   const entityName = getEntityDisplayName(entityCard.entity, entityCard.entityType);
 
   return (
@@ -295,12 +295,12 @@ function EntityCardMessage({
                 <div className="flex items-center gap-2 text-sm">
                   <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className="text-[var(--v2-text-secondary)]">
-                    {new Date(entityCard.entity.due_date as string).toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', {
+                    {new Date(entityCard.entity.due_date as string).toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', timeZoneOptions({
                       weekday: 'short',
                       year: 'numeric',
                       month: 'short',
                       day: 'numeric'
-                    })}
+                    }))}
                   </span>
                 </div>
               )}
@@ -370,13 +370,13 @@ function EntityCardMessage({
             <div className="flex items-center gap-2 text-sm">
               <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
               <span className="text-[var(--v2-text-secondary)]">
-                {new Date(entityCard.entity.start_time as string).toLocaleString(isHebrew ? 'he-IL' : 'en-US', {
+                {new Date(entityCard.entity.start_time as string).toLocaleString(isHebrew ? 'he-IL' : 'en-US', timeZoneOptions({
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
                   hour: '2-digit',
                   minute: '2-digit'
-                })}
+                }))}
               </span>
             </div>
           )}
@@ -421,11 +421,11 @@ function EntityCardMessage({
                   <Calendar className="w-3.5 h-3.5 text-[var(--v2-text-muted)]" />
                   <span className="text-[var(--v2-text-secondary)]">
                     {isHebrew ? 'תאריך יעד: ' : 'Due: '}
-                    {new Date(entityCard.entity.due_date as string).toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', {
+                    {new Date(entityCard.entity.due_date as string).toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', timeZoneOptions({
                       year: 'numeric',
                       month: 'short',
                       day: 'numeric'
-                    })}
+                    }))}
                   </span>
                 </div>
               )}
@@ -526,18 +526,21 @@ function BookingListMessage({
   isHebrew: boolean;
   onOpenBooking?: (bookingId: string) => void;
 }) {
+  // Same clock as the calendar, the drawer and the client's email.
+  const { timeZoneOptions } = useLanguage();
+
   const formatDateTime = (isoString: string) => {
     const date = new Date(isoString);
     return {
-      date: date.toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', {
+      date: date.toLocaleDateString(isHebrew ? 'he-IL' : 'en-US', timeZoneOptions({
         weekday: 'short',
         month: 'short',
         day: 'numeric'
-      }),
-      time: date.toLocaleTimeString(isHebrew ? 'he-IL' : 'en-US', {
+      })),
+      time: date.toLocaleTimeString(isHebrew ? 'he-IL' : 'en-US', timeZoneOptions({
         hour: '2-digit',
         minute: '2-digit'
-      })
+      }))
     };
   };
 

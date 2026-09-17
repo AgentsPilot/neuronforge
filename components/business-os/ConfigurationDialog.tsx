@@ -618,19 +618,88 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
 
   return (
     <>
+      {/*
+        ABOVE the Radix dialog primitive, deliberately.
+
+        This sat at z-50 while `components/ui/dialog` — every Radix dialog in
+        the app — sits at z-[60], so configuration opened UNDERNEATH anything
+        that had opened it. The invoice gate is where it showed up: press
+        "Complete invoice details" and the settings appear behind the very
+        dialog that sent you there, with its backdrop over them.
+
+        Not specific to that one caller. Configuration is opened from inside
+        dialogs and drawers in several places, and it lost to all of them.
+
+        z-[70] rather than raising the primitive: this is the deeper screen in
+        every case — it is only ever reached from something else, never the
+        other way round — so it belongs on top, and moving the shared primitive
+        instead would drag every unrelated dialog up with it.
+      */}
+      {/*
+        ── SURVIVING A RADIX MODAL ABOVE US ──────────────────────────────────
+
+        This dialog is opened from inside Radix dialogs — the invoice composer,
+        the booking modal, the CRM drawer, sometimes two of them nested — and it
+        renders OUTSIDE their portals. That costs it two things, and both have to
+        be taken back explicitly.
+
+        `pointerEvents: 'auto'`
+          A modal Radix dialog has react-remove-scroll put `pointer-events: none`
+          on <body>, and this dialog inherits it. Every click was landing on
+          nothing: the close button needed pressing twice, then not at all once a
+          second modal was in the stack. Raising z-index earlier fixed what could
+          be SEEN and not what could be PRESSED, which is why it looked solved.
+          This is the line that actually makes it clickable, and it holds however
+          many modals are stacked above.
+
+        `onPointerDown` stopping propagation — IN THE BUBBLE PHASE
+          Radix listens on the document for a pointer-down outside its content,
+          and everything in here is outside every one of them. Without this, one
+          click on a settings field dismisses the booking form and the drawer
+          behind it — taking the half-typed booking with them.
+
+          This was written as `onPointerDownCapture` and that broke every input
+          in the dialog. Capture runs OUTSIDE-IN: a capture handler on this
+          container fires before the event reaches whatever was clicked, so
+          stopping it here meant no field ever saw its own pointerdown. Buttons
+          still worked — `onClick` fires on `click`, not `pointerdown` — so the
+          damage showed up only where focus matters: the country combobox in the
+          connect wizard rendered its placeholder and could not be typed into.
+
+          Bubble runs inside-out, so the field handles its own event first and
+          this stops it on the way past, before it reaches the document. Same
+          protection, without taking the dialog's own controls down with it.
+
+        `onWheelCapture` / `onTouchMoveCapture` stopping propagation
+          The same library also cancels SCROLLING. It listens for `wheel` and
+          `touchmove` on the document and calls preventDefault for anything
+          outside the locked subtree — which is everything in here, so the
+          invoice tab would not scroll with a mouse at all. Those listeners are
+          registered `{ passive: false }` with NO capture, so stopping the event
+          before it bubbles to the document is enough: nothing calls
+          preventDefault and the browser scrolls this dialog normally.
+        ────────────────────────────────────────────────────────────────────── */}
       {/* Backdrop */}
       <div
-        className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+        className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm"
+        style={{ pointerEvents: 'auto' }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
         onClick={handleCloseAttempt}
       />
 
       {/* Dialog */}
       <div
-        className="fixed inset-0 sm:inset-4 md:inset-6 lg:inset-8 z-50 flex items-center justify-center p-2 sm:p-0"
+        className="fixed inset-0 sm:inset-4 md:inset-6 lg:inset-8 z-[70] flex items-center justify-center p-2 sm:p-0"
+        style={{ pointerEvents: 'auto' }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
         <div
-          className="w-full h-full max-w-7xl max-h-[100vh] sm:max-h-[95vh] md:max-h-[90vh] bg-[var(--v2-surface)] border-0 sm:border border-[var(--v2-border)] flex flex-col overflow-hidden shadow-2xl sm:rounded-[var(--v2-radius-card)]"
+          className="w-full h-full max-w-7xl max-h-[100dvh] sm:max-h-[95dvh] md:max-h-[90dvh] bg-[var(--v2-surface)] border-0 sm:border border-[var(--v2-border)] flex flex-col overflow-hidden shadow-2xl sm:rounded-[var(--v2-radius-card)]"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-3 sm:px-4 md:px-6 py-3 sm:py-4 border-b border-[var(--v2-border)]">
@@ -1060,14 +1129,32 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
         </div>
       </div>
 
+      {/*
+        z-[80], above this dialog's own z-[70].
+
+        These three confirmations are rendered BY the configuration dialog and
+        sit on top of it. They were z-[60] back when their parent was z-50;
+        raising the parent above the Radix primitive without bringing them along
+        would have put each one behind the screen that opened it — including the
+        close confirmation, which would have been unreachable.
+      */}
       {/* Stripe Disconnect Confirmation Dialog (Soft - keeps Stripe account) */}
       {showDisconnectConfirm && (
         <>
           <div
-            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm"
+            style={{ pointerEvents: 'auto' }}
             onClick={() => setShowDisconnectConfirm(false)}
           />
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+            style={{ pointerEvents: 'auto' }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+          >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
               style={{ borderRadius: 'var(--v2-radius-card)' }}
@@ -1115,10 +1202,19 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       {showDeleteConfirm && (
         <>
           <div
-            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm"
+            style={{ pointerEvents: 'auto' }}
             onClick={() => setShowDeleteConfirm(false)}
           />
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+            style={{ pointerEvents: 'auto' }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+          >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
               style={{ borderRadius: 'var(--v2-radius-card)' }}
@@ -1166,10 +1262,19 @@ export function ConfigurationDialog({ isOpen, onClose, initialTab, serviceToEdit
       {showCloseConfirm && (
         <>
           <div
-            className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm"
+            className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm"
+            style={{ pointerEvents: 'auto' }}
             onClick={() => setShowCloseConfirm(false)}
           />
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+            style={{ pointerEvents: 'auto' }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+            onTouchMove={(e) => e.stopPropagation()}
+        onWheel={(e) => e.stopPropagation()}
+        onTouchMove={(e) => e.stopPropagation()}
+          >
             <div
               className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full shadow-2xl"
               style={{ borderRadius: 'var(--v2-radius-card)' }}

@@ -264,6 +264,7 @@ function quotedPayment(
             trigger: s.trigger,
             invoiceId: s.invoice_id,
             dueDate: s.due_date,
+            paidAt: s.paid_at,
           })),
         }
       : undefined,
@@ -289,7 +290,13 @@ function buildJourneySteps(
    * resend a form the client had already returned, and could not send one that
    * had never gone out.
    */
-  collectsIntake: boolean = false
+  collectsIntake: boolean = false,
+  /**
+   * The business's clock. Passed rather than read, because this is a plain
+   * function and hooks are not available to it — and defaulted to UTC rather
+   * than the browser's zone, matching every other fallback in the fix.
+   */
+  timezone: string = 'UTC'
 ): BookingJourneyStep[] {
   const { booking, payment, confirmationEmail } = data;
   const steps: BookingJourneyStep[] = [];
@@ -309,8 +316,10 @@ function buildJourneySteps(
    */
   const isQuotedBooking = booking.service?.sale_mode === 'proposal';
 
-  // Helper to format date and time
+  // Helper to format date and time, on the business's clock — the same one the
+  // calendar, the booking dialog and the client's email use.
   const formatDateTime = (date: Date) => date.toLocaleString(language, {
+    timeZone: timezone,
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -1011,7 +1020,7 @@ export function CRMContactDrawerV2({
   onTasksUpdated,
   initialSection = 'details'
 }: CRMContactDrawerV2Props) {
-  const { t, isRTL, language } = useLanguage();
+  const { t, isRTL, language, timezone, timeZoneOptions } = useLanguage();
 
   // Form state
   const [formData, setFormData] = useState<ContactFormData>({
@@ -1171,6 +1180,9 @@ export function CRMContactDrawerV2({
    */
   const [servicesLoading, setServicesLoading] = useState(true);
   const [availability, setAvailability] = useState<Record<string, { start: string; end: string }[]> | undefined>(undefined);
+  /* The zone those hours are written in: the booking dialog renders on the
+     business's clock, not the browser's. */
+  const [bookingTimezone, setBookingTimezone] = useState<string>('UTC');
   const [allBookings, setAllBookings] = useState<SchedulingBooking[]>([]);
 
   // Payment management modal state
@@ -1438,7 +1450,8 @@ export function CRMContactDrawerV2({
               : undefined
           },
           language,
-          collectsIntake
+          collectsIntake,
+          timezone
         )
       };
     });
@@ -1645,6 +1658,7 @@ export function CRMContactDrawerV2({
         load('/api/scheduling/availability', data => {
           if (data.success && data.availability) {
             setAvailability(data.availability as Record<string, { start: string; end: string }[]>);
+            if (data.timezone) setBookingTimezone(data.timezone as string);
           }
         }),
 
@@ -1881,7 +1895,8 @@ export function CRMContactDrawerV2({
                   : undefined
               },
               language,
-              collectsIntake
+              collectsIntake,
+              timezone
             )
           };
         });
@@ -2768,6 +2783,7 @@ export function CRMContactDrawerV2({
           // Booking updates are silently refreshed in the drawer without closing it
         }}
         availability={availability}
+        timezone={bookingTimezone}
         prefilledContact={{
           id: contact.id,
           first_name: contact.first_name,

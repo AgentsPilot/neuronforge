@@ -54,6 +54,32 @@ interface FormData {
   tosAccepted: boolean;
 }
 
+/**
+ * Countries Stripe will not grant `card_payments` to.
+ *
+ * Not a policy of ours — Stripe refuses the capability outright:
+ *
+ *   "You cannot request the `card_payments` capability for accounts in IL.
+ *    For a list of countries that support card_payments, see
+ *    https://stripe.com/global. To create an account in IL, see
+ *    https://stripe.com/docs/connect/cross-border-payouts."
+ *
+ * These are the cross-border-payouts countries: an account there can RECEIVE
+ * money the platform has collected, but cannot charge a card itself. That is a
+ * different commercial arrangement — it makes the platform the merchant of
+ * record — and not something a setup wizard can opt somebody into.
+ *
+ * So the wizard stops at the country step rather than letting an owner fill in
+ * five pages of personal and business detail to be refused at the end, which is
+ * exactly what happened before this existed.
+ *
+ * Evidence-based, deliberately: only codes we have SEEN Stripe reject are
+ * listed. Guessing at the rest of stripe.com/global would block businesses that
+ * can in fact take cards. Anything not listed still fails safely — the error is
+ * surfaced verbatim by the create route.
+ */
+const CARD_PAYMENTS_UNSUPPORTED = new Set(['IL']);
+
 // Countries with flag emoji support
 const SUPPORTED_COUNTRIES = [
   { code: 'US', name: 'United States', flag: '🇺🇸', nameHe: 'ארצות הברית', nameEs: 'Estados Unidos' },
@@ -129,6 +155,138 @@ const containsNonAscii = (text: string): boolean => /[^\x00-\x7F]/.test(text);
 /**
  * Modern Step-by-Step Stripe Connect Wizard
  */
+/**
+ * A dropdown you can type into.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * MODULE SCOPE, DELIBERATELY. This was declared inside `StripeConnectWizard`,
+ * and that is the whole reason searching never worked.
+ *
+ * A component defined in another component's body is a NEW FUNCTION IDENTITY on
+ * every render. React compares types by identity, so each re-render looked like
+ * a different component in that position: it unmounted this subtree and mounted
+ * a fresh one. Typing a character called `onSearchChange`, which set state on
+ * the wizard, which re-rendered — and the input the character had just gone into
+ * no longer existed. The field appeared to ignore every keystroke because each
+ * one destroyed the thing receiving it.
+ *
+ * Nothing about the markup was wrong, which is why it reads as a working
+ * combobox and why the placeholder showed correctly.
+ *
+ * It closes over nothing now: every value arrives as a prop, and the only
+ * outside reference it had — the translator — is its own hook call below.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function SearchableSelect({
+  value,
+  onChange,
+  options,
+  search,
+  onSearchChange,
+  placeholder,
+  renderOption,
+  renderValue,
+  error
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: { code: string; name: string }[];
+  search: string;
+  onSearchChange: (search: string) => void;
+  placeholder: string;
+  renderOption: (option: any, active: boolean) => React.ReactNode;
+  renderValue: (value: string) => string;
+  error?: string;
+}) {
+  const { t } = useLanguage();
+
+  return (
+  <div className="relative">
+    {/* `val` is nullable: Headless UI reports a cleared combobox as null, and
+        this component's contract is a plain string, where empty means "nothing
+        chosen". Coerced rather than guarded so clearing still propagates. */}
+    <Combobox
+      value={value}
+      onChange={(val: string | null) => {
+        onChange(val ?? '');
+        onSearchChange('');
+      }}
+    >
+      <div className="relative">
+        <div className="relative w-full">
+          <Combobox.Input
+            className={`w-full h-12 px-4 pe-10 border text-sm bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#635BFF] transition-all ${
+              error ? 'border-red-500' : 'border-[var(--v2-border)]'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-button)' }}
+            displayValue={() => renderValue(value)}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder={placeholder}
+          />
+          <Combobox.Button className="absolute inset-y-0 end-0 flex items-center pe-3">
+            <ChevronDown className="h-5 w-5 text-[var(--v2-text-muted)]" />
+          </Combobox.Button>
+        </div>
+
+        <Transition
+          as={Fragment}
+          leave="transition ease-in duration-100"
+          leaveFrom="opacity-100"
+          leaveTo="opacity-0"
+          afterLeave={() => onSearchChange('')}
+        >
+          {/*
+            `anchor` portals this list to the document body and positions it
+            against the input.
+
+            Without it the list is an absolutely-positioned child of the form,
+            so the dialog's own `overflow-y-auto` CLIPPED it: the options existed
+            but were cut off at the panel edge, and picking a country meant
+            scrolling the dialog to reach a list that should have been floating
+            above it. Headless UI v2 does the positioning; nothing here measures
+            anything.
+
+            `--input-width` is exposed by `anchor`, so the list stays exactly as
+            wide as the field it belongs to.
+          */}
+          <Combobox.Options
+            anchor="bottom start"
+            className="z-[100] mt-1 max-h-60 w-[var(--input-width)] overflow-auto bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-xl focus:outline-none"
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+          >
+            {options.length === 0 ? (
+              <div className="px-4 py-3 text-sm text-[var(--v2-text-muted)]">
+                {t('common.no_results') || 'No results found'}
+              </div>
+            ) : (
+              options.map((option) => (
+                <Combobox.Option
+                  key={option.code}
+                  value={option.code}
+                  className={({ active }) =>
+                    `cursor-pointer select-none px-4 py-3 ${
+                      active ? 'bg-[#635BFF] text-white' : 'text-[var(--v2-text-primary)]'
+                    }`
+                  }
+                >
+                  {({ active, selected }) => (
+                    <div className="flex items-center gap-3">
+                      {renderOption(option, active)}
+                      {selected && <Check className="h-4 w-4 ms-auto flex-shrink-0" />}
+                    </div>
+                  )}
+                </Combobox.Option>
+              ))
+            )}
+          </Combobox.Options>
+        </Transition>
+      </div>
+    </Combobox>
+    {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+  </div>
+);
+}
+
 export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, existingAccount, useEmbeddedOnboarding = true }: Props) {
   const { t, language, isRTL } = useLanguage();
 
@@ -172,8 +330,84 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
 
   // Check if current country requires English-only input (Israel)
   const requiresEnglishOnly = formData.country === 'IL';
+  /** Stripe will not grant this country the capability the wizard exists to get. */
+  const cardPaymentsUnavailable = CARD_PAYMENTS_UNSUPPORTED.has(formData.country);
 
   // Fetch account details when continuing
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT THE BUSINESS HAS ALREADY TOLD US.
+   *
+   * Onboarding asks for the business name in its very first question, and the
+   * invoice details carry an address and a tax id. This wizard asked for all of
+   * it again — a company typing its own name for the second time in ten minutes,
+   * on the step right after it had watched the platform build a website carrying
+   * that name.
+   *
+   * `invoice-settings` is the source because it already resolves the fallback we
+   * want: `invoice_company_name` where the owner set one, the business's own
+   * `company_name` where they did not. The same endpoint the invoice gate reads,
+   * so the two cannot disagree about what this business is called.
+   *
+   * Only EMPTY fields are filled. A returning user who has typed something is
+   * never overwritten, and the existing-account effect below — which restores a
+   * half-finished Stripe onboarding — is the more specific answer where both
+   * apply, so this one skips entirely when it is running.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  useEffect(() => {
+    if (continueOnboarding) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch('/api/business-os/invoice-settings', { cache: 'no-store' });
+        if (!response.ok) return;
+        const result = await response.json();
+        if (!result?.success || !result.data || cancelled) return;
+
+        const settings = result.data;
+        const address = settings.invoice_address ?? {};
+
+        const candidate = String(address.country ?? '').trim().toUpperCase();
+        const normalisedCountry = SUPPORTED_COUNTRIES.some(c => c.code === candidate)
+          ? candidate
+          : '';
+
+        setFormData(prev => ({
+          ...prev,
+          businessName: prev.businessName || settings.invoice_company_name || '',
+          addressLine1: prev.addressLine1 || address.line1 || '',
+          addressLine2: prev.addressLine2 || address.line2 || '',
+          city: prev.city || address.city || '',
+          state: prev.state || address.state || '',
+          postalCode: prev.postalCode || address.postal_code || '',
+          /*
+           * Only an ISO-2 code this picker actually offers.
+           *
+           * The stored address is free text typed into the invoice form, and
+           * real rows carry "USA" — three letters, matching no option in
+           * `SUPPORTED_COUNTRIES`. Prefilling it would leave the picker
+           * displaying a value it cannot resolve, and `requiresEnglishOnly`
+           * (which tests `country === 'IL'`) would quietly read false for an
+           * Israeli business that had written "Israel".
+           *
+           * Anything we cannot map is left blank for the owner to choose, which
+           * is the one screen where they are being asked anyway.
+           */
+          country: prev.country || normalisedCountry,
+        }));
+      } catch {
+        // Prefilling is a convenience. A failure leaves the form blank, which
+        // is exactly where it started.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [continueOnboarding]);
+
   useEffect(() => {
     if (continueOnboarding && existingAccount?.stripe_account_id) {
       fetchAccountDetails();
@@ -570,87 +804,6 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
   };
 
   // Searchable Select Component
-  const SearchableSelect = ({
-    value,
-    onChange,
-    options,
-    search,
-    onSearchChange,
-    placeholder,
-    renderOption,
-    renderValue,
-    error
-  }: {
-    value: string;
-    onChange: (value: string) => void;
-    options: { code: string; name: string }[];
-    search: string;
-    onSearchChange: (search: string) => void;
-    placeholder: string;
-    renderOption: (option: any, active: boolean) => React.ReactNode;
-    renderValue: (value: string) => string;
-    error?: string;
-  }) => (
-    <div className="relative">
-      <Combobox value={value} onChange={(val) => { onChange(val); onSearchChange(''); }}>
-        <div className="relative">
-          <div className="relative w-full">
-            <Combobox.Input
-              className={`w-full h-12 px-4 pe-10 border text-sm bg-[var(--v2-surface)] text-[var(--v2-text-primary)] placeholder:text-[var(--v2-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#635BFF] transition-all ${
-                error ? 'border-red-500' : 'border-[var(--v2-border)]'
-              }`}
-              style={{ borderRadius: 'var(--v2-radius-button)' }}
-              displayValue={() => renderValue(value)}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder={placeholder}
-            />
-            <Combobox.Button className="absolute inset-y-0 end-0 flex items-center pe-3">
-              <ChevronDown className="h-5 w-5 text-[var(--v2-text-muted)]" />
-            </Combobox.Button>
-          </div>
-
-          <Transition
-            as={Fragment}
-            leave="transition ease-in duration-100"
-            leaveFrom="opacity-100"
-            leaveTo="opacity-0"
-            afterLeave={() => onSearchChange('')}
-          >
-            <Combobox.Options
-              className="absolute z-50 mt-1 max-h-60 w-full overflow-auto bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-xl focus:outline-none"
-              style={{ borderRadius: 'var(--v2-radius-card)' }}
-            >
-              {options.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-[var(--v2-text-muted)]">
-                  {t('common.no_results') || 'No results found'}
-                </div>
-              ) : (
-                options.map((option) => (
-                  <Combobox.Option
-                    key={option.code}
-                    value={option.code}
-                    className={({ active }) =>
-                      `cursor-pointer select-none px-4 py-3 ${
-                        active ? 'bg-[#635BFF] text-white' : 'text-[var(--v2-text-primary)]'
-                      }`
-                    }
-                  >
-                    {({ active, selected }) => (
-                      <div className="flex items-center gap-3">
-                        {renderOption(option, active)}
-                        {selected && <Check className="h-4 w-4 ms-auto flex-shrink-0" />}
-                      </div>
-                    )}
-                  </Combobox.Option>
-                ))
-              )}
-            </Combobox.Options>
-          </Transition>
-        </div>
-      </Combobox>
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
-    </div>
-  );
 
   // Step indicator component
   const StepIndicator = () => {
@@ -664,8 +817,21 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
 
     const currentIndex = steps.findIndex(s => s.key === step);
 
+    /*
+     * Frozen to the top of whatever is scrolling this wizard.
+     *
+     * Sticky rather than a restructured flex column: each of the five steps
+     * renders its own indicator AND its own buttons, so hoisting them into a
+     * shared shell would mean rewriting all five and inventing a per-step
+     * "can proceed" contract that the footer does not currently have. Sticky
+     * gets the same frozen header and footer out of the two elements that
+     * already exist.
+     *
+     * The background is not decoration: without it the form scrolls visibly
+     * underneath and the indicator becomes unreadable.
+     */
     return (
-      <div className="flex items-center justify-center gap-2 mb-8">
+      <div className="sticky top-0 z-20 -mx-1 px-1 pt-1 pb-3 mb-5 bg-[var(--v2-surface)] flex items-center justify-center gap-2">
         {steps.map((s, index) => {
           const Icon = s.icon;
           const isActive = index === currentIndex;
@@ -800,28 +966,32 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
         }}
       />
 
-      {formData.country === 'IL' && (
+      {/* The notice here used to say "English input required", which read as
+          "this will work if you type in English". It will not: Stripe refuses
+          the capability for these countries entirely. Saying so is the whole
+          value of this step. */}
+      {cardPaymentsUnavailable && (
         <div className="flex items-start gap-3 p-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
           <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
-              {t('payments.stripe.wizard.israel_notice_title') || 'English Input Required'}
+              {t('payments.stripe.unsupported_title')}
             </p>
             <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-              {t('payments.stripe.wizard.israel_notice_desc') || 'Stripe requires all information for Israeli accounts to be in English characters only.'}
+              {t('payments.stripe.unsupported_desc')}
             </p>
           </div>
         </div>
       )}
 
-      <div className="flex justify-between pt-4">
+      <div className="sticky bottom-0 z-20 -mx-1 px-1 pt-4 pb-1 bg-[var(--v2-surface)] border-t border-[var(--v2-border)] flex justify-between">
         <Button variant="ghost" onClick={prevStep} className="gap-2">
           <ArrowLeft className="w-4 h-4" />
           {t('common.back') || 'Back'}
         </Button>
         <Button
           onClick={nextStep}
-          disabled={!formData.country}
+          disabled={!formData.country || cardPaymentsUnavailable}
           style={{ background: 'linear-gradient(135deg, #635BFF 0%, #4F46E5 100%)' }}
           className="text-white gap-2"
         >
@@ -940,7 +1110,7 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
         </div>
       </div>
 
-      <div className="flex justify-between pt-4">
+      <div className="sticky bottom-0 z-20 -mx-1 px-1 pt-4 pb-1 bg-[var(--v2-surface)] border-t border-[var(--v2-border)] flex justify-between">
         <Button variant="ghost" onClick={prevStep} className="gap-2">
           <ArrowLeft className="w-4 h-4" />
           {t('common.back') || 'Back'}
@@ -1081,7 +1251,7 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
         </div>
       </div>
 
-      <div className="flex justify-between pt-4">
+      <div className="sticky bottom-0 z-20 -mx-1 px-1 pt-4 pb-1 bg-[var(--v2-surface)] border-t border-[var(--v2-border)] flex justify-between">
         <Button variant="ghost" onClick={prevStep} className="gap-2">
           <ArrowLeft className="w-4 h-4" />
           {t('common.back') || 'Back'}
@@ -1165,7 +1335,7 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
         </div>
       </div>
 
-      <div className="flex justify-between pt-4">
+      <div className="sticky bottom-0 z-20 -mx-1 px-1 pt-4 pb-1 bg-[var(--v2-surface)] border-t border-[var(--v2-border)] flex justify-between">
         <Button variant="ghost" onClick={prevStep} className="gap-2">
           <ArrowLeft className="w-4 h-4" />
           {t('common.back') || 'Back'}
@@ -1274,7 +1444,7 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
           </div>
         </div>
 
-        <div className="flex justify-between pt-4">
+        <div className="sticky bottom-0 z-20 -mx-1 px-1 pt-4 pb-1 bg-[var(--v2-surface)] border-t border-[var(--v2-border)] flex justify-between">
           <Button variant="ghost" onClick={prevStep} className="gap-2">
             <ArrowLeft className="w-4 h-4" />
             {t('common.back') || 'Back'}
@@ -1396,7 +1566,16 @@ export function StripeConnectWizard({ onComplete, onCancel, continueOnboarding, 
   }
 
   return (
-    <div className={step === 'embedded' ? 'max-w-2xl mx-auto' : 'max-w-lg mx-auto'} dir={isRTL ? 'rtl' : 'ltr'}>
+    /*
+     * Wider than it was. `max-w-lg` is 512px, and this is a five-step form
+     * carrying a country picker, a full postal address, a business profile and
+     * a review — fields that sat one per line with their labels wrapping, in a
+     * column narrower than the dialog around it.
+     *
+     * The embedded step is wider again: it hosts Stripe's own onboarding iframe,
+     * which has its own idea of a comfortable width and was being squeezed.
+     */
+    <div className={step === 'embedded' ? 'max-w-3xl mx-auto' : 'max-w-2xl mx-auto'} dir={isRTL ? 'rtl' : 'ltr'}>
       {step === 'choice' && renderChoice()}
       {step === 'country' && renderCountryStep()}
       {step === 'personal' && renderPersonalStep()}
