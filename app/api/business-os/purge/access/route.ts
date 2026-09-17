@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { canUseInternalPurgeSurface } from '@/lib/business-os/purge/purgeAuthz';
+import { businessPurgeRepository } from '@/lib/repositories/BusinessPurgeRepository';
 
 const logger = createLogger({ module: 'PurgeAccessAPI' });
 
@@ -36,6 +37,18 @@ export async function GET(request: NextRequest) {
       email: user.email ?? null,
     });
 
+    // M-4: tell the page whether Reset can ACTUALLY delete right now.
+    //
+    // The banner used to say "the server refuses Reset, and that is expected".
+    // True today — and false the moment `purge_business_data` is applied, with
+    // nothing on the page noticing. An admin would then read "refuses" beside a
+    // button that now deletes. So the banner is driven by the same probe
+    // `ResetService` uses, and can never disagree with it.
+    //
+    // Probed only for admins: a non-admin is not shown the button, and the probe
+    // is not free.
+    const resetLive = allowed ? await businessPurgeRepository.purgeFunctionExists() : null;
+
     return NextResponse.json({
       success: true,
       data: {
@@ -46,6 +59,8 @@ export async function GET(request: NextRequest) {
         // is the single most important thing to show before anyone clicks.
         userId: user.id,
         email: user.email ?? null,
+        /** true = Reset WILL delete · false = function not applied · null = unknown */
+        resetLive,
       },
     });
   } catch (error) {

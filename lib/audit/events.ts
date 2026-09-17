@@ -107,6 +107,15 @@ export const AUDIT_EVENTS = {
   DATA_EXPORTED: 'DATA_EXPORTED', // User data export
   DATA_DELETED: 'DATA_DELETED', // Right to erasure
   DATA_ANONYMIZED: 'DATA_ANONYMIZED', // PII anonymization
+  // Business OS purge (Reset / Purge of one business's data). Distinct from
+  // DATA_DELETED: that is account-level erasure, whereas a business Reset
+  // deliberately keeps the login, the profile and the configuration. Conflating
+  // them would make an audit query for "erasure requests" return test resets.
+  BUSINESS_DATA_PURGED: 'BUSINESS_DATA_PURGED',
+  // Written for REFUSED runs too (FR-20, AC-18). A refused purge is the more
+  // interesting event to have on record: it is the one where something was
+  // wrong, and the one someone may later ask about.
+  BUSINESS_DATA_PURGE_BLOCKED: 'BUSINESS_DATA_PURGE_BLOCKED',
   DATA_ACCESSED: 'DATA_ACCESSED', // Who accessed what data
   CONSENT_GRANTED: 'CONSENT_GRANTED',
   CONSENT_REVOKED: 'CONSENT_REVOKED',
@@ -464,6 +473,16 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'User data deleted (GDPR Article 17)',
+  },
+  [AUDIT_EVENTS.BUSINESS_DATA_PURGED]: {
+    severity: 'critical',
+    complianceFlags: ['GDPR', 'SOC2'],
+    description: 'Business data reset or purged (irreversible; pre-purge snapshot recorded)',
+  },
+  [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'Business data reset or purge refused before any data was touched',
   },
   [AUDIT_EVENTS.DATA_ANONYMIZED]: {
     severity: 'critical',

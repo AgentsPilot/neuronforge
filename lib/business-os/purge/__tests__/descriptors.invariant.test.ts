@@ -394,15 +394,153 @@ describe('SA-S2 — the capability set is exhaustive', () => {
     }
   });
 
-  it('slice 1 grants read-only capabilities only', () => {
-    // If this fails, either a destructive capability was granted without the
-    // implementation behind it, or the implementation landed without the
-    // corresponding review. Both are worth stopping for.
-    expect([...GRANTED_CAPABILITIES].sort()).toEqual(['count', 'storage_count']);
+  it('destructive and snapshot operations are reachable from exactly one orchestrator', () => {
+    // Slice 2 is the first slice that GRANTS deletion, so the slice 1 assertion
+    // ("nothing destructive is granted") is retired here and replaced with a
+    // stronger structural one: these operations may be CALLED from exactly one
+    // file.
+    //
+    // Every guard — the RPC-existence probe, both controls, the verified
+    // snapshot — lives in `ResetService`. A second caller is a path that skips
+    // all of them and looks perfectly reasonable in isolation.
+    //
+    // M-2: `writeVerifiedSnapshot` is in this list too, for the same reason. It
+    // already HAD a second caller — a phase-1 demonstration route that wrote a
+    // full business snapshot without ever checking the function existed — and
+    // this assertion, had it covered snapshots, would have caught it.
+    //
+    // C-36: the scan covers ALL of `app/` and `lib/`, not just the purge
+    // directories. A second caller dropped into `app/api/admin/**` — where the
+    // routes are unauthenticated — would pass a scan scoped to the feature
+    // folders, and that is exactly the directory most worth watching.
+    const REPO = path.join(__dirname, '..', '..', '..', '..');
+    const everywhere = [...walk(path.join(REPO, 'app')), ...walk(path.join(REPO, 'lib'))].filter(
+      (f) => !f.includes(`${path.sep}__tests__${path.sep}`) && !f.includes('node_modules')
+    );
 
-    for (const destructive of ['snapshot', 'delete_rows', 'delete_storage'] as const) {
-      expect(hasCapability(destructive)).toBe(false);
+    // Non-vacuity: a scan that silently found nothing would pass every
+    // assertion below. Same failure as the comment-stripper, one level up.
+    expect(everywhere.length).toBeGreaterThan(500);
+
+    /**
+     * Files that CALL `method`, in any form.
+     *
+     * E-1: the first version matched only `.method(` and `await method(`, and QA
+     * proved two bypasses with planted callers — a bare `return method(...)`
+     * with no `await`, and a direct call to the repository's own write. Both got
+     * past it. So this now matches `method(` in ANY position and removes the
+     * things that are not calls instead:
+     *
+     *   * comments — stripped LINE-FIRST (block-first lets a `/*` inside a line
+     *     comment swallow real code, which failed OPEN elsewhere in this cycle);
+     *   * definitions — `async method(`, `function method(`, and class-method
+     *     heads, which contain `method(` without being a call.
+     *
+     * Erring toward matching is deliberate. A false positive costs a look; a
+     * false negative is a second path to the delete that skips every guard.
+     */
+    const stripComments = (src: string) =>
+      src.replace(/^[ \t]*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+    const callers = (method: string) =>
+      everywhere
+        .filter((f) => {
+          const code = stripComments(fs.readFileSync(f, 'utf-8'))
+            // Remove definitions so a declaration is not counted as a call.
+            .replace(new RegExp(`\\b(?:async\\s+|function\\s+)${method}\\s*\\(`, 'g'), '');
+          return new RegExp(`\\b${method}\\s*\\(`).test(code);
+        })
+        .map((f) => path.relative(REPO, f).split(path.sep).join('/'))
+        .sort();
+
+    expect(callers('executePurge')).toEqual(['lib/business-os/purge/ResetService.ts']);
+    expect(callers('removeStorageUnderUser')).toEqual(['lib/business-os/purge/ResetService.ts']);
+    expect(callers('writeVerifiedSnapshot')).toEqual(['lib/business-os/purge/ResetService.ts']);
+
+    // E-1: the repository's own write, one level below the orchestrator. A caller
+    // that skipped `writeVerifiedSnapshot` and wrote directly would also skip
+    // the read-back verification — not just the guards.
+    expect(callers('writeSnapshot')).toEqual(['lib/business-os/purge/SnapshotWriter.ts']);
+
+    expect(hasCapability('delete_rows')).toBe(true);
+    expect(hasCapability('delete_storage')).toBe(true);
+    expect([...GRANTED_CAPABILITIES].sort()).toEqual([...PURGE_CAPABILITIES].sort());
+  });
+
+  it('no user-facing copy claims deletion is impossible', () => {
+    // The same failure has now shipped in THREE places in this feature:
+    //
+    //   1. the Danger Zone banner       — "nothing will be deleted"       (fixed, M-4)
+    //   2. the preview limitations panel — "no delete capability. Nothing
+    //                                       here can remove a row."        (fixed, B-1)
+    //   3. the /test-business-os tab copy — "no delete capability at all" (fixed, B-1)
+    //
+    // Each was true in slice 1 and silently became false in slice 2, rendering
+    // beside a button that deletes. Each was found by a reviewer rather than by
+    // a test. A fourth would be found the same way — or not at all.
+    //
+    // So: whether deletion is possible is stated in exactly ONE place, driven by
+    // the server's `purgeFunctionExists()` probe. No static string anywhere on
+    // the purge surface may assert that it is impossible. Comments are stripped
+    // first (line-first), because several of them quote these phrases to
+    // explain why they were removed.
+    const REPO = path.join(__dirname, '..', '..', '..', '..');
+    const surface = [
+      ...walk(path.join(REPO, 'components', 'business-os', 'purge')),
+      ...walk(path.join(REPO, 'app', 'api', 'business-os', 'purge')),
+      ...walk(PURGE_DIR),
+      path.join(REPO, 'app', 'test-business-os', 'page.tsx'),
+    ].filter((f) => !f.includes(`${path.sep}__tests__${path.sep}`) && fs.existsSync(f));
+
+    // Non-vacuity: the files this exists to protect must actually be scanned.
+    const names = surface.map((f) => path.basename(f));
+    expect(names).toEqual(
+      expect.arrayContaining(['PurgeDangerZone.tsx', 'PreviewService.ts', 'page.tsx'])
+    );
+
+    const FALSE_REASSURANCE = [
+      /no delete capability/i,
+      /nothing (here )?can (remove|delete)/i,
+      /no commit route/i,
+      /nothing will be deleted/i,
+      /cannot delete anything/i,
+    ];
+
+    const strip = (src: string) =>
+      src.replace(/^[ \t]*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+        // JSX comments: {/* ... */}
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+
+    const offenders: string[] = [];
+    for (const f of surface) {
+      const code = strip(fs.readFileSync(f, 'utf-8'));
+      for (const re of FALSE_REASSURANCE) {
+        if (re.test(code)) offenders.push(`${path.relative(REPO, f)}: ${re}`);
+      }
     }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the RPC-existence probe keeps BOTH of its defensive arguments', () => {
+    // The probe calls the function that deletes a business. It is safe only
+    // because that function rejects it twice before the advisory lock:
+    // `p_user_id: null` raises on the first statement, `p_tables: []` on the
+    // next. A tidy-up passing a real id or a real table list removes a defence
+    // while the probe keeps returning true — so nothing would reveal it. With
+    // both changed, the probe IS a Reset. A comment asks; this enforces.
+    const REPO = path.join(__dirname, '..', '..', '..', '..');
+    const src = fs.readFileSync(
+      path.join(REPO, 'lib', 'repositories', 'BusinessPurgeRepository.ts'),
+      'utf-8'
+    );
+
+    const start = src.indexOf('async purgeFunctionExists()');
+    expect(start).toBeGreaterThan(-1);
+    const probe = src.slice(start, src.indexOf('});', start));
+
+    expect(probe).toMatch(/p_user_id:\s*null/);
+    expect(probe).toMatch(/p_tables:\s*\[\]/);
   });
 });
 

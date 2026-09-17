@@ -23,8 +23,11 @@
 // If that test can be made to pass by changing a capability, the test is wrong.
 //
 // ── Slice status ───────────────────────────────────────────────────────────
-// Slice 1 (this build) grants COUNT and STORAGE_COUNT only. Nothing else is
-// implemented, and nothing else may be granted without the work behind it.
+// Slice 1 granted COUNT and STORAGE_COUNT.
+// Slice 2 adds SNAPSHOT, DELETE_ROWS and DELETE_STORAGE — the Reset path.
+// All five capabilities are now granted. The RPC behind `delete_rows` is
+// written but deliberately NOT applied until the service_role key is rotated,
+// and the orchestrator refuses when it is absent.
 
 /**
  * Every operation this feature can perform.
@@ -59,6 +62,24 @@ export type PurgeCapability = (typeof PURGE_CAPABILITIES)[number];
 export const GRANTED_CAPABILITIES: ReadonlySet<PurgeCapability> = new Set<PurgeCapability>([
   'count',
   'storage_count',
+  // Slice 2 phase 1: copy rows out to storage. Read-only w.r.t. the business.
+  'snapshot',
+  // Slice 2 phase 2/3: the Reset commit and the storage removal after it.
+  //
+  // Granting these says the CODE PATH exists. It does not, today, mean deletion
+  // can happen: `delete_rows` calls `purge_business_data`, which is written but
+  // NOT applied, and `ResetService` probes for it before doing anything and
+  // refuses if it is absent.
+  //
+  // ⚠️ Do not read the absent function as a second CONTROL. It is an
+  // OPERATIONAL HOLD, kept by people: nothing in the system prevents anyone
+  // applying `supabase/held/20260916b_purge_business_data.sql`. What prevents it
+  // is that the file sits outside `migrations/` with a README, and that the
+  // people able to apply it know not to until the service-role key is rotated.
+  // A hold is only as strong as the discipline behind it. Once the function is
+  // applied, this capability is the only thing on this line of defence.
+  'delete_rows',
+  'delete_storage',
 ]);
 
 export function hasCapability(capability: PurgeCapability): boolean {

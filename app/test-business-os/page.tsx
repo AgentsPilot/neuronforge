@@ -456,13 +456,20 @@ export default function TestBusinessOSPage() {
         </div>
       )}
 
-      {/* Tab: Danger Zone — dry-run purge preview (T22, preview-only slice) */}
+      {/* Tab: Danger Zone — purge preview and the Reset commit (T22, slice 2).
+          Deliberately makes NO claim about whether deletion is possible. That
+          claim lives in exactly one place — the banner inside PurgeDangerZone —
+          and is driven by the server's own probe. Static copy here said "this
+          build has no delete capability at all" and silently became false in
+          slice 2, above a button that deletes; restating the state in a second
+          place is how the two drift. */}
       {activeTab === 'danger-zone' && (
         <div style={{ padding: '15px', border: '1px solid #ccc', borderRadius: '5px', marginBottom: '20px' }}>
           <h2 style={{ marginTop: 0 }}>Danger Zone — Business Data Reset &amp; Purge</h2>
           <p style={{ fontSize: '13px', color: '#666' }}>
-            Counts what a Reset or Purge <strong>would</strong> delete for the signed-in
-            account. This build has no delete capability at all — see the banner below.
+            Previews what a Reset or Purge would delete for the signed-in account, and — for
+            Reset — can carry it out. <strong>Read the banner below</strong> for whether Reset is
+            currently live.
           </p>
           <PurgeDangerZone onLog={addDebugLog} onResponse={setLastResponse} />
         </div>

@@ -48,7 +48,180 @@
 **Requirement:** [BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_BUSINESS_DATA_PURGE_REQUIREMENT.md) (31 FRs, 49 ACs, SA-approved 2026-09-14; FR-26 / FR-28 / AC-26 amended by SA §12.6, BA applying)
 **Branch:** `feature/business-os-business-data-purge` — ✅ created by RM, cut from `origin/main` at `7acd323a`, confirmed checked out
 **Date:** 2026-09-15
-**Status:** **SA Approved with conditions (rev 2)** — implementation may begin on Stages 0/1/3/4. T11, T22, T24 held pending C-15/C-17 and the T31 `fix/` branch.
+**Status:** ⏸️ **PARKED 2026-09-16** — slice 1 merged; slice 2 built and uncommitted, blocked on key rotation; slices 3–5 not started. **See the Parking State section below.**
+
+## ⏸️ PARKING STATE — read this first when resuming
+
+> **Parked 2026-09-16** at the owner's request, after slice 2 was built, so they can test before continuing.
+> This section is the known starting point. Everything below it is history and rationale.
+
+### Where the requirement stands
+
+| Slice | What | Status |
+|---|---|---|
+| **1** | Read-only census / preview | ✅ **Merged** (PR #43), live-verified against real data |
+| **2** | **Reset**, internal surface, skip-cleanly case only | 🟡 **Built, not committed, not yet exercised** — branch `feature/business-os-purge-slice-2` @ `5e584047`. Blocked on key rotation before it can delete anything |
+| **3** | Purge level; opt-ins (B6/B7); cron starvation; subdomain release | ⬜ Not started. Untouched |
+| **4** | Stripe provider pre-flight gate (C1/C2/C3 from Stripe) | ⬜ Not started. Untouched. **Replaces** slice 2's two controls |
+| **5** | Customer surface; localised copy; D9 flag flip | ⬜ Not started. Untouched |
+
+### What is live in the database vs only written
+
+| Object | File | Live? |
+|---|---|---|
+| `purge_schema_introspect()` | `supabase/migrations/20260915a_purge_schema_introspect.sql` | ✅ **Applied** (merged, PR #43) |
+| `business-purge-snapshots` bucket | `supabase/migrations/20260916a_purge_snapshots_bucket.sql` | ✅ **Applied** via SQL editor, 2026-09-16. Write/read-back/anon-denied **proven** |
+| **`purge_business_data()`** | **`supabase/held/20260916b_purge_business_data.sql`** | 🔴 **WRITTEN, NOT APPLIED — HELD until the `service_role` key is rotated.** Moved out of `migrations/` (M-3): this repo has `supabase/config.toml`, so a bulk `supabase db push` would otherwise apply it regardless of its header. See `supabase/held/README.md` |
+
+As of parking, the key in `.env.local` is still byte-identical to the one published on public `origin/main` in `docs/VERCEL_DEPLOYMENT_SETUP.md` (`sha256[:12] = 0b022ec57c77`).
+
+**One artefact left in storage on purpose:** a phase-1 demonstration snapshot at `business-purge-snapshots/868fda6a-59fa-4e99-8930-9951484078bf/2026-09-16T16-31-09-257Z.json` (75 rows, 53 tables) — the owner's own data, kept to compare against the first real Reset. **Do not delete without being asked.**
+
+⚠️ **This is not protected, and nothing here should read as though it is.** The bucket has no RLS policy, which means `anon` and `authenticated` cannot reach it — but the **service role ignores RLS entirely**, and until rotation the service-role key is published. So until the key is rotated, **anyone holding the published key can read this file**, and it has no expiry. "Private and policy-free" describes a missing policy, not a lock.
+
+### What slice 2 contains (uncommitted, awaiting owner review)
+
+| File | Role |
+|---|---|
+| `lib/business-os/purge/ResetService.ts` | **Orchestrator** — probe → guard → verified snapshot → RPC → storage → report → audit |
+| `lib/business-os/purge/ResetGuard.ts` | Both SA-S5 controls |
+| `lib/business-os/purge/localPrecondition.ts` | Control 2 as **data** — literal subset of slice 4's gate |
+| `lib/business-os/purge/SnapshotWriter.ts` | Paginated full read, write, read-back, compare |
+| `lib/repositories/BusinessPurgeRepository.ts` | + existence probe, `executePurge`, **recursive** storage walk |
+| `lib/business-os/purge/capabilities.ts` | All five capabilities now granted (see note) |
+| `app/api/business-os/purge/commit/route.ts` | **The Reset commit**, typed confirmation checked server-side |
+| `components/business-os/purge/PurgeDangerZone.tsx` | Reset button + confirmation; banner rewritten |
+| `lib/audit/events.ts` | `BUSINESS_DATA_PURGED`, `BUSINESS_DATA_PURGE_BLOCKED` |
+| `lib/business-os/purge/__tests__/ResetService.order.test.ts` | 14 ordering/refusal tests, mutation-verified |
+| `docs/investigations/MIGRATION_COMMENT_ON_POLICY_42501.md` | Out-of-band defect record |
+
+**Capability note.** All five capabilities are granted in slice 2. That says the *code path* exists — not that deletion can happen. For a row to be deleted, the capability must be granted **and** `purge_business_data` must exist in the database. `ResetService` probes for the second before doing anything, and refuses when it is absent.
+
+⚠️ **The absent function is not a control. It is a hold, kept by people.** Nothing in the system prevents someone applying `20260916b`; what prevents it is that it sits in `supabase/held/` with a README, and that the people who could apply it know not to. That is weaker than a control and should be described as what it is.
+
+### 🔴 A slice 1 defect found and fixed during slice 2
+
+**Storage counting was wrong in the merged slice 1, and storage removal would have silently failed in slice 2.** Supabase `list(prefix)` returns only immediate children, and every writer in this codebase nests two or three levels deep (`{userId}/{contactId}/intake/{uuid}`). A single-level listing sees only folders. Measured on real data:
+
+| Bucket / account | Single-level (old) | Recursive (fixed) |
+|---|---|---|
+| `contact-documents` / `08456106` | **0** | **9** |
+| `contact-documents` / `39c134b8` | **0** | **1** |
+| `website-images` / `08456106` | 9 | 13 |
+| `website-images` / `39c134b8` | 0 | 3 |
+| `website-images` / `b509258d` | 8 | 14 |
+
+For `contact-documents` — contracts and intake forms — the old code saw **none** of ten real documents. A Reset would have reported success and left all of them behind. The fix (`listObjectPathsRecursive`) is in this slice's working tree and **also corrects the preview's storage counts**.
+
+**Recorded against slice 1 (merged, PR #43):** its storage object counts were **wrong** — undercounted for every account with nested files. Slice 1 is read-only, so **no data was lost and no revert is needed**; the numbers it displayed were simply incorrect until slice 2 lands. The regression is now guarded by `lib/repositories/__tests__/BusinessPurgeRepository.storage.test.ts` (C-39), which fails if the walk is reverted to a single level — mutation-verified.
+
+### Known gaps carried forward — NOT done in slice 2
+
+- 🔴 **AC-29 is a SLICE 5 PREREQUISITE, not merely a gap.** The signed dry-run token binding a preview to its commit is not implemented. Slice 2's *Delivers* names typed confirmation only, and on the internal admin surface that is acceptable. **The customer surface must not ship without it**: there, the UI's "preview first" is rendering order, not enforcement, and a customer-facing destructive route with no enforced preview is the gap AC-29 exists to close.
+- 🔴 **Snapshot retention is required before Reset runs on anything beyond the owner's own test data** — not merely before slice 5. Each Reset writes a full row-level copy of a business's contacts, messages and invoices with **no expiry**, and until rotation that bucket is readable by anyone holding the published key. The enforcer must **not** be hosted on `/api/auth/cleanup-incomplete`, which is fail-closed dormant while `CRON_SECRET` is unset.
+- **Integration tests for the guard and snapshot cannot run under Jest** — see the test plan below.
+- **E-1 (closed, not merely recorded):** QA showed with planted callers that the single-caller test missed a bare `return writeVerifiedSnapshot(...)` (no `await`) and a direct `businessPurgeRepository.writeSnapshot(...)`. It now matches the call in any form after stripping comments and definitions, and also pins `writeSnapshot` to `SnapshotWriter.ts`. Both of QA's bypasses were re-planted and both now fail the test, naming the file.
+- **C-37 (done):** the recursive storage walk now has a wall-clock budget (20s) and a call budget (2,000), not just an object cap. A large tree reports `truncated: true` as residue instead of dying at the 60s platform limit as an opaque timeout.
+- `20260722_create_contact_documents_bucket.sql` fails halfway in the SQL editor — recorded in `docs/investigations/`, not fixed.
+
+---
+
+## ⏸️ Slice 2 test plan — for QA, and for the owner
+
+### What each layer proves
+
+| Layer | Covers | Does NOT cover | Command |
+|---|---|---|---|
+| **Unit (Jest)** — `descriptors.invariant` | Classification, ordering constraints, capability discipline; the **single-caller** rule for `executePurge`, `removeStorageUnderUser`, `writeVerifiedSnapshot` and `writeSnapshot` across all of `app/` and `lib/`, in any call form (E-1); the probe's two defensive arguments; **no static copy claiming deletion is impossible** | Anything touching the database | included in the command below |
+| **Unit (Jest)** — `ResetService.order` | Sequencing (probe → guard → snapshot → commit → storage), every refusal short-circuiting before the snapshot, AC-35, FR-22, audit of refusals and outcomes. **Mutation-verified**: disabling the RPC refusal turns 2 of 14 red | The database — the repository is mocked | included in the command below |
+| **Route (Jest)** — `commit/route` | 401 signed out; 403 non-admin **even with the correct confirmation**, and no confirmation oracle for a refused caller; 400 for wrong / empty / whitespace / missing confirmation, `level: purge`, injected `userId` / `user_id`, and **malformed JSON** (E-2); 409 with nothing to confirm against; happy path runs Reset **exactly once, for the session user**. **Mutation-verified**: dropping `.strict()` fails 3, dropping the JSON guard fails 1 | The delete itself — `runReset` is mocked | included in the command below |
+| **Unit (Jest)** — `BusinessPurgeRepository.storage` | Recursive storage walk at 2–3 levels; never touches another tenant or the shared `logos/` folder. **Mutation-verified**: reverting to single-level listing fails 2 of 4 | — | included in the command below |
+| **Unit (Jest)** — `no-deletion-paths.guard` | Repo-wide: no deletion primitive outside the allow-list | — | included in the command below |
+| **Live, via `tsx`** | The real guard and real snapshot against the real database | The commit (RPC not applied) | see below |
+| **Live, via the route** | End-to-end including authorisation and typed confirmation | — | the UI steps below |
+
+**Run everything unit-level:**
+
+```bash
+npx jest "[Pp]urge"
+```
+
+Expect **83 passed across 6 suites**.
+
+**This is the one command, used everywhere.** The purge tests live in four directories (`lib/business-os/purge`, `components/business-os/purge`, `app/api/business-os/purge`, and `lib/repositories` for the storage suite), so any command naming directories drops whichever one it forgets — QA found exactly that, a 61-across-4 run that silently skipped the storage suite. `"[Pp]urge"` is a path regex matching all six suites and nothing unrelated (verified with `--listTests`), and a future purge test is picked up automatically because its path will contain "purge" or "Purge".
+
+### ⚠️ Why a red Jest run against the database is not a defect
+
+`supabase-js` has **no working `fetch` under this repo's Jest environment**. Any Jest test that reaches the network fails with `TypeError: fetch failed` — while the identical query returns HTTP 200 from plain Node. This was confirmed during slice 2 by running the same four queries both ways.
+
+So database-touching tests must run through **`tsx`** or through the **dev server**, never Jest. A red integration run under Jest means the harness, not the code. The unit suites above deliberately mock the repository for this reason.
+
+**`tsx` harness pattern** (env must be loaded *before* importing anything that constructs a Supabase client — a static import runs first and fails with `supabaseUrl is required`):
+
+```ts
+// .check.ts — run with: node_modules/.bin/tsx ./.check.ts
+import fs from 'fs';
+for (const l of fs.readFileSync('.env.local', 'utf8').split('\n')) {
+  const m = l.match(/^([A-Z0-9_]+)=(.*)$/); if (m) process.env[m[1]] = m[2].trim();
+}
+(async () => {
+  const { evaluateResetGuard } = await import('@/lib/business-os/purge/ResetGuard');
+  console.log(await evaluateResetGuard({ userId: '<uuid>', correlationId: 'qa' }));
+})();
+```
+
+### 🔴 C-40 — the post-rotation checklist (do these IN ORDER)
+
+This is the most important thing in the parking state. Each step checks the one before it; skipping ahead is how a step that silently failed goes unnoticed. The same list is in `supabase/held/README.md`, beside the held file.
+
+1. **Rotate the `service_role` key** in the Supabase dashboard.
+2. **Update the key** in Vercel and in `.env.local`.
+3. **Confirm the OLD key is actually rejected.** Rotation that hasn't taken looks identical to rotation that has, until tested. The old key hashes to `sha256[:12] = 0b022ec57c77`.
+4. **Remove the key from `docs/VERCEL_DEPLOYMENT_SETUP.md`.** Not sufficient on its own — the old key is in public git history, which is why rotation comes first.
+5. **Move the migration back:** `supabase/held/20260916b_purge_business_data.sql` → `supabase/migrations/`.
+6. **Apply it** in the Supabase SQL editor.
+7. **Reload PostgREST's schema cache:**
+   ```sql
+   NOTIFY pgrst, 'reload schema';
+   ```
+   ⚠️ **Not mentioned anywhere before C-40, and easy to miss.** Without it the API still cannot see the new function: Reset keeps refusing with `rpc_not_applied`, the banner keeps saying the function is not applied, and it looks exactly like a broken migration when it is only a stale cache.
+8. **Confirm the probe returns true** — `purgeFunctionExists()`.
+9. **Confirm the Danger Zone banner reads "⚠️ Reset is LIVE — it will delete data."** It is driven by the same probe (M-4), so if step 8 passed and the banner disagrees, reload the page.
+10. **Run a Reset preview and confirm the preview panel AGREES with the banner** (B-1). Its first line must read *"⚠️ RESET IS LIVE…"*. Before this fix it said *"PREVIEW ONLY — this build has no commit route and no delete capability. Nothing here can remove a row"* regardless of state, directly above the Reset button. Both are now driven by the same probe; if they ever disagree, stop — something is reading a stale response.
+11. **First Reset on the owner's test data only** — a throwaway account, never a real login — and **compare the result against the demonstration snapshot** already in the bucket.
+
+    ⚠️ **E-4 — the numbers will not match exactly, and that is not a bug.** The demonstration snapshot recorded **75 rows**; a preview taken later showed **74**. The difference is `external_calendar_events`, which changes as calendar data syncs — the database moved between the two readings, not the code. Expect the first real Reset to differ from the demo snapshot by that kind of drift. Compare **per table**, and treat a mismatch confined to `external_calendar_events` as expected. A mismatch in a table nothing writes to on its own (contacts, invoices, bookings) is worth investigating.
+
+`20260916a` (the bucket) is already applied. Do not re-run it.
+
+### 🔴 Testing Reset — on a THROWAWAY account, never your own login
+
+**Do not run the first real Reset on your own account.** The environment points at the production database. A Reset permanently deletes that account's CRM contacts, bookings, invoices, payments, website and insight data, and there is no undo — the snapshot is a forensic record, not a restore path. Test on a disposable account first.
+
+1. **Create a throwaway account** — sign up with a new email you control.
+2. **Grant it admin** so it can reach the Danger Zone: add a row to `admin_users` for that account. *(Remove it again after testing.)*
+3. **Seed it:** `/test-business-os` → **Overview** → Account Setup. Then create a couple of contacts through the **Modules** tab.
+4. **Check it has no Stripe connection** — slice 2 refuses otherwise, by design.
+5. `npm run dev` → **`http://localhost:3000/test-business-os`** → sign in **as the throwaway account** → **Danger Zone** tab.
+6. **Confirm the amber banner names the throwaway account** — the email and uuid shown are exactly whose data will be deleted. **If it shows your own account, stop.**
+7. Select **Reset** → **Run dry-run preview**. Note the row counts.
+8. In the **Reset this business** box, type the business name (or the account email if it has none) → **Reset — delete permanently**.
+
+**What you should see:**
+
+- **Before rotation / before `20260916b` is applied:** the banner reads *"Reset is currently refused — the destructive function is not applied"*. Pressing Reset gives a yellow **"Reset refused — rpc_not_applied"** panel, *Rows deleted: 0 · Snapshot written: no*. This is correct, and it proves the probe runs before the snapshot.
+- **After it is applied and the schema is reloaded:** the banner turns red — **"⚠️ Reset is LIVE — it will delete data."** Pressing Reset gives a green **"Reset completed"** panel with the row count and snapshot path, plus any storage residue listed separately.
+
+### Confirming it worked
+
+- **Rows gone:** re-run the preview → the Reset-level tables should read 0.
+- **What was kept:** `business_profiles`, pipeline stages, intake settings/forms, capabilities, payment processors, Stripe Connect, channel connections — and always `email_unsubscribes` and `user_preferences`.
+- **Snapshot exists and matches:** the path shown in the completed panel is in `business-purge-snapshots`; its `rowCount` should equal the preview's total.
+- **Audit row:** `audit_trail` has a `BUSINESS_DATA_PURGED` entry for the account, with `rowsDeleted`, `rowsByTable`, `snapshotPath` and the `correlationId` shown in the debug console.
+- **Refusals are audited too:** the pre-rotation refusal in step 8 should have written a `BUSINESS_DATA_PURGE_BLOCKED` row.
+- **SQL spot-check:** `select count(*) from crm_contacts where user_id = '<throwaway uuid>';` → **0**.
+
+---
 
 ## Overview
 
@@ -2050,9 +2223,310 @@ This is not this cycle's work and I am not folding it in. It is recorded here be
 
 ---
 
+## 12E. SA Code Review — Slice 2 (Reset)
+
+**Reviewed by SA — 2026-09-16** · branch `feature/business-os-purge-slice-2` @ `5e584047`, working tree.
+**Status:** 🔄 **Changes required before merge — three merge-blocking (M-1…M-3), one blocking before the RPC is applied (M-4).** None is large.
+
+**The crux: does "merged but inert" hold?** **For the Reset path, yes — verified.** **For the merged build as a whole, no** — one route writes a full business snapshot without ever asking whether the destructive function exists. That route has no caller and should be deleted. Once it is, the claim holds.
+
+The engineering in `ResetService` is careful and the ordering test is genuinely load-bearing. Unit suites re-run by SA: **4 suites, 60 passed**.
+
+---
+
+### 12E.1 "Merged but inert" — ✅ holds for `/commit`, ❌ fails for `/snapshot`
+
+#### The Reset path — verified
+
+`/commit` → `getUser` → strict Zod → `authorizePurge` → typed confirmation against a **server-looked-up** `company_name` (fallback: account email) → `runReset`. Inside `runReset`, read line by line:
+
+| Step | With `purge_business_data` absent |
+|---|---|
+| capability `delete_rows` | granted — passes |
+| **`purgeFunctionExists()`** | **`false` → refuse `rpc_not_applied`, `snapshotWritten: false`** |
+| guard (control 1, control 2) | never reached |
+| `writeVerifiedSnapshot` | never reached |
+| `executePurge` | never reached |
+| storage removal | gated on `result && result.ok` — **unreachable without a successful commit** |
+| audit | the refusal is audited as `BUSINESS_DATA_PURGE_BLOCKED` |
+
+`ResetService.order.test.ts` asserts exactly this: on `rpc_not_applied` the calls list contains neither `resolveConnectAccounts`, nor `writeSnapshot`, nor `executePurge`; on `rpc_state_unknown`, no `writeSnapshot`. Moving the probe after the snapshot would turn those red — the mutation claim is credible. **No path through `/commit` deletes a row, writes a snapshot, or removes an object while the RPC is absent.**
+
+#### 🔴 M-1 (merge-blocking) — `/api/business-os/purge/snapshot` writes a snapshot with no RPC probe
+
+`app/api/business-os/purge/snapshot/route.ts` runs `authorizePurge` → `evaluateResetGuard` → **`writeVerifiedSnapshot`**. It **never calls `purgeFunctionExists()`**. With the RPC absent, a merged build can still write a snapshot — one of the three things "inert" has to exclude.
+
+What makes it worse than an ordering slip:
+
+- **It has no caller.** `PurgeDangerZone.tsx` fetches only `/preview` and `/commit`. The route is reachable only by a direct POST.
+- **Its safety claims are false in this build.** The header says *"the `delete_rows` capability is ungranted"* and *"There is no phase 2 in this build"*; its success response tells the caller *"No rows were deleted — this build has no delete path."* This same diff granted `delete_rows` and added phase 2, and left those statements standing. It is the F-1 / N12 class — a superseded file describing a superseded world — except this one still executes.
+- **Before rotation, a snapshot is a pre-packaged exfiltration target.** It is one object containing an entire business — contact names, emails, phones, message bodies. The bucket is "private, policy-free", but **the service role bypasses storage RLS and the service-role key is public**. There is no retention enforcer, so they accumulate. And the response hands back the exact object path.
+- **Admin-only** limits who can *write* one. It does nothing about who can *read* one.
+
+`runReset` already performs everything this route was built to demonstrate, in the correct order and behind the probe. **Delete the route.** Adding a probe to it would leave a second orchestrator to keep in step with the first.
+
+#### 🔴 M-2 (merge-blocking) — extend the single-orchestrator test to the snapshot writer
+
+The test's own rationale is: *"Every guard — the RPC-existence probe, both controls, the verified snapshot — lives in `ResetService`. A second caller … would be a path … that skips all of them."* That reasoning applies **identically** to `writeVerifiedSnapshot`, which currently has **two** callers — and the second is M-1. Add:
+
+```ts
+expect(callers('writeVerifiedSnapshot')).toEqual(['ResetService.ts']);
+```
+
+One line, and it is the assertion that would have caught M-1 before review.
+
+---
+
+### 12E.2 Probe safety — ✅ verified against the migration, and safer than claimed
+
+The probe sends `{ p_user_id: null, p_level: 'reset', p_options: {}, p_tables: [] }`.
+
+| Migration line | Statement | Relative to side effects |
+|---|---|---|
+| **93** | `IF p_user_id IS NULL THEN RAISE` | **First executable statement** |
+| 97 | level check | before lock |
+| **101** | `IF … jsonb_array_length(p_tables) = 0 THEN RAISE` | **also before lock** |
+| 115–117 | `pg_try_advisory_xact_lock` | first side effect |
+| 129+ | the delete loop | — |
+
+**The rejection precedes every side effect, including the advisory lock.** `RAISE EXCEPTION` aborts the transaction, so nothing persists either way.
+
+**It is two independent pre-lock rejections, not one.** Remove line 93 and `p_tables: []` still raises at line 101 before the lock. **Pin both in the probe's comment**: the probe must keep `p_user_id: null` *and* `p_tables: []`. A later "tidy" to pass a real UUID or a representative table list would silently remove one of the two defences and nobody would notice, because the probe would still work.
+
+**The classifier fails closed on every non-`true` branch:** clean return → `null` (refuse — a null id must raise); `PGRST202` → `false` (refuse); message match → `true`; anything else → `null` (refuse). ✅
+
+One consequence for resuming (see 12E.7): **`PGRST202` also fires when the function is applied but PostgREST's schema cache has not reloaded.** Fail-closed, so safe — but it will look like a bug to whoever applies the migration.
+
+---
+
+### 12E.3 Is "and the function exists" a real control? — **No. It is an operational hold. Make it a mechanical one.**
+
+The honest answer is that it **is** a coincidence of today's database state — deliberately so. Once `20260916b` is applied, `purgeFunctionExists()` returns `true` permanently and the gates reduce to: admin, typed confirmation, the two guard controls. That is the intended end state and it is fine. But the RPC's absence must be described as **an operational hold, only as strong as the discipline of not applying one file** — not as a second control. The capability note in the parking section currently presents it as the latter ("two independent facts must both hold"); that sentence overstates it.
+
+#### 🔴 M-3 (merge-blocking) — a comment is not a hold
+
+`20260916b_purge_business_data.sql` sits in **`supabase/migrations/`**, and `supabase/config.toml` exists. **Any bulk `supabase db push` or migration runner applies it** along with whatever else is pending — the `DO NOT APPLY` header is read by humans, not by tools. This repo's practice is selective application (58 migrations deliberately unapplied), which lowers the likelihood. It does not change what the hold *is*: a convention.
+
+The coordinator's framing is exactly right — merging before rotation is acceptable only if the RPC's absence is real. So make it real:
+
+- **Move the file out of any path a migration runner globs** — e.g. `supabase/held/20260916b_purge_business_data.sql`, with a short `README.md` naming the rotation precondition.
+- **Commit it there.** O-1's lesson stands: a live object no committed file explains is the `audit_logs` defect.
+- **Moving it into `migrations/` is the first step of the post-rotation checklist.** Check the invariant and guard tests for any hard-coded path before moving.
+
+---
+
+### 12E.4 The single-orchestrator test — ✅ can fail, but scoped too narrowly
+
+**It can fail.** A second call site for `.executePurge(` or `.removeStorageUnderUser(` inside the scanned directories turns it red. A mis-resolved directory also turns it red, because the expected value is non-empty. ✅
+
+**Two weaknesses:**
+
+1. **It scans only `lib/business-os/purge/**` and `app/api/business-os/purge/**`.** `businessPurgeRepository` is exported from `lib/repositories/` and importable from anywhere. A second caller in a cron, a script, `lib/services/**` — or `app/api/admin/**`, the 41 unauthenticated routes of E5, which is where one would most plausibly appear — **passes this test**. That is the per-directory weakness C-34 ruled against. **Condition C-36: scan all of `app/` and `lib/`**, excluding `__tests__` and the repository's own definition file.
+2. It does not cover `writeVerifiedSnapshot` — **M-2**.
+
+Matching on the literal `.method(` misses aliasing (`repo['executePurge']`, destructuring). Acceptable for a structural test; noted so nobody reads it as a proof.
+
+---
+
+### 12E.5 Storage recursion — ✅ complete; bounded on objects, not on calls
+
+| Property | Result |
+|---|---|
+| **Complete** | ✅ Per-prefix pagination correct (`offset += 1000`, stop on a short page). `entry.id === null` descends as a folder. Storage prefixes form a tree, so no cycle guard is needed |
+| **Tenant-scoped** | ✅ Walk starts at `userId`; every path is `${prefix}/${name}`, so every path is under `{userId}/`. Supabase `list()` is folder-scoped, and full UUIDs cannot prefix-collide |
+| **Bounded — objects** | ✅ 10,000-object cap returns `truncated: true`; removal records truncation as **residue**, never as success |
+| **Bounded — calls / wall-clock** | ⚠️ **No.** A wide or deep tree walks until `maxDuration` kills the function — which surfaces as a platform timeout, not as `truncated: true` |
+
+**C-37:** add a list-call or elapsed-time budget that returns `truncated: true`. Same principle as C-18 — a budget refusal is reported by our code, never by a platform kill. Low priority.
+
+#### Does the merged slice 1 warrant more than landing the fix? **Yes — three small things.**
+
+Slice 1 is read-only, so no data was lost; the harm is wrong numbers on the screen an admin uses to judge what a Reset will touch — and the undercount was worst exactly where it matters, contracts and intake documents.
+
+1. **C-38 — land the storage fix independently if slice 2 does not merge promptly.** The fix lives in slice 2's working tree. The owner is parking, so if slice 2 is held for M-1…M-4, **`main` keeps showing wrong storage counts**. PR #41 is the precedent: found during the cycle, shipped on its own.
+2. **C-39 — add a regression test with a nested fixture** (`{userId}/{contactId}/intake/{uuid}`) asserting the recursive count. At present nothing fails if someone reverts to a single-level `list()`.
+3. **Record on the slice-1 record** that its storage counts were wrong from merge until the fix. No revert — just so anyone who acted on a slice-1 number knows.
+
+---
+
+### 12E.6 The banner — honest before rotation, false after it
+
+> *"Until the destructive database function is applied, the server refuses Reset before anything is written. **That refusal is the expected state right now.**"*
+
+- **Before rotation:** true for Reset. ✅
+- **After the migration is applied:** false — and nothing ties it to actual state. The admin sees *"the server refuses Reset … expected state right now"* beside a button that now deletes.
+
+Dev's own comment names this exact failure — *"A reassuring banner that has quietly become false is worse than no banner at all."* The rewrite fixes one instance and plants the next, and the person applying the migration is the person least likely to also edit UI copy.
+
+#### 🔴 M-4 (blocking before the RPC is applied) — derive the sentence from real state
+
+Return `purgeFunctionExists()` from `/access` (or with the preview) and render: *"Reset is currently refused — the destructive function is not applied"* only when that is true, and **"⚠️ Reset is LIVE — it will delete"** otherwise. Honest in both states by construction. Because the parking hand-off is a cold resume, **do this before merge** rather than trusting it to be remembered at apply time.
+
+---
+
+### 12E.7 Known gaps — rulings
+
+| Gap | Ruling |
+|---|---|
+| **AC-29 — no server-enforced preview-before-commit** | ✅ **Acceptable for merge.** Admin-only, own account, internal surface; the typed confirmation is checked server-side against a server-looked-up value; and the RPC is absent. **Load-bearing for slice 5** (customer surface), so it must be listed as a **slice 5 prerequisite**, not only as a gap. Dev's route header states it plainly — good |
+| **Snapshot retention enforcer** | ✅ **Acceptable for merge — but only because of M-1.** With the orphaned route deleted, no snapshot can be written before rotation (`runReset` refuses first). After rotation, every Reset writes one and nothing expires them. So the enforcer is a **prerequisite for the first Reset on any business other than the owner's own test data**, and for slice 5. It must not be hosted on the dormant `cleanup-incomplete` cron (C-17) |
+
+---
+
+### 12E.8 Parking state — strong, not yet sufficient to resume cold
+
+**What is good:** per-slice status; the live-versus-written table; the demonstration snapshot identified by exact path; the storage defect with measured before/after numbers; carried gaps stated as gaps; and the test plan, including the Jest `fetch` trap and a `tsx` harness that loads env *before* constructing a client. Someone could pick up most of this cold.
+
+**What is missing:**
+
+1. **C-40 — the rotation → apply sequence, as an ordered checklist.** This is the most consequential step anyone will take on this feature, and it currently exists only as scattered warnings:
+   1. Rotate the `service_role` key.
+   2. Update Vercel env and `.env.local`.
+   3. **Verify the old key is rejected** — not assumed.
+   4. Move `20260916b` from `supabase/held/` into `supabase/migrations/` (M-3).
+   5. Apply it.
+   6. **`NOTIFY pgrst, 'reload schema';`** — without this, PostgREST keeps answering `PGRST202` and Reset keeps refusing `rpc_not_applied`, which will look like a bug. **It is not mentioned anywhere today.**
+   7. Confirm `purgeFunctionExists()` returns `true`.
+   8. Confirm the banner now reads **LIVE** (M-4).
+   9. First Reset: **the owner's own test business only**, compared against the demonstration snapshot.
+2. **The demonstration snapshot is described as sitting in a "private policy-free bucket."** That describes the policy, not a protection: **until rotation it is readable by anyone holding the published key**, because the service role bypasses storage RLS. Keeping it is the owner's call about the owner's own data — the note should simply not read as reassurance. After rotation it is protected.
+3. **The storage fix's dependency on slice 2 merging** — state it, and point at C-38.
+4. **The `/snapshot` row in "What slice 2 contains"** goes after M-1; the **capability note** should say "operational hold" rather than "two independent facts" (12E.3).
+
+---
+
+### 12E.9 Conditions
+
+| # | Item | Blocks |
+|---|---|---|
+| **M-1** | Delete `app/api/business-os/purge/snapshot/route.ts` | **merge** |
+| **M-2** | `callers('writeVerifiedSnapshot')` equals `['ResetService.ts']` | **merge** |
+| **M-3** | Move `20260916b` out of `supabase/migrations/` into a non-migration path, committed, with a README | **merge** |
+| **M-4** | Banner's refusal sentence derived from `purgeFunctionExists()` | **merge** (hard block before apply) |
+| **C-36** | Single-orchestrator scan covers all of `app/` and `lib/` | slice 2 |
+| **C-37** | Call/time budget on the storage walk returning `truncated` | follow-up |
+| **C-38** | Land the storage fix independently if slice 2 merge slips | as needed |
+| **C-39** | Nested-fixture regression test for the recursive walk | slice 2 |
+| **C-40** | Rotation → apply checklist in the parking section, incl. `NOTIFY pgrst` | **before parking** |
+| — | Probe comment pins **both** `p_user_id: null` and `p_tables: []` | slice 2 |
+| — | AC-29 listed as a **slice 5 prerequisite**; retention enforcer as a prerequisite for any non-test Reset | parking doc |
+
+**Merge verdict: not yet.** With M-1…M-4 applied, **"merged but inert" holds, and merging before rotation is sound.**
+
+---
+
 ## 13. QA Testing Report
 
-_QA will populate this section._
+**QA — 2026-09-16 (slice 2, Reset — "merged but inert" verification)**
+**Test mode:** full (scoped to slice 2)
+**Strategy used:** A (Jest unit + mutation testing on the structural guards), B (route-level Jest with mocked auth/repos — temporary, removed after the run), C (`tsx` scripts against the live DB, read-only, with write tripwires), dev-server HTTP probes. E2E browser click-through not run — see Skipped.
+**Focus:** security, api, schema (probe safety), storage
+**Skipped:** Authenticated admin click-through on `/test-business-os` — QA has no session for an admin account and did not mint one against production. Covered instead by the route test (real `authorizePurge`, mocked `getUser`/`isAdmin`) plus the live `runReset` call below. The owner's throwaway-account walkthrough (test plan, "Testing Reset" steps 1–8) remains the only true end-to-end proof. The held migration was **not** applied and no real Reset was run, as instructed.
+**Input source:** prompt keywords (coordinator brief) + workplan Slice 2 test plan
+**Environment:** `.env.local` → **production DB**. Every DB action was a read. The one live `runReset` call had its audit sink replaced and `writeSnapshot` / `executePurge` / `removeStorageUnderUser` / `readAllRows` / guard reads replaced with record-and-throw tripwires, and targeted a random UUID with no data. Nothing was written to the database or storage. All temporary files (a mutation route, a route test, three `tsx` scripts, a git worktree) were removed; `git status` matches the pre-QA state, stashes untouched.
+
+### SA §12E merge conditions
+
+| Condition | Verified? | Result | Evidence |
+|---|---|---|---|
+| **M-1** `/purge/snapshot` deleted, 404 | ✅ | **Pass** | Dev server: `POST /api/business-os/purge/snapshot` → **404**, `GET` → **404**. Directory absent. Repo-wide grep: `writeVerifiedSnapshot` has one call site (`ResetService.ts:159`); the repository's `writeSnapshot` has one call site (`SnapshotWriter.ts:157`). No other writer targets `business-purge-snapshots` |
+| **M-2** one-caller test covers delete methods + `writeVerifiedSnapshot`, scans all `app/` + `lib/`, can fail | ✅ | **Pass** (with an edge case, see E-1) | Planted `app/api/admin/qa-m2-mutation/route.ts` calling `await writeVerifiedSnapshot(...)` → **red**, `Received +1 "app/api/admin/qa-m2-mutation/route.ts"`. Same plant calling `businessPurgeRepository.executePurge(...)` / `.removeStorageUnderUser(...)` → **red**, naming the file. Removed → **33/33 green** |
+| **M-3** `20260916b` out of `migrations/`, in `supabase/held/` with README | ✅ | **Pass** | `supabase/migrations/` holds only `20260915a` and `20260916a`. `supabase/held/README.md` states the rotation precondition and the 10-step release order including `NOTIFY pgrst`. No reference anywhere in the repo to `migrations/20260916b` (grep empty). Remaining mentions are the held path, the release step "move it back", or SA's historical §12E text |
+| **M-4** banner driven by `purgeFunctionExists()` | ✅ | **Pass** | `/access` returns `resetLive` from the same probe, admins only (unauthenticated `/access` → `allowed:false`, no `resetLive` field). `PurgeDangerZone.tsx` renders three distinct states: `true` → red "⚠️ Reset is LIVE — it will delete data."; `false` → "Reset is currently refused — the destructive function is not applied"; `null`/`undefined` → "Could not determine whether Reset is live. Treat it as live". Live probe today returns `false`, so the "refused" branch is the one shown |
+
+### "Merged but inert" — the core check
+
+| Check | Result | Evidence |
+|---|---|---|
+| Probe reports the function absent | ✅ Pass | Live `purgeFunctionExists()` → `false`. Sanity: an RPC to a nonexistent function returns `PGRST202` from PostgREST, the same code the probe classifies as absent |
+| Reset refuses before anything irreversible | ✅ Pass | Live `runReset` → `{"status":"refused","reason":"rpc_not_applied","snapshotWritten":false,"rowsDeleted":0}`. **Tripwires hit: `[]`** — neither the guard reads, snapshot read/write, commit nor storage removal was reached |
+| No snapshot object created | ✅ Pass | Bucket walked recursively before and after: `["868fda6a-…/2026-09-16T16-31-09-257Z.json"]` both times. **New objects: `[]`**. Demo snapshot untouched |
+| Refusal is audited | ✅ Pass (shape only) | Captured event: `BUSINESS_DATA_PURGE_BLOCKED`, `reason: rpc_not_applied`, `snapshotWritten: false`. Not persisted — the sink was suppressed so production stayed write-free |
+| Stale PostgREST cache case | ✅ Safe by construction | If the function existed but the cache was stale, `executePurge` would get the same `PGRST202`, so nothing could delete either |
+
+**Conclusion: "merged but inert" holds.** QA found no path that deletes a row, removes a storage object or writes a snapshot while `purge_business_data` is absent.
+
+### Other acceptance checks
+
+| Criterion | Tested? | Result | Notes |
+|---|---|---|---|
+| Typed confirmation checked server-side | ✅ | Pass | Temporary route test (14 cases, real `authorizePurge` and Zod): wrong text → 400, empty → 400, whitespace-only → 400, missing → 400, email typed when a business name exists → 400. In every case `runReset` is never called. Normalised match (`' acme plumbing '` vs `Acme  Plumbing`) → 200. Email fallback when there's no business name → 200. No name and no email → 409 |
+| Non-admin refused by the route, not only the UI | ✅ | Pass | Non-admin with the correct confirmation → **403**. Neither `runReset` nor the profile lookup is called. Admin lookup throwing → non-200, `runReset` not called (fails closed). Unauthenticated on the live dev server → **401** |
+| Target is always the session user | ✅ | Pass | Injected `userId` → 400 (`.strict()`). `runReset` is called with the session id. `level: 'purge'` → 400 |
+| Probe-safety test fails if the probe's arguments change | ✅ | Pass | Mutation `p_user_id: '<uuid>'` → red at `toMatch(/p_user_id:\s*null/)`. Mutation `p_tables: [{…}]` → red at `toMatch(/p_tables:\s*\[\]/)`. File restored (sha256 identical) → green |
+| C-39 storage recursion test fails on a single-level revert | ✅ | Pass | Mutation: stop descending into folders → **2 of 4 red**. Restored → green. Fixture asserts `other-user/…` and `logos/shared.png` are never removed |
+| Recursive walk is correct on real data | ✅ | Pass | Live read, single-level vs recursive: contact-documents `08456106` 0→**9**, `39c134b8` 0→**1**; website-images `08456106` 9→**13**, `39c134b8` 0→**3**, `b509258d` 8→**14**. Matches Dev's table exactly. `logos/` exists at the top level of `website-images` and is never a walk root, because walks start at the user's UUID |
+| Preview still works as in slice 1 | ✅ | Pass (see B-1) | Live `buildPurgePreview` for `868fda6a`: reset **74 rows / 53 tables / 0 unknown**, purge **77 / 62 / 0 unknown**, gate `skipped`, ~4s. `evaluateResetGuard` → `clear`. Unauthenticated `/preview` → 401 |
+| Ordering / refusal unit suite | ✅ | Pass | `ResetService.order` 14/14 |
+| Unit suites | ✅ | Pass | `npx jest lib/business-os/purge components/business-os/purge lib/repositories/__tests__/BusinessPurgeRepository.storage` → **65 passed, 5 suites**. ⚠️ The brief's shorter command (without the storage path) gives **61 passed, 4 suites**. That isn't a defect: the storage suite lives under `lib/repositories/` |
+| Repo-wide baseline vs `origin/main` | ✅ | Pass | Branch: 297 suites, 22 failed, 4087 pass / 131 fail. `origin/main` (`5e584047`, clean worktree): 295 suites, 22 failed, 4068 pass / 131 fail. **Added failing suites: none. Added failing tests: none.** The only new suites are `ResetService.order` and `BusinessPurgeRepository.storage`, both green |
+
+### Issues Found
+
+#### Bugs (should fix before merge — neither breaks "inert")
+
+1. **B-1 — The preview still tells the admin nothing can be deleted, directly above the Reset button** — File: `lib/business-os/purge/PreviewService.ts:117-120` — Severity: **Medium**
+   - Steps to reproduce: run a Reset preview (verified live via `buildPurgePreview`, `limitations` array).
+   - Expected: limitations that describe the current build.
+   - Actual: `"PREVIEW ONLY — this build has no commit route and no delete capability. Nothing here can remove a row."`, `"…the business-purge-snapshots bucket has not been created, and no snapshot writer has been built"`, `"The destructive RPC … has not been written or applied"`. All three are now false. `PurgeDangerZone` renders these above the counts, and the "Reset this business" box sits right below them.
+   - Why it matters: this is the same false-reassurance problem as M-1 and M-4. The banner is now live-driven, but this panel is hard-coded. After C-40 step 6 the banner will say LIVE while this panel says "Nothing here can remove a row". No step in the C-40 checklist would catch it, and nobody edits code between merge and apply. Fix: rewrite or derive these lines (the RPC one could use the same probe). Text-only change.
+
+2. **B-2 — The new commit route has no route-level test** — File: `app/api/business-os/purge/commit/route.ts` (no `__tests__/`) — Severity: **Medium**
+   - The `new-api-route` skill and CLAUDE.md require happy path + 401 + 400 for a new API route. Nothing in the repo exercises this route's auth, Zod strictness or typed-confirmation logic. `ResetService.order` mocks below the route.
+   - QA confirmed the behaviour is correct with a temporary 14-case test, then removed it (QA doesn't ship fixes). Dev should add a permanent `app/api/business-os/purge/commit/__tests__/route.test.ts` covering at least: 401, non-admin 403, wrong/empty confirmation 400, injected `userId` 400, correct confirmation → `runReset` called with the session id. The `resetLive` addition to `/access` is also untested.
+
+#### Performance Issues
+
+None found. The live preview runs in ~4s. `/access` now makes one extra RPC for admins only.
+
+#### Edge Cases (nice to fix)
+
+1. **E-1 — The one-caller scan can be dodged by call shape** — `lib/business-os/purge/__tests__/descriptors.invariant.test.ts:~425` — Low. The regex `(\.|\bawait\s+)method\(` only matches member calls and `await` calls. QA mutation: a planted `return writeVerifiedSnapshot(...)` (no `await`) plus `businessPurgeRepository.writeSnapshot(...)` (the raw repository write, not in the checked list) → **test stayed green**. M-2 is met as SA worded it, and no such caller exists today (grep-verified). Suggest `\bmethod\s*\(` excluding the defining file, and adding `writeSnapshot` to the checked methods.
+2. **E-2 — Malformed JSON body returns 500, not 400** — `commit/route.ts:71` — Low. `request.json()` throws a `SyntaxError` outside the `ZodError` branch. Nothing runs (`runReset` not called) and details are dev-only, so this is cosmetic.
+3. **E-3 — A code comment still calls the absent function a control** — `lib/business-os/purge/capabilities.ts:~72`: *"Two independent facts must both be true for a row to be deleted"*. §12E.3 / §12E.8-4 asked for "operational hold" wording. The parking section was corrected; this comment was not. Low, comment-only.
+4. **E-4 — Row totals have already drifted from the demo snapshot** — observation for C-40 step 10. The live reset preview for `868fda6a` shows **74** rows; the demo snapshot is recorded as **75**. Whoever compares the first real Reset to the demo snapshot should expect differences, not treat them as a defect.
+
+#### Harness limitations (not product defects)
+
+- supabase-js has no `fetch` under Jest here (per the test plan), so every DB-touching check ran via `tsx` and none were attempted under Jest. No `fetch failed` results are counted above.
+- Refusal audit rows were captured, not persisted — a deliberate choice to keep production write-free. The owner's walkthrough will persist one (`BUSINESS_DATA_PURGE_BLOCKED`).
+
+### Test Outputs / Logs
+
+```text
+# Live inert check (tsx, tripwired, random UUID)
+BUCKET BEFORE ["868fda6a-59fa-4e99-8930-9951484078bf/2026-09-16T16-31-09-257Z.json"]
+BOGUS RPC code PGRST202
+PROBE purgeFunctionExists = false
+OUTCOME {"status":"refused","reason":"rpc_not_applied","snapshotWritten":false,"rowsDeleted":0,...}
+TRIPWIRES HIT []
+AUDIT CAPTURED [{"action":"BUSINESS_DATA_PURGE_BLOCKED","reason":"rpc_not_applied","snapshotWritten":false}]
+BUCKET AFTER ["868fda6a-59fa-4e99-8930-9951484078bf/2026-09-16T16-31-09-257Z.json"]
+NEW OBJECTS []
+
+# Dev server
+POST /api/business-os/purge/snapshot  -> 404
+GET  /api/business-os/purge/snapshot  -> 404
+POST /api/business-os/purge/commit    -> 401 {"success":false,"error":"Unauthorized"}
+POST /api/business-os/purge/preview   -> 401
+GET  /api/business-os/purge/access    -> 200 {"success":true,"data":{"allowed":false,"reason":"signed_out"}}
+
+# M-2 mutation (second caller in app/api/admin/**)
++   "app/api/admin/qa-m2-mutation/route.ts",     Tests: 1 failed   -> removed -> 33 passed
+
+# Baseline
+branch      : suites 267/297 (22 failed)  tests 4087 pass / 131 fail
+origin/main : suites 265/295 (22 failed)  tests 4068 pass / 131 fail
+ADDED failing suites: []   ADDED failing tests: []
+```
+
+### Final Status
+
+- [x] **"Merged but inert" holds** — all four SA merge conditions (M-1…M-4) verified
+- [x] No High-severity bug open
+- [ ] Two Medium bugs (B-1 stale preview limitations, B-2 missing commit route test) — **recommended for Dev before merge**. Both are small, and neither can delete data while the function is absent.
+
+**Verdict: PASS WITH NOTES.** Safe to merge before rotation from a data-safety standpoint. QA recommends fixing B-1 before merge, because nothing in the post-rotation checklist would catch it and it's the panel an admin reads immediately before pressing Reset.
 
 ---
 
@@ -2066,6 +2540,11 @@ _RM will populate this section._
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-16 | **Dev — QA §13 fixes (B-1, B-2, E-1–E-4) and the single test command** | **B-1:** the preview panel's opening claims were all false by slice 2 — *"no commit route and no delete capability. Nothing here can remove a row"*, *"the bucket has not been created, no snapshot writer"*, *"the RPC has not been written"* — and now render from the same `purgeFunctionExists()` probe as the banner. **Found a THIRD copy of the same claim** that QA had not flagged: the `/test-business-os` tab header, *"This build has no delete capability at all"*. Removed rather than probed a third time, so the state lives in exactly one place. **Because this is now three instances of one failure, added a guard**: no static copy on the purge surface may claim deletion is impossible — mutation-verified by reintroducing the original tab text, which it caught and named. **B-2:** permanent commit-route test, 17 cases, organised around *did Reset run?* — 401, 403 even with the correct confirmation (and no confirmation oracle for a refused caller), 400 for every invalid input including injected ids, 409, and a happy path asserting exactly one Reset for the **session** user. Mutation-verified: dropping `.strict()` fails 3, dropping the JSON guard fails 1. **E-2:** malformed JSON is a 400 on both the commit and preview routes, and whitespace-only confirmation is rejected at the schema. **E-3:** `capabilities.ts` now calls the absent function an operational hold kept by people. **E-1: closed** — both of QA's bypasses re-planted and both now caught. **E-4:** checklist explains the 75-vs-74 drift. **One test command everywhere:** `npx jest "[Pp]urge"` — **83 passed across 6 suites**. |
+| 2026-09-16 | **QA — slice 2 (Reset): PASS WITH NOTES** | **"Merged but inert" holds.** All four SA merge conditions verified: `/snapshot` 404 on the dev server (M-1); one-caller test mutation-verified red naming a planted `app/api/admin/**` caller (M-2); `20260916b` only in `supabase/held/` with README, no stale path references (M-3); three banner states driven by the live probe (M-4). A live tripwired `runReset` refused `rpc_not_applied`, reached no tripwire, and left the snapshot bucket unchanged. Probe-safety and C-39 recursion tests mutation-verified. Unit 65/65 (5 suites); repo-wide: zero failures added vs `origin/main`. **Open:** B-1 (Medium) stale "PREVIEW ONLY / no delete capability" limitations shown above the Reset button; B-2 (Medium) no route test for `/purge/commit`; E-1…E-4 low. See §13. |
+| 2026-09-16 | **Dev — SA §12E required changes (M-1–M-4) and parking items** | **M-1:** deleted `POST /api/business-os/purge/snapshot` — it wrote a full business snapshot without ever probing for the function, its comments had become false, and nothing called it; confirmed 404. **M-2 + C-36:** the single-caller test now covers `writeVerifiedSnapshot` and scans **all of `app/` and `lib/`** — mutation-verified by planting a caller in `app/api/admin/**`, which it caught and named. **M-3:** `20260916b` moved to `supabase/held/` with a README, because `supabase/config.toml` means a bulk `db push` ignores a header. **M-4:** the banner is driven by the server's own `purgeFunctionExists()` probe — *refused / not applied*, **⚠️ LIVE — it will delete**, or *unknown, treat as live* — so it cannot drift from `ResetService`. **Probe safety:** comment naming both defensive arguments, **plus a test enforcing them** (mutation-verified — a real user id turns it red), since a comment asks and a test enforces. **C-39:** nested-folder regression test on an injected fake storage client — reverting to single-level listing turns 2 of 4 red. **C-37:** walk now has time and call budgets. **C-40:** ten-step post-rotation checklist, including `NOTIFY pgrst, 'reload schema';`. Parking state corrected: demo-snapshot line no longer implies protection; slice 1's wrong storage counts recorded; AC-29 now an explicit **slice 5 prerequisite**; retention required before Reset runs beyond the owner's test data. **65 tests, 5 suites.** |
+| 2026-09-16 | **SA code review — slice 2 (Reset): changes required (M-1…M-4)** | **“Merged but inert” holds for the Reset path and fails for the build.** `/commit` → `runReset` verified line by line: with `purge_business_data` absent it refuses `rpc_not_applied` with `snapshotWritten:false` before the guard, the snapshot, the commit or storage removal; storage removal is reachable only after `result && result.ok`; the order test asserts all of it. **🔴 M-1:** `POST /api/business-os/purge/snapshot` writes a full business snapshot **with no RPC-existence probe**, has **no UI caller**, and its header and success response (“`delete_rows` is ungranted”, “this build has no delete path”) were made false by this same diff. Before rotation a snapshot is a pre-packaged exfiltration target: service role bypasses storage RLS and the key is public. **Delete it.** **M-2:** extend the single-orchestrator test to `writeVerifiedSnapshot` — its own rationale applies identically, and it is the assertion that would have caught M-1. **Probe safety verified against the migration and safer than claimed:** `p_user_id IS NULL` raises at the first executable statement (line 93), and `p_tables: []` independently raises at line 101 — **two** rejections before the advisory lock at 117; pin both in the probe's comment. **The RPC's absence is an operational hold, not a control** — and **M-3**: the file sits in `supabase/migrations/`, so any bulk push applies it regardless of its `DO NOT APPLY` header; move it to a non-migration path, committed. **Single-orchestrator test can fail but scans only two directories** — a second caller in `app/api/admin/**` passes it (C-36). **Storage recursion complete and tenant-scoped; bounded on objects (truncation recorded as residue), not on calls** (C-37). Merged slice 1 needs the fix landed independently if slice 2 slips (C-38) plus a nested-fixture regression test (C-39). **M-4:** the banner's “that refusal is the expected state right now” becomes false the moment the migration is applied — derive it from `purgeFunctionExists()`. **AC-29 and the retention enforcer acceptable for merge** (the latter only because of M-1). **Parking state strong but needs the rotation → apply checklist (C-40)**, including `NOTIFY pgrst, 'reload schema'`, mentioned nowhere today — without it Reset keeps refusing after apply and looks broken. Unit suites re-run by SA: 60 passed. |
+| 2026-09-16 | **Dev — slice 2 built; requirement PARKED** | Reset, internal surface, skip-cleanly case. **Orchestrator** (`ResetService`) runs the RPC-existence probe → both SA-S5 controls → a verified snapshot → `purge_business_data` → recursive storage removal → report → audit, with every step that can refuse running before the first irreversible one. **The probe runs first** so an unapplied function is discovered before a snapshot is written — it passes `p_user_id: null`, which the function rejects on its first statement, and reads PostgREST's `PGRST202` for absence. **Commit route** checks typed confirmation against a server-side value. **Audit** records refusals as well as outcomes. **14 ordering tests, mutation-verified.** 🔴 **Found and fixed a slice 1 defect:** Supabase `list()` is single-level and every writer nests 2–3 deep, so the merged preview undercounts storage and slice 2's removal would have silently deleted nothing — `contact-documents` showed **0 of 10** real documents. Also caught a stale banner that still read *"nothing will be deleted"* beside the new Reset button. **Not done:** AC-29's dry-run token (not in slice 2's Delivers), the retention enforcer, and Jest-based integration tests (supabase-js has no working fetch under Jest here). **`20260916b` written, not applied** — key still not rotated. Parking state and full test plan written at the top of this document. |
 | 2026-09-15 | **Dev — C-33 flag, C-34 guard, C-35 preservation, T6 invariant suite** | **C-34:** both retired route files and their `__tests__` deleted; replaced by ONE repo-wide guard at `lib/business-os/purge/__tests__/no-deletion-paths.guard.test.ts` with all six conditions — a file-count floor that fails closed (the comment-stripper defect one level up), an allow-list naming `cleanup-incomplete`/E1 inline, three assertion families, a **unit-tested comment stripper** including the exact `app/admin/**` input that broke the tombstones, string-literal hits counting as hits, and ~4s over 500+ files. **It found two hits on its first run (F-25):** `app/api/plugin-connections/route.ts` — legitimate, properly scoped, so `plugin_connections` moved to client-only rather than being allow-listed, because an allow-list padded with routine exceptions stops being read; and the guard matching itself, excluded by exact path rather than by exempting `__tests__`. **C-35:** both tombstones' findings preserved in §9.4 F-24 and T32 — verbatim, the `/terminate` audit row attributing the deletion to its own victim with `terminated_by: 'admin'` as a literal and no actor id anywhere. **C-33:** `parseBooleanFlag` extracted to a zero-import module; `useBusinessDeleteSurface()` registered with a JSDoc saying it is a rendering hint; **the computed `process.env[CONST]` replaced with a literal read** (invisible to Next's static substitution, `undefined` on Edge — fails gated, but presents as "we set the flag and nothing happened"); documented in `feature_flags.md` with a ⚠️ block naming `authorizePurge`. **T6:** 24-assertion invariant suite — ordering verified against the live dump via exported `BLOCKING_EDGES`, B-1 importer scan, C-16 storage rules, and a deliberately broken fixture proving the scope assertion can fail. **Erasure contact** swapped to the owner's address as a marked interim (N2). 38 tests pass. |
 | 2026-09-15 | **SA rulings — D9 flag shape; delete-vs-tombstone** | **Flag:** `featureFlags.ts` *is* importable server-side (no `'use client'`; `logger/client` re-exports Pino) — but it has **zero server importers today**, so nothing enforces that it stays server-safe, and that is too fragile a dependency for an authorisation boundary. **Extract `parseBooleanFlag` to a zero-import module** both callers share; register `useBusinessDeleteSurface()` as a **rendering hint**; `isBusinessDeleteSurfaceEnabled()` stays authoritative per C-22. **🔴 Defect neither the user nor Dev named:** `process.env[BUSINESS_DELETE_FLAG]` is a **computed** lookup, and Next inlines only *literal* `process.env.NEXT_PUBLIC_*` accesses — works in the Node runtime, returns `undefined` on Edge, and presents as “flag set, nothing happened, no signal”, i.e. deviation (c) through a second door. **Read the literal.** **Naming: premise (d) does not hold** — measured, `NEXT_PUBLIC_SHOW_CALIBRATION_BUTTON` and `NEXT_PUBLIC_MOVE_TO_CALIBRATION_AFTER_AGENT_CREATION` already exist without `USE_`; the convention is `NEXT_PUBLIC_<verb>_<thing>`, `USE_*` means “select implementation A vs B”, and this is an exposure flag. **Keep `ENABLE_`.** Documentation deviation made **binding in three places**, incl. a T21 test — a comment is a request, a failing test is a boundary (**C-33**). **Tombstone → delete.** The user's pushback is correct and the coordinator's proposal is **strictly stronger**: a per-file assertion protects a path that already exists, and the fifth deletion path was found *outside* the oracle SA specified. 410 vs 404 is cosmetic for a stale bundle. **Delete both route files and both `__tests__/` dirs; one repo-wide guard replaces them** (**C-34**), under six conditions of which the first is decisive — **it must fail closed on a file-count floor**, because “scanned 0, found 0” is Dev's comment-stripper defect one level up. Allow-list not deny-list, with `cleanup-incomplete` listed inline naming E1/T32. **C-21 and C-24 superseded.** **C-35:** preserve both tombstones' documented findings before deleting — including that `/terminate` wrote an audit row attributing the deletion to its own victim (`user_id: userId`, `terminated_by: 'admin'` as a literal, no actor id), verified in source. **E5 amplified:** with the repo PUBLIC and the live `service_role` key committed since 2025-10-30, the 38 unauthenticated service-role routes are **not** the primary exposure — **rotate the key first**, then the admin-authz workstream. The two findings are more severe together than separately, which is what gets missed when each lives in its own tracker. |
 | 2026-09-15 | **Dev — T4 descriptor set complete (121 descriptors, 0 unclassified)** | `lib/business-os/purge/descriptors.ts` written from the requirement's §3/§8 classification and the **live dump** for every ordering and scoping fact. **Passes AC-37's own completeness check: all 110 user-scoped base tables have a descriptor**, and the 11 extras are exactly the expected categories (five global catalogs, `organizations`, `profiles`, four parent-scoped children with no tenancy column). Ordering is four bands plus `crm_activities` LAST, with `BLOCKING_EDGES` exported so the invariant test asserts `order[child] < order[parent]` for all nine **against the dump** rather than trusting the bands; B4 is carried separately in `TRIGGER_ORDERING` because it cannot be expressed as an FK. **BA's three confirmations answered:** `user_media` needs **no fourth StorageDescriptor** — its `storage_path` points at the existing `website-images` bucket (`GeneratedImageService`/`StockImageService` both set `BUCKET = 'website-images'`), so AC-4 does not extend; `business_chat_verified_questions.user_id` is **NOT NULL**, so §8.2's portable-row shape does not apply to it; `agent_memory` (singular) **exists**, alongside three other memory tables. **Two pending requirement amendments flagged (N20):** §8.10 still lists `data_decision_requests` as provisional `never` where SA ruled `optional:agents`, and §8.13 still files `agent_stats`/`agent_intensity_metrics` as suspected views when Part 2 proved they are base tables. |
