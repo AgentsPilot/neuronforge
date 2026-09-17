@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-09-16
-**Status:** SA approved — changes applied, ready for Dev workplan (SA review 2026-09-16; RC-1 to RC-15 and user decisions applied 2026-09-17; SA workplan-review to-dos RQ-1 to RQ-4 applied 2026-09-17)
+**Status:** SA approved — changes applied, ready for Dev workplan (SA review 2026-09-16; RC-1 to RC-15 and user decisions applied 2026-09-17; SA workplan-review to-dos RQ-1 to RQ-4 applied 2026-09-17; SA code-review correction CR-1 applied 2026-09-17)
 
 ## Overview
 
@@ -79,7 +79,7 @@ These calls stay as they are in Layer 1 and must not be modified by this work:
 | Chat v2 (legacy) | `lib/business-os/ai-data-layer/AIDataLayerService.ts:895`, `:1243` | Legacy chat path. It bypasses the provider layer (direct SDK) and is superseded by chat v4. Retire-vs-fix is decided separately (user decision 2026-09-16) |
 | Chat v1 (legacy) | `lib/business-os/IntentParser.ts:114` | Legacy chat path with no UI caller found. Superseded by chat v4 (user decision 2026-09-16) |
 | Story | `app/api/business-os/story/route.ts:183` | Broken: calls a method that doesn't exist, so it always serves its fallback and makes no LLM call. No caller (user decision 2026-09-16) |
-| WebsiteAnalyzer | `lib/services/WebsiteAnalyzer.ts:123` | Dead and broken: reads a response shape the helper doesn't return (user decision 2026-09-16) |
+| WebsiteAnalyzer | `lib/services/WebsiteAnalyzer.ts:123` | **Dead and broken, no LLM spend; fix vs retire decided separately.** It calls methods that don't exist (`getDefaultModel`, and `complete` on the wrong type) and reads a response shape the helper doesn't return, so its LLM call always fails (user decision 2026-09-16; confirmed by SA code review CR-1, 2026-09-17) |
 | Onboarding conversation (4 calls per session) | `lib/services/OnboardingConversationManager.ts:950`, `:995`, `:1097`, `:1397` (live through `app/api/onboarding/chat/route.ts:99`) | Still recorded on the platform account (`system` / `onboarding`). Kept out to hold Layer 1's focus. **Moved to Layer 1.5** (user decision 2026-09-17) |
 | Service generator | `lib/services/ServiceGeneratorService.ts:304` (also `:275`) | Broken: calls a `complete` method the provider doesn't have (and reads `response.choices` at `:314`). It always falls back, so there is no LLM spend and no ledger row. Same class as Story. Retire-vs-fix decided separately (SA workplan review 2026-09-17, RQ-1) |
 | AI image generation | `lib/services/GeneratedImageService.ts:186` | Direct OpenAI image generation (`gpt-image-1`) that bypasses the provider layer, so it isn't recorded in `token_usage` at all. The provider layer has no image method, and images are priced per image, not per token, so the token-based ledger and credits can't represent them correctly. It already has its own daily per-business image cap (`:170-183`). **Moved to Layer 1.5** (user decision 2026-09-17), with the open business question [OQ-7](#open-questions) |
@@ -227,7 +227,10 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
     - When absent, today's default (`system` / `onboarding` / `simple-complete`, `:324-328`) stays byte-for-byte unchanged.
     - The misleading "no tracking" comment (`:323`) is corrected.
     - Every in-scope caller (rows 13, 14, 15, 17a–f) passes a context built by the attribution builder (FR-26).
-12. **FR-12 — Other callers of the simple helper.** Callers outside Business OS, namely the onboarding conversation (excluded) and WebsiteAnalyzer (excluded), keep working unchanged and are not converted in Layer 1. Business OS callers can't forget attribution, because the Business OS service methods that call the helper take a **required** attribution parameter.
+12. **FR-12 — Other callers of the simple helper.**
+    - **Only live caller outside Business OS:** the onboarding conversation (`OnboardingConversationManager.ts`, excluded). It keeps calling the helper without a context and keeps working unchanged. It is not converted in Layer 1 (Layer 1.5).
+    - **WebsiteAnalyzer is not a working caller** (SA code review CR-1, 2026-09-17). It is dead and broken: it calls methods that don't exist (`getDefaultModel`, and `complete` on the wrong type), so its LLM call always fails. It is in the [Excluded calls](#excluded-calls) table and is not modified. Layer 1 makes no promise about its behaviour beyond leaving the file untouched.
+    - **Business OS callers can't forget attribution,** because the Business OS service methods that call the helper take a **required** attribution parameter.
 13. **FR-13 — Embedding service.** `generateEmbedding`'s existing optional attribution (`lib/services/EmbeddingService.ts:99-123`) gains a call name, and Business OS callers pass it through the attribution builder. A Business OS chat embedding must never be recorded under the help bot's feature. The help bot default and the batch path (`:113-121`, `:172-179`) stay byte-identical.
 
 ### Per-area changes
@@ -321,7 +324,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 - [ ] **AC-4** (FR-1, FR-18) — Intake form generation and question inference pass the owner's account id to the provider.
 - [ ] **AC-5** (FR-1, FR-19) — Full-site generation, field regenerate, testimonial enhance, and each of hero, about, FAQ and features content pass the owner's account id to the provider. Rows 17c–f are proven by this test only.
 - [ ] **AC-6** (FR-11) — Calling the simple completion helper **with** a context passes exactly that context to the provider. Calling it **without** a context produces the unchanged default (`system` / `onboarding` / `simple-complete`).
-- [ ] **AC-7** (FR-12) — Callers of the simple completion helper outside Business OS still work unchanged (existing tests pass, or a test covers the no-context path).
+- [ ] **AC-7** (FR-12) — The live caller of the simple completion helper outside Business OS (the onboarding conversation) still compiles and calls the helper without a context, getting the unchanged default (existing tests pass, or a test covers the no-context path). WebsiteAnalyzer is dead and is not tested (CR-1).
 - [ ] **AC-8** (FR-4, FR-6, FR-7) — For every row in the [Per-Call Before / After](#per-call-before--after) table (including rows 4 and 4b, which must carry their two distinct call names), a test asserts `feature` = `business-os-<area>` and `component` = the catalog call name. The cache-hit row is not covered (FR-15).
 - [ ] **AC-9** (FR-5, FR-9) — All chat calls (rows 1, 2, 3a, 3b, 4, 4b) are recorded with feature `business-os-chat`. Rows 1, 3a and 4 keep the turn id as before, row 4b carries the turn id, and row 2 (chat analysis) carries the request's turn id in every case, not the request correlation id.
 - [ ] **AC-10** (FR-8, FR-10, FR-16, FR-20) — Grouping:
@@ -351,7 +354,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
   - `aiAnalytics.ts` is unchanged.
   - The chat "rewrite a section field" request shape is unchanged.
   - `providerFactory.ts` and `EmbeddingService.ts` are converted to Pino, with no remaining `console.*` logging calls (user-approved 2026-09-17).
-  - The excluded calls, including `ServiceGeneratorService.ts` and `GeneratedImageService.ts`, are unchanged.
+  - The excluded calls, including `WebsiteAnalyzer.ts`, `ServiceGeneratorService.ts` and `GeneratedImageService.ts`, are unchanged.
 
 **QA run against a real environment:**
 
@@ -373,7 +376,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 
   `onboarding` is **deliberately excluded** from this query, because the out-of-scope onboarding conversation keeps writing `system` / `onboarding`.
 - [ ] **AC-20** (FR-21, FR-22) — The test business's usage card loads, and its total includes the website, intake, insights, briefing and leads activity from AC-18.
-- [ ] **AC-21** (FR-24, FR-25) — The diff contains no change to the excluded calls (including the onboarding conversation, the service generator and AI image generation), and no data migration or backfill of existing usage rows.
+- [ ] **AC-21** (FR-24, FR-25) — The diff contains no change to the excluded calls (including WebsiteAnalyzer, the onboarding conversation, the service generator and AI image generation), and no data migration or backfill of existing usage rows.
 
 *AC numbering is kept stable from the SA-reviewed draft. AC-22 to AC-24 were added when the RCs were applied.*
 
@@ -429,6 +432,7 @@ These were found during the investigation and SA reviews. **None is fixed in Lay
 | **KI-3** | Known issue | **Block-content AI generation is switched off.** Hero, about, FAQ and features block generation have no production trigger (all callers pass `useAI = false`). They are attributed in Layer 1 for completeness | `app/api/website/pages/route.ts:172`, `app/api/website/pages/[id]/enrich/route.ts:80`, `lib/services/WebsitePublishService.ts:367` | Informational |
 | **KI-4** | Known issue | **Service generator AI never runs.** The service generator calls a method the AI provider doesn't have, so it always falls back to its non-AI output. There is no AI spend and no usage row. Excluded from Layer 1 | `lib/services/ServiceGeneratorService.ts:275`, `:304`, `:314` | Open — retire-vs-fix decided separately |
 | **KI-5** | Known issue | **AI images aren't tracked as usage.** Generated website images call OpenAI directly, outside the provider layer, so they never appear in the usage ledger or on the usage card. They are limited only by a daily per-business image cap | `lib/services/GeneratedImageService.ts:170-187` | Moved to Layer 1.5 (user decision 2026-09-17) |
+| **KI-6** | Known issue | **AI intake forms never work.** Intake form generation makes a real AI call (now correctly charged to the business), but validation rejects every question the model returns (`maxFiles` must be greater than 0, `showIfIndex` is null), so it always falls back to the generic 3-question form. The spend is wasted on every generation. Same class as the parked lead-reply parsing bug. Found in QA (P-1) | `lib/services/IntakeGenerationService.ts` (validation of the generated questions); workplan §14 | Parked — handle later (user decision 2026-09-17) |
 
 ---
 
@@ -468,7 +472,7 @@ Deferred to Layer 1.5 (not needed for Layer 1):
 | Intake | `lib/services/IntakeGenerationService.ts`, `app/api/intake/form/generate/route.ts`, `app/api/intake/form/infer-question/route.ts`, `app/api/onboarding/build/route.ts` (`:840` intake, `:881` website; optional shared UUID) |
 | Leads | `lib/business-os/leads/LeadReplyRecommender.ts`, `LeadAlertService.ts` |
 | Usage | `app/api/business-os/usage/route.ts` (mapping at `:65-89` extracted to an exported function); `components/business-os/UsageCard.tsx` (no change) |
-| Excluded (must not change) | `AIDataLayerService.ts`, `IntentParser.ts`, `story/route.ts`, `WebsiteAnalyzer.ts`, `OnboardingConversationManager.ts`, `ServiceGeneratorService.ts`, `GeneratedImageService.ts` |
+| Excluded (must not change) | `AIDataLayerService.ts`, `IntentParser.ts`, `story/route.ts`, `WebsiteAnalyzer.ts` (dead and broken), `OnboardingConversationManager.ts`, `ServiceGeneratorService.ts`, `GeneratedImageService.ts` |
 | DB | `token_usage` (writes only; **no schema change**) |
 
 The Business OS Insights module has its own skill and as-built doc ([BUSINESS_OS_INSIGHTS_MODULE.md](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md)). Dev should use it when touching `lib/business-os/insight/**` or the insight crons.
@@ -523,7 +527,7 @@ The search covered `app`, `lib`, `components`, `scripts`, `supabase` (SQL) and a
 
 **Non-Business OS callers (unchanged in Layer 1):**
 - `lib/services/OnboardingConversationManager.ts:950`, `:995`, `:1097`, `:1397`. Live through `app/api/onboarding/chat/route.ts:99`; see business decision 1.
-- `lib/services/WebsiteAnalyzer.ts:123` (dead, excluded).
+- `lib/services/WebsiteAnalyzer.ts:123` (dead, excluded). *(CR-1, 2026-09-17: not a working caller. It calls non-existent methods (`getDefaultModel`, `complete` on the wrong type), so its LLM call always fails. The only live non-BOS caller is the onboarding conversation. FR-12 corrected.)*
 
 **Rejected:** making the context mandatory for every caller would pull the onboarding conversation into scope.
 
@@ -603,7 +607,7 @@ The attribution is passed down to the private generators (`:352`, `:396`, `:525`
    - the briefing group-id helper (RC-11).
 
    Every in-scope call site uses the builder. No free-typed feature, component or call-name strings at call sites. — **Applied 2026-09-17:** new FR-26, AC-22, AC-24, NFR Maintainability, Integration Points.
-9. **RC-9 (FR-11, FR-12, FR-13):** Record the OQ-3 design. For FR-13, `generateEmbedding`'s existing optional `attribution` gains `callName`. Business OS callers pass it through the builder. The help bot default and the batch path (`EmbeddingService.ts:113-121`, `:172-179`) stay byte-identical. — **Applied 2026-09-17:** FR-11, FR-12, FR-13, AC-6, AC-13.
+9. **RC-9 (FR-11, FR-12, FR-13):** Record the OQ-3 design. For FR-13, `generateEmbedding`'s existing optional `attribution` gains `callName`. Business OS callers pass it through the builder. The help bot default and the batch path (`EmbeddingService.ts:113-121`, `:172-179`) stay byte-identical. — **Applied 2026-09-17:** FR-11, FR-12, FR-13, AC-6, AC-13. *FR-12 and AC-7 corrected by CR-1 (2026-09-17): the onboarding conversation is the only live non-BOS caller; WebsiteAnalyzer is dead.*
 10. **RC-10 (NFR Logging):** Name `providerFactory.ts` and `EmbeddingService.ts` as touched non-compliant files the workplan must flag and propose converting. State that `aiAnalytics.ts` is not touched. — **Applied 2026-09-17:** NFR Logging, AC-24. *Conversion of both approved by the user for this cycle (2026-09-17).*
 11. **RC-11 (FR-10 grouping sources):** Add the table below. Rule: the entry point that represents the user action or job owns the id. Services accept it as a parameter and don't mint their own when a caller has one.
 
@@ -655,11 +659,23 @@ Source: [workplan §13](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_
 
 **Also recorded:** Pino conversion of `providerFactory.ts` and `EmbeddingService.ts` approved by the user for this cycle (2026-09-17). Applied in NFR Logging and AC-24.
 
+### Requirement correction from the SA code review (2026-09-17)
+
+- **CR-1 — WebsiteAnalyzer is not a working caller of the simple helper.** FR-12 described `lib/services/WebsiteAnalyzer.ts` as a non-BOS caller that "keeps working unchanged". SA verified it is dead and broken: it calls non-existent methods (`getDefaultModel`, and `complete` on the wrong type), so its LLM call always fails. This matches investigation row 18. — **Applied 2026-09-17:**
+  - FR-12 now names the onboarding conversation as the only live non-BOS caller;
+  - AC-7 tests only that caller;
+  - the Excluded calls reason for WebsiteAnalyzer is now "dead and broken, no LLM spend; fix vs retire decided separately";
+  - AC-21, AC-24 and Integration Points list WebsiteAnalyzer explicitly;
+  - OQ-3 and RC-9 are annotated.
+
+  No scope change: WebsiteAnalyzer was already excluded and untouched.
+
 ### Approval
 
 - [x] Requirement approved for Dev workplan, **conditional on** BA applying RC-1 to RC-15 and the user answering decisions 1–2. RC-7 wording depends on decision 1.
 - [x] Conditions met 2026-09-17: RC-1 to RC-15 applied by BA; decisions 1–2 answered by the user. **Ready for Dev workplan.**
 - [x] SA workplan-review requirement to-dos RQ-1 to RQ-4 applied by BA (2026-09-17). Non-blocking for implementation.
+- [x] SA code-review requirement correction CR-1 applied by BA (2026-09-17). Docs only.
 
 ---
 
@@ -672,3 +688,5 @@ Source: [workplan §13](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_
 | 2026-09-17 | RCs applied + user decisions — ready for Dev workplan | Applied RC-1–RC-15: ledger mapping and UUID grouping ids (FR-7, FR-8), grouping-source table (FR-10), insights group key and required `runId` (FR-16), FR-3 rewritten (log, never drop spend, `aiAnalytics` untouched), FR-23 carve-out for plan-cache embeddings, rows 17c–f test-only, chat section-field path compile-only (KI-1), AC-19 feature list excluding `onboarding`, new FR-26 call catalog and builder, optional context on `complete()` and embedding call name, Pino flags for `providerFactory.ts`/`EmbeddingService.ts`, briefing UUID v5 and per-enquiry lead UUID, exported category mapping with legacy values, AC-15 as code review. User decisions 2026-09-17: onboarding conversation excluded and added to Layer 1.5; "credits remaining" drop recorded as OI-1 (layer TBD); block regenerate cross-tenant read recorded as OI-2. Added Known Issues and Open Items section, AC-22–AC-24. Status → SA approved, ready for Dev workplan. Final count: 26 FRs, 24 ACs |
 | 2026-09-17 | SA trivial wording alignment (workplan review) | Aligned with SA workplan rulings (workplan §13, 2026-09-17), no scope change: FR-16 and OQ-4(c) `runId` required on all five public insight repository methods (ruling d); FR-3 and AC-12 log names the correlation id, or the grouping id where no request correlation id exists; AC-14 asserts exact token and call sums, not rounded credits (ruling e); NFR Logging `providerFactory.ts` count 8 → 6 real calls; RC-11 `uuid` dependency hint marked superseded by Node `crypto` UUID v5 (ruling c). Pending BA: RQ-1 to RQ-4 in workplan §13 |
 | 2026-09-17 | BA applied SA workplan-review to-dos RQ-1–RQ-4 + user decisions | RQ-1: `ServiceGeneratorService.ts:304` (broken) and `GeneratedImageService.ts:186` (direct image SDK, not in ledger) added to Excluded calls, with KI-4/KI-5; AI image generation moved to Layer 1.5(c) (user decision 2026-09-17) with open business question OQ-7 (do images count against monthly credits, and how many credits per image). RQ-2: new chat call name `verified_question_store_embedding` (row 4b), lookup reworded; AC-8/AC-9 cover rows 4 and 4b. RQ-3: FR-9, row 2 and AC-9 state chat analysis always uses the turn id (T14; no visible change). RQ-4: line refs refreshed (`Planner.ts:444`, usage mapping `:65-89`, onboarding build `:840`/`:881`). User approval 2026-09-17 of Pino conversion for `providerFactory.ts` and `EmbeddingService.ts` recorded in NFR Logging and AC-24. No FR/AC added or removed: 26 FRs, 24 ACs |
+| 2026-09-17 | BA applied SA code-review correction CR-1 (docs only) | FR-12 no longer treats `WebsiteAnalyzer.ts` as a working non-BOS caller of `getProviderFactory().complete()`: SA verified it is dead and broken (calls non-existent `getDefaultModel` and `complete` on the wrong type; its LLM call always fails). The onboarding conversation is the only live non-BOS caller. AC-7 narrowed to that caller. Excluded calls reason for WebsiteAnalyzer set to "dead and broken, no LLM spend; fix vs retire decided separately"; AC-21, AC-24 and Integration Points name it; OQ-3 and RC-9 annotated. No scope change; 26 FRs, 24 ACs |
+| 2026-09-17 | QA finding parked | Added KI-6: AI intake form generation always falls back because validation rejects the model's questions (QA P-1, workplan §14). Pre-existing, not caused by Layer 1; parked per user decision 2026-09-17. No scope change |

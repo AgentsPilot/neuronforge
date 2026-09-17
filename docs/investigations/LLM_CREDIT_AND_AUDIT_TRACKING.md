@@ -98,6 +98,7 @@ Requirements are written layer by layer (see [Decisions & Direction](#e-decision
 - `getProviderFactory().complete()` hardcodes `userId: 'system'`, `feature: 'onboarding'`, `component: 'simple-complete'` (`lib/ai/providerFactory.ts:324-328`).
 - It **is** tracked, despite the comment "no tracking" at `:323`.
 - The cost goes to the admin or all-zero user. It isn't on the business's usage card and can't be traced back to the business.
+- **Callers outside Business OS:** the onboarding conversation is the only live one. `WebsiteAnalyzer.ts` also calls the helper, but it is dead and broken, so its LLM call always fails (row 18; SA code review CR-1, 2026-09-17).
 
 ---
 
@@ -152,13 +153,13 @@ All calls go to OpenAI. The required after-state is in the Layer 1 requirement.
 | 15 | Website generation `lib/services/WebsiteGenerationService.ts:546` | Hardcoded | **system** | onboarding / simple-complete | Website |
 | 16 | Landing page `app/api/website/landing-pages/generate/route.ts:102` | Hardcoded | Real | landing-page-generation / LandingPageGenerateAPI | Website |
 | 17 | Website block content, 6 calls `lib/services/WebsiteAIContentService.ts:301` (field), `:337` (testimonial), `:371` (hero), `:414` (about), `:546` (FAQ), `:602` (features) | Hardcoded | **system** | onboarding / simple-complete | Website (hero/about/FAQ/features have no production trigger, SA) |
-| 18 | WebsiteAnalyzer `lib/services/WebsiteAnalyzer.ts:123` | From caller | Broken | none | Website (dead, excluded) |
+| 18 | WebsiteAnalyzer `lib/services/WebsiteAnalyzer.ts:123` | From caller | Broken: calls non-existent methods (`getDefaultModel`, and `complete` on the wrong type) and reads `.choices` from the helper's result, so the LLM call always fails. No LLM spend | none | Website (dead and broken, excluded; fix vs retire decided separately; SA code review CR-1) |
 
 **Found at SA reviews, not in the original 18:**
 
 | Call | Where | Behaviour today | Layer 1 status |
 |---|---|---|---|
-| Onboarding conversation (4 calls per session) | `lib/services/OnboardingConversationManager.ts:950`, `:995`, `:1097`, `:1397` | Via `complete()`, recorded as `system` / `onboarding` | **Excluded; moved to Layer 1.5** (E.8) |
+| Onboarding conversation (4 calls per session) | `lib/services/OnboardingConversationManager.ts:950`, `:995`, `:1097`, `:1397` | Via `complete()`, recorded as `system` / `onboarding`. The only live non-Business OS caller of the helper | **Excluded; moved to Layer 1.5** (E.8) |
 | Service generator | `lib/services/ServiceGeneratorService.ts:275`, `:304` | Broken: calls a `complete` method the provider doesn't have (and reads `response.choices`, `:314`). It always falls back, so there is no LLM spend and no ledger row | **Excluded** (same class as Story; retire-vs-fix separately) (E.9) |
 | AI image generation | `lib/services/GeneratedImageService.ts:186-187` | Direct OpenAI SDK `images.generate` (`gpt-image-1`), bypassing the provider layer, so it is **not recorded in `token_usage`**. Images are priced per image, not per token. It has its own daily per-business image cap (`:170-183`) | **Excluded; moved to Layer 1.5** (user decision 2026-09-17) (E.9) |
 
@@ -217,6 +218,7 @@ SA's required changes RC-1 to RC-15 were applied to the Layer 1 requirement on t
 2. **AI image generation** (`GeneratedImageService.ts:186`) is excluded from Layer 1 and **moved to Layer 1.5**, next to the extended usage report and the onboarding conversation calls (user decision). Open business question for then: should AI images count against monthly credits, and how many credits is one image worth? (K, OQ-7)
 3. **Pino conversion** of `lib/ai/providerFactory.ts` (6 real `console.*` calls) and `lib/services/EmbeddingService.ts` (16) is **approved by the user for this cycle**, as part of Layer 1 delivery.
 4. Requirement refinements from the workplan review: the verified-question store embedding gets its own call name (RQ-2), and chat analysis always uses the turn id (RQ-3). Both are in the Layer 1 requirement.
+5. **SA code review CR-1 (docs only):** the Layer 1 requirement had described WebsiteAnalyzer as a working caller outside Business OS. It is dead and broken, as row 18 already said, so the onboarding conversation is the only live one. Corrected in the requirement (FR-12, AC-7, Excluded calls). No scope change.
 
 ---
 
@@ -406,7 +408,7 @@ Existing screens can't serve as the proof. The smallest option is extending the 
 | V6 intent-contract route trusts `x-user-id` header | `app/api/v6/generate-ir-intent-contract/route.ts:41-43` | Needs SA check |
 | Several audit actions have no `EVENT_METADATA` entry | `AGENT_EXECUTED`, `PILOT_STEP_EXECUTED`, `TOKEN_DISCREPANCY_DETECTED` | Open |
 | Story route always throws | `app/api/business-os/story/route.ts:183` | Excluded from Layer 1 |
-| WebsiteAnalyzer is dead and broken | `lib/services/WebsiteAnalyzer.ts:123-139` | Excluded from Layer 1 |
+| **WebsiteAnalyzer is dead and broken, no LLM spend** | `lib/services/WebsiteAnalyzer.ts:123-139`: calls non-existent methods (`getDefaultModel`, and `complete` on the wrong type) and reads `.choices` from the helper's result, so its LLM call always fails. It is **not** a working caller of the simple completion helper (SA code review CR-1, 2026-09-17) | Excluded from Layer 1; fix vs retire decided separately |
 | `console.*` logging in touched or admin files | `lib/ai/providerFactory.ts` (6 real calls), `lib/services/EmbeddingService.ts` (16). Also `token-usage/stats`, `users/[id]/stats`, `system-config`, `system-config/pricing` routes | First two: **conversion approved by the user for Layer 1 (2026-09-17)**. Others convert when touched |
 
 ---
@@ -416,7 +418,7 @@ Existing screens can't serve as the proof. The smallest option is extending the 
 **Resolved:**
 
 - [x] **Q2 — Does automatic AI work count against the business?** (raised by: BA | status: **resolved 2026-09-16**) Yes; implemented in Layer 1 FR-1, FR-2.
-- [x] **Q8 — Legacy and broken calls** (raised by: BA | status: **resolved 2026-09-16**) Excluded from Layer 1 with reasons. Extended 2026-09-17 with the service generator.
+- [x] **Q8 — Legacy and broken calls** (raised by: BA | status: **resolved 2026-09-16**) Excluded from Layer 1 with reasons. Extended 2026-09-17 with the service generator. WebsiteAnalyzer's reason was sharpened by CR-1 (dead and broken, no LLM spend).
 - [x] **Q9 — Past usage recorded under the system user** (raised by: BA | status: **resolved 2026-09-16**) Left as is, no backfill.
 - [x] **Q10 — V6 intent-generation attribution** (raised by: BA | status: **resolved 2026-09-16**) Separate item.
 - [x] **Q11 — Where the Layer 1 proof is read** (raised by: BA | status: **resolved 2026-09-16**) Data-only proof accepted; report moved to Layer 1.5; Layer 1 proven by QA evidence.
@@ -452,3 +454,4 @@ Existing screens can't serve as the proof. The smallest option is extending the 
 | 2026-09-16 | Layer 1 decisions + requirement | Added E.7; resolved Q2, Q8–Q11; Q12 handled separately; H.3 points to the Layer 1 requirement |
 | 2026-09-17 | Layer 1 finalised (SA approved) | Added E.8 (onboarding conversation → Layer 1.5; "credits remaining" drop → OI-1, layer TBD; block regenerate cross-tenant read → OI-2); D notes the onboarding conversation and block-content no-trigger finding; J adds OI-2, KI-1, onboarding conversation, plan-cache store and block-content rows, Pino flags; K renamed "Open Questions and Open Items" with OI-1/OI-2; H.3 updated with Layer 1.5 contents and final counts (26 FRs, 24 ACs); sections B–I condensed where the requirement is now the source of detail |
 | 2026-09-17 | SA workplan review follow-up (RQ-1) + user decisions | Added E.9: service generator (`ServiceGeneratorService.ts:304`, broken, no spend) excluded; AI image generation (`GeneratedImageService.ts:186`, direct SDK, not in `token_usage`, per-image pricing, own daily cap) excluded and moved to Layer 1.5 with open business question OQ-7 (do images count against monthly credits, credits per image); Pino conversion of `providerFactory.ts` (6 calls) and `EmbeddingService.ts` (16) approved for Layer 1. D gains a "found at SA reviews" table; A.2/F.4/F.6 note image spend isn't representable; H.2/H.3 Layer 1.5(c); J adds image and service-generator rows and updates the Pino row; K adds OQ-7 and the two resolved items. Refreshed line refs noted (`Planner.ts:444`, usage mapping `:65-89`) |
+| 2026-09-17 | SA code review CR-1 mirrored (docs only) | No contradiction existed: row 18 already listed WebsiteAnalyzer as dead and broken. Sharpened the evidence (calls non-existent `getDefaultModel` and `complete` on the wrong type; LLM call always fails; no spend) in D row 18 and J. A.6 now states the onboarding conversation is the only live non-Business OS caller of `getProviderFactory().complete()`. Added E.9.5 and the Q8 note, matching the Layer 1 requirement's corrected FR-12/AC-7 |

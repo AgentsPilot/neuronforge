@@ -7,7 +7,7 @@
 **Evidence:** [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md)
 **Branch:** `feature/business-os-llm-attribution-layer1` (worktree `neuronforge-llm-attribution`, off `origin/main` @ `6351ebb1`)
 **Date:** 2026-09-17
-**Status:** SA approved — changes applied, ready to implement. (SA workplan review 2026-09-17: Approved with changes; WC-1 to WC-10 applied by Dev 2026-09-17, see §13.4. No second SA pass needed; SA verifies the WCs at code review.) **No code written yet.**
+**Status:** SA code review 2026-09-17: Approved with fixes (CR-1 docs only, §13.5; applied). User-approved addition T46–T47 (scoped CI type-check gate + chat label constant, §12.2) implemented; SA review §13.6: T47 approved; T46 approved after CR-2 + S-5 re-verification (§13.6.3). Layer 1 fully SA-approved. **QA 2026-09-17: PASS WITH ISSUES (§14): no Layer 1 bugs; pre-existing P-1/P-2 and test-strength notes W-1 to W-5 are non-blocking. Awaiting user approval.** S-6 (required check on main) is an admin setting. (SA workplan review 2026-09-17: Approved with changes; WC-1 to WC-10 applied, see §13.4. Implementation 2026-09-17, see §12.1. Not committed; RM commits after SA code review, QA and user approval.)
 
 ## Overview
 
@@ -31,7 +31,7 @@ This workplan traces each FR and AC to tasks and tests. It verifies every line r
 10. [Questions and Decisions for SA](#10-questions-and-decisions-for-sa)
 11. [Implementation Sequence](#11-implementation-sequence)
 12. [Task Checklist](#12-task-checklist)
-13. [SA Review Notes](#13-sa-review-notes)
+13. [SA Review Notes](#13-sa-review-notes) (code review: §13.5)
 14. [QA Testing Report](#14-qa-testing-report)
 15. [Commit Info](#15-commit-info)
 16. [Change History](#change-history)
@@ -196,7 +196,7 @@ async complete(params, context?) {
   });
 ```
 
-**Backward compatibility:** the parameter is trailing and optional, and the default object literal is byte-identical. `OnboardingConversationManager.ts:950/:995/:1097/:1397` and `WebsiteAnalyzer.ts:123` call `complete({...})` with one argument and compile and behave unchanged (AC-7). The misleading comment at `:323` is corrected. `CallContext` is imported as a type from `./providers/baseProvider`, which is already imported.
+**Backward compatibility:** the parameter is trailing and optional, and the default object literal is byte-identical. The only working caller outside Business OS, `OnboardingConversationManager.ts:950/:995/:1097/:1397`, calls `complete({...})` with one argument and compiles and behaves unchanged (AC-7). `WebsiteAnalyzer.ts` is **not** a working `complete()` caller (CR-1): `extractInformationWithLLM` (`:97-123`) calls `getDefaultModel` (not on `SimpleProvider`) and then `complete` on a `BaseAIProvider` (no such method), so its LLM call always fails, with no LLM spend and no ledger row. It is dead and broken like `ServiceGeneratorService`, stays untouched, and is follow-up FU-4. The misleading comment at `:323` is corrected. `CallContext` is imported as a type from `./providers/baseProvider`, which is already imported.
 
 ### 3.3 `EmbeddingService.generateEmbedding`: `callName` (FR-13)
 
@@ -356,7 +356,7 @@ All account and grouping sources are server-side: `getUser()`, DB-iterated ids, 
 | `app/api/business-os/usage/route.ts` | modify | Import extracted mapping |
 | `docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md` | modify | One line: insight LLM calls attributed to the business, `session_id = runId` (per `business-os-insights` skill close-out) |
 
-**Explicitly unchanged (AC-21, AC-24):** `lib/analytics/aiAnalytics.ts`, `lib/ai/providers/baseProvider.ts`, `lib/business-os/ai-data-layer/AIDataLayerService.ts`, `lib/business-os/IntentParser.ts`, `app/api/business-os/story/route.ts`, `lib/services/WebsiteAnalyzer.ts`, `lib/services/OnboardingConversationManager.ts`, `lib/services/ServiceGeneratorService.ts` (F-2, excluded: broken), `lib/services/GeneratedImageService.ts` (F-3, Layer 1.5), `turnUsage.ts`, `ChatBudget.ts`, `usageReport.ts`, `UsageCard.tsx`, `scripts/verify-insights.ts`, `app/api/cron/insight-detect/route.ts` (already passes a `string` `runId`). No `supabase/migrations/**` file.
+**Explicitly unchanged (AC-21, AC-24):** `lib/analytics/aiAnalytics.ts`, `lib/ai/providers/baseProvider.ts`, `lib/business-os/ai-data-layer/AIDataLayerService.ts`, `lib/business-os/IntentParser.ts`, `app/api/business-os/story/route.ts`, `lib/services/WebsiteAnalyzer.ts` (broken: calls non-existent `getDefaultModel` / `BaseAIProvider.complete`, no LLM call; FU-4), `lib/services/OnboardingConversationManager.ts`, `lib/services/ServiceGeneratorService.ts` (F-2, excluded: broken), `lib/services/GeneratedImageService.ts` (F-3, Layer 1.5), `turnUsage.ts`, `ChatBudget.ts`, `usageReport.ts`, `UsageCard.tsx`, `scripts/verify-insights.ts`, `app/api/cron/insight-detect/route.ts` (already passes a `string` `runId`). No `supabase/migrations/**` file.
 
 ---
 
@@ -376,7 +376,7 @@ All automated tests use Jest with the provider **mocked**: `jest.spyOn(ProviderF
 | AC-4 | `intake-llm-attribution.test.ts` | `generateIntakeForm(U1, { groupId: G1 })` (repos mocked): `complete` 2nd arg `userId U1`; infer-question `POST` (`getUser` mocked → U1): `complete` ctx `userId U1` |
 | AC-5 | `website-llm-attribution.test.ts` (`jest.mock('uuid')`, WC-6) | `callLLM` (full_site), `regenerateField`, `enhanceTestimonial`, `generateBlockContent` for `hero`/`about`/`faq`/`features`: each `complete` ctx `userId === U1` |
 | AC-6 | `providerFactory.complete.test.ts` | With ctx C: `chatCompletion` called with `(params, C)` (same reference/deep-equal). Without: `{ userId: 'system', feature: 'onboarding', component: 'simple-complete' }` exactly (`toStrictEqual`) |
-| AC-7 | `providerFactory.complete.test.ts` | One-arg `complete({...})` (the onboarding/WebsiteAnalyzer form) resolves `{ content }` from `choices[0].message.content`. `tsc` on `OnboardingConversationManager.ts`/`WebsiteAnalyzer.ts` has no new errors (T42) |
+| AC-7 | `providerFactory.complete.test.ts` | One-arg `complete({...})` (the onboarding conversation form) resolves `{ content }` from `choices[0].message.content`. `tsc` on `OnboardingConversationManager.ts` has no new errors (T42). `WebsiteAnalyzer.ts` is not evidence for AC-7: it is broken and makes no `complete()` call (CR-1, FU-4); `tsc` only confirms its two pre-existing errors are unchanged |
 | AC-8 | each area test file | One assertion per row (1, 2, 3a, 3b, 4, 4b, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17a–f): `feature === 'business-os-<area>'`, `component === <call name>`. Row 4 (`similar()`) asserts `verified_question_embedding`; row 4b (`remember()`) asserts `verified_question_store_embedding` (WC-4). Cache-hit row excluded |
 | AC-9 | `llm-attribution.test.ts` | Rows 1, 2, 3a, 3b, 4, 4b `feature 'business-os-chat'`; rows 1, 2, 3a, 4, 4b `sessionId === turnId` passed in. Row 2: `AnalysisService` maps `request.turnId` → `sessionId` (T14 / WC-7) |
 | AC-10(a) | chat: `llm-attribution.test.ts`; website: `website-llm-attribution.test.ts`; intake: `intake-llm-attribution.test.ts` | Chat: planner repair (2 provider calls in one `plan()`) share `sessionId`; a second `plan()` with another turn differs. Website: `enrichBlocks(U1, [hero, about], lang, true)` → both `complete` ctx share one `sessionId`; a second `enrichBlocks` call differs; **`enrichBlock` called alone without `groupId` → `complete` ctx `sessionId` is a UUID (self-minted, WC-5)**. Intake: two `POST`s to the generate route → different `groupId` into the mocked service. Intake has one LLM call per action, so "two calls share" is shown by the build route sharing one id (code review; build route too large to unit test; Q-8) |
@@ -518,7 +518,7 @@ All other touched files already use `createLogger` and have **0** `console.*` ca
 | FR-9 Chat grouping unchanged | T9–T14 | AC-9, AC-17 |
 | FR-10 Grouping sources | T17, T21, T24, T27, T28, T31–T33, T35–T37, T38a, T38b | AC-10 |
 | FR-11 `complete()` context | T3 | AC-6 |
-| FR-12 Other callers unchanged, BOS required | T3, T26, T30, T34, T36 | AC-7, `tsc` gate (T42, WC-1) |
+| FR-12 Other callers unchanged, BOS required | T3, T26, T30, T34, T36 | AC-7 (onboarding conversation, the only working non-BOS caller; WebsiteAnalyzer is broken, FU-4), `tsc` gate (T42, WC-1) |
 | FR-13 Embedding call name | T6, T11–T13 | AC-2, AC-13 |
 | FR-14 Plan cache store | T12 | AC-2 |
 | FR-15 Repairs and cache hits | T9 (extras) | AC-11 |
@@ -544,7 +544,7 @@ All other touched files already use `createLogger` and have **0** `console.*` ca
 | AC-4 | T26–T28, T38a | T29 `intake-llm-attribution.test.ts` |
 | AC-5 | T30, T34, T36, T38b | T39 `website-llm-attribution.test.ts` |
 | AC-6 | T3 | T5 `providerFactory.complete.test.ts` |
-| AC-7 | T3 | T5 + T42 `tsc` |
+| AC-7 | T3 | T5 + T42 `tsc` (onboarding conversation caller; WebsiteAnalyzer excluded as broken, CR-1) |
 | AC-8 | All call-site tasks | T15, T19, T22, T25, T29, T39 |
 | AC-9 | T9–T14 | T15, T43 (T14 diff) |
 | AC-10 | T1, T12, T17, T24, T27, T31–T37, T38a, T38b | T2, T15, T19, T25, T29, T39 |
@@ -598,6 +598,7 @@ All other touched files already use `createLogger` and have **0** `console.*` ca
 | FU-1 | **Direct Supabase calls in touched files** (pre-existing, non-ledger tables, unrelated to attribution). Not fixed in Layer 1; goes to the existing **Business OS repo-conformance sweep**. Layer 1 adds none (T43, WC-8). Complete list: <br>• `app/api/website/landing-pages/generate/route.ts:80` <br>• `app/api/website/blocks/[blockId]/regenerate/route.ts:62` (security aspect tracked separately as OI-2, `:55-62`) <br>• `lib/services/WebsiteSectionService.ts:512` <br>• `app/api/business-os/usage/route.ts:218`, `:255`, `:286` <br>• `lib/services/EmbeddingService.ts:208`, `:222`, `:244`, `:261`, `:283`, `:306`, `:334`, `:356` <br>• **SA additions:** `lib/business-os/bizql/cache/PlanCache.ts:178` (+ RPC); `lib/business-os/bizql/planner/VerifiedQuestions.ts:106`, `:140`, `:153`, `:201`; `lib/services/LeadAlertService.ts:110-127`; `lib/services/WebsiteBlockEnrichmentService.ts:458`, `:1211`, `:1241-1242` <br>• `lib/business-os/bizql/telemetry/ChatBudget.ts:158` (not touched) | Repo-conformance sweep | SA item 4 |
 | FU-2 | **Website image generation spend** (`lib/services/GeneratedImageService.ts:186-187`, direct OpenAI SDK). Needs an image method on the provider layer, image pricing, a credits-per-picture rule, and catalog attribution | **Layer 1.5** | User decision 2026-09-17; SA ruling (a) |
 | FU-3 | **`ServiceGeneratorService`** (`lib/services/ServiceGeneratorService.ts:275`, `:304`) calls a non-existent `complete` on `BaseAIProvider`; always falls back, no LLM call. Excluded from attribution; the breakage itself is a separate bug | Excluded (separate fix if wanted) | User decision 2026-09-17; SA ruling (a) |
+| FU-4 | **`WebsiteAnalyzer`** (`lib/services/WebsiteAnalyzer.ts:97-123`, `extractInformationWithLLM`) is broken the same way as `ServiceGeneratorService`: it calls `getDefaultModel` (not on `SimpleProvider`) and `complete` on a `BaseAIProvider` (no such method), and reads `response.choices`. No LLM call, no ledger row. Untouched in Layer 1. Fix vs retire decided separately; if fixed, attribute it through the catalog | Separate decision (fix vs retire) | SA code review 2026-09-17, CR-1 |
 
 ---
 
@@ -656,79 +657,173 @@ Each step compiles, passes its own tests, and leaves the product behaving as bef
 ## 12. Task Checklist
 
 **Step 0: Setup**
-- [ ] T0: `npm ci` in worktree; run `chat-budget.test.ts` + `usage-report.test.ts`; record `tsc --noEmit -p .` baseline errors for touched files
+- [x] T0: `npm ci` in worktree; run `chat-budget.test.ts` + `usage-report.test.ts`; record `tsc --noEmit -p .` baseline errors for touched files
 
 **Step 1: Catalog**
-- [ ] T1: Create `lib/business-os/llm/callCatalog.ts` (§3.1): catalog incl. `verified_question_store_embedding` (WC-4); UUID v5 via Node `crypto`, no `uuid` import (ruling (c), WC-6); frozen namespace + name format with "never change" comment; FR-3 log also for `SYSTEM_ADMIN_USER_ID` / all-zero UUID
-- [ ] T2: `lib/business-os/llm/__tests__/callCatalog.test.ts`: runtime AC-10d, AC-12, AC-22, AC-23 (RFC 9562 vector, version nibble `5`, variant `10xx`); `@ts-expect-error` cases for AC-22 (verified by `tsc`, not Jest; WC-1). Run the `tsc` filter on both files
+- [x] T1: Create `lib/business-os/llm/callCatalog.ts` (§3.1): catalog incl. `verified_question_store_embedding` (WC-4); UUID v5 via Node `crypto`, no `uuid` import (ruling (c), WC-6); frozen namespace + name format with "never change" comment; FR-3 log also for `SYSTEM_ADMIN_USER_ID` / all-zero UUID
+- [x] T2: `lib/business-os/llm/__tests__/callCatalog.test.ts`: runtime AC-10d, AC-12, AC-22, AC-23 (RFC 9562 vector, version nibble `5`, variant `10xx`); `@ts-expect-error` cases for AC-22 (verified by `tsc`, not Jest; WC-1). Run the `tsc` filter on both files
 
 **Step 2: Usage mapping (moved up, WC-3)**
-- [ ] T40: Create `lib/business-os/usage/usageCategories.ts` (ruling (f)); `usage/route.ts` imports it (replaces `:65-96`, `:354-361`)
-- [ ] T41: `lib/business-os/usage/__tests__/usageCategories.test.ts` (AC-14: exact token + call sums, no credit-sum assertion; ruling (e))
+- [x] T40: Create `lib/business-os/usage/usageCategories.ts` (ruling (f)); `usage/route.ts` imports it (replaces `:65-96`, `:354-361`)
+- [x] T41: `lib/business-os/usage/__tests__/usageCategories.test.ts` (AC-14: exact token + call sums, no credit-sum assertion; ruling (e))
 
 **Step 3: `complete()` helper**
-- [ ] T3: Optional `context?: CallContext` on `SimpleProvider.complete` + impl; fix `:323` comment
-- [ ] T4: Pino-convert `lib/ai/providerFactory.ts`: 6 `console.*` calls → `createLogger({ module: 'ProviderFactory' })` (user approved 2026-09-17)
-- [ ] T5: `lib/ai/__tests__/providerFactory.complete.test.ts` (AC-6, AC-7, AC-12)
+- [x] T3: Optional `context?: CallContext` on `SimpleProvider.complete` + impl; fix `:323` comment
+- [x] T4: Pino-convert `lib/ai/providerFactory.ts`: 6 `console.*` calls → `createLogger({ module: 'ProviderFactory' })` (user approved 2026-09-17)
+- [x] T5: `lib/ai/__tests__/providerFactory.complete.test.ts` (AC-6, AC-7, AC-12)
 
 **Step 4: Embedding service**
-- [ ] T6: `callName` on `generateEmbedding` attribution → `component`
-- [ ] T7: Pino-convert `lib/services/EmbeddingService.ts`: 16 `console.*` calls → `createLogger({ service: 'EmbeddingService' })`, errors as `{ err }` (user approved 2026-09-17)
-- [ ] T8: `lib/services/__tests__/EmbeddingService.attribution.test.ts` (AC-13)
+- [x] T6: `callName` on `generateEmbedding` attribution → `component`
+- [x] T7: Pino-convert `lib/services/EmbeddingService.ts`: 16 `console.*` calls → `createLogger({ service: 'EmbeddingService' })`, errors as `{ err }` (user approved 2026-09-17)
+- [x] T8: `lib/services/__tests__/EmbeddingService.attribution.test.ts` (AC-13)
 
 **Step 5: Chat**
-- [ ] T9: Row 1 `Planner.ts:481-491` via builder, `activity_type` extras
-- [ ] T10: Row 2 `AnalysisService.ts:137-143` via builder
-- [ ] T11: Row 3a `PlanCache.ts:226-230` via `toEmbeddingAttribution`
-- [ ] T12: Row 3b: `turnId?` on `PlanCache.store` args; attribution at `:333`; `Planner.ts:641-648` passes `turnId: request.turnId`
-- [ ] T13: Rows 4 + 4b: `embed()` in `VerifiedQuestions.ts:74` takes the call name; `similar()` (`:136`) passes `verified_question_embedding`, `remember()` (`:197`) passes `verified_question_store_embedding`; context at `:81-85` via `toEmbeddingAttribution` (WC-4)
-- [ ] T14: `chat-v4/route.ts:1329` `turnId: correlationId` → `turnId` (approved in scope, ruling (b); verified by T43 single-token diff and T15; WC-7)
-- [ ] T15: `lib/business-os/bizql/__tests__/llm-attribution.test.ts` (AC-2; AC-8 incl. rows 4 and 4b by name; AC-9 incl. 4b and `AnalysisService` `request.turnId` → `sessionId`; AC-10a; AC-11)
-- [ ] T16: Run `chat-budget.test.ts`, `usage-report.test.ts`, `plan-cache-safety.test.ts`, `calendar-dates.test.ts` unchanged (AC-11, AC-17)
+- [x] T9: Row 1 `Planner.ts:481-491` via builder, `activity_type` extras
+- [x] T10: Row 2 `AnalysisService.ts:137-143` via builder
+- [x] T11: Row 3a `PlanCache.ts:226-230` via `toEmbeddingAttribution`
+- [x] T12: Row 3b: `turnId?` on `PlanCache.store` args; attribution at `:333`; `Planner.ts:641-648` passes `turnId: request.turnId`
+- [x] T13: Rows 4 + 4b: `embed()` in `VerifiedQuestions.ts:74` takes the call name; `similar()` (`:136`) passes `verified_question_embedding`, `remember()` (`:197`) passes `verified_question_store_embedding`; context at `:81-85` via `toEmbeddingAttribution` (WC-4)
+- [x] T14: `chat-v4/route.ts:1329` `turnId: correlationId` → `turnId` (approved in scope, ruling (b); verified by T43 single-token diff and T15; WC-7)
+- [x] T15: `lib/business-os/bizql/__tests__/llm-attribution.test.ts` (AC-2; AC-8 incl. rows 4 and 4b by name; AC-9 incl. 4b and `AnalysisService` `request.turnId` → `sessionId`; AC-10a; AC-11)
+- [x] T16: Run `chat-budget.test.ts`, `usage-report.test.ts`, `plan-cache-safety.test.ts`, `calendar-dates.test.ts` unchanged (AC-11, AC-17)
 
 **Step 6: Insights**
-- [ ] T17: `runId: string` (required, ruling (d)) on `CreateInsightParams`, `createBatch`, `saveCorrelationResults`, `createCorrelatedInsight`, `createOrUpdateHealthSummary`; pass `runId` to generators at `:449`, `:1577`, `:1891`
-- [ ] T18: Rows 7/8/9 contexts (`:724-728`, `:1735-1739`, `:2120-2124`) via builder
-- [ ] T19: `lib/business-os/insight/__tests__/insight-llm-attribution.test.ts` (AC-1, AC-8, AC-10b)
-- [ ] T20: Confirm cron route + `scripts/verify-insights.ts` compile unchanged (`tsc` filter)
+- [x] T17: `runId: string` (required, ruling (d)) on `CreateInsightParams`, `createBatch`, `saveCorrelationResults`, `createCorrelatedInsight`, `createOrUpdateHealthSummary`; pass `runId` to generators at `:449`, `:1577`, `:1891`
+- [x] T18: Rows 7/8/9 contexts (`:724-728`, `:1735-1739`, `:2120-2124`) via builder
+- [x] T19: `lib/business-os/insight/__tests__/insight-llm-attribution.test.ts` (AC-1, AC-8, AC-10b)
+- [x] T20: Confirm cron route + `scripts/verify-insights.ts` compile unchanged (`tsc` filter)
 
 **Step 7: Briefing**
-- [ ] T21: `narrateBriefing` `userId: string`; context via builder + `bosBriefingGroupId(userId, facts.day.date)`; keep `activity_type: 'narration'`; include `groupId` in the existing narration log
-- [ ] T22: `lib/business-os/briefing/__tests__/BriefingNarrator.attribution.test.ts` (AC-3 runtime, AC-8; `@ts-expect-error` part verified by `tsc`, WC-1)
+- [x] T21: `narrateBriefing` `userId: string`; context via builder + `bosBriefingGroupId(userId, facts.day.date)`; keep `activity_type: 'narration'`; include `groupId` in the existing narration log
+- [x] T22: `lib/business-os/briefing/__tests__/BriefingNarrator.attribution.test.ts` (AC-3 runtime, AC-8; `@ts-expect-error` part verified by `tsc`, WC-1)
 
 **Step 8: Leads**
-- [ ] T23: `recommendLeadReply(..., userId, groupId)`; context `:109` via builder; nothing else in the function changes
-- [ ] T24: `LeadAlertService.queueLeadReply` mints `newBosGroupId()` before `:334`, **logs `groupId`** (WC-10) and passes it
-- [ ] T25: `lib/business-os/leads/__tests__/lead-reply-attribution.test.ts` (AC-8, AC-10c)
+- [x] T23: `recommendLeadReply(..., userId, groupId)`; context `:109` via builder; nothing else in the function changes
+- [x] T24: `LeadAlertService.queueLeadReply` mints `newBosGroupId()` before `:334`, **logs `groupId`** (WC-10) and passes it
+- [x] T25: `lib/business-os/leads/__tests__/lead-reply-attribution.test.ts` (AC-8, AC-10c)
 
 **Step 9: Intake (+ intake half of the build route, WC-2)**
-- [ ] T26: `generateIntakeForm(userId, { groupId, regenerate? })` (default removed); `callLLM(owner, …)` passes context to `complete()`
-- [ ] T27: `intake/form/generate/route.ts:47` mints group id and **logs `{ correlationId, groupId }`** (WC-10)
-- [ ] T28: `infer-question/route.ts` mints group id and **logs `{ correlationId, groupId }`** (WC-10); `infer(text, language, owner)`; context at `:123`
-- [ ] T38a: `onboarding/build/route.ts`: mint one `newBosGroupId()` (logged with `correlationId`, WC-10) before the intake call and pass it to `generateIntakeForm(user.id, { groupId })` at `:840`. Check: `tsc` shows no new error in `app/api/onboarding/build/route.ts` (WC-2)
-- [ ] T29: `lib/services/__tests__/intake-llm-attribution.test.ts` (AC-4, AC-8, AC-10a)
+- [x] T26: `generateIntakeForm(userId, { groupId, regenerate? })` (default removed); `callLLM(owner, …)` passes context to `complete()`
+- [x] T27: `intake/form/generate/route.ts:47` mints group id and **logs `{ correlationId, groupId }`** (WC-10)
+- [x] T28: `infer-question/route.ts` mints group id and **logs `{ correlationId, groupId }`** (WC-10); `infer(text, language, owner)`; context at `:123`
+- [x] T38a: `onboarding/build/route.ts`: mint one `newBosGroupId()` (logged with `correlationId`, WC-10) before the intake call and pass it to `generateIntakeForm(user.id, { groupId })` at `:840`. Check: `tsc` shows no new error in `app/api/onboarding/build/route.ts` (WC-2)
+- [x] T29: `lib/services/__tests__/intake-llm-attribution.test.ts` (AC-4, AC-8, AC-10a)
 
 **Step 10: Website**
-- [ ] T30: `generateWebsite(userId, { groupId, … })`; `callLLM(owner, …)` context at `:546`
-- [ ] T31: `generate-from-profile/route.ts:78` mints group id, **logs it** (WC-10), passes `user.id`
-- [ ] T32: `MutateExecutor.ts:808` mints group id and **logs it** (WC-10)
-- [ ] T33: Row 16 `landing-pages/generate/route.ts:118-122` via builder with minted group id, **logged** (WC-10)
-- [ ] T34: `WebsiteAIContentService`: `owner` on `generateBlockContent`, `regenerateField`, `enhanceTestimonial` and the 4 private generators; contexts at `:301/:337/:371/:414/:546/:602`
-- [ ] T35: `blocks/[blockId]/regenerate/route.ts:68` and `enhance-testimonial/route.ts:35` mint group id, **log it** (WC-10), pass `user.id` (OI-2 not touched)
-- [ ] T36: `WebsiteBlockEnrichmentService`: trailing `groupId?` on `enrichBlock`/`enrichBlocks`; **`enrichBlock` mints its own `newBosGroupId()` when absent** (direct caller `pages/[id]/enrich/route.ts:75`); `enrichBlocks` mints once and passes the id to every `enrichBlock`; both mint points log `groupId` (WC-5, WC-10); `owner` into the 4 `*WithAI` methods (`:418/:624/:1018/:1078`)
-- [ ] T37: `WebsiteSectionService.ts:519`: add second arg `{ userId, groupId: newBosGroupId() }` only, **logging `groupId`** (WC-10); request shape unchanged (KI-1)
-- [ ] T38b: `onboarding/build/route.ts`: pass the id minted in T38a to `generateWebsite(user.id, { groupId, … })` at `:881` (WC-2)
-- [ ] T39: `lib/services/__tests__/website-llm-attribution.test.ts` (AC-5, AC-8, AC-10a incl. two blocks in one `enrichBlocks` call sharing one id and a lone `enrichBlock` self-minting; `jest.mock('uuid')`; WC-5, WC-6)
+- [x] T30: `generateWebsite(userId, { groupId, … })`; `callLLM(owner, …)` context at `:546`
+- [x] T31: `generate-from-profile/route.ts:78` mints group id, **logs it** (WC-10), passes `user.id`
+- [x] T32: `MutateExecutor.ts:808` mints group id and **logs it** (WC-10)
+- [x] T33: Row 16 `landing-pages/generate/route.ts:118-122` via builder with minted group id, **logged** (WC-10)
+- [x] T34: `WebsiteAIContentService`: `owner` on `generateBlockContent`, `regenerateField`, `enhanceTestimonial` and the 4 private generators; contexts at `:301/:337/:371/:414/:546/:602`
+- [x] T35: `blocks/[blockId]/regenerate/route.ts:68` and `enhance-testimonial/route.ts:35` mint group id, **log it** (WC-10), pass `user.id` (OI-2 not touched)
+- [x] T36: `WebsiteBlockEnrichmentService`: trailing `groupId?` on `enrichBlock`/`enrichBlocks`; **`enrichBlock` mints its own `newBosGroupId()` when absent** (direct caller `pages/[id]/enrich/route.ts:75`); `enrichBlocks` mints once and passes the id to every `enrichBlock`; both mint points log `groupId` (WC-5, WC-10); `owner` into the 4 `*WithAI` methods (`:418/:624/:1018/:1078`)
+- [x] T37: `WebsiteSectionService.ts:519`: add second arg `{ userId, groupId: newBosGroupId() }` only, **logging `groupId`** (WC-10); request shape unchanged (KI-1)
+- [x] T38b: `onboarding/build/route.ts`: pass the id minted in T38a to `generateWebsite(user.id, { groupId, … })` at `:881` (WC-2)
+- [x] T39: `lib/services/__tests__/website-llm-attribution.test.ts` (AC-5, AC-8, AC-10a incl. two blocks in one `enrichBlocks` call sharing one id and a lone `enrichBlock` self-minting; `jest.mock('uuid')`; WC-5, WC-6)
 
 **Step 11: Close-out**
-- [ ] T42: Full Jest run for touched areas + existing suites (AC-16, AC-17). **`tsc --noEmit -p .` gate** (WC-1): filter on every touched file **and every new test file** (explicitly `callCatalog.test.ts` and `BriefingNarrator.attribution.test.ts`); fail on any error not in the T0 baseline, including **TS2578** (unused `@ts-expect-error`). Verifies the type parts of AC-3 and AC-22 and the FR-12/FR-16 required arguments
-- [ ] T43: Diff review (§6.3): AC-15; AC-21 (incl. `ServiceGeneratorService.ts`, `GeneratedImageService.ts` untouched); AC-24; T14 single-token diff (WC-7); **no new direct Supabase `from(` / `.rpc(` / `.storage` call** (WC-8); every mint point logs `groupId` (WC-10); no `uuid` import in `callCatalog.ts` (WC-6)
-- [ ] T44: One-line attribution note in `docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md`
-- [ ] T45: Update this workplan: task marks, Status → Code Complete, notify TL for SA code review
+- [x] T42: Full Jest run for touched areas + existing suites (AC-16, AC-17). **`tsc --noEmit -p .` gate** (WC-1): filter on every touched file **and every new test file** (explicitly `callCatalog.test.ts` and `BriefingNarrator.attribution.test.ts`); fail on any error not in the T0 baseline, including **TS2578** (unused `@ts-expect-error`). Verifies the type parts of AC-3 and AC-22 and the FR-12/FR-16 required arguments
+- [x] T43: Diff review (§6.3): AC-15; AC-21 (incl. `ServiceGeneratorService.ts`, `GeneratedImageService.ts` untouched); AC-24; T14 single-token diff (WC-7); **no new direct Supabase `from(` / `.rpc(` / `.storage` call** (WC-8); every mint point logs `groupId` (WC-10); no `uuid` import in `callCatalog.ts` (WC-6)
+- [x] T44: One-line attribution note in `docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md`
+- [x] T45: Update this workplan: task marks, Status → Code Complete, notify TL for SA code review
 
-**Total: 47 tasks (T0–T37, T38a, T38b, T39–T45) in 12 steps (0–11). None SA-gated.**
+**Step 12: User-approved additions (2026-09-17, before QA; pending SA review)**
+- [x] T46: CI type check scoped to Business OS LLM attribution: `scripts/typecheck-bos-llm.ts` + committed baseline `scripts/typecheck-bos-llm.baseline.json`, npm script `typecheck:bos-llm`, workflow `.github/workflows/bos-llm-typecheck.yml` (PRs and pushes to `main`). Proven to fail on a bad call name, a missing `userId`, and an unused `@ts-expect-error` (TS2578), and to pass on today's code (§12.2). **CR-2 applied:** scope widened through compiler-resolved imports to barrels and direct callers (36 → 96 files), baseline refreshed (21 → 30 errors, +9 pre-existing), proven on a dropped `runId` in the insight cron and a dropped `userId` in `BriefingStore.ts`. **S-5 applied** (workflow permissions, concurrency, timeout)
+- [x] T47: Remove the hand-typed chat label: `bosFeature(area)` + `BOS_CHAT_FEATURE` exported from `callCatalog.ts` (the builder uses `bosFeature` too); used in `ChatBudget.ts:161`, `usageReport.ts:187`/`:358`, `turnUsage.ts:105` (cache-hit row stays a non-LLM row) and for the `business-os-*` entries in `usageCategories.ts`. Pure refactor, identical strings; `IntentParser.ts` untouched
+
+**Total: 49 tasks (T0–T37, T38a, T38b, T39–T47) in 13 steps (0–12). T46–T47 are a user-approved addition pending SA review.**
+
+### 12.1 Implementation Notes (Dev, 2026-09-17)
+
+**Verification results**
+
+| Check | Before (T0 baseline) | After | Result |
+|---|---|---|---|
+| Jest, touched areas (`lib/business-os lib/services lib/ai app/api/website app/api/intake app/api/business-os`) | 83 suites, 1,395 passed, 28 skipped | 94 suites, 1,510 passed, 28 skipped (+10 new suites, +1 `lib/server/website-plugin-executor.test.ts` added to the run) | All green |
+| `chat-budget.test.ts`, `usage-report.test.ts` (AC-17) | pass | pass, no edits | ✅ |
+| Full `tsc --noEmit -p .` (includes all test files) | 2,045 errors | 2,045 errors; 0 new, 0 resolved; 0 TS2578 | ✅ (WC-1 gate) |
+| Full Jest suite (whole repo) | — | 21 suites / 129 tests fail | Pre-existing: the identical 21 suites and 129 tests fail on a clean `git archive` of `9e904f32` (missing `DeclarativeCompiler`, `_DEPRECATED` modules, V6/pilot/orchestration suites). None touches this change |
+| T43 diff review | — | no excluded file, migration, `aiAnalytics.ts` or `baseProvider.ts` change; no new `.from(` / `.rpc(` / `.storage`; no free-typed Business OS `feature:` literal outside the catalog; T14 is a one-token diff; AC-15 diff is signature + import + context only; no `uuid` import in the catalog; every `newBosGroupId()` site logs `groupId`; 0 `console.*` in touched files | ✅ |
+
+Per-step `tsc` checks used a subset program (touched files + their import graph) compared against the T0 baseline by (file, code, message), because a full run takes ~10 minutes; the full run was repeated at close-out.
+
+**Deviations from the workplan (for SA)**
+
+| # | Deviation | Why |
+|---|---|---|
+| D-1 | `enrichBlock` mints its own group id **lazily, only when an AI branch runs** (and `enrichBlocks` only when `useAI` is true), rather than on every call | All production callers pass `useAI = false` (KI-3). Minting and logging a group on every non-AI enrichment would add log noise for a group nothing is recorded under. WC-5's guarantee (a lone `enrichBlock` AI call is grouped under a fresh UUID; blocks in one `enrichBlocks` share one) is unchanged and tested |
+| D-2 | `uuidV5` and `isUuid` are exported from `callCatalog.ts` in addition to the §3.1 surface | `uuidV5` is exported so the RFC vector can be tested directly (ruling (c)); `isUuid` is shared by the tests instead of re-declaring the regex in each file |
+| D-3 | Row 16 (landing-page route) passes `correlationId` into the builder | So the FR-3 log names the request, as §3.1/Q-7 describe for route-level calls. Other routes pass the owner to a service, where the service builds the context |
+| D-4 | `BriefingNarrator` adds `groupId` to its existing failure `warn` log (there is no success log to extend) | T21 says "include `groupId` in the existing narration log"; the failure log is the only one on that path |
+| D-5 | `generate-from-profile/route.ts` now calls `generateWebsite(user.id, …)` instead of the body `userId` | Planned in T31; recorded because it is a (safe) behaviour-visible line: the two are already checked equal at `:67`, so nothing changes for a valid request |
+| D-6 | `docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md`: the note is on the `InsightRepository.ts` module-map row plus a Change History row, and Last Updated bumped | T44 close-out per the `business-os-insights` skill |
+
+**Things SA should look at closely**
+
+1. **`narrateBriefing(facts, language = 'en', userId: string, …)`**: a required parameter after a defaulted one. TypeScript allows it and the only caller (`BriefingStore.ts:51`) passes all four; a future caller must pass `language` explicitly (or `undefined`).
+2. **`WebsiteSectionService.regenerateSectionField`** (KI-1): only a second argument and a mint log were added; the broken request shape and its `as Parameters<…>[0]` cast are untouched. The pre-existing TS2352 on that cast is still in the baseline.
+3. **Required-parameter changes rely on `tsc`**: `generateWebsite`/`generateIntakeForm` defaults removed, `runId` required ×5, `groupId` on `recommendLeadReply`. All callers found by grep were updated and the full `tsc` gate shows no new error, but `next.config.js` still ignores TS errors at build.
+4. **Pino conversions (T4, T7)**: provider initialisation lines moved from `console.log` to `logger.debug` (not visible at production `info` level); EmbeddingService progress lines are `info`, errors `error` with `{ err }`.
+5. **Tests reach private methods by bracket access** (`repo['generateLocalizedContent']`, `service['callLLM']`) as planned in §6, and use a chainable Proxy stub for `supabaseServer` in the chat and lead tests.
+6. **SA optimisation adopted**: the builder's FR-3 `logger.error` also fires for `SYSTEM_ADMIN_USER_ID` and the all-zero UUID (TL confirmed keeping it).
+
+**Files changed:** 26 modified/created source and doc files, listed in the Dev report to TL; 10 new test files (`callCatalog`, `usageCategories`, `providerFactory.complete`, `EmbeddingService.attribution`, `llm-attribution` (chat), `insight-llm-attribution`, `BriefingNarrator.attribution`, `lead-reply-attribution`, `intake-llm-attribution`, `website-llm-attribution`).
 
 ---
+
+### 12.2 Scoped Type-Check Gate and Chat Label (T46, T47; user-approved addition, pending SA review)
+
+**Why.** The catalog's `as const` unions are only enforced by `tsc`, and nothing runs `tsc` as a gate: `next.config.js` has `ignoreBuildErrors: true`, Jest is transpile-only (`isolatedModules`), the only CI workflow was `plugin-tests.yml`, and the repo carries 2,045 `tsc` errors. A wrong or missing area/call name would ship and write a wrong ledger label.
+
+**Approach chosen (T46): a TypeScript Compiler API script with a committed baseline, no new dependencies.**
+
+| Option | Verdict |
+|---|---|
+| Small scoped `tsconfig` + `tsc -p` | Rejected: `tsc` reports errors in every transitively imported file, so unrelated modules' errors leak in, and the scoped files already carry 21 pre-existing errors on untouched lines (KI-1 cast, `WebsiteBlockEnrichmentService` content types, onboarding build route, regenerate route) |
+| Run full `tsc` and filter its text output | Works, but ~10 minutes, and literal-union order in messages varies between runs, so text matching is flaky |
+| **Compiler API script** (`scripts/typecheck-bos-llm.ts`, run with the existing `tsx`) | **Chosen.** Builds the same program as `tsc -p tsconfig.json`, then asks the checker for diagnostics of the in-scope files only. The checker is lazy, so other modules' errors are never reported. ~1 minute locally |
+
+How it works:
+
+1. **Scope (derived from the import graph, not hand-listed; widened by CR-2).** Imports are resolved by the TypeScript compiler, not a regex: `ts.preProcessFile` collects every import, `export … from`, `import()` and `require()` specifier (type-only imports included), and `ts.resolveModuleName` resolves each one with the tsconfig options. So `@/` aliases, relative paths and `index.ts` barrels are followed exactly as `tsc` follows them. The candidate files are the tsconfig program's project files (no `.d.ts`, no `node_modules`). Scope has three layers:
+   - **Core** (36 files): everything under `lib/business-os/llm/` and `lib/business-os/usage/`; every file whose imports resolve to `callCatalog.ts` (the only way to use `buildBosCallContext`, `toEmbeddingAttribution`, `newBosGroupId`, `bosBriefingGroupId`, `bosFeature` or `BosLlmOwner`); every test named `*attribution*.test.ts`.
+   - **Barrels** (2): any file that re-exports (`export … from`, detected in the AST) an in-scope module, repeated to a fixed point so barrels of barrels count. Today: `lib/business-os/insight/repository/index.ts` and `lib/business-os/insight/index.ts`.
+   - **Callers** (58): every file that **directly** imports a core or barrel file, one level only. This is where a missing **required** argument (`runId`, `groupId`, `userId`) is reported, because callers usually don't import the catalog. It brings in, among others, `app/api/cron/insight-detect/route.ts` (via the repository barrel), `lib/business-os/briefing/BriefingStore.ts` (relative import), `scripts/verify-insights.ts` (dynamic `import()` of the barrel), `app/api/business-os/usage/route.ts`, `my-day/route.ts`, `DailyBriefingDispatchService.ts`, the lead form routes and the bizql tests and scripts.
+   - **Today: 96 files.** `npm run typecheck:bos-llm -- --list` prints each file with its layer. To extend: import the catalog, or call an attributed service (automatic); follow the test naming convention; or add a directory to `SCOPED_DIRS`.
+2. **Baseline:** `scripts/typecheck-bos-llm.baseline.json` holds today's **30** pre-existing errors in scope as **23** keys of (file, code, headline message) with counts. There are no line numbers, so unrelated edits don't break it. Union members inside quoted types are sorted (string-literal unions at any depth, and named unions at the top level), so the checker's run-to-run ordering doesn't break it either (seen for both `'"a" | "b"'` and `'MutateResult | ComputeResult | …'`).
+   - **CR-2 baseline additions** (9 errors in 5 newly scoped caller files, all on untouched lines, all present in the T0 full-`tsc` baseline): `app/api/book/manage/[token]/reschedule/route.ts` TS2352 ×1; `scripts/bizql-capability-sweep.ts` TS2339 ×1; `scripts/bizql-conversation-test.ts` TS2339 ×1; `scripts/bizql-planner-test.ts` TS2339 ×3; `tests/business-os-chat/run-eval.ts` TS2339 ×3. One existing key (`blocks/[blockId]/regenerate/route.ts` TS2322) was re-keyed by the union normalisation; it is the same single error. `--update-baseline` is only for a pre-existing error that comes into scope, never for a new one. Fixed baseline entries are reported, not failed.
+3. **Fails (exit 1)** on any error not covered by the baseline, including TS2578. A scoped file missing from the tsconfig program exits 2 rather than being skipped silently.
+4. **CI:** `.github/workflows/bos-llm-typecheck.yml`, same conventions as `plugin-tests.yml` (Node 18, `actions/setup-node@v4` with npm cache, `npm ci`). Runs on `pull_request` and `push` to `main` (+ `workflow_dispatch`), with **no path filter** because the scope is import-derived. `NODE_OPTIONS=--max-old-space-size=6144`, because the program covers the whole repo. After S-5 it also has `permissions: contents: read`, `concurrency` (group `bos-llm-typecheck-${{ github.ref }}`, `cancel-in-progress: true`) and job `timeout-minutes: 15`.
+5. **Runtime:** ~65 s locally for the gate with 96 files in scope (was ~60 s with 36; the import-graph scan adds a few seconds, and `--list` alone takes ~20 s).
+
+**Gate proof, CR-2 (2026-09-17, local, 96-file scope).** Each mutation was applied alone, the gate run, and the file restored from a backup copy (byte-identical, `cmp`). At the end, `git diff` and `git status --porcelain` were byte-identical to a snapshot taken before the proof.
+
+| Change introduced | Gate result |
+|---|---|
+| `repository.createBatch(userId, prioritized)` in `app/api/cron/insight-detect/route.ts` (`runId` dropped at a **caller** reached through the barrel) | `31 errors, 1 new`: TS2554 `Expected 3 arguments, but got 2.` at `:232`, exit 1 |
+| `narrateBriefing(facts, language, businessType)` at `lib/business-os/briefing/BriefingStore.ts:51` (`userId` dropped at a relative-import caller) | `1 new`: TS2345 `Argument of type 'BusinessType' is not assignable to parameter of type 'string'.`, exit 1 |
+| `callName: 'ful_site'` in `WebsiteGenerationService.ts:570` | `1 new`: TS2820 `… Did you mean '"full_site"'?`, exit 1 |
+| None (clean, after all restores) | `96 files in scope, 30 errors, 0 new (65.1s)`, passed, exit 0 |
+
+**Gate proof, original T46 (2026-09-17, 36-file scope; each change reverted from a backup copy afterwards):**
+
+| Change introduced | Gate result |
+|---|---|
+| None (today's code) | `36 files in scope, 21 errors, 0 new`, passed, exit 0 |
+| `callName: 'ful_site'` in `WebsiteGenerationService.ts` | TS2820 `'"ful_site"' is not assignable … Did you mean '"full_site"'?`, exit 1 |
+| `userId` removed from `buildBosCallContext` in `LeadReplyRecommender.ts` | TS2345 `Property 'userId' is missing`, exit 1 |
+| `callName: 'planner'` for area `website` in `callCatalog.test.ts` | TS2345 `'"planner"' is not assignable …`, exit 1 |
+| Wrong-area `@ts-expect-error` case made valid (`callName: 'planner'` for `chat`) | TS2578 `Unused '@ts-expect-error' directive`, exit 1 |
+| After revert (via `npm run typecheck:bos-llm`) | `0 new`, passed, exit 0 |
+
+**Chat label (T47).** `bosFeature(area): \`business-os-${A}\`` is the single place the prefix is written. `buildBosCallContext` uses it, and `BOS_CHAT_FEATURE = bosFeature('chat')` replaces the four hand-typed `'business-os-chat'` literals in chat telemetry. `usageCategories.ts` uses `bosFeature(...)` for its six Business OS entries; the legacy values stay literal. A new `callCatalog.test.ts` case pins `BOS_CHAT_FEATURE === 'business-os-chat'`. The three telemetry files have **0** `console.*` calls. Their pre-existing direct `supabaseServer` reads are unchanged (only the `.eq('feature', …)` argument changed) and are already on FU-1.
+
+**Verification after T46/T47:**
+- Jest, touched areas: 94 suites, 1,512 passed, 28 skipped. `chat-budget.test.ts` and `usage-report.test.ts` pass unedited.
+- Full `tsc`: 2,045 errors, 0 new, 0 resolved, 0 TS2578. The new script itself compiles clean.
+- Gate: passed, 0 new.
+
+**Note for SA:** the script is a CLI under `scripts/` and prints its report with `console.*`, like `scripts/schema-check.ts`. The CLAUDE.md Pino rule covers `lib/`, `app/` and `components/`.
 
 ## 13. SA Review Notes
 
@@ -904,11 +999,386 @@ All ten are applied by Dev (2026-09-17); see the application log in §13.4.
 
 **SA optimisation adopted:** the FR-3 log also fires for `SYSTEM_ADMIN_USER_ID` and the all-zero UUID (§3.1, AC-12 test). The builder stays synchronous and side-effect-free apart from the log.
 
+### 13.5 SA Code Review
+
+**Code Review by SA — 2026-09-17**
+**Status:** ✅ Code Approved, with one documentation fix (CR-1)
+
+**Verdict: APPROVED WITH FIXES.** The code needs no changes. CR-1 is a workplan and requirement text correction. It does **not** block QA, but it must be in before RM commits.
+
+Reviewed in worktree `neuronforge-llm-attribution` (uncommitted diff on `9e904f32`): 27 modified files (25 code/doc files plus this workplan and the insights doc) and 12 untracked files (2 modules, 10 tests).
+
+#### 13.5.1 Independent verification
+
+| Check | SA result | Matches Dev? |
+|---|---|---|
+| Jest, touched areas (`lib/business-os lib/services lib/ai app/api/website app/api/intake app/api/business-os`) | 93 suites / 1,488 passed / 28 skipped; plus `lib/server/website-plugin-executor.test.ts` 1 suite / 22 passed = **94 / 1,510** | ✅ |
+| `chat-budget.test.ts`, `usage-report.test.ts` | Pass, and neither file is in the diff | ✅ |
+| Full `tsc --noEmit -p .` | **2,045 errors, 0 TS2578.** Every error in a touched file is on unchanged code: `EmbeddingService.ts:129/185` `createEmbedding`; `WebsiteBlockEnrichmentService.ts` `EnrichmentResult` variance; `WebsiteSectionService.ts:525` TS2352 (KI-1 cast); `regenerate/route.ts:76` profile type; `onboarding/build/route.ts:395-397` null checks. There is none in any new file or in any caller of a changed signature (cron, `verify-insights.ts`, `BriefingStore.ts`, `WebsitePublishService.ts`, `pages/[id]/enrich`, `pages/route.ts`, `OnboardingConversationManager.ts`) | ✅ |
+| **Type-level tests really bite (AC-3, AC-22)** | SA ran `tsc` on a subset program holding copies of `callCatalog.test.ts` and `BriefingNarrator.attribution.test.ts`, with the "bad" line fixed in each (`full_site`→`planner` on a chat attribution; `groupId: undefined`→`G1` on intake; `narrateBriefing(facts, 'en')`→`+ U1`). **Each mutation produced TS2578.** The unmutated files compile clean. The `@ts-expect-error` cases are effective, not vacuous | ✅ |
+| Excluded files unchanged (AC-21) | `git diff` is empty for `lib/analytics/`, `lib/ai/providers/`, `GeneratedImageService.ts`, `ServiceGeneratorService.ts`, `OnboardingConversationManager.ts`, `WebsiteAnalyzer.ts`, `IntentParser.ts`, `story/`, `bizql/telemetry/`, `components/`, `scripts/`, `supabase/` | ✅ |
+| No new direct Supabase call (WC-8) | No `+` line in the diff has `.from(` / `.rpc(` / `.storage` | ✅ |
+| Pino (NFR Logging, CLAUDE.md rule 3) | 0 `console.*` calls in every touched and new file. `providerFactory.ts` 6 → 0, `EmbeddingService.ts` 16 → 0; errors logged as `{ err }` | ✅ |
+| No new `any` | No `+` line adds `any`. The `as never` on `AnalysisService`'s context and `profile: any` in `WebsiteGenerationService.callLLM` were already there | ✅ |
+| AC-15 | `LeadReplyRecommender.ts` diff hunks: import (`:30`), signature (`:78-80`), context literal (`:112`). Nothing from `:113` onward | ✅ |
+| T14 (WC-7) | `chat-v4/route.ts`: one-token change at `:1329`; `turnId` is in scope (`:335`) | ✅ |
+
+#### 13.5.2 Per-row correctness and tenancy
+
+Every row was checked in the diff for `feature` / `component` / `session_id` and traced back to its account source.
+
+| Row | Context (verified) | Account source (server-side) | Group source |
+|---|---|---|---|
+| 1 planner | `business-os-chat` / `planner` / `request.turnId`; `activity_type` kept via extras | `chat-v4` `getUser()` | turn |
+| 2 analysis | `… / analysis / request.turnId` | `chat-v4` `user.id` | turn (T14) |
+| 3a / 3b | `… / plan_cache_lookup_embedding` · `plan_cache_store_embedding` / turn. `category`/`activity_*` unchanged (set inside EmbeddingService) | Planner `request.userId` | turn; 3b via new `store({ turnId })` (`Planner.ts:652`) |
+| 4 / 4b | `… / verified_question_embedding` (`similar`) · `verified_question_store_embedding` (`remember`) | Planner / `chat-v4` `user.id` | turn |
+| 7 / 8 / 9 | `business-os-insights` / `insight_content` · `correlated_insight` · `health_summary` / `runId` | the cron's DB-iterated `userId` (`insight-detect/route.ts:205`); `'system'` is gone | cron `runId` (`:142`), required on all 5 public methods and 3 private generators |
+| 10 | `business-os-briefing` / `daily_narration` / v5(`userId`, `facts.day.date`); `activity_type: 'narration'` kept; `'unknown'` gone | `my-day` `user.id` or the dispatch job's `userId`, via `BriefingStore.ts:51` | derived |
+| 12 | `business-os-leads` / `reply_recommendation` / minted per enquiry (`LeadAlertService.ts:336`) | `input.ownerId`, resolved from DB records by all 5 `notifyOwnerOfLead` callers (website page / business profile / booking row) | minted |
+| 13 / 14 | `business-os-intake` / `form_generation` · `question_inference` | `getUser()` in both routes; the build route uses `user.id` | minted at the route (`generate/route.ts:49`, `infer-question/route.ts:67`); build route shares one (`:825`) |
+| 15 | `business-os-website` / `full_site` | `generate-from-profile` now passes **`user.id`** (D-5); `MutateExecutor` `ctx.userId`; build route `user.id` | minted (`generate-from-profile:76`, `MutateExecutor:811`, build `:825`) |
+| 16 | `… / landing_page` via the builder in the route | `getUser()` | minted (`:91`) |
+| 17a / 17b | `… / field_regenerate` · `testimonial_enhance`, with the owner as a separate positional argument | `regenerate` `user.id`; `enhance-testimonial` `user.id`; `WebsiteSectionService` `userId` param (KI-1, compile-only; the request object at `:525-535` is unchanged) | minted (`regenerate:68`, `enhance-testimonial:34`, `WebsiteSectionService:521`) |
+| 17c–f | `… / hero_content` · `about_content` · `faq_content` · `features_content` | `enrichBlock(s)` `userId`, from `getUser()` at every caller | `enrichBlocks` shared, or `enrichBlock` lazy self-mint (D-1) |
+
+**Tenancy: no finding.** No attribution field is read from a body, query string or header. The intake and website tests also cover a hostile body `userId`/`groupId`, and it is ignored. `x-correlation-id` reaches the builder only as the FR-3 log field (D-3); it is never written to the ledger. Layer 1 adds no service-role write keyed by a caller-supplied id, so `tenant-isolation-guard` doesn't trigger. OI-2 (`regenerate` reads a block without an owner check) is unchanged and still tracked separately. Attribution there uses the **requester's** `user.id`, which is correct for spend.
+
+#### 13.5.3 Backward compatibility, RC-3, no behaviour change
+
+- **`getProviderFactory().complete()`:** `context` is a trailing optional parameter, and `context ?? { userId: 'system', feature: 'onboarding', component: 'simple-complete' }` is identical to the old literal. AC-6 asserts both paths with `toStrictEqual`, plus reference identity for the passed context. `OnboardingConversationManager.ts:950/995/1097/1397` compile unchanged.
+- **`EmbeddingService`:** `callName` is optional, and the only change inside the context is `component: attribution?.callName ?? 'EmbeddingService'`. AC-13 pins the helpbot default and the batch context byte-for-byte. Help bot callers are unchanged.
+- **RC-3:** `buildBosCallContext` never throws. It logs at `error` (`callCatalog.ts:130-136`) and returns `userId` unchanged. `aiAnalytics.ts:121-126` still moves it to the system user, so the row is written. `aiAnalytics.ts` and `baseProvider.ts` are byte-identical.
+- **No behaviour change:** no model, prompt, temperature, token limit or response handling changed in any row.
+  - **ChatBudget and the chat usage report** read `feature`, `session_id` and `activity_type`, never `component` (`usageReport.ts:129/142/153`), so renaming `BizQLPlanner` → `planner` etc. doesn't affect them. No other code or SQL filters on the old component values; the admin drill-down only passes through a user-chosen filter (OQ-2, accepted).
+  - **The RC-4 carve-out applies only to 3b:** 4b already wrote `business-os-chat`.
+- **Usage mapping (RC-15):** it contains every new and legacy value in FR-21, and `onboarding` stays under `help`. `business_os_usage_summary` groups by feature with no feature filter, so nothing new is dropped. `UsageCard.tsx` doesn't render `breakdown`, so the missing `usage.category.briefing/intake/leads` labels need no change (FR-21).
+
+#### 13.5.4 WC-1 … WC-10: implemented, not just documented
+
+| WC | Evidence in code | Result |
+|---|---|---|
+| WC-1 | Full `tsc` gate re-run by SA (0 new, 0 TS2578), plus the mutation proof in §13.5.1 | ✅ |
+| WC-2 | `onboarding/build/route.ts:825` mints `buildGroupId` → intake `:848-850` and website `:891`; `generateIntakeForm` default removed | ✅ |
+| WC-3 | `usageCategories.ts` carries legacy + new values; the route imports it | ✅ |
+| WC-4 | `VerifiedQuestions.embed(…, callName)`; `similar` / `remember` pass distinct names; catalog + tests assert both | ✅ |
+| WC-5 | `enrichBlock` trailing `groupId?` + self-mint; `enrichBlocks` mints once and passes it down (`WebsiteBlockEnrichmentService.ts:249-254`); tested (shared, caller-supplied, lone) | ✅ (lazy, see D-1) |
+| WC-6 | `callCatalog.ts` imports only `crypto`; website test mocks `uuid` | ✅ |
+| WC-7 | Single-token `:1329`; `analyse` test asserts `request.turnId` → `sessionId` | ✅ |
+| WC-8 | No new `.from(` / `.rpc(` / `.storage` | ✅ |
+| WC-9 | §6.4 pass rule carries both exceptions | ✅ (QA-facing) |
+| WC-10 | All 11 mint points log `groupId`: routes at `info` with the request's child logger (so `correlationId` is attached); `MutateExecutor` `info`; `WebsiteSectionService` `info`; build route `info`; `LeadAlertService` `debug` (child carries `ownerId`, `contactId`); enrichment `debug` | ✅ |
+
+#### 13.5.5 Deviations
+
+| # | SA judgement |
+|---|---|
+| D-1 lazy self-mint | **Accepted.** WC-5's guarantee holds: every AI call made without a supplied id still gets a UUID group, and blocks in one `enrichBlocks` share it. It also avoids logging groups nothing is recorded under. The `aiOwner()` closure runs only on an AI branch, and at most once per `enrichBlock`, so no block can get two ids |
+| D-2 export `uuidV5`, `isUuid` | **Accepted.** Needed to test the RFC vector directly (ruling (c)). `isUuid` has no other production importer yet, so this adds no competing validation pattern. Don't let it become a second source of truth next to `chat-v4`'s local `isUuid` without consolidating |
+| D-3 `correlationId` into the builder (row 16) | **Accepted.** Log-only field, per FR-3/AC-12; never persisted |
+| D-4 `groupId` on the failure `warn` | **Accepted.** There is no success log on that path, and the id is derivable anyway (v5 of account + date) |
+| D-5 `generate-from-profile` passes `user.id` | **Accepted; a small hardening.** Equal to the body value after the `:67` check, so no behaviour change for a valid request |
+| D-6 insights doc placement | **Accepted.** Satisfies the `business-os-insights` skill close-out |
+
+#### 13.5.6 Dev's flagged items
+
+1. **Required `userId` after defaulted `language` (`BriefingNarrator.ts:82-88`).** Accepted. There is one caller, and TS makes `language` effectively required-but-undefined-able, so no call can silently drop the account. Reordering would be a wider signature change for no gain.
+2. **KI-1 left broken.** Accepted, as FR-19 requires. The request object is unchanged, and the owner is a positional argument the cast cannot hide.
+3. **Required params enforced only by `tsc`.** Accepted residual risk (R-1), mitigated in this cycle by the full gate run. It is a repo-wide gap, not introduced here → optional suggestion S-4.
+4. **Provider init logs at `debug`.** Accepted, as approved in §13.3 item 7.
+5. **Bracket access to private methods; Proxy stub of `supabaseServer`.** Accepted for this cycle. Bracket access keeps type checking, unlike `as any`. The Proxy stub resolves every chain to one shared result. That is acceptable because the tests assert provider contexts, not queries, but it would hide a query-shape regression if these tests were ever extended to cover DB behaviour.
+6. **Extra error log for `SYSTEM_ADMIN_USER_ID` / all-zero.** Accepted. See QA note Q-1.
+
+#### 13.5.7 Findings (ranked)
+
+No High or Medium findings.
+
+| # | File:line | Finding | Priority |
+|---|---|---|---|
+| F-A | Workplan §3.2 "Backward compatibility", §6.1 AC-7, §5; requirement FR-12 | **Inaccurate evidence.** `WebsiteAnalyzer.ts:101-123` is **not** a one-argument `getProviderFactory().complete()` caller. It calls `this.factory.getDefaultModel('openai')` (doesn't exist on `SimpleProvider`) and then `provider.complete(...)` on a `BaseAIProvider` (doesn't exist), and reads `response.choices`. `tsc` flags both (pre-existing, untouched file). It is broken the same way as `ServiceGeneratorService` (F-2/FU-3): the website-analysis LLM call always throws, so no ledger row is written. **No impact on Layer 1 correctness**: AC-7 still holds through `OnboardingConversationManager`. But the docs claim a working caller that doesn't exist, and a second silently broken Business OS AI call is untracked | Low → **CR-1** |
+| F-B | `lib/services/__tests__/*`, routes | **Test gap:** no automated test covers the mint point or the `user.id` source in `generate-from-profile`, `blocks/[blockId]/regenerate`, `MutateExecutor.ts:811` or `onboarding/build/route.ts:825`. SA verified each by review (§13.5.2), and QA §6.4 steps 4–5 exercise the first two live | Low (optional S-1) |
+| F-C | `insight-llm-attribution.test.ts` | `runId` forwarding is tested at runtime for `createBatch`→`create` and `saveCorrelationResults`→children, but not for `create`/`createCorrelatedInsight`/`createOrUpdateHealthSummary` → private generator. `tsc` enforces it (required positional `runId`), and QA step 2 checks it live | Low (optional S-2) |
+| F-D | `lib/services/LeadAlertService.ts:337` | The group-id mint log is `debug`, so in production (`info`) an enquiry's usage group can't be linked back from logs. Allowed by WC-10 ("info or debug"), but it is the only request-less mint point without an `info` line | Low (optional S-3) |
+| F-E | `app/api/onboarding/build/route.ts:825-826` | Mints and logs `buildGroupId` even when neither intake nor website runs: one idle log line per build | Cosmetic |
+
+#### Required fixes
+
+- **CR-1 (docs only; before RM commit, doesn't block QA).**
+  - **Dev (workplan):** in §3.2, §5 "Explicitly unchanged" and §6.1 AC-7, stop citing `WebsiteAnalyzer.ts:123` as a working one-argument `complete()` caller. Say it is broken (it calls the non-existent `getDefaultModel`/`BaseAIProvider.complete`) and untouched.
+  - **Dev (workplan):** add **FU-4** to §9.3 next to FU-3: "`WebsiteAnalyzer.extractInformationWithLLM` is broken the same way as `ServiceGeneratorService`; no LLM call, no ledger row; separate fix; attribute through the catalog when fixed."
+  - **BA (requirement):** in FR-12 and the Excluded calls table, note WebsiteAnalyzer as broken rather than "keeps working unchanged".
+  - ✅ **Dev part applied 2026-09-17:** §3.2 backward-compatibility note, §5 "Explicitly unchanged", §6.1 AC-7, §8.1 FR-12 and §8.2 AC-7 no longer cite WebsiteAnalyzer as a working caller; FU-4 added to §9.3. No code touched. (BA part is tracked in the requirement.)
+
+#### Optimisation Suggestions (optional, non-blocking)
+
+- **S-1:** Add route-level tests for `generate-from-profile` (hostile body `userId` equal to the session, `generateWebsite` receives `user.id` + UUID `groupId`) and `blocks/[blockId]/regenerate` (owner argument = `user.id`), mirroring the existing intake and testimonial route tests.
+- **S-2:** One test per insight public method asserting the generator receives the same `runId` (spy on the private generator via bracket access).
+- **S-3:** Raise `LeadAlertService.ts:337` to `info`, for parity with the other mint points.
+- **S-4 (follow-up, not this cycle):** A CI `tsc` diff gate (touched files, TS2578 included). `next.config.js` ignores type errors and Jest is transpile-only, so the "required attribution" guarantees are only as strong as someone remembering to run `tsc`.
+
+#### QA notes (for §6.4)
+
+- **Q-1:** `TEST_USER_ID` **must not** equal `SYSTEM_ADMIN_USER_ID` in the QA environment. Otherwise AC-19 reports that business's legitimate rows as system-user rows, and every call emits the FR-3 error log by design.
+- **Q-2:** Expect FR-3 `error` logs from any chat eval script run with a non-UUID user id (e.g. `tests/business-os-chat/run-eval.ts`). That is by design, not a regression.
+
+#### Scope creep check
+
+Nothing excluded was touched: `GeneratedImageService`, `ServiceGeneratorService`, `LeadReplyRecommender` response handling (AC-15), OI-1, OI-2 (`regenerate` ownership read unchanged), FU-1 (no repository refactors). No migration.
+
+### Code Approved for QA: Yes
+
+QA may start now. CR-1 (documentation only) must be applied before RM commits; SA doesn't need to re-review it.
+
+### 13.6 SA Code Review Addendum: T46 (scoped type-check gate) and T47 (chat label from the catalog)
+
+**Code Review by SA — 2026-09-17**
+
+| Item | Verdict |
+|---|---|
+| **T46 gate** | 🔄 **Fix Required: CR-2.** The mechanism works, but the scope misses the callers of the required parameters. That is half of what the gate is for |
+| **T47 chat label** | ✅ **Approved** |
+| CR-1 | ✅ Applied (workplan §3.2/§5/§6.1/§8/§9.3 FU-4; requirement FR-12, AC-7, AC-21, AC-24, Excluded calls). Docs only |
+
+QA may continue on the Layer 1 behaviour. **CR-2 must land (with SA spot-check of the proof) before RM commits**, because the workflow is part of this commit.
+
+#### 13.6.1 Independent verification
+
+| Check | Result |
+|---|---|
+| Gate on current code (`npm run typecheck:bos-llm`) | 36 files in scope, 21 errors, 0 new, **exit 0**, 55 s locally |
+| Mutation 1: `callName: 'ful_site'` (`WebsiteGenerationService.ts`) | Reported TS2820 ("Did you mean 'full_site'?"), **exit 1** |
+| Mutation 2: `userId` removed from `buildBosCallContext` (`LeadReplyRecommender.ts`) | Reported TS2345 "Property 'userId' is missing", **exit 1** |
+| Mutation 3: required `runId` dropped at a **caller**, `repository.createBatch(userId, prioritized)` in `app/api/cron/insight-detect/route.ts` | **Not reported.** The run showed "2 new", not 3. A real TS2554 that ships silently → CR-2 |
+| Restore | All four files copied back from backups: md5 matches, and `git status` / `git diff` are byte-identical to the pre-test snapshot |
+| TS2578 (unused `@ts-expect-error`) | Covered: both type-test files are in scope, and SA's §13.5.1 mutation proof fires TS2578 |
+| T47 tests | `chat-budget.test.ts`, `usage-report.test.ts`, `llm/`, `usage/`: 4 suites / 66 passed. The two chat test files are **not** in the diff |
+| Scope creep | Non-doc diff = the 25 files reviewed in §13.5 + `ChatBudget.ts`, `turnUsage.ts`, `usageReport.ts` + `package.json` (one script line); new: script, baseline, workflow. Doc diffs are CR-1 only. Nothing else |
+
+#### 13.6.2 Findings
+
+| # | File:line | Finding | Priority |
+|---|---|---|---|
+| G-1 | `scripts/typecheck-bos-llm.ts` `scopedFiles()` / `CATALOG_IMPORT` | **Scope is "files that import the catalog", but a required-parameter error lands in the *caller*.** Callers of the changed required signatures that don't import the catalog are out of scope, so a dropped or missing argument there passes the gate (mutation 3). Today that means: `app/api/cron/insight-detect/route.ts` (`runId`; imports via the **barrel** `@/lib/business-os/insight/repository`), `scripts/verify-insights.ts` (`runId`), `lib/business-os/briefing/BriefingStore.ts` (`userId`; **relative** `./BriefingNarrator` import), and **any future new caller** of `generateWebsite` / `generateIntakeForm` / `recommendLeadReply` / `regenerateField` / `enhanceTestimonial` / `generateBlockContent` / the insight methods that doesn't itself mint an id. The account and call-name checks (mutations 1–2) are covered; the "can't forget attribution" guarantee (FR-12, FR-16, FR-17) is not | **Medium → CR-2** |
+| G-2 | Baseline keying | **The premise of the question is outdated: the baseline already stores a count per key** (`texts.length > allowed`, and `--update-baseline` writes counts). A second identical error in the same file therefore **fails**. The only residual mask is "fix one baselined error and add an identical one in the same change", which nets to zero. That is negligible and needs no line numbers. **Acceptable as is** | Info |
+| G-3 | `app/api/business-os/usage/route.ts` | Not in scope (imports `usageCategories`, not the catalog). Its only use is `summariseUsageByCategory`, which takes no attribution types, so the risk is low. CR-2's importer rule covers it anyway | Low (fixed by CR-2) |
+| G-4 | Type-only imports; tests outside `*attribution*` | **No gap.** `import type { BosLlmOwner } from '…/callCatalog'` and `{ …, type BosLlmOwner }` both match (`from '…'` is on the final line even for multi-line imports). `callCatalog.test.ts` and `usageCategories.test.ts` are covered by `SCOPED_DIRS`, and `providerFactory.complete.test.ts` by its catalog import | Info |
+| G-5 | `.github/workflows/bos-llm-typecheck.yml` | Correct: PR + push to `main` + manual; no secrets; Node 18 and `setup-node` npm cache, like `plugin-tests.yml`. No path filter is justified (scope is import-derived). `process.exit(1)` for new errors and `2` for config/scope errors propagate through `npm run`, so the check fails properly. Cost: one `npm ci` plus about a minute of checking per PR. Missing (optional): `permissions: contents: read`, `timeout-minutes`, and `concurrency` with cancel-in-progress | Low (S-5) |
+| G-6 | `scripts/typecheck-bos-llm.ts` | Quality is good: no new dependencies (`typescript`, `tsx` already in `package.json`); `stableMessage` handles the union-order flake; a scoped file missing from the program fails loudly (exit 2); failure output lists `file(line,col): error TSxxxx: message`; stale baseline entries are reported without failing. `console.*` in `scripts/` is **accepted**: the CLAUDE.md Pino rule covers `lib/`, `app/`, `components/`, and a CLI's stdout/stderr and exit code are its interface (precedent `scripts/schema-check.ts`) | Info |
+| G-7 | Workflow memory | `NODE_OPTIONS=--max-old-space-size=6144` builds the whole-repo program. That fits a standard hosted runner (a local `tsc` without a raised heap hit OOM at ~4 GB). Watch it if the runner type changes | Info |
+| T-1 | `callCatalog.ts:65-77`, `ChatBudget.ts:162`, `usageReport.ts:188/:359`, `turnUsage.ts:107`, `usageCategories.ts:30-61` | **T47 is a pure refactor.** `bosFeature(area)` returns `` `business-os-${area}` `` (typed as a template literal), so every string is identical, and a test pins `BOS_CHAT_FEATURE === 'business-os-chat'`. No `'use client'` module imports the catalog, `usageCategories` or the three telemetry files, so the catalog's `crypto` import can't reach a browser bundle. `IntentParser.ts` is untouched. Bonus: the three telemetry files are now inside the gate's scope | ✅ |
+
+#### Required fix
+
+- **CR-2 (Dev, T46): cover the callers.** ✅ **Applied by Dev 2026-09-17** (§12.2): scope now resolves imports through the compiler (`ts.preProcessFile` + `ts.resolveModuleName`) and adds re-export barrels (to a fixed point) plus their and the core's direct importers, for 36 → 96 files. It covers `insight-detect/route.ts` via the repository barrel, `BriefingStore.ts`, `scripts/verify-insights.ts` (dynamic import) and `usage/route.ts`. The baseline was refreshed: 21 → 30 errors, +9 pre-existing in 5 caller files, listed in §12.2. Union normalisation was extended to named unions after one of them reordered between runs. Proof: dropped `runId` in the cron → TS2554, exit 1; dropped `userId` at `BriefingStore.ts:51` → TS2345, exit 1; `'ful_site'` → TS2820, exit 1; clean → 0 new, exit 0 (65 s); `git diff`/`status` byte-identical to the pre-proof snapshot. Header comment SCOPE section updated. Awaiting SA spot-check.
+  - **Extend the scope:** add **every source file (tests included) that directly imports an in-scope non-test file**. Resolve the imports through the TypeScript program rather than a regex: for each import, export-from and dynamic-import specifier, use `ts.resolveModuleName` (or the program's resolved modules), so **relative imports and `index.ts` barrels** are followed. A re-export-only barrel should pass through to its importers. That is what brings in `insight-detect/route.ts`, `BriefingStore.ts`, `scripts/verify-insights.ts` and `usage/route.ts`.
+  - **Refresh the baseline:** run `--update-baseline` once. SA's sample of importers found only about 3 pre-existing errors, so the baseline stays small.
+  - **Prove it:** add mutation 3 to the §12.2 evidence (drop `runId` in the cron route → gate exits 1), plus one relative-import caller (e.g. drop `userId` in `BriefingStore.ts:51` → exit 1). Then revert and confirm a clean `git diff`.
+  - **Update the header comment:** the SCOPE section should describe the importer rule.
+
+#### Optimisation Suggestions (optional)
+
+- **S-5:** ✅ *Applied by Dev 2026-09-17* (`permissions: contents: read`, `concurrency` group `bos-llm-typecheck-${{ github.ref }}` with `cancel-in-progress: true`, `timeout-minutes: 15`; YAML validated). In the workflow, add `permissions: contents: read`, `timeout-minutes: 15`, and `concurrency: { group: bos-llm-typecheck-${{ github.ref }}, cancel-in-progress: true }`.
+- **S-6:** Consider making this job a required status check on `main` in branch protection. Otherwise a red run is advisory only (this is a repo-settings action for the user or an admin, not a code change).
+
+### Code Approved for QA: Yes (Layer 1 behaviour). Commit blocked on CR-2.
+
+#### 13.6.3 CR-2 / S-5 re-verification (SA, 2026-09-17)
+
+**T46 verdict: ✅ Approved. CR-2 is resolved and S-5 is verified. The Layer 1 code, including T46 and T47, is now fully SA-approved for QA and for commit after QA and user approval.** S-6 (make the job a required check on `main`) is still open. It is a repo-settings action for an admin.
+
+| Check | SA result |
+|---|---|
+| Scope (`--list`) | 96 files: 4 core, 30 catalog importers, 2 attribution tests, **2 barrels** (`lib/business-os/insight/index.ts`, `…/insight/repository/index.ts`), 58 callers. Includes `insight-detect/route.ts`, `BriefingStore.ts`, `scripts/verify-insights.ts`, `usage/route.ts` |
+| **Proof: cron `runId`** (`createBatch(userId, prioritized)`) | `insight-detect/route.ts(232,43): TS2554 Expected 3 arguments, but got 2`, **exit 1** |
+| **Proof: BriefingStore `userId`** (`narrateBriefing(facts, language)`) | `BriefingStore.ts(51,27): TS2554 Expected 3-4 arguments, but got 2`, **exit 1** |
+| Restore | Both files copied back from backups: md5 matches; `git status` and `git diff` byte-identical to the pre-test snapshot |
+| Clean run | 96 files, 30 errors, **0 new, exit 0**, about 73 s locally |
+| **The 9 baseline additions are pre-existing** | All 9 match the full-program `tsc` output line for line: reschedule `:112` TS2352; `bizql-capability-sweep.ts:99`, `bizql-conversation-test.ts:110`, `bizql-planner-test.ts:121/122/122`, `run-eval.ts:245/247/248` TS2339. **None of those five files differs from `9e904f32`** (`git diff --name-only 9e904f32`). The types involved (`Query`, `ComputeResult \| MutateResult \| ForEachResult`, the reschedule service row) are not in this diff. So they aren't caused by Layer 1 |
+| **Is one caller level enough?** | Yes. Every **required** signature change is in a scoped core file: `generateWebsite`, `generateIntakeForm`, `WebsiteAIContentService` methods, `recommendLeadReply`, `narrateBriefing`, the 5 insight methods (barrels followed), and `PlanCache.store`. A caller of a caller can only break if a signature it uses changed, and those are all consumed by direct importers. The only changed files **outside** core/barrel are `providerFactory.ts` (`context?`) and `EmbeddingService.ts` (`callName?`). Both are **optional** additions and can't break any caller. No caller-layer file re-exports a core symbol through an `import`-then-`export { X }` pattern (grep over all 58), so there's no hidden barrel |
+| **Can union normalization mask a different error?** | No, in any practical sense. Sorting top-level union members only reorders operands of a commutative `\|`, so two headlines that normalize alike describe the same types. A distinct error still differs in file, code or member set. Known imprecision: the depth counter treats `>` in `=>` as a closing bracket, so a function type in a quoted message may be split oddly. That only risks a *non-normalized* key (a flaky "new" error, i.e. fail-safe), not a merged one. Masking also still needs the per-key **count** to stay within the baseline |
+| Workflow (S-5) | YAML parses: triggers `push`/`pull_request` on `main` + `workflow_dispatch`; `permissions: contents: read`; `concurrency` group per ref with cancel-in-progress; `timeout-minutes: 15`; 4 steps; no secrets. Exit codes still propagate (1 new errors / 2 config) |
+
+**Residual notes (no action):**
+- The quoted-type split imprecision noted above is fail-safe.
+- `cancel-in-progress` also applies to pushes on `main`: only the latest push's check is kept, which is acceptable.
+
 ---
 
 ## 14. QA Testing Report
 
-_QA to populate._
+**QA — 2026-09-17**
+**Test mode:** full (automated verification + live run, AC-18 to AC-21)
+**Strategy used:** A/B (Jest, existing + 10 new suites; scoped and full `tsc`), C (a gitignored `tsx` driver script that calls the real services and route handlers with the real test account against the live Supabase project and real OpenAI), plus ledger SQL (read-only)
+**Focus:** all (api, pipeline-free; schema; security of attribution sources)
+**Skipped:** Playwright/E2E (no UI change; the usage card was checked through its route handler). Some AC-18 paths were not reachable; see "Skipped items"
+**Input source:** TL trigger prompt (workplan §6.4 as the manual)
+
+### 14.1 Environment
+
+| Item | Value |
+|---|---|
+| Code | Worktree `neuronforge-llm-attribution`, branch `feature/business-os-llm-attribution-layer1`, uncommitted on `9e904f32` |
+| Database | Current Supabase project (future staging; no real customers). 4 business profiles |
+| LLM | Real OpenAI calls through the provider factory |
+| Env | `.env.local` copied from the main checkout for the run (gitignored, `.gitignore:46`), deleted afterwards. No secret values were printed or written to any file |
+| Driver | `scripts/tmp-qa-llm-attribution.ts` (gitignored `scripts/tmp-*.ts`, deleted afterwards), run with `npx tsx --import ./scripts/env-preload.ts`. Route handlers were called directly. Session auth was stubbed with a `require.cache` entry for `lib/auth.ts` that returns the test account, and `server-only` was stubbed as an empty module (outside the Next bundler it can't be resolved) |
+| **Test account** | **`2f734ed5-3681-4049-880d-3de7b096bea3`**: has a business profile; not `SYSTEM_ADMIN_USER_ID`; not the all-zero UUID; not in `admin_users` (satisfies Q-1). Created 2026-09-16 and looks like a test account. The other three profiles were rejected: two are `admin_users` rows, and the third is an older, more active account |
+| Window | `WINDOW_START = 2026-09-17T13:58:11Z` (after a first attempt at 13:55 that failed on `server-only` before any LLM call; no rows were written in that attempt). The insight cron ran 14:02:31–14:04:08Z |
+
+### 14.2 Part 1: automated verification
+
+| Check | Expected | Result |
+|---|---|---|
+| Jest, touched areas (`lib/business-os lib/services lib/ai app/api/website app/api/intake app/api/business-os lib/server/website-plugin-executor.test.ts`) | ~94 suites / 1,512 passed | ✅ **94 suites passed, 1,512 passed, 28 skipped** (18.7 s). Includes `chat-budget.test.ts` and `usage-report.test.ts` (AC-17, unedited) |
+| `npm run typecheck:bos-llm` | 96 files, 30 known, 0 new, exit 0 | ✅ **96 files in scope, 30 errors, 0 new (77.6 s), passed, exit 0** |
+| Full `tsc --noEmit -p .` (worktree) | 2,045, 0 new | ✅ **2,045 errors, 0 TS2578** |
+| Full `tsc` on a clean `git archive 9e904f32` (node_modules junctioned) | compare | ✅ **2,045 errors. Per-file error counts are identical.** A line-free set diff leaves 14 pairs that differ only by the absolute path inside `import("…")` type names and by union member order (`"database" \| "template" …` vs `"database" \| "ai" …`). **0 new errors** |
+| Code-review ACs spot-checked | — | ✅ T14 is the one-token diff at `chat-v4/route.ts:1329`. AC-15: the `LeadReplyRecommender.ts` diff is the import, the `groupId` param and the context literal only. AC-21: no excluded file and no migration in `git diff --name-only 9e904f32`. AC-24: `providerFactory.ts` has 2 `console.` matches, both URL strings; `EmbeddingService.ts` has 0 |
+
+**AC to test mapping (spot-check for assertion strength):**
+
+| AC | Test | Asserts real behaviour? | Notes |
+|---|---|---|---|
+| AC-1 | `insight-llm-attribution.test.ts` | ✅ Real private generators; provider spy; `toEqual` on the full context | Public method → generator `runId` hop is not unit-tested (F-C). **Now proven live:** cron rows carry the run id (§14.3) |
+| AC-2 | `llm-attribution.test.ts` row 3b | ✅ Real `PlanCache.store`; only the DB and provider are faked | — |
+| AC-3 | `BriefingNarrator.attribution.test.ts` | ✅ `toStrictEqual` context; `@ts-expect-error` enforced by the gate (file in scope) | — |
+| AC-4 | `intake-llm-attribution.test.ts` | ✅ Real service and real route handlers (auth mocked); a hostile body `userId`/`groupId` is ignored | — |
+| AC-5 | `website-llm-attribution.test.ts` | ✅ for the service contexts | **Weak (W-2):** full_site goes through private `callLLM`, not `generateWebsite` or the `generate-from-profile` route, and the regenerate route isn't tested. The route-level account source (D-5 `user.id` swap) is code review only (SA S-1 still open) |
+| AC-6 / AC-7 / AC-12 | `providerFactory.complete.test.ts` | ✅ Real `getProviderFactory().complete`; `toBe` reference plus `toStrictEqual` default; provider called once | Cosmetic (W-1): header comment still lists WebsiteAnalyzer as a no-context caller, which CR-1 corrected |
+| AC-8 | area files | ✅ One assertion per row, including distinct 4 / 4b names | — |
+| AC-9 | `llm-attribution.test.ts` | ✅ for Planner / AnalysisService / cache / verified questions | **Weak (W-5):** the T14 route change (analysis gets `turnId`, not `correlationId`) is diff review only; there is no route-level test |
+| AC-10(a) | chat, website, intake files | ✅ chat (repair shares turn), website (`enrichBlocks` shares, lone `enrichBlock` self-mints) | **Weak (W-3):** intake "two calls in one action share one id" is proven only by code review of the onboarding build route (Q-8); the tests show only that two requests differ |
+| AC-10(b)(c)(d) | insight, leads, catalog files | ✅ | (b) also proven live across 3 real businesses |
+| AC-11 | `llm-attribution.test.ts` + `usage-report.test.ts` | ✅ | — |
+| AC-13 | `EmbeddingService.attribution.test.ts` | ✅ `toStrictEqual` for the help bot default and the batch context | — |
+| AC-14 | `usageCategories.test.ts` | ✅ Table-driven; exact token and call sums | — |
+| AC-16 / AC-17 | existing suites | ✅ All green | — |
+| AC-22 / AC-23 | `callCatalog.test.ts` | ✅ RFC 9562 vector, version/variant bits, runtime spread order; type cases enforced by the gate | — |
+
+None of the weak spots is a mock-around. Each weak AC has a real assertion at the service layer, and the gaps are at the route/entry-point layer. The live run closes W-3 and W-5 only partly (see §14.5).
+
+### 14.3 Part 2: live run (AC-18, AC-19)
+
+| Area | Call exercised (how) | Row found | user_id ok | feature | component | session_id / grouping | Pass |
+|---|---|---|---|---|---|---|---|
+| chat | `POST chat-v4` route ×2 (turn ids `4ccc7b0e…`, `e3a33693…` as `x-correlation-id`) | ✅ 6 | ✅ test | `business-os-chat` | `planner` (`activity_type` plan, repair, repair per turn) | ✅ 3 rows share each turn id; two turns differ | ✅ |
+| chat | `POST chat-v4` "How many contacts do I have?" ×2 (turns `53c0a486…`, `a8d4b4bf…`) | ✅ 4 | ✅ | `business-os-chat` | `verified_question_embedding` + `planner` | ✅ both calls of each turn share the turn id (live AC-10(a) for chat) | ✅ |
+| chat | `VerifiedQuestions.remember()` direct (turn `1868f8b3…`) | ✅ 1 | ✅ | `business-os-chat` | `verified_question_store_embedding` | ✅ turn id | ✅ |
+| chat | `analyse()` direct (turn `4d5e4152…`) | ✅ 1 | ✅ | `business-os-chat` | `analysis` | ✅ turn id | ✅ |
+| insights | Per-user replica of the cron loop, real `DetectorEngine` / `InsightPrioritizer` / `InsightRepository` (run `f22f6caa…`) | ✅ 1 | ✅ | `business-os-insights` | `health_summary` | ✅ = run id | ✅ |
+| insights | **`GET /api/cron/insight-detect`** handler (run `13757ed6…`, 4 businesses) | ✅ 6 | ✅ each row on its own business (test account + 3 others); none on system | `business-os-insights` | `insight_content` ×3, `health_summary` ×3 | ✅ all 6 share `session_id` = run id `13757ed6…` across different `user_id`s (live AC-10(b)) | ✅ |
+| briefing | `getBriefing()` (store; non-quiet day, cache miss) + `narrateBriefing()` ×2 direct | ✅ 3 | ✅ | `business-os-briefing` | `daily_narration` (`activity_type` narration) | ✅ all 3 = `e2786667-3f67-52af-8e70-2fe7a3dd73bd` = `bosBriefingGroupId(test, 2026-09-17)` (stable same account and day) | ✅ |
+| leads | `recommendLeadReply()` direct ×2, same input, fresh `newBosGroupId()` each | ✅ 2 | ✅ | `business-os-leads` | `reply_recommendation` | ✅ two different UUIDs | ✅ (answer fell back `empty_response`: known parked parsing bug, as expected) |
+| intake | `POST /api/intake/form/generate` handler | ✅ 1 | ✅ | `business-os-intake` | `form_generation` | ✅ UUID = the id in the route's mint log | ✅ (content fell back; see pre-existing finding P-1) |
+| intake | `POST /api/intake/form/infer-question` handler (body carried a hostile `userId` + `groupId`) | ✅ 1 | ✅ session account, body ignored | `business-os-intake` | `question_inference` | ✅ UUID = mint log id, not the body's | ✅ |
+| website | `WebsiteGenerationService['callLLM']` direct (full_site) | ✅ 1 | ✅ | `business-os-website` | `full_site` | ✅ UUID | ✅ |
+| website | `POST /api/website/landing-pages/generate` handler | ✅ 1 | ✅ | `business-os-website` | `landing_page` | ✅ UUID = mint log id | ✅ |
+| website | `POST /api/website/enhance-testimonial` handler (hostile body `userId`) | ✅ 1 | ✅ session account | `business-os-website` | `testimonial_enhance` | ✅ UUID = mint log id | ✅ |
+| website | `WebsiteAIContentService.regenerateField()` direct | ✅ 1 | ✅ | `business-os-website` | `field_regenerate` | ✅ UUID | ✅ |
+
+**Pass rule (§6.4, WC-9):** every in-window `business-os-*` row uses a catalog `feature`/`component` pair, and no row has a null `session_id`. No `BizQLPlanCache` or `IntentParser` rows appeared, so no exclusion was needed. All rows `success = true`.
+
+**AC-19:** ✅ **0 rows** on `SYSTEM_ADMIN_USER_ID` or the all-zero UUID for the 12 listed feature values, and **0 rows of any feature** on those two accounts in the whole window (13:58:11Z → end of cron), even though the cron processed every business in the environment.
+
+**WC-10 mint-point logs:** ✅ The `info` lines carry `groupId` + `correlationId` and match the ledger `session_id` exactly for `IntakeGenerateAPI`, `IntakeInferQuestionAPI`, `LandingPageGenerateAPI` and `EnhanceTestimonialAPI`. The cron logs `runId` at start and on completion, matching the ledger. `LeadAlertService`, `generate-from-profile`, the regenerate route, `MutateExecutor`, `WebsiteSectionService` and the onboarding build mint points were not on the exercised path (see skipped items).
+
+**SQL used** (read-only; run through the Supabase service client with the equivalent filters):
+
+```sql
+-- AC-18: all rows in the window (every user, to see anything unexpected)
+select created_at, user_id, feature, component, session_id, activity_type,
+       input_tokens, output_tokens, success
+from token_usage
+where created_at >= '2026-09-17T13:58:11Z'
+order by created_at;
+
+-- AC-18 grouping
+select feature, session_id, array_agg(distinct component) as calls, count(*) as rows
+from token_usage
+where created_at >= '2026-09-17T13:58:11Z'
+  and user_id = '2f734ed5-3681-4049-880d-3de7b096bea3'
+  and feature like 'business-os-%'
+group by feature, session_id
+order by min(created_at);
+
+-- AC-19 (expect zero)
+select feature, component, count(*)
+from token_usage
+where created_at >= '2026-09-17T13:58:11Z'
+  and user_id in (:system_admin_user_id, '00000000-0000-0000-0000-000000000000')
+  and feature in ('business-os-chat','business-os-insights','business-os-briefing',
+                  'business-os-website','business-os-intake','business-os-leads',
+                  'insight-generation','correlated-insight-generation','health-summary-generation',
+                  'landing-page-generation','lead-reply','business-os')
+group by feature, component;
+
+-- AC-19 (stricter, any feature)
+select feature, component
+from token_usage
+where created_at >= '2026-09-17T13:58:11Z'
+  and user_id in (:system_admin_user_id, '00000000-0000-0000-0000-000000000000');
+```
+
+### 14.4 Usage category check (AC-20, AC-21)
+
+`GET /api/business-os/usage?range=last_24h` route handler, called for the test account before and after the run:
+
+| | credits | calls | breakdown |
+|---|---|---|---|
+| Before | 73 | 1 | `insights` 73 / 1 call (a legacy `health-summary-generation` row from 2026-09-16) |
+| After | **7,547** | **26** | `chat` 6,397 / 12 · `website` 407 / 4 · `briefing` 368 / 3 · `insights` 212 / 3 · `intake` 118 / 2 · `leads` 45 / 2 |
+
+- ✅ Every new area has its own category; **no `other` bucket**.
+- ✅ The call counts match the ledger exactly: chat 12 (6 + 6), website 4, briefing 3, insights 3 (1 legacy + 2 new, merged into one category as FR-21 requires), intake 2, leads 2 = 26.
+- ✅ Total credits include every new area; here the category credits happen to sum exactly to the total (not required, ruling (e)).
+- ✅ Grouping sanity: insight rows' `session_id` equals the run id (`f22f6caa…` per-user, `13757ed6…` cron); briefing `session_id` is the same for 3 narrations of the same account and day and equals `bosBriefingGroupId`; each chat row's `session_id` equals the turn id sent as `x-correlation-id`.
+- ✅ AC-21: re-checked by diff (§14.2).
+
+### 14.5 Issues Found
+
+#### Bugs in Layer 1 (must fix before commit)
+
+None.
+
+#### Pre-existing findings (not caused by Layer 1; for TL to route)
+
+1. **P-1: Intake form generation always falls back to the generic form.** Severity: Medium (product quality, not attribution). File: `lib/services/IntakeGenerationService.ts` (response validation after the `complete()` call). Layer 1's diff there is only the context argument.
+   - Repro: `POST /api/intake/form/generate` for a coaching business.
+   - Expected: model questions are used (`contentSource: 'llm'`).
+   - Actual: the call succeeds (389 output tokens, now correctly billed to the owner), but Zod rejects every question (`questions.N.maxFiles: Number must be greater than 0`, `showIfIndex: Expected number, received null`, `showIfEquals: Invalid input`). The service logs an error and saves the 3-question fallback (`source: "fallback"`). The owner pays for a call whose output is discarded. Same class as the parked lead-reply parsing bug.
+2. **P-2 (known, parked): Lead reply recommender** returns `fallback / empty_response` for a normal enquiry. As expected; attribution still recorded.
+3. **P-3 (observation): Chat planner** needed plan + 2 repairs and accepted "soft problems" (`answer.text is required`, absolute-date anchor) for "Compare my bookings and invoices this month…". A repeated identical question was not served from the plan cache (`cache: miss` both times). Behaviour is unchanged by Layer 1; the repair rows are correctly marked `activity_type: repair` under one turn id.
+
+#### Test-strength notes (Low, non-blocking)
+
+- **W-1:** `lib/ai/__tests__/providerFactory.complete.test.ts:1-5` header comment still names WebsiteAnalyzer as a working no-context caller (stale after CR-1). Cosmetic.
+- **W-2:** no route-level test for `generate-from-profile` (D-5 `user.id`) or `blocks/[blockId]/regenerate` (SA S-1 still open). Not live-tested either (see skipped items).
+- **W-3:** intake "two calls in one action share an id" (onboarding build route) is code review only.
+- **W-5:** T14 (chat analysis uses `turnId`) has no route-level test, and live analysis was invoked directly because the planner didn't emit an `analyse` step.
+
+### 14.6 Skipped items and reasons
+
+| Item | Reason |
+|---|---|
+| `correlated_insight` live row | The cron ran for all 4 businesses but `patternsMatched: 0`, so no correlated insight was generated. Covered by AC-1/AC-8 unit tests only |
+| `insight_content` for the **test account** | Its 2 detections matched existing insights, which were updated rather than re-generated. `insight_content` was verified live on 3 other businesses in the same cron run, each on its own account |
+| `plan_cache_lookup_embedding` / `plan_cache_store_embedding` (rows 3a/3b) | `bizchat_plan_semantic_cache_enabled` is unset (default `false`) in this environment, so no semantic embedding runs. System config was **not** changed, because it is shared. Covered by AC-2 and the row 3a unit test (3b is also a documented allowed absence) |
+| Chat cache-hit row (`BizQLPlanCache`) | The repeated question was a cache miss (P-3). Not a catalog call; AC-11 covers it |
+| `generate-from-profile` route / full `generateWebsite` | Would create a homepage and blocks and adopt a template on the test account. Used the narrower `callLLM` (the same LLM call and context) |
+| `blocks/[blockId]/regenerate` builder route | The test account has no website blocks, and using another tenant's block (the route has no ownership check, OI-2) was not acceptable. Called `regenerateField` directly instead |
+| `LeadAlertService` / public enquiry form path | Would notify the owner (external message). Called `recommendLeadReply` directly with fresh group ids, as instructed |
+| `/api/business-os/my-day`, `DailyBriefingDispatchService`, `/api/cron/daily-briefing` | Dispatch/email path forbidden; `getBriefing` + `narrateBriefing` used instead |
+| Onboarding build route, `MutateExecutor` website path, `WebsiteSectionService` (KI-1), rows 17c–f (KI-3) | Not reachable safely or no production trigger; excluded by §6.4 |
+| Playwright / usage card UI | No UI change; the route handler output was verified |
+
+**Data left on the test account (test data only):** one intake draft form (fallback content), one verified-question row ("show my unpaid invoices"), updated `insights` rows and a refreshed health summary, and a briefing cache row for 2026-09-17. The cron also refreshed insights and health summaries for the other businesses in this environment (user-accepted). No emails, WhatsApp, SMS or notifications were sent. No payments, purge or deletes.
+
+### 14.7 Final Status
+
+- [x] All acceptance criteria pass: ready for commit (subject to user approval; CR-1 and CR-2 already applied)
+- [ ] Issues found: Dev must address before commit
+
+**Verdict: PASS WITH ISSUES.** Layer 1 has no defects. AC-1 to AC-17 and AC-22 to AC-24 are verified by passing tests, the scoped gate and full `tsc` with 0 new errors, and diff checks. AC-18 to AC-21 are verified live: 30 in-window ledger rows across all six areas, all on the correct account with catalog names and UUID groups, 0 system-user rows, and the usage card shows every new area in its own category. The issues are pre-existing product bugs (P-1 intake fallback, P-2 lead fallback), low-severity test-strength notes (W-1 to W-5) and paths that could not be run live (§14.6). None of them blocks the commit.
 
 ---
 
@@ -925,3 +1395,11 @@ _RM to populate._
 | 2026-09-17 | Created | Dev workplan for Layer 1: line references verified against worktree (§2, 7 mismatches + 8 findings), catalog/helper design, per-call tasks, test plan incl. QA SQL, Pino flags, traceability, 9 SA questions, 46 tasks |
 | 2026-09-17 | SA workplan review — Approved with changes | §13 populated: RC-1–RC-15 application verified; rulings (a)–(h) and item 4; findings (Jest runs transpile-only under `isolatedModules`, so type-level ACs need the `tsc` gate; Step 8 not independently shippable; usage mapping must precede renames; verified-question store embedding uncatalogued); WC-1–WC-10 for Dev, RQ-1–RQ-4 for BA; one non-blocking user decision (image-generation spend) |
 | 2026-09-17 | SA changes applied — ready to implement | Dev applied WC-1–WC-10 (log in §13.4): `tsc` gate over new test files incl. TS2578; T38 split into T38a (intake, Step 9) / T38b (website, Step 10); usage mapping moved to Step 2; `verified_question_store_embedding` (row 4b); `enrichBlock` self-mints; `uuid` mocked in website test; T14 un-gated; no-new-direct-Supabase check + FU-1 follow-up list; AC-18 pass rule exceptions; mint-point logging. Recorded SA rulings (a)–(h) + item 4 (§10) and user decisions of 2026-09-17 (§10.1: image generation → Layer 1.5, `ServiceGeneratorService` excluded, Pino conversion approved as T4/T7). Status → SA approved, changes applied. 47 tasks, 12 steps |
+| 2026-09-17 | Implementation — Code Complete | Steps 0–11 implemented on `feature/business-os-llm-attribution-layer1` (not committed). 47/47 tasks ticked. Jest touched areas 94 suites green; full `tsc` 2,045 → 2,045 (0 new, 0 TS2578); full-repo Jest failures (21 suites) proven pre-existing on clean `9e904f32`. Deviations D-1–D-6 and SA focus points in §12.1. Status → Code Complete — awaiting SA code review |
+| 2026-09-17 | SA code review — Approved with fixes | §13.5: SA re-ran Jest (94 / 1,510) and full `tsc` (2,045, 0 TS2578), and mutation-tested the `@ts-expect-error` cases (each fires TS2578). Every row's context and account source verified server-side; WC-1–WC-10 confirmed in code; D-1–D-6 accepted. No code change required. CR-1 (docs): WebsiteAnalyzer is not a working `complete()` caller; add FU-4. Optional S-1–S-4; QA notes Q-1/Q-2. Code approved for QA |
+| 2026-09-17 | CR-1 applied (docs only) | WebsiteAnalyzer corrected from "working non-BOS `complete()` caller" to broken and untouched in §3.2, §5, §6.1 AC-7, §8.1 FR-12, §8.2 AC-7; FU-4 added (fix vs retire decided separately). No code change |
+| 2026-09-17 | T46–T47 added — user-approved, pending SA review | Step 12 (§12.2). T46: scoped type-check gate (`scripts/typecheck-bos-llm.ts`, Compiler API over the full program, diagnostics for import-derived scope only, committed baseline of 21 pre-existing errors / 17 keys; npm `typecheck:bos-llm`; workflow `bos-llm-typecheck.yml` on PR/push to main). Proven to fail on `'ful_site'`, a missing `userId`, a wrong-area call name and an unused `@ts-expect-error`, and to pass on today's code. T47: `bosFeature` / `BOS_CHAT_FEATURE` replace hand-typed `business-os-*` labels in chat telemetry and `usageCategories.ts` (identical strings). Jest 94 suites / 1,512 green; full `tsc` 2,045, 0 new |
+| 2026-09-17 | SA review of T46–T47 | §13.6: T47 approved (pure refactor, identical strings, chat tests unedited and green). T46 Fix Required, CR-2: the gate catches bad call names and missing accounts (SA mutation-tested), but missed a dropped required `runId` in the insight cron, because callers that don't import the catalog (barrel/relative imports) are out of scope. Extend scope to resolved direct importers, refresh the baseline, add the proof. Baseline already counts per key (acceptable). Optional S-5 (workflow hardening), S-6 (required status check). QA may proceed; commit blocked on CR-2 |
+| 2026-09-17 | CR-2 + S-5 applied (T46) | Gate scope now derived from compiler-resolved imports: core (catalog, usage mapping, catalog importers, attribution tests), re-export barrels to a fixed point, and direct callers. 36 → 96 files. Baseline 21 → 30 errors / 17 → 23 keys (+9 pre-existing on untouched lines in 5 caller files); named-union ordering normalised. Proven: dropped `runId` in `insight-detect/route.ts` → exit 1, dropped `userId` at `BriefingStore.ts:51` → exit 1, `'ful_site'` → exit 1, clean → exit 0 (~65 s); tree restored byte-identical. Workflow hardened (permissions, concurrency, timeout). Pending SA spot-check |
+| 2026-09-17 | SA re-verification of CR-2 / S-5 — T46 approved | §13.6.3: SA reran the proofs (cron `runId` and BriefingStore `userId` each TS2554, exit 1; restored byte-identical; clean run 0 new). Confirmed the 9 baseline additions are pre-existing (files unchanged since `9e904f32`). One caller level is sufficient: all required signature changes are in core; out-of-core changes are optional params. Union normalization is commutative-only and fail-safe. Workflow YAML valid. Layer 1 (incl. T46/T47) fully SA-approved for QA |
+| 2026-09-17 | QA — PASS WITH ISSUES | §14 populated. Part 1: Jest 94 suites / 1,512 passed; `typecheck:bos-llm` 96 files, 30 known, 0 new; full `tsc` 2,045 with per-file counts identical to a clean `9e904f32` archive (0 new, 0 TS2578); AC mapping spot-checked, with weak spots W-1 to W-5 (route-level coverage, stale comment). Part 2: live run on test account `2f734ed5…` against the current Supabase project with real OpenAI. 30 ledger rows across chat (planner, analysis, verified-question lookup/store), insights (per-user + cron over 4 businesses: `insight_content`, `health_summary`, one run id across accounts), briefing (stable v5 group), leads, intake and website (full_site, landing_page, testimonial_enhance, field_regenerate). All on the correct account with catalog names and UUID groups; 0 system/all-zero rows; usage card shows all six categories, no `other`, 26 calls matching the ledger. No Layer 1 bugs. Pre-existing P-1 (intake generation always falls back on Zod rejection) and P-2 (lead reply fallback, parked). Not live: correlated_insight (no pattern matched), plan-cache embeddings (semantic cache off), cache-hit row, generate-from-profile / regenerate routes, LeadAlertService (would notify). No external messages sent |

@@ -1,6 +1,6 @@
 # Business OS — Insights Module (as-merged into `main`)
 
-> **Last Updated**: 2026-09-11
+> **Last Updated**: 2026-09-17
 > **Verified against**: `main` @ `d3312431` (local == `origin/main`, 0 ahead / 0 behind)
 
 ## Overview
@@ -56,7 +56,7 @@ Two unrelated subsystems in this repo are called "insights". Nearly every stale 
 
 | Path | Lines | Responsibility |
 |---|---|---|
-| `repository/InsightRepository.ts` | 2,583 | Persistence for `insights`, `owner_insight_history`, `business_health_summaries`, correlation results **plus** the three LLM calls that localize prose, and `getVectorMaturity()` |
+| `repository/InsightRepository.ts` | 2,583 | Persistence for `insights`, `owner_insight_history`, `business_health_summaries`, correlation results **plus** the three LLM calls that localize prose, and `getVectorMaturity()`. Those three calls record usage against the business analysed (`feature = business-os-insights`, `component` = `insight_content` / `correlated_insight` / `health_summary`, `session_id` = the detection `runId`, now required on the public methods), via `lib/business-os/llm/callCatalog.ts` |
 | `detectors/DetectorEngine.ts` | 366 | Registers and runs all 28 detectors for one user; invokes the correlation engine |
 | `detectors/types.ts` | — | `DetectorDefinition`, `DetectionResult`, `Detector`, severity, guardrails, consent tiers |
 | `detectors/catalog/*.ts` | 28 files | One detector each; all extend `BaseDetector` |
@@ -382,4 +382,5 @@ They remain accurate about the **agent** insight system and are still the right 
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-17 | LLM usage attribution | Insight LLM calls attributed to the business analysed, grouped by `runId` (Business OS LLM Call Attribution Layer 1). |
 | 2026-09-11 | Created | First as-built map of the Insights module, written from code at `main` @ `d3312431`. Establishes the §1 name-collision fence, documents the six insight tables missing from BUSINESS_OS_DATA_MODEL.md, maps the 2026-08-26→09-07 additions (correlation, journey timeline, funnel gap, vertical config, channel insights) that had no documentation, and records ten verified hazards. |
