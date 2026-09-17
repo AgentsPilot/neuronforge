@@ -15,6 +15,19 @@
 // Testing a tailored setup means testing several DIFFERENT answer sets, which
 // means the account has to be genuinely empty each time.
 //
+// HOW IT WORKS NOW
+//
+// It deletes ONE row: the business_profiles row. Every table a business owns
+// carries a foreign key to it with ON DELETE CASCADE
+// (supabase/migrations/20260916_business_data_ownership.sql), so the database
+// removes the rest.
+//
+// This replaces a hand-maintained list of tables to delete in order. That list
+// named 17 tables and the registry now names 55 — it had fallen 38 behind, with
+// every insight table among them, and nothing failed when it drifted because an
+// out-of-date list looks exactly like a complete one. Deleting the parent
+// cannot go stale.
+//
 // SAFETY
 //
 // Prints what it would delete and stops. Nothing is removed without --confirm.
@@ -28,6 +41,7 @@
 
 import { config } from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
+import { BUSINESS_OWNED_TABLES, USER_OWNED_TABLES } from '../lib/business-os/businessOwnedTables';
 
 config({ path: '.env.local' });
 
@@ -38,44 +52,26 @@ const supabaseAdmin = createClient(
 );
 
 /**
- * Everything the build writes, child-first.
+ * What the reset has to remove BY HAND.
  *
- * Order matters: a row with a NOT NULL foreign key has to go before the row it
- * points at, and `crm_contacts` is pointed at by six tables — which is the same
- * fact that makes CRM structural rather than optional.
+ * Only the tables a business owns but the cascade cannot reach. There is one:
+ * the onboarding transcript is deliberately not tied to the profile, because it
+ * is written before the profile exists — the chat is what produces it — so a
+ * foreign key there would reject the first message of every new account.
+ *
+ * Everything else is handled by deleting the profile. See
+ * lib/business-os/businessOwnedTables.ts for the full ownership map.
  */
-const TABLES_IN_DELETE_ORDER = [
-  // Anything hanging off a booking or a contact.
-  'scheduling_bookings',
-  'payment_transactions',
-  'payment_installments',
-  'payment_invoices',
-  'proposals',
-  'crm_activities',
-  'crm_tasks',
-  'crm_contacts',
-  // The catalogue and how it is sold.
-  'payment_plans',
-  'scheduling_services',
-  // Intake.
-  'intake_forms',
-  'user_intake_settings',
-  // Anything a client could reach.
-  'website_pages',
-  'smart_links',
-  // The pipeline, and what onboarding decided.
-  'crm_pipeline_stages',
-  'user_capabilities',
+const NOT_CASCADED = [
   /*
-   * The transcript, and the state machine's position in it.
-   *
-   * The chat page clears this on load by itself, so it is here for the case the
+   * The chat page clears this on load by itself, so this is for the case the
    * page never gets that far: an account left mid-conversation shows the
    * welcome screen with the SERVER still standing at "tell me about your
    * services", and the language you then pick is read as a service description.
    */
   'onboarding_conversations',
 ];
+
 
 async function main() {
   const [email, ...flags] = process.argv.slice(2);
@@ -100,77 +96,110 @@ async function main() {
 
   console.log(`\n${confirmed ? 'RESETTING' : 'DRY RUN —'} ${email}  (${user.id})\n`);
 
+  /*
+   * Counted before anything is deleted, because after the cascade there is
+   * nothing left to count. A dry run and a real run print the same list; only
+   * the verb differs.
+   */
   let total = 0;
+  const populated: Array<[string, number]> = [];
 
-  for (const table of TABLES_IN_DELETE_ORDER) {
+  for (const table of BUSINESS_OWNED_TABLES) {
     const { count, error } = await supabaseAdmin
       .from(table)
-      .select('id', { count: 'exact', head: true })
+      .select('user_id', { count: 'exact', head: true })
       .eq('user_id', user.id);
 
-    if (error) {
-      // A table that does not exist in this environment is not a failure — say
-      // so and carry on, rather than stopping halfway through a delete.
-      console.log(`  ${table.padEnd(24)} skipped (${error.message})`);
-      continue;
-    }
+    // A table absent from this environment is not a failure. Environments
+    // differ, and a reset that stops halfway leaves a state nobody intended.
+    if (error) continue;
 
     const rows = count || 0;
+    if (!rows) continue;
+
     total += rows;
+    populated.push([table, rows]);
+  }
 
-    if (!rows) {
-      console.log(`  ${table.padEnd(24)} —`);
-      continue;
-    }
+  for (const [table, rows] of populated) {
+    console.log(`  ${table.padEnd(34)} ${rows} row${rows === 1 ? '' : 's'}`);
+  }
+  if (!populated.length) console.log('  (no business data on this account)');
 
-    if (!confirmed) {
-      console.log(`  ${table.padEnd(24)} ${rows} row${rows === 1 ? '' : 's'}`);
-      continue;
-    }
+  console.log(`\n  ${total} row${total === 1 ? '' : 's'} across ${populated.length} table${populated.length === 1 ? '' : 's'}`);
 
-    const { error: deleteError } = await supabaseAdmin.from(table).delete().eq('user_id', user.id);
-    console.log(
-      `  ${table.padEnd(24)} ${deleteError ? `FAILED — ${deleteError.message}` : `deleted ${rows}`}`
-    );
+  /*
+   * The profile is DELETED, and that is what does the work.
+   *
+   * It used to be emptied instead, to preserve `user_code` — the address every
+   * smart link and public page is built from — so that a reset would not
+   * invalidate links someone had open. That reasoning does not survive contact
+   * with the cascade: ON DELETE CASCADE fires on DELETE, so clearing fields
+   * leaves every child row in place, attached to the same user_id, ready to be
+   * adopted by the next business built on this account. Emptying the row is
+   * precisely the bug this reset exists to undo.
+   *
+   * The link tradeoff is also smaller than it looks. A reset means the business
+   * is gone; a booking link that still resolves to it would be worse than one
+   * that stops working.
+   */
+  if (!confirmed) {
+    console.log('\n  business_profiles                  would be DELETED — the cascade takes the rows above');
+    console.log(`\n${total} row${total === 1 ? '' : 's'} would go. Re-run with --confirm.\n`);
+    return;
+  }
+
+  const { error: profileError } = await supabaseAdmin
+    .from('business_profiles')
+    .delete()
+    .eq('user_id', user.id);
+
+  if (profileError) {
+    console.error(`\n  business_profiles                  FAILED — ${profileError.message}`);
+    console.error('\nNothing else was removed: the cascade is what deletes the rest.\n');
+    process.exit(1);
+  }
+
+  console.log('\n  business_profiles                  deleted — cascade removed the rows above');
+
+  /*
+   * What the cascade cannot reach, done by hand.
+   */
+  for (const table of NOT_CASCADED) {
+    const { error } = await supabaseAdmin.from(table).delete().eq('user_id', user.id);
+    console.log(`  ${table.padEnd(34)} ${error ? `FAILED — ${error.message}` : 'deleted'}`);
   }
 
   /*
-   * The profile is EMPTIED, not deleted.
+   * Verified rather than assumed.
    *
-   * `user_code` lives on it and is what every smart link and public page is
-   * addressed by. Dropping the row mints a new code on the next build, which
-   * quietly invalidates every link you had open in a tab — so the row stays and
-   * the answers on it are cleared.
+   * The whole point of this rewrite is that one delete removes everything, and
+   * a claim like that is worth checking rather than trusting — a table whose
+   * constraint was never added would otherwise be silently left behind, which
+   * is the exact failure the old hand-maintained list kept producing.
    */
-  const profileReset = {
-    onboarding_completed: false,
-    vertical: null,
-    sub_vertical: null,
-    description: null,
-    clients_per_week: null,
-    pain_points: null,
-    goals: null,
-    tools: null,
-    online_presence_mode: null,
-    payment_mode: null,
-    collection_method: null,
-  };
-
-  if (confirmed) {
-    const { error } = await supabaseAdmin
-      .from('business_profiles')
-      .update(profileReset)
+  const leftovers: string[] = [];
+  for (const table of BUSINESS_OWNED_TABLES) {
+    const { count, error } = await supabaseAdmin
+      .from(table)
+      .select('user_id', { count: 'exact', head: true })
       .eq('user_id', user.id);
+    if (error) continue;
+    if (count) leftovers.push(`${table} (${count})`);
+  }
 
-    console.log(`\n  business_profiles         ${error ? `FAILED — ${error.message}` : 'cleared (user_code kept)'}`);
-  } else {
-    console.log(`\n  business_profiles         would clear ${Object.keys(profileReset).length} answers (user_code kept)`);
+  if (leftovers.length) {
+    console.error('\n  ⚠️  SURVIVED THE CASCADE — these tables are missing their constraint:');
+    leftovers.forEach(l => console.error(`      ${l}`));
+    console.error('      Re-run supabase/migrations/20260916_business_data_ownership.sql\n');
+    process.exit(1);
   }
 
   console.log(
-    confirmed
-      ? `\nDone. Sign in as ${email} and the onboarding chat will start from nothing.\n`
-      : `\n${total} rows would go. Re-run with --confirm.\n`
+    `\nDone. ${total} row${total === 1 ? '' : 's'} gone. Sign in as ${email} and the ` +
+    'onboarding chat will start from nothing.\n' +
+    `Kept, by design: ${Object.keys(USER_OWNED_TABLES).length} user-owned tables ` +
+    '(preferences, plugin connections, agents, unsubscribes).\n'
   );
 }
 

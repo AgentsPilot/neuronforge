@@ -152,6 +152,20 @@ export async function narrateBriefing(
 
 /* ------------------------------------------------------------------ prompt */
 
+/**
+ * Bump this whenever the prompt below changes the words it produces.
+ *
+ * The briefing is cached per business day against a hash of the FACTS, so a
+ * change to the instructions is invisible to that hash: the wording changes,
+ * the fingerprint does not, and everyone who already has a cached briefing
+ * keeps the old phrasing until tomorrow. The fix for the ordering rule was
+ * itself unobservable for exactly this reason.
+ *
+ * It costs one re-narration per user on the day it changes, which is the same
+ * price as any other fact moving.
+ */
+export const PROMPT_VERSION = 3;
+
 function buildPrompt(
   facts: BriefingFacts,
   language: BriefingLanguage,
@@ -178,6 +192,8 @@ function buildPrompt(
     '   your sentence — every word you write must be in the target language.',
     '',
     'WHAT THE FIELDS MEAN — read these before writing:',
+    '- receivedToday: money that ARRIVED today. Good news — report it as money in,',
+    '  never as something owed or outstanding. Do not confuse it with payments below.',
     '- payments: money someone STILL OWES the business. It has NOT been paid.',
     '  Never describe it as paid, received, settled or collected. The owner needs to chase it.',
     '- awaitingIntake: these people have NOT returned their intake form yet.',
@@ -185,6 +201,8 @@ function buildPrompt(
     '  where payment was due before the appointment. Not the same as an unpaid invoice.',
     '- cancelled: appointments that were cancelled, freeing that slot.',
     '- allReady: every appointment today is ready; nothing is outstanding on them.',
+    '- completed: appointments that have ALREADY HAPPENED. Say so as a fact about the',
+    '  day — never as something outstanding, and never as a reason to chase anyone.',
     '- newLeads: people who got in touch for the first time today. `count` is how',
     '  many there were; `people` are the ones you may name, with `note` being what',
     '  they asked about. Name them where you can — it is the point of the line.',
@@ -223,6 +241,35 @@ function buildPrompt(
     'Each line is a single short sentence — under about ten words — that stands on its own.',
     'No bullet characters, no numbering, no headings, no greeting, no sign-off, no blank lines.',
     'At most six lines, fewer when there is less to say.',
+    '',
+    /*
+     * The order is fixed here because it was previously fixed nowhere.
+     *
+     * `composeFallback` has always assembled these lines in a deliberate
+     * sequence, but the model was given no ordering rule at all — so the two
+     * paths told the same day differently, and the model's own choice moved
+     * between runs. A day whose takings led with the money read as a receipt
+     * rather than a briefing; the owner opens this to find out what the day
+     * holds, and the day's shape has to come first.
+     *
+     * This list mirrors the fallback step for step. Change one and change the
+     * other, or the card starts depending on whether the model was reachable.
+     */
+    'ORDER: report the facts in this sequence, skipping anything absent.',
+    '1. How many appointments there are today.',
+    '2. How many of them are already completed.',
+    '3. How many are ready.',
+    '4. Anyone who has not returned an intake form.',
+    '5. Anyone who has not paid for today\'s appointment.',
+    '6. Money that came in today.',
+    '7. Money still owed.',
+    '8. Cancellations.',
+    '9. Which appointment is first, and when.',
+    '10. What is coming next: new enquiries, quotes, the next appointment.',
+    'The day comes before the money. Never open with an amount when there are',
+    'appointments to report — takings are the result of the day, not its headline.',
+    'The lines above name what to cover in what order. They are not phrasings to',
+    'copy — write each fact in your own natural sentence.',
     '',
     'Example of the shape (not the content):',
     'You have 6 appointments today.',
@@ -269,6 +316,7 @@ function toPromptShape(facts: BriefingFacts) {
        * with no number to repeat; a partial count is genuinely new information
        * and keeps its digit.
        */
+      ...(appointments.completed > 0 && { completed: appointments.completed }),
       ...(appointments.total > 0 && appointments.ready === appointments.total
         ? { allReady: true }
         : appointments.ready > 0 && { ready: appointments.ready }),
@@ -295,6 +343,13 @@ function toPromptShape(facts: BriefingFacts) {
       }),
     },
   };
+
+  if (money.receivedToday > 0) {
+    // Pre-formatted, like the owed amounts: handing over a number and a
+    // currency code produced "500 USD" where a reader expects "$500".
+    shape.receivedToday = formatMoney(money.receivedToday, money.currency);
+    shape.receivedCount = money.receivedCount;
+  }
 
   if (money.owed.length > 0) {
     /*
@@ -504,6 +559,15 @@ export function composeFallback(facts: BriefingFacts, language: BriefingLanguage
 
   if (appointments.total > 0) {
     lines.push(phrase.appointments(appointments.total));
+
+    /*
+     * Finished sessions are reported, not hidden. The owner asked for the
+     * day's work to show as done rather than vanish from the count — a card
+     * that silently shrinks through the afternoon reads as data going missing.
+     */
+    if (appointments.completed > 0) {
+      lines.push(phrase.completed(appointments.completed, appointments.total));
+    }
     if (appointments.ready > 0 && appointments.ready === appointments.total) {
       lines.push(phrase.allReady(appointments.ready));
     } else if (appointments.ready > 0) {
@@ -517,6 +581,23 @@ export function composeFallback(facts: BriefingFacts, language: BriefingLanguage
 
   for (const person of appointments.awaitingPayment.slice(0, 3)) {
     lines.push(phrase.awaitingPayment(person.name));
+  }
+
+  /*
+   * What came in, before what is owed.
+   *
+   * The card could only ever report debts — `owed` was its whole money
+   * vocabulary — so a day on which £500 arrived and nothing was outstanding had
+   * nothing to say about money at all. The figure an owner most wants at the
+   * end of a day was the one the briefing could not produce.
+   */
+  if (money.receivedToday > 0) {
+    lines.push(
+      phrase.receivedToday(
+        formatMoney(money.receivedToday, money.currency),
+        money.receivedCount
+      )
+    );
   }
 
   for (const entry of money.owed.slice(0, 3)) {
@@ -641,11 +722,15 @@ function formatAmount(amount: number, currency: string): string {
 
 interface FallbackPhrases {
   appointments: (n: number) => string;
+  /** `n` of `total` have already happened. */
+  completed: (n: number, total: number) => string;
   allReady: (n: number) => string;
   someReady: (n: number) => string;
   awaitingIntake: (name: string) => string;
   /** Coming today and hasn't paid, where payment was due before the appointment. */
   awaitingPayment: (name: string) => string;
+  /** `money` is already formatted; `n` is how many payments made it up. */
+  receivedToday: (money: string, n: number) => string;
   owes: (name: string, amount: string) => string;
   cancelledAt: (time: string) => string;
   cancelled: () => string;
@@ -698,11 +783,13 @@ function joinNames(
 const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
   en: {
     appointments: n => (n === 1 ? 'You have one appointment today.' : `You have ${n} appointments today.`),
+    completed: (n, total) => (n === total ? 'All of them are done.' : `${n} of them are already done.`),
     allReady: n => (n === 1 ? 'They are ready.' : `All ${n} are ready.`),
     someReady: n => (n === 1 ? 'One client is ready.' : `${n} clients are ready.`),
     awaitingIntake: name => `${name} hasn't completed intake.`,
     awaitingPayment: name => `${name} hasn't paid yet.`,
     owes: (name, amount) => `${name} still owes ${amount}.`,
+    receivedToday: (money, n) => (n === 1 ? `${money} came in today.` : `${money} came in today, across ${n} payments.`),
     cancelledAt: time => `Your ${time} appointment was cancelled, leaving an opening.`,
     cancelled: () => 'An appointment was cancelled, leaving an opening.',
     first: (name, time) => `Your first appointment is ${name} at ${time}.`,
@@ -726,11 +813,13 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
   },
   es: {
     appointments: n => (n === 1 ? 'Tienes una cita hoy.' : `Tienes ${n} citas hoy.`),
+    completed: (n, total) => (n === total ? 'Todas ya están hechas.' : `${n} de ellas ya están hechas.`),
     allReady: n => (n === 1 ? 'Está listo.' : `Los ${n} están listos.`),
     someReady: n => (n === 1 ? 'Un cliente está listo.' : `${n} clientes están listos.`),
     awaitingIntake: name => `${name} no ha completado el formulario.`,
     awaitingPayment: name => `${name} todavía no ha pagado.`,
     owes: (name, amount) => `${name} todavía debe ${amount}.`,
+    receivedToday: (money, n) => (n === 1 ? `Entraron ${money} hoy.` : `Entraron ${money} hoy, en ${n} pagos.`),
     cancelledAt: time => `Tu cita de las ${time} se canceló y dejó un hueco libre.`,
     cancelled: () => 'Se canceló una cita y dejó un hueco libre.',
     first: (name, time) => `Tu primera cita es ${name} a las ${time}.`,
@@ -752,11 +841,13 @@ const FALLBACK: Record<BriefingLanguage, FallbackPhrases> = {
   },
   he: {
     appointments: n => (n === 1 ? 'יש לך פגישה אחת היום.' : `יש לך ${n} פגישות היום.`),
+    completed: (n, total) => (n === total ? 'כולן כבר הסתיימו.' : `${n} מהן כבר הסתיימו.`),
     allReady: n => (n === 1 ? 'הוא מוכן.' : `כל ${n} מוכנים.`),
     someReady: n => (n === 1 ? 'לקוח אחד מוכן.' : `${n} לקוחות מוכנים.`),
     awaitingIntake: name => `${name} לא השלים את הטופס.`,
     awaitingPayment: name => `${name} עדיין לא שילם.`,
     owes: (name, amount) => `${name} עדיין חייב ${amount}.`,
+    receivedToday: (money, n) => (n === 1 ? `${money} נכנסו היום.` : `${money} נכנסו היום, ב-${n} תשלומים.`),
     cancelledAt: time => `הפגישה שלך ב-${time} בוטלה ונפתח חלון פנוי.`,
     cancelled: () => 'פגישה בוטלה ונפתח חלון פנוי.',
     first: (name, time) => `הפגישה הראשונה שלך היא ${name} בשעה ${time}.`,

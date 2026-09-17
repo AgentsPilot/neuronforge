@@ -290,15 +290,6 @@ export const SETUP_STEPS: GraphNode[] = [
     belongsTo: 'availability',
   },
 
-  // A way for a client to reach and book: a published site, a landing page or a
-  // smart link. Any one will do — which is why the dashboard decides whether it
-  // is satisfied and the graph only says it is required. Never skipped: a
-  // business nobody can book is not configured, whatever it said about websites.
-  { id: 'website', requires: ['services'], owner: 'platform', mandatory: 'always' },
-  // A site publishes fine on the stock theme, so this never blocks — but it is
-  // where the look of the site, the invoices and the emails is set.
-  { id: 'design', requires: [], owner: 'platform', mandatory: 'optional', belongsTo: 'website' },
-
   // A card processor, and only for businesses that take cards. Someone who
   // invoices and takes a transfer should never see this step at all, let alone
   // be asked to hand Stripe their ID for an account they will not use.
@@ -390,6 +381,32 @@ export const SETUP_STEPS: GraphNode[] = [
     },
     belongsTo: 'payments',
   },
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * PUBLISHING COMES LAST — AFTER THE THINGS PUBLISHING ITSELF DEMANDS.
+   *
+   * A way for a client to reach and book: a published site, a landing page or a
+   * smart link. Any one will do — which is why the dashboard decides whether it
+   * is satisfied and the graph only says it is required. Never skipped: a
+   * business nobody can book is not configured, whatever it said about
+   * websites.
+   *
+   * This used to sit ABOVE `profile` and `invoicing`, so it was the step the
+   * dashboard named first — and `WebsitePublishService.pagePublishBlocker` then
+   * refused that very publish for the things not yet asked for. The owner was
+   * sent to publish, told they could not because they had no working hours and
+   * no invoice details, and sent back. The readiness order and the publish gate
+   * were issuing opposite instructions about the same account.
+   *
+   * Ordering it after them makes the sequence match what has to happen anyway:
+   * set the hours, settle how you get paid, then open the doors.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  { id: 'website', requires: ['services'], owner: 'platform', mandatory: 'always' },
+  // A site publishes fine on the stock theme, so this never blocks — but it is
+  // where the look of the site, the invoices and the emails is set.
+  { id: 'design', requires: [], owner: 'platform', mandatory: 'optional', belongsTo: 'website' },
 
   // The accounts a business already has, connected so we can say where clients
   // came from. Two steps, because they are two connections: a Meta login that

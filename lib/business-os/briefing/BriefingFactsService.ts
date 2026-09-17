@@ -14,6 +14,7 @@
 import { schedulingBookingRepository } from '@/lib/repositories/SchedulingRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { paymentInvoiceRepository, ISSUED_INVOICE_STATUSES } from '@/lib/repositories/PaymentRepository';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { findGaps } from '@/lib/business-os/gaps/findGaps';
 import type { GapId, GapResult } from '@/lib/business-os/gaps/types';
@@ -40,7 +41,12 @@ export interface BriefingFacts {
 
   appointments: {
     total: number;
-    /** Intake complete, or never required. */
+    /**
+     * Already happened. Counted in `total`, excluded from everything that asks
+     * whether something is outstanding — a finished session is not unready.
+     */
+    completed: number;
+    /** Confirmed, and waiting on nothing. Finished sessions are not counted. */
     ready: number;
     /** Intake was sent and has not come back. These are the ones worth naming. */
     awaitingIntake: BriefedPerson[];
@@ -70,6 +76,21 @@ export interface BriefingFacts {
     currency: string;
     /** True when outstanding invoices span more than one currency. */
     mixedCurrency: boolean;
+    /**
+     * Money that ARRIVED today.
+     *
+     * The briefing could only ever report debts: `owed` was the whole of its
+     * money vocabulary, so a day on which £500 came in and nothing was
+     * outstanding had nothing to say about money at all. The one figure an
+     * owner most wants at the end of a day was the one figure the card could
+     * not produce.
+     *
+     * De-duplicated the way the stats route does it: an invoice settled BY a
+     * transaction is one payment, not two.
+     */
+    receivedToday: number;
+    /** How many separate payments that was. */
+    receivedCount: number;
   };
 
   /**
@@ -179,7 +200,7 @@ export async function buildBriefingFacts(
 ): Promise<BriefingFacts> {
   const limit = options.limit ?? 100;
 
-  const [bookingsResult, invoicesResult, nextBookingResult, newLeadsResult, gaps] =
+  const [bookingsResult, invoicesResult, paidTodayTxResult, paidTodayInvResult, nextBookingResult, newLeadsResult, gaps] =
     await Promise.all([
     schedulingBookingRepository.list(userId, {
       startDate: day.startUtc,
@@ -192,6 +213,27 @@ export async function buildBriefingFacts(
       includeContact: true,
       limit,
     }),
+    /*
+     * The day's takings, from both places money lands.
+     *
+     * Read directly rather than through the repository: neither list method
+     * filters on a settlement date, and "paid today" is the whole question.
+     * Both are scoped to the BUSINESS's day, like everything else here.
+     */
+    supabaseServer
+      .from('payment_transactions')
+      .select('id, amount, refunded_amount, currency, invoice_id')
+      .eq('user_id', userId)
+      .in('status', ['succeeded', 'refunded'])
+      .gte('created_at', day.startUtc)
+      .lt('created_at', day.endUtc),
+    supabaseServer
+      .from('payment_invoices')
+      .select('id, amount, refunded_amount, currency')
+      .eq('user_id', userId)
+      .in('status', ['paid', 'refunded', 'partially_refunded'])
+      .gte('paid_at', day.startUtc)
+      .lt('paid_at', day.endUtc),
     // Fetched unconditionally so it can join the same concurrent batch. Whether
     // it is USED depends on today being empty, which is not known until the
     // bookings above come back — and a second round trip after that would cost
@@ -228,7 +270,18 @@ export async function buildBriefingFacts(
   const invoices = invoicesResult.data ?? [];
 
   const appointments = summariseAppointments(bookings, day);
-  const money = summariseMoney(invoices);
+  const money = summariseMoney(
+    invoices,
+    paidTodayTxResult.data ?? [],
+    paidTodayInvResult.data ?? []
+  );
+
+  if (paidTodayTxResult.error || paidTodayInvResult.error) {
+    logger.warn(
+      { err: paidTodayTxResult.error ?? paidTodayInvResult.error, userId },
+      'Briefing could not read today\'s takings; money in will read as zero'
+    );
+  }
   const outlook = summariseOutlook(
     appointments,
     nextBookingResult.data as BookingRow | null,
@@ -262,6 +315,17 @@ export function isQuietDay(
     appointments.total === 0 &&
     appointments.cancelled.length === 0 &&
     money.owed.length === 0 &&
+    /*
+     * Money arriving is the best thing that can happen in a day. Suppressing
+     * the briefing on the day someone paid would be the worst time to be
+     * silent.
+     *
+     * Falsy rather than `=== 0`: this flag decides whether an email is sent, and
+     * a caller whose facts predate this field would otherwise make every single
+     * day non-quiet and mail somebody daily. An absent figure means nothing
+     * arrived, which is the safe reading.
+     */
+    !money.receivedToday &&
     outlook.newLeads.count === 0 &&
     // A price nobody has named is somebody still waiting. Never a quiet day.
     outlook.quotesWaiting.count === 0
@@ -289,7 +353,22 @@ type BookingRow = {
 };
 
 function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFacts['appointments'] {
-  const live = rows.filter(r => r.status === 'confirmed' || r.status === 'completed');
+  /*
+   * The day's appointments, with the finished ones marked rather than dropped.
+   *
+   * `total` is still everything on the day — a session that has happened is
+   * part of it, and removing it would make the count shrink through the
+   * afternoon for no reason the reader can see.
+   *
+   * What a finished session is NOT is outstanding. Everything below that asks
+   * "is anything being waited on" runs over the confirmed ones only, because a
+   * session that already happened cannot be missing its intake and cannot be
+   * unpaid-in-advance — it reported both, and told the owner to chase a client
+   * who had already been and gone.
+   */
+  const confirmed = rows.filter(r => r.status === 'confirmed');
+  const done = rows.filter(r => r.status === 'completed');
+  const live = [...confirmed, ...done];
   const cancelled = rows.filter(r => r.status === 'cancelled');
 
   /*
@@ -298,14 +377,14 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
    * outstanding would report every client of a business that does not use
    * intake forms as unprepared.
    */
-  const awaiting = live.filter(r => r.intake_sent_at && !r.intake_completed_at);
+  const awaiting = confirmed.filter(r => r.intake_sent_at && !r.intake_completed_at);
 
   /*
    * Payment counts the same way intake does: outstanding only where it was
    * actually expected before the appointment. A service billed afterwards is
    * not unready — see the booking-unpaid detector, which draws the same line.
    */
-  const awaitingPay = live.filter(
+  const awaitingPay = confirmed.filter(
     r => !SETTLED_PAYMENT.has((r.payment_status ?? '').toLowerCase()) &&
          (toNumber(r.payment_amount) > 0 || r.service?.collection === 'online')
   );
@@ -316,7 +395,7 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
    * hasn't paid — and the unpaid line directly beneath would contradict it.
    */
   const unready = new Set([...awaiting, ...awaitingPay]);
-  const ready = live.length - unready.size;
+  const ready = confirmed.length - unready.size;
 
   const ordered = [...live].sort(
     (a, b) => Date.parse(a.start_time ?? '') - Date.parse(b.start_time ?? '')
@@ -325,6 +404,7 @@ function summariseAppointments(rows: BookingRow[], day: BusinessDay): BriefingFa
 
   return {
     total: live.length,
+    completed: done.length,
     ready,
     awaitingIntake: awaiting.map(r => ({
       name: displayName(r),
@@ -495,7 +575,60 @@ type InvoiceRow = {
   client_name?: string | null;
 };
 
-function summariseMoney(rows: InvoiceRow[]): BriefingFacts['money'] {
+/** One settled row, reduced to what the day's total needs. */
+interface SettledRow {
+  id?: unknown;
+  amount?: number | string | null;
+  refunded_amount?: number | string | null;
+  currency?: string | null;
+  invoice_id?: unknown;
+}
+
+/**
+ * What arrived today, counted once.
+ *
+ * A card payment and the invoice it settles are the same money in two tables.
+ * Summing both would report £500 as £1,000 on exactly the days an owner is
+ * most likely to check — so an invoice already referenced by one of today's
+ * transactions is dropped, which is the rule the stats route applies to the
+ * same pair.
+ *
+ * Net of refunds, because a refunded payment is money that came and went.
+ */
+function takingsFor(
+  transactions: SettledRow[],
+  invoices: SettledRow[]
+): { total: number; count: number; currency?: string } {
+  const settledByTransaction = new Set(
+    transactions.map(t => (t.invoice_id ? String(t.invoice_id) : '')).filter(Boolean)
+  );
+
+  const counted = [
+    ...transactions,
+    ...invoices.filter(i => !settledByTransaction.has(String(i.id))),
+  ];
+
+  let total = 0;
+  let count = 0;
+  for (const row of counted) {
+    const net = toNumber(row.amount) - toNumber(row.refunded_amount);
+    if (net <= 0) continue;
+    total += net;
+    count += 1;
+  }
+
+  return {
+    total: Math.round(total * 100) / 100,
+    count,
+    currency: counted.find(r => r.currency)?.currency ?? undefined,
+  };
+}
+
+function summariseMoney(
+  rows: InvoiceRow[],
+  paidTodayTransactions: SettledRow[],
+  paidTodayInvoices: SettledRow[]
+): BriefingFacts['money'] {
   const owed: OwedAmount[] = rows
     .map(row => {
       const gross = toNumber(row.amount);
@@ -524,11 +657,17 @@ function summariseMoney(rows: InvoiceRow[]): BriefingFacts['money'] {
 
   const dominant = [...byCurrency.entries()].sort((a, b) => b[1] - a[1])[0];
 
+  const takings = takingsFor(paidTodayTransactions, paidTodayInvoices);
+
   return {
     owed: owed.sort((a, b) => b.amount - a.amount),
     totalOwed: dominant?.[1] ?? 0,
-    currency: dominant?.[0] ?? 'USD',
+    // The day's takings name their own currency where there is one, so a
+    // business owed nothing still reports what came in with the right symbol.
+    currency: dominant?.[0] ?? takings.currency ?? 'USD',
     mixedCurrency: byCurrency.size > 1,
+    receivedToday: takings.total,
+    receivedCount: takings.count,
   };
 }
 

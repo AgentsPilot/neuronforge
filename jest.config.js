@@ -12,6 +12,10 @@ const config = {
     // Next resolves `server-only` internally, so it is not in node_modules and
     // Jest cannot find it. See __mocks__/server-only.js.
     '^server-only$': '<rootDir>/__mocks__/server-only.js',
+    // Stylesheets carry no behaviour to test, and Jest cannot parse CSS. Any
+    // component importing one (react-phone-number-input, for instance) was
+    // untestable without this.
+    '\\.(css|scss|sass|less)$': '<rootDir>/__mocks__/styleMock.js',
   },
   collectCoverageFrom: [
     'lib/**/*.{ts,tsx}',

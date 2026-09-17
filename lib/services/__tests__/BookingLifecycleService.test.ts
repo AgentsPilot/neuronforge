@@ -103,7 +103,9 @@ describe('cancelBooking', () => {
     // The three steps that make a cancellation real.
     expect(mockCancel).toHaveBeenCalledWith(BOOKING_ID, USER_ID, 'client is ill');
     expect(mockDeleteCalendarEvent).toHaveBeenCalledWith(booking(), USER_ID);
-    expect(mockSendCancellationEmail).toHaveBeenCalledWith(BOOKING_ID, USER_ID, 'client is ill');
+    expect(mockSendCancellationEmail).toHaveBeenCalledWith(BOOKING_ID, USER_ID, 'client is ill', {
+      offerRebooking: undefined,
+    });
   });
 
   it('records the reason on the audit entry', async () => {
@@ -209,6 +211,31 @@ describe('cancelBooking', () => {
     await cancelBooking({ bookingId: BOOKING_ID, userId: USER_ID });
 
     expect(mockCancel).toHaveBeenCalledWith(BOOKING_ID, USER_ID, undefined);
-    expect(mockSendCancellationEmail).toHaveBeenCalledWith(BOOKING_ID, USER_ID, undefined);
+    // Undefined, not false: an ordinary cancellation still invites the client
+    // to book again. Only a closing business suppresses that.
+    expect(mockSendCancellationEmail).toHaveBeenCalledWith(BOOKING_ID, USER_ID, undefined, {
+      offerRebooking: undefined,
+    });
+  });
+
+  it('suppresses the rebooking invitation when the business is closing', async () => {
+    /*
+     * Account deletion cancels every future booking through here. "Book Again"
+     * would contradict an email saying the business has ceased operating, and
+     * would point at a page that is about to stop existing.
+     */
+    await cancelBooking({
+      bookingId: BOOKING_ID,
+      userId: USER_ID,
+      reason: 'This business has ceased operating',
+      offerRebooking: false,
+    });
+
+    expect(mockSendCancellationEmail).toHaveBeenCalledWith(
+      BOOKING_ID,
+      USER_ID,
+      'This business has ceased operating',
+      { offerRebooking: false }
+    );
   });
 });

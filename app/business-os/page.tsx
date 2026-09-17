@@ -55,21 +55,11 @@ function getGreetingFromTime(): 'morning' | 'afternoon' | 'evening' {
 function BusinessOSContent() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const { t, language } = useLanguage();
+  const { t, language, timeZoneOptions } = useLanguage();
   /** The assistant panel is hidden until the button on the insight card is pressed. */
   const [assistantOpen, setAssistantOpen] = useState(false);
   const chatPanelRef = useRef<ChatCommandPanelRef>(null);
 
-  /**
-   * Why a readiness action failed, shown on the card that ran it.
-   *
-   * `SystemReadiness` has always accepted an `actionError` and rendered it; the
-   * dashboard simply never passed one, so publish results went into the CHAT
-   * instead — a panel that is also on My Day and does not clear, leaving "your
-   * website is now live 🎉" hanging over an unrelated screen.
-   */
-  const [publishActionError, setPublishActionError] =
-    useState<{ action: string; message: string } | null>(null);
   const [loading, setLoading] = useState(true);
   // The dashboard keeps its OWN dialog instance for the chat-driven flows
   // (prefilled services, single visible tab, callbacks into the conversation).
@@ -165,8 +155,6 @@ function BusinessOSContent() {
   const [milestoneData, setMilestoneData] = useState<MilestoneData | undefined>(undefined);
   const [channelPerformance, setChannelPerformance] = useState<ChannelPerformance | undefined>(undefined);
 
-  const [draftPageId, setDraftPageId] = useState<string | undefined>(undefined);
-  const [publishingWebsite, setPublishingWebsite] = useState(false);
 
 
   /**
@@ -197,32 +185,38 @@ function BusinessOSContent() {
       ]);
 
       /*
-       * What needs the owner, on its own.
+       * What needs the owner, and what the platform is offering to take off
+       * their hands — one request, on its own.
        *
        * Deliberately outside the Promise.all above: this list is the newest
        * thing on the dashboard, and a failure here must cost only its card.
+       *
+       * The automations used to be a second request to
+       * `/api/business-os/automations/operational`, which opened by running the
+       * same six gap definitions this one had just run — eleven queries twice,
+       * concurrently, for one answer. They now travel back together. The
+       * decision PUT still goes to that route.
        */
       fetch('/api/business-os/gaps', { cache: 'no-store' })
         .then(response => response.json())
-        .then(data => setGaps(data?.success ? data.gaps : []))
-        .catch(() => setGaps([]));
-
-      // Same reasoning: its own request, its own failure.
-      fetch('/api/business-os/automations/operational', { cache: 'no-store' })
-        .then(response => response.json())
-        /*
-         * Only the undecided reach the card. Approved is a setting and declined
-         * is an answer; the advisor exists to ask open questions.
-         */
-        .then(data =>
+        .then(data => {
+          setGaps(data?.success ? data.gaps : []);
+          /*
+           * Only the undecided reach the card. Approved is a setting and
+           * declined is an answer; the advisor exists to ask open questions.
+           */
           setAutomations(
             data?.success
-              ? (data.automations as Array<OperationalItem & { enabled: boolean; declined: boolean }>)
-                  .filter(entry => !entry.enabled && !entry.declined)
+              ? ((data.automations ?? []) as Array<
+                  OperationalItem & { enabled: boolean; declined: boolean }
+                >).filter(entry => !entry.enabled && !entry.declined)
               : []
-          )
-        )
-        .catch(() => setAutomations([]));
+          );
+        })
+        .catch(() => {
+          setGaps([]);
+          setAutomations([]);
+        });
 
       // Where clients came from. Failing here must degrade only that section,
       // never the whole dashboard.
@@ -334,10 +328,6 @@ function BusinessOSContent() {
               // site, or creating the link that stands in for one.
               action: s.website?.wants_website ? 'publish_website' : 'create_booking_link'
             });
-            // Store draft page ID for quick publish
-            if (s.website?.draft_page_id) {
-              setDraftPageId(s.website.draft_page_id);
-            }
           } else if (s.website?.is_reachable) {
             computedSetupItems.push({
               id: 'website',
@@ -809,8 +799,8 @@ function BusinessOSContent() {
         if (chatPanelRef.current && action.bookings) {
           const bookingListHtml = action.bookings.map((b: { id: string; client_name: string; service_name: string; start_time: string; status: string }) => {
             const date = new Date(b.start_time);
-            const dateStr = date.toLocaleDateString(language === 'he' ? 'he-IL' : 'en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-            const timeStr = date.toLocaleTimeString(language === 'he' ? 'he-IL' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+            const dateStr = date.toLocaleDateString(language === 'he' ? 'he-IL' : 'en-US', timeZoneOptions({ weekday: 'short', month: 'short', day: 'numeric' }));
+            const timeStr = date.toLocaleTimeString(language === 'he' ? 'he-IL' : 'en-US', timeZoneOptions({ hour: '2-digit', minute: '2-digit' }));
             return `<button onclick="window.viewBooking('${b.id}')" class="booking-list-item" style="display: block; width: 100%; text-align: start; padding: 10px 12px; margin: 6px 0; background: var(--v2-bg); border: 1px solid var(--v2-border); border-radius: 10px; cursor: pointer; transition: all 0.15s;" onmouseover="this.style.borderColor='#F97316'" onmouseout="this.style.borderColor='var(--v2-border)'"><b style="display: block; font-size: 14px; color: var(--v2-text-primary);">${b.client_name}</b><span style="font-size: 12px; color: var(--v2-text-muted);">${b.service_name} · ${dateStr} ${timeStr}</span></button>`;
           }).join('');
           chatPanelRef.current.addMessage('ai', bookingListHtml);
@@ -821,7 +811,7 @@ function BusinessOSContent() {
         // Show confirmation dialog for booking cancellation
         if (chatPanelRef.current) {
           const date = new Date(action.startTime);
-          const dateStr = date.toLocaleDateString(language === 'he' ? 'he-IL' : 'en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+          const dateStr = date.toLocaleDateString(language === 'he' ? 'he-IL' : 'en-US', timeZoneOptions({ weekday: 'long', month: 'short', day: 'numeric' }));
           const confirmHtml = language === 'he'
             ? `לבטל את הפגישה עם <b>${action.clientName}</b> ב${dateStr}?`
             : `Cancel booking with <b>${action.clientName}</b> on ${dateStr}?`;
@@ -1198,73 +1188,6 @@ function BusinessOSContent() {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  // Handle website publish from dashboard
-  const handlePublishWebsite = useCallback(async () => {
-    if (!draftPageId || publishingWebsite) return;
-
-    try {
-      setPublishingWebsite(true);
-      const response = await fetch(`/api/website/pages/${draftPageId}/publish`, {
-        method: 'POST'
-      });
-      const data = await response.json();
-
-      if (data.success) {
-        /*
-         * The readiness step turning green IS the confirmation.
-         *
-         * This used to post "Your website is now live! 🎉" into the chat panel,
-         * which is not where the action happened and not something that clears:
-         * the chat sits on this page for My Day too, so a publish left a
-         * celebration hanging over an unrelated screen long afterwards. The
-         * chat is a place to ask for things, not a log of what buttons did.
-         *
-         * Refreshing turns the "put your online presence live" row into
-         * "clients can reach you", in the card the owner just clicked — which
-         * is the feedback, in the right place, and it goes away on its own.
-         */
-        setPublishActionError(null);
-        fetchDashboardData();
-      } else {
-        /*
-         * ─────────────────────────────────────────────────────────────────────
-         * SAY WHAT IS WRONG, AND GO WHERE IT CAN BE FIXED.
-         *
-         * This posted "Failed to publish website. Please try again." and threw
-         * `data.error` away. Two things wrong with that: the server had already
-         * worked out which services were holding it up and written a sentence
-         * naming them, and "try again" is advice that cannot work — a publish
-         * refused for want of working hours is refused identically every time.
-         *
-         * It also stayed on the dashboard. The website page is where the
-         * refusal is shown on the card, beside a control that opens the exact
-         * settings tab that fixes it — so a refusal now lands the owner there
-         * rather than leaving them on a card with a button that did nothing.
-         *
-         * The chat message is attempted but never relied on: `chatPanelRef` is
-         * null whenever the panel is closed, which is how this could fail in
-         * complete silence.
-         */
-        setPublishActionError({
-          action: 'publish_website',
-          message: data.error || (language === 'he'
-            ? 'לא ניתן לפרסם את האתר.'
-            : 'Could not publish the website.'),
-        });
-        router.push('/business-os/website');
-      }
-    } catch (error) {
-      logger.error({ err: error, pageId: draftPageId }, 'Failed to publish website');
-      setPublishActionError({
-        action: 'publish_website',
-        message: language === 'he'
-          ? 'לא ניתן לפרסם את האתר.'
-          : 'Could not publish the website.',
-      });
-    } finally {
-      setPublishingWebsite(false);
-    }
-  }, [draftPageId, publishingWebsite, language, router]);
 
   if (loading) {
     return (
@@ -1335,7 +1258,6 @@ function BusinessOSContent() {
             pipelineStages={pipelineStages}
             milestoneData={milestoneData}
             onConfigureClick={handleQuickSetupClick}
-            actionError={publishActionError}
             onAction={(action) => {
               // Handle actions from LiveDashboard
               if (action === 'publish_website') {

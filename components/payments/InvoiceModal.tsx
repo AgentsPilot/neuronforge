@@ -1,11 +1,16 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { PAYMENT_TERMS_PRESETS } from '@/lib/payments/paymentTerms';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { SwitchRow } from './SwitchRow';
+import { useConfigurationDialog } from '@/components/business-os/ConfigurationDialogProvider';
+import {
+  missingInvoiceFields,
+  type InvoiceField,
+} from '@/lib/business-os/setup/profileReadiness';
 import { createLogger } from '@/lib/logger';
 import { useLanguage, type CurrencyCode } from '@/lib/business-os/LanguageContext';
 import {
@@ -76,6 +81,53 @@ const DUE_DATE_PRESETS_BASE = PAYMENT_TERMS_PRESETS;
 
 export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, contactEmail }: Props) {
   const { currencyCode, availableCurrencies, t, isRTL } = useLanguage();
+  const { openConfiguration } = useConfigurationDialog();
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE FORM DOES NOT OPEN UNTIL AN INVOICE CAN ACTUALLY BE ISSUED.
+   *
+   * Company name, tax id, an address and a way to be paid. Without them the
+   * document this form produces names no seller and gives the client nowhere to
+   * send the money — and the owner finds out when nobody pays.
+   *
+   * Gated at the door rather than at the send button on purpose: being refused
+   * after writing out an invoice is a worse experience than being told before
+   * starting, and the fix is the same either way. `sendInvoice` refuses too, so
+   * a stale client cannot slip one out; this is the half that saves the typing.
+   *
+   * `null` means "not asked yet" and shows neither the form nor the gate — a
+   * flash of the form before it is replaced reads as a glitch, and a flash of
+   * the gate accuses a business that is perfectly well configured.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const [gateMissing, setGateMissing] = useState<InvoiceField[] | null>(null);
+
+  const checkInvoiceReadiness = useCallback(async () => {
+    try {
+      const response = await fetch('/api/business-os/invoice-settings', { cache: 'no-store' });
+      const result = await response.json();
+      // The same function the send gate, the readiness card and the publish
+      // gate use. Four surfaces, one definition of "complete".
+      setGateMissing(result?.success ? missingInvoiceFields(result.data) : []);
+    } catch {
+      /*
+       * A failed check must not stand between an owner and their invoicing.
+       * The server refuses a send it cannot justify, so the cost of being wrong
+       * here is a refusal later — where the cost of being wrong the other way is
+       * a business locked out of billing because one request failed.
+       */
+      setGateMissing([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setGateMissing(null);
+      return;
+    }
+    checkInvoiceReadiness();
+  }, [isOpen, checkInvoiceReadiness]);
 
   // Get translated due date presets - memoized to update when language changes
   const dueDatePresets = useMemo(() => {
@@ -501,9 +553,95 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
   return (
     <Dialog open={isOpen} onOpenChange={open => !open && onClose()}>
       <DialogContent
-        className="flex w-full sm:max-w-2xl h-[100vh] sm:h-auto max-h-[100vh] sm:max-h-[90vh] flex-col rounded-none sm:rounded-lg p-0 overflow-hidden"
+        className="flex w-full sm:max-w-2xl h-[100vh] sm:h-auto max-h-[100dvh] sm:max-h-[90dvh] flex-col rounded-none sm:rounded-lg p-0 overflow-hidden"
         dir={isRTL ? 'rtl' : 'ltr'}
       >
+        {gateMissing === null ? (
+          /* Not asked yet. Neither screen, so nothing is claimed either way. */
+          <div className="flex flex-1 items-center justify-center p-10">
+            <DialogTitle className="sr-only">{t('invoice.create_title')}</DialogTitle>
+            <p className="text-sm text-[var(--v2-text-muted)]">{t('invoice.gate.checking')}</p>
+          </div>
+        ) : gateMissing.length > 0 ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-5 py-5">
+              <div className="flex items-center gap-2.5">
+                <span
+                  className="flex h-8 w-8 items-center justify-center bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                  style={{ borderRadius: 'var(--v2-radius-button)' }}
+                >
+                  <FileText className="h-4 w-4" />
+                </span>
+                <DialogTitle className="text-[15px] font-semibold text-[var(--v2-text-primary)]">
+                  {t('invoice.gate.title')}
+                </DialogTitle>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+              <p className="text-sm leading-relaxed text-[var(--v2-text-secondary)]">
+                {t('invoice.gate.body')}
+              </p>
+
+              {/* Named, not counted. "Your details are incomplete" sends someone
+                  to a form to compare it against nothing; these four words tell
+                  them what they are going there to type. */}
+              <div className="mt-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--v2-text-muted)]">
+                  {t('invoice.gate.still_needs')}
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {gateMissing.map(field => (
+                    <li
+                      key={field}
+                      className="flex items-center gap-2 text-sm text-[var(--v2-text-primary)]"
+                    >
+                      <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-amber-500" />
+                      {t(`setup.field.${field}`)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div className="flex flex-shrink-0 justify-end gap-2 border-t border-[var(--v2-border)] px-5 py-4">
+              <Button type="button" variant="outline" onClick={onClose}>
+                {t('common.cancel') || 'Cancel'}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => {
+                  /*
+                   * This dialog CLOSES, and settings open in its place.
+                   *
+                   * Stacking them was the obvious move and it fought Radix the
+                   * whole way. `InvoiceModal` is a modal dialog: it traps focus
+                   * and treats a click anywhere outside its own content as a
+                   * dismissal. The settings dialog is not inside that content,
+                   * so the first click on its close button was consumed by the
+                   * trap and only the second reached the button — the dialog
+                   * underneath was eating the clicks meant for the one on top.
+                   *
+                   * Raising z-index fixed what you could SEE and not what you
+                   * could press, because the problem was modality, not paint
+                   * order.
+                   *
+                   * Nothing is lost by closing: the gate is the first thing
+                   * this dialog shows, so there is no invoice in progress to
+                   * discard — and "Create invoice" is one press away once the
+                   * details are in.
+                   */
+                  onClose();
+                  openConfiguration('invoice');
+                }}
+                style={{ backgroundColor: REPORTS_COLOR }}
+                className="text-white"
+              >
+                {t('invoice.gate.action')}
+              </Button>
+            </div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
         {/* ── Header ──────────────────────────────────────────────────────
             Led by the total, the way the refund dialog is led by the amount
@@ -1052,6 +1190,7 @@ export function InvoiceModal({ isOpen, onClose, onSave, contactId, contactName, 
             </Button>
           </div>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

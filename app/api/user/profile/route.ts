@@ -145,6 +145,41 @@ export async function PUT(req: NextRequest) {
 
     console.log(`✅ [PROFILE UPDATE] Profile updated for user ${user.id}`);
 
+    /*
+     * The timezone lives in TWO columns, and both are read.
+     *
+     * ─────────────────────────────────────────────────────────────────────────
+     * `profiles.timezone` is what this route writes and what the Business OS
+     * scheduling dialog reads. `user_preferences.timezone` is what the settings
+     * page writes and what everything else reads: the availability API, the
+     * booking routes, every client-facing email, and the language provider that
+     * now supplies the clock to every screen.
+     *
+     * Nothing kept them in step, so they drifted. At the time of writing three
+     * accounts had `profiles = Asia/Jerusalem` while `user_preferences = UTC` —
+     * an owner in Israel whose confirmation emails went out on UTC.
+     *
+     * Writing both here is the same remedy the language already uses in
+     * `LanguageContext`, which dual-writes `user_preferences` and
+     * `business_profiles` for exactly this reason. Non-blocking: a failure to
+     * mirror must not fail the profile save the user actually asked for, but it
+     * must be loud, because a silent half-write is how the two drifted apart in
+     * the first place.
+     */
+    if (timezone !== undefined) {
+      await supabase
+        .from('user_preferences')
+        .upsert(
+          { user_id: user.id, timezone, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' }
+        )
+        .then(({ error: mirrorError }) => {
+          if (mirrorError) {
+            console.error('Failed to mirror timezone to user_preferences:', mirrorError);
+          }
+        });
+    }
+
     // AUDIT TRAIL: Log profile update with change tracking
     try {
       const changes = generateDiff(currentProfile, updatedProfile);

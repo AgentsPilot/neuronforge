@@ -879,7 +879,7 @@ export default function UIConfigPage() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               onClick={(e) => e.stopPropagation()}
-              className="bg-slate-800 border border-red-500/30 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+              className="bg-slate-800 border border-red-500/30 rounded-2xl shadow-2xl max-w-md w-full mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             >
               {/* Header */}
               <div className="bg-gradient-to-r from-red-500/20 to-orange-500/20 border-b border-red-500/30 p-6">

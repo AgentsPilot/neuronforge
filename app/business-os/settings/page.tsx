@@ -156,14 +156,21 @@ function BusinessOSSettingsContent() {
         supabase.from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle(),
       ]);
 
-      if (profileRes.data) {
-        setProfile({
-          full_name: profileRes.data.full_name || '',
-          avatar_url: profileRes.data.avatar_url || '',
-          job_title: profileRes.data.job_title || '',
-          timezone: prefsRes.data?.timezone || '',
-        });
-      }
+      /*
+       * Not gated on the profile row.
+       *
+       * `.single()` returns nothing when no `profiles` row exists yet, and this
+       * used to skip the whole assignment — including the timezone, which comes
+       * from a different table entirely. An account with a saved zone and no
+       * profile row showed an empty timezone picker, which reads as "never set"
+       * and invites someone to set it again.
+       */
+      setProfile({
+        full_name: profileRes.data?.full_name || '',
+        avatar_url: profileRes.data?.avatar_url || '',
+        job_title: profileRes.data?.job_title || '',
+        timezone: prefsRes.data?.timezone || '',
+      });
     } catch (error) {
       logger.error({ err: error }, 'Failed to load the account settings');
     } finally {
@@ -171,33 +178,105 @@ function BusinessOSSettingsContent() {
     }
   };
 
-  const saveProfile = async () => {
+  /**
+   * Store the business timezone, in both columns, and PROVE it landed.
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * The timezone used to be one field among several in a profile upsert, which
+   * made three silent failures possible and two of them happened:
+   *
+   *   - the value was read from state that had not re-rendered yet, so the
+   *     write carried the PREVIOUS zone, or none at all;
+   *   - `supabase-js` returns `{ error }` rather than throwing, and nobody
+   *     destructured it, so a rejected write still showed "saved";
+   *   - `if (profile.timezone)` is false for an account that has never set one,
+   *     which is exactly the account trying to set one. Nothing was written.
+   *
+   * So this takes the zone as an argument, writes each table explicitly, checks
+   * each error, and READS THE VALUE BACK. A write that silently fails to take
+   * is otherwise indistinguishable from success, and this one field governs
+   * every time the platform displays.
+   */
+  const persistTimezone = async (zone: string): Promise<string | null> => {
+    if (!user) return null;
+
+    const stamp = new Date().toISOString();
+
+    const { error: prefsError } = await supabase.from('user_preferences').upsert({
+      user_id: user.id,
+      timezone: zone,
+      // Carried even though this save is about the timezone. Without it the
+      // upsert CREATES the row, and `preferred_language` lands on its `en`
+      // default — which server-side features read as a deliberate choice
+      // and used to generate English insights for a Hebrew business.
+      preferred_language: language,
+      updated_at: stamp,
+    }, { onConflict: 'user_id' });
+
+    if (prefsError) {
+      logger.error({ err: prefsError, userId: user.id, zone }, 'Failed to store the timezone');
+      return null;
+    }
+
+    /*
+     * A targeted UPDATE, not an upsert: the row exists, and naming the single
+     * column cannot clobber a field this screen did not intend to write.
+     */
+    const { error: mirrorError } = await supabase
+      .from('profiles')
+      .update({ timezone: zone, updated_at: stamp })
+      .eq('id', user.id);
+
+    if (mirrorError) {
+      logger.error({ err: mirrorError, userId: user.id, zone }, 'Failed to mirror the timezone onto the profile');
+    }
+
+    const { data: prefsRow } = await supabase
+      .from('user_preferences').select('timezone').eq('user_id', user.id).maybeSingle();
+
+    if (prefsRow?.timezone !== zone) {
+      logger.error(
+        { userId: user.id, zone, stored: prefsRow?.timezone },
+        'The timezone did not persist: the write reported success but the stored value differs'
+      );
+      return null;
+    }
+
+    return zone;
+  };
+
+  const saveProfile = async (overrides?: Partial<typeof profile>) => {
     if (!user) return;
+
+    // Passed in rather than read back out of state, so the save cannot depend
+    // on whether React has re-rendered yet.
+    const next = { ...profile, ...overrides };
 
     try {
       setSaving(true);
       setSuccessMessage('');
       setErrorMessage('');
 
-      await supabase.from('profiles').upsert({
+      const { error: profileError } = await supabase.from('profiles').upsert({
         id: user.id,
-        full_name: profile.full_name,
-        avatar_url: profile.avatar_url,
-        job_title: profile.job_title,
+        full_name: next.full_name,
+        avatar_url: next.avatar_url,
+        job_title: next.job_title,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'id' });
 
-      if (profile.timezone) {
-        await supabase.from('user_preferences').upsert({
-          user_id: user.id,
-          timezone: profile.timezone,
-          // Carried even though this save is about the timezone. Without it the
-          // upsert CREATES the row, and `preferred_language` lands on its `en`
-          // default — which server-side features read as a deliberate choice
-          // and used to generate English insights for a Hebrew business.
-          preferred_language: language,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' });
+      if (profileError) {
+        logger.error({ err: profileError, userId: user.id }, 'Failed to save the profile row');
+        setErrorMessage(t('settings.profile.error'));
+        return;
+      }
+
+      if (next.timezone) {
+        const saved = await persistTimezone(next.timezone);
+        if (!saved) {
+          setErrorMessage(t('settings.profile.error'));
+          return;
+        }
       }
 
       setEditingProfile(false);
@@ -566,7 +645,9 @@ function BusinessOSSettingsContent() {
                   {t('common.cancel')}
                 </button>
                 <button
-                  onClick={saveProfile}
+                  // Wrapped, not passed directly: React hands a click event to
+                  // the handler, and `saveProfile` would take it as overrides.
+                  onClick={() => saveProfile()}
                   disabled={saving}
                   className="px-4 py-2 text-sm bg-[var(--v2-primary)] text-white font-medium disabled:opacity-50"
                   style={{ borderRadius: 'var(--v2-radius-button)' }}
@@ -670,7 +751,7 @@ function BusinessOSSettingsContent() {
                   {timezoneOptions.map((tz) => (
                     <button
                       key={tz.value}
-                      onClick={() => { setProfile(p => ({ ...p, timezone: tz.value })); setOpenDropdown(null); saveProfile(); }}
+                      onClick={() => { setProfile(p => ({ ...p, timezone: tz.value })); setOpenDropdown(null); saveProfile({ timezone: tz.value }); }}
                       className={`w-full px-4 py-3 text-sm flex items-center justify-between hover:bg-[var(--v2-bg)] ${profile.timezone === tz.value ? 'bg-[var(--v2-bg)]' : ''}`}
                     >
                       <span>{tz.label}</span>

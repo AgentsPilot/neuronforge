@@ -14,6 +14,7 @@ import type { SessionCardData } from './types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CollapsibleSection } from '../CollapsibleSection';
+import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 
 interface PaymentTransaction {
   id: string;
@@ -110,6 +111,9 @@ export function PaymentsSection({
   onMoneyChanged,
   onInvoiceCreated
 }: PaymentsSectionProps) {
+  // The business's clock, so a payment date reads the same here, on the
+  // invoice and in the client's receipt email.
+  const { timeZoneOptions } = useBusinessTimezone();
   const router = useRouter();
 
   /**
@@ -326,11 +330,11 @@ export function PaymentsSection({
   };
 
   const formatDate = (date: string) => {
-    return new Date(date).toLocaleDateString(language || 'en', {
+    return new Date(date).toLocaleDateString(language || 'en', timeZoneOptions({
       year: 'numeric',
       month: 'short',
       day: 'numeric'
-    });
+    }));
   };
 
   const translatePaymentMethod = (method: string | null): string => {

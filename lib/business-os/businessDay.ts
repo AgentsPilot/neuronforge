@@ -38,11 +38,34 @@ export interface TimezoneResolution {
 /**
  * Where the business timezone actually lives.
  *
- * `business_profiles.timezone` has never existed — BusinessProfileRepository
- * says so explicitly and excludes it from its Insert/Update shapes. The value
- * is on `user_preferences.timezone`, written by the settings page. Code that
- * reads it from the profile gets `undefined` and silently falls back to UTC,
- * which is why this resolution is a named function rather than an inline `??`.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THREE TABLES GET CONFUSED FOR EACH OTHER. ONLY ONE IS AUTHORITATIVE.
+ *
+ *   user_preferences.timezone   THE SOURCE. Written by the settings page and
+ *                               mirrored by `/api/user/profile`. Read by the
+ *                               availability API, the booking routes, every
+ *                               client-facing email, and the language provider
+ *                               that supplies the clock to every screen.
+ *
+ *   profiles.timezone           A REAL COLUMN, and a real trap. Written by
+ *                               `/api/user/profile` and, until recently, read
+ *                               on its own by the Business OS scheduling
+ *                               dialog. It drifted: three accounts held
+ *                               `Asia/Jerusalem` here against `UTC` there. The
+ *                               route now mirrors into `user_preferences` on
+ *                               every write, and
+ *                               `scripts/backfill-timezone-preferences.ts`
+ *                               closed the drift already in the data. Do not
+ *                               read it directly.
+ *
+ *   business_profiles.timezone  DOES NOT EXIST, and never has.
+ *                               BusinessProfileRepository says so explicitly
+ *                               and excludes it from its Insert/Update shapes.
+ *                               Reading it returns `undefined`, which silently
+ *                               becomes UTC.
+ *
+ * Two of the three fail SILENTLY — one by drifting, one by being absent — which
+ * is why this resolution is a named function rather than an inline `??`.
  */
 export function resolveBusinessTimezone(input: {
   preferencesTimezone?: string | null;
@@ -124,6 +147,68 @@ export function localHourIn(instant: Date, timezone: string): number {
   }).format(instant);
 
   return Number(hour) % 24;
+}
+
+/**
+ * The UTC instant at which a wall-clock time occurs in a given zone.
+ *
+ * The inverse of `localHourIn`, and the piece that was missing. Availability is
+ * stored as wall-clock strings — "09:00" means nine in the morning WHERE THE
+ * BUSINESS IS — and turning one into a real moment needs the zone. Building it
+ * with `new Date(...)` or `setHours` instead uses whatever zone the reader's
+ * browser happens to be in, which is how a New York business viewed from
+ * Jerusalem ends up being offered slots at two in the morning.
+ *
+ * Two passes, because the offset depends on the instant and the instant depends
+ * on the offset. The first guess treats the wall clock as UTC and corrects by
+ * the offset there; the second re-reads the offset at the corrected instant, so
+ * a time that falls on a daylight-saving change lands on the right side of it.
+ *
+ * Times that do not exist (the spring-forward hour) resolve to the instant the
+ * clock jumps to; times that happen twice (autumn) resolve to the first. Both
+ * are the conventional answers and neither can be avoided — there is no such
+ * wall-clock moment to return.
+ */
+export function wallClockToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timezone: string
+): Date {
+  const zone = isUsableTimezone(timezone) ? timezone : 'UTC';
+  const naive = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+
+  const firstPass = naive - zoneOffsetMs(new Date(naive), zone);
+  return new Date(naive - zoneOffsetMs(new Date(firstPass), zone));
+}
+
+/** How far ahead of UTC `zone` is at this instant, in milliseconds. */
+function zoneOffsetMs(instant: Date, zone: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(instant);
+
+  const at = (type: string) => Number(parts.find(part => part.type === type)?.value ?? '0');
+
+  const asUtc = Date.UTC(
+    at('year'),
+    at('month') - 1,
+    at('day'),
+    at('hour') % 24,
+    at('minute'),
+    at('second')
+  );
+
+  return asUtc - instant.getTime();
 }
 
 function isoDate(y: number, m: number, d: number): string {

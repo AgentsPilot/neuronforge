@@ -29,7 +29,15 @@ export interface GhostProjection {
 interface FunnelMapProps {
   stations: FunnelStation[];
   gaps: FunnelGap[];
-  tips?: { at: string; n: number }[];
+  /**
+   * Markers pinned to the station or connector each tip is about.
+   *
+   * `label` is what the marker MEANS. Without it the badge was a bare digit
+   * sitting beside a station's own count — two numbers on one card, one a
+   * visitor total and the other a position in a list, distinguishable only by
+   * size and colour. A reader had no way to find out which was which.
+   */
+  tips?: { at: string; n: number; label?: string }[];
   selectedKey?: string;
   onSelectNode?: (key: string) => void;
   ghost?: GhostProjection;
@@ -173,10 +181,16 @@ export function FunnelMap({
   const { isRTL, t } = useLanguage();
 
   // Get tip badge for a station/gap
-  const getTipBadge = (key: string) => {
-    const tip = tips.find((t) => t.at === key);
-    return tip ? tip.n : null;
-  };
+  const getTipBadge = (key: string) => tips.find((t) => t.at === key) ?? null;
+
+  /*
+   * A number only where numbering means something.
+   *
+   * With one tip, "1" is not an index the reader can act on — it is a digit
+   * next to another digit. A single marker shows "!", which says "something to
+   * read here" without competing with the count beneath it.
+   */
+  const badgeGlyph = (tip: { n: number }) => (tips.length > 1 ? String(tip.n) : '!');
 
   return (
     <div
@@ -317,6 +331,10 @@ export function FunnelMap({
               {getTipBadge(station.k) !== null && (
                 <span
                   className="lv-mk"
+                  // Hover and screen readers get the tip itself. The marker
+                  // stops being a number nobody can look up.
+                  title={getTipBadge(station.k)!.label}
+                  aria-label={getTipBadge(station.k)!.label}
                   style={{
                     position: 'absolute',
                     top: '-9px',
@@ -334,7 +352,7 @@ export function FunnelMap({
                     animation: 'mkPop 0.4s ease-out',
                   }}
                 >
-                  {getTipBadge(station.k)}
+                  {badgeGlyph(getTipBadge(station.k)!)}
                 </span>
               )}
             </button>
@@ -447,6 +465,8 @@ export function FunnelMap({
                 {getTipBadge(gaps[index].k) !== null && (
                   <span
                     className="lv-mk"
+                    title={getTipBadge(gaps[index].k)!.label}
+                    aria-label={getTipBadge(gaps[index].k)!.label}
                     style={{
                       position: 'absolute',
                       top: '-2px',
@@ -465,7 +485,7 @@ export function FunnelMap({
                       animation: 'mkPop 0.4s ease-out',
                     }}
                   >
-                    {getTipBadge(gaps[index].k)}
+                    {badgeGlyph(getTipBadge(gaps[index].k)!)}
                   </span>
                 )}
               </button>

@@ -29,6 +29,7 @@ import { FontPicker } from '@/components/website/FontPicker';
 import { Switch } from '@/components/ui/switch';
 import { HEADING_FONTS, BODY_FONTS, carriesHebrew } from '@/lib/website-builder/fontCatalogue';
 import { openingHoursRows } from '@/lib/branding/openingHours';
+import { onlinePresenceGuidance } from '@/lib/business-os/onlinePresenceGuidance';
 import { WebsiteSetupWizard, type WizardResult } from '@/components/business-os/WebsiteSetupWizard';
 import { LandingPageWizard, type LandingPageWizardResult } from '@/components/business-os/LandingPageWizard';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -803,7 +804,10 @@ const LABELS = {
 export default function WebsiteManagementPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { language } = useLanguage();
+  // `t` as well as `language`: the guidance and the publish warning are keyed
+  // strings in three languages, not the inline ternaries the rest of this file
+  // uses for one-off labels.
+  const { language, t } = useLanguage();
   const { user } = useAuth();
   const labels = LABELS[language] || LABELS.en;
 
@@ -1035,6 +1039,8 @@ export default function WebsiteManagementPage() {
    * editor rather than being stranded published with no way back in.
    */
   const offerWebsite = wantsWebsite(businessProfile?.online_presence_mode);
+
+
   const [hasPaidServices, setHasPaidServices] = useState(false);
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
@@ -1046,6 +1052,29 @@ export default function WebsiteManagementPage() {
   const [creatingPage, setCreatingPage] = useState(false);
   const [smartLinksRefreshTrigger, setSmartLinksRefreshTrigger] = useState(0);
   const [smartLinks, setSmartLinks] = useState<SmartLink[]>([]);
+
+  /**
+   * What to do next about being findable, and why.
+   *
+   * The dashboard sends people here saying "clients cannot find you" and this
+   * page used to say nothing about it — a website card, a list of landing pages
+   * and a list of links, with no indication which of the three the dashboard
+   * meant. Three different routes satisfy that step; naming the one that is
+   * shortest for THIS business is the whole point of the notice below.
+   */
+  const presenceGuidance = useMemo(
+    () =>
+      onlinePresenceGuidance({
+        wantsWebsite: offerWebsite,
+        hasWebsite: Boolean(page),
+        websitePublished: page?.status === 'live',
+        livePages: allPages.filter(p => p.page_type === 'landing' && p.status === 'live').length,
+        draftPages: allPages.filter(p => p.page_type === 'landing' && p.status !== 'live').length,
+        bookingLinkActive: smartLinks.some(l => l.destination_type === 'booking' && l.is_active),
+        bookingLinkExists: smartLinks.some(l => l.destination_type === 'booking'),
+      }),
+    [offerWebsite, page, allPages, smartLinks]
+  );
   const [editingSmartLink, setEditingSmartLink] = useState<{
     id: string;
     name: string | null;
@@ -3973,7 +4002,24 @@ export default function WebsiteManagementPage() {
           {smartLinks.map((link) => (
             <div
               key={`smart-${link.id}`}
-              className={`p-4 bg-[var(--v2-bg)] rounded-lg border ${!link.is_active ? 'border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-900/10' : 'border-[var(--v2-border)]'}`}
+              /*
+                The row the notice above is pointing at, marked.
+
+                Text alone leaves the owner scanning two lists for "my booking
+                link" — the notice names the thing and the page shows it among
+                others that look identical. Only the BOOKING link is marked,
+                and only while the notice is actually asking for it: a
+                highlight that is always on is decoration, and decoration
+                cannot direct anybody anywhere.
+              */
+              className={`p-4 bg-[var(--v2-bg)] rounded-lg border transition-shadow ${
+                link.destination_type === 'booking' && !link.is_active &&
+                (presenceGuidance.state === 'activate_link' || presenceGuidance.alsoActivateLink)
+                  ? `border-[#4F6EF7] ring-2 ring-[#4F6EF7]/30${prefersReducedMotion ? '' : ' ap-attention'}`
+                  : !link.is_active
+                    ? 'border-red-200 bg-red-50/30 dark:border-red-900 dark:bg-red-900/10'
+                    : 'border-[var(--v2-border)]'
+              }`}
             >
               {/* Why this link will not switch on. Named against the link
                   itself, because the gap is in the journey THIS link sells —
@@ -4035,10 +4081,16 @@ export default function WebsiteManagementPage() {
                   full width, because it is about the link rather than a reading
                   of it. The stats lead — left in English, right in Hebrew — and
                   the side is chosen because the document is dir="ltr". */}
-              <div className={`flex items-start gap-4 ${language === 'he' ? '' : 'flex-row-reverse'}`}>
-              <div className="flex-1 min-w-0 flex items-center justify-between">
+              {/* Stacked on a phone, side by side from `sm`.
+                  Squeezing the analytics card in beside the name left both
+                  columns too narrow to read — the link's own address wrapped
+                  mid-word while the figures beside it had nowhere to go. The
+                  direction swap only applies once there are two columns to
+                  swap. */}
+              <div className={`flex flex-col sm:flex-row items-stretch sm:items-start gap-4 ${language === 'he' ? '' : 'sm:flex-row-reverse'}`}>
+              <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex items-center gap-4">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${!link.is_active ? 'opacity-50' : ''}`} style={{ backgroundColor: '#4F6EF720' }}>
                     <Link2 className="w-5 h-5" style={{ color: '#4F6EF7' }} />
                   </div>
                   <div>
@@ -4258,8 +4310,19 @@ export default function WebsiteManagementPage() {
               key={p.id}
               /* `flex` so the stats card below sits at the END of the row —
                  the left in Hebrew — rather than under it. */
-              className={`p-4 bg-[var(--v2-bg)] rounded-lg border border-[var(--v2-border)] flex items-start gap-4 ${
-                /* The stats lead, in whichever direction the reader is going:
+              className={`p-4 bg-[var(--v2-bg)] rounded-lg border flex flex-col sm:flex-row items-stretch sm:items-start gap-4 transition-shadow ${
+                /* A drafted landing page, while the notice is asking for one to
+                   be published. Every draft is marked rather than a guessed
+                   "best" one: the notice says a landing page would do it, and
+                   which one is the owner's call, not ours. */
+                presenceGuidance.state === 'publish_landing' && p.status !== 'live'
+                  ? `border-[#4F6EF7] ring-2 ring-[#4F6EF7]/30 ${prefersReducedMotion ? '' : 'ap-attention '}`
+                  : 'border-[var(--v2-border)] '
+              }${
+                /* Stacked on a phone; the direction swap only applies once
+                   there are two columns to swap.
+
+                   The stats lead, in whichever direction the reader is going:
                    the left in English and Spanish, the right in Hebrew — the
                    side each language starts from.
 
@@ -4268,12 +4331,12 @@ export default function WebsiteManagementPage() {
                    so flex start/end never mirrors on its own. The DOM order is
                    content-then-stats, so reversing is what puts the stats on
                    the left. */
-                language === 'he' ? '' : 'flex-row-reverse'
+                language === 'he' ? '' : 'sm:flex-row-reverse'
               }`}
             >
-              <div className="flex-1 min-w-0 flex items-center justify-between">
+              <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ backgroundColor: '#22C58B20' }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: '#22C58B20' }}>
                     <FileText className="w-5 h-5" style={{ color: '#22C58B' }} />
                   </div>
                   <div>
@@ -4659,6 +4722,112 @@ export default function WebsiteManagementPage() {
             so "I'd like a website after all" had no route. Only on Overview,
             so it does not sit under the Design or Templates tabs which have
             their own content. */}
+        {/*
+          ───────────────────────────────────────────────────────────────────
+          WHAT TO DO HERE, IN PLAIN WORDS.
+
+          Dynamic, because the answer genuinely differs. A business that asked
+          for a website is told to read and publish it; one that declined a
+          website is told its booking link IS its front door and is currently
+          off — and is never told to go and build the site it turned down.
+
+          Only on Overview. The Design, Templates and Settings tabs are places
+          somebody has already navigated to on purpose, and a standing
+          instruction there is nagging rather than guidance.
+
+          Not shown while loading: an empty page briefly looks like a business
+          with nothing, and "you have no website" is a bad first thing to read
+          about a site that is about to appear.
+        */}
+        {/*
+          The attention frame, as a slow breath rather than a flash.
+
+          A static ring is easy to miss on a page of cards that all have
+          borders; a hard blink is an alarm, and nothing here is wrong. Two and
+          a half seconds, eased, never fully off, so it reads as "this one"
+          rather than "something has broken".
+
+          `box-shadow` and not `border`, because the border is already carrying
+          the card's own colour and animating it would make the frame flicker
+          between two identities. The shadow sits outside it and changes
+          nothing about the layout.
+
+          Off entirely for anyone who asked their system for less motion, and
+          the ring stays, so the mark survives without the movement.
+        */}
+        <style jsx global>{`
+          @keyframes ap-attention {
+            0%, 100% { box-shadow: 0 0 0 3px rgba(79, 110, 247, 0.28); }
+            50%      { box-shadow: 0 0 0 6px rgba(79, 110, 247, 0.10); }
+          }
+          .ap-attention { animation: ap-attention 2.5s ease-in-out infinite; }
+          @media (prefers-reduced-motion: reduce) {
+            .ap-attention { animation: none; }
+          }
+        `}</style>
+
+        {!loading && viewMode === 'overview' && (
+          <div
+            className={`p-4 border ${
+              presenceGuidance.urgency === 'required'
+                ? 'bg-[#4F6EF7]/5 border-[#4F6EF7]/30'
+                : 'bg-[var(--v2-surface)] border-[var(--v2-border)]'
+            }`}
+            style={{ borderRadius: 'var(--v2-radius-card)' }}
+            role="status"
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`w-8 h-8 shrink-0 flex items-center justify-center ${
+                  presenceGuidance.urgency === 'required'
+                    ? 'bg-[#4F6EF7]/15 text-[#4F6EF7]'
+                    : 'bg-green-500/15 text-green-600 dark:text-green-400'
+                }`}
+                style={{ borderRadius: 'var(--v2-radius-button)' }}
+              >
+                {presenceGuidance.urgency === 'required'
+                  ? <Target className="w-4 h-4" />
+                  : <Check className="w-4 h-4" />}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[var(--v2-text-primary)]">
+                  {t('presence.guide.title')}
+                </p>
+                <p className="text-sm text-[var(--v2-text-secondary)] mt-1 leading-relaxed">
+                  {t(`presence.guide.${presenceGuidance.state}`)}
+                </p>
+                {/*
+                  Said only where it changes what the owner should do: a
+                  business with no site and no live booking link is reachable
+                  for MESSAGES but not for bookings, and that distinction is
+                  the difference between "nobody can find me" and "nobody can
+                  book me".
+                */}
+                {presenceGuidance.state === 'activate_link' && (
+                  <p className="text-xs text-[var(--v2-text-muted)] mt-2">
+                    {t('presence.guide.contact_note')}
+                  </p>
+                )}
+                {/*
+                  The other way to be findable, where there is one.
+
+                  The notice names the shortest route by number of steps, and a
+                  drafted website is one step — but that step is reading a whole
+                  site before putting it in front of clients. A dormant booking
+                  link is a switch. A business with both was told about the long
+                  route and never told the short one existed, so it read as an
+                  instruction rather than a choice.
+                */}
+                {presenceGuidance.alsoActivateLink && (
+                  <p className="text-sm text-[var(--v2-text-secondary)] mt-2 leading-relaxed">
+                    {t('presence.guide.also_link')}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {!loading && !page && viewMode === 'overview' && (
           <div
             className="text-center py-6 px-5 bg-[var(--v2-surface)] border border-[var(--v2-border)]"
@@ -4746,12 +4915,23 @@ export default function WebsiteManagementPage() {
 
                   {/* Main Website Card */}
                   <div
-                    className="lg:col-span-2 bg-[var(--v2-surface)] border border-[#4F6EF7]/30 p-6"
+                    /* Marked while the notice is asking for this card and no
+                       longer, for the same reason as the link row below. */
+                    className={`lg:col-span-2 bg-[var(--v2-surface)] border p-6 transition-shadow ${
+                      presenceGuidance.state === 'publish_website'
+                        ? `border-[#4F6EF7] ring-2 ring-[#4F6EF7]/30${prefersReducedMotion ? '' : ' ap-attention'}`
+                        : 'border-[#4F6EF7]/30'
+                    }`}
                     style={{ borderRadius: 'var(--v2-radius-card)' }}
                   >
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-[#4F6EF7]/10">
+                    {/* The badge drops under the title on a phone rather than
+                        competing with it for the same line — "Manage your
+                        professional website" and a status pill cannot both fit
+                        across 375px without one of them wrapping to two
+                        characters a line. */}
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-[#4F6EF7]/10 shrink-0">
                           <Globe className="w-5 h-5 text-[#4F6EF7]" />
                         </div>
                         <div>
@@ -4765,7 +4945,7 @@ export default function WebsiteManagementPage() {
                       </div>
                       {/* Status Badge */}
                       <span
-                        className={`px-3 py-1 text-xs font-medium rounded-full ${
+                        className={`self-start shrink-0 px-3 py-1 text-xs font-medium rounded-full ${
                           page.status === 'live'
                             ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
                             : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
@@ -4778,8 +4958,11 @@ export default function WebsiteManagementPage() {
                     {/* URL Display */}
                     {page.subdomain && (
                       <div className="flex items-center gap-3 p-3 bg-[var(--v2-bg)] rounded-lg mb-4">
-                        <Globe className="w-5 h-5 text-[var(--v2-text-muted)]" />
-                        <span className="flex-1 text-[var(--v2-text-secondary)] text-sm font-mono">
+                        <Globe className="w-5 h-5 text-[var(--v2-text-muted)] shrink-0" />
+                        {/* `break-all`, because an address is one unbreakable
+                            token: with nothing to wrap on it pushed the copy
+                            button off the card instead of wrapping. */}
+                        <span className="flex-1 min-w-0 break-all text-[var(--v2-text-secondary)] text-sm font-mono">
                           {page.subdomain}.agentpilot.io
                         </span>
                         <button
@@ -5314,7 +5497,7 @@ export default function WebsiteManagementPage() {
                                         previewClassName="w-full h-40"
                                       />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                       <div>
                                         <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                           {labels.cta_text}
@@ -5386,7 +5569,7 @@ export default function WebsiteManagementPage() {
                                         </p>
                                       )}
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                       <div>
                                         <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                           {labels.cta_text}
@@ -5505,7 +5688,7 @@ export default function WebsiteManagementPage() {
                                         className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                       />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                       <div>
                                         <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                           {labels.cta_text}
@@ -6756,7 +6939,7 @@ export default function WebsiteManagementPage() {
                                         className="w-full px-3 py-2 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-lg text-[var(--v2-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#4F6EF7]"
                                       />
                                     </div>
-                                    <div className="grid grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                       <div>
                                         <label className="block text-sm font-medium text-[var(--v2-text-secondary)] mb-1">
                                           {language === 'he' ? 'סכום' : language === 'es' ? 'Monto' : 'Amount'}
@@ -7880,7 +8063,11 @@ export default function WebsiteManagementPage() {
 
           {/* Modal */}
           <div
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 w-full max-w-lg mx-4 shadow-2xl"
+            /* Capped and scrollable. A centred `fixed` panel taller than the
+               screen overflows in BOTH directions, and the part above the top
+               edge cannot be reached by scrolling anything. `dvh` because a
+               phone's `vh` excludes the address bar. */
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 w-full max-w-lg mx-4 shadow-2xl max-h-[calc(100ddvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             {/* Header */}
@@ -8006,7 +8193,7 @@ export default function WebsiteManagementPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div className="absolute inset-0 bg-black/50" onClick={() => setPublishAddressOpen(false)} />
           <div
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-md mx-4 p-6"
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-md mx-4 p-4 sm:p-6 max-h-[calc(100ddvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             <h3 className="text-lg font-semibold text-[var(--v2-text-primary)]">
@@ -8015,6 +8202,32 @@ export default function WebsiteManagementPage() {
             <p className="mt-1 text-sm text-[var(--v2-text-muted)]">
               {labels.publish_address_subtitle}
             </p>
+
+            {/*
+              ─────────────────────────────────────────────────────────────────
+              THE LAST MOMENT BEFORE IT IS PUBLIC.
+
+              This dialog asks for an address and said nothing about what
+              pressing the button does. The page it publishes was written by a
+              model from an onboarding conversation — its wording, its prices,
+              its photographs — and most owners will not have read it line by
+              line. Publishing is the first time anyone else can.
+
+              Placed here rather than on the page behind it because this is the
+              only screen every publish passes through, and a warning somewhere
+              else is a warning that can be scrolled past.
+            */}
+            <div
+              className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30"
+              style={{ borderRadius: 'var(--v2-radius-card)' }}
+            >
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                {t('presence.review.title')}
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">
+                {t('presence.review.body')}
+              </p>
+            </div>
 
             <div className="mt-4 flex items-center gap-2">
               <input
@@ -8108,7 +8321,7 @@ export default function WebsiteManagementPage() {
             stacking context.
           */}
           <div
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col mx-4"
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-2xl max-h-[calc(100ddvh-2rem)] sm:max-h-[80dvh] overflow-hidden flex flex-col mx-4"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             <div className="shrink-0 bg-[var(--v2-surface)] border-b border-[var(--v2-border)] p-4 flex items-center justify-between">
@@ -8128,7 +8341,9 @@ export default function WebsiteManagementPage() {
                 {language === 'he' ? 'בחר סוג חלק להוספה לאתר שלך' : language === 'es' ? 'Selecciona el tipo de sección para agregar a tu sitio' : 'Choose a section type to add to your website'}
               </p>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {/* One column on a phone: two 150px tiles each holding an icon,
+                  a name and a description is narrower than the words in them. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {[
                   { type: 'hero', icon: Target, label: { en: 'Hero', es: 'Encabezado', he: 'כותרת ראשית' }, desc: { en: 'Main headline section', es: 'Sección principal', he: 'חלק כותרת ראשי' } },
                   { type: 'services', icon: Package, label: { en: 'Services', es: 'Servicios', he: 'שירותים' }, desc: { en: 'List your services', es: 'Lista de servicios', he: 'רשימת השירותים' } },

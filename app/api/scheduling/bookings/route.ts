@@ -15,6 +15,14 @@ import {
   BookingSlotUnavailableError
 } from '@/lib/services/BookingLifecycleService';
 import { z } from 'zod';
+import { supabaseServer } from '@/lib/supabaseServer';
+import {
+  journeyGaps,
+  isBlockingGap,
+  describeJourneyGap,
+  describeJourneyGaps,
+} from '@/lib/business-os/journeyReadiness';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 
 const logger = createLogger({ module: 'SchedulingBookingsAPI' });
 
@@ -142,19 +150,100 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * CAN THIS SERVICE ACTUALLY BE HONOURED?
+     *
+     * The booking dialog asks the same question before it lets Save through,
+     * but a client-side gate is a convenience and this is the authority: the
+     * chat creates bookings through `MutateExecutor` with no gate at all, and
+     * anything holding an auth cookie can POST here directly.
+     *
+     * Per SERVICE, because the answer differs inside one catalogue — a free
+     * intro needs only a time, a paid programme needs the invoice details
+     * behind it. `isBlockingGap` keeps the processor out of it: a booking with
+     * no card processor falls back to an invoice and is perfectly valid.
+     *
+     * Fails OPEN. `journeyGaps` reaches the database three times, and an
+     * outage there must not stop a business recording work it has agreed. The
+     * refusal below only fires on a gap we positively found.
+     * ───────────────────────────────────────────────────────────────────────
+     */
+    try {
+      const { data: gateService } = await supabaseServer
+        .from('scheduling_services')
+        .select('service_name, is_scheduled, collection, price')
+        .eq('id', validated.service_id)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (gateService) {
+        const blocking = (
+          await journeyGaps(user.id, [
+            {
+              name: gateService.service_name,
+              is_scheduled: gateService.is_scheduled,
+              collection: gateService.collection,
+              price: gateService.price,
+            },
+          ])
+        ).filter(isBlockingGap);
+
+        if (blocking.length > 0) {
+          requestLogger.info(
+            { userId: user.id, serviceId: validated.service_id, gaps: blocking.map(g => g.kind) },
+            'Booking refused: the service is not ready to be honoured'
+          );
+          return NextResponse.json(
+            {
+              success: false,
+              error: describeJourneyGaps(blocking),
+              reason: blocking[0].kind,
+              gaps: blocking.map(gap => ({ kind: gap.kind, message: describeJourneyGap(gap) })),
+            },
+            { status: 400 }
+          );
+        }
+      }
+    } catch (gateError) {
+      requestLogger.warn({ err: gateError }, 'Readiness check failed; allowing the booking');
+    }
+
     // 4. Create the booking — conflict checks, calendar, invoice, confirmation.
     //
     // The whole sequence lives in BookingLifecycleService so the chat creates a
     // booking the same way this route does. Doing it here meant an appointment
     // booked any other way skipped the overlap check, the calendar and the
     // client's confirmation.
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * THE BUSINESS'S ZONE, RESOLVED HERE RATHER THAN TRUSTED FROM THE CLIENT.
+     *
+     * `validated.timezone` is whatever the caller sent, and the booking dialog
+     * sent nothing — so bookings were stamped with an empty zone or with the
+     * browser's, and the client's confirmation email, which formats against
+     * that column, printed a time nobody had chosen. One appointment read
+     * 12:00 AM in the drawer, 4:00 AM in the email and 7:00 AM where the work
+     * actually happens.
+     *
+     * Read from `user_preferences`, the same column the public booking page
+     * uses, so a booking taken by the owner and one taken by a client carry the
+     * same clock. A caller may still pass one explicitly — an importer moving
+     * historical bookings needs to — but nothing is inferred from the browser.
+     */
+    const { data: ownerPrefs } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
     const result = await createBooking({
       userId: user.id,
       serviceId: validated.service_id,
       contactId,
       startTime: validated.start_time,
       endTime: validated.end_time,
-      timezone: validated.timezone,
+      timezone: validated.timezone || safeTimezone(ownerPrefs?.timezone),
       notes: validated.notes,
       bookingSource: validated.booking_source,
       createInvoice: validated.create_invoice,

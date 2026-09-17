@@ -176,7 +176,11 @@ export default function AdditionalConfigModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+              {/* `overflow-hidden` with no height cap clipped anything past
+                  the screen with no way to scroll to it. Capped and scrollable
+                  instead — and `dvh`, because a phone's `vh` excludes the
+                  address bar. */}
+              <Dialog.Panel className="w-full max-w-md transform max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl bg-white p-4 sm:p-6 text-left align-middle shadow-xl transition-all">
                 <div className="flex items-center justify-between mb-4">
                   <Dialog.Title className="text-lg font-medium leading-6 text-gray-900 flex items-center gap-2">
                     {isViewMode ? <Eye className="w-5 h-5" /> : <Edit className="w-5 h-5" />}

@@ -93,7 +93,7 @@ interface PaymentInvoiceListProps {
 const INVOICE_GRID = 'grid-cols-[120px_1fr_1fr_85px_85px_95px_80px_208px]';
 
 export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highlightId }: PaymentInvoiceListProps) {
-  const { t, isRTL, language } = useLanguage();
+  const { t, isRTL, language, timeZoneOptions } = useLanguage();
   const [invoices, setInvoices] = useState<PaymentInvoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled'>('all');
@@ -513,11 +513,11 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
   const formatDate = (dateString: string | null) => {
     if (!dateString) return t('payments.not_set');
     const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
-    return new Date(dateString).toLocaleDateString(locale, {
+    return new Date(dateString).toLocaleDateString(locale, timeZoneOptions({
       year: 'numeric',
       month: 'short',
       day: 'numeric',
-    });
+    }));
   };
 
   /**
@@ -1142,7 +1142,10 @@ export function PaymentInvoiceList({ searchQuery = '', onCreateInvoice, highligh
 
           {/* Modal */}
           <div
-            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl w-full max-w-md"
+            /* Capped to the visible screen. A centred fixed panel taller
+               than the viewport overflows in both directions and the part
+               above the top edge cannot be scrolled to. */
+            className="relative bg-[var(--v2-surface)] border border-[var(--v2-border)] shadow-2xl w-full max-w-md mx-4 max-h-[calc(100dvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
             dir={isRTL ? 'rtl' : 'ltr'}
           >

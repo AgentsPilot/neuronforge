@@ -165,7 +165,7 @@ export function TemplatePreviewModal({
       {/* Modal */}
       <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 overflow-y-auto">
         <div
-          className="bg-[var(--v2-surface)] w-full max-w-4xl max-h-[90vh] flex flex-col animate-in slide-in-from-bottom-4 duration-300"
+          className="bg-[var(--v2-surface)] w-full max-w-4xl max-h-[90dvh] flex flex-col animate-in slide-in-from-bottom-4 duration-300"
           style={{
             borderRadius: 'var(--v2-radius-card)',
             border: '1px solid var(--v2-border)',

@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import { createLogger } from '@/lib/logger';
 import type { SessionCardData } from './types';
+import { PaymentPlanTotals } from '@/components/payments/PaymentPlanTotals';
+import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 
 const logger = createLogger({ module: 'PaymentManagementModal' });
 
@@ -49,6 +51,7 @@ export function PaymentManagementModal({
   isRTL = false,
   startInRefundView = false
 }: PaymentManagementModalProps) {
+  const { timeZoneOptions } = useBusinessTimezone();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -63,17 +66,91 @@ export function PaymentManagementModal({
   // Check if refund is possible (payment status is 'paid')
   // Note: refund works with or without payment.id - manual payments can be "refunded" by updating status
   const paymentData = booking?.payment;
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE BOOKING'S STATUS IS NOT THE PLAN'S STATUS.
+   *
+   * `payment.status` is one field for the whole booking. On a plan — a quoted
+   * job billed in stages, or an instalment sale — it flips to `paid` as soon as
+   * the FIRST stage is collected, while the rest are still owed.
+   *
+   * Everything here keyed off that one field, so a plan behaved correctly
+   * exactly once. The first stage opened the details view with "Mark as paid",
+   * as it should. The moment it was paid, the second stage opened the REFUND
+   * form instead, and the mark-paid button vanished with it — an owner with no
+   * payment processor, whose only way to record money is to mark it by hand,
+   * was offered a refund for the payment they were trying to collect.
+   *
+   * The stage list already carries what is actually owed, so the question is
+   * asked of it rather than of the aggregate.
+   */
+  const stages = paymentData?.plan?.stages ?? [];
+  const outstandingStage =
+    stages.find(stage => stage.status !== 'paid' && stage.status !== 'cancelled') ?? null;
+
+  /** Money is still to be collected on this booking. */
+  const hasOutstanding = Boolean(outstandingStage) || Boolean(paymentData?.outstandingInvoiceId);
+
+  /**
+   * The invoice a manual payment would actually settle.
+   *
+   * A stage only has one once it has been BILLED. A milestone waiting on the
+   * owner to say the work happened has no invoice yet, and there is nothing to
+   * mark paid — the next step there is to raise it, not to record money against
+   * it.
+   */
+  const settleableInvoiceId = outstandingStage?.invoiceId ?? paymentData?.outstandingInvoiceId ?? null;
+
+  /**
+   * Whether "Mark as paid" should be offered at all.
+   *
+   * On a PLAN it requires a real invoice to settle. Without that guard the
+   * handler falls through to marking the whole BOOKING paid, which is the bug
+   * this change exists to remove: it would settle every remaining stage at once
+   * while their invoices stayed open.
+   *
+   * A single payment keeps its old behaviour, where the booking's own status is
+   * the whole truth.
+   */
+  const isPlan = Boolean(paymentData?.plan);
+
+  /*
+   * The agreement's own arithmetic, summed from the stages.
+   *
+   * Not `payment.amount`, which is ONE period — the figure that made the old
+   * header ambiguous. A reader needs to see that $1,000 was agreed, $500 has
+   * landed and $500 is still out; any one of those alone invites the wrong
+   * conclusion.
+   *
+   * `plan.totalAmount` is preferred where it exists because it is the agreed
+   * figure, and a stage list can be edited after the fact.
+   */
+  // Derived by `PaymentPlanTotals`, which owns this arithmetic for every surface.
+  /*
+   * Read from `paymentData`, not from the `isPending` below it.
+   *
+   * These declarations sit ABOVE the `if (!booking || !paymentData) return null`
+   * guard, because the hook beneath them must run on every render. `isPending`
+   * is derived after that guard, so naming it here is a temporal dead zone —
+   * `Cannot access 'isPending' before initialization`, thrown at render, which
+   * a type check cannot see because the binding exists and only the ORDER is
+   * wrong.
+   */
+  const canMarkPaid = isPlan ? Boolean(settleableInvoiceId) : paymentData?.status === 'pending';
+
   const canRefund = paymentData?.status === 'paid';
   const [view, setView] = useState<ModalView>('refund');
 
-  // Always start in refund view when modal opens (if payment is paid)
+  /*
+   * Refund is still REACHABLE when something is outstanding — money has changed
+   * hands and giving it back is legitimate — but it is not what the owner came
+   * for. Collecting is. The refund button in the details view covers the rest.
+   */
   useEffect(() => {
-    if (isOpen && canRefund) {
-      setView('refund');
-    } else if (isOpen) {
-      setView('details');
-    }
-  }, [isOpen, canRefund]);
+    if (!isOpen) return;
+    setView(canRefund && !hasOutstanding ? 'refund' : 'details');
+  }, [isOpen, canRefund, hasOutstanding]);
 
   if (!booking || !paymentData) return null;
 
@@ -85,6 +162,19 @@ export function PaymentManagementModal({
 
   const maxRefundable = payment.amount;
   const refundAmount = refundType === 'full' ? maxRefundable : parseFloat(partialAmount) || 0;
+
+  /**
+   * A stage's date, short.
+   *
+   * On the BUSINESS's clock, like every other time this drawer shows: a payment
+   * recorded at 11pm in New York is not the next day because the owner happens
+   * to be reading from Tel Aviv.
+   */
+  const stageDate = (value: string) =>
+    new Date(value).toLocaleDateString(
+      isRTL ? 'he-IL' : 'en-US',
+      timeZoneOptions({ day: 'numeric', month: 'short' })
+    );
 
   const formatCurrency = (amount: number, currency: string) => {
     return new Intl.NumberFormat('en-US', {
@@ -105,16 +195,42 @@ export function PaymentManagementModal({
     onClose();
   };
 
+  /**
+   * Record money that arrived outside a processor.
+   *
+   * ─────────────────────────────────────────────────────────────────────────────
+   * IT USED TO SETTLE THE WHOLE BOOKING, ALWAYS.
+   *
+   * The only thing this did was `PUT payment_status: 'paid'` on the booking.
+   * For a single payment that is right. For a PLAN it is not: a quoted job
+   * billed in two stages would have its booking marked fully paid while the
+   * second invoice sat at `sent` — the money would read as collected and the
+   * invoice would still be chaseable, which is a worse state than the one the
+   * owner was trying to fix.
+   *
+   * A stage has its own invoice, and that invoice is what gets settled. The
+   * booking's aggregate follows from the invoices rather than being asserted
+   * over them.
+   *
+   * `bank_transfer` is the route's own default and the right one here: anything
+   * marked by hand did not come through a processor, so it is not a card.
+   */
   const handleMarkAsPaid = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`/api/scheduling/bookings/${booking.booking.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_status: 'paid' })
-      });
+      const response = settleableInvoiceId
+        ? await fetch(`/api/payments/invoices/${settleableInvoiceId}/mark-paid`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payment_method: 'bank_transfer' })
+          })
+        : await fetch(`/api/scheduling/bookings/${booking.booking.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payment_status: 'paid' })
+          });
 
       const data = await response.json();
 
@@ -291,7 +407,7 @@ export function PaymentManagementModal({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogContent
-        className="w-full sm:max-w-md h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden"
+        className="w-full sm:max-w-md h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-bg)] p-0 overflow-hidden"
         dir={isRTL ? 'rtl' : 'ltr'}
       >
         {/* Sticky Header */}
@@ -349,62 +465,165 @@ export function PaymentManagementModal({
           {/* Details View */}
           {view === 'details' && (
             <>
-              {/* Payment Details Section */}
-              <div className="space-y-4">
-                <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] uppercase tracking-wide">
-                  {t('crm.payment.details') || 'Payment Details'}
-                </h3>
+              {/*
+                ─────────────────────────────────────────────────────────────
+                THE WHOLE AGREEMENT, NOT ONE FIGURE FROM IT.
 
-                <div className="space-y-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 rounded-lg">
-                  {/* Amount */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
-                      <DollarSign className="h-4 w-4" />
-                      {t('crm.payment.amount') || 'Amount'}
-                    </div>
-                    <span className="text-lg font-bold text-[var(--v2-text-primary)]">
-                      {formatCurrency(payment.amount, payment.currency)}
-                    </span>
+                This showed a single Amount and a single Status. On a plan that
+                is genuinely ambiguous: the $500 shown was the deposit ALREADY
+                PAID, while the button underneath collected a different $500
+                still owed. An owner reading "Amount $500 / Status Paid" above
+                "Mark as Paid · $500" cannot tell which payment the dialog is
+                about, because it is about two.
+
+                A plan now shows its stages. Each line says what it is, what it
+                costs and where it stands, so the figures on screen and the
+                action beneath them refer to things the reader can tell apart.
+              */}
+              {isPlan ? (
+                <div className="space-y-3">
+                  {/* The agreement at a glance: what it is worth, what has
+                      landed, what is still out. Shared with the booking journey
+                      and the installment list, so the same money cannot be
+                      described three different ways. */}
+                  <PaymentPlanTotals
+                    stages={stages}
+                    currency={payment.currency}
+                    totalAmount={paymentData?.plan?.totalAmount}
+                    locale={isRTL ? 'he-IL' : 'en-US'}
+                    labels={{
+                      total: t('crm.payment.total') || 'Total',
+                      collected: t('crm.payment.collected') || 'Collected',
+                      outstanding: t('crm.payment.outstanding') || 'Outstanding',
+                    }}
+                  />
+
+                  {/* Every stage, in order. The one that is owed is the only
+                      one drawn with emphasis — it is the one the action acts on. */}
+                  <div className="overflow-hidden rounded-xl border border-[var(--v2-border)]">
+                    {stages.map((stage, index) => {
+                      const settled = stage.status === 'paid';
+                      const isTarget = outstandingStage?.id === stage.id;
+
+                      return (
+                        <div
+                          key={stage.id}
+                          className={`flex items-center justify-between gap-3 px-4 py-3 ${
+                            index > 0 ? 'border-t border-[var(--v2-border)]' : ''
+                          } ${isTarget ? 'bg-[#8B5CF6]/5' : 'bg-[var(--v2-bg)]'}`}
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium text-[var(--v2-text-primary)]">
+                                {stage.label || `${t('crm.payment.installment') || 'Payment'} ${index + 1}`}
+                              </span>
+                              {isTarget && (
+                                <span className="flex-shrink-0 rounded-full bg-[#8B5CF6] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                                  {t('crm.payment.due_now') || 'Due now'}
+                                </span>
+                              )}
+                            </div>
+                            {/*
+                              The status AND its date.
+                              ─────────────────────────────────────────────────
+                              "Paid" with no date is the wrong half of the answer
+                              for anyone reconciling a bank statement, and
+                              "Invoiced" with none does not say whether it is
+                              late. Both dates were on the row already; only the
+                              status was being shown.
+                            */}
+                            <div className="mt-0.5 text-xs text-[var(--v2-text-muted)]">
+                              {settled
+                                ? stage.paidAt
+                                  ? `${t('crm.payment.status_paid')} · ${stageDate(stage.paidAt)}`
+                                  : t('crm.payment.status_paid')
+                                : stage.invoiceId
+                                  ? stage.dueDate
+                                    ? `${t('crm.payment.status_invoiced')} · ${t('crm.payment.due')} ${stageDate(stage.dueDate)}`
+                                    : t('crm.payment.status_invoiced')
+                                  : t('crm.payment.status_not_billed')}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-shrink-0 items-center gap-2">
+                            <span className={`text-sm font-semibold tabular-nums ${
+                              settled ? 'text-[var(--v2-text-muted)] line-through' : 'text-[var(--v2-text-primary)]'
+                            }`}>
+                              {formatCurrency(stage.amount, payment.currency)}
+                            </span>
+                            {settled ? (
+                              <CheckCircle2 className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <Clock className="h-4 w-4 text-amber-500" />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  {/* Status */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
-                      <StatusIcon className="h-4 w-4" />
-                      {t('crm.payment.status') || 'Status'}
-                    </div>
-                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${statusConfig.bg} ${statusConfig.border} border`}>
-                      <StatusIcon className={`h-3.5 w-3.5 ${statusConfig.color}`} />
-                      <span className={`text-sm font-medium ${statusConfig.color}`}>
-                        {statusConfig.label}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Contact */}
                   {contactName && (
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
-                        <User className="h-4 w-4" />
-                        {t('crm.payment.contact') || 'Contact'}
-                      </div>
-                      <span className="text-sm font-medium text-[var(--v2-text-primary)]">
-                        {contactName}
-                      </span>
-                    </div>
+                    <p className="text-xs text-[var(--v2-text-muted)]">
+                      {t('crm.payment.contact') || 'Contact'}: {contactName}
+                    </p>
                   )}
                 </div>
-              </div>
+              ) : (
+                /* A single payment has one amount and one status, and the flat
+                   card says that perfectly well. */
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] uppercase tracking-wide">
+                    {t('crm.payment.details') || 'Payment Details'}
+                  </h3>
 
-              {/* Actions Section */}
-              <div className="space-y-4 pt-4 border-t border-[var(--v2-border)]">
-                <h3 className="text-sm font-semibold text-[var(--v2-text-primary)] uppercase tracking-wide">
-                  {t('crm.payment.actions') || 'Actions'}
-                </h3>
+                  <div className="space-y-3 bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
+                        <DollarSign className="h-4 w-4" />
+                        {t('crm.payment.amount') || 'Amount'}
+                      </div>
+                      <span className="text-lg font-bold text-[var(--v2-text-primary)]">
+                        {formatCurrency(payment.amount, payment.currency)}
+                      </span>
+                    </div>
 
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
+                        <StatusIcon className="h-4 w-4" />
+                        {t('crm.payment.status') || 'Status'}
+                      </div>
+                      <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full ${statusConfig.bg} ${statusConfig.border} border`}>
+                        <StatusIcon className={`h-3.5 w-3.5 ${statusConfig.color}`} />
+                        <span className={`text-sm font-medium ${statusConfig.color}`}>
+                          {statusConfig.label}
+                        </span>
+                      </div>
+                    </div>
+
+                    {contactName && (
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm text-[var(--v2-text-secondary)]">
+                          <User className="h-4 w-4" />
+                          {t('crm.payment.contact') || 'Contact'}
+                        </div>
+                        <span className="text-sm font-medium text-[var(--v2-text-primary)]">
+                          {contactName}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="space-y-3 pt-4 border-t border-[var(--v2-border)]">
                 <div className="space-y-3">
-                  {/* Mark as Paid - only for pending */}
-                  {isPending && (
+                  {/*
+                    COLLECTING. The primary act, and on a plan it names the one
+                    stage it settles — "Mark as Paid" alone does not say which
+                    $500, and the two are collected weeks apart.
+                  */}
+                  {canMarkPaid && (
                     <Button
                       type="button"
                       onClick={handleMarkAsPaid}
@@ -417,22 +636,33 @@ export function PaymentManagementModal({
                       ) : (
                         <Check className="h-4 w-4 me-2" />
                       )}
-                      {t('crm.payment.mark_paid') || 'Mark as Paid'}
+                      {outstandingStage
+                        ? `${t('crm.payment.record_payment') || 'Record payment'} · ${formatCurrency(outstandingStage.amount, payment.currency)}`
+                        : t('crm.payment.mark_paid') || 'Mark as Paid'}
                     </Button>
                   )}
 
-                  {/* Refund - for any paid booking (with or without payment_id) */}
+                  {/*
+                    REFUNDING. Deliberately demoted: a rule above it, quiet
+                    styling, and its own words. It sat as a second full-width
+                    button directly beneath the collect action, in the same
+                    visual weight, so the two read as a pair of equals — one
+                    taking money in and one giving it back, a click apart.
+                  */}
                   {isPaid && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setView('refund')}
-                      disabled={loading}
-                      className="w-full border-orange-500 text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950/20"
-                    >
-                      <RotateCcw className="h-4 w-4 me-2" />
-                      {t('crm.payment.refund') || 'Refund Payment'}
-                    </Button>
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setView('refund')}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1.5 text-sm text-[var(--v2-text-muted)] underline-offset-4 hover:text-orange-600 hover:underline disabled:opacity-50 transition-colors"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        {isPlan
+                          ? t('crm.payment.refund_collected') || 'Refund money already collected'
+                          : t('crm.payment.refund') || 'Refund Payment'}
+                      </button>
+                    </div>
                   )}
 
                   {/* Manual payment note - no actual money refund */}

@@ -112,9 +112,27 @@ describe('[smoke] setup graph — what to do next', () => {
   });
 
   it('moves next along as steps are completed, skipping locked ones', () => {
-    // Payments is a choice — a business can invoice by hand — so the next
-    // compulsory thing after hours is giving clients a way to book.
+    /*
+     * Payments is a choice — a business can invoice by hand — so it is skipped.
+     * What comes next is the PAPERWORK, not the publish.
+     *
+     * This used to expect 'website', and the order it was asserting was the bug:
+     * `pagePublishBlocker` refuses to publish a page for a business with no
+     * working hours and no invoice details, so naming the publish first sent
+     * owners to a screen that turned them away for things nobody had asked them
+     * for yet. Hours, then how you get paid, then open the doors.
+     */
     const graph = resolveSetup(items(['services', 'availability']), CARD);
+    expect(nextStep(graph)?.item.id).toBe('profile');
+  });
+
+  it('only offers the publish once the publish gate would accept it', () => {
+    // The same account with its paperwork done. `website` is what is left, and
+    // now it is a step that can actually succeed.
+    const graph = resolveSetup(
+      items(['services', 'availability', 'profile', 'invoicing']),
+      CARD
+    );
     expect(nextStep(graph)?.item.id).toBe('website');
   });
 

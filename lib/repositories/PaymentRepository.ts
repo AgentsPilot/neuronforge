@@ -131,7 +131,15 @@ export interface StripeConnectAccount {
   details_submitted: boolean;
   onboarding_completed: boolean;
   country: string | null;
-  currency: string;
+  /**
+   * Settlement currency, as WE understand it.
+   *
+   * Nullable like `country` above, and for the same reason: it can be unknown.
+   * Stripe decides the real one from the country; this records our belief, and
+   * both readers already treat it as optional — `|| null` in the status refresh
+   * and `?.toUpperCase()` in the status card. The type simply had not caught up.
+   */
+  currency: string | null;
   business_type: string | null;
   created_at: string;
   updated_at: string;

@@ -57,3 +57,11 @@ tests/effort-estimator/logs/
 
 # dev server log (generated at runtime; was tracked by mistake)
 dev.log
+
+# Snapshots of real business data taken by scripts/business-fixture.ts.
+# Never commit these: they contain a real account's rows.
+.fixtures/
+
+# Throwaway probe scripts. `scripts/tmp-audit.ts` hardcoded a live Stripe
+# account id; nothing named tmp- is meant to outlive the debugging session.
+scripts/tmp-*.ts

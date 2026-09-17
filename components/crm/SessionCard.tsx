@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Calendar, Clock, CreditCard, ClipboardList, ChevronDown, ChevronUp, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 
 interface IntakeResponses {
   template_id: string;
@@ -88,6 +89,8 @@ const PAYMENT_STATUS_STYLES = {
 };
 
 export function SessionCard({ session, locale, isRTL, t, onEdit, onViewIntake, intakeTemplate }: SessionCardProps) {
+  // Same clock as the calendar, the drawer and the client's email.
+  const { timeZoneOptions } = useBusinessTimezone();
   const [showIntake, setShowIntake] = useState(false);
   const { booking, payment } = session;
 
@@ -135,17 +138,17 @@ export function SessionCard({ session, locale, isRTL, t, onEdit, onViewIntake, i
   const isPast = bookingDate < new Date();
 
   // Format date
-  const formattedDate = bookingDate.toLocaleDateString(locale, {
+  const formattedDate = bookingDate.toLocaleDateString(locale, timeZoneOptions({
     weekday: 'short',
     month: 'short',
     day: 'numeric',
-  });
+  }));
 
   // Format time
-  const formattedTime = bookingDate.toLocaleTimeString(locale, {
+  const formattedTime = bookingDate.toLocaleTimeString(locale, timeZoneOptions({
     hour: '2-digit',
     minute: '2-digit',
-  });
+  }));
 
   // Duration in minutes
   const durationMinutes = Math.round((endDate.getTime() - bookingDate.getTime()) / (1000 * 60));

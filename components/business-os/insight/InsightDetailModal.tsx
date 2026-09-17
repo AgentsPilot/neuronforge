@@ -173,7 +173,7 @@ export function InsightDetailModal({
       onClick={onClose}
     >
       <div
-        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-lg max-h-[90vh] overflow-y-auto"
+        className="bg-[var(--v2-surface)] border border-[var(--v2-border)] w-full max-w-lg max-h-[90dvh] overflow-y-auto"
         style={{ borderRadius: '20px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}
         onClick={(e) => e.stopPropagation()}
         dir={isRTL ? 'rtl' : 'ltr'}

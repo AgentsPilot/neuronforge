@@ -69,6 +69,19 @@ export interface InvoiceSettings {
    * business that registers for VAT later would go on issuing receipts.
    */
   invoice_document_type: DocumentType | null;
+  /**
+   * How long the client has to pay, in days, as printed on the document.
+   *
+   * Not nullable here even though the column is: both readers below apply
+   * `?? 30`, so what leaves this repository is always a number and a caller
+   * never has to decide what an absent payment window means.
+   *
+   * It was missing from this interface while the column, the SELECT, the read
+   * mapping and the write all carried it — so every one of the four sites that
+   * touch it was a type error, and the build ignores type errors
+   * (`next.config.js`), which is why it shipped anyway.
+   */
+  invoice_payment_terms_days: number;
 }
 
 /**
@@ -420,6 +433,73 @@ export class BusinessProfileRepository {
       return { data, error: null };
     } catch (error) {
       logger.error({ err: error, userId: profile.user_id }, 'Failed to upsert business profile');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Delete the business, and with it everything the business owned.
+   *
+   * This is not an ordinary delete. Every table a business owns carries a
+   * foreign key to this row with ON DELETE CASCADE
+   * (supabase/migrations/20260916_business_data_ownership.sql), so removing it
+   * removes the CRM, the bookings, the invoices, the website, the insights and
+   * the rest — 50-odd tables — in one statement. There is no undo.
+   *
+   * It exists because replacing a business used to mean upserting over the
+   * profile and leaving everything else in place, so the next business silently
+   * inherited the previous one's pipeline, capabilities and links. The fix is
+   * to make replacement an actual replacement.
+   *
+   * Only call this where erasing a business is the INTENT. The count of what
+   * went is returned so a caller can log it rather than guess.
+   */
+  async deleteByUserId(userId: string): Promise<BusinessProfileRepositoryResult<{ deleted: boolean }>> {
+    try {
+      logger.warn({ userId }, 'Deleting business profile — cascade will remove all business data');
+
+      const { error, count } = await this.supabase
+        .from('business_profiles')
+        .delete({ count: 'exact' })
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      const deleted = (count ?? 0) > 0;
+      logger.warn({ userId, deleted }, 'Business profile deleted');
+      return { data: { deleted }, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to delete business profile');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * How many days this business gives clients to pay, as stored.
+   *
+   * Returns the raw column — `null` when the business has never set one, and
+   * NOT defaulted to 30 here. The caller pairs it with a per-proposal override
+   * (`resolveTermsDays`), and that function distinguishes "no answer" from an
+   * answer of 30; defaulting on the way out would collapse the two and make a
+   * business-level default indistinguishable from a deliberate choice.
+   *
+   * Separate from `getInvoiceSettings` on purpose: that reads seventeen columns
+   * to render a settings form, and a caller that needs one number should not
+   * pay for the rest.
+   */
+  async getPaymentTermsDays(userId: string): Promise<BusinessProfileRepositoryResult<number | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('business_profiles')
+        .select('invoice_payment_terms_days')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+
+      return { data: data?.invoice_payment_terms_days ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read payment terms');
       return { data: null, error: error as Error };
     }
   }
@@ -1082,6 +1162,7 @@ export class BusinessProfileRepository {
           invoice_tax_label,
           invoice_document_type,
           invoice_number_prefix,
+          invoice_payment_terms_days,
           logo_url
         `)
         .eq('user_id', userId)
@@ -1115,6 +1196,18 @@ export class BusinessProfileRepository {
         invoice_tax_label: data.invoice_tax_label ?? null,
         invoice_document_type: (data.invoice_document_type as DocumentType) ?? null,
         invoice_number_prefix: data.invoice_number_prefix || 'INV',
+        /*
+         * Carried here as well as in `getInvoiceSettings`.
+         *
+         * No caller reads it from this method today — the due date is resolved
+         * when the invoice is created and stored on the invoice row, which is
+         * what the PDF and the emailed copy read. It is mapped anyway because
+         * the return type promises a whole `InvoiceSettings`, and a field that
+         * is selected but not copied out is exactly the shape of the bug
+         * described above: the value arrives and is dropped on the way out,
+         * with nothing to show for it.
+         */
+        invoice_payment_terms_days: data.invoice_payment_terms_days ?? 30,
         logo_url: data.logo_url
       };
 

@@ -767,6 +767,14 @@ export function LiveDashboard({
     pipelineStages.length > 0 ? pipelineStages[0].stage_key : 'lead'
   );
   const [tipIndex, setTipIndex] = useState(0);
+  /*
+   * Bumped on every marker press so the tip strip can acknowledge one.
+   *
+   * `tipIndex` cannot serve: with a single tip it is always 0, so pressing the
+   * marker moved nothing and the control looked dead — which is exactly what
+   * was reported.
+   */
+  const [tipPulse, setTipPulse] = useState(0);
 
   // Update selected node when pipeline stages load
   useEffect(() => {
@@ -1053,6 +1061,7 @@ export function LiveDashboard({
         s: reachesByLink
           ? t('tip.setup.link.desc')
           : t('tip.setup.desc'),
+        about: funnelStations.find(station => station.k === 'found')?.lb,
       });
       return result;
     }
@@ -1069,6 +1078,9 @@ export function LiveDashboard({
         n: result.length + 1,
         t: t('tip.followup.title') || 'Follow up',
         s: `${from.count - to.count} ${t('tip.followup.stuckAt') || 'are still at'} ${from.label} ${t('tip.followup.notYet') || 'and haven\'t reached'} ${to.label}. ${t('tip.followup.desc') || 'A note costs nothing.'}`,
+        // A connector has two ends, so naming one of them would be worse than
+        // naming neither — the reader would look for a single station.
+        about: `${from.label} → ${to.label}`,
       });
     }
 
@@ -1079,11 +1091,12 @@ export function LiveDashboard({
         n: result.length + 1,
         t: t('tip.reach.title') || 'Increase reach',
         s: t('tip.reach.desc') || 'Your rate is fine. Your reach isn\'t — consider more channels.',
+        about: funnelStations.find(station => station.k === 'found')?.lb,
       });
     }
 
     return result;
-  }, [hasPublished, reachesByLink, funnelGaps, funnelNodes, stats, t]);
+  }, [hasPublished, reachesByLink, funnelGaps, funnelNodes, funnelStations, stats, t]);
 
   /*
    * `FirstLightMilestones` and the `milestones` memo that fed it are gone.
@@ -1450,12 +1463,23 @@ export function LiveDashboard({
   const handleNodeSelect = useCallback((nodeKey: string) => {
     setSelectedNode(nodeKey);
     const tipForNode = tips.findIndex(tip => tip.at === nodeKey);
-    if (tipForNode >= 0) setTipIndex(tipForNode);
+    if (tipForNode >= 0) {
+      setTipIndex(tipForNode);
+      // Fired even when the strip is already showing this tip. That case is
+      // the whole point: one tip means the index never changes, and a press
+      // with no visible result reads as a broken button.
+      setTipPulse(pulse => pulse + 1);
+    }
   }, [tips]);
 
   const handleTipSelect = useCallback((tip: Tip) => {
     setSelectedNode(tip.at);
-  }, []);
+    // Keep the two in step in BOTH directions: stepping through the tips
+    // highlights the station each one is about, exactly as clicking a marker
+    // moves the stepper.
+    const index = tips.findIndex(candidate => candidate.at === tip.at && candidate.n === tip.n);
+    if (index >= 0) setTipIndex(index);
+  }, [tips]);
 
   return (
     <section
@@ -1513,7 +1537,28 @@ export function LiveDashboard({
                 a distracting icon. It also stops for anyone who has asked the
                 system for reduced motion.
               */}
-              {onToggleAssistant && (
+              {/*
+                ─────────────────────────────────────────────────────────────
+                THE ASSISTANT ARRIVES WHEN THE SETUP IS DONE.
+
+                It appeared from the first login, beside a card still saying
+                "Your page is built, but nobody can find it". Two invitations
+                at once, pulling opposite ways, and the chat is the wrong one:
+                nothing the assistant says publishes a page or switches on a
+                link, so it can only postpone the work the card is naming.
+
+                `isReadyForClients` is the graph's own test, nothing compulsory
+                outstanding, and it is the same one that decides whether the
+                reach journey shows at all. So the two swap: while a station is
+                blocked the owner sees the work, and the moment all three clear
+                the work disappears and the assistant takes its place.
+
+                It covers the empty graph too. `isReadyForClients` answers false
+                when no steps resolved, because an unanswered question is not a
+                finished setup, so a failed stats call hides the button rather
+                than making the account look ready.
+              */}
+              {onToggleAssistant && isReadyForClients(setupGraph) && (
                 <button
                   onClick={onToggleAssistant}
                   aria-expanded={assistantOpen}
@@ -2133,6 +2178,11 @@ export function LiveDashboard({
       {tips.length > 0 && (
         <TipsStepper
           tips={tips}
+          // Clicking a marker on the map points this at the tip it belongs to.
+          // Without it `tipIndex` was set and read by nothing, so the marker
+          // was decoration that looked like a button.
+          activeIndex={tipIndex}
+          pulseKey={tipPulse}
           onSelectTip={handleTipSelect}
         />
       )}
@@ -2145,7 +2195,9 @@ export function LiveDashboard({
           <FunnelMap
             stations={funnelStations}
             gaps={funnelGaps}
-            tips={tips.map(tip => ({ at: tip.at, n: tip.n }))}
+            // The tip's own title travels with it, so the marker can say what
+            // it is about instead of showing a number with no referent.
+            tips={tips.map(tip => ({ at: tip.at, n: tip.n, label: tip.t }))}
             selectedKey={selectedNode}
             onSelectNode={handleNodeSelect}
             ghost={ghost}

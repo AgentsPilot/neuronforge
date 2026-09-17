@@ -18,6 +18,55 @@ import { CATALOG_VERSION } from '@/lib/business-os/catalog';
 
 const USER = '11111111-1111-1111-1111-111111111111';
 
+/*
+ * The action log is stubbed because it is the one collaborator here that goes
+ * to the network.
+ *
+ * `executeForEach` checks the daily quota BEFORE it looks at how much work it
+ * has, so it makes two Supabase round trips even for the case below, which has
+ * no rows to act on at all: `dailyLimit` reads system config and `countToday`
+ * counts the log. Left real those took ~3.5s against Jest's 5s default, so this
+ * file passed when run alone and failed under the parallel load of a full run —
+ * a flake that looks like a broken assertion and is actually a timeout.
+ *
+ * Stubbing it also restores what the header above promises. The assertions in
+ * this file are about what `applyFrozenWrites` REPORTS; the quota is a
+ * different subject with its own tests.
+ *
+ * The values mirror the real path for an empty fan-out: under the limit, log
+ * present, so no branch is taken that the network version would not take.
+ */
+/*
+ * Branding is stubbed for the same reason as the action log: it goes to the
+ * network, and this file is not about branding.
+ *
+ * `applyFrozenWrites` resolves the business's email branding before it looks at
+ * whether there is any work, so it reads `business_profiles` even for the empty
+ * fan-out below. Mocking only the action log left this one behind, and the test
+ * went on timing out intermittently — the first fix measured 514ms and looked
+ * convincing because the unmocked call happened to fail fast that run.
+ *
+ * The shape matches BrandingData's required fields; nothing here asserts on it.
+ */
+jest.mock('@/lib/email/branding', () => ({
+  resolveEmailBranding: async () => ({
+    businessName: 'Test Business',
+    primaryColor: '#000000',
+    secondaryColor: '#ffffff',
+  }),
+}));
+
+jest.mock('../mutate/ActionLog', () => ({
+  ...jest.requireActual('../mutate/ActionLog'),
+  getActionLog: () => ({
+    dailyLimit: async () => 1000,
+    countToday: async () => 0,
+    isAvailable: () => true,
+    claim: async () => ({ proceed: true, entryId: null }),
+    complete: async () => undefined,
+  }),
+}));
+
 /** Records what the store tried to write, without a database. */
 function makeFakeClient() {
   const updates: Array<Record<string, unknown>> = [];

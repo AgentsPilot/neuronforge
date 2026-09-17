@@ -17,7 +17,7 @@ export default function AgentResultModal({
   return (
     <Dialog open={isOpen} onClose={onClose} as={Fragment}>
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-        <Dialog.Panel className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6">
+        <Dialog.Panel className="bg-white rounded-2xl shadow-xl max-w-lg w-full mx-4 p-4 sm:p-6 max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <Dialog.Title className="text-xl font-semibold mb-2 text-gray-800">
             {title}
           </Dialog.Title>

@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { businessProfileRepository, type BusinessProfileInsert } from '@/lib/repositories/BusinessProfileRepository';
+import { onboardingConversationRepository } from '@/lib/repositories/OnboardingConversationRepository';
 import { crmPipelineStagesRepository } from '@/lib/repositories/CRMPipelineStagesRepository';
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { smartLinkRepository } from '@/lib/repositories/SmartLinkRepository';
@@ -316,6 +317,106 @@ export async function POST(request: NextRequest) {
       profileData.online_presence_mode = configuration.online_presence_mode;
       profileData.needs_stripe_connect = configuration.needs_stripe_connect;
       profileData.extracted_data = configuration; // Store full config for debugging
+    }
+
+    /*
+     * Replacing a finished business, or resuming an unfinished one?
+     *
+     * The difference decides whether the previous business's data survives, and
+     * until now nothing asked: the profile was upserted, so a second trip
+     * through onboarding updated the row in place. `ON DELETE CASCADE` only
+     * fires on DELETE, so nothing else was removed — and every step below that
+     * asks "does this user already have one?" then answered yes on behalf of a
+     * business the owner believed they had replaced.
+     *
+     * That is not hypothetical. A rebuilt account kept the deleted business's
+     * four pipeline stages, so its own configured stages were never written,
+     * and kept all six core capabilities, so the new business activated none of
+     * its own. The smart links still addressed the previous `user_code`.
+     *
+     * `onboarding_completed` is the signal because it is the only one that
+     * means "this account already had a finished business". A half-finished
+     * setup is a RESUME — the owner is still building the same thing — and
+     * deleting there would throw away work in progress.
+     *
+     * Both callers of this route are build entry points (the onboarding flow
+     * and the test harness), not settings screens, so a build arriving over a
+     * completed profile is a replacement rather than an edit.
+     */
+    const existingProfile = await businessProfileRepository.findByUserId(user.id);
+
+    /*
+     * A replacement, or a retry of a build that already succeeded?
+     *
+     * Both arrive here with a finished business on the account and they need
+     * opposite treatment. `onboarding_completed` alone cannot tell them apart,
+     * because THIS ROUTE sets it (see profileData above) — so a second call
+     * after a successful one, from a double submit, a client retry, or a
+     * request that timed out after the server had finished, would read its own
+     * work as a previous business and delete everything it had just built.
+     *
+     * The transcript separates them. It is written before the profile and is
+     * deliberately outside the cascade, so it survives a replacement: a chat
+     * newer than the profile means the owner has been back through onboarding
+     * since that profile was made. A profile newer than the chat means the
+     * profile was already built FROM that chat, which is a retry.
+     *
+     * When the answer is not clear — no transcript, or an unreadable one — the
+     * business is kept. Erasing it is irreversible and getting that wrong costs
+     * far more than leaving a stale row for the steps below to skip.
+     */
+    let replacingPreviousBusiness = false;
+
+    if (existingProfile.data?.onboarding_completed) {
+      const transcriptAt = await onboardingConversationRepository.getLatestMessageAt(user.id);
+      const profileAt = existingProfile.data.created_at;
+
+      replacingPreviousBusiness =
+        !!transcriptAt.data && !!profileAt && transcriptAt.data > profileAt;
+
+      if (!replacingPreviousBusiness) {
+        requestLogger.info(
+          {
+            userId: user.id,
+            profileCreatedAt: profileAt,
+            latestMessageAt: transcriptAt.data,
+            transcriptUnreadable: !!transcriptAt.error,
+          },
+          'Building over a finished business with no newer onboarding chat — treating as a retry, keeping the existing data'
+        );
+      }
+    }
+
+    if (replacingPreviousBusiness) {
+      requestLogger.warn(
+        {
+          userId: user.id,
+          previousCompany: existingProfile.data.company_name,
+          previousVertical: existingProfile.data.vertical,
+          previousCreatedAt: existingProfile.data.created_at,
+        },
+        'Rebuilding over a completed business — deleting it so the cascade clears its data'
+      );
+
+      const removed = await businessProfileRepository.deleteByUserId(user.id);
+
+      if (removed.error) {
+        /*
+         * Refuse rather than carry on.
+         *
+         * Building on top of a business that was supposed to be gone is the
+         * exact defect this block exists to prevent, and it is silent: the new
+         * setup looks like it worked and quietly describes the old one.
+         */
+        requestLogger.error(
+          { err: removed.error, userId: user.id },
+          'Could not remove the previous business; refusing to build over it'
+        );
+        return NextResponse.json(
+          { success: false, error: 'Could not clear the previous setup. Nothing was changed.' },
+          { status: 500 }
+        );
+      }
     }
 
     const profileResult = await businessProfileRepository.upsert(profileData);
@@ -795,54 +896,69 @@ export async function POST(request: NextRequest) {
       }
     } else {
       requestLogger.info({ userId: user.id, onlinePresenceMode: configuration?.online_presence_mode }, 'Skipping website generation (not requested)');
+    }
 
-      // Declining a website is a choice about the shape of an online presence,
-      // not about whether clients can reach you. Until now this branch created
-      // nothing at all: the business finished onboarding with services, hours
-      // and prices, and no address on the internet where anyone could act on
-      // them — while the dashboard told it to go and publish a site it had
-      // just said it did not want.
-      //
-      // A booking link needs no site, works in a WhatsApp message, and arrives
-      // already done, so one whole step of setup is finished before they see it.
-      try {
-        const codeResult = await businessProfileRepository.getUserCode(user.id);
+    /*
+     * ─────────────────────────────────────────────────────────────────────────
+     * EVERY ACCOUNT GETS ITS LINKS. A WEBSITE IS NOT AN ALTERNATIVE TO THEM.
+     *
+     * This sat inside the `else` above, so it was strictly either/or: choose a
+     * website and you got a website and NO links; decline one and you got links
+     * instead. Nothing ever decided that — the block was written for the
+     * business with no site and inherited the branch it was written in.
+     *
+     * A booking link is not a substitute for a website. It is the thing that
+     * goes in a WhatsApp message, a bio, an email signature and a printed card,
+     * and a business with a beautiful site hands one out more often, not less.
+     * Making it conditional on NOT having a site left exactly the businesses
+     * most likely to share a link without one.
+     *
+     * Created inactive, as the links always are: the publish gates still decide
+     * when anything goes live, and `getOrCreateDefaultLinks` is idempotent, so
+     * an account that already has them is untouched.
+     */
+    try {
+      const codeResult = await businessProfileRepository.getUserCode(user.id);
 
-        if (codeResult.data) {
-          // No flow pinned to the link.
-          //
-          // It used to carry one derived from the business-wide
-          // `collection_method`, which cannot describe a business selling a
-          // card-paid session and an invoiced programme — one word had to
-          // stand for both, and whichever it picked was wrong for half the
-          // catalogue. The booking page already rebuilds its steps from the
-          // service the client selects, so the link carries no journey and the
-          // service decides.
-          // Named in the language the business is being set up in. The
-          // repository has no language of its own, so the words come from here.
-          const linkNames = lang === 'he'
-            ? { booking: 'לינק להזמנות', contact: 'טופס יצירת קשר' }
-            : lang === 'es'
-              ? { booking: 'Enlace de reserva', contact: 'Formulario de contacto' }
-              : { booking: 'Booking Link', contact: 'Contact Form' };
+      if (codeResult.data) {
+        // No flow pinned to the link.
+        //
+        // It used to carry one derived from the business-wide
+        // `collection_method`, which cannot describe a business selling a
+        // card-paid session and an invoiced programme — one word had to stand
+        // for both, and whichever it picked was wrong for half the catalogue.
+        // The booking page already rebuilds its steps from the service the
+        // client selects, so the link carries no journey and the service
+        // decides.
+        //
+        // Named in the language the business is being set up in. The repository
+        // has no language of its own, so the words come from here.
+        const linkNames = lang === 'he'
+          ? { booking: 'לינק להזמנות', contact: 'טופס יצירת קשר' }
+          : lang === 'es'
+            ? { booking: 'Enlace de reserva', contact: 'Formulario de contacto' }
+            : { booking: 'Booking Link', contact: 'Contact Form' };
 
-          const linksResult = await smartLinkRepository.getOrCreateDefaultLinks(
-            user.id,
-            codeResult.data,
-            { names: linkNames }
-          );
-          requestLogger.info(
-            { userId: user.id, bookingLink: linksResult.data?.booking?.code ?? null },
-            'Created a booking link in place of a website'
-          );
-        } else {
-          requestLogger.warn({ userId: user.id, err: codeResult.error }, 'No user code — skipped booking link');
-        }
-      } catch (err) {
-        // Never fatal: the account is already built, and the dashboard will ask
-        // for a way to book rather than the user losing the whole onboarding.
-        requestLogger.error({ err, userId: user.id }, 'Could not create a booking link');
+        const linksResult = await smartLinkRepository.getOrCreateDefaultLinks(
+          user.id,
+          codeResult.data,
+          { names: linkNames }
+        );
+        requestLogger.info(
+          {
+            userId: user.id,
+            bookingLink: linksResult.data?.booking?.code ?? null,
+            withWebsite: shouldGenerateWebsite,
+          },
+          'Ensured the account has its smart links'
+        );
+      } else {
+        requestLogger.warn({ userId: user.id, err: codeResult.error }, 'No user code — skipped smart links');
       }
+    } catch (err) {
+      // Never fatal: the account is already built, and the dashboard will ask
+      // for a way to book rather than the user losing the whole onboarding.
+      requestLogger.error({ err, userId: user.id }, 'Could not create the smart links');
     }
 
     // 7. Return success

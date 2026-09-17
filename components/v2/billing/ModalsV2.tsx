@@ -101,7 +101,7 @@ export default function ModalsV2({
             className="absolute inset-0 bg-black/30 backdrop-blur-md"
             onClick={closeCheckoutModal}
           />
-          <div className="relative bg-[var(--v2-surface)] backdrop-blur-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+          <div className="relative bg-[var(--v2-surface)] backdrop-blur-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-2xl w-full max-h-[90dvh] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             {/* Close button */}

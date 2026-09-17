@@ -38,7 +38,7 @@ export function ExecutionModal({
       >
         {/* Modal */}
         <div
-          className="bg-[var(--v2-surface)] rounded-xl shadow-2xl max-w-sm w-full border border-[var(--v2-border)] overflow-hidden animate-in zoom-in-95 duration-200"
+          className="bg-[var(--v2-surface)] rounded-xl shadow-2xl max-w-sm w-full mx-4 border border-[var(--v2-border)] max-h-[calc(100dvh-2rem)] overflow-y-auto animate-in zoom-in-95 duration-200"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
