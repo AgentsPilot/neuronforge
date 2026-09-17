@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-09-16
-**Status:** SA approved — changes applied, ready for Dev workplan (SA review 2026-09-16; RC-1 to RC-15 and user decisions applied 2026-09-17)
+**Status:** SA approved — changes applied, ready for Dev workplan (SA review 2026-09-16; RC-1 to RC-15 and user decisions applied 2026-09-17; SA workplan-review to-dos RQ-1 to RQ-4 applied 2026-09-17)
 
 ## Overview
 
@@ -19,7 +19,7 @@ Layer 1 changes nothing else about how calls behave, and it ships no report or U
 
 **Why now:** this is the foundation for every later layer (see the [Layers Roadmap](#layers-roadmap)). The user decided that tracking must be confirmed complete before deciding what to deduct or enforce.
 
-**Evidence:** [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md) (sections A, D, E, I), plus the SA code checks in the [SA Review](#sa-review).
+**Evidence:** [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md) (sections A, D, E, I), plus the SA code checks in the [SA Review](#sa-review) and the SA workplan review ([workplan §13](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_WORKPLAN.md)).
 
 ---
 
@@ -81,6 +81,8 @@ These calls stay as they are in Layer 1 and must not be modified by this work:
 | Story | `app/api/business-os/story/route.ts:183` | Broken: calls a method that doesn't exist, so it always serves its fallback and makes no LLM call. No caller (user decision 2026-09-16) |
 | WebsiteAnalyzer | `lib/services/WebsiteAnalyzer.ts:123` | Dead and broken: reads a response shape the helper doesn't return (user decision 2026-09-16) |
 | Onboarding conversation (4 calls per session) | `lib/services/OnboardingConversationManager.ts:950`, `:995`, `:1097`, `:1397` (live through `app/api/onboarding/chat/route.ts:99`) | Still recorded on the platform account (`system` / `onboarding`). Kept out to hold Layer 1's focus. **Moved to Layer 1.5** (user decision 2026-09-17) |
+| Service generator | `lib/services/ServiceGeneratorService.ts:304` (also `:275`) | Broken: calls a `complete` method the provider doesn't have (and reads `response.choices` at `:314`). It always falls back, so there is no LLM spend and no ledger row. Same class as Story. Retire-vs-fix decided separately (SA workplan review 2026-09-17, RQ-1) |
+| AI image generation | `lib/services/GeneratedImageService.ts:186` | Direct OpenAI image generation (`gpt-image-1`) that bypasses the provider layer, so it isn't recorded in `token_usage` at all. The provider layer has no image method, and images are priced per image, not per token, so the token-based ledger and credits can't represent them correctly. It already has its own daily per-business image cap (`:170-183`). **Moved to Layer 1.5** (user decision 2026-09-17), with the open business question [OQ-7](#open-questions) |
 
 The lead reply recommender **is** in scope for naming and grouping (it already passes the real account). Its known parsing bug is **parked** and must not be fixed or changed as part of Layer 1 (see [Out of Scope](#out-of-scope--future-roadmap)).
 
@@ -121,7 +123,8 @@ Existing `activity_type`, `activity_name` and `category` values stay unchanged. 
 | chat | `analysis` | Writes the analysis sentence for a result |
 | chat | `plan_cache_lookup_embedding` | Embeds the question to look up a cached plan |
 | chat | `plan_cache_store_embedding` | Embeds the question to store a successful plan |
-| chat | `verified_question_embedding` | Embeds the question to match verified questions |
+| chat | `verified_question_embedding` | Embeds the question to match (look up) verified questions |
+| chat | `verified_question_store_embedding` | Embeds a question to store it as a verified question (split from the lookup, as plan cache is; RQ-2) |
 | insights | `insight_content` | Writes title, description and recommendation for one detected issue |
 | insights | `correlated_insight` | Writes the story for a group of connected issues |
 | insights | `health_summary` | Writes the business health executive summary |
@@ -151,7 +154,7 @@ A group is the user action or background job a call belongs to. Every grouping i
 | briefing | One business on one business-local day. Re-narrations the same day, after the facts change, share the group | Deterministic UUID v5 of (account, briefing date), produced by a helper in the catalog module |
 | website | One owner request: a full-site generation, a landing-page generation, one field regeneration, one testimonial enhancement, or one chat website operation. Block-content calls made during a build share that build's group | New UUID at each entry point: `app/api/website/generate-from-profile/route.ts`, `app/api/website/landing-pages/generate/route.ts`, `app/api/website/blocks/[blockId]/regenerate/route.ts`, `app/api/website/enhance-testimonial/route.ts`, `MutateExecutor.ts:806-808` (chat mutate context has no turn id; don't thread it through) |
 | intake | One form-generation request, or one question-inference request | New UUID at `app/api/intake/form/generate/route.ts:47` and `app/api/intake/form/infer-question/route.ts` |
-| onboarding build | The onboarding build may pass **one** UUID to both intake and website generation, since it is one owner action (`app/api/onboarding/build/route.ts:739`, `:777`). Permitted, not required | Minted at the build route |
+| onboarding build | The onboarding build may pass **one** UUID to both intake and website generation, since it is one owner action (`app/api/onboarding/build/route.ts:840` intake, `:881` website). Permitted, not required | Minted at the build route |
 | leads | One incoming enquiry. Not the contact, because one contact can send several enquiries | New UUID minted in `LeadAlertService.ts` before `recommendLeadReply` (`:334`) |
 
 A caller's `x-correlation-id` may be reused as the grouping id **only** when it is a valid UUID (the rule in `chat-v4/route.ts:326-336`). Otherwise the entry point uses `crypto.randomUUID()`. Non-UUID values are dropped by the tracker, so they would silently lose the grouping.
@@ -164,11 +167,12 @@ A caller's `x-correlation-id` may be reused as the grouping id **only** when it 
 
 | # | Call (location) | Before: account | Before: naming | After: account | After: area / call | After: grouping |
 |---|---|---|---|---|---|---|
-| 1 | Chat planner (`bizql/planner/Planner.ts:443`) | Real | business-os-chat / BizQLPlanner | Real (unchanged) | chat / `planner` | Turn (unchanged) |
-| 2 | Chat analysis (`bizql/analyse/AnalysisService.ts:124`) | Real | business-os-chat / BizQLAnalysis | Real (unchanged) | chat / `analysis` | Turn (unchanged) |
+| 1 | Chat planner (`bizql/planner/Planner.ts:444`) | Real | business-os-chat / BizQLPlanner | Real (unchanged) | chat / `planner` | Turn (unchanged) |
+| 2 | Chat analysis (`bizql/analyse/AnalysisService.ts:124`) | Real | business-os-chat / BizQLAnalysis | Real (unchanged) | chat / `analysis` | Turn: **always** the turn id. Previously the request correlation id, which equals the turn id unless a caller sends a non-UUID header; the product UI sends none, so nothing visible changes (RQ-3) |
 | 3a | Plan cache lookup embedding (`bizql/cache/PlanCache.ts:226`) | Real | business-os-chat / EmbeddingService | Real (unchanged) | chat / `plan_cache_lookup_embedding` | Turn (unchanged) |
 | **3b** | **Plan cache store embedding** (`PlanCache.ts:333`, called from `Planner.ts:640-648`) | **System user** | **helpbot** / EmbeddingService | **Real** (the account whose turn produced the plan) | chat / `plan_cache_store_embedding` | **Turn** (`request.turnId`, passed into `store`) |
-| 4 | Verified question embedding (`bizql/planner/VerifiedQuestions.ts:81`) | Real | business-os-chat / EmbeddingService | Real (unchanged) | chat / `verified_question_embedding` | Turn (unchanged) |
+| 4 | Verified question lookup embedding (`bizql/planner/VerifiedQuestions.ts` `similar()` `:136` via `embed()` `:74-89`; called from `Planner.ts:349`) | Real | business-os-chat / EmbeddingService | Real (unchanged) | chat / `verified_question_embedding` | Turn (unchanged) |
+| 4b | Verified question store embedding (`VerifiedQuestions.ts` `remember()` `:197` via `embed()`; called from `chat-v4/route.ts:1592`) | Real | business-os-chat / EmbeddingService | Real (unchanged) | chat / `verified_question_store_embedding` | Turn |
 | **7** | **Insight content** (`insight/repository/InsightRepository.ts:717`) | **'system'** (account available, `:608`) | insight-generation / InsightRepository | **Real** (the business analysed) | insights / `insight_content` | Run (`runId`) |
 | **8** | **Correlated insight** (`InsightRepository.ts:1728`) | **'system'** (account available, `:1659`) | correlated-insight-generation / InsightRepository | **Real** | insights / `correlated_insight` | Run (`runId`) |
 | 9 | Health summary (`InsightRepository.ts:2113`) | Real | health-summary-generation / InsightRepository | Real (unchanged) | insights / `health_summary` | Run (`runId`) |
@@ -194,7 +198,7 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
 2. **FR-2 — Background work belongs to the business.** Calls made by background jobs (the insight cron, lead-triggered work, briefing generation) are attributed to the business whose data is being processed, as for user-triggered calls.
 3. **FR-3 — Missing or invalid account: log, never drop spend.**
    - A missing account is prevented at compile time: the attribution type (FR-26) requires the account.
-   - If the runtime account value is not a valid UUID, the attribution builder emits an **error-level** structured log naming the area, call name and correlation id.
+   - If the runtime account value is not a valid UUID, the attribution builder emits an **error-level** structured log naming the area, call name and the request correlation id (or the grouping id where the call has no request correlation id, e.g. insights, briefing, leads).
    - The call still completes, and user-facing behaviour is unchanged.
    - The ledger row is still written. The existing tracker fallback (`aiAnalytics.ts:120-130`) places it on the system user, where the Layer 1.5 system-user count will catch it.
    - Spend is never dropped.
@@ -203,7 +207,7 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
 ### Naming
 
 4. **FR-4 — Area.** Every in-scope call must be recorded with an area from the fixed list: `chat`, `insights`, `briefing`, `website`, `intake`, `leads`.
-5. **FR-5 — Chat keeps its feature value.** Chat calls must keep the existing feature value `business-os-chat`. The chat daily limit (`ChatBudget.ts:161`), the admin chat usage report (`usageReport.ts:187`, `:358`) and the owner's usage API (`usage/route.ts:49-69`) depend on it.
+5. **FR-5 — Chat keeps its feature value.** Chat calls must keep the existing feature value `business-os-chat`. The chat daily limit (`ChatBudget.ts:161`), the admin chat usage report (`usageReport.ts:187`, `:358`) and the owner's usage API (`usage/route.ts:65-89`) depend on it.
 6. **FR-6 — Call name.** Every in-scope call must be recorded with its call name from the [catalog](#call-names). Call names are stable identifiers: once released they must not be renamed without a migration plan, because Layer 2 uses them as configuration keys.
 7. **FR-7 — Ledger mapping.** For every in-scope call, the area is recorded in `feature` as `business-os-<area>`, the call name in `component`, and the grouping id in `session_id`. Existing `activity_type`, `activity_name` and `category` values are left unchanged, and no schema change is made.
 
@@ -211,6 +215,9 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
 
 8. **FR-8 — Grouping id.** Every in-scope call must be recorded with a grouping id that identifies the user action or background job it belongs to, as defined in the [grouping table](#grouping-ids). All calls made for the same action or job carry the same grouping id. **Every grouping id is a UUID.** A caller's `x-correlation-id` may be reused only when it is a valid UUID; otherwise `crypto.randomUUID()` is used.
 9. **FR-9 — Chat grouping unchanged.** Chat calls must keep using the chat turn id exactly as today. The chat daily limit counts distinct turns from it (`ChatBudget.ts:97`), and the chat usage report groups by it (`usageReport.ts:112-113`).
+   - **Chat analysis (row 2) now uses the turn id in every case** (SA ruling (b), workplan T14, RQ-3). It previously received the request correlation id.
+   - The two are identical whenever the correlation header is absent or a valid UUID. The product UI sends no correlation header, so there is no visible change.
+   - Only a caller sending a non-UUID header was affected: its analysis row used to be recorded with no grouping id.
 10. **FR-10 — Grouping sources.** Grouping ids come from the sources in the [grouping table](#grouping-ids). The entry point that represents the user action or job owns the id; services accept it as a parameter and don't mint their own when a caller supplies one.
 
 ### Shared helpers
@@ -229,7 +236,7 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
 15. **FR-15 — Chat repairs and cache hits.** Chat planner repair attempts must keep the existing marking that tells them apart from first attempts (`Planner.ts:490`), and they are recorded under call name `planner`. The cache-hit row (`turnUsage.ts:95-111`) is not an LLM call and stays unchanged (see [catalog](#call-names)).
 16. **FR-16 — Insights.** Insight content (row 7), correlated insight (row 8) and health summary (row 9) must be attributed to the business being analysed, with the cron `runId` as the grouping id.
     - The group key is (account, grouping id).
-    - `runId` becomes a **required** parameter of the three repository methods that reach these calls. Both existing callers (the cron, and `scripts/verify-insights.ts:98`) already pass it.
+    - `runId` becomes a **required** parameter of every public repository method that reaches these calls: `create` (via its params), `createBatch`, `saveCorrelationResults`, `createCorrelatedInsight` and `createOrUpdateHealthSummary` (SA workplan review 2026-09-17). Both existing callers (the cron, and `scripts/verify-insights.ts:98`, `:114`) already pass it.
 17. **FR-17 — Briefing.** The briefing narration (row 10) must require the account; the `'unknown'` fallback is removed. The grouping id is a deterministic UUID v5 of (account, briefing date), produced by a helper in the catalog module, so re-narrations on the same day share the group.
 18. **FR-18 — Intake.** Intake form generation (row 13) and question inference (row 14) must be attributed to the owner's account, with one new UUID per request, minted at the route. The onboarding build may pass one shared UUID to both intake and website generation.
 19. **FR-19 — Website.**
@@ -241,7 +248,7 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
 
 ### Usage card
 
-21. **FR-21 — Category mapping, same release.** The owner usage API's category mapping must be extracted from `app/api/business-os/usage/route.ts:49-69` into an **exported pure function**, and updated in the same release:
+21. **FR-21 — Category mapping, same release.** The owner usage API's category mapping must be extracted from `app/api/business-os/usage/route.ts:65-89` into an **exported pure function**, and updated in the same release:
     - `chat` ← `business-os-chat` (unchanged)
     - `website` ← `business-os-website`, `landing-page-generation`
     - `insights` ← `business-os-insights`, `health-summary-generation`, `insight-generation`, `correlated-insight-generation`
@@ -292,7 +299,8 @@ Rows in **bold** change attribution. The other rows change naming and grouping o
 - **Security / tenancy:** the account and grouping id come only from server-side sources: the authenticated session (`getUser()`), database records the job iterates, or ids resolved server-side (e.g. the lead owner from the site). **No attribution field may be read from a request body, query string or header.** The one exception is reusing a valid-UUID `x-correlation-id` as a grouping id (FR-8), which never carries the account.
 - **Logging:**
   - Touched files use structured Pino logging.
-  - `lib/ai/providerFactory.ts` (8 `console.*` calls) and `lib/services/EmbeddingService.ts` (16) are touched non-compliant files. The Dev workplan must flag both and propose converting them to Pino per CLAUDE.md.
+  - `lib/ai/providerFactory.ts` (6 `console.*` calls; two further matches are URL strings) and `lib/services/EmbeddingService.ts` (16) are touched non-compliant files.
+  - **The user approved converting both to Pino in this cycle (2026-09-17).** The conversion is part of Layer 1 delivery.
   - `lib/analytics/aiAnalytics.ts` is **not touched** in Layer 1.
   - FR-3 errors include area, call name and correlation id.
 - **Maintainability:** areas, call names and the builder are defined once (FR-26).
@@ -314,21 +322,21 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 - [ ] **AC-5** (FR-1, FR-19) — Full-site generation, field regenerate, testimonial enhance, and each of hero, about, FAQ and features content pass the owner's account id to the provider. Rows 17c–f are proven by this test only.
 - [ ] **AC-6** (FR-11) — Calling the simple completion helper **with** a context passes exactly that context to the provider. Calling it **without** a context produces the unchanged default (`system` / `onboarding` / `simple-complete`).
 - [ ] **AC-7** (FR-12) — Callers of the simple completion helper outside Business OS still work unchanged (existing tests pass, or a test covers the no-context path).
-- [ ] **AC-8** (FR-4, FR-6, FR-7) — For every row in the [Per-Call Before / After](#per-call-before--after) table, a test asserts `feature` = `business-os-<area>` and `component` = the catalog call name. The cache-hit row is not covered (FR-15).
-- [ ] **AC-9** (FR-5, FR-9) — All chat calls (rows 1, 2, 3a, 3b, 4) are recorded with feature `business-os-chat`, and rows 1, 2, 3a and 4 keep the turn id as before.
+- [ ] **AC-8** (FR-4, FR-6, FR-7) — For every row in the [Per-Call Before / After](#per-call-before--after) table (including rows 4 and 4b, which must carry their two distinct call names), a test asserts `feature` = `business-os-<area>` and `component` = the catalog call name. The cache-hit row is not covered (FR-15).
+- [ ] **AC-9** (FR-5, FR-9) — All chat calls (rows 1, 2, 3a, 3b, 4, 4b) are recorded with feature `business-os-chat`. Rows 1, 3a and 4 keep the turn id as before, row 4b carries the turn id, and row 2 (chat analysis) carries the request's turn id in every case, not the request correlation id.
 - [ ] **AC-10** (FR-8, FR-10, FR-16, FR-20) — Grouping:
   - (a) For chat, website and intake, two calls within one action share one grouping id, and a second action gets a different one.
   - (b) For insights, two businesses in one run share `session_id` but differ by account, and a second run has a different `session_id`.
   - (c) For leads, two enquiries from the same contact get different grouping ids.
   - (d) Every grouping id is a valid UUID.
 - [ ] **AC-11** (FR-15) — A planner repair attempt and a cache hit keep their existing markings. The existing chat usage report tests (repair rate, cache hit rate) pass unchanged.
-- [ ] **AC-12** (FR-3) — When the attribution builder receives an account that isn't a valid UUID, it emits an error-level log naming area, call name and correlation id, the call completes, and the provider is called exactly once.
+- [ ] **AC-12** (FR-3) — When the attribution builder receives an account that isn't a valid UUID, it emits an error-level log naming area, call name and the correlation id (or grouping id where none exists), the call completes, and the provider is called exactly once.
 - [ ] **AC-13** (FR-13) — The embedding service's help bot callers and batch path still record their existing attribution (regression test).
 - [ ] **AC-14** (FR-21) — The exported category-mapping function:
   - maps each new `business-os-<area>` value and each legacy value listed in FR-21 to its category;
   - keeps `onboarding` under `help`;
   - puts none of the listed values in `other`;
-  - produces category credits that sum to the total.
+  - produces per-category tokens and call counts that sum exactly to the totals (credits are rounded per category and are not required to sum; rounding is unchanged, FR-23).
 - [ ] **AC-16** (FR-23) — For each in-scope call, existing tests covering model, prompt, response handling and fallback pass unchanged.
 - [ ] **AC-17** (FR-9, FR-23) — Existing chat daily limit tests (`lib/business-os/bizql/__tests__/chat-budget.test.ts`) and usage report tests (`usage-report.test.ts`) pass unchanged.
 - [ ] **AC-22** (FR-26) — The attribution builder maps area → `feature`, call name → `component` and grouping id → `session_id`, and preserves extra fields such as the repair `activity_type`. A test for a call name outside its area fails type checking (compile-time test or `@ts-expect-error`).
@@ -342,7 +350,8 @@ Verification is by QA test evidence and code review. No report or UI ships in La
   - No attribution field is read from a request body, query string or header (except a valid-UUID `x-correlation-id` as grouping id).
   - `aiAnalytics.ts` is unchanged.
   - The chat "rewrite a section field" request shape is unchanged.
-  - The workplan flags `providerFactory.ts` and `EmbeddingService.ts` for Pino conversion.
+  - `providerFactory.ts` and `EmbeddingService.ts` are converted to Pino, with no remaining `console.*` logging calls (user-approved 2026-09-17).
+  - The excluded calls, including `ServiceGeneratorService.ts` and `GeneratedImageService.ts`, are unchanged.
 
 **QA run against a real environment:**
 
@@ -364,7 +373,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 
   `onboarding` is **deliberately excluded** from this query, because the out-of-scope onboarding conversation keeps writing `system` / `onboarding`.
 - [ ] **AC-20** (FR-21, FR-22) — The test business's usage card loads, and its total includes the website, intake, insights, briefing and leads activity from AC-18.
-- [ ] **AC-21** (FR-24, FR-25) — The diff contains no change to the excluded calls (including the onboarding conversation), and no data migration or backfill of existing usage rows.
+- [ ] **AC-21** (FR-24, FR-25) — The diff contains no change to the excluded calls (including the onboarding conversation, the service generator and AI image generation), and no data migration or backfill of existing usage rows.
 
 *AC numbering is kept stable from the SA-reviewed draft. AC-22 to AC-24 were added when the RCs were applied.*
 
@@ -376,6 +385,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 |---|---|
 | Extended usage report (all Business OS areas + system-user count + truncation warning) | Layer 1.5 (user decision 2026-09-16) |
 | Onboarding conversation attribution (4 calls per session, `OnboardingConversationManager.ts`) | Layer 1.5 (user decision 2026-09-17) |
+| AI image generation spend (`GeneratedImageService.ts`): tracking images, and whether and how they count toward credits | Layer 1.5 (user decision 2026-09-17); business question OQ-7 |
 | Model, provider, temperature and on/off configuration per call (JSON per area in DB config) | Layer 2 |
 | "Credits remaining" dropping from background work | Open item OI-1, layer TBD (user decision 2026-09-17) |
 | Cross-tenant read in the website block regenerate route | Open issue OI-2, separate security fix (user decision 2026-09-17) |
@@ -387,7 +397,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 | V6 intent-generation attribution (AgentsPilot agents product) | Separate item (user decision 2026-09-16) |
 | Authentication on `/api/admin/**` routes | Separate security fix, handled outside this effort |
 | LeadReplyRecommender parsing bug (`LeadReplyRecommender.ts:112`) | Parked by user |
-| Excluded legacy or broken calls (chat v2, chat v1, story, WebsiteAnalyzer) | Retire-vs-fix decided separately |
+| Excluded legacy or broken calls (chat v2, chat v1, story, WebsiteAnalyzer, service generator) | Retire-vs-fix decided separately |
 | Modifying `lib/analytics/aiAnalytics.ts` (including its system-user fallback) | Not in Layer 1 |
 | Backfilling historical system-attributed usage | Not planned (user decision 2026-09-16) |
 
@@ -400,7 +410,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 | Layer | Delivers | Depends on |
 |---|---|---|
 | **1 (this)** | Every in-scope Business OS LLM call recorded against the right business, with area, call name and grouping id | — |
-| **1.5** | (a) Admin data report proving completeness: per business × area, for a period, calls, tokens and estimated cost; count of Business OS calls on the system user; warning when results were capped. (b) Onboarding conversation LLM calls (4 per session) attributed to the new owner's account, with area and call names | Layer 1 |
+| **1.5** | (a) Admin data report proving completeness: per business × area, for a period, calls, tokens and estimated cost; count of Business OS calls on the system user; warning when results were capped. (b) Onboarding conversation LLM calls (4 per session) attributed to the new owner's account, with area and call names. (c) AI image generation (`GeneratedImageService.ts`) brought into usage tracking and attributed to the business. Needs an image method in the provider layer and image pricing. Open business question: should AI images count against monthly credits, and how many credits is one image worth (OQ-7)? | Layer 1 |
 | **2** | Model, provider, temperature and on/off per call, stored as one JSON configuration per area, keyed by the Layer 1 call names; no hardcoded models | Layer 1 call names |
 | **Later** | Cost accuracy; per-action audit events; admin UI (usage + model config); credits deduction and enforcement; "credits remaining" treatment of background work (OI-1, layer TBD) | Layers 1–2 |
 
@@ -408,7 +418,7 @@ Verification is by QA test evidence and code review. No report or UI ships in La
 
 ## Known Issues and Open Items
 
-These were found during the investigation and SA review. **None is fixed in Layer 1.**
+These were found during the investigation and SA reviews. **None is fixed in Layer 1.**
 
 | Id | Type | Description (business terms) | Evidence | Status |
 |---|---|---|---|---|
@@ -417,6 +427,8 @@ These were found during the investigation and SA review. **None is fixed in Laye
 | **KI-1** | Known issue | **Chat "rewrite a section field" never works.** When the chat asks to rewrite one field of a website section, it sends the request in the wrong shape, so it fails before any AI call and the owner gets no rewrite. Layer 1 adds attribution there only so the code compiles, and doesn't fix it | `WebsiteSectionService.ts:519-529` sends `field` / `language` / `context`; `regenerateField` reads `fieldToRegenerate` / `targetLanguage` / `businessProfile` (`WebsiteAIContentService.ts:278-284`) | Open — separate fix |
 | **KI-2** | Known issue | **Plan cache store may not run.** Storing a successful chat plan happens after the response is sent. On serverless it may never run, so that small embedding cost may go unrecorded (and the plan isn't cached) | `Planner.ts:640-648` (`void cache.store(...)`) | Pre-existing; not a Layer 1 defect |
 | **KI-3** | Known issue | **Block-content AI generation is switched off.** Hero, about, FAQ and features block generation have no production trigger (all callers pass `useAI = false`). They are attributed in Layer 1 for completeness | `app/api/website/pages/route.ts:172`, `app/api/website/pages/[id]/enrich/route.ts:80`, `lib/services/WebsitePublishService.ts:367` | Informational |
+| **KI-4** | Known issue | **Service generator AI never runs.** The service generator calls a method the AI provider doesn't have, so it always falls back to its non-AI output. There is no AI spend and no usage row. Excluded from Layer 1 | `lib/services/ServiceGeneratorService.ts:275`, `:304`, `:314` | Open — retire-vs-fix decided separately |
+| **KI-5** | Known issue | **AI images aren't tracked as usage.** Generated website images call OpenAI directly, outside the provider layer, so they never appear in the usage ledger or on the usage card. They are limited only by a daily per-business image cap | `lib/services/GeneratedImageService.ts:170-187` | Moved to Layer 1.5 (user decision 2026-09-17) |
 
 ---
 
@@ -427,7 +439,7 @@ All six were resolved by SA on 2026-09-16 (details in the [SA Review](#open-ques
 - [x] **OQ-1 — Ledger fields.** Resolved: `feature` = `business-os-<area>`, `component` = call name, `session_id` = UUID grouping id; `activity_*` / `category` unchanged. Applied in FR-7, FR-8.
 - [x] **OQ-2 — Consumers of renamed values.** Resolved: only the owner usage API mapping is affected. Legacy values map into the new categories (FR-21). The admin drill-down will show old and new values as separate buckets for historical periods (accepted; consolidated view in Layer 1.5).
 - [x] **OQ-3 — Mandatory attribution on the simple helper.** Resolved: optional on the shared helper, required at the Business OS service layer through the typed builder. Applied in FR-11, FR-12, FR-26.
-- [x] **OQ-4 — Insight run id.** Resolved: the cron `runId` exists and reaches all three insight calls; the group key is (account, `runId`); `runId` becomes required on the three repository methods. Applied in FR-16.
+- [x] **OQ-4 — Insight run id.** Resolved: the cron `runId` exists and reaches all three insight calls; the group key is (account, `runId`); `runId` becomes required on the public repository methods on that path. Applied in FR-16.
 - [x] **OQ-5 — Account source for website block content.** Resolved: passed explicitly from each caller, never derived from the profile. Applied in FR-19.
 - [x] **OQ-6 — Plan cache store turn id.** Resolved: `request.turnId` is in scope at the store call; add it to the store arguments. Applied in FR-14; fire-and-forget caveat in AC-18 and KI-2.
 
@@ -435,6 +447,11 @@ User decisions requested by SA (answered 2026-09-17):
 
 - [x] **Onboarding conversation** — not in Layer 1; added to the Excluded calls table and to Layer 1.5.
 - [x] **"Credits remaining" drop from background work** — not solved now; recorded as OI-1, layer TBD.
+- [x] **AI image generation spend in Layer 1?** (SA workplan review ruling (a)) — no; excluded and moved to Layer 1.5.
+
+Deferred to Layer 1.5 (not needed for Layer 1):
+
+- [ ] **OQ-7 — Should AI-generated images count against a business's monthly credits, and how many credits is one image worth?** (raised by: SA / BA | status: open, to be answered when Layer 1.5 is written). Images are priced per image, not per token, so today's rule (credits = tokens ÷ tokens per credit) can't express them. *BA suggestion:* decide together with OI-1, since both are about what an owner's allowance should include.
 
 ---
 
@@ -443,14 +460,15 @@ User decisions requested by SA (answered 2026-09-17):
 | Area | Files |
 |---|---|
 | New | `lib/business-os/llm/callCatalog.ts` (proposed path; FR-26) |
-| Shared helpers | `lib/ai/providerFactory.ts` (`getProviderFactory().complete()`), `lib/services/EmbeddingService.ts`, `lib/ai/providers/baseProvider.ts` (`CallContext`, read only). `lib/analytics/aiAnalytics.ts` is **not modified** |
-| Chat | `lib/business-os/bizql/planner/Planner.ts`, `bizql/analyse/AnalysisService.ts`, `bizql/cache/PlanCache.ts`, `bizql/planner/VerifiedQuestions.ts`; unchanged but relied on: `bizql/telemetry/ChatBudget.ts`, `bizql/telemetry/usageReport.ts`, `bizql/telemetry/turnUsage.ts` |
+| Shared helpers | `lib/ai/providerFactory.ts` (`getProviderFactory().complete()`; Pino conversion), `lib/services/EmbeddingService.ts` (Pino conversion), `lib/ai/providers/baseProvider.ts` (`CallContext`, read only). `lib/analytics/aiAnalytics.ts` is **not modified** |
+| Chat | `lib/business-os/bizql/planner/Planner.ts`, `bizql/analyse/AnalysisService.ts`, `bizql/cache/PlanCache.ts`, `bizql/planner/VerifiedQuestions.ts` (lookup and store), `app/api/business-os/chat-v4/route.ts` (analysis turn id; verified-question store caller); unchanged but relied on: `bizql/telemetry/ChatBudget.ts`, `bizql/telemetry/usageReport.ts`, `bizql/telemetry/turnUsage.ts` |
 | Insights | `lib/business-os/insight/repository/InsightRepository.ts`, `app/api/cron/insight-detect/route.ts`, `scripts/verify-insights.ts` |
 | Briefing | `lib/business-os/briefing/BriefingNarrator.ts`, `BriefingStore.ts`, `app/api/business-os/my-day/route.ts`, `DailyBriefingDispatchService.ts` |
 | Website | `lib/services/WebsiteGenerationService.ts`, `lib/services/WebsiteAIContentService.ts`, `lib/services/WebsiteBlockEnrichmentService.ts`, `lib/services/WebsiteSectionService.ts` (compile-only), `MutateExecutor.ts`, `app/api/website/generate-from-profile/route.ts`, `app/api/website/landing-pages/generate/route.ts`, `app/api/website/blocks/[blockId]/regenerate/route.ts`, `app/api/website/enhance-testimonial/route.ts` |
-| Intake | `lib/services/IntakeGenerationService.ts`, `app/api/intake/form/generate/route.ts`, `app/api/intake/form/infer-question/route.ts`, `app/api/onboarding/build/route.ts` (optional shared UUID) |
+| Intake | `lib/services/IntakeGenerationService.ts`, `app/api/intake/form/generate/route.ts`, `app/api/intake/form/infer-question/route.ts`, `app/api/onboarding/build/route.ts` (`:840` intake, `:881` website; optional shared UUID) |
 | Leads | `lib/business-os/leads/LeadReplyRecommender.ts`, `LeadAlertService.ts` |
-| Usage | `app/api/business-os/usage/route.ts` (mapping extracted to an exported function); `components/business-os/UsageCard.tsx` (no change) |
+| Usage | `app/api/business-os/usage/route.ts` (mapping at `:65-89` extracted to an exported function); `components/business-os/UsageCard.tsx` (no change) |
+| Excluded (must not change) | `AIDataLayerService.ts`, `IntentParser.ts`, `story/route.ts`, `WebsiteAnalyzer.ts`, `OnboardingConversationManager.ts`, `ServiceGeneratorService.ts`, `GeneratedImageService.ts` |
 | DB | `token_usage` (writes only; **no schema change**) |
 
 The Business OS Insights module has its own skill and as-built doc ([BUSINESS_OS_INSIGHTS_MODULE.md](/docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md)). Dev should use it when touching `lib/business-os/insight/**` or the insight crons.
@@ -523,7 +541,7 @@ The search covered `app`, `lib`, `components`, `scripts`, `supabase` (SQL) and a
 **Decisions:**
 - **(a)** `runId` covers every call in a run for all businesses. The grouping key is **(`user_id`, `session_id`)**, not `session_id` alone (RC-2). Don't mint a separate id per business.
 - **(b)** In the cron, the health summary shares the run's id. "A health summary generation is its own group" is dropped, because no other health-summary generator exists. `call_name` already tells the three calls apart.
-- **(c)** `runId` becomes required on those three repository methods (both callers already pass it).
+- **(c)** `runId` becomes required on those three repository methods (both callers already pass it). *Workplan review 2026-09-17: extended to all five public methods on the path, see FR-16.*
 
 #### OQ-5 — Website block content: pass the account explicitly, never derive it from the profile
 
@@ -559,7 +577,7 @@ The attribution is passed down to the private generators (`:352`, `:396`, `:525`
 | **FR-3 vs the `aiAnalytics` fallback** | **Conflict.** A missing or non-UUID user id is rewritten to `SYSTEM_ADMIN_USER_ID` / all-zero before insert (`aiAnalytics.ts:120-130`). So AC-12's "no usage row is written under the system user" could only hold by skipping the ledger write, which would lose real spend. Resolved in RC-3 |
 | **Scope: call sites** | All 18 investigation rows checked. Gaps: onboarding conversation (4 calls, not listed; decision 1). Rows 17c–f are unreachable (RC-5). The chat "rewrite a section field" path is broken (RC-6). Chat-created landing pages use the `full_site` generator (RC-13) |
 | **User-visible beyond the usage card** | (1) The card counts **down** "credits remaining" against the monthly allowance (`UsageCard.tsx:1-24`). Automatic work (insights cron, briefing) now reduces "remaining" with no owner action (decision 2). (2) Plan-cache store embeddings now count toward the chat daily **token** ceiling (`ChatBudget.ts:99-105`), about tens of tokens per stored plan; SA accepts this under RC-4. Nothing else is visible |
-| **Touched files still using `console.*`** | `lib/ai/providerFactory.ts` (8), `lib/services/EmbeddingService.ts` (16). The workplan must flag both and propose Pino conversion per CLAUDE.md. `lib/analytics/aiAnalytics.ts` (16) **must not be touched**: RC-3 removes the need |
+| **Touched files still using `console.*`** | `lib/ai/providerFactory.ts` (8), `lib/services/EmbeddingService.ts` (16). The workplan must flag both and propose Pino conversion per CLAUDE.md. `lib/analytics/aiAnalytics.ts` (16) **must not be touched**: RC-3 removes the need. *(2026-09-17: providerFactory count corrected to 6 real calls; conversion of both approved by the user for this cycle)* |
 | **Out-of-scope security finding (for TL, not Layer 1)** | `app/api/website/blocks/[blockId]/regenerate/route.ts:55-61` says "Verify block ownership" but calls `WebsiteBlockRepository.findById(blockId)`, which has no user scope (`WebsiteBlockRepository.ts:220-226`). Another business's block content is then fed into the prompt (`:73`) and the rewrite is returned. This is a cross-tenant read. Track it as a separate fix with the `tenant-isolation-guard` skill. Layer 1 must not expand to fix it. **→ Recorded as OI-2 (2026-09-17)** |
 
 ### Required changes (BA to apply)
@@ -586,17 +604,17 @@ The attribution is passed down to the private generators (`:352`, `:396`, `:525`
 
    Every in-scope call site uses the builder. No free-typed feature, component or call-name strings at call sites. — **Applied 2026-09-17:** new FR-26, AC-22, AC-24, NFR Maintainability, Integration Points.
 9. **RC-9 (FR-11, FR-12, FR-13):** Record the OQ-3 design. For FR-13, `generateEmbedding`'s existing optional `attribution` gains `callName`. Business OS callers pass it through the builder. The help bot default and the batch path (`EmbeddingService.ts:113-121`, `:172-179`) stay byte-identical. — **Applied 2026-09-17:** FR-11, FR-12, FR-13, AC-6, AC-13.
-10. **RC-10 (NFR Logging):** Name `providerFactory.ts` and `EmbeddingService.ts` as touched non-compliant files the workplan must flag and propose converting. State that `aiAnalytics.ts` is not touched. — **Applied 2026-09-17:** NFR Logging, AC-24.
+10. **RC-10 (NFR Logging):** Name `providerFactory.ts` and `EmbeddingService.ts` as touched non-compliant files the workplan must flag and propose converting. State that `aiAnalytics.ts` is not touched. — **Applied 2026-09-17:** NFR Logging, AC-24. *Conversion of both approved by the user for this cycle (2026-09-17).*
 11. **RC-11 (FR-10 grouping sources):** Add the table below. Rule: the entry point that represents the user action or job owns the id. Services accept it as a parameter and don't mint their own when a caller has one.
 
     | Area | Grouping id source |
     |---|---|
     | chat | Existing `turnId` (unchanged) |
     | insights | `runId` (`insight-detect/route.ts:142`) |
-    | briefing | Deterministic UUID v5 from (`userId`, `facts.day.date`), using the existing `uuid` dependency (`package.json:97`). Re-narrations on the same day, after facts change (`BriefingStore.ts:42-51`), share the group. The helper lives in the catalog module |
+    | briefing | Deterministic UUID v5 from (`userId`, `facts.day.date`), implemented in the catalog module with Node `crypto` (*superseded 2026-09-17: `uuid@13` is ESM-only and does not load under the Jest config; see workplan §13 ruling (c)*). Re-narrations on the same day, after facts change (`BriefingStore.ts:42-51`), share the group. The helper lives in the catalog module |
     | website | New UUID at each entry point: `app/api/website/generate-from-profile/route.ts`, `app/api/website/landing-pages/generate/route.ts`, the regenerate and enhance-testimonial routes, and `MutateExecutor.ts:806-808` (chat has no `turnId` in mutate context; don't thread it through) |
     | intake | New UUID at `app/api/intake/form/generate/route.ts:47` and `app/api/intake/form/infer-question/route.ts` |
-    | onboarding build | `app/api/onboarding/build/route.ts:739`, `:777` may pass **one** UUID to both intake and website generation, since it is one owner action. Permitted, not required |
+    | onboarding build | `app/api/onboarding/build/route.ts:739`, `:777` may pass **one** UUID to both intake and website generation, since it is one owner action. Permitted, not required. *(Lines refreshed 2026-09-17: `:840` intake, `:881` website.)* |
     | leads | New UUID minted in `LeadAlertService.ts` before `recommendLeadReply` (`:334`). **Not** `contactId`: one contact can send several enquiries |
 
     — **Applied 2026-09-17:** catalog "Grouping ids" table, FR-10, FR-17, FR-18, FR-20, AC-10, AC-23.
@@ -626,10 +644,22 @@ The attribution is passed down to the private generators (`:352`, `:396`, `:525`
 
 **Also recorded (user decision 2026-09-17):** the cross-tenant read in the website block regenerate route is an open issue to handle later, out of Layer 1 scope → OI-2.
 
+### Requirement to-dos from the SA workplan review (2026-09-17)
+
+Source: [workplan §13](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_WORKPLAN.md), "Requirement text changes for BA (non-blocking)".
+
+- **RQ-1 — Excluded calls.** `ServiceGeneratorService.ts:304` (broken, no LLM spend) and `GeneratedImageService.ts:186` (direct SDK image generation, not in the ledger). — **Applied 2026-09-17:** Excluded calls table, KI-4, KI-5, AC-21, AC-24, Out of Scope, Integration Points. User decision 2026-09-17: image generation moved to **Layer 1.5** (Layers Roadmap 1.5(c)), with open business question OQ-7.
+- **RQ-2 — Verified question store embedding.** Separate call name for `VerifiedQuestions.remember()`. — **Applied 2026-09-17:** catalog `verified_question_store_embedding` (lookup reworded as "match (look up)"), per-call row 4b, AC-8, AC-9, Integration Points.
+- **RQ-3 — Chat analysis always uses the turn id** (ruling (b), T14). — **Applied 2026-09-17:** FR-9, per-call row 2, AC-9.
+- **RQ-4 (optional) — Stale line references.** — **Applied 2026-09-17:** row 1 `Planner.ts:444`; usage mapping `:65-89` (FR-5, FR-21, Integration Points); onboarding build `:840` / `:881` (grouping table, Integration Points, RC-11 annotation); providerFactory 6 `console.*` calls (NFR Logging, Other checks annotation). SA evidence text elsewhere is kept as reviewed.
+
+**Also recorded:** Pino conversion of `providerFactory.ts` and `EmbeddingService.ts` approved by the user for this cycle (2026-09-17). Applied in NFR Logging and AC-24.
+
 ### Approval
 
 - [x] Requirement approved for Dev workplan, **conditional on** BA applying RC-1 to RC-15 and the user answering decisions 1–2. RC-7 wording depends on decision 1.
 - [x] Conditions met 2026-09-17: RC-1 to RC-15 applied by BA; decisions 1–2 answered by the user. **Ready for Dev workplan.**
+- [x] SA workplan-review requirement to-dos RQ-1 to RQ-4 applied by BA (2026-09-17). Non-blocking for implementation.
 
 ---
 
@@ -640,3 +670,5 @@ The attribution is passed down to the private generators (`:352`, `:396`, `:525`
 | 2026-09-16 | Created (Draft) | Layer 1 requirement written from the investigation and the user's decisions of 2026-09-16: attribution, area/call naming, grouping ids, shared helper fix, usage card mapping; excluded calls; Layer 1.5 report moved out; indicative layers roadmap |
 | 2026-09-16 | SA review — Approved with changes | Added SA Review section: OQ-1–OQ-6 resolved with code evidence (feature=`business-os-<area>`, component=call name, session_id=UUID grouping id; optional context on `complete()`; cron `runId`; explicit website attribution; turnId in scope at plan-cache store); 15 required changes (RC-1–RC-15); 2 user decisions (onboarding conversation exclusion, "credits remaining" drop from automatic work); out-of-scope cross-tenant finding on the block regenerate route; OQs marked resolved; status updated |
 | 2026-09-17 | RCs applied + user decisions — ready for Dev workplan | Applied RC-1–RC-15: ledger mapping and UUID grouping ids (FR-7, FR-8), grouping-source table (FR-10), insights group key and required `runId` (FR-16), FR-3 rewritten (log, never drop spend, `aiAnalytics` untouched), FR-23 carve-out for plan-cache embeddings, rows 17c–f test-only, chat section-field path compile-only (KI-1), AC-19 feature list excluding `onboarding`, new FR-26 call catalog and builder, optional context on `complete()` and embedding call name, Pino flags for `providerFactory.ts`/`EmbeddingService.ts`, briefing UUID v5 and per-enquiry lead UUID, exported category mapping with legacy values, AC-15 as code review. User decisions 2026-09-17: onboarding conversation excluded and added to Layer 1.5; "credits remaining" drop recorded as OI-1 (layer TBD); block regenerate cross-tenant read recorded as OI-2. Added Known Issues and Open Items section, AC-22–AC-24. Status → SA approved, ready for Dev workplan. Final count: 26 FRs, 24 ACs |
+| 2026-09-17 | SA trivial wording alignment (workplan review) | Aligned with SA workplan rulings (workplan §13, 2026-09-17), no scope change: FR-16 and OQ-4(c) `runId` required on all five public insight repository methods (ruling d); FR-3 and AC-12 log names the correlation id, or the grouping id where no request correlation id exists; AC-14 asserts exact token and call sums, not rounded credits (ruling e); NFR Logging `providerFactory.ts` count 8 → 6 real calls; RC-11 `uuid` dependency hint marked superseded by Node `crypto` UUID v5 (ruling c). Pending BA: RQ-1 to RQ-4 in workplan §13 |
+| 2026-09-17 | BA applied SA workplan-review to-dos RQ-1–RQ-4 + user decisions | RQ-1: `ServiceGeneratorService.ts:304` (broken) and `GeneratedImageService.ts:186` (direct image SDK, not in ledger) added to Excluded calls, with KI-4/KI-5; AI image generation moved to Layer 1.5(c) (user decision 2026-09-17) with open business question OQ-7 (do images count against monthly credits, and how many credits per image). RQ-2: new chat call name `verified_question_store_embedding` (row 4b), lookup reworded; AC-8/AC-9 cover rows 4 and 4b. RQ-3: FR-9, row 2 and AC-9 state chat analysis always uses the turn id (T14; no visible change). RQ-4: line refs refreshed (`Planner.ts:444`, usage mapping `:65-89`, onboarding build `:840`/`:881`). User approval 2026-09-17 of Pino conversion for `providerFactory.ts` and `EmbeddingService.ts` recorded in NFR Logging and AC-24. No FR/AC added or removed: 26 FRs, 24 ACs |
