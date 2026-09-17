@@ -6,35 +6,9 @@
 
 import { clientLogger } from '@/lib/logger/client';
 
-/**
- * Parse a boolean feature flag from environment variable
- *
- * @param flag - The environment variable value (may be undefined)
- * @param defaultValue - Default value when flag is not set (defaults to false)
- * @returns {boolean} True if flag is 'true' or '1', false if 'false' or '0', defaultValue otherwise
- */
-function parseBooleanFlag(flag: string | undefined, defaultValue: boolean = false): boolean {
-  // Default to defaultValue if not set, empty, or whitespace-only
-  if (!flag || flag.trim() === '') {
-    return defaultValue;
-  }
-
-  // Normalize the flag value (lowercase and trim)
-  const normalizedFlag = flag.trim().toLowerCase();
-
-  // Explicitly check for false values
-  if (normalizedFlag === 'false' || normalizedFlag === '0') {
-    return false;
-  }
-
-  // Enable if set to 'true' or '1'
-  if (normalizedFlag === 'true' || normalizedFlag === '1') {
-    return true;
-  }
-
-  // Default to defaultValue for any other/unrecognized value
-  return defaultValue;
-}
+// C-33: the parser now lives in a zero-import module so server code can share
+// the same rules without importing this module's dependency graph.
+import { parseBooleanFlag } from '@/lib/utils/parseBooleanFlag';
 
 /**
  * Check if thread-based agent creation flow is enabled
@@ -151,6 +125,34 @@ export function useAIDataLayer(): boolean {
  *
  * @returns {object} Object with all feature flags and their status
  */
+/**
+ * Whether the customer-facing "delete my business" surface should be RENDERED.
+ *
+ * ⚠️ **THIS IS A RENDERING HINT. IT IS NOT AN AUTHORIZATION BOUNDARY.**
+ *
+ * A `NEXT_PUBLIC_*` value is compiled into the client bundle, and the purge
+ * routes are callable directly regardless of what the UI chooses to draw. The
+ * boundary is `authorizePurge()` in `lib/business-os/purge/purgeAuthz.ts`,
+ * which performs its own server-side read (C-22) and, while this flag is off,
+ * restricts the customer-surface Purge to platform admins.
+ *
+ * **Do not "simplify" `authorizePurge` to call this hook.** Doing so would move
+ * a destructive-capability check into the client bundle and reopen on the
+ * customer surface exactly the hole T30 closed on the internal one. That is not
+ * a hypothetical tidy-up: it is the shape this codebase has already shipped
+ * more than once. A test in the purge route suite asserts the server refusal,
+ * so this note is backed by something that fails rather than by good intentions.
+ *
+ * Defaults to **off** (D9): un-gating requires the AC-2/5/10/13/16/24/37
+ * checklist demonstrated on a real account.
+ *
+ * @returns {boolean} True if the customer-facing delete surface should render
+ */
+export function useBusinessDeleteSurface(): boolean {
+  const flag = process.env.NEXT_PUBLIC_ENABLE_BUSINESS_DELETE;
+  return parseBooleanFlag(flag);
+}
+
 export function getFeatureFlags() {
   return {
     useThreadBasedAgentCreation: useThreadBasedAgentCreation(),
@@ -159,5 +161,6 @@ export function getFeatureFlags() {
     useV6ReviewMode: useV6ReviewMode(),
     useMoveToCalibrationAfterCreation: useMoveToCalibrationAfterCreation(),
     useAIDataLayer: useAIDataLayer(),
+    useBusinessDeleteSurface: useBusinessDeleteSurface(),
   };
 }
