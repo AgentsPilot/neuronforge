@@ -8,6 +8,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPageGenerateAPI' });
@@ -86,7 +87,12 @@ export async function POST(request: NextRequest) {
     // Detect language from service description or name
     const contentLanguage = detectLanguage(validated.serviceDescription || validated.serviceName);
 
+    // One usage group per generation request; never taken from the request.
+    const groupId = newBosGroupId();
+
     requestLogger.info({
+      userId: user.id,
+      groupId,
       detectedLanguage: contentLanguage,
       descriptionLength: validated.serviceDescription?.length || 0,
       serviceName: validated.serviceName
@@ -115,11 +121,13 @@ export async function POST(request: NextRequest) {
         temperature: 0.7,
         response_format: { type: 'json_object' }
       },
-      {
+      buildBosCallContext({
         userId: user.id,
-        feature: 'landing-page-generation',
-        component: 'LandingPageGenerateAPI'
-      }
+        area: 'website',
+        callName: 'landing_page',
+        groupId,
+        correlationId,
+      })
     );
 
     // Parse the generated content

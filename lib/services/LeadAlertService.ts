@@ -45,6 +45,7 @@ import { leadResponseRepository } from '@/lib/repositories/LeadResponseRepositor
 import { resolveBookingUrl } from '@/lib/branding/platformSite';
 import { buildLeadReplyCandidates } from '@/lib/business-os/leads/leadReplyCandidates';
 import { recommendLeadReply } from '@/lib/business-os/leads/LeadReplyRecommender';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { automationById } from '@/lib/business-os/gaps/automations';
 import { businessEventService } from '@/lib/business-os/insight/events/BusinessEventService';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
@@ -331,6 +332,10 @@ async function queueLeadReply(
     return;
   }
 
+  // One group per enquiry, not per contact: one person can send several.
+  const groupId = newBosGroupId();
+  log.debug({ groupId }, 'Lead reply recommendation group');
+
   const recommendation = await recommendLeadReply(
     candidates,
     {
@@ -339,7 +344,8 @@ async function queueLeadReply(
       businessType: profile?.sub_vertical || profile?.vertical,
       language: locale,
     },
-    input.ownerId
+    input.ownerId,
+    groupId
   );
 
   if (!recommendation) {

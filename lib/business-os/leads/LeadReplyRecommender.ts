@@ -27,6 +27,7 @@
 import { z } from 'zod';
 import { createLogger } from '@/lib/logger';
 import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory';
+import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 import { systemConfigRepository } from '@/lib/repositories/SystemConfigRepository';
 import {
   candidatesForPrompt,
@@ -74,7 +75,9 @@ export interface RecommendInput {
 export async function recommendLeadReply(
   candidates: LeadReplyCandidate[],
   input: RecommendInput,
-  userId: string
+  userId: string,
+  /** One id per incoming enquiry, minted by the caller. */
+  groupId: string
 ): Promise<LeadReplyRecommendation | null> {
   const fallback = (why: string): LeadReplyRecommendation | null => {
     const candidate = pickFallbackCandidate(candidates, input);
@@ -106,7 +109,7 @@ export async function recommendLeadReply(
           { role: 'user', content: userPrompt(candidates, input) },
         ],
       },
-      { userId, feature: 'lead-reply', component: 'LeadReplyRecommender' }
+      buildBosCallContext({ userId, area: 'leads', callName: 'reply_recommendation', groupId })
     );
 
     const raw = response?.content;

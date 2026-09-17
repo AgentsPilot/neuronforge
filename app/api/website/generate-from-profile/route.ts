@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { WebsiteGenerationService } from '@/lib/services/WebsiteGenerationService';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteGenerationAPI' });
@@ -71,11 +72,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    requestLogger.info({ userId, pageId, templateId }, 'Starting website generation');
+    // One usage group per generation request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId, pageId, templateId, groupId }, 'Starting website generation');
 
-    // 4. Generate website
+    // 4. Generate website for the signed-in account (checked equal above)
     const generationService = new WebsiteGenerationService();
-    const result = await generationService.generateWebsite(userId, { pageId, templateId });
+    const result = await generationService.generateWebsite(user.id, { groupId, pageId, templateId });
 
     if (!result.success) {
       requestLogger.error({ userId, error: result.error }, 'Website generation failed');

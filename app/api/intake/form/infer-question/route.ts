@@ -28,6 +28,7 @@ import { randomUUID } from 'crypto';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext, newBosGroupId, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { INTAKE_QUESTION_TYPES, isIntakeQuestionType } from '@/lib/business-os/intake/types';
 import { stripForbiddenQuestions } from '@/lib/business-os/intake/verticalKnowledge';
@@ -62,7 +63,11 @@ export async function POST(request: NextRequest) {
     const { data: profile } = await businessProfileRepository.findByUserId(user.id);
     const language = profile?.language || 'en';
 
-    const inferred = await infer(text, language);
+    // One group per inference request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, groupId }, 'Inferring intake question');
+
+    const inferred = await infer(text, language, { userId: user.id, groupId });
 
     /*
      * The same filter the generator runs. An owner typing "ask about their
@@ -104,7 +109,8 @@ export async function POST(request: NextRequest) {
  */
 async function infer(
   text: string,
-  language: string
+  language: string,
+  owner: BosLlmOwner
 ): Promise<{
   id: string;
   label: string;
@@ -151,7 +157,12 @@ Only mark it required if the business plainly cannot proceed without it.
       ],
       response_format: { type: 'json_object' },
       temperature: 0.2,
-    });
+    }, buildBosCallContext({
+      userId: owner.userId,
+      area: 'intake',
+      callName: 'question_inference',
+      groupId: owner.groupId,
+    }));
 
     const parsed = InferredSchema.safeParse(JSON.parse(response.content));
     if (!parsed.success) return fallback;

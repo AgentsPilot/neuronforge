@@ -1326,7 +1326,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
           userId: user.id,
           steps: readSteps,
           results,
-          turnId: correlationId,
+          turnId,
         })
       : null;
 

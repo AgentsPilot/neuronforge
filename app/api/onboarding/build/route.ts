@@ -21,6 +21,7 @@ import { resolveBusinessCurrency } from '@/lib/business-os/currency';
 import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository';
 import { capabilityActivationService } from '@/lib/services/CapabilityActivationService';
 import { capabilityConditionEvaluator } from '@/lib/services/CapabilityConditionEvaluator';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'OnboardingBuildAPI' });
@@ -818,6 +819,13 @@ export async function POST(request: NextRequest) {
     }
 
     /*
+     * One owner action, one usage group: the intake draft and the website
+     * generated below are both "build my business", so they share an id.
+     */
+    const buildGroupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, groupId: buildGroupId }, 'Onboarding build usage group');
+
+    /*
      * Write their intake form.
      *
      * AFTER the services exist, because the questions are built from what this
@@ -837,7 +845,9 @@ export async function POST(request: NextRequest) {
     if (configuration?.needs_intake) {
       try {
         const { intakeGenerationService } = await import('@/lib/services/IntakeGenerationService');
-        const intake = await intakeGenerationService.generateIntakeForm(user.id);
+        const intake = await intakeGenerationService.generateIntakeForm(user.id, {
+          groupId: buildGroupId,
+        });
 
         requestLogger.info(
           {
@@ -878,7 +888,7 @@ export async function POST(request: NextRequest) {
         const websiteService = new WebsiteGenerationService();
 
         // AWAIT the website generation to ensure it completes before returning
-        const result = await websiteService.generateWebsite(user.id);
+        const result = await websiteService.generateWebsite(user.id, { groupId: buildGroupId });
 
         if (result.success) {
           websiteGenerated = true;

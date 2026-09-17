@@ -32,6 +32,7 @@ import type { NextRequest } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 
 const logger = createLogger({ service: 'WebsiteSectionService' });
 const auditTrail = AuditTrailService.getInstance();
@@ -515,6 +516,11 @@ export async function regenerateSectionField(params: {
       .eq('user_id', userId)
       .maybeSingle();
 
+    // Attribution argument only. The request shape below is known to be wrong
+    // (KI-1) and is deliberately not changed here.
+    const groupId = newBosGroupId();
+    logger.info({ userId, blockId, groupId }, 'Section field rewrite usage group');
+
     const service = new WebsiteAIContentService();
     const generated = await service.regenerateField({
       field,
@@ -526,7 +532,7 @@ export async function regenerateSectionField(params: {
         description: profile?.description ?? undefined,
         existingContent: content,
       },
-    } as Parameters<typeof service.regenerateField>[0]);
+    } as Parameters<typeof service.regenerateField>[0], { userId, groupId });
 
     if (typeof generated !== 'string' || !generated.trim()) {
       return { data: null, error: new Error('The rewrite came back empty; nothing was changed.') };

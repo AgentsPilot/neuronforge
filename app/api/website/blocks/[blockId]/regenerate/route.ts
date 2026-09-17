@@ -9,6 +9,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteAIContentService, type WebsiteLanguage } from '@/lib/services/WebsiteAIContentService';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'RegenerateFieldAPI' });
@@ -63,6 +64,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       .eq('user_id', user.id)
       .single();
 
+    // One usage group per regeneration request; never taken from the request.
+    const groupId = newBosGroupId();
+    requestLogger.info({ userId: user.id, blockId, groupId }, 'Regeneration usage group');
+
     // Use AI service to regenerate the field
     const aiService = new WebsiteAIContentService();
     const regeneratedValue = await aiService.regenerateField({
@@ -71,7 +76,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       businessProfile: profile || undefined,
       existingContent: validated.context?.existingContent || blockResult.data.content,
       fieldToRegenerate: validated.field
-    });
+    }, { userId: user.id, groupId });
 
     requestLogger.info(
       { userId: user.id, blockId, field: validated.field },

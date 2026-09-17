@@ -23,6 +23,7 @@
 
 import { randomUUID } from 'crypto';
 import { createLogger } from '@/lib/logger';
+import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
@@ -805,7 +806,13 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
       if (pageType === 'landing') {
         const { WebsiteGenerationService } = await import('@/lib/services/WebsiteGenerationService');
 
+        // One usage group per chat website operation. The mutate context
+        // carries no turn id, and threading one through is out of scope.
+        const groupId = newBosGroupId();
+        logger.info({ userId: ctx.userId, pageId: created.data.id, groupId }, 'Generating landing page content');
+
         const generated = await new WebsiteGenerationService().generateWebsite(ctx.userId, {
+          groupId,
           pageId: created.data.id,
           ...(templateId ? { templateId } : {}),
           focus: {

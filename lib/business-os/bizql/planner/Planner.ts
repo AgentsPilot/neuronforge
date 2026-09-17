@@ -23,6 +23,7 @@
 
 import { createLogger } from '@/lib/logger';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 import { SystemConfigService } from '@/lib/services/SystemConfigService';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
@@ -478,17 +479,21 @@ export class BizQLPlanner {
             // instead of expensively — this is the belt to the penalty's braces.
             max_tokens: MAX_PLAN_TOKENS,
           },
-          {
-            userId: request.userId,
-            feature: 'business-os-chat',
-            component: 'BizQLPlanner',
-            sessionId: request.turnId,
-            // A repair is a SECOND full-prompt call for one question. Tagged so
-            // its overhead is visible: repairs were the dominant cost driver at
-            // several points during development and looked identical to first
-            // attempts in the data.
-            activity_type: repairAttempted ? 'repair' : 'plan',
-          }
+          buildBosCallContext(
+            {
+              userId: request.userId,
+              area: 'chat',
+              callName: 'planner',
+              groupId: request.turnId,
+            },
+            {
+              // A repair is a SECOND full-prompt call for one question. Tagged so
+              // its overhead is visible: repairs were the dominant cost driver at
+              // several points during development and looked identical to first
+              // attempts in the data.
+              activity_type: repairAttempted ? 'repair' : 'plan',
+            }
+          )
         );
 
         promptTokens = response.usage?.prompt_tokens ?? promptTokens;
@@ -643,6 +648,8 @@ export class BizQLPlanner {
               literals: cached.literals,
               language: request.language ?? 'en',
               userId: request.userId,
+              // The store embedding belongs to the turn that produced the plan.
+              turnId: request.turnId,
               plan,
               model,
             })
