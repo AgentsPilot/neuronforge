@@ -7,7 +7,7 @@
 **Layer 1 context:** [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_WORKPLAN.md) (§6.4 QA SQL, §12.2 T46 gate, §13 SA, §14 QA)
 **Branch:** `feature/business-os-llm-usage-layer1-1` (worktree `neuronforge-llm-attribution`, off `main` @ `56fb7dbd`, Layer 1 PR #47 merged)
 **Date:** 2026-09-17
-**Status:** Planning. Awaiting SA workplan review (§12). No code written. RM commits after SA code review, QA and user approval.
+**Status:** QA complete — **PASS WITH ISSUES** (§13, 2026-09-17): no bugs; T39 browser smoke handed off to TL. Previously: SA Code Approved (§12), CR-1 applied. Not committed; RM commits after the T39 smoke and user approval.
 
 ## Overview
 
@@ -1007,81 +1007,166 @@ Each step ends with a runnable, green state and can be reviewed on its own.
 ## 10. Task Checklist
 
 **S0: Pre-flight**
-- [ ] T0: Confirm branch `feature/business-os-llm-usage-layer1-1` @ `56fb7dbd`. Record `--list` (96 ✔ measured), the gate (30 errors, 0 new ✔ measured), the baseline blob `8cff995b…` ✔, and Jest counts for the §5.5 paths.
+- [x] T0: ✅ Confirm branch `feature/business-os-llm-usage-layer1-1` @ `56fb7dbd`. Record `--list` (96 ✔ measured), the gate (30 errors, 0 new ✔ measured), the baseline blob `8cff995b…` ✔, and Jest counts for the §5.5 paths.
 
 **S1: Usage card characterization**
-- [ ] T1: `app/api/business-os/usage/__tests__/route.test.ts` against the current route (DB path, fallback, BIGINT, tokens-per-credit cases, allowance, 401, 400, `summedBy`); green before any refactor.
+- [x] T1: ✅ `app/api/business-os/usage/__tests__/route.test.ts` against the current route (DB path, fallback, BIGINT, tokens-per-credit cases, allowance, 401, 400, `summedBy`); green before any refactor.
 
 **S2: Catalog constants**
-- [ ] T2: Export `isPlatformAccount` (case-insensitive); add `platformAccountIds()`.
-- [ ] T3: `BOS_LEGACY_FEATURES`, `BOS_LEGACY_FEATURES_FLAT`, `BOS_FEATURE_FILTER_PREFIX`, `bosRowFilter()`, `isBusinessOsFeature()`.
-- [ ] T4: `BOS_KNOWN_NON_CATALOG_COMPONENTS`, `BosRowFlagExemption`, `BOS_LEGACY_HELPER_LABEL`.
-- [ ] T5: Extend `callCatalog.test.ts` (§5.1).
-- [ ] T6: `usageCategories.ts` builds Business OS categories from the constants; new `usageCategories.catalog.test.ts`; the existing test runs unedited.
-- [ ] T7: `turnUsage.ts` uses `BOS_KNOWN_NON_CATALOG_COMPONENTS.BizQLPlanCache.component`; existing bizql tests green.
-- [ ] T8: `providerFactory.complete.test.ts` asserts the default equals `BOS_LEGACY_HELPER_LABEL`.
+- [x] T2: ✅ Export `isPlatformAccount` (case-insensitive); add `platformAccountIds()`.
+- [x] T3: ✅ `BOS_LEGACY_FEATURES`, `BOS_LEGACY_FEATURES_FLAT`, `BOS_FEATURE_FILTER_PREFIX`, `bosRowFilter()`, `isBusinessOsFeature()`.
+- [x] T4: ✅ `BOS_KNOWN_NON_CATALOG_COMPONENTS`, `BosRowFlagExemption`, `BOS_LEGACY_HELPER_LABEL`.
+- [x] T5: ✅ Extend `callCatalog.test.ts` (§5.1).
+- [x] T6: ✅ `usageCategories.ts` builds Business OS categories from the constants; new `usageCategories.catalog.test.ts`; the existing test runs unedited.
+- [x] T7: ✅ `turnUsage.ts` uses `BOS_KNOWN_NON_CATALOG_COMPONENTS.BizQLPlanCache.component`; existing bizql tests green.
+- [x] T8: ✅ `providerFactory.complete.test.ts` asserts the default equals `BOS_LEGACY_HELPER_LABEL`.
 
 **S3: Repository**
-- [ ] T9: `lib/repositories/TokenUsageRepository.ts` (§3.5), with the documented-bypass header comment and no `lib/business-os` import.
-- [ ] T10: `lib/repositories/__tests__/TokenUsageRepository.test.ts` (§5.1).
-- [ ] T11: Export class, singleton and types from `lib/repositories/index.ts`; confirm with `--list` that neither file is in scope.
+- [x] T9: ✅ `lib/repositories/TokenUsageRepository.ts` (§3.5), with the documented-bypass header comment and no `lib/business-os` import.
+- [x] T10: ✅ `lib/repositories/__tests__/TokenUsageRepository.test.ts` (§5.1).
+- [x] T11: ✅ Export class, singleton and types from `lib/repositories/index.ts`; confirm with `--list` that neither file is in scope.
 
 **S4: Usage summary extraction**
-- [ ] T12: `lib/business-os/usage/usageSummary.ts` (§3.9); `ConfigRepository(supabaseServer)`.
-- [ ] T13: `app/api/business-os/usage/route.ts` calls the module; `readAllowanceCredits` stays; T1 test green **unedited**.
-- [ ] T14: `lib/business-os/usage/__tests__/usageSummary.test.ts` (§5.1, + Q-11 type case).
+- [x] T12: ✅ `lib/business-os/usage/usageSummary.ts` (§3.9); `ConfigRepository(supabaseServer)`.
+- [x] T13: ✅ `app/api/business-os/usage/route.ts` calls the module; `readAllowanceCredits` stays; T1 test green **unedited**.
+- [x] T14: ✅ `lib/business-os/usage/__tests__/usageSummary.test.ts` (§5.1, + Q-11 type case).
 
 **S5: Business profile search**
-- [ ] T15: `BusinessProfileRepository.searchForAdmin` + `escapeIlikePattern`, with the bypass comment.
-- [ ] T16: `BusinessProfileRepository.searchForAdmin.test.ts`.
+- [x] T15: ✅ `BusinessProfileRepository.searchForAdmin` + `escapeIlikePattern`, with the bypass comment.
+- [x] T16: ✅ `BusinessProfileRepository.searchForAdmin.test.ts`.
 
 **S6: Pure check logic**
-- [ ] T17: `lib/business-os/usage/llmUsageReportTypes.ts` (types only).
-- [ ] T18: `LLM_USAGE_LIMITS`, `buildReportQuerySchema`, `BusinessListQuerySchema`, `resolveReportWindow`.
-- [ ] T19: `classifyCallRow`, `evaluateCallsCheck`, `computeAreaTotals`.
-- [ ] T20: `evaluatePlatformAccountCheck`, `evaluateLegacyLabelsCheck`.
-- [ ] T21: `evaluateGroupsCheck`.
-- [ ] T22: `evaluateUsageCardCheck`.
-- [ ] T23: `lib/business-os/usage/__tests__/llmUsageVerification.test.ts` (§5.2).
+- [x] T17: ✅ `lib/business-os/usage/llmUsageReportTypes.ts` (types only).
+- [x] T18: ✅ `LLM_USAGE_LIMITS`, `buildReportQuerySchema`, `BusinessListQuerySchema`, `resolveReportWindow`.
+- [x] T19: ✅ `classifyCallRow`, `evaluateCallsCheck`, `computeAreaTotals`.
+- [x] T20: ✅ `evaluatePlatformAccountCheck`, `evaluateLegacyLabelsCheck`.
+- [x] T21: ✅ `evaluateGroupsCheck`.
+- [x] T22: ✅ `evaluateUsageCardCheck`.
+- [x] T23: ✅ `lib/business-os/usage/__tests__/llmUsageVerification.test.ts` (§5.2).
 
 **S7: Orchestrator**
-- [ ] T24: `lib/business-os/usage/llmUsageReport.ts` (§3.8; `Promise.allSettled`, safe errors, one `platformAccountIds()` read).
-- [ ] T25: `lib/business-os/usage/__tests__/llmUsageReport.test.ts` (§5.3).
+- [x] T24: ✅ `lib/business-os/usage/llmUsageReport.ts` (§3.8; `Promise.allSettled`, safe errors, one `platformAccountIds()` read).
+- [x] T25: ✅ `lib/business-os/usage/__tests__/llmUsageReport.test.ts` (§5.3).
 
 **S8: Business list route**
-- [ ] T26: `app/api/admin/business-os/llm-usage/businesses/route.ts` (§3.7).
-- [ ] T27: Its route test (§5.3).
+- [x] T26: ✅ `app/api/admin/business-os/llm-usage/businesses/route.ts` (§3.7).
+- [x] T27: ✅ Its route test (§5.3).
 
 **S9: Report route**
-- [ ] T28: `app/api/admin/business-os/llm-usage/route.ts` (§3.7; log level by trigger; no names in logs).
-- [ ] T29: Its route test (§5.3).
+- [x] T28: ✅ `app/api/admin/business-os/llm-usage/route.ts` (§3.7; log level by trigger; no names in logs).
+- [x] T29: ✅ Its route test (§5.3).
 
 **S10: Refresh logic**
-- [ ] T30: `components/test-business-os/llm-usage/refreshMachine.ts` + `__tests__/refreshMachine.test.ts`.
-- [ ] T31: `hooks/useLlmUsageAutoRefresh.ts` + `hooks/useLlmUsageAutoRefresh.test.tsx`.
+- [x] T30: ✅ `hooks/llmUsageRefreshMachine.ts` + `hooks/llmUsageRefreshMachine.test.ts` (moved to `hooks/`, §11.4 D1).
+- [x] T31: ✅ `hooks/useLlmUsageAutoRefresh.ts` + `hooks/useLlmUsageAutoRefresh.test.tsx`.
 
 **S11: UI**
-- [ ] T32: `LlmUsageVerification.tsx`, `BusinessPicker.tsx`, `WindowControls.tsx`, `StatusSummary.tsx`, `StatusBadge.tsx`, `CheckPanels.tsx`, `formatters.ts` (type-only server imports).
-- [ ] T33: `__tests__/LlmUsageVerification.test.tsx` (§5.4).
-- [ ] T34: `__tests__/boundaries.static.test.ts` (§5.4).
+- [x] T32: ✅ `LlmUsageVerification.tsx`, `BusinessPicker.tsx`, `WindowControls.tsx`, `StatusSummary.tsx`, `StatusBadge.tsx`, `CheckPanels.tsx`, `formatters.ts` (type-only server imports).
+- [x] T33: ✅ `__tests__/LlmUsageVerification.test.tsx` (§5.4).
+- [x] T34: ✅ `__tests__/boundaries.static.test.ts` (§5.4).
 
 **S12: Page**
-- [ ] T35: `app/test-business-os/page.tsx`: `TABS` entry + tab block.
+- [x] T35: ✅ `app/test-business-os/page.tsx`: `TABS` entry + tab block.
 
 **S13: Docs**
-- [ ] T36: `docs/BUSINESS_OS_TEST_PAGE_SCOPE.md`: **Tab: LLM Usage** (Purpose / Features / API Endpoints Used / Use Cases). It covers admin-only access, the business-selection exception, the checks and statuses including Incomplete, caps and the 5,000 ceiling, the Check 5 window caveat and open end, and the non-production "verify a test session" use case. Plus the ToC entry, a Change History row and Last Updated.
-- [ ] T37: FR-22: add D-4 (one business at a time; all-businesses view would need F-2) to the Layer 1 requirement roadmap row 1.1 + a Change History row; confirm the investigation doc needs no change (M-11).
+- [x] T36: ✅ `docs/BUSINESS_OS_TEST_PAGE_SCOPE.md`: **Tab: LLM Usage** (Purpose / Features / API Endpoints Used / Use Cases). It covers admin-only access, the business-selection exception, the checks and statuses including Incomplete, caps and the 5,000 ceiling, the Check 5 window caveat and open end, and the non-production "verify a test session" use case. Plus the ToC entry, a Change History row and Last Updated.
+- [x] T37: ✅ FR-22: add D-4 (one business at a time; all-businesses view would need F-2) to the Layer 1 requirement roadmap row 1.1 + a Change History row; confirm the investigation doc needs no change (M-11).
 
 **S14: Verification and handover**
-- [ ] T38: §5.5 runs. Record in §11: Jest counts; `--list` before/after file lists and delta; gate result; baseline blob unchanged; eslint; `console.` grep = 0.
-- [ ] T39: Local dev smoke (non-production): non-admin → "Admins only"; admin → select business, Refresh, auto-refresh on/off, hidden-tab pause; the owner usage card still renders the same numbers for the same account.
-- [ ] T40: Update this workplan: tasks ✅, §11 notes, Status → Code Complete; notify TL for SA code review.
+- [x] T38: ✅ §5.5 runs. Record in §11: Jest counts; `--list` before/after file lists and delta; gate result; baseline blob unchanged; eslint; `console.` grep = 0.
+- [ ] T39: **Not run — moved to QA (§11.4 D12).** Local dev smoke (non-production): non-admin → "Admins only"; admin → select business, Refresh, auto-refresh on/off, hidden-tab pause; the owner usage card still renders the same numbers for the same account.
+- [x] T40: ✅ Update this workplan: tasks ✅, §11 notes, Status → Code Complete; notify TL for SA code review.
 
 ---
 
 ## 11. Implementation Notes
 
-*(Dev fills this in during implementation: `--list` delta, gate output, baseline hash, Jest counts, deviations.)*
+**Dev — 2026-09-17.** All WC-1 to WC-10 were applied. WC-1 and WC-2 were in place before S1 and S4, and WC-4 before S9. Nothing is committed.
+
+### 11.1 Verification results
+
+| Item | Before (S0, `56fb7dbd`) | After (S14) |
+|---|---|---|
+| Jest, touched areas (`lib/business-os lib/repositories lib/ai app/api/business-os app/api/admin components/test-business-os hooks`) | 97 suites; 1,493 passed; 28 skipped | **111 suites; 1,761 passed; 28 skipped; 0 failed**; 2 snapshots passed |
+| `npm run typecheck:bos-llm` | 96 files; 30 errors; 0 new | **119 files; 30 errors; 0 new; passed** (run after S2, S3, S4, S7, S9 and S12) |
+| Baseline JSON blob | `8cff995bebebae238587d7a03886c7851a0e2146` | **unchanged** (`git hash-object` after every gate run) |
+| Full `tsc --noEmit -p .` | 2,045 errors | **2,045 errors** (run after S3, S9 and S12). Per-file counts are identical; the only textual difference is the known union-order noise. There are no errors in any new or touched file |
+| ESLint (flat config `eslint.config.mjs`) on every new and modified code file | — | 0 problems |
+| `console.` in new and modified code files | — | 0 |
+
+**Proof for the WC-3 gate:**
+- I temporarily changed `countInWindow` so that a call without the account list type-checks.
+- The gate then reported `31 errors, 1 new`: TS2578 `Unused '@ts-expect-error' directive` at `tokenUsageRepository.contract.test.ts(40,3)`, exit 1.
+- I restored the file from a backup copy (`cmp` identical).
+
+**Before/after proof for the usage card (AC-23):**
+- `app/api/business-os/usage/__tests__/route.test.ts` was written and passed against the **unchanged** route (S1). Its snapshot file was written then.
+- After T13 both files are byte-identical and the test passes with `--ci`:
+  - test blob: `3f5e96f76d3ef2c589220e5d74a0a98a36d0eec0`;
+  - snapshot blob: `96821cf7d58cae9c31717981849127d98fe0e7a4`.
+- Snapshots pin the exact response string for the database path and the fallback path (2,050 rows, 3 pages, one row from another account and one from before the window, both excluded).
+- Explicit cases cover:
+  - tokens per credit: `'25'`, `25`, `'0'`, `''`, `null`, `'abc'`, `'-3'`, no row, two rows, and a thrown client error;
+  - allowance, default range, 401 and 400;
+  - the `summedBy` log field.
+
+### 11.2 `typecheck:bos-llm` scope delta (AC-16)
+
+The scope grows from 96 to 119 files, **+23, all of them new files**. No existing file joined. `lib/repositories/index.ts`, `TokenUsageRepository.ts`, `BusinessProfileRepository.ts` and the 19 barrel importers are **not** in scope.
+
+| Layer | Added files |
+|---|---|
+| core (9) | `lib/business-os/usage/usageSummary.ts`, `llmUsageVerification.ts`, `llmUsageReport.ts`, `llmUsageReportTypes.ts`; tests `usageSummary.test.ts`, `llmUsageVerification.test.ts`, `llmUsageReport.test.ts`, `tokenUsageRepository.contract.test.ts`, `usageCategories.catalog.test.ts` |
+| catalog-importer (1) | `app/api/admin/business-os/llm-usage/businesses/route.ts` |
+| caller (13) | `app/api/admin/business-os/llm-usage/route.ts` and both route tests; `components/test-business-os/llm-usage/BusinessPicker.tsx`, `CheckPanels.tsx`, `LlmUsageVerification.tsx`, `StatusSummary.tsx`, `formatters.ts`, `__tests__/LlmUsageVerification.test.tsx`; `hooks/llmUsageRefreshMachine.ts` (+ test), `hooks/useLlmUsageAutoRefresh.ts` (+ test) |
+
+`StatusBadge.tsx`, `WindowControls.tsx`, the static boundary test and `tests/helpers/fakePostgrest.ts` import nothing in scope, so they are not listed.
+
+### 11.3 WC-10: `token_usage` columns and the `id` type
+
+**The live read-only check couldn't be run from this session:**
+- this worktree has no `.env.local`;
+- I did not take credentials from the main checkout;
+- a read-only `select … limit 1` probe was refused by the session's permission policy.
+
+**Verified from the code instead:**
+- The tracker's insert (`lib/analytics/aiAnalytics.ts:141-185`) writes `cost_usd`, `success` and `error_code`. Inserts with those keys would fail on every LLM call if the columns were missing.
+- `total_tokens` is read by the migrated `business_os_usage_summary` function (`20260929_usage_summary.sql:64`, `:79`) and by the card's fallback.
+- For `id`: `docs/PRICING_SYSTEM_IMPLEMENTATION_PLAN.md:340` references `token_usage(id)` as `UUID`, and `lib/repositories/types.ts:231` types it as `string`.
+
+**Decision:** `LedgerCallRow.id` is typed `string`. De-duplication uses `String(row.id)`, and the tiebreak `order('id', desc)` only needs a stable order, so a bigint `id` would also work unchanged.
+
+**QA to confirm during AC-21:** run `select id, error_code, cost_usd, success, total_tokens from token_usage limit 1` read-only.
+
+### 11.4 Deviations from the workplan (with reasons)
+
+| # | Planned | Done | Why |
+|---|---|---|---|
+| D1 | `components/test-business-os/llm-usage/refreshMachine.ts` (+ test under `__tests__`) | `hooks/llmUsageRefreshMachine.ts` + `hooks/llmUsageRefreshMachine.test.ts` | SA optimisation note: keeps `hooks/` from importing `components/`. The hook test is co-located (`hooks/useLlmUsageAutoRefresh.test.tsx`), as in `hooks/useSideConsole.test.tsx` |
+| D2 | — | New test helper `tests/helpers/fakePostgrest.ts` | WC-1 needs real PostgREST semantics (`.single()`/`.maybeSingle()` for 0/1/many rows, filters, order, range, `or`, `ilike` escapes, head counts). It is shared by the characterization, repository, `searchForAdmin` and contract tests. It lives outside `__tests__` so Jest doesn't collect it. **A new test pattern for SA to accept or reject** |
+| D3 | Repository logs every read error at `warn` (§3.5) | `usageSummaryByFeatureAndDay` logs an RPC error at `debug`; everything else is unchanged | The card already logs the missing-function case once at `warn`, with the fix. A second warn per card load would change the card's log output, which the characterization test caught (FR-23 "no behaviour change") |
+| D4 | Refresh reducer state `selection` | `accountId` + `startIso` fields, plus `settledRequests` | The start time exists before a business is chosen. `settledRequests` fixes a real bug found by the hook test: a response fast enough to be batched with its own start left `inFlight` looking unchanged, so the auto-refresh timer never re-armed |
+| D5 | Q-11 type case inside `usageSummary.test.ts` | Dedicated `lib/business-os/usage/__tests__/tokenUsageRepository.contract.test.ts` | WC-3 |
+| D6 | — | New exports: `isPlatformAccountEnvIgnored()` (catalog), `bosCategoryFeatures()` (usageCategories), `BUSINESS_SEARCH_MAX_LIMIT` (BusinessProfileRepository), `TOKEN_USAGE_READ_LIMITS` (repository) | WC-9 flag without exposing the env value; one derivation shared by the category map and its static test; the caps asserted by tests |
+| D7 | `BusinessListResponse` = `{ businesses, limit, platformAccountIds }` | + `platformAccountEnvIgnored` | WC-9 visibility on the tab before any report is run |
+| D8 | Report response per §3.3 | + `trigger`, and `account.profileLookup: 'skipped'` | WC-6; the client keeps the name from the last manual report |
+| D9 | Static boundary test: "the usage route contains no `supabaseServer.from(`" (AC-16) | The usage route test asserts **no `token_usage` read, no `.rpc(`, no `createClient(`**, and that the only remaining direct read is `.from('ais_system_config'` | FR-23 keeps `readAllowanceCredits` in the route, and it still reads `ais_system_config` directly. AC-16's literal wording and FR-23 conflict here; **SA to confirm** (moving it is out of 1.1 scope) |
+| D10 | Route header comments said "never `profiles.role`" | Reworded to "never the user-writable profile role field" | WC-8's static test asserts that the routes contain no `profiles.role` text at all |
+| D11 | Skill Step 2: row types in `lib/repositories/types.ts` | `TokenUsageRepository` row types live in the repository file and are re-exported from `index.ts` with `export type` (Q-9) | Recorded as SA required: `TokenUsage` in `types.ts` is an unrelated execution type |
+| D12 | T39 local dev smoke | **Not run** | No `.env.local` in the worktree, and the main checkout is off-limits. The tab's behaviour is covered by jsdom component and hook tests. The browser smoke (including SA's `%` search note) moves to QA |
+
+### 11.5 Points for SA to examine closely
+
+1. **D9:** the AC-16 wording against `readAllowanceCredits` staying in the usage route.
+2. **D3:** the repository's `debug` level for an unavailable usage-summary function.
+3. **D2:** the new `tests/helpers/fakePostgrest.ts` helper; its semantics are what WC-1's equivalence proof rests on.
+4. **The admin gate in both routes:**
+   - `isAdmin` runs in its own `try/catch` before Zod;
+   - the report route fixes `receivedAt` before `getUser()`, so the window end is the receipt time;
+   - no read runs before 401/403/400 (route tests count every repository call).
+5. **Check 2 when the breakdown read fails:** the check is Fail even with a count of 0 (a silent empty breakdown would otherwise read as Pass). SA's Q-6 covered Check 3 only.
+6. **`listCallsInWindow` paging with the ceiling:** each page is `min(pageSize, ceiling - from)` rows. `reachedCeiling` is `rows.length >= ceiling`, so exactly 5,000 counts as Incomplete (Q-8).
+7. **`summedBy` and the fallback now start inside `Promise.all`:** the fallback begins as soon as the RPC fails, instead of after all three reads settle. The response and log lines are unchanged.
 
 ---
 
@@ -1209,9 +1294,385 @@ Whatever the user decides, QA must know:
 
 ---
 
+### SA Code Review
+
+**Code Review by SA — 2026-09-17**
+**Status:** ✅ **Code Approved with one required fix (CR-1).** CR-1 is a one-line mechanical change. The Dev applies it and re-runs the two checks listed under CR-1; no second SA review is needed. QA may start once CR-1 is in. O-1 to O-6 are optional.
+
+#### A. Independent verification (SA re-ran, not taken from §11)
+
+| Claim | SA result |
+|---|---|
+| Jest, touched areas | ✅ 111 suites, 1,761 passed, 28 skipped, 2 snapshots passed (`--ci`) |
+| `npm run typecheck:bos-llm` | ✅ 119 files, 30 errors, 0 new, passed; `scripts/typecheck-bos-llm.baseline.json` not modified (`git status`) |
+| Full `tsc --noEmit -p .` | ✅ 2,045 errors; none in any new or touched file |
+| ESLint (`-c eslint.config.mjs`) and `console.*` | ✅ 0 problems, 0 `console.*`. Note: the default `npx eslint <files>` picks `eslint.config.js` and **ignores** every one of these files, so "0 problems" is only true with `-c eslint.config.mjs` |
+| AC-23: the card's response is unchanged | ✅ **Proven by SA independently.** The unchanged characterization test and snapshot were run with `--ci` against the **original** route (`git show HEAD:app/api/business-os/usage/route.ts`, mapped in through a scratch Jest config): 19/19 pass, 2 snapshots match. A mutation in that copy (default 10 → 11) fails 8 tests, so the test really exercises the route it loads |
+| D4: the fast-response re-arm fix | ✅ **Proven by mutation.** With `settledRequests` removed from the timer effect's dependencies, `runs at the chosen interval with trigger=auto…` fails (1 of 9). The fix is correct and is covered by that test |
+| WC-3 contract test | ✅ All five methods carry an `@ts-expect-error` line, in a core-scope file. The Dev's TS2578 mutation proof (§11.1) is accepted |
+
+#### B. Findings (ranked)
+
+**Required**
+
+1. **CR-1 — `lib/business-os/usage/llmUsageVerification.ts:316` — a literal NUL byte (0x00) in the source.** Priority: **Medium**. The breakdown map key is built as `` `${feature}<NUL>${row.component ?? ''}` `` with a raw NUL character typed into the template literal, not an escape sequence.
+   - **Effect:** `file` reports the module as `data`, `grep` reports "Binary file matches", and ripgrep (VS Code search and the agents' own code search) **skips binary files by default**. The definitions of every check would silently disappear from code search. Git only treats it as text because the byte sits past offset 8,000; an edit above it that shortens the file enough would flip the diff to "Binary files differ".
+   - **Fix:** use a visible separator or escape, e.g. `'\u0000'` written as an escape sequence, or `JSON.stringify([feature, row.component])` as the key. No behaviour change.
+   - **Caution:** some edit tools turn an escape typed in the replacement text into the raw byte, which is the likely origin of this bug (SA hit exactly that while writing this note). Check the file bytes after editing, not the editor view.
+   - **Verify:** `tr -d -c '\000' < lib/business-os/usage/llmUsageVerification.ts | wc -c` prints `0`; `file` reports text; the Jest suite for `llmUsageVerification.test.ts` still passes.
+
+**Optional (Low; not blocking QA)**
+
+- **O-1 — `lib/repositories/TokenUsageRepository.ts:318-322` — `reachedCeiling` counts unique rows, not rows read.** If de-duplication drops a repeated row, the last page ends at slot 5,000 but `rows.length` is 4,999, so `reachedCeiling` is false even though an older row was pushed past the ceiling. In practice this needs a row inserted *inside* the fixed window during paging (the `lte(end)` bound excludes new `now()` rows unless the app and DB clocks disagree), so it is near-impossible. It would still be a false "complete", so the cheap fix is: treat the read as at the ceiling when the last requested slot (`ceiling - 1`) came back full, regardless of de-duplication.
+- **O-2 — `llmUsageVerification.ts:450`, `:471` — timestamps are ordered with `localeCompare`.** ICU collation isn't code-point order: SA confirmed `'…10:00:00+00:00'.localeCompare('…10:00:00.5+00:00')` returns 1, so a row on an exact whole second sorts after a fractional one. PostgREST prints whole seconds without a fraction. `created_at` is a microsecond `now()`, so this is about a 1-in-a-million misordering of "call names in the order they ran" and first/last. Compare `Date.parse` values, or plain `<`/`>`.
+- **O-3 — `llmUsageVerification.ts:332` — when Check 2's breakdown read fails and the count is > 0, `breakdownTruncated` is true,** so the tab shows a truncation warning next to the read error. Set it to false when the breakdown wasn't read.
+- **O-4 — `components/test-business-os/llm-usage/LlmUsageVerification.tsx:138-144` — if the first business-list request fails (500 or network), the whole tab shows only the error,** and the "paste an account id" path (FR-8) is unreachable, although the report route itself may work. Consider rendering the picker (paste field enabled) with the list error inline once the failure is not 401/403.
+- **O-5 — `tests/helpers/fakePostgrest.ts:114-117` — `gte`/`lte` compare timestamps as strings.** That's correct only when fixtures use the same ISO format as `toISOString()` (all current fixtures do). Add one sentence to the header saying fixtures must use `toISOString()` format.
+- **O-6 — `hooks/useLlmUsageAutoRefresh.ts:209`, `LlmUsageVerification.tsx:62` — `crypto.randomUUID()` needs a secure context.** It works on localhost and HTTPS, but on a plain-HTTP LAN host every request fails with a JS error, which does show in the tab. Not worth changing for an internal page; noted for QA.
+
+#### C. Security review (highest priority): no findings
+
+| Item | Result | Evidence |
+|---|---|---|
+| Gate order 401 → 403 → 400, fail closed | ✅ | Both routes: `getUser()` (server-validated `auth.getUser()`, `lib/auth.ts:29-31`), then `isAdmin` in its own `try/catch` defaulting to `false`, then Zod. Report route `:49-83`, list route `:186-218`. Tests count every repository call and assert zero before the gate passes, including a throwing admin check and a non-admin sending invalid parameters |
+| No `profiles.role` / `app_metadata` / `UserProfileRepository` (WC-8) | ✅ | Static test `boundaries.static.test.ts:110-119` |
+| `runtime = 'nodejs'`, `dynamic = 'force-dynamic'` (WC-4) | ✅ | Report route `:39-40`, list route `:178-179`; static-tested |
+| Zod on every input | ✅ | `buildReportQuerySchema` (UUID → lower-case → platform-account refine; ISO datetime with offset; ±60 s skew; 7-day bound; `trigger` enum) and `BusinessListQuerySchema` (max 100, trimmed) |
+| Platform account rejected as the selected business | ✅ | `llmUsageVerification.ts:88`; route tests for the all-zero id and an env id in any case |
+| No emails, payloads, error messages in responses | ✅ | Column allow-list `TOKEN_USAGE_COLUMNS` (`TokenUsageRepository.ts:80-85`) never names `request_payload`, `response_metadata`, `metadata` or `error_message`; `searchForAdmin` selects `user_id, company_name`; `findByUserId`'s row is reduced to `company_name` before it leaves the orchestrator. The route test asserts the serialized response contains none of those strings nor `@example.com` |
+| Error details | ✅ | 400 messages are fixed schema strings; 500 details only under `NODE_ENV === 'development'`; per-check errors are fixed strings, and raw errors are only logged |
+| Search escaping (Q-4) | ✅ | `escapeIlikePattern` escapes `\` first, then `%` and `_`; `.ilike()` only, never `.or()`; the `*` wildcard is documented in code and in the scope doc. The DB-side `\` escape is still for QA's browser smoke (D12) |
+| `.or()` injection | ✅ | The only `.or()` string is built from `LABEL_PATTERN`-guarded constants (`TokenUsageRepository.ts:97`, `:184-188`) |
+| Repository requires the account (RC-6a) | ✅ | Required parameters on all five methods, runtime UUID guards, empty list rejected; WC-3 type contract |
+| Cross-tenant reads only behind the gate (`tenant-isolation-guard`) | ✅ | Step 1: service-role reads by a caller-supplied id, so the guard applies. The gate precedes every read, the id is validated and non-platform, and each read is scoped to that one id or to `platformAccountIds()` (read once, returned as checked). Steps 2–4 (writes, allow-listed payloads, the trigger/upsert/injection trio) don't apply: there are no writes, and the static test forbids `insert`/`update`/`upsert`/`delete` in the routes, the modules and the repository. Step 7: the invariant tests are the route gate tests |
+| `searchForAdmin` documented bypass | ✅ | `BusinessProfileRepository.ts:519-532` |
+| Client bundle boundary (RC-8) | ✅ | Every client file imports server modules with `import type` only (static-tested, dynamic `import()`/`require` also forbidden). `llmUsageReportTypes.ts` exports types only |
+| Logs | ✅ | Manual refreshes at info, auto at debug; no business names or search text; denied access at warn with the user id; the name lookup (whose repository logs at info) is skipped on auto (WC-6) |
+
+#### D. Correctness of the checks: matches the requirement
+
+- **Exemptions (RC-2, Q-7):** `classifyCallRow` applies a known component only when the row's area is current **and** equals the component's declared area (`:192-195`). `BizQLPlanCache` is exempt from the unknown call name flag only; `IntentParser` from both. Legacy and unknown-area rows aren't judged against the catalog again. ✅
+- **Incomplete at 5,000:** `reachedCeiling = rows.length >= ceiling` (exactly 5,000 counts, Q-8). The ceiling propagates to Checks 1, 3(a) and 4 and to the area totals; status precedence is error/fail → incomplete → info → pass. ✅ (see O-1 for the de-duplication corner)
+- **Pass/Fail from all rows, display capped:** status and flag counts use the full array, and only `slice(0, 500)` is returned. Tested with a flagged row at position 501+ for Checks 1 and 4. ✅
+- **`business-os%` + unknown area:** `bosRowFilter()` builds the `LIKE 'business-os*'` or legacy-list filter from the constants; `business-os-webiste` → `unknown_area`; the legacy `business-os` → legacy (briefing). ✅
+- **Legacy helper label (FR-14):** (b), selected account → Fail; (c), platform → Info only, with an exact count and at most 50 timestamps; a read failure in any part → Fail, naming the part (Q-6). ✅
+- **Check 5 open end:** `readUsageSummary(accountId, window.start)`; `windowEnd: 'open'` in the response and the caveat in the tab. Fail only for an observed `isBusinessOsFeature` value in `other`. ✅
+- **`platformAccountIds()`:** UUID-only env value, lower-cased and de-duplicated. `isPlatformAccount` is case-insensitive (approved Q-2; it also makes the Layer 1 builder reject an upper-case system id, which is tested). `isPlatformAccountEnvIgnored` is a boolean only, and the route warns once (WC-9). ✅
+- **Paging de-duplication:** keyed by `String(row.id)`, first copy kept; `created_at DESC, id DESC`. ✅
+- **Fixed window end:** `receivedAt` is taken before `getUser()`; the orchestrator test asserts the same `end` reaches every windowed read. ✅
+
+#### E. Owner usage card: no behaviour change (verified)
+
+- The extraction in `usageSummary.ts` is line-for-line equivalent: RPC first with null meaning "not migrated", BIGINT coercion, feature-row totals only, the same paging fallback, `Math.round(tokens / tokensPerCredit)` and the same breakdown sort.
+- **`ConfigRepository` with `supabaseServer` injected (M-2):** `.single()` plus `data?.config_value || null` then `parseTokensPerCredit` gives the same result as the old `.maybeSingle()` read for every case: `'25'`, `25`, `'0'`, `''`, `null`, `'abc'`, `'-3'`, no row, two rows, and a thrown error. The characterization test covers them all, and it passes against both the old and the new route (§A).
+- **Snapshot strength:** strong. It pins the exact serialized body for the database path and for a 3-page fallback (2,050 rows, with one other-account row and one out-of-window row excluded), plus `summedBy` and the single warn line (which caught D3).
+- **Starting the fallback inside `Promise.all` (§11.5 item 7):** the response is identical. A fallback page error still becomes a 500 (tested).
+
+**`tests/helpers/fakePostgrest.ts` (D2 in §11.4; Dev item b): accepted as a test pattern.** Its semantics match PostgREST for what it claims to support:
+- `.single()`: 0 or >1 rows → PGRST116 with `data: null`;
+- `.maybeSingle()`: 0 rows → `null` with no error; >1 rows → PGRST116;
+- the exact count is taken before `range`/`limit`; `head: true` returns `data: null`;
+- default null ordering is ASC NULLS LAST and DESC NULLS FIRST;
+- `like`/`ilike` handle `%`, `_`, `*` and `\` escapes;
+- the `or` parser throws on unsupported operators, and unsupported builder methods are simply absent, so they fail loudly.
+
+It lives outside `__tests__` and is shared by four suites. **Conditions for reuse:**
+- extend it only with real PostgREST semantics;
+- keep it test-only;
+- note the string timestamp comparison (O-5).
+
+It doesn't replace a live smoke: DB-side ILIKE escaping and column existence stay with QA.
+
+#### F. Dev's flagged items
+
+- **(a) AC-16 vs FR-23: `readAllowanceCredits` reading `ais_system_config` directly.** **Accepted for 1.1.**
+  - FR-23 explicitly keeps `readAllowanceCredits` in the route. The read is pre-existing, not new code, and `ConfigRepository` has no multi-key read.
+  - The static test pins it as the **only** direct read left, so it can't grow.
+  - AC-16 is read as "no *new* direct Supabase call, and no `token_usage` read, in the usage route".
+  - **Follow-up F-6 added:** move `readAllowanceCredits` behind a `ConfigRepository.getSystemConfigs(keys[])` method (one round trip), then tighten the static test to zero direct reads.
+- **(b) `fakePostgrest`:** accepted; see §E.
+- **(c) Check 2 is Fail when its breakdown can't be read, even with count = 0.** **Accepted.** It is consistent with FR-18 ("a read that fails … shown as Fail … never as zero or Pass") and with the Q-6 ruling for Check 3. The error names the part ("Platform-account breakdown could not be read"), so an admin won't read it as a finding. See O-3 for the truncation flag in that state.
+
+#### G. WC-1 to WC-10
+
+| WC | Implemented | Evidence |
+|---|---|---|
+| WC-1 | ✅ | Fixture-driven fake with real `.single()`/`.maybeSingle()` semantics; all six config cases plus no row, two rows and a throw; proven against the original route by SA (§A) |
+| WC-2 | ✅ (process) | `usageSummary.test.ts` exists and covers the module standalone; the ordering itself is process evidence from §11 |
+| WC-3 | ✅ | `tokenUsageRepository.contract.test.ts`: five `@ts-expect-error` lines plus a runtime empty-list check, in core scope |
+| WC-4 | ✅ | Both routes; static-tested |
+| WC-5 | ✅ | Scope doc lines 21 and 100 list all four tabs and point to F-5; Check 5 open-end caveat and `*` wildcard note present; non-production use case present; ToC and Change History updated |
+| WC-6 | ✅ | Name lookup only on manual; `profileLookup: 'skipped'`; the reducer keeps the last manual name (orchestrator, route and reducer tests) |
+| WC-7 | ✅ | `REQUEST_FAIL` sets auto `off` for any status, including 400 (reducer and hook tests) |
+| WC-8 | ✅ | Static test |
+| WC-9 | ✅ | Catalog, orchestrator, both routes (warn once, value never returned or logged), and the tab banner; unit, route and component tests |
+| WC-10 | ⚠️ Partial, fail-safe; **QA entry condition** | The code evidence is sound for `cost_usd`, `success`, `error_code`, `input_tokens`, `output_tokens`, `session_id`, `feature` and `component`: the live tracker insert writes them (`aiAnalytics.ts`), so a missing column would already break every LLM call. `total_tokens` is read by the migrated function. The `id` type evidence is weaker (a plan doc), but the design doesn't depend on it: `String(row.id)` de-duplicates either type, and `id DESC` only needs a stable order. If `id` were missing, the paged read would error and Checks 1, 3, 4 and the totals would show **Fail**, never a false Pass. QA runs the read-only `select id, error_code, cost_usd, success, total_tokens from token_usage limit 1` probe before AC-21 |
+
+#### H. Deviation judgements (§11.4)
+
+| # | Judgement | Note |
+|---|---|---|
+| D1 | ✅ Accepted | This was SA's own optimisation note; `hooks/` no longer imports `components/` |
+| D2 | ✅ Accepted | See §E; reuse conditions stated there |
+| D3 | ✅ Accepted | The caller still warns once with `err` and the fix; the repository's `debug` avoids a doubled warn. Guard refusals still warn |
+| D4 | ✅ Accepted | A real bug fix, proven by SA mutation (§A) |
+| D5 | ✅ Accepted | Required by WC-3 |
+| D6 | ✅ Accepted | All four exports are used by code or tests; no env value is exposed |
+| D7 | ✅ Accepted | WC-9 visibility before the first report |
+| D8 | ✅ Accepted | WC-6 |
+| D9 | ✅ Accepted with follow-up F-6 | See §F(a) |
+| D10 | ✅ Accepted | Needed for the WC-8 static assertion; the meaning is unchanged |
+| D11 | ✅ Accepted | Pre-approved Q-9 deviation from the `new-repository` skill (Step 2) |
+| D12 | ✅ Accepted, moved to QA | QA's browser smoke must include: a `%` / `_` search, "My account", a pasted id, a 10 s auto-refresh with the tab hidden and shown, and the WC-10 probe |
+
+#### I. Skill checklists and CLAUDE.md compliance
+
+- **`new-api-route`:** ✅ route files, `requestLogger` only, no direct Supabase, Zod before logic, dev-only details, 401/403/400/200 tests. The account filter is the validated target id, not `user.id`, by design (admin cross-account read, documented). There is no audit event, by design (OQ-5). Lint per §A.
+- **`new-repository`:** ✅ optional client, `{ data, error }` never thrown, `createLogger({ service })`, a singleton, class and types re-exported from `index.ts` (types in the repository file per Q-9), per-method tests with error paths, no `'use client'` importer. The `.in('user_id', ids)` scope for platform ids is documented.
+- **Scope:**
+  - no Layer 1 attribution behaviour change other than the approved Q-2 case-insensitivity;
+  - no F-1 to F-5 work;
+  - no migration;
+  - no new direct Supabase call outside repositories (the one pre-existing read is pinned, F-6).
+- **`turnUsage.ts`:** a trivial literal → constant swap with the same value. ✅
+- **`providerFactory.complete.test.ts`:** one added AC-5 case, correct. ✅
+- **Pino:** ✅ no `console.*` in new or touched code. (`aiAnalytics.ts` still has `console.warn`, but it isn't touched by this diff, so no conversion is due.)
+
+#### J. Test quality against the ACs
+
+| AC | Proven by | Verdict |
+|---|---|---|
+| AC-1, AC-2, AC-3 | Route tests (both routes), schema unit tests | ✅ |
+| AC-4 | Static literal scan, catalog derivation tests, `usageCategories.test.ts` unedited | ✅ |
+| AC-5 | `callCatalog.test.ts` agreement cases, `providerFactory.complete.test.ts` | ✅ |
+| AC-6 to AC-12 | `llmUsageVerification.test.ts`, `llmUsageReport.test.ts` (failure isolation per read) | ✅ |
+| AC-13 | Orchestrator scoping and fixed-end tests, plus repository tests against the fake applying `user_id`/window filters | ✅ |
+| AC-14 | Route test: no audit, provider or direct-DB call; forbidden strings absent; static no-write scan | ✅ |
+| AC-15 | `searchForAdmin` tests (escapes, 50 cap, columns, no `or`), list route test | ✅ (DB-side escaping: QA smoke) |
+| AC-16 | Static boundary test; scope delta in §11.2 | ✅ (with §F(a)) |
+| AC-17 to AC-20 | jsdom component, hook and reducer tests | ✅ (browser smoke: QA) |
+| AC-21, AC-22 | QA run; scope doc verified by SA | AC-22 ✅; AC-21 pending QA |
+| AC-23 | Characterization test, independently re-run by SA against the original route | ✅ |
+| AC-24 | Repository tests, contract test | ✅ |
+
+#### Follow-ups added
+
+| # | Item |
+|---|---|
+| F-6 | Move `readAllowanceCredits` (`app/api/business-os/usage/route.ts`) behind a `ConfigRepository` multi-key read, then tighten the static test to zero direct reads in the usage route |
+
+### Code Approved for QA: Yes, conditional on CR-1
+
+**QA entry conditions:**
+- CR-1 applied and its two checks run;
+- the WC-10 read-only column probe;
+- AC-21 in a **non-production** environment only.
+
+---
+
 ## 13. QA Testing Report
 
-*(QA populates this section.)*
+### QA Report — 2026-09-17
+
+**Test mode:** full (automated verification + live run)
+**Strategy used:** A/B (Jest on the touched areas, the scoped gate and full `tsc` against a clean `main` archive), C (`tsx` driver scripts that call the real flows, the real report orchestrator and the real owner usage route against the live Supabase project with real OpenAI calls), plus independent read-only ledger queries as the oracle
+**Focus:** all (api, security, schema, ui by component tests; browser smoke handed off)
+**Skipped / handed off:** the T39 browser smoke (needs an admin browser session; handed to TL). Admin routes were **not** called live: no admin session, and auth was not forged. See §13.7
+**Input source:** TL trigger prompt (Part 1 / Part 2 instructions), workplan §5.6 and §12 QA entry conditions
+
+#### 13.1 Environment
+
+| Item | Value |
+|---|---|
+| Code | Worktree `neuronforge-llm-attribution`, branch `feature/business-os-llm-usage-layer1-1`, uncommitted on `65d0283f` (CR-1 applied) |
+| Database | Current Supabase project (future staging; 4 business profiles). User approved, including an all-business insight run (not needed, see §13.4) |
+| LLM | Real OpenAI calls through the provider factory |
+| Env | `.env.local` copied from the main checkout for the run (gitignored) and deleted afterwards. No secret values were printed or written. `SYSTEM_ADMIN_USER_ID` is set and is a valid UUID |
+| Drivers | Temporary scripts in the session scratchpad (deleted afterwards), run with `npx tsx --import ./scripts/env-preload.ts` from the worktree root. A preload stubbed `server-only` (unresolvable outside Next) and, **for the Business OS flow routes only**, `@/lib/auth` returning the test account. No admin route was called |
+| **Test account** | **`2f734ed5-3681-4049-880d-3de7b096bea3`** (same as Layer 1): has a business profile, 2 CRM contacts, 3 bookings, 1 invoice; not in `admin_users`; not `SYSTEM_ADMIN_USER_ID`; not the all-zero UUID |
+| Window | **Start `2026-09-17T17:29:37.606Z`**, recorded immediately before the first flow. Final report fixed end `2026-09-17T17:35:18.010Z` (server receipt time) |
+
+#### 13.2 Part 1: automated verification
+
+| Check | Expected | Result |
+|---|---|---|
+| Jest, touched areas (`lib/business-os lib/repositories lib/ai app/api/business-os app/api/admin components/test-business-os hooks`, `--ci`) | ~111 suites / 1,761 passed | ✅ **111 suites passed; 1,761 passed, 28 skipped, 0 failed; 2 snapshots passed** (27.1 s) |
+| `npm run typecheck:bos-llm` | 119 files, 30 known, 0 new | ✅ **119 files in scope, 30 errors, 0 new (103.2 s), passed, exit 0** |
+| Baseline JSON | unchanged | ✅ Not in `git diff`; blob still `8cff995bebebae238587d7a03886c7851a0e2146` |
+| Full `tsc --noEmit -p .` (worktree) | 2,045, 0 new | ✅ **2,045 errors; none in any new or modified file** |
+| Full `tsc` on a clean `git archive 56fb7dbd` (node_modules junctioned; needed `--max-old-space-size=8192`) | compare | ✅ **2,045 errors; per-file counts identical.** A line-free set diff leaves 8 pairs that differ only by union member order or a "Did you mean" suggestion. **0 new errors** |
+| NUL bytes in new and modified files (44 files, including untracked directories) | 0 | ✅ **0 files contain a NUL byte** (CR-1 holds) |
+
+**AC → test spot-check (assertion strength):**
+
+| AC | Test | Real assertion? | Notes |
+|---|---|---|---|
+| AC-1 | both route tests | ✅ 401 with no admin check and zero reads (report route counts 5 read mocks); 403 + warn with `userId`; 403-not-400 for a non-admin with invalid input | W-2, W-3 below |
+| AC-2 | both route tests | ✅ `isAdmin` rejects → 403 with zero reads (not 500) | — |
+| AC-3 | report route `it.each` + `llmUsageVerification.test.ts` | ✅ Exact messages for non-UUID, missing id, all-zero id, `SYSTEM_ADMIN_USER_ID`, malformed/+61 s/−7 d −61 s start, bad trigger; each asserts zero reads; +59 s → 200 with `startClamped: true` and start = end | Also verified live (§13.5) |
+| AC-4 / AC-16 | `boundaries.static.test.ts` | ✅ Source scans: client files import server modules `import type` only (dynamic `import()`/`require` also forbidden); no `supabaseServer.from(`/`.rpc(`/`createClient(`; no hand-typed feature/component/helper literals; repository imports nothing from `business-os`; no writes | Regex-based, comment-stripped; acceptable |
+| WC-8 | `boundaries.static.test.ts:110-119` | ✅ Routes contain `AdminAccessService.getInstance().isAdmin(` and no `profiles.role`, `UserProfileRepository`, `app_metadata`, `from('profiles'`; `runtime`/`dynamic` exports | Text-level only (W-3) |
+| AC-13 | `llmUsageReport.test.ts` + report route happy path | ✅ Every read's account scope asserted (selected id vs exactly `platformAccountIds()`); same `end` for every windowed read; upper-case id lower-cased | Proven live (§13.4) |
+| AC-14 | report route test | ✅ Audit/provider/direct-DB spies never called; serialized body has none of `request_payload`, `response_metadata`, `"metadata"`, `error_message`, `email`, `prompt`, `@example.com` (the profile mock *does* carry an email, so the reduction to `company_name` is really tested); error code kept | — |
+| AC-15 | `searchForAdmin` test + list route test | ✅ Columns exactly `user_id, company_name`; `%`, `_`, `\` literal against the fake PostgREST; no `.or()`; cap 50 | W-1; DB-side escaping proven live (§13.6) |
+| AC-23 | `app/api/business-os/usage/__tests__/route.test.ts` (+ snapshot) | ✅ Exact response strings for DB and 3-page fallback paths, 10 tokens-per-credit cases, allowance, 401/400, `summedBy` | **Also proven live:** the owner usage route from this branch and from the clean `56fb7dbd` archive returned **byte-identical** bodies (7,417 bytes) for the test account for `last_24h`, `last_7d`, `last_30d`, `last_90d`; a second branch run was also identical |
+| AC-24 | `TokenUsageRepository.test.ts` + `tokenUsageRepository.contract.test.ts` | ✅ Per-method account filter, empty list / bad id / bad label refused before any query, select strings exclude forbidden columns; five `@ts-expect-error` lines in gate scope | — |
+
+#### 13.3 WC-10: `token_usage` columns (read-only, before any flow)
+
+Read from the project's PostgREST OpenAPI description plus a `select id, error_code, cost_usd, success, total_tokens from token_usage limit 1` probe (no error).
+
+| Column | Type | Column | Type |
+|---|---|---|---|
+| `id` | **uuid, primary key** (JS `string`) | `session_id` | uuid |
+| `created_at` | timestamptz | `input_tokens` | integer |
+| `user_id` | uuid | `output_tokens` | integer |
+| `feature` | character varying | `total_tokens` | integer |
+| `component` | character varying | `cost_usd` | numeric (JS `number`) |
+| `success` | boolean | `error_code` | character varying |
+
+✅ **All 12 columns present.** `id` is `uuid`, so `LedgerCallRow.id: string` is correct and `String(row.id)` de-duplication and the `id DESC` tiebreak are sound. WC-10 is closed.
+
+#### 13.4 Part 2: live flows run for the test account
+
+| Area | Call exercised (how) | Ledger rows in window | Group (`session_id`) |
+|---|---|---|---|
+| chat | `POST chat-v4` route handler, "Compare my bookings this month with last month…" ×2 (turns `c04b8b8e…`, `591d5126…`) | 8: `verified_question_embedding` + `planner` ×3 per turn (plan + 2 repairs) | each turn's 4 rows share its turn id |
+| chat | `POST chat-v4` "How many bookings did I have this month compared with last month…" (turn `42c18eb4…`); the planner emitted no `analyse` step, so `analyse()` was then called directly **with the same turn id** (as Layer 1 QA did) | 4: `verified_question_embedding`, `planner` ×2, `analysis` | all 4 share turn `42c18eb4…` (**planner + analysis in one group**) |
+| briefing | `buildBriefingFacts` + `narrateBriefing()` directly (non-quiet day; no cache write, no dispatch) | 1 `daily_narration` | `e2786667…` = `bosBriefingGroupId(test, 2026-09-17)` |
+| leads | `recommendLeadReply()` directly with a fresh `newBosGroupId()` (never `LeadAlertService`) | 1 `reply_recommendation` | `2f897386…` = the minted id (answer fell back `empty_response`: known parked bug P-2) |
+| intake | `POST /api/intake/form/infer-question` route handler | 1 `question_inference` | `d3cd8194…` |
+| website | `POST /api/website/enhance-testimonial` route handler | 1 `testimonial_enhance` | `5107109a…` |
+| insights | Per-user replica of the `insight-detect` loop for the test account only (real `DetectorEngine`, `InsightPrioritizer`, `InsightRepository`), run id `c1c40514…` | 1 `health_summary` (2 detections updated existing insights, so no `insight_content`) | `c1c40514…` = run id |
+
+17 rows, all `success = true`, all on the test account. The per-user path was enough for Check 4 (the insight row carries the run id), so **the all-business insight cron was not run** and no other business was charged.
+
+#### 13.5 Report vs SQL (orchestrator `buildLlmUsageReport`, `trigger=manual`)
+
+The report was built through the same path the route uses (`buildReportQuerySchema(receivedAt)` → `resolveReportWindow` → `buildLlmUsageReport`), with the real repositories and a real Pino logger. The oracle queries used a raw service client (not `TokenUsageRepository`), hand-typed constants, and **the report's own fixed start and end**. Server time for the report: 658 ms (844 ms before the extra chat turn); 899 ms for a 7-day window of 43 rows.
+
+**Header:** `profileLookup: 'found'`; `startClamped: false`; `incomplete: false`; `platformAccountIdsChecked` = the all-zero UUID and the `SYSTEM_ADMIN_USER_ID` value (equal to the oracle's list); `platformAccountEnvIgnored: false`.
+
+| Check | Expected (SQL) | Report | Result |
+|---|---|---|---|
+| **1. Calls** | 17 Business OS rows; 0 flagged (every pair in the catalog, no null `session_id`) | `rowsRead` 17, displayed 17, `flaggedRows` 0, all flag counts 0, `incomplete` false, status **pass**. Row order and content (newest first) identical to SQL | ✅ Pass |
+| **1. Area totals** | chat 12 / 62,267 tok · website 1 / 106 · intake 1 / 254 · leads 1 / 288 · briefing 1 / 1,239 · insights 1 / 720; cost per area | Every line equal in calls, tokens (input + output) and estimated cost; total 17 calls / 64,874 tok / $0.010623; no legacy or unknown line; status `complete` | ✅ Pass |
+| **2. Platform account** | 0 Business OS rows on the platform ids in the window (0 rows of **any** feature) | `count` 0, breakdown empty, status **pass** | ✅ Pass (no concurrent mis-attribution) |
+| **3. Legacy labels** | (a) selected 0, platform 0; (b) helper label on selected 0; (c) helper label on platform 0, no timestamps | (a) 0 / 0; (b) 0; (c) count 0, `timestamps: []`; status **pass**; `error` null | ✅ Pass ((c) Info: no onboarding sessions in the window) |
+| **4. Groups** | 8 `session_id` groups, 0 ungrouped | `groupsTotal` 8, `ungroupedTotal` 0, status **pass**. Every group's call count and tokens equal SQL. Summaries: `verified_question_embedding, planner ×3` (×2 turns); `verified_question_embedding, planner ×2, analysis`; `daily_narration`; `reply_recommendation`; `question_inference`; `testimonial_enhance`; `health_summary` (run id) | ✅ Pass |
+| **5. Usage card** | `summariseUsageByCategory` over the account's rows since start (open end, `total_tokens`, all features): chat 62,267 / 12 · briefing 1,239 / 1 · leads 288 / 1 · intake 254 / 1 · website 106 / 1 · insights 720 / 1; no Business OS feature in `other` | Same six categories with equal tokens and calls; credits at 10 tokens per credit (e.g. chat 4,582); `otherFeatures` empty; `summedBy: 'database'`; `windowEnd: 'open'`; status **pass** | ✅ Pass |
+
+**Extra live comparisons (non-zero paths), 7-day window ending 2026-09-17T17:37:14Z, `trigger=auto`:**
+
+| Item | SQL | Report | Result |
+|---|---|---|---|
+| Check 1 rows / legacy / null `session_id` | 43 / 1 / 1 | `rowsRead` 43; `legacy_feature` 1, `missing_group_id` 1 (a pre-Layer-1 `health-summary-generation` row from 2026-09-16); status fail | ✅ Correct Fail |
+| Check 2 platform count | 9 | `count` 9; breakdown `insight-generation / InsightRepository` 9 (sums to the count, not truncated); status fail | ✅ Correct Fail (pre-Layer-1 rows, all before this session's start) |
+| Check 3 (a) platform / (b) / (c) | 9 / 0 / 59, newest 50 timestamps | 9 / 0 / count 59, 50 timestamps, `timestampsTruncated: true`; timestamps **identical, same order** | ✅ |
+| Check 4 | 1 ungrouped | `ungroupedTotal` 1, `ungroupedFlagged` 1; fail | ✅ |
+| Check 5 | no Business OS feature in `other` | pass | ✅ |
+
+**Negative control (another business, read-only):** account `b509258d…` over the last 6 hours had 18 Business OS rows, 16 of them legacy (`business-os` ×15, `lead-reply` ×1, no `session_id`). The report read 18 rows, flagged `legacy_feature` 16 and `missing_group_id` 16, and returned Check 1 **fail**, Check 3 **fail** (`business-os` 15, `lead-reply` 1), Check 4 **fail**, Checks 2 and 5 pass. So the tab really catches mis-labelled calls (see E-1).
+
+**SQL used** (read-only; run through the Supabase service client with the equivalent filters; `:start`/`:end` = the report's `window.start`/`window.end`):
+
+```sql
+-- Business OS row filter (oracle, hand-typed)
+--   feature like 'business-os%' or feature in ('insight-generation','correlated-insight-generation',
+--   'health-summary-generation','business-os','landing-page-generation','lead-reply')
+
+-- Check 1 / area totals / Check 3(a) selected / Check 4
+select id, created_at, feature, component, session_id, input_tokens, output_tokens, total_tokens, cost_usd, success
+from token_usage
+where user_id = '2f734ed5-3681-4049-880d-3de7b096bea3'
+  and created_at >= :start and created_at <= :end
+  and (feature like 'business-os%' or feature in (/* legacy list */))
+order by created_at desc;            -- paged 1,000 at a time; grouped/summed in the driver
+
+-- Check 2 (count) and "any feature" on the platform accounts
+select count(*) from token_usage
+where user_id in ('00000000-0000-0000-0000-000000000000', :system_admin_user_id)
+  and created_at >= :start and created_at <= :end
+  and (feature like 'business-os%' or feature in (/* legacy list */));
+select created_at, user_id, feature, component from token_usage
+where user_id in ('00000000-0000-0000-0000-000000000000', :system_admin_user_id)
+  and created_at >= :start and created_at <= :end;
+
+-- Check 3
+select count(*) from token_usage where user_id in (/* platform ids */)
+  and created_at >= :start and created_at <= :end and feature in (/* legacy list */);                 -- (a) platform
+select count(*) from token_usage where user_id = :test_user_id
+  and created_at >= :start and created_at <= :end and feature = 'onboarding' and component = 'simple-complete';   -- (b)
+select count(*) from token_usage where user_id in (/* platform ids */)
+  and created_at >= :start and created_at <= :end and feature = 'onboarding' and component = 'simple-complete';   -- (c)
+select created_at from token_usage where user_id in (/* platform ids */)
+  and created_at >= :start and created_at <= :end and feature = 'onboarding' and component = 'simple-complete'
+order by created_at desc limit 50;                                                                    -- (c) timestamps
+
+-- Check 5 (open end, all features, then summariseUsageByCategory in the driver)
+select feature, total_tokens from token_usage
+where user_id = :test_user_id and created_at >= :start
+order by created_at;
+```
+
+#### 13.6 Edge cases and business list (live, through the schema, orchestrator and repository)
+
+| Case | Expected | Result |
+|---|---|---|
+| All-zero UUID as `accountId` | rejected with the platform message | ✅ "This is the platform account; its Business OS rows are shown in Check 2" |
+| `SYSTEM_ADMIN_USER_ID` (upper-cased) as `accountId` | rejected | ✅ same message |
+| Start 7 d + 61 s ago | rejected | ✅ "Start time is more than 7 days ago; the maximum window is 7 days" |
+| Start 7 d + 59 s ago | accepted | ✅ |
+| Start 30 s in the future | accepted and clamped | ✅ `startClamped: true`, start = end = receipt time |
+| Start 61 s in the future | rejected | ✅ "Start time is in the future" |
+| No `trigger` | defaults to `manual` | ✅ |
+| `trigger=auto` | `profileLookup: 'skipped'` | ✅ `skipped`, `companyName: null`, all five statuses still computed (pass) |
+| Search by a 10-character substring of the test business's name | returns it | ✅ 1 result, the test account |
+| Search `%` | literal: no name contains `%` → 0 (unescaped it would match all 4) | ✅ 0, no error |
+| Search `_` | literal → 0 | ✅ 0, no error |
+| Search `<2 chars>_<5 chars>` built from the name (would match if `_` were a wildcard) | no match | ✅ test account **not** returned: `_` is literal in the database |
+| Search `\` | literal, no error | ✅ 0, no error |
+| Search `*` | documented PostgREST wildcard (M-4) | ⚠️ 4 (all) — as documented, not a defect |
+| No search | ≤ 50, sorted by name | ✅ 4, sorted |
+| Response data | only `user_id`, `company_name`; no email | ✅ keys seen: `user_id`, `company_name`; no `@` anywhere |
+| `platformAccountIds()` / `isPlatformAccountEnvIgnored()` (the list route's top-level fields) | two ids / `false` | ✅ `[all-zero, SYSTEM_ADMIN_USER_ID]` / `false` |
+
+**Logs (Pino, run with `NODE_ENV=production`, i.e. info level as in production):** the manual report wrote exactly two info lines (`BusinessProfileRepository` "Finding business profile by user ID" / "Business profile found", ids only); the auto report wrote **none**. This confirms WC-6 live: auto-refresh can't flood info logs. **No business name appeared in any log line.** The route's own "LLM usage report served" line (info for manual, debug for auto, with statuses) was not exercised live because the route wasn't called (no admin session); it is covered by the report route test (`logs a manual refresh at info…`, `logs an automatic refresh at debug…`).
+
+#### 13.7 Issues Found
+
+**Bugs in Layer 1.1 (must fix before commit):** none.
+
+**Test-strength notes (Low, non-blocking):**
+
+- **W-1:** `app/api/admin/business-os/llm-usage/businesses/__tests__/route.test.ts:115` asserts "no email" against a `searchForAdmin` mock that never returns one. The real guard is the repository column test plus the route's explicit `{ userId, companyName }` mapping (`businesses/route.ts:95`). Now also proven live (§13.6).
+- **W-2:** the "403, not 400, for a non-admin with invalid input" cases (report route test `:202-206`, list route test `:82-86`) assert the status only, not zero reads. The other 403 cases do assert zero reads, so the risk is low.
+- **W-3:** the AC-1 `profiles.role` case is tautological on its own (`isAdmin` mocked false). Its strength comes from the WC-8 text scan, which forbids `profiles.role`, `app_metadata`, `UserProfileRepository` and `from('profiles'` but wouldn't catch a role read through another repository. Acceptable with SA's review.
+
+**Environment observations (for TL to route; not Layer 1.1 defects):**
+
+- **E-1: pre-Layer-1 code is writing into this Supabase project.** Account `b509258d…` wrote `business-os / daily-briefing` ×15 and `lead-reply / LeadReplyRecommender` ×1, with no `session_id`, on 2026-09-17 between 14:28Z and 16:22Z. This branch no longer contains those labels. The main checkout is at `5cdc5521` (`feature/business-os-purge-slice-2`), which does **not** include Layer 1 (`56fb7dbd`), so a dev server running from it is the likely writer. Effects: (1) the tab correctly reports those rows as Fail (negative control, §13.5); (2) during the T39 smoke, a dev server on a pre-Layer-1 branch will make Checks 1, 3 and 4 fail for the business it serves, and could make Check 2 fail for pre-Layer-1 insight rows. **Run T39 against a server built from this branch and use "Start now".**
+- **E-2 (known, parked):** the lead reply recommender fell back with `empty_response` again (Layer 1 P-2), and the repeated chat question was again not served from the plan cache (Layer 1 P-3), so no `BizQLPlanCache` row appeared live. The `BizQLPlanCache` exemption is covered by unit tests only.
+
+#### 13.8 Handed off and skipped
+
+| Item | Status / reason |
+|---|---|
+| **T39 browser smoke** (non-admin → "Admins only"; admin: search incl. `%`/`_`, "My account", pasted id, Refresh, 10 s auto-refresh with the browser tab hidden and shown, auto-refresh stopping on input change, Debug Logs behaviour, owner card renders) | **Handed off to TL** with the user signed in as an admin. Needs an admin browser session, which QA can't get without forging auth. Components and hook are covered by jsdom tests; the server side is verified live above. See E-1 |
+| Admin routes live (401/403/400 ordering, served log level by trigger) | Not called live (no admin session; auth not forged). Covered by the two route test suites; the report and list payloads were verified live through the orchestrator and repository they call |
+| All-business `insight-detect` cron | Not run: the per-user replica produced a run-id-grouped insight row, which is all Check 4 needs. No other business was charged |
+| Full website generation, landing page, intake form generation, public enquiry form, `field_regenerate` | Out of this run's minimal set (one call per area as instructed). Their attribution was verified live in Layer 1 QA. Website and intake were each covered by one route-level call here. The enquiry form path would notify the owner, so it was not used |
+| `BizQLPlanCache` / `IntentParser` rows live | Not produced (cache miss, E-2; chat v1 not used). Unit-tested exemptions |
+| `incomplete` (5,000-row ceiling) live | Not reachable with this data (busiest 7-day window: 43 rows). Unit and repository tests cover it |
+
+**Data left on the test account (test data only):** 17 `token_usage` rows (about 64.9k tokens, about $0.011 estimated), 2 existing insights updated plus the health summary refreshed (run `c1c40514…`), and whatever chat-v4 stores per turn. There was no briefing cache write, no intake form write and no testimonial persistence. **No emails, WhatsApp, SMS or notifications were sent. No payments, purge or deletes. No other business was written to.**
+
+#### 13.9 Final Status
+
+- [x] All acceptance criteria that can be verified without an admin browser session pass: ready for commit once TL's T39 browser smoke passes (and with user approval)
+- [ ] Issues found: Dev must address before commit
+
+**Verdict: PASS WITH ISSUES.** No defects found in Layer 1.1. Part 1: Jest 111/1,761 green; the scoped gate has 0 new errors and an unchanged baseline; full `tsc` matches `main` per file; 0 NUL bytes; the security ACs are backed by real assertions. Part 2: WC-10 is closed (all columns present, `id` is uuid). Checks 1 to 5 and the area totals match independent SQL exactly for the test session: Pass on all five, with 0 platform-account rows and no concurrent mis-attribution. The non-zero and Fail paths (platform count, helper-label timestamps with truncation, legacy and ungrouped flags) also match SQL on a 7-day window and on a negative-control account. The owner usage card is byte-identical to `main` live. All edge cases behave as specified, and `%`/`_`/`\` are literal in the database. The "issues" are three low test-strength notes (W-1 to W-3), two environment observations (E-1 stale pre-Layer-1 writer, E-2 known parked bugs) and the T39 browser smoke, which is handed off.
 
 ---
 
@@ -1227,3 +1688,7 @@ Whatever the user decides, QA must know:
 |------|--------|---------|
 | 2026-09-17 | Created (Planning) | Dev workplan for Layer 1.1 from the SA-approved requirement (24 FRs / 24 ACs). Code-reality check at `56fb7dbd`: all cited references verified; 14 findings (M-1 to M-14), including no end bound on `business_os_usage_summary` (M-1), `ConfigRepository`'s browser-client default (M-2), a non-UUID `SYSTEM_ADMIN_USER_ID` in `.in()` (M-5), and an existing jsdom component-test pattern (M-8). Design: admin routes under `app/api/admin/business-os/llm-usage`, Zod schemas, runtime-free response types, `TokenUsageRepository` signatures and guards, check algorithms with one exemption rule and Incomplete precedence, `usageSummary.ts` extraction with a before/after characterization test, client reducer + hook. Typecheck gate: measured 96 files / 0 new; predicted about +18 to +22 new files only, repository and barrel out of scope, baseline unchanged. 15 steps / 41 tasks. 13 SA questions, 1 user question (Q-14) |
 | 2026-09-17 | SA workplan review — approved with changes | SA confirmed the BA applied RC-1 to RC-14 and aligned the requirement's wording for Q-1/Q-2/Q-3/Q-5/Q-12 (logged in the requirement). Rulings: Q-1 Check 5 open end; Q-2 UUID-only env id and case-insensitive `isPlatformAccount`; Q-3 `platformAccountIds` in the business list; Q-4 `*` accepted; Q-5a name lookup (manual only, WC-6); Q-5b Info; Q-6 Fail with the part named; Q-7 chat-only exemptions; Q-8 5,000 → Incomplete; Q-9 types in the repository file; Q-10 inline gate; Q-11 dedicated contract test; Q-12 per TL ruling (fix the stale tab text only, F-5); Q-13 auto off on failure; M-2 approved; M-8 confirmed (SA's earlier note corrected). Type-check gate impact accepted. WC-1 to WC-10 to apply during implementation; Q-14 constraints listed for the user |
+| 2026-09-17 | Implementation — Code Complete | S0 to S14 implemented with WC-1 to WC-10. Jest touched areas 111 suites / 1,761 passed (was 97 / 1,493); `typecheck:bos-llm` 119 files, 0 new, baseline unchanged; full `tsc` 2,045 (unchanged). Scope +23 new files only. Deviations D1 to D12 and SA focus points in §11.4 and §11.5; T39 local smoke moved to QA |
+| 2026-09-17 | SA code review — approved with one required fix | SA re-ran Jest (111 suites / 1,761 passed), `typecheck:bos-llm` (119 files, 0 new, baseline unchanged) and full `tsc` (2,045, none in touched files). SA independently proved AC-23 by running the unchanged characterization test and snapshot against the original route (19/19, plus a mutation check), and proved the D4 re-arm fix by mutation. Required: CR-1, a raw NUL byte in `llmUsageVerification.ts:316` (hides the module from code search). Optional: O-1 to O-6. Security review: no findings. All WC-1 to WC-9 implemented; WC-10 partial but fail-safe (QA probe is an entry condition). D1–D12 accepted, D9 with new follow-up F-6 (`readAllowanceCredits` to `ConfigRepository`). `fakePostgrest` accepted as a test pattern with reuse conditions |
+| 2026-09-17 | CR-1 applied (TL) | `llmUsageVerification.ts:316`: the raw NUL byte in the Check 2 breakdown key replaced with `JSON.stringify([feature, row.component ?? null])`. File now has 0 NUL bytes (no other new/modified file has any); `lib/business-os/usage` Jest 6 suites / 120 pass; `typecheck:bos-llm` re-run. Ready for QA |
+| 2026-09-17 | QA — PASS WITH ISSUES | §13 QA Report. Part 1: Jest 111 suites / 1,761 passed; `typecheck:bos-llm` 119 files, 0 new, baseline blob unchanged; full `tsc` 2,045, per-file identical to a clean `56fb7dbd` archive; 0 NUL bytes in 44 new/modified files; AC→test spot-check (W-1 to W-3, Low). WC-10 closed live: all 12 `token_usage` columns present, `id` uuid PK. Part 2 on test account `2f734ed5…`: 17 real LLM calls across all six areas (chat planner + analysis in one turn group, briefing, leads, intake, website, per-user insight run; no all-business cron). The orchestrator report matched independent SQL for Checks 1–5 and area totals (all Pass, Check 2 count 0); non-zero/Fail paths matched on a 7-day window and a negative-control account; owner usage route byte-identical to `main` for 4 ranges; all edge cases and literal `%`/`_`/`\` search verified; auto trigger skips the profile lookup and writes no info logs. No bugs. E-1: a pre-Layer-1 dev server is writing legacy labels into this project. T39 browser smoke handed off to TL. No external messages sent |
