@@ -2,17 +2,19 @@
 //
 // T16 (dry-run slice) — assembles the preview.
 //
-// ⚠️ This service CANNOT delete anything. It composes counts, the gate result,
+// ⚠️ This service itself cannot delete anything — it is the read-only half.
+// The commit is `ResetService`, reached through a separate route. It composes
+// counts, the gate result,
 // and — the part that matters most — an explicit inventory of what this build
 // could NOT verify. The requirement's dry-run returns "gate outcome, per-table
 // counts, per-bucket object counts, and any table FR-1 could not verify"; the
 // last clause is the one a demo is most tempted to drop, so it is modelled as
 // a first-class field rather than a log line.
 //
-// No dry-run token is minted. The token exists to bind a preview to a commit
-// (FR-21/AC-29), and there is no commit route in this build. Minting one would
-// produce a credential that authorises nothing, which is worse than absent: the
-// next reader would reasonably assume a commit path exists to consume it.
+// No dry-run token is minted. The token binds a preview to its commit
+// (FR-21/AC-29). Slice 2's commit route relies on typed confirmation instead,
+// and does not require or accept a token — so minting one here would produce a
+// credential nothing consumes. AC-29 is a slice 5 prerequisite.
 
 import { createLogger } from '@/lib/logger';
 import {
@@ -54,7 +56,13 @@ export interface PreviewResult {
    */
   limitations: string[];
 
-  /** Always false in this build. There is no commit route. */
+  /**
+   * Whether Reset can actually delete, from the server's own probe.
+   * The same answer the page banner shows, so the two cannot disagree.
+   */
+  resetLive: boolean | null;
+
+  /** Always false: a PREVIEW never proceeds. The commit route is separate. */
   canProceed: false;
 
   generatedAt: string;
@@ -113,12 +121,41 @@ export async function buildPurgePreview(params: {
     );
   }
 
-  // ── Limitations: stated, not implied ────────────────────────────────────
-  const limitations: string[] = [
-    'PREVIEW ONLY — this build has no commit route and no delete capability. Nothing here can remove a row.',
-    'The pre-purge snapshot does NOT exist yet: the `business-purge-snapshots` bucket has not been created, and no snapshot writer has been built. There is currently no forensic record and no way to see what was deleted after the fact.',
-    'The destructive RPC (`purge_business_data`) has not been written or applied, so the ordered, single-transaction delete — including the blocking-FK ordering constraints and the `crm_activities`-last rule — is unexercised.',
-  ];
+  // ── Limitations: stated, not implied — and DRIVEN BY STATE, not hard-coded ─
+  //
+  // B-1. These lines used to be fixed strings: "PREVIEW ONLY — this build has no
+  // commit route and no delete capability. Nothing here can remove a row." That
+  // was true in slice 1 and became false in slice 2, and it would have gone on
+  // rendering directly above a Reset button that deletes. The page banner was
+  // already fixed for this exact failure (M-4); this panel is the same claim in a
+  // second place, so it asks the same question — `purgeFunctionExists()` — and
+  // can never disagree with the banner or with `ResetService`.
+  const resetLive = await businessPurgeRepository.purgeFunctionExists();
+
+  const limitations: string[] = [];
+
+  if (resetLive === true) {
+    limitations.push(
+      '⚠️ RESET IS LIVE. This preview is read-only, but the Reset button below WILL permanently delete the rows counted here. A verified snapshot is written first; there is no undo.',
+    );
+  } else if (resetLive === false) {
+    limitations.push(
+      'This preview is read-only. Reset is currently REFUSED: the destructive database function (`purge_business_data`) is not applied, so the server rejects Reset before writing a snapshot or deleting anything.',
+    );
+  } else {
+    limitations.push(
+      'Could not determine whether Reset is live. Treat it as LIVE — the server re-checks before deleting and refuses if it cannot confirm.',
+    );
+  }
+
+  if (level === 'purge') {
+    // Slice 2 implements Reset only. A Purge preview counts what Purge WOULD
+    // remove, but there is no Purge commit — say so, rather than let the counts
+    // imply one.
+    limitations.push(
+      'Purge is preview-only in this build. The commit path implements Reset; there is no Purge commit yet (slice 3).',
+    );
+  }
 
   if (gate.outcome !== 'skipped') {
     limitations.push(
@@ -171,6 +208,7 @@ export async function buildPurgePreview(params: {
     gate,
     gateCoverage,
     limitations,
+    resetLive,
     canProceed: false,
     generatedAt: new Date().toISOString(),
     durationMs,
