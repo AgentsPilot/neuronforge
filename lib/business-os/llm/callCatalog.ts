@@ -70,6 +70,80 @@ export function bosFeature<A extends BosLlmArea>(area: A): BosLlmFeature<A> {
 }
 
 /**
+ * Feature values each area's calls wrote BEFORE Layer 1 renamed them to
+ * `business-os-<area>`. Keyed by area so the usage-card categories and the
+ * verification checks cannot drift apart. Chat and intake had none.
+ */
+export const BOS_LEGACY_FEATURES = {
+  chat: [],
+  insights: ['insight-generation', 'correlated-insight-generation', 'health-summary-generation'],
+  // `business-os` is the legacy briefing tag (component `daily-briefing`).
+  briefing: ['business-os'],
+  website: ['landing-page-generation'],
+  intake: [],
+  leads: ['lead-reply'],
+} as const satisfies Record<BosLlmArea, readonly string[]>;
+
+/** Every legacy Business OS feature value, in area order. */
+export const BOS_LEGACY_FEATURES_FLAT: readonly string[] = BOS_LLM_AREAS.flatMap(
+  (area) => BOS_LEGACY_FEATURES[area] as readonly string[]
+);
+
+/**
+ * The `LIKE` prefix of the Business OS row filter. It matches every
+ * `bosFeature(area)`, a misspelled `business-os-<typo>` area (so it is seen,
+ * not hidden), and the legacy briefing value `business-os`.
+ */
+export const BOS_FEATURE_FILTER_PREFIX = 'business-os';
+
+/**
+ * The Business OS row filter: prefix OR one of the legacy values. Built only
+ * from the constants above, never from request input; a repository receives it
+ * as plain data.
+ */
+export function bosRowFilter(): { featurePrefix: string; features: readonly string[] } {
+  return { featurePrefix: BOS_FEATURE_FILTER_PREFIX, features: BOS_LEGACY_FEATURES_FLAT };
+}
+
+/** Whether a ledger `feature` value is a Business OS row (the filter above, in code). */
+export function isBusinessOsFeature(feature: string): boolean {
+  return feature.startsWith(BOS_FEATURE_FILTER_PREFIX) || BOS_LEGACY_FEATURES_FLAT.includes(feature);
+}
+
+/** The flags a known non-catalog component can be exempt from. */
+export type BosRowFlagExemption = 'unknown_call_name' | 'missing_group_id';
+
+/**
+ * Business OS ledger components that are expected but are not catalog calls,
+ * each with the checks it is exempt from and why. An exemption applies only
+ * under the component's own area.
+ */
+export const BOS_KNOWN_NON_CATALOG_COMPONENTS = {
+  BizQLPlanCache: {
+    component: 'BizQLPlanCache',
+    area: 'chat',
+    exemptFrom: ['unknown_call_name'],
+    reason: 'Zero-token chat cache-hit row; not an LLM call; carries the turn id',
+  },
+  IntentParser: {
+    component: 'IntentParser',
+    area: 'chat',
+    exemptFrom: ['unknown_call_name', 'missing_group_id'],
+    reason: 'Excluded chat v1 intent parser; records no grouping id',
+  },
+} as const satisfies Record<
+  string,
+  { component: string; area: BosLlmArea; exemptFrom: readonly BosRowFlagExemption[]; reason: string }
+>;
+
+/**
+ * The labels the shared `getProviderFactory().complete()` helper records when
+ * a caller passes no context (`lib/ai/providerFactory.ts`, which keeps its own
+ * literal; a unit test asserts the two agree).
+ */
+export const BOS_LEGACY_HELPER_LABEL = { feature: 'onboarding', component: 'simple-complete' } as const;
+
+/**
  * The chat feature value. Chat telemetry (daily budget, usage report, cache-hit
  * row) filters and writes by it, so it must never drift from what the builder
  * records.
@@ -121,11 +195,41 @@ export function isUuid(value: string | undefined | null): value is string {
 /**
  * A value the tracker would accept but that FR-1 forbids: the system user or
  * the all-zero placeholder. Read at call time so a late-loading env applies.
+ *
+ * Case-insensitive: Postgres compares uuids case-insensitively, so an
+ * upper-case spelling of the system id IS the platform account.
  */
-function isPlatformAccount(userId: string): boolean {
-  if (userId === ALL_ZERO_UUID) return true;
+export function isPlatformAccount(userId: string): boolean {
+  const candidate = userId.toLowerCase();
+  if (candidate === ALL_ZERO_UUID) return true;
   const systemUserId = process.env.SYSTEM_ADMIN_USER_ID;
-  return !!systemUserId && userId === systemUserId;
+  return !!systemUserId && candidate === systemUserId.toLowerCase();
+}
+
+/**
+ * The account ids calls land on when they have no valid account
+ * (`aiAnalytics.ts` tracker fallback), for queries that look for them.
+ *
+ * Same two sources as `isPlatformAccount`, read at call time. The env value is
+ * included only when it is a UUID: the tracker cannot write anything else into
+ * the uuid `user_id` column, and a non-UUID in an `in(...)` filter would make
+ * every platform-account query fail.
+ */
+export function platformAccountIds(): string[] {
+  const ids = [ALL_ZERO_UUID];
+  const systemUserId = process.env.SYSTEM_ADMIN_USER_ID?.toLowerCase();
+  if (systemUserId && isUuid(systemUserId) && !ids.includes(systemUserId)) ids.push(systemUserId);
+  return ids;
+}
+
+/**
+ * True when `SYSTEM_ADMIN_USER_ID` is set but is not a UUID, so it was left
+ * out of `platformAccountIds()`. Reports surface this rather than silently
+ * checking fewer ids (Layer 1.1 WC-9). Never exposes the value itself.
+ */
+export function isPlatformAccountEnvIgnored(): boolean {
+  const systemUserId = process.env.SYSTEM_ADMIN_USER_ID;
+  return !!systemUserId && !isUuid(systemUserId);
 }
 
 /**

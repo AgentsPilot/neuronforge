@@ -16,6 +16,18 @@ export interface BusinessProfileRepositoryResult<T> {
   error: Error | null;
 }
 
+/** Most businesses `searchForAdmin` returns. */
+export const BUSINESS_SEARCH_MAX_LIMIT = 50;
+
+/**
+ * Escape text for use inside an ILIKE pattern: `\` first, then `%` and `_`, so
+ * they match literally. (`*` cannot be escaped through PostgREST; see
+ * `searchForAdmin`.)
+ */
+export function escapeIlikePattern(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 /**
  * Process step structure for "How It Works" section
  */
@@ -500,6 +512,48 @@ export class BusinessProfileRepository {
       return { data: data?.invoice_payment_terms_days ?? null, error: null };
     } catch (error) {
       logger.error({ err: error, userId }, 'Failed to read payment terms');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
+   * Business picker for the admin LLM usage report (Layer 1.1 FR-2).
+   *
+   * INTENTIONAL CROSS-ACCOUNT READ (CLAUDE.md Rule 4): there is no user_id
+   * filter by design. The only caller is
+   * `GET /api/admin/business-os/llm-usage/businesses`, which checks admin rights
+   * through AdminAccessService before this runs.
+   *
+   * Selects ONLY `user_id, company_name`. The search goes through `.ilike()` (a
+   * single operator argument, so commas and parentheses are harmless) with
+   * `\`, `%` and `_` escaped; it is never built into an `.or()` string.
+   * PostgREST also reads `*` as a wildcard and it cannot be escaped, so a `*`
+   * widens this admin-only, capped search (accepted, Layer 1.1 Q-4).
+   */
+  async searchForAdmin(
+    search: string | undefined,
+    limit: number
+  ): Promise<BusinessProfileRepositoryResult<Array<{ user_id: string; company_name: string | null }>>> {
+    try {
+      const cappedLimit = Math.min(Math.max(Math.trunc(limit) || 1, 1), BUSINESS_SEARCH_MAX_LIMIT);
+
+      let query = this.supabase.from('business_profiles').select('user_id, company_name');
+
+      if (search) {
+        query = query.ilike('company_name', `%${escapeIlikePattern(search)}%`);
+      }
+
+      const { data, error } = await query
+        .order('company_name', { ascending: true, nullsFirst: false })
+        .limit(cappedLimit);
+
+      if (error) throw error;
+
+      // Search text and names are not logged: a search is usually a business name.
+      logger.debug({ hasSearch: !!search, results: data?.length ?? 0 }, 'Admin business search');
+      return { data: (data ?? []) as Array<{ user_id: string; company_name: string | null }>, error: null };
+    } catch (error) {
+      logger.error({ err: error }, 'Admin business search failed');
       return { data: null, error: error as Error };
     }
   }

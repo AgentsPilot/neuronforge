@@ -41,7 +41,12 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { summariseUsageByCategory } from '@/lib/business-os/usage/usageCategories';
+import {
+  buildCardBreakdown,
+  readTokensPerCredit,
+  readUsageSummary,
+  toCredits as creditsAt,
+} from '@/lib/business-os/usage/usageSummary';
 
 
 const logger = createLogger({ module: 'BusinessOsUsageAPI' });
@@ -50,8 +55,11 @@ const QuerySchema = z.object({
   range: z.enum(['last_24h', 'last_7d', 'last_30d', 'last_90d']).default('last_30d'),
 });
 
-// Category mapping lives in lib/business-os/usage/usageCategories.ts so it can be
-// tested (a route module may only export handlers and route config).
+// Category mapping lives in lib/business-os/usage/usageCategories.ts, and the
+// totals (database function first, rows as fallback, tokens per credit) in
+// lib/business-os/usage/usageSummary.ts, so both can be tested and the admin
+// LLM usage report computes exactly what this card shows (a route module may
+// only export handlers and route config).
 //
 // The label is NOT resolved here. The client owns the translation dictionary,
 // and a label written server-side ships in one language — which is how
@@ -85,146 +93,6 @@ function fillGaps(
   }
 
   return filled;
-}
-
-/** What the card needs, however it was obtained. */
-interface UsageSummary {
-  totalTokens: number;
-  totalCalls: number;
-  /** feature name → its totals. */
-  byFeature: Map<string, { tokens: number; calls: number }>;
-  /** YYYY-MM-DD (UTC) → tokens that day. */
-  byDay: Map<string, number>;
-}
-
-/**
- * The totals, summed in Postgres.
- *
- * Returns null — never throws and never a zeroed summary — when the function is
- * not there, so the caller can tell "no usage" apart from "not migrated yet".
- * Reporting a missing migration as zero consumption would draw a full gauge for
- * a business that has used its whole allowance.
- */
-async function summaryFromDatabase(
-  userId: string,
-  since: Date,
-  log: { warn: (ctx: Record<string, unknown>, msg: string) => void }
-): Promise<UsageSummary | null> {
-  const { data, error } = await supabaseServer.rpc('business_os_usage_summary', {
-    p_user_id: userId,
-    p_since: since.toISOString(),
-  });
-
-  if (error) {
-    log.warn(
-      { err: error },
-      'business_os_usage_summary unavailable — falling back to reading the rows. Run supabase/migrations/20260929_usage_summary.sql'
-    );
-    return null;
-  }
-
-  const summary: UsageSummary = {
-    totalTokens: 0,
-    totalCalls: 0,
-    byFeature: new Map(),
-    byDay: new Map(),
-  };
-
-  for (const row of (data ?? []) as Array<{
-    bucket: string;
-    key: string;
-    tokens: number | string;
-    calls: number | string;
-  }>) {
-    // BIGINT arrives as a string from PostgREST once it is large enough, and
-    // `'12' + 5` is '125'. Coerced on the way in rather than at each use.
-    const tokens = Number(row.tokens) || 0;
-    const calls = Number(row.calls) || 0;
-
-    if (row.bucket === 'feature') {
-      summary.byFeature.set(row.key, { tokens, calls });
-      // Totalled from the FEATURE rows alone. Both buckets cover the same
-      // rows, so adding the day rows as well would double everything.
-      summary.totalTokens += tokens;
-      summary.totalCalls += calls;
-    } else if (row.bucket === 'day') {
-      summary.byDay.set(row.key, tokens);
-    }
-  }
-
-  return summary;
-}
-
-/**
- * The same totals, computed the old way, for an environment where the migration
- * has not run yet.
- *
- * Narrowed to the three columns the card reads. `select('*')` was 31 of them,
- * including `request_payload` and `response_metadata` — JSON blobs nothing here
- * has ever looked at and most of the 1.77 MB this used to move.
- *
- * The paging stays. PostgREST caps a page at 1,000 rows, and a query that
- * stopped there silently understated one real account by 52%.
- */
-async function summaryFromRows(userId: string, since: Date): Promise<UsageSummary> {
-  const summary: UsageSummary = {
-    totalTokens: 0,
-    totalCalls: 0,
-    byFeature: new Map(),
-    byDay: new Map(),
-  };
-
-  const PAGE = 1000;
-
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabaseServer
-      .from('token_usage')
-      .select('feature, total_tokens, created_at')
-      .eq('user_id', userId)
-      .gte('created_at', since.toISOString())
-      .order('created_at', { ascending: false })
-      .range(from, from + PAGE - 1);
-
-    if (error) throw error;
-
-    const rows = data ?? [];
-
-    for (const row of rows) {
-      const tokens = row.total_tokens || 0;
-      const feature = row.feature || 'unknown';
-
-      summary.totalTokens += tokens;
-      summary.totalCalls += 1;
-
-      const existing = summary.byFeature.get(feature) ?? { tokens: 0, calls: 0 };
-      existing.tokens += tokens;
-      existing.calls += 1;
-      summary.byFeature.set(feature, existing);
-
-      const day = new Date(row.created_at).toISOString().slice(0, 10);
-      summary.byDay.set(day, (summary.byDay.get(day) ?? 0) + tokens);
-    }
-
-    if (rows.length < PAGE) break;
-  }
-
-  return summary;
-}
-
-/** Tokens per Pilot Credit, from system config. Falls back to the documented 10. */
-async function readTokensPerCredit(): Promise<number> {
-  try {
-    const { data } = await supabaseServer
-      .from('ais_system_config')
-      .select('config_value')
-      .eq('config_key', 'tokens_per_pilot_credit')
-      .maybeSingle();
-
-    const parsed = parseInt(String(data?.config_value ?? ''), 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
-  } catch {
-    return 10;
-  }
 }
 
 /**
@@ -294,10 +162,10 @@ export async function GET(request: NextRequest) {
       Date.now() - (RANGE_DAYS[parsed.data.range] ?? 30) * 24 * 60 * 60 * 1000
     );
 
-    const [summarised, tokensPerCredit, allowanceCredits] = await Promise.all([
+    const [{ summary: usage, summedBy }, tokensPerCredit, allowanceCredits] = await Promise.all([
       // userId is the caller's, never a parameter — there is no way to ask for
       // somebody else's usage.
-      summaryFromDatabase(user.id, since, requestLogger),
+      readUsageSummary(user.id, since, requestLogger),
       // The SAME key the admin analytics reads (`tokens_per_pilot_credit` in
       // ais_system_config), fetched here with the SERVER client.
       //
@@ -308,28 +176,16 @@ export async function GET(request: NextRequest) {
       readAllowanceCredits(),
     ]);
 
-    const usage = summarised ?? (await summaryFromRows(user.id, since));
+    const toCredits = (tokens: number) => creditsAt(tokens, tokensPerCredit);
 
-    const toCredits = (tokens: number) => Math.round(tokens / tokensPerCredit);
-
-    const byCategory = summariseUsageByCategory(usage.byFeature);
-
-    const breakdown = [...byCategory.entries()]
-      .filter(([, v]) => v.tokens > 0)
-      .map(([key, v]) => ({
-        key,
-        credits: toCredits(v.tokens),
-        calls: v.calls,
-        share: usage.totalTokens ? Number((v.tokens / usage.totalTokens).toFixed(4)) : 0,
-      }))
-      .sort((a, b) => b.credits - a.credits);
+    const breakdown = buildCardBreakdown(usage, tokensPerCredit);
 
     requestLogger.info(
       {
         userId: user.id,
         range: parsed.data.range,
         credits: toCredits(usage.totalTokens),
-        summedBy: summarised ? 'database' : 'rows',
+        summedBy,
       },
       'Usage reported'
     );

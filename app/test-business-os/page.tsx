@@ -37,6 +37,7 @@ import { BosModuleTester, type BosModule } from '@/components/test-business-os/B
 import type { ActionSchema } from '@/lib/plugins/tester/tester-types';
 import type { ExecutionResult } from '@/lib/types/plugin-types';
 import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
+import { LlmUsageVerification } from '@/components/test-business-os/llm-usage/LlmUsageVerification';
 
 // ── Tabs ─────────────────────────────────────────────────────────────────────
 // Add tabs here. The first real tab will replace/extend this list.
@@ -44,6 +45,7 @@ const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'modules', label: 'Modules' },
   { id: 'danger-zone', label: 'Danger Zone' },
+  { id: 'llm-usage', label: 'LLM Usage' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -472,6 +474,23 @@ export default function TestBusinessOSPage() {
             currently live.
           </p>
           <PurgeDangerZone onLog={addDebugLog} onResponse={setLastResponse} />
+        </div>
+      )}
+
+      {/* Tab: LLM Usage — admin-only, read-only attribution checks for one
+          business (Layer 1.1). The one tab that reads a business other than the
+          session user's; the server enforces admin rights on every request. It
+          logs manual refreshes and errors to the shared Debug Logs, but not
+          each successful auto-refresh. */}
+      {activeTab === 'llm-usage' && (
+        <div style={panelStyle}>
+          <h2 style={{ marginTop: 0 }}>LLM Usage — Business OS AI call attribution</h2>
+          <LlmUsageVerification
+            sessionUserId={user?.id ?? null}
+            authLoading={authLoading}
+            onLog={addDebugLog}
+            onResponse={setLastResponse}
+          />
         </div>
       )}
 
