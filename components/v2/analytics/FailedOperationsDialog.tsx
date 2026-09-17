@@ -136,7 +136,7 @@ export function FailedOperationsDialog({
       >
         {/* Dialog */}
         <div
-          className="bg-[var(--v2-surface)] rounded-xl shadow-2xl max-w-3xl w-full max-h-[80vh] border border-[var(--v2-border)] overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col"
+          className="bg-[var(--v2-surface)] rounded-xl shadow-2xl max-w-3xl w-full max-h-[80dvh] border border-[var(--v2-border)] overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}

@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { CollapsibleSection } from '../CollapsibleSection';
 import type { CRMActivity } from './types';
 import type { ContactEmail } from './types';
+import { useBusinessTimezone } from '@/lib/business-os/LanguageContext';
 
 interface ActivitySectionProps {
   activities: CRMActivity[];
@@ -137,6 +138,8 @@ export function ActivitySection({
   isLoading = false,
   isLoadingEmails = false
 }: ActivitySectionProps) {
+  // One clock for every time this drawer shows. See `formatActivityMoment`.
+  const { timeZoneOptions } = useBusinessTimezone();
   const [selectedType, setSelectedType] = useState('note');
   const [activityText, setActivityText] = useState('');
   const [activeSubTab, setActiveSubTab] = useState<'activity' | 'emails'>('activity');
@@ -162,10 +165,10 @@ export function ActivitySection({
     if (diffHours < 24) return `${diffHours}${t('crm.activity.hours_ago') || 'h ago'}`;
     if (diffDays < 7) return `${diffDays}${t('crm.activity.days_ago') || 'd ago'}`;
 
-    return date.toLocaleDateString(language, {
+    return date.toLocaleDateString(language, timeZoneOptions({
       month: 'short',
       day: 'numeric'
-    });
+    }));
   };
 
   /**
@@ -174,22 +177,33 @@ export function ActivitySection({
    * Short on purpose — "7 Sep, 13:00" — because these read inside a sentence,
    * not as a heading.
    *
-   * The zone travels with the row rather than arriving as a prop: an activity
-   * records what was agreed at the time, and a business that later changes its
-   * timezone must not silently rewrite the hour of every appointment already in
-   * the history. Falls back to the viewer's zone only when a row predates this.
+   * ───────────────────────────────────────────────────────────────────────────
+   * IT USED TO PREFER THE ZONE STAMPED ON THE ROW
+   *
+   * The reasoning was historical fidelity: an activity records what was agreed
+   * at the time, so a business that later corrects its timezone should not
+   * silently rewrite the hour of appointments already in the history.
+   *
+   * Sound in principle, wrong in practice, because the stamp was never the
+   * business's zone. It was whatever the CALLER sent — the owner's browser for
+   * a booking made in the dashboard, null for anything older, which formats in
+   * the viewer's zone. So the fidelity preserved was to an accident, and this
+   * line ended up disagreeing with the booking directly above it in the same
+   * drawer.
+   *
+   * One clock for every displayed time. The `timeZone` argument is still
+   * accepted so callers need not change, and ignored.
    */
-  const formatActivityMoment = (value: string, timeZone?: string) => {
+  const formatActivityMoment = (value: string, _timeZone?: string) => {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
-    return date.toLocaleString(language, {
+    return date.toLocaleString(language, timeZoneOptions({
       day: 'numeric',
       month: 'short',
       hour: '2-digit',
       minute: '2-digit',
       hour12: language === 'en',
-      ...(timeZone ? { timeZone } : {}),
-    });
+    }));
   };
 
   /**
@@ -1150,7 +1164,7 @@ export function ActivitySection({
                             {formatActivityTime(activity.created_at)}
                           </span>
                           <span className="hidden sm:inline">
-                            {activityDate.toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}
+                            {activityDate.toLocaleTimeString(language, timeZoneOptions({ hour: '2-digit', minute: '2-digit' }))}
                           </span>
                         </div>
                       </div>
@@ -1226,13 +1240,13 @@ export function ActivitySection({
                         <span>•</span>
                         <span className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
-                          {sentDate.toLocaleDateString(language)} {sentDate.toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}
+                          {sentDate.toLocaleDateString(language, timeZoneOptions())} {sentDate.toLocaleTimeString(language, timeZoneOptions({ hour: '2-digit', minute: '2-digit' }))}
                         </span>
                       </div>
                       {email.opened_at && (
                         <div className="mt-1.5 text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
                           <Eye className="h-3 w-3" />
-                          {t('crm.email.opened_at') || 'Opened:'} {new Date(email.opened_at).toLocaleString(language)}
+                          {t('crm.email.opened_at') || 'Opened:'} {new Date(email.opened_at).toLocaleString(language, timeZoneOptions())}
                         </div>
                       )}
                     </div>

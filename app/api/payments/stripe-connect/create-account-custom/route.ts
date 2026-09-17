@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { settlementCurrencyFor } from '@/lib/payments/countryCurrency';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { getStripeService } from '@/lib/stripe/StripeService';
@@ -117,7 +118,13 @@ export async function POST(request: NextRequest) {
       details_submitted: false,
       onboarding_completed: false,
       country: validated.country,
-      currency: validated.country === 'US' ? 'USD' : 'EUR',
+      // One ternary used to answer this for twenty-four countries, so every
+      // account outside the US was filed as euros — an Israeli business
+      // settling in shekels included.
+      currency: settlementCurrencyFor(validated.country),
+      // The column exists and we have the answer in hand; it was simply never
+      // written, so every stored account read as an unknown business type.
+      business_type: validated.business_type,
     });
 
     if (saveResult.error) {
@@ -180,6 +187,34 @@ export async function POST(request: NextRequest) {
           success: false,
           error: 'Stripe Connect is not enabled. Please enable it in your Stripe Dashboard: https://dashboard.stripe.com/connect',
           needsConnectSetup: true
+        },
+        { status: 400 }
+      );
+    }
+
+    /*
+     * Stripe's own words, where Stripe is the one refusing.
+     *
+     * A `StripeError` carries a message written for the account holder — "your
+     * account cannot currently make live charges", "the combination of country
+     * and capability is not supported" — and a `param` naming the offending
+     * field outright. All of it was being replaced with "Failed to create
+     * payment account", which is why a failure here could only be investigated
+     * from the server log.
+     *
+     * Only Stripe's message is passed on. An unexpected error still answers
+     * generically, because its text is ours and may name internals.
+     */
+    const stripeError = error as { type?: string; code?: string; param?: string; message?: string };
+    const isStripeError = typeof stripeError?.type === 'string' && stripeError.type.startsWith('Stripe');
+
+    if (isStripeError && stripeError.message) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: stripeError.message,
+          code: stripeError.code,
+          param: stripeError.param,
         },
         { status: 400 }
       );

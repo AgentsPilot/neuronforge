@@ -1539,11 +1539,36 @@ export async function GET(request: NextRequest) {
      * value is the worse error.
      */
     const PAGE_BACKED = new Set(['landing', 'website']);
+
+    /*
+     * A CONTACT FORM IS NOT A WAY TO BOOK OR BUY.
+     *
+     * `getOrCreateDefaultLinks` makes two links for every new account. The
+     * booking link is born INACTIVE on purpose — there are no hours behind it
+     * yet — but the contact form is born active. So a business that had just
+     * finished onboarding, with nothing published and nothing configured, was
+     * counted as reachable on the strength of a link the platform had created
+     * for itself, and the whole readiness chain reported it done.
+     *
+     * The principle the booking link already follows: something the system
+     * created on its own must never satisfy a readiness step on the owner's
+     * behalf. A form collects a message; it does not let anyone see what is for
+     * sale, pick a time, or pay. Those are what "clients can reach you" means
+     * here, and they are what `booking` and `payment` links do.
+     *
+     * A `form` link still counts for everything else it is good for — it is
+     * simply not evidence that this business is open.
+     */
+    const TRANSACTIONAL = new Set(['booking', 'payment']);
     const smartLinkRows = activeSmartLinkRows || [];
 
-    const reachableSmartLinks = smartLinkRows.filter((link: { destination_type?: string | null }) =>
-      PAGE_BACKED.has(link.destination_type ?? '') ? hasLivePages : true
-    );
+    const reachableSmartLinks = smartLinkRows.filter((link: { destination_type?: string | null }) => {
+      const type = link.destination_type ?? '';
+      // A link to one of this business's own pages is only a route in if that
+      // page is actually published; otherwise it resolves to nothing.
+      if (PAGE_BACKED.has(type)) return hasLivePages;
+      return TRANSACTIONAL.has(type);
+    });
 
     const activeSmartLinks = smartLinkRows.length;
     const hasSmartLinks = reachableSmartLinks.length > 0;

@@ -22,6 +22,23 @@ export default function SchedulingPage() {
   const [isNewBookingModalOpen, setIsNewBookingModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [availability, setAvailability] = useState<WeeklyAvailability>(DEFAULT_AVAILABILITY);
+  /*
+   * The zone those hours are written in.
+   *
+   * Availability is a set of wall-clock windows, and the booking dialog used to
+   * read the BROWSER's clock for want of anywhere better. It arrives with the
+   * hours because the two are the same fact.
+   */
+  /*
+   * `undefined` until the fetch lands, not 'UTC'.
+   *
+   * The booking modal treats an absent zone as "not known yet" and holds back
+   * its quick-pick chips, which are labelled Today/Tomorrow from whichever day
+   * the zone says it is. A 'UTC' placeholder is indistinguishable from a
+   * business genuinely on UTC, so the modal could not tell the two apart and
+   * offered a chip reading "Today" whose real date was tomorrow.
+   */
+  const [timezone, setTimezone] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     fetchData();
@@ -34,6 +51,9 @@ export default function SchedulingPage() {
       const data = await response.json();
       if (data.success && data.availability) {
         setAvailability(parseAvailability(data.availability));
+        // Settled either way: `undefined` means "still loading" to the booking
+        // modal, so a response carrying no zone must resolve to UTC, not linger.
+        setTimezone(typeof data.timezone === 'string' && data.timezone ? data.timezone : 'UTC');
       }
     } catch (error) {
       console.error('Failed to fetch availability:', error);
@@ -196,6 +216,7 @@ export default function SchedulingPage() {
           }}
           onBookingUpdated={isNewBookingModalOpen ? handleBookingCreated : handleBookingUpdated}
           availability={availability}
+          timezone={timezone}
           existingBookings={bookings}
         />
       )}

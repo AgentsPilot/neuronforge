@@ -518,7 +518,7 @@ export function ProposalBuilderModal({
         class outright.
       */}
       <DialogContent
-        className="w-full h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden transition-[max-width] duration-200"
+        className="w-full h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden transition-[max-width] duration-200"
         style={{ maxWidth: file ? '64rem' : '42rem' }}
         dir={isRTL ? 'rtl' : 'ltr'}
       >

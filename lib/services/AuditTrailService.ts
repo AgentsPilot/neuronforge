@@ -16,6 +16,9 @@ import {
 } from '../audit/types';
 import { getEventMetadata } from '../audit/events';
 import { generateDiff, sanitizeChanges, summarizeChanges } from '../audit/diff';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ service: 'AuditTrailService' });
 
 /**
  * Singleton audit trail service
@@ -49,10 +52,21 @@ class AuditTrailService {
       enableCompression: config.enableCompression ?? false,
     };
 
-    // Start auto-flush timer
-    if (this.config.enabled) {
-      this.startFlushTimer();
-    }
+    /*
+     * No timer is started here.
+     *
+     * The singleton is constructed at module scope (see the export at the
+     * bottom), so starting an interval in the constructor meant that merely
+     * IMPORTING this file began a 5-second wakeup that nothing ever cleared.
+     * Anything that transitively reached it inherited a handle that keeps the
+     * Node event loop alive forever — which is why every Jest run touching the
+     * booking or bizql chain ended in "a worker process has failed to exit
+     * gracefully", and why an idle process woke twice a minute to flush an
+     * empty queue.
+     *
+     * The timer now starts when there is something to flush and stops when
+     * there is not. See `ensureFlushTimer`.
+     */
   }
 
   /**
@@ -75,6 +89,8 @@ class AuditTrailService {
     try {
       const entry = await this.buildLogEntry(input);
       this.logQueue.push(entry);
+      // Something is now waiting, so the timer has a reason to exist.
+      this.ensureFlushTimer();
 
       // Flush immediately if batch size reached
       if (this.logQueue.length >= this.config.batchSize) {
@@ -216,21 +232,53 @@ class AuditTrailService {
         throw error;
       }
 
-      console.log(`✅ Flushed ${logsToWrite.length} audit log(s)`);
+      logger.debug({ count: logsToWrite.length }, 'Flushed audit logs');
     } catch (error) {
       this.handleError('Failed to flush audit logs', error);
     } finally {
       this.isFlushing = false;
+
+      /*
+       * Nothing left to flush means nothing left to wake up for.
+       *
+       * Reached on the failure path too, and deliberately: the queue is cleared
+       * before the insert, so a failed write loses those entries either way and
+       * leaving the timer running would not bring them back — it would only
+       * keep the process awake on behalf of an empty queue.
+       */
+      if (this.logQueue.length === 0) {
+        this.stopFlushTimer();
+      }
     }
   }
 
   /**
-   * Start auto-flush timer
+   * Run the flush timer while — and only while — something is queued.
+   *
+   * Idempotent: called on every queued entry, starts at most one interval.
    */
-  private startFlushTimer(): void {
+  private ensureFlushTimer(): void {
+    if (!this.config.enabled || this.flushTimer) return;
+
     this.flushTimer = setInterval(() => {
-      this.flush();
+      void this.flush();
     }, this.config.batchIntervalMs);
+
+    /*
+     * Unreferenced as well as lazy.
+     *
+     * Lazy start means an idle process holds no handle at all; `unref` covers
+     * the remaining window, where entries are queued and the process would
+     * otherwise be free to exit. It does not stop the timer firing — anything
+     * else keeping the loop alive, which for a server is the HTTP listener,
+     * keeps it ticking — it only stops a pending audit flush from being the
+     * one thing preventing shutdown.
+     *
+     * Nothing is lost by that: `beforeExit` below flushes whatever is still
+     * queued. Guarded because `unref` is a Node timer method and this module is
+     * also reachable from runtimes without it.
+     */
+    this.flushTimer.unref?.();
   }
 
   /**
@@ -440,11 +488,10 @@ class AuditTrailService {
    * Handle errors silently (if configured)
    */
   private handleError(message: string, error: unknown, context?: any): void {
-    console.error(`[AuditTrail] ${message}:`, error);
-
-    if (context) {
-      console.error('[AuditTrail] Context:', JSON.stringify(context, null, 2));
-    }
+    // `context` is an AuditLogInput and stays structured rather than being
+    // stringified into the message, so a failed audit write is searchable by
+    // the same fields as a successful one.
+    logger.error({ err: error, context }, message);
 
     if (!this.config.silent) {
       throw error;
@@ -462,6 +509,24 @@ class AuditTrailService {
 
 // Export singleton instance
 export const AuditTrail = AuditTrailService.getInstance();
+
+/*
+ * Flush on the way out.
+ *
+ * The timer is unreferenced, so a process with queued entries is free to exit
+ * before the next tick. `beforeExit` fires when the loop has nothing left to
+ * do, which is exactly that moment, and the flush it triggers gives the loop
+ * more work — so the entries are written and the process then exits normally.
+ *
+ * Registered once, and only where `process` exists. It does NOT fire on
+ * `process.exit()` or on a signal; those paths should call `shutdown()`, which
+ * stops the timer and flushes explicitly.
+ */
+if (typeof process !== 'undefined' && typeof process.once === 'function') {
+  process.once('beforeExit', () => {
+    void AuditTrail.flush();
+  });
+}
 
 // Export class for testing
 export { AuditTrailService };

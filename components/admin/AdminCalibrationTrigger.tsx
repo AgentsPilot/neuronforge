@@ -145,7 +145,7 @@ export function AdminCalibrationTrigger() {
           onClick={closeModal}
         >
           <div
-            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl"
+            className="w-full max-w-2xl max-h-[90dvh] overflow-y-auto rounded-xl bg-white shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b px-5 py-4">

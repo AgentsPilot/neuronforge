@@ -1906,7 +1906,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-sm w-full mx-4 shadow-xl"
+            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 max-w-sm w-full mx-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             {deleteError?.bookingCount ? (
@@ -2039,7 +2039,7 @@ export function SchedulingServicesList({ services, onServiceClick, onServicePubl
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div
             ref={descriptionDialogRef}
-            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-6 max-w-md w-full mx-4 shadow-xl"
+            className="bg-[var(--v2-surface)] border border-[var(--v2-border)] p-4 sm:p-6 max-w-md w-full mx-4 shadow-xl max-h-[calc(100dvh-2rem)] overflow-y-auto"
             style={{ borderRadius: 'var(--v2-radius-card)' }}
           >
             <div className="flex items-center justify-between mb-4">

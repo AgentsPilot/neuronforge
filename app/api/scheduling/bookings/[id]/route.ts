@@ -12,6 +12,7 @@ import { AuditTrailService } from '@/lib/services/AuditTrailService';
 import { schedulingBookingRepository, schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import {
+  ISSUED_INVOICE_STATUSES,
   paymentInvoiceRepository,
   paymentTransactionRepository,
   stripeConnectRepository,
@@ -25,6 +26,7 @@ import { z } from 'zod';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { activitySentence, activityMoment } from '@/lib/business-os/activityText';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
 
 const logger = createLogger({ module: 'SchedulingBookingAPI' });
 const auditTrail = AuditTrailService.getInstance();
@@ -181,8 +183,149 @@ export async function PUT(
     }
     const oldBooking = oldBookingResult.data;
 
+    /*
+     * ───────────────────────────────────────────────────────────────────────
+     * A SETTLED BOOKING IS A RECORD, NOT A PLAN.
+     *
+     * `completed` and `cancelled` are terminal: the meeting happened or it did
+     * not, and neither can be moved, reassigned to another client, or turned
+     * into a different service afterwards. This route accepted all of it —
+     * there was no status check anywhere in the handler — so a completed
+     * appointment could be rewritten into a different one, leaving the invoice
+     * raised against it describing something that never took place.
+     *
+     * Notes and status stay open. Writing up a session after it happens is the
+     * normal use of the screen once a meeting is over, and a status can still
+     * be corrected — a no-show marked completed by mistake has to be fixable.
+     */
+    const SETTLED = ['completed', 'cancelled'];
+    const MEETING_FACTS = [
+      'service_id',
+      'contact_id',
+      'start_time',
+      'end_time',
+      'timezone',
+      'client_first_name',
+      'client_last_name',
+      'client_email',
+      'client_phone',
+    ] as const;
+
+    if (SETTLED.includes(oldBooking.status)) {
+      const attempted = MEETING_FACTS.filter(field => {
+        const next = (bookingUpdateData as Record<string, unknown>)[field];
+        return next !== undefined && next !== (oldBooking as Record<string, unknown>)[field];
+      });
+
+      if (attempted.length > 0) {
+        requestLogger.info(
+          { userId: user.id, bookingId, status: oldBooking.status, attempted },
+          'Refused to rewrite a settled booking'
+        );
+        return NextResponse.json(
+          {
+            success: false,
+            error: `This booking is ${oldBooking.status} and cannot be changed.`,
+            reason: 'booking_settled',
+            fields: attempted,
+          },
+          { status: 409 }
+        );
+      }
+    }
+
     // 4. Update booking (only pass actual DB columns, not send_intake_form flag)
     const result = await schedulingBookingRepository.update(bookingId, user.id, bookingUpdateData);
+
+    /*
+     * Money marked on the booking is money marked on its invoice.
+     *
+     * The contact drawer's "mark as paid" sets `payment_status` here and
+     * stopped — leaving the invoice behind that booking at `sent`. The invoice
+     * is the only record the money side reads, so the client had paid, the
+     * booking said so, and the briefing, the unpaid-invoice gap, the overdue
+     * detector and the revenue-at-risk total all went on reporting the amount
+     * as owed. One £500 session reported as a debt by four surfaces at once.
+     *
+     * The mirror already exists: settling an invoice confirms its booking
+     * (`invoices/[id]/mark-paid`). Only this direction was missing, so which
+     * screen the owner happened to use decided whether the two agreed.
+     *
+     * Found by `booking_id` rather than `bookings.invoice_id`, which is null on
+     * real rows — the link is written on the invoice, not on the booking.
+     *
+     * Non-blocking: the booking update has already succeeded and is what the
+     * owner asked for; a settlement that fails is logged, not thrown.
+     */
+    if (!result.error && bookingUpdateData.payment_status === 'paid') {
+      const { data: openInvoices, error: lookupError } = await supabaseServer
+        .from('payment_invoices')
+        // `contact_id`, `amount` and `currency` as well as the id: the
+        // settlement records a payment, and a payment needs a payer and a sum.
+        .select('id, contact_id, amount, currency, invoice_number')
+        .eq('user_id', user.id)
+        .eq('booking_id', bookingId)
+        .in('status', [...ISSUED_INVOICE_STATUSES]);
+
+      if (lookupError) {
+        requestLogger.warn({ err: lookupError, bookingId }, 'Could not look up the booking\'s invoice');
+      }
+
+      /*
+       * ───────────────────────────────────────────────────────────────────────
+       * THE SAME SETTLEMENT THE PROCESSOR USES.
+       *
+       * This called `paymentInvoiceRepository.markAsPaid`, which updates
+       * `payment_invoices` and nothing else. The mark-paid route and every
+       * processor path go through `settleInvoicePaid`, which ALSO writes a
+       * `payment_transactions` row. Two ways to settle an invoice, and only one
+       * of them recorded that money had arrived.
+       *
+       * That row is not bookkeeping. `promote_contact_on_payment` is a trigger
+       * ON `payment_transactions` — money arriving is what makes someone a
+       * client — so an invoice settled through this path left the contact
+       * stranded at whatever stage they were in. A quoted job's deposit was
+       * collected, the client stayed "Qualified", and nothing in the pipeline
+       * showed the business had won the work.
+       *
+       * It also left the invoice paid with no payment behind it, which the
+       * settlement helper explicitly refuses to allow and the money reports
+       * read as a discrepancy.
+       *
+       * One path, so manual money and processor money are recorded identically.
+       */
+      for (const invoice of openInvoices ?? []) {
+        try {
+          await settleInvoicePaid(supabaseServer, {
+            invoiceId: invoice.id,
+            userId: user.id,
+            contactId: invoice.contact_id,
+            amount: invoice.amount,
+            currency: invoice.currency,
+            // Money that arrived outside any processor — a transfer, cash, a
+            // card read in the room. Exactly what `mark-paid` records by hand.
+            paymentMethod: 'manual',
+            processorType: 'manual',
+            // No Stripe account was involved, and saying so explicitly is what
+            // stops the refund path trying to return money through one.
+            accountContext: {
+              stripe_connect_account_id: null,
+              charge_account_kind: 'platform',
+              account_resolution: 'recorded',
+            },
+            description: `Invoice ${invoice.invoice_number}`,
+            metadata: { source: 'booking_marked_paid' },
+          });
+
+          requestLogger.info({ bookingId, invoiceId: invoice.id }, 'Invoice settled from the booking');
+        } catch (err) {
+          requestLogger.warn(
+            { err, bookingId, invoiceId: invoice.id },
+            'Booking marked paid but its invoice could not be settled'
+          );
+        }
+      }
+    }
 
     if (result.error) {
       requestLogger.error({ err: result.error, userId: user.id, bookingId }, 'Failed to update booking');
@@ -341,12 +484,56 @@ export async function PUT(
     const newEndTime = validated.end_time ? new Date(validated.end_time).getTime() : oldEndTime;
     const timeActuallyChanged = oldStartTime !== newStartTime || oldEndTime !== newEndTime;
 
-    if (timeActuallyChanged && result.data.status === 'confirmed' && result.data.contact_id) {
-      BookingEmailService.sendRescheduledEmail(
-        bookingId,
-        user.id,
-        new Date(oldBooking.start_time)
-      ).catch(err => requestLogger.warn({ err, bookingId }, 'Reschedule email failed'));
+    if (timeActuallyChanged) {
+      /*
+       * ─────────────────────────────────────────────────────────────────────
+       * A RESCHEDULE THAT SENDS NOTHING MUST SAY SO.
+       *
+       * Two faults, and together they made moving a booking look like it had
+       * told the client when it had not.
+       *
+       *  1. `.catch()` only fires on a THROWN error, and
+       *     `sendRescheduledEmail` does not throw when it refuses — it RETURNS
+       *     `{ sent: false, error }` at three exits: booking not found, no
+       *     client email, service not found. Every one of those passed through
+       *     the catch untouched and nothing was logged at all. This is the
+       *     same trap the intake block below already documents, fixed there
+       *     and not here.
+       *
+       *  2. The send was gated on `status === 'confirmed' && contact_id`, and
+       *     a booking failing either was skipped in silence. A pending booking
+       *     is still a time a client is holding; moving it without a word is
+       *     the worst version of this, because the client keeps the old one.
+       *
+       * The gate stays — a booking with no contact has nobody to write to —
+       * but every path now says what it did, so "the client got no email" is
+       * answerable from the log instead of being invisible.
+       */
+      const notifiable = result.data.status !== 'cancelled' && Boolean(result.data.contact_id);
+
+      if (!notifiable) {
+        requestLogger.warn(
+          { bookingId, status: result.data.status, hasContact: Boolean(result.data.contact_id) },
+          'Booking time changed but the client was not emailed'
+        );
+      } else {
+        BookingEmailService.sendRescheduledEmail(
+          bookingId,
+          user.id,
+          new Date(oldBooking.start_time)
+        )
+          .then(emailResult => {
+            if (emailResult.sent) {
+              requestLogger.info({ bookingId }, 'Reschedule email sent');
+            } else {
+              requestLogger.warn(
+                { bookingId, reason: emailResult.error },
+                'Reschedule email refused'
+              );
+            }
+          })
+          .catch(err => requestLogger.error({ err, bookingId }, 'Reschedule email threw'));
+      }
     }
 
     // 9. Send intake form if requested (non-blocking)

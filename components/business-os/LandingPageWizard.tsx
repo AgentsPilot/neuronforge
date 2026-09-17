@@ -2915,7 +2915,7 @@ export function LandingPageWizard({
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-[var(--v2-surface)] rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+        className="bg-[var(--v2-surface)] rounded-2xl shadow-xl w-full max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col"
       >
         {/* Header */}
         <div className="px-6 py-4 border-b border-[var(--v2-border)] flex items-center justify-between">

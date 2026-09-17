@@ -928,29 +928,75 @@ function OnboardingBuildContent() {
           surface has to come from here. */}
       {openStep === 'stripe' && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
-          {/* The wizard's own root is max-w-lg, so a wider shell only added
-              empty margin around it. Bounded to the window for the same reason
-              as the bank panel below: the wizard grows with each step. */}
+          {/*
+            A flex COLUMN, not one scrolling box.
+
+            This was a single `overflow-y-auto` panel with everything inside it,
+            which is why the wizard's sticky step indicator never held: sticky
+            pins to the nearest scrolling ancestor, and that was the same element
+            as the title, so the header scrolled away with the form. A column
+            with its own non-scrolling header and a bounded body gives the
+            indicator something to stick to — and gives the dialog the shape
+            every other dialog in the platform has.
+
+            `max-h`, NOT a fixed height. A fixed one forced every step to the
+            full 90dvh, so the country step — a title and one field — opened as
+            a tall box with a large empty area under its buttons. It also broke
+            the footer: `sticky bottom-0` cannot push an element past its own
+            parent, and the parent was only as tall as the short form, so the
+            buttons sat at the end of the content with the dead space below
+            them rather than at the foot of the dialog.
+
+            With `max-h` the panel hugs its content and the buttons land at the
+            bottom because the bottom is where the content ends. On a long step
+            the body overflows, and the same sticky footer then has room to pin.
+
+            `dvh` because a phone reports `vh` without its address bar.
+          */}
           <div
-            className="w-full max-w-lg max-h-[calc(100vh-1.5rem)] overflow-y-auto bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl p-4"
+            className="w-full max-w-2xl max-h-[90dvh] flex flex-col overflow-hidden bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-2xl shadow-2xl"
             dir={isRTL ? 'rtl' : 'ltr'}
           >
-            <div className="flex items-center justify-between gap-3 mb-2.5">
-              <h3 className="text-[14px] font-bold text-[var(--v2-text-primary)] m-0">
-                {selectedLanguage === 'he' ? 'חיבור תשלומים' : selectedLanguage === 'es' ? 'Conectar pagos' : 'Connect payments'}
-              </h3>
+            {/* Header — the same shape the invoice and ledger dialogs use: a
+                tinted icon tile, the name, and what the screen is for. It was a
+                14px bold line with a close button, which read as a section
+                label rather than the title of a five-step form. */}
+            <div className="flex-shrink-0 flex items-start gap-3 border-b border-[var(--v2-border)] px-5 py-4">
+              <span
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center"
+                style={{ backgroundColor: 'rgba(99, 91, 255, 0.12)', borderRadius: 'var(--v2-radius-button)' }}
+              >
+                <CreditCard className="h-5 w-5" style={{ color: '#635BFF' }} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="m-0 text-[15px] font-semibold text-[var(--v2-text-primary)]">
+                  {selectedLanguage === 'he' ? 'חיבור תשלומים' : selectedLanguage === 'es' ? 'Conectar pagos' : 'Connect payments'}
+                </h3>
+                <p className="mt-0.5 text-[12px] text-[var(--v2-text-muted)]">
+                  {selectedLanguage === 'he'
+                    ? 'כדי שתוכל/י לקבל תשלומים בכרטיס'
+                    : selectedLanguage === 'es'
+                      ? 'Para que puedas cobrar con tarjeta'
+                      : 'So you can take card payments'}
+                </p>
+              </div>
               <button
                 onClick={() => setOpenStep(null)}
-                className="p-0.5 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
+                className="flex-shrink-0 p-1 text-[var(--v2-text-muted)] hover:text-[var(--v2-text-primary)]"
                 aria-label={selectedLanguage === 'he' ? 'סגור' : selectedLanguage === 'es' ? 'Cerrar' : 'Close'}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <StripeConnectWizard
-              onComplete={() => settleOwnerStep('stripe')}
-              onCancel={() => setOpenStep(null)}
-            />
+
+            {/* Body — the only thing that scrolls, so the wizard's own sticky
+                indicator and buttons pin to THIS and stay on screen. */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <StripeConnectWizard
+                onComplete={() => settleOwnerStep('stripe')}
+                onCancel={() => setOpenStep(null)}
+              />
+            </div>
           </div>
         </div>
       )}

@@ -947,7 +947,7 @@ export default function BillingSettings() {
             className="absolute inset-0 bg-black/30 backdrop-blur-md"
             onClick={closeCheckoutModal}
           />
-          <div className="relative bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <div className="relative bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl border border-white/20 max-w-2xl w-full max-h-[90dvh] overflow-y-auto">
             {/* Close button */}
             <button
               onClick={closeCheckoutModal}

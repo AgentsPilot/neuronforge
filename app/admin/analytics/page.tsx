@@ -1430,7 +1430,7 @@ export default function AdminCostAnalytics() {
                 </button>
               </div>
 
-              <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              <div className="p-6 space-y-4 max-h-[70dvh] overflow-y-auto">
                 {/* Primary Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div>

@@ -9,9 +9,26 @@
  * recorded with a synthetic token count precisely so that plugin work still
  * counts. Summing cost would value all of that at zero.
  *
- * This is the user's OWN usage. It reuses `getUsageAnalytics`, the same
- * aggregation the admin analytics page uses, scoped to the caller — rather than
- * a second aggregator over the same table that would drift from it.
+ * This is the user's OWN usage, always scoped to the caller.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE ANSWER, NOT THE EVIDENCE
+ *
+ * This read `getUsageAnalytics` — the admin analytics aggregation — which pages
+ * every matching `token_usage` row into Node and sums it there. On the busiest
+ * real account that was 1,991 rows, 1.77 MB and two sequential round trips,
+ * about 1.2 seconds, for one number and five lines. And it grows with what it
+ * reports: Business OS chat writes a row on every turn.
+ *
+ * `business_os_usage_summary` does the same sums in Postgres and returns a
+ * handful of rows. The shape below is unchanged — the card, its ring and its
+ * breakdown were not touched.
+ *
+ * The old path survives as a FALLBACK, narrowed to the three columns that are
+ * actually read, for the window between this code deploying and the migration
+ * running. It is not dead code waiting to rot: it is what keeps the card
+ * working on an environment whose migration is still pending, and it says so in
+ * the log when it runs.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  *   GET /api/business-os/usage?range=last_30d
@@ -23,7 +40,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
-import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { supabaseServer } from '@/lib/supabaseServer';
 
 
@@ -108,6 +124,130 @@ function fillGaps(
   return filled;
 }
 
+/** What the card needs, however it was obtained. */
+interface UsageSummary {
+  totalTokens: number;
+  totalCalls: number;
+  /** feature name → its totals. */
+  byFeature: Map<string, { tokens: number; calls: number }>;
+  /** YYYY-MM-DD (UTC) → tokens that day. */
+  byDay: Map<string, number>;
+}
+
+/**
+ * The totals, summed in Postgres.
+ *
+ * Returns null — never throws and never a zeroed summary — when the function is
+ * not there, so the caller can tell "no usage" apart from "not migrated yet".
+ * Reporting a missing migration as zero consumption would draw a full gauge for
+ * a business that has used its whole allowance.
+ */
+async function summaryFromDatabase(
+  userId: string,
+  since: Date,
+  log: { warn: (ctx: Record<string, unknown>, msg: string) => void }
+): Promise<UsageSummary | null> {
+  const { data, error } = await supabaseServer.rpc('business_os_usage_summary', {
+    p_user_id: userId,
+    p_since: since.toISOString(),
+  });
+
+  if (error) {
+    log.warn(
+      { err: error },
+      'business_os_usage_summary unavailable — falling back to reading the rows. Run supabase/migrations/20260929_usage_summary.sql'
+    );
+    return null;
+  }
+
+  const summary: UsageSummary = {
+    totalTokens: 0,
+    totalCalls: 0,
+    byFeature: new Map(),
+    byDay: new Map(),
+  };
+
+  for (const row of (data ?? []) as Array<{
+    bucket: string;
+    key: string;
+    tokens: number | string;
+    calls: number | string;
+  }>) {
+    // BIGINT arrives as a string from PostgREST once it is large enough, and
+    // `'12' + 5` is '125'. Coerced on the way in rather than at each use.
+    const tokens = Number(row.tokens) || 0;
+    const calls = Number(row.calls) || 0;
+
+    if (row.bucket === 'feature') {
+      summary.byFeature.set(row.key, { tokens, calls });
+      // Totalled from the FEATURE rows alone. Both buckets cover the same
+      // rows, so adding the day rows as well would double everything.
+      summary.totalTokens += tokens;
+      summary.totalCalls += calls;
+    } else if (row.bucket === 'day') {
+      summary.byDay.set(row.key, tokens);
+    }
+  }
+
+  return summary;
+}
+
+/**
+ * The same totals, computed the old way, for an environment where the migration
+ * has not run yet.
+ *
+ * Narrowed to the three columns the card reads. `select('*')` was 31 of them,
+ * including `request_payload` and `response_metadata` — JSON blobs nothing here
+ * has ever looked at and most of the 1.77 MB this used to move.
+ *
+ * The paging stays. PostgREST caps a page at 1,000 rows, and a query that
+ * stopped there silently understated one real account by 52%.
+ */
+async function summaryFromRows(userId: string, since: Date): Promise<UsageSummary> {
+  const summary: UsageSummary = {
+    totalTokens: 0,
+    totalCalls: 0,
+    byFeature: new Map(),
+    byDay: new Map(),
+  };
+
+  const PAGE = 1000;
+
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabaseServer
+      .from('token_usage')
+      .select('feature, total_tokens, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', since.toISOString())
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE - 1);
+
+    if (error) throw error;
+
+    const rows = data ?? [];
+
+    for (const row of rows) {
+      const tokens = row.total_tokens || 0;
+      const feature = row.feature || 'unknown';
+
+      summary.totalTokens += tokens;
+      summary.totalCalls += 1;
+
+      const existing = summary.byFeature.get(feature) ?? { tokens: 0, calls: 0 };
+      existing.tokens += tokens;
+      existing.calls += 1;
+      summary.byFeature.set(feature, existing);
+
+      const day = new Date(row.created_at).toISOString().slice(0, 10);
+      summary.byDay.set(day, (summary.byDay.get(day) ?? 0) + tokens);
+    }
+
+    if (rows.length < PAGE) break;
+  }
+
+  return summary;
+}
+
 /** Tokens per Pilot Credit, from system config. Falls back to the documented 10. */
 async function readTokensPerCredit(): Promise<number> {
   try {
@@ -180,13 +320,21 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid range' }, { status: 400 });
     }
 
-    const [report, tokensPerCredit, allowanceCredits] = await Promise.all([
+    /*
+     * The window, computed once and shared.
+     *
+     * It used to be derived inside `getUsageAnalytics` from the range string.
+     * Now the same Date goes to the database function and to the fallback, so
+     * the two cannot disagree about where the 30 days start.
+     */
+    const since = new Date(
+      Date.now() - (RANGE_DAYS[parsed.data.range] ?? 30) * 24 * 60 * 60 * 1000
+    );
+
+    const [summarised, tokensPerCredit, allowanceCredits] = await Promise.all([
       // userId is the caller's, never a parameter — there is no way to ask for
       // somebody else's usage.
-      new AIAnalyticsService(supabaseServer).getUsageAnalytics({
-        userId: user.id,
-        dateRange: parsed.data.range,
-      }),
+      summaryFromDatabase(user.id, since, requestLogger),
       // The SAME key the admin analytics reads (`tokens_per_pilot_credit` in
       // ais_system_config), fetched here with the SERVER client.
       //
@@ -197,21 +345,18 @@ export async function GET(request: NextRequest) {
       readAllowanceCredits(),
     ]);
 
+    const usage = summarised ?? (await summaryFromRows(user.id, since));
+
     const toCredits = (tokens: number) => Math.round(tokens / tokensPerCredit);
 
     const byCategory = new Map<string, { tokens: number; calls: number }>();
 
-    const featureStats = (report.featureBreakdown ?? {}) as Record<
-      string,
-      { tokens?: number; calls?: number }
-    >;
-
-    for (const [feature, stats] of Object.entries(featureStats)) {
+    for (const [feature, stats] of usage.byFeature) {
       const key = FEATURE_TO_CATEGORY.get(feature) ?? 'other';
       const existing = byCategory.get(key) ?? { tokens: 0, calls: 0 };
 
-      existing.tokens += stats.tokens ?? 0;
-      existing.calls += stats.calls ?? 0;
+      existing.tokens += stats.tokens;
+      existing.calls += stats.calls;
       byCategory.set(key, existing);
     }
 
@@ -221,12 +366,17 @@ export async function GET(request: NextRequest) {
         key,
         credits: toCredits(v.tokens),
         calls: v.calls,
-        share: report.totalTokens ? Number((v.tokens / report.totalTokens).toFixed(4)) : 0,
+        share: usage.totalTokens ? Number((v.tokens / usage.totalTokens).toFixed(4)) : 0,
       }))
       .sort((a, b) => b.credits - a.credits);
 
     requestLogger.info(
-      { userId: user.id, range: parsed.data.range, credits: toCredits(report.totalTokens) },
+      {
+        userId: user.id,
+        range: parsed.data.range,
+        credits: toCredits(usage.totalTokens),
+        summedBy: summarised ? 'database' : 'rows',
+      },
       'Usage reported'
     );
 
@@ -234,9 +384,9 @@ export async function GET(request: NextRequest) {
     // out: a line that skips quiet days compresses time and implies usage was
     // continuous when it was not.
     const daily = fillGaps(
-      (report.dailyBreakdown ?? []).map((d) => ({
-        date: d.date,
-        credits: toCredits(d.tokens ?? 0),
+      [...usage.byDay.entries()].map(([date, tokens]) => ({
+        date,
+        credits: toCredits(tokens),
       })),
       parsed.data.range
     );
@@ -256,7 +406,7 @@ export async function GET(request: NextRequest) {
         //
         // token_usage is written by every AI call through the provider factory,
         // so it needs no per-feature wiring and cannot drift.
-        credits: toCredits(report.totalTokens),
+        credits: toCredits(usage.totalTokens),
         /*
          * The ceiling the card counts down from, in Pilot Credits, or null
          * when no ceiling applies.
@@ -269,10 +419,10 @@ export async function GET(request: NextRequest) {
         remaining:
           allowanceCredits === null
             ? null
-            : Math.max(0, allowanceCredits - toCredits(report.totalTokens)),
+            : Math.max(0, allowanceCredits - toCredits(usage.totalTokens)),
         breakdown,
         daily,
-        calls: report.totalCalls,
+        calls: usage.totalCalls,
       },
     });
   } catch (error) {

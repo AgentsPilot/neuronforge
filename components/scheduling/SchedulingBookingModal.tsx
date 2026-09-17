@@ -1,6 +1,15 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  toBusinessLocalInput,
+  fromBusinessLocalInput,
+  safeTimezone,
+  businessDateKey,
+  businessInstant,
+  shiftBusinessDateKey,
+} from '@/lib/scheduling/businessTime';
+import { JourneyGapNotice } from '@/components/business-os/setup/JourneyGapNotice';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
@@ -59,6 +68,20 @@ interface SchedulingBookingModalProps {
   onClose: () => void;
   onBookingUpdated: () => void;
   availability?: WeeklyAvailability;
+  /**
+   * The business's timezone, not the browser's.
+   *
+   * Every time in this dialog is a wall clock, and a wall clock without a zone
+   * is where three different answers for one appointment came from: the drawer
+   * read the owner's laptop, the client's email read the booking row, and the
+   * business kept a third. An owner checking their diary from abroad must see
+   * the hours their clients will turn up at.
+   *
+   * Optional so a caller that has not been given one yet still renders; it
+   * falls back to UTC rather than to the browser, because a wrong time that is
+   * wrong the same way everywhere is the one you can find.
+   */
+  timezone?: string;
   prefilledDateTime?: PrefilledDateTime;
   prefilledContact?: PrefilledContact; // Skip contact search when provided
   existingBookings?: SchedulingBooking[]; // For filtering out booked slots
@@ -100,19 +123,47 @@ const STATUS_COLORS: Record<string, { bg: string; text: string; border: string }
 const DAY_KEYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
 // Format a Date to local datetime-local input format (YYYY-MM-DDTHH:MM)
-function formatDateTimeLocal(date: Date): string {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE BUSINESS'S CLOCK, NOT THE MACHINE'S.
+ *
+ * This used `getFullYear`/`getHours`, which read the BROWSER's zone. A booking
+ * stored at 04:00Z therefore showed as 12:00 AM on a laptop in Toronto, 7:00 AM
+ * in Tel Aviv, and 4:00 AM in the client's email — one appointment, three
+ * answers, and the owner had no way to tell which one the client would keep.
+ *
+ * Worse than the display: `new Date("2026-09-21T12:00")` parses in the runtime
+ * zone too, so an owner typing 12:00 while travelling SAVED a different instant
+ * than the same owner typing 12:00 at home.
+ *
+ * Both directions now go through `businessTime`, which measures the zone's
+ * offset on that particular date — so a booking either side of a daylight
+ * saving change is still correct.
+ */
+function formatDateTimeLocal(date: Date, timezone: string): string {
+  return toBusinessLocalInput(date, timezone);
+}
+
+/** A wall clock the owner typed, as the instant the business means by it. */
+function parseDateTimeLocal(local: string, timezone: string): Date {
+  return fromBusinessLocalInput(local, timezone);
 }
 
 // Get default times based on user availability
-function getDefaultTimes(availability?: WeeklyAvailability, serviceDurationMinutes: number = 60): { start: string; end: string } {
+function getDefaultTimes(availability: WeeklyAvailability | undefined, serviceDurationMinutes: number, timezone: string): { start: string; end: string } {
+  const zone = timezone;
   const now = new Date();
-  const today = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+  /*
+   * The weekday WHERE THE BUSINESS IS, read off the same clock as the date
+   * below.
+   *
+   * `now.getDay()` is the browser's. It was paired with a `dateKey` built from
+   * `businessDateKey(now, zone)`, so the two could name different days: the
+   * loop looked up Wednesday's opening hours and stamped them onto Thursday's
+   * date. Silent, and only for a reader whose zone differs from the business's
+   * across midnight — which is precisely the case this whole change exists for.
+   */
+  const today = new Date(`${businessDateKey(now, zone)}T00:00:00Z`).getUTCDay();
 
   // Try to find availability for today or the next available day
   for (let i = 0; i < 7; i++) {
@@ -122,24 +173,22 @@ function getDefaultTimes(availability?: WeeklyAvailability, serviceDurationMinut
 
     if (daySlots.length > 0) {
       const slot = daySlots[0];
-      const [startHour, startMinute] = slot.start.split(':').map(Number);
-
-      // Calculate the target date
-      const targetDate = new Date(now);
-      targetDate.setDate(now.getDate() + i);
-      targetDate.setHours(startHour, startMinute, 0, 0);
+      // The business's calendar date for this offset, and the window's opening
+      // hour on the business's clock. `setHours` here wrote the browser's.
+      const dateKey = shiftBusinessDateKey(businessDateKey(now, zone), i);
+      const targetDate = businessInstant(dateKey, slot.start, zone);
 
       // If it's today and the start time has passed, try to find a slot that works
       if (i === 0 && targetDate < now) {
-        // Round up current time to next 30-minute mark
-        const roundedNow = new Date(now);
-        const minutes = roundedNow.getMinutes();
-        roundedNow.setMinutes(minutes < 30 ? 30 : 60, 0, 0);
-        if (minutes >= 30) roundedNow.setHours(roundedNow.getHours() + 1);
+        /*
+         * Now, rounded up to the next half hour — on the epoch, not with
+         * `setMinutes`/`setHours`, which read and write the BROWSER's clock and
+         * whose rollover also moved the date near midnight.
+         */
+        const HALF_HOUR = 30 * 60 * 1000;
+        const roundedNow = new Date(Math.ceil(now.getTime() / HALF_HOUR) * HALF_HOUR);
 
-        const [endHour, endMinute] = slot.end.split(':').map(Number);
-        const slotEnd = new Date(targetDate);
-        slotEnd.setHours(endHour, endMinute, 0, 0);
+        const slotEnd = businessInstant(dateKey, slot.end, zone);
 
         // Check if there's still time in today's slot
         if (roundedNow < slotEnd) {
@@ -147,8 +196,8 @@ function getDefaultTimes(availability?: WeeklyAvailability, serviceDurationMinut
           // Make sure end time doesn't exceed slot end
           if (endTime <= slotEnd) {
             return {
-              start: formatDateTimeLocal(roundedNow),
-              end: formatDateTimeLocal(endTime)
+              start: formatDateTimeLocal(roundedNow, zone),
+              end: formatDateTimeLocal(endTime, zone)
             };
           }
         }
@@ -159,28 +208,41 @@ function getDefaultTimes(availability?: WeeklyAvailability, serviceDurationMinut
       // Return the start of the available slot
       const endTime = new Date(targetDate.getTime() + serviceDurationMinutes * 60 * 1000);
       return {
-        start: formatDateTimeLocal(targetDate),
-        end: formatDateTimeLocal(endTime)
+        start: formatDateTimeLocal(targetDate, zone),
+        end: formatDateTimeLocal(endTime, zone)
       };
     }
   }
 
-  // Fallback: no availability set, use 9:00 AM tomorrow
-  const tomorrow = new Date(now);
-  tomorrow.setDate(now.getDate() + 1);
-  tomorrow.setHours(9, 0, 0, 0);
+  /*
+   * Fallback: nine tomorrow, on the BUSINESS's calendar.
+   *
+   * `setDate`/`setHours` built that on the browser's, which near midnight is a
+   * different day and, for an owner away from the business, a different hour.
+   */
+  const tomorrow = businessInstant(shiftBusinessDateKey(businessDateKey(now, zone), 1), '09:00', zone);
   const endTime = new Date(tomorrow.getTime() + serviceDurationMinutes * 60 * 1000);
 
   return {
-    start: formatDateTimeLocal(tomorrow),
-    end: formatDateTimeLocal(endTime)
+    start: formatDateTimeLocal(tomorrow, zone),
+    end: formatDateTimeLocal(endTime, zone)
   };
 }
 
-// Get availability for a specific day
-function getAvailabilityForDay(date: Date, availability?: WeeklyAvailability): { start: string; end: string } | null {
+/**
+ * The opening window for a given day.
+ *
+ * The weekday is the business's, not the browser's. `date.getDay()` answered
+ * for the reader, so the hours shown beneath the date field could belong to the
+ * neighbouring day whenever the two zones straddle midnight.
+ */
+function getAvailabilityForDay(
+  date: Date,
+  availability?: WeeklyAvailability,
+  timezone: string = 'UTC'
+): { start: string; end: string } | null {
   if (!availability) return null;
-  const dayKey = DAY_KEYS[date.getDay()];
+  const dayKey = DAY_KEYS[new Date(`${businessDateKey(date, timezone)}T00:00:00Z`).getUTCDay()];
   const slots = availability[dayKey];
   if (slots && slots.length > 0) {
     return slots[0];
@@ -204,10 +266,17 @@ const LOCALE_MAP: Record<string, string> = {
   he: 'he-IL'
 };
 
-// Format date for display (e.g., "Mon, Jan 15")
-function formatDateShort(date: Date, language: string = 'en'): string {
+/**
+ * Format date for display (e.g., "Mon, Jan 15").
+ *
+ * The zone matters for the WEEKDAY as much as the hour: a Monday evening
+ * appointment in New York is already Tuesday in Jerusalem. Getting the hour
+ * right and the weekday wrong is the worse failure, because it looks correct.
+ */
+function formatDateShort(date: Date, language: string = 'en', timezone?: string): string {
   const locale = LOCALE_MAP[language] || 'en-US';
   return date.toLocaleDateString(locale, {
+    ...(timezone ? { timeZone: timezone } : {}),
     weekday: 'short',
     month: 'short',
     day: 'numeric'
@@ -259,9 +328,10 @@ function isSlotBlockedByExternal(
 }
 
 // Generate next available slots based on availability
-function getNextAvailableSlots(
+export function getNextAvailableSlots(
   availability: WeeklyAvailability | undefined,
   serviceDurationMinutes: number,
+  timezone: string,
   maxSlots: number = 6,
   existingBookings: SchedulingBooking[] = [],
   externalBusySlots: ExternalBusySlot[] = []
@@ -269,8 +339,18 @@ function getNextAvailableSlots(
   if (!availability) return [];
 
   const slots: QuickPickSlot[] = [];
+  const zone = safeTimezone(timezone);
   const now = new Date();
-  const today = now.getDay();
+  /*
+   * Which day it is WHERE THE WORK HAPPENS.
+   *
+   * `now.getDay()` answers for the browser, and at 9pm in New York it is
+   * already tomorrow in Tel Aviv — so the builder read Monday's hours while
+   * offering Tuesday's dates. The weekday is taken from the business's own
+   * calendar date for the same reason every other time here is.
+   */
+  const todayKey = businessDateKey(now, zone);
+  const today = new Date(`${todayKey}T00:00:00Z`).getUTCDay();
 
   // Look ahead up to 14 days
   for (let dayOffset = 0; dayOffset < 14 && slots.length < maxSlots; dayOffset++) {
@@ -280,10 +360,10 @@ function getNextAvailableSlots(
 
     if (daySlots.length === 0) continue;
 
-    // Calculate the target date
-    const targetDate = new Date(now);
-    targetDate.setDate(now.getDate() + dayOffset);
-    targetDate.setSeconds(0, 0);
+    // The business's calendar date for this offset, as a key the slot builder
+    // below turns into instants. `setDate` on a browser Date would reintroduce
+    // the browser's clock.
+    const dateKey = shiftBusinessDateKey(todayKey, dayOffset);
 
     for (const slot of daySlots) {
       if (slots.length >= maxSlots) break;
@@ -291,19 +371,28 @@ function getNextAvailableSlots(
       const [startHour, startMinute] = slot.start.split(':').map(Number);
       const [endHour, endMinute] = slot.end.split(':').map(Number);
 
-      // Calculate available time blocks within this slot
-      let currentStart = new Date(targetDate);
-      currentStart.setHours(startHour, startMinute, 0, 0);
-
-      const slotEnd = new Date(targetDate);
-      slotEnd.setHours(endHour, endMinute, 0, 0);
+      /*
+       * The window's hours are the BUSINESS's, so they are built on its clock.
+       *
+       * `setHours` wrote the browser's: a window stored as 09:00-17:00 became
+       * 9am wherever the laptop was, and the dialog offered a client hours the
+       * business is closed for.
+       */
+      let currentStart = businessInstant(dateKey, slot.start, zone);
+      const slotEnd = businessInstant(dateKey, slot.end, zone);
 
       // If it's today, start from current time (rounded up to next 30 min)
       if (dayOffset === 0) {
-        const roundedNow = new Date(now);
-        const minutes = roundedNow.getMinutes();
-        roundedNow.setMinutes(minutes < 30 ? 30 : 60, 0, 0);
-        if (minutes >= 30) roundedNow.setHours(roundedNow.getHours());
+        /*
+         * Now, rounded up to the next half hour.
+         *
+         * Done on the epoch rather than with `setMinutes`, which reads and
+         * writes the BROWSER's clock — and whose `setMinutes(60)` rollover also
+         * quietly moved the date near midnight. Rounding an instant to a
+         * 30-minute boundary needs no zone at all.
+         */
+        const HALF_HOUR = 30 * 60 * 1000;
+        const roundedNow = new Date(Math.ceil(now.getTime() / HALF_HOUR) * HALF_HOUR);
 
         if (roundedNow > currentStart) {
           currentStart = roundedNow;
@@ -346,8 +435,38 @@ export function SchedulingBookingModal({
   availability,
   prefilledDateTime,
   prefilledContact,
-  existingBookings = []
+  existingBookings = [],
+  timezone
 }: SchedulingBookingModalProps) {
+  /*
+   * One zone for the whole dialog, resolved once.
+   *
+   * `safeTimezone` rather than the raw prop: a stored zone can be an old IANA
+   * name or a hand-edited row, and `Intl` throws on those. A booking dialog
+   * must not fail to open over a display detail.
+   */
+  const zone = safeTimezone(timezone);
+
+  /**
+   * Has the caller resolved the business zone yet?
+   *
+   * ───────────────────────────────────────────────────────────────────────────
+   * `zone` is `UTC` both when the business really is on UTC and when the
+   * parent's fetch has not landed — the placeholder is indistinguishable from
+   * an answer. For DISPLAY that does not matter; a label corrects itself a
+   * moment later.
+   *
+   * It matters for the slot builders, which use the zone to decide WHICH DAY IS
+   * TODAY and then label their chips "Today" and "Tomorrow" from that. At 9pm in
+   * New York it is already the next day in UTC, so a placeholder run offered a
+   * chip reading "Today" whose real date was tomorrow — and the form, filled
+   * from that first result, kept the wrong day even after the zone arrived.
+   *
+   * An absent prop is the signal. Callers pass `undefined` until they know, so
+   * a business genuinely on UTC is not mistaken for one still loading.
+   */
+  const zoneReady = timezone !== undefined;
+
   const { t, language } = useLanguage();
   // Get browser timezone synchronously as initial default
   const browserTimezone = typeof window !== 'undefined'
@@ -412,7 +531,7 @@ export function SchedulingBookingModal({
    */
   const timeAlreadyBooked = (() => {
     if (!formData.start_time || !formData.end_time) return false;
-    const start = new Date(formData.start_time);
+    const start = parseDateTimeLocal(formData.start_time, zone);
     const end = new Date(formData.end_time);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
     return isSlotBooked(start, end, existingBookings, booking?.id);
@@ -492,8 +611,8 @@ export function SchedulingBookingModal({
         client_last_name: booking.client_last_name || '',
         client_email: booking.client_email,
         client_phone: booking.client_phone || '',
-        start_time: formatDateTimeLocal(new Date(booking.start_time)),
-        end_time: formatDateTimeLocal(new Date(booking.end_time)),
+        start_time: formatDateTimeLocal(new Date(booking.start_time), zone),
+        end_time: formatDateTimeLocal(new Date(booking.end_time), zone),
         timezone: booking.timezone || 'UTC',
         notes: booking.notes || '',
         status: booking.status
@@ -519,12 +638,23 @@ export function SchedulingBookingModal({
 
       // If prefilled from calendar slot click, use that
       if (prefilledDateTime) {
-        const startDate = new Date(prefilledDateTime.date);
-        startDate.setHours(prefilledDateTime.hour, 0, 0, 0);
+        /*
+         * The calendar cell the owner clicked, as the instant it means.
+         *
+         * `prefilledDateTime.hour` is the GRID's hour, and the grid's hours are
+         * the business's — they come from its availability. `setHours` wrote
+         * that number onto the browser's clock, so clicking the 2pm cell from
+         * another zone created a booking at 2pm there. The date is read off the
+         * cell's calendar fields, which are the day it stands for; its instant
+         * is a browser-local midnight and is not.
+         */
+        const cell = prefilledDateTime.date;
+        const cellKey = `${cell.getFullYear()}-${String(cell.getMonth() + 1).padStart(2, '0')}-${String(cell.getDate()).padStart(2, '0')}`;
+        const startDate = businessInstant(cellKey, `${String(prefilledDateTime.hour).padStart(2, '0')}:00`, zone);
         const endDate = new Date(startDate.getTime() + serviceDuration * 60 * 1000);
         // Format as local time for datetime-local input (YYYY-MM-DDTHH:MM)
-        startTime = formatDateTimeLocal(startDate);
-        endTime = formatDateTimeLocal(endDate);
+        startTime = formatDateTimeLocal(startDate, zone);
+        endTime = formatDateTimeLocal(endDate, zone);
       } else {
         /*
          * The first slot that is actually FREE, not the first the calendar allows.
@@ -543,19 +673,16 @@ export function SchedulingBookingModal({
          * It falls back to `getDefaultTimes` when there is no availability
          * configured at all, which is the case that function exists for.
          */
-        const [firstFree] = getNextAvailableSlots(
-          availability,
-          serviceDuration,
-          1,
-          existingBookings,
-          externalBusySlots
-        );
+        // Nothing computed against the placeholder: see `zoneReady`.
+        const [firstFree] = zoneReady
+          ? getNextAvailableSlots(availability, serviceDuration, zone, 1, existingBookings, externalBusySlots)
+          : [];
 
         if (firstFree) {
-          startTime = formatDateTimeLocal(firstFree.start);
-          endTime = formatDateTimeLocal(firstFree.end);
+          startTime = formatDateTimeLocal(firstFree.start, zone);
+          endTime = formatDateTimeLocal(firstFree.end, zone);
         } else {
-          const defaultTimes = getDefaultTimes(availability, serviceDuration);
+          const defaultTimes = getDefaultTimes(availability, serviceDuration, zone);
           startTime = defaultTimes.start;
           endTime = defaultTimes.end;
         }
@@ -609,7 +736,20 @@ export function SchedulingBookingModal({
       setNewClientNotes('');
       setNewTagInput('');
     }
-  }, [booking, services, availability, prefilledDateTime, prefilledContact, browserTimezone]);
+    /*
+     * `zone` and `zoneReady` belong here.
+     *
+     * The default start time is computed from the zone — which day is today,
+     * which of today's hours are still ahead — and the zone arrives a moment
+     * after the modal opens. Without them in the deps this effect ran once
+     * against the UTC placeholder and never again, so the inputs kept a default
+     * derived from the wrong day while the quick-pick chips beside them, which
+     * re-render freely, corrected themselves. The two then disagreed on screen.
+     *
+     * Re-running is safe: it only replaces the DEFAULT, and the zone resolves
+     * once, immediately after open, well before anyone has typed.
+     */
+  }, [booking, services, availability, prefilledDateTime, prefilledContact, browserTimezone, zone, zoneReady]);
 
   // Handle late-loading services: if service_id is empty but services just loaded, set the default
   useEffect(() => {
@@ -625,7 +765,7 @@ export function SchedulingBookingModal({
           return {
             ...prev,
             service_id: defaultService.id,
-            end_time: formatDateTimeLocal(endDate)
+            end_time: formatDateTimeLocal(endDate, zone)
           };
         });
       }
@@ -732,15 +872,118 @@ export function SchedulingBookingModal({
     setShowClientSearch(true);
   };
 
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * WHAT STANDS BETWEEN THIS SERVICE AND A CLIENT.
+   *
+   * Asked per SERVICE, not per business, because the answer differs inside one
+   * catalogue: a free fifteen-minute intro needs nothing but a time, and a paid
+   * programme cannot be billed without the invoice details behind it. The
+   * service drives it, so the check moves with the picker.
+   *
+   * `journeyGaps` already decides this — `hours` when something asks for a time
+   * and no availability exists, `invoicing` when money is owed and the business
+   * cannot issue a document for it. A missing card processor is deliberately
+   * NOT blocking: the booking falls back to an invoice, which is why the
+   * invoicing gap is the one that matters.
+   *
+   * Fails OPEN, twice over: the endpoint answers `{ ready: true, checkFailed }`
+   * on its own error, and a throw here is swallowed the same way. A failed
+   * request must never stand between an owner and writing down a booking they
+   * have already agreed.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  /**
+   * This booking is a record of something that already happened.
+   *
+   * `completed` and `cancelled` are terminal: the meeting is in the past or it
+   * is off, and neither can be rearranged. The time fields already knew this;
+   * the rest of the form did not, so a settled appointment still offered to be
+   * updated and the server accepted whatever came back.
+   *
+   * Notes stay writable deliberately. Writing up a session afterwards is the
+   * normal use of this screen once the meeting is over, and nowhere else in the
+   * product can edit them.
+   */
+  const isSettled = !!booking && ['completed', 'cancelled'].includes(booking.status);
+
+  const [serviceGaps, setServiceGaps] = useState<Array<{ kind: string; message: string }>>([]);
+
+  /*
+   * True while the configuration dialog is open on top of this one.
+   *
+   * This dialog cannot simply close to make room, the way the invoice composer
+   * does: by the time a gap is showing, a service is chosen and client details
+   * may be typed, and discarding that to go and fill in a tax id would be a
+   * worse bug than the one being fixed.
+   *
+   * So it stays and gives up its MODALITY instead. Radix traps focus while
+   * `modal` is true and treats a click outside its own content as a dismissal,
+   * which is why the settings dialog's close button needed pressing twice — the
+   * dialog underneath was eating the first press. With modality dropped the
+   * clicks land, and `onInteractOutside` below stops those same clicks from
+   * closing this dialog and taking the form with it.
+   */
+  const [configOpen, setConfigOpen] = useState(false);
+
+  const checkServiceReadiness = useCallback(async (serviceId: string) => {
+    if (!serviceId) {
+      setServiceGaps([]);
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/business-os/journey-readiness?service_ids=${encodeURIComponent(serviceId)}`,
+        { cache: 'no-store' }
+      );
+      const result = await response.json();
+      // `gaps` carries only the blocking ones; `advisory` (the processor) is
+      // deliberately ignored — saying so would invite a fix for something that
+      // is working as designed.
+      setServiceGaps(result?.success && !result.ready ? result.gaps ?? [] : []);
+    } catch {
+      setServiceGaps([]);
+    }
+  }, []);
+
+  /*
+   * Checked on open as well as on change, so an edit whose service has since
+   * become blocked says so — and one that has since been fixed does not.
+   */
+  useEffect(() => {
+    if (!isOpen) {
+      setServiceGaps([]);
+      // Reset too: this component stays mounted between openings, so a stale
+      // `true` here would leave the next booking non-modal for no reason.
+      setConfigOpen(false);
+      return;
+    }
+    /*
+     * Nothing to gate on a meeting that is over.
+     *
+     * The readiness check asks whether this service can still be honoured —
+     * whether anyone can book a time, whether the money can be collected. A
+     * completed appointment needs none of that, and blocking its notes behind
+     * a missing tax id would be an obstacle to recording history.
+     */
+    if (isSettled) {
+      setServiceGaps([]);
+      return;
+    }
+    checkServiceReadiness(formData.service_id);
+    // Only the service matters here; the rest of the form does not change it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, formData.service_id, checkServiceReadiness, isSettled]);
+
   const handleServiceChange = (serviceId: string) => {
     const service = services.find(s => s.id === serviceId);
     if (service && !booking) {
-      const start = new Date(formData.start_time);
+      const start = parseDateTimeLocal(formData.start_time, zone);
       const end = new Date(start.getTime() + service.duration_minutes * 60 * 1000);
       setFormData(prev => ({
         ...prev,
         service_id: serviceId,
-        end_time: formatDateTimeLocal(end)
+        end_time: formatDateTimeLocal(end, zone)
       }));
     } else {
       setFormData(prev => ({ ...prev, service_id: serviceId }));
@@ -765,7 +1008,7 @@ export function SchedulingBookingModal({
     setFormData(prev => ({
       ...prev,
       start_time: newStartTime,
-      end_time: formatDateTimeLocal(endDate)
+      end_time: formatDateTimeLocal(endDate, zone)
     }));
 
     // Clear time-related errors
@@ -793,7 +1036,7 @@ export function SchedulingBookingModal({
     if (!formData.start_time) {
       errors.start_time = t('scheduling.booking.error_start_required') || 'Start time is required';
     } else {
-      const startTime = new Date(formData.start_time);
+      const startTime = parseDateTimeLocal(formData.start_time, zone);
       const now = new Date();
       if (!booking && startTime < now) {
         errors.start_time = t('scheduling.booking.error_past_time') || 'Cannot book in the past';
@@ -803,7 +1046,7 @@ export function SchedulingBookingModal({
     if (!formData.end_time) {
       errors.end_time = t('scheduling.booking.error_end_required') || 'End time is required';
     } else if (formData.start_time) {
-      const startTime = new Date(formData.start_time);
+      const startTime = parseDateTimeLocal(formData.start_time, zone);
       const endTime = new Date(formData.end_time);
       if (endTime <= startTime) {
         errors.end_time = t('scheduling.booking.error_end_before_start') || 'End time must be after start time';
@@ -815,6 +1058,16 @@ export function SchedulingBookingModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    /*
+     * The disabled button is not the gate; this is.
+     *
+     * Enter submits a form whose submit button is disabled, so a gate that
+     * lives only in `disabled` is one keystroke from being bypassed. The
+     * notice above already says why, so this returns silently rather than
+     * raising a second complaint about the same thing.
+     */
+    if (!isSettled && serviceGaps.length > 0) return;
 
     // Validate form using custom validation
     const errors = validateForm();
@@ -839,8 +1092,8 @@ export function SchedulingBookingModal({
         client_last_name: formData.client_last_name || undefined,
         client_email: formData.client_email,
         client_phone: formData.client_phone || undefined,
-        start_time: new Date(formData.start_time).toISOString(),
-        end_time: new Date(formData.end_time).toISOString(),
+        start_time: parseDateTimeLocal(formData.start_time, zone).toISOString(),
+        end_time: parseDateTimeLocal(formData.end_time, zone).toISOString(),
         timezone: formData.timezone,
         notes: formData.notes || undefined
       };
@@ -969,11 +1222,23 @@ export function SchedulingBookingModal({
   const statusStyle = STATUS_COLORS[booking?.status || 'pending'];
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={onClose} modal={!configOpen}>
       {/* Wider than a form needs, because this is not only a form: it carries the
           quick-pick slot cards, the service summary and the intake panel, and at
           2xl those sat in a column narrow enough to wrap every one of them. */}
-      <DialogContent className="w-full sm:max-w-3xl lg:max-w-4xl h-[100vh] sm:h-auto sm:max-h-[92vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
+      <DialogContent
+        className="w-full sm:max-w-3xl lg:max-w-4xl h-[100vh] sm:h-auto sm:max-h-[92dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden"
+        /* While settings are open, every click lands "outside" this dialog —
+           including the ones inside settings. Dismissing on those would close
+           the booking form out from under the person fixing the thing it asked
+           them to fix. */
+        onInteractOutside={event => {
+          if (configOpen) event.preventDefault();
+        }}
+        onEscapeKeyDown={event => {
+          if (configOpen) event.preventDefault();
+        }}
+      >
         {/* Sticky Header */}
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 pe-12 sm:pe-14 bg-[var(--v2-surface)]">
           <div className="flex items-center gap-3 sm:gap-4">
@@ -1136,6 +1401,22 @@ export function SchedulingBookingModal({
                 </p>
               )}
             </div>
+
+            {/* What this particular service still needs. Under the picker, not
+                at the top of the form: the choice made just above is what
+                raised it, and the rest of the form is still worth filling in. */}
+            {serviceGaps.length > 0 && (
+              <div className="mt-3">
+                <JourneyGapNotice
+                  gaps={serviceGaps}
+                  onFixOpened={() => setConfigOpen(true)}
+                  onResolved={async () => {
+                    setConfigOpen(false);
+                    await checkServiceReadiness(formData.service_id);
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           {/* Client Info Section */}
@@ -1471,7 +1752,11 @@ export function SchedulingBookingModal({
           {availability && (
             (() => {
               const serviceDuration = services.find(s => s.id === formData.service_id)?.duration_minutes || 60;
-              const quickSlots = getNextAvailableSlots(availability, serviceDuration, 6, existingBookings, externalBusySlots);
+              // Not offered until the zone is known: a chip labelled from the
+              // UTC placeholder names the wrong day. See `zoneReady`.
+              const quickSlots = zoneReady
+                ? getNextAvailableSlots(availability, serviceDuration, zone, 6, existingBookings, externalBusySlots)
+                : [];
 
               if (quickSlots.length === 0) return null;
 
@@ -1479,13 +1764,22 @@ export function SchedulingBookingModal({
               const getDayLabel = (offset: number, date: Date): string => {
                 if (offset === 0) return t('scheduling.booking.today');
                 if (offset === 1) return t('scheduling.booking.tomorrow');
-                return formatDateShort(date, language);
+                return formatDateShort(date, language, zone);
               };
 
               // Helper to get time label
+              /*
+                The business's clock, like the inputs below.
+
+                This formatted in the BROWSER's zone while the Start Time field
+                underneath formatted in the business's, so picking "Tomorrow
+                10:00 AM" filled the field with 02:00 PM. Two controls, one
+                click, two different answers.
+              */
               const getTimeLabel = (date: Date): string => {
                 const locale = LOCALE_MAP[language] || 'en-US';
                 return date.toLocaleTimeString(locale, {
+                  timeZone: zone,
                   hour: 'numeric',
                   minute: '2-digit',
                   hour12: language !== 'he' // Hebrew uses 24-hour format
@@ -1501,8 +1795,8 @@ export function SchedulingBookingModal({
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                     {quickSlots.map((slot, index) => {
                       const isSelected =
-                        formData.start_time === formatDateTimeLocal(slot.start) &&
-                        formData.end_time === formatDateTimeLocal(slot.end);
+                        formData.start_time === formatDateTimeLocal(slot.start, zone) &&
+                        formData.end_time === formatDateTimeLocal(slot.end, zone);
 
                       const dayLabel = getDayLabel(slot.dayOffset, slot.start);
                       const timeLabel = getTimeLabel(slot.start);
@@ -1514,8 +1808,8 @@ export function SchedulingBookingModal({
                           onClick={() => {
                             setFormData(prev => ({
                               ...prev,
-                              start_time: formatDateTimeLocal(slot.start),
-                              end_time: formatDateTimeLocal(slot.end)
+                              start_time: formatDateTimeLocal(slot.start, zone),
+                              end_time: formatDateTimeLocal(slot.end, zone)
                             }));
                           }}
                           className={`flex flex-col items-center p-3 text-sm transition-all ${
@@ -1546,7 +1840,7 @@ export function SchedulingBookingModal({
                 <span className="font-medium text-[#0D9488]">{t('scheduling.booking.available_hours')}:</span>
                 {(() => {
                   const selectedDate = new Date(formData.start_time);
-                  const dayAvailability = getAvailabilityForDay(selectedDate, availability);
+                  const dayAvailability = getAvailabilityForDay(selectedDate, availability, zone);
                   if (dayAvailability) {
                     return (
                       <span className="text-[var(--v2-text-primary)]" dir="ltr">
@@ -1566,7 +1860,7 @@ export function SchedulingBookingModal({
               <Clock className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               {t('scheduling.booking.time_section')}
               {/* Show indicator when time editing is disabled (only for completed/cancelled) */}
-              {booking && ['completed', 'cancelled'].includes(booking.status) && (
+              {isSettled && (
                 <span className="text-xs font-normal text-[var(--v2-text-muted)] normal-case">
                   ({t('scheduling.booking.time_locked')})
                 </span>
@@ -1582,8 +1876,8 @@ export function SchedulingBookingModal({
                   type="datetime-local"
                   value={formData.start_time}
                   onChange={(e) => handleStartTimeChange(e.target.value)}
-                  min={!booking ? formatDateTimeLocal(new Date()) : undefined}
-                  disabled={booking && ['completed', 'cancelled'].includes(booking.status)}
+                  min={!booking ? formatDateTimeLocal(new Date(), zone) : undefined}
+                  disabled={isSettled}
                   className={`datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50 ${
                     formErrors.start_time
                       ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
@@ -1624,8 +1918,8 @@ export function SchedulingBookingModal({
                     setFormData(prev => ({ ...prev, end_time: e.target.value }));
                     setFormErrors(prev => ({ ...prev, end_time: '' }));
                   }}
-                  min={formData.start_time || (!booking ? formatDateTimeLocal(new Date()) : undefined)}
-                  disabled={booking && ['completed', 'cancelled'].includes(booking.status)}
+                  min={formData.start_time || (!booking ? formatDateTimeLocal(new Date(), zone) : undefined)}
+                  disabled={isSettled}
                   className={`datetime-input-scheduling w-full px-4 py-2.5 bg-[var(--v2-bg)] border text-[var(--v2-text-primary)] text-sm focus:outline-none focus:ring-2 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-[var(--v2-bg)]/50 ${
                     formErrors.end_time
                       ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
@@ -1863,11 +2157,24 @@ export function SchedulingBookingModal({
                   </button>
                   <button
                     type="submit"
-                    disabled={loading || !formData.service_id || !formData.client_first_name || !formData.client_email}
+                    /* `serviceGaps` only ever holds BLOCKING gaps — the route
+                       filters the advisory processor out — so anything in it is
+                       a reason this booking cannot be honoured. */
+                    disabled={
+                      loading ||
+                      !formData.service_id ||
+                      !formData.client_first_name ||
+                      !formData.client_email ||
+                      serviceGaps.length > 0
+                    }
                     className="px-4 py-2 text-sm font-medium text-[#14B8A6] border border-[#14B8A6] bg-[#14B8A6]/10 hover:bg-[#14B8A6]/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ borderRadius: 'var(--v2-radius-button)' }}
                   >
-                    {loading ? t('scheduling.booking.saving') : booking ? t('scheduling.booking.save_changes') : t('scheduling.booking.create_booking')}
+                    {loading
+                      ? t('scheduling.booking.saving')
+                      : booking
+                        ? t('scheduling.booking.save_changes')
+                        : t('scheduling.booking.create_booking')}
                   </button>
                 </div>
               </div>

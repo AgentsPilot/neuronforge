@@ -692,7 +692,7 @@ export function ModernHelpDialog({ isOpen, onClose }: ModernHelpDialogProps) {
           onClick={() => setSelectedArticle(null)}
         >
           <div
-            className="w-full max-w-2xl max-h-[80vh] mx-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl shadow-2xl overflow-hidden flex flex-col"
+            className="w-full max-w-2xl max-h-[80dvh] mx-4 bg-[var(--v2-surface)] border border-[var(--v2-border)] rounded-xl shadow-2xl overflow-hidden flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}

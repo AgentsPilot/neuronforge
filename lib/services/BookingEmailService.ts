@@ -34,6 +34,7 @@ import { resolveEmailBranding } from '@/lib/email/branding';
 import type { Locale } from '@/lib/i18n/config';
 import { isValidLocale, defaultLocale } from '@/lib/i18n/config';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { safeTimezone } from '@/lib/scheduling/businessTime';
 import * as jwt from 'jsonwebtoken';
 
 const logger = createLogger({ service: 'BookingEmailService' });
@@ -139,10 +140,61 @@ async function getUserLocale(userId: string): Promise<Locale> {
 }
 
 /**
+ * The clock a client-facing email should be written on.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY NOT `booking.timezone`
+ *
+ * Every email here formatted against the row's own `timezone` column, which is
+ * stamped once at creation from whatever the caller happened to send. Three
+ * things follow, and all three were live:
+ *
+ *   - A booking made through the dashboard stamped the OWNER'S BROWSER. The
+ *     drawer then showed 12:00 AM and the email said 4:00 AM for one instant.
+ *   - A booking made before the column was populated is null, and `timeZone:
+ *     undefined` means the SERVER's zone — UTC on Vercel, the machine's zone in
+ *     development. The same booking mails differently in the two.
+ *   - Correcting a business's timezone fixed every screen and left every
+ *     already-created booking mailing on the old one, for ever.
+ *
+ * An appointment happens where the business is. That is the only clock a
+ * confirmation, a reschedule or a reminder can be written on and still mean the
+ * hour the client should turn up. The stored instant is untouched, as always:
+ * this decides only which wall clock it is read against.
+ *
+ * The row's stamp stays as the fallback, so a booking whose owner has never set
+ * a preference reads exactly as it did before rather than jumping to UTC.
+ */
+export async function getBusinessTimezone(
+  userId: string,
+  stampedOnBooking?: string | null
+): Promise<string> {
+  try {
+    const { data, error } = await supabaseServer
+      .from('user_preferences')
+      .select('timezone')
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      logger.debug({ userId, err: error }, 'No user_preferences row; using the timezone stamped on the booking');
+      return safeTimezone(stampedOnBooking);
+    }
+
+    if (data?.timezone) return safeTimezone(data.timezone);
+
+    return safeTimezone(stampedOnBooking);
+  } catch (err) {
+    logger.warn({ userId, err }, 'Error resolving the business timezone');
+    return safeTimezone(stampedOnBooking);
+  }
+}
+
+/**
  * Fetch business profile language
  * Used for client-facing emails (booking confirmations, intake requests, etc.)
  */
-async function getBusinessLocale(userId: string): Promise<Locale> {
+export async function getBusinessLocale(userId: string): Promise<Locale> {
   try {
     const profileResult = await businessProfileRepository.findByUserId(userId);
     const language = profileResult.data?.language;
@@ -359,7 +411,7 @@ export class BookingEmailService {
         dateTime: startTime,
         endTime,
         duration: durationMinutes,
-        timezone: booking.timezone,
+        timezone: await getBusinessTimezone(userId, booking.timezone),
         location: undefined, // TODO: add location support
         price: service.price || undefined,
         currency: service.currency,
@@ -591,7 +643,9 @@ export class BookingEmailService {
            * the template already does when there is nothing to show.
            */
           appointmentDate = booking.start_time ? new Date(booking.start_time) : undefined;
-          timezone = booking.timezone;
+          // The business's clock, same as every other booking email. See
+          // `getBusinessTimezone`.
+          timezone = await getBusinessTimezone(userId, booking.timezone);
           contactId = booking.contact_id;
 
           // Generate manage URL
@@ -698,7 +752,17 @@ export class BookingEmailService {
   static async sendCancellationEmail(
     bookingId: string,
     userId: string,
-    reason?: string
+    reason?: string,
+    options?: {
+      /**
+       * Whether to invite the client to book again. Defaults to true, which is
+       * right for every ordinary cancellation.
+       *
+       * False when the business itself is closing: "Book Again" contradicts the
+       * message and points at a page that is about to stop existing.
+       */
+      offerRebooking?: boolean;
+    }
   ): Promise<EmailResult> {
     const requestLogger = logger.child({ bookingId, userId, action: 'sendCancellationEmail' });
 
@@ -745,7 +809,10 @@ export class BookingEmailService {
 
       // Somewhere the client can actually book — see `resolveBookingUrl`.
       // Never the business's own site: see the note there.
-      const bookAgainUrl = await resolveBookingUrl(userId, profileResult.data);
+      const bookAgainUrl =
+        options?.offerRebooking === false
+          ? undefined
+          : await resolveBookingUrl(userId, profileResult.data);
 
       // Parse booking datetime
       const startTime = new Date(booking.start_time);
@@ -758,7 +825,7 @@ export class BookingEmailService {
         clientName,
         serviceName: service.service_name,
         dateTime: startTime,
-        timezone: booking.timezone,
+        timezone: await getBusinessTimezone(userId, booking.timezone),
         reason: reason || booking.cancellation_reason || undefined,
         bookAgainUrl,
         // Same test as the confirmation: a booking with no start time was never
@@ -873,7 +940,7 @@ export class BookingEmailService {
         newDateTime,
         newEndTime: endTime,
         duration: durationMinutes,
-        timezone: booking.timezone,
+        timezone: await getBusinessTimezone(userId, booking.timezone),
         rescheduleUrl,
         cancelUrl,
         bookingId,
@@ -1309,7 +1376,7 @@ export class BookingEmailService {
         serviceName: service.service_name,
         dateTime: startTime,
         duration: durationMinutes,
-        timezone: booking.timezone,
+        timezone: await getBusinessTimezone(userId, booking.timezone),
         location: undefined, // TODO: add location support
         intakeFormUrl,
         rescheduleUrl,
@@ -1466,7 +1533,7 @@ export class BookingEmailService {
         clientName,
         serviceName: service.service_name,
         dateTime: booking.start_time ? new Date(booking.start_time) : null,
-        timezone: booking.timezone || 'UTC',
+        timezone: await getBusinessTimezone(userId, booking.timezone),
         completedAt: booking.intake_completed_at
           ? new Date(booking.intake_completed_at)
           : new Date(),

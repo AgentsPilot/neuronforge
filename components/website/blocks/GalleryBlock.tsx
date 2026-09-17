@@ -263,7 +263,14 @@ export function GalleryBlock({ content, styles, theme, isRTL, className }: Block
               exit={{ scale: 0.9, opacity: 0 }}
               src={images[lightboxIndex].url}
               alt={images[lightboxIndex].alt}
-              className="max-h-[85vh] max-w-[85vw] object-contain"
+              /* `dvh`, and narrower margins on a phone.
+                 `85vh` measures a viewport that includes the address bar, so a
+                 portrait photograph filled more than the visible height and its
+                 top and bottom sat behind the browser chrome. The 15% side
+                 margin also cost a phone most of its width — the prev/next
+                 controls sit over the picture rather than beside it, so the
+                 space was buying nothing. */
+              className="max-h-[80dvh] max-w-[92vw] sm:max-w-[85vw] object-contain"
               onClick={(e) => e.stopPropagation()}
             />
 

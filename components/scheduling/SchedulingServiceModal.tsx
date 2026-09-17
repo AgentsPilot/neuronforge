@@ -308,7 +308,7 @@ export function SchedulingServiceModal({ service, isOpen, onClose, onServiceUpda
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-full sm:max-w-2xl h-[100vh] sm:h-auto sm:max-h-[90vh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
+      <DialogContent className="w-full sm:max-w-2xl h-[100vh] sm:h-auto sm:max-h-[90dvh] flex flex-col bg-[var(--v2-surface)] border-[var(--v2-border)] p-0 overflow-hidden">
         {/* Sticky Header - pe-14 for close button space */}
         <div className="flex-shrink-0 border-b border-[var(--v2-border)] px-4 sm:px-6 py-4 sm:py-6 pe-12 sm:pe-14 bg-[var(--v2-surface)]">
           <div className="flex items-center gap-3 sm:gap-4">

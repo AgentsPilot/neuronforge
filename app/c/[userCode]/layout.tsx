@@ -5,6 +5,9 @@ import { PublicDirScript } from '@/components/public/PublicDirScript';
 import { PublicFontLinks } from '@/components/public/PublicFontLinks';
 import { PublicThemeStyle } from '@/components/public/PublicThemeStyle';
 import { resolvePublicBranding } from '@/lib/branding/publicBranding';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'SmartLinkLayout' });
 
 /**
  * The branded frame for the smart-link pages.
@@ -26,7 +29,38 @@ export default async function SmartLinkLayout({
   params: Promise<{ userCode: string }>;
 }) {
   const { userCode } = await params;
-  const brand = await resolvePublicBranding({ by: 'userCode', userCode });
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * CAUGHT, BECAUSE A THROW HERE HAS NOWHERE TO GO.
+   *
+   * This layout resolves branding from the database before the page below it
+   * renders. An uncaught failure — a dropped connection, a timeout, a row that
+   * vanished mid-request — lands after the response shell is flushed, and there
+   * is no render pass left to route it into `error.tsx`. Next defers its own
+   * boundary onto a timer, and that boundary calls `usePathname` from the timer
+   * callback, where React's dispatcher is null:
+   *
+   *   Warning: Invalid hook call...
+   *   TypeError: Cannot read properties of null (reading 'useContext')
+   *     at usePathname → at ErrorBoundary → at Timeout._onTimeout
+   *
+   * Both lines describe the BOUNDARY failing, not the original fault, so the
+   * real error is lost entirely. That is what made this page undiagnosable from
+   * its logs: every report showed the same secondary crash.
+   *
+   * Unbranded children are the right fallback. The pages below each resolve
+   * their own branding and render their own error screen, so losing the frame
+   * costs styling, not function — and a smart link that loads plain beats one
+   * that 500s.
+   */
+  let brand: Awaited<ReturnType<typeof resolvePublicBranding>> | null = null;
+
+  try {
+    brand = await resolvePublicBranding({ by: 'userCode', userCode });
+  } catch (error) {
+    logger.error({ err: error, userCode }, 'Failed to resolve smart-link branding');
+  }
 
   if (!brand) return <>{children}</>;
 

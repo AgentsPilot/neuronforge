@@ -75,7 +75,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', hideInternalSearch = false, highlightId }: PaymentTransactionListProps) {
-  const { t, isRTL, language } = useLanguage();
+  const { t, isRTL, language, timeZoneOptions } = useLanguage();
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'succeeded' | 'pending' | 'failed' | 'refunded'>('all');
@@ -226,11 +226,11 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
 
   const formatDate = (dateString: string) => {
     const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
-    return new Date(dateString).toLocaleDateString(locale, {
+    return new Date(dateString).toLocaleDateString(locale, timeZoneOptions({
       year: 'numeric',
       month: 'short',
       day: 'numeric',
-    });
+    }));
   };
 
   const copyToClipboard = async (text: string, id: string) => {
@@ -313,7 +313,7 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
     const rows = selectedTransactions.map(transaction => {
       const hasRefund = transaction.refund_status === 'partial' || transaction.refund_status === 'full';
       return [
-        transaction.paid_at || transaction.created_at ? new Date(transaction.paid_at || transaction.created_at).toLocaleDateString() : '',
+        transaction.paid_at || transaction.created_at ? new Date(transaction.paid_at || transaction.created_at).toLocaleDateString(undefined, timeZoneOptions()) : '',
         getContactName(transaction.contact) || '-',
         transaction.contact?.email || '-',
         transaction.amount.toFixed(2),
@@ -349,13 +349,13 @@ export function PaymentTransactionList({ searchQuery: externalSearchQuery = '', 
 
   const formatDateTime = (dateString: string) => {
     const locale = language === 'he' ? 'he-IL' : language === 'es' ? 'es-ES' : 'en-US';
-    return new Date(dateString).toLocaleString(locale, {
+    return new Date(dateString).toLocaleString(locale, timeZoneOptions({
       year: 'numeric',
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-    });
+    }));
   };
 
   // Translate description - handles "Booking: ServiceName" pattern

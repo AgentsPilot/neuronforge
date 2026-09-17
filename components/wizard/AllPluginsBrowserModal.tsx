@@ -86,7 +86,7 @@ export const AllPluginsBrowserModal: React.FC<AllPluginsBrowserModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+      <div className="bg-white rounded-3xl shadow-2xl max-w-6xl w-full max-h-[90dvh] overflow-hidden">
         {/* Modal Header */}
         <div className={`px-8 py-6 text-white ${
           isReplacementMode 

@@ -16,6 +16,7 @@ function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
     },
     appointments: {
       total: 6,
+      completed: 0,
       ready: 5,
       awaitingIntake: [{ name: 'Sarah', timeLocal: '11:00' }],
       awaitingPayment: [],
@@ -26,7 +27,7 @@ function facts(overrides: Partial<BriefingFacts> = {}): BriefingFacts {
       owed: [{ name: 'John', amount: 250, currency: 'USD', overdue: true }],
       totalOwed: 250,
       currency: 'USD',
-      mixedCurrency: false,
+      mixedCurrency: false, receivedToday: 0, receivedCount: 0,
     },
     isQuiet: false,
     ...overrides,
@@ -86,7 +87,7 @@ describe('findUnsupportedFigures', () => {
         owed: [{ name: 'John', amount: 1250.5, currency: 'USD', overdue: false }],
         totalOwed: 1250.5,
         currency: 'USD',
-        mixedCurrency: false,
+        mixedCurrency: false, receivedToday: 0, receivedCount: 0,
       },
     });
 
@@ -113,7 +114,7 @@ describe('composeFallback', () => {
 
   it('gets Hebrew singular and plural right', () => {
     const one = facts({
-      appointments: { total: 1, ready: 1, awaitingIntake: [],
+      appointments: { total: 1, completed: 0, ready: 1, awaitingIntake: [],
       awaitingPayment: [], cancelled: [], first: undefined },
     });
 
@@ -137,9 +138,9 @@ describe('composeFallback', () => {
 
   it('says something rather than nothing on a quiet day', () => {
     const quiet = facts({
-      appointments: { total: 0, ready: 0, awaitingIntake: [],
+      appointments: { total: 0, completed: 0, ready: 0, awaitingIntake: [],
       awaitingPayment: [], cancelled: [], first: undefined },
-      money: { owed: [], totalOwed: 0, currency: 'USD', mixedCurrency: false },
+      money: { owed: [], totalOwed: 0, currency: 'USD', mixedCurrency: false, receivedToday: 0, receivedCount: 0 },
       isQuiet: true,
     });
 
@@ -160,6 +161,7 @@ describe('findUntranslatedWords', () => {
     facts({
       appointments: {
         total: 2,
+        completed: 0,
         ready: 2,
         awaitingIntake: [],
       awaitingPayment: [],
@@ -170,7 +172,7 @@ describe('findUntranslatedWords', () => {
         owed: [{ name: 'דויד המלך', amount: 200, currency: 'USD', overdue: false }],
         totalOwed: 200,
         currency: 'USD',
-        mixedCurrency: false,
+        mixedCurrency: false, receivedToday: 0, receivedCount: 0,
       },
     });
 
@@ -186,7 +188,7 @@ describe('findUntranslatedWords', () => {
   it('allows a Latin name, which must survive verbatim', () => {
     const latinName = facts({
       appointments: { ...facts().appointments, first: { name: 'Studio 54', timeLocal: '09:00' } },
-      money: { owed: [], totalOwed: 0, currency: 'USD', mixedCurrency: false },
+      money: { owed: [], totalOwed: 0, currency: 'USD', mixedCurrency: false, receivedToday: 0, receivedCount: 0 },
     });
     // Transliterating a client's name would describe someone the owner does
     // not recognise, so names are exempt from the check.

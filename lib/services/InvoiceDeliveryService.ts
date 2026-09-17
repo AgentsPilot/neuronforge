@@ -39,6 +39,10 @@ import {
 } from '@/lib/repositories/PaymentRepository';
 import { getStripeInvoiceService } from '@/lib/stripe/StripeInvoiceService';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import {
+  missingInvoiceFields,
+  type InvoiceField,
+} from '@/lib/business-os/setup/profileReadiness';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmActivityRepository } from '@/lib/repositories/CRMActivityRepository';
 import { generateInvoiceEmail } from '@/lib/email/templates/invoice';
@@ -70,7 +74,20 @@ type ContextLogger = {
 export class InvoiceNotSendableError extends Error {
   constructor(
     message: string,
-    readonly reason: 'already_paid' | 'cancelled' | 'no_client_email' | 'no_business_profile'
+    readonly reason:
+      | 'already_paid'
+      | 'cancelled'
+      | 'no_client_email'
+      | 'no_business_profile'
+      | 'invoicing_incomplete',
+    /**
+     * Exactly which invoice fields are missing, for `invoicing_incomplete`.
+     *
+     * Named rather than summarised: an owner told "your invoice details are
+     * incomplete" has to open the form and compare it against nothing. Told
+     * "tax id, address", they know before they click.
+     */
+    readonly missing?: InvoiceField[]
   ) {
     super(message);
     this.name = 'InvoiceNotSendableError';
@@ -150,6 +167,46 @@ export async function sendInvoice(
       error: new InvoiceNotSendableError(
         `Invoice ${invoice.invoice_number} has no client email address to send to.`,
         'no_client_email'
+      ),
+    };
+  }
+
+  /*
+   * ───────────────────────────────────────────────────────────────────────────
+   * AN INVOICE WITHOUT THE BUSINESS'S OWN DETAILS IS NOT A VALID DOCUMENT.
+   *
+   * Company name, tax id, an address, and some way to actually pay. Without
+   * them the client receives a demand for money from a party they cannot
+   * identify, with nowhere to send it — and the owner finds out when nobody
+   * pays, not when they pressed send.
+   *
+   * These four are exactly `missingInvoiceFields`, the same test the readiness
+   * card and `journeyReadiness`'s publish gate already use, so the dashboard
+   * cannot call a business ready to invoice while this refuses to let it.
+   * Deliberately NOT the wider `missingProfileFields`: `vertical` and the
+   * organisation's own categorisation never appear on an invoice, and refusing
+   * a send over them would block a document that is perfectly valid.
+   *
+   * Checked here rather than in `sendByEmail` so it covers the Stripe path too,
+   * and every caller — the orders page, the chat, bizql, the payment-stage
+   * completion hook and the lead-response cron. An automated send has the same
+   * problem as a manual one; it just has nobody watching it fail.
+   *
+   * The fetch is not wasted: `sendByEmail` needs these settings anyway.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  const { data: invoiceSettings } =
+    await businessProfileRepository.getInvoiceSettingsWithProfile(userId);
+
+  const missing = missingInvoiceFields(invoiceSettings);
+  if (missing.length > 0) {
+    log.info({ userId, invoiceId, missing }, 'Invoice send refused: invoicing incomplete');
+    return {
+      data: null,
+      error: new InvoiceNotSendableError(
+        'Your invoice details are incomplete, so this invoice cannot be issued yet.',
+        'invoicing_incomplete',
+        missing
       ),
     };
   }

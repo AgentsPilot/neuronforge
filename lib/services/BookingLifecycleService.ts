@@ -78,6 +78,14 @@ export interface CancelBookingParams {
   request?: NextRequest;
   /** A caller's correlated child logger, so one cancellation reads as one story. */
   logger?: ContextLogger;
+  /**
+   * Whether the cancellation email invites the client to book again. Defaults
+   * to true, which is right for every ordinary cancellation.
+   *
+   * False when the business itself is closing: the invitation contradicts the
+   * message and points at a page that is about to stop existing.
+   */
+  offerRebooking?: boolean;
 }
 
 /** What actually happened to each side effect, so a caller can say so. */
@@ -97,7 +105,7 @@ export interface CancelBookingOutcome {
 export async function cancelBooking(
   params: CancelBookingParams
 ): Promise<SchedulingRepositoryResult<CancelBookingOutcome>> {
-  const { bookingId, userId, reason, request } = params;
+  const { bookingId, userId, reason, request, offerRebooking } = params;
   const log = params.logger ?? logger;
 
   log.info({ bookingId, userId, reason }, 'Cancelling booking');
@@ -212,7 +220,9 @@ export async function cancelBooking(
   if (!meetingStillAhead) {
     log.info({ bookingId }, 'Cancellation email skipped — the meeting had already passed');
   } else try {
-    const email = await BookingEmailService.sendCancellationEmail(bookingId, userId, reason);
+    const email = await BookingEmailService.sendCancellationEmail(bookingId, userId, reason, {
+      offerRebooking,
+    });
     clientNotified = email.sent;
     if (!email.sent) {
       log.warn({ bookingId, error: email.error }, 'Cancellation email not sent');
@@ -450,7 +460,28 @@ export async function createBooking(
   // 5. Bill for it, when there is something to bill. A failure here is logged
   //    and reported, never fatal — the appointment stands either way.
   let invoice: PaymentInvoice | null = null;
-  const shouldInvoice = !!service && !!service.price && service.price > 0 && createInvoice;
+  /*
+   * A QUOTED service is never invoiced on booking.
+   *
+   * `sale_mode: 'proposal'` means the price is not agreed yet — the client gets
+   * a quote, and the invoice follows acceptance. Booking one from the drawer
+   * used to raise an invoice on the spot for whatever placeholder price the
+   * service carried, asking for money nobody had quoted.
+   *
+   * Price alone decides the rest, and deliberately so. This path has no
+   * checkout: the drawer and the chat record a booking the owner agreed by
+   * phone, so nobody has paid and the money is owed however the service says it
+   * likes to collect. The public widget uses a different rule — it invoices
+   * only when it did NOT take a card — because it is the one place a client can
+   * actually pay at the moment of booking. Two rules, two situations; they are
+   * not a contradiction.
+   */
+  const shouldInvoice =
+    !!service &&
+    service.sale_mode !== 'proposal' &&
+    !!service.price &&
+    service.price > 0 &&
+    createInvoice;
 
   if (shouldInvoice) {
     try {

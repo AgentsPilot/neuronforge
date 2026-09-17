@@ -191,6 +191,37 @@ export class OnboardingConversationRepository {
   /**
    * Clear all messages for a user (for restarting onboarding)
    */
+  /**
+   * When the newest message in this account's onboarding chat was written.
+   *
+   * `null` when there is no transcript at all.
+   *
+   * Used to tell a REPLACEMENT from a RETRY. Both arrive at the build route
+   * with a finished business already on the account, and they need opposite
+   * treatment: a replacement must clear the old business first, a retry must
+   * not, because the thing it would clear is what the previous attempt just
+   * built. The transcript separates them — it is written before the profile and
+   * is deliberately not cascaded, so a chat newer than the profile means the
+   * owner has been back through onboarding since that profile was made.
+   */
+  async getLatestMessageAt(userId: string): Promise<OnboardingConversationRepositoryResult<string | null>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('onboarding_conversations')
+        .select('created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (error) throw error;
+
+      return { data: data?.[0]?.created_at ?? null, error: null };
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Failed to read the onboarding transcript timestamp');
+      return { data: null, error: error as Error };
+    }
+  }
+
   async clearConversation(userId: string): Promise<OnboardingConversationRepositoryResult<boolean>> {
     try {
       logger.info({ userId }, 'Clearing onboarding conversation');

@@ -41,7 +41,25 @@ jest.mock('@/lib/supabaseServer', () => ({
 
       builder.update = (row: Record<string, unknown>) => {
         if (table === 'scheduling_bookings') dbState.bookingUpdates.push(row);
-        return { eq: () => ({ eq: async () => ({ error: null }) }) };
+
+        /*
+         * Chainable to any depth, and awaitable at every one.
+         *
+         * This used to be `{ eq: () => ({ eq: async () => … }) }`, which
+         * hard-coded exactly two filters. When the source added a third —
+         * `.eq('status', 'pending')`, so a confirm cannot resurrect a cancelled
+         * booking — the mock returned undefined from the second call and the
+         * test died on `.eq is not a function`, pointing at the source rather
+         * than at itself.
+         *
+         * A self-returning chain has no depth to get wrong, so adding or
+         * removing a filter upstream cannot break this file again.
+         */
+        const chain: Record<string, unknown> = {
+          then: (resolve: (value: { error: null }) => unknown) => resolve({ error: null }),
+        };
+        chain.eq = () => chain;
+        return chain;
       };
 
       void selected;
