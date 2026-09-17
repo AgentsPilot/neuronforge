@@ -22,12 +22,21 @@
  * @module lib/business-os/usage/usageCategories
  */
 
-import { bosFeature } from '@/lib/business-os/llm/callCatalog';
+import { BOS_LEGACY_FEATURES, bosFeature, type BosLlmArea } from '@/lib/business-os/llm/callCatalog';
 
 export const OTHER_USAGE_CATEGORY = 'other';
 
+/**
+ * An area's current feature value followed by the legacy values it replaced,
+ * from the catalog, so the category map and the Layer 1.1 verification checks
+ * read the same lists.
+ */
+export function bosCategoryFeatures(area: BosLlmArea): string[] {
+  return [bosFeature(area), ...BOS_LEGACY_FEATURES[area]];
+}
+
 export const USAGE_CATEGORIES: ReadonlyArray<{ key: string; features: readonly string[] }> = [
-  { key: 'chat', features: [bosFeature('chat'), 'chat-v3'] },
+  { key: 'chat', features: [...bosCategoryFeatures('chat'), 'chat-v3'] },
   {
     key: 'automations_built',
     features: [
@@ -45,20 +54,12 @@ export const USAGE_CATEGORIES: ReadonlyArray<{ key: string; features: readonly s
     key: 'automations_run',
     features: ['agentkit_execution', 'ai_processing', 'pilot', 'orchestration', 'memory_system'],
   },
-  { key: 'website', features: [bosFeature('website'), 'landing-page-generation'] },
-  {
-    key: 'insights',
-    features: [
-      bosFeature('insights'),
-      'health-summary-generation',
-      'insight-generation',
-      'correlated-insight-generation',
-    ],
-  },
-  // `business-os` is the legacy briefing tag (component `daily-briefing`).
-  { key: 'briefing', features: [bosFeature('briefing'), 'business-os'] },
-  { key: 'intake', features: [bosFeature('intake')] },
-  { key: 'leads', features: [bosFeature('leads'), 'lead-reply'] },
+  { key: 'website', features: bosCategoryFeatures('website') },
+  { key: 'insights', features: bosCategoryFeatures('insights') },
+  // Includes `business-os`, the legacy briefing tag (component `daily-briefing`).
+  { key: 'briefing', features: bosCategoryFeatures('briefing') },
+  { key: 'intake', features: bosCategoryFeatures('intake') },
+  { key: 'leads', features: bosCategoryFeatures('leads') },
   { key: 'documents', features: ['document-extraction'] },
   // `onboarding` stays here: the onboarding chat and prompt-ideas flows still write it.
   { key: 'help', features: ['help_bot_v2', 'input_help_bot', 'helpbot', 'onboarding'] },

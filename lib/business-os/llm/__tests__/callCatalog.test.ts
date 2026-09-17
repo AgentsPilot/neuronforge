@@ -13,9 +13,19 @@ jest.mock('@/lib/logger', () => ({
 
 import {
   BOS_CHAT_FEATURE,
+  BOS_FEATURE_FILTER_PREFIX,
+  BOS_KNOWN_NON_CATALOG_COMPONENTS,
+  BOS_LEGACY_FEATURES,
+  BOS_LEGACY_FEATURES_FLAT,
+  BOS_LEGACY_HELPER_LABEL,
   BOS_LLM_AREAS,
   BOS_LLM_CALLS,
   bosFeature,
+  bosRowFilter,
+  isBusinessOsFeature,
+  isPlatformAccount,
+  isPlatformAccountEnvIgnored,
+  platformAccountIds,
   bosBriefingGroupId,
   buildBosCallContext,
   isUuid,
@@ -252,5 +262,111 @@ describe('newBosGroupId', () => {
     expect(isUuid(a)).toBe(true);
     expect(isUuid(b)).toBe(true);
     expect(a).not.toBe(b);
+  });
+});
+
+// ─── Layer 1.1 shared constants (FR-4 to FR-6, AC-4, AC-5) ────────────────────
+
+const ZERO = '00000000-0000-0000-0000-000000000000';
+
+describe('platform account (FR-5)', () => {
+  it('is only the all-zero id when SYSTEM_ADMIN_USER_ID is unset', () => {
+    expect(platformAccountIds()).toEqual([ZERO]);
+    expect(isPlatformAccount(ZERO)).toBe(true);
+    expect(isPlatformAccount(U1)).toBe(false);
+    expect(isPlatformAccountEnvIgnored()).toBe(false);
+  });
+
+  it('adds SYSTEM_ADMIN_USER_ID when it is a UUID, read at call time', () => {
+    process.env.SYSTEM_ADMIN_USER_ID = U2;
+    expect(platformAccountIds()).toEqual([ZERO, U2]);
+    expect(isPlatformAccount(U2)).toBe(true);
+    expect(isPlatformAccountEnvIgnored()).toBe(false);
+  });
+
+  it('lower-cases the env id and compares case-insensitively', () => {
+    const upper = 'AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA';
+    process.env.SYSTEM_ADMIN_USER_ID = upper;
+    expect(platformAccountIds()).toEqual([ZERO, upper.toLowerCase()]);
+    expect(isPlatformAccount(upper.toLowerCase())).toBe(true);
+    expect(isPlatformAccount(upper)).toBe(true);
+    expect(isPlatformAccount(ZERO.toUpperCase())).toBe(true);
+  });
+
+  it('does not repeat the all-zero id when the env is set to it', () => {
+    process.env.SYSTEM_ADMIN_USER_ID = ZERO;
+    expect(platformAccountIds()).toEqual([ZERO]);
+  });
+
+  it('leaves out a non-UUID env value and says so (WC-9)', () => {
+    process.env.SYSTEM_ADMIN_USER_ID = 'not-a-uuid';
+    expect(platformAccountIds()).toEqual([ZERO]);
+    expect(isPlatformAccountEnvIgnored()).toBe(true);
+  });
+
+  it('agrees with isPlatformAccount for every id it returns, env set or unset', () => {
+    for (const env of [undefined, U2]) {
+      if (env) process.env.SYSTEM_ADMIN_USER_ID = env;
+      else delete process.env.SYSTEM_ADMIN_USER_ID;
+      for (const id of platformAccountIds()) expect(isPlatformAccount(id)).toBe(true);
+    }
+  });
+
+  it('makes the builder log an error for an upper-case spelling of the system id', () => {
+    process.env.SYSTEM_ADMIN_USER_ID = U2;
+    buildBosCallContext({ userId: U2.toUpperCase(), area: 'leads', callName: 'reply_recommendation', groupId: G1 });
+    expect(mockLogger.error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Business OS feature values (FR-4)', () => {
+  it('flattens the per-area legacy lists in area order', () => {
+    expect(BOS_LEGACY_FEATURES_FLAT).toEqual(BOS_LLM_AREAS.flatMap((a) => [...BOS_LEGACY_FEATURES[a]]));
+    expect(new Set(BOS_LEGACY_FEATURES_FLAT).size).toBe(BOS_LEGACY_FEATURES_FLAT.length);
+  });
+
+  it('never lists a current value as a legacy value', () => {
+    for (const area of BOS_LLM_AREAS) {
+      for (const other of BOS_LLM_AREAS) {
+        expect(BOS_LEGACY_FEATURES[area] as readonly string[]).not.toContain(bosFeature(other));
+      }
+    }
+  });
+
+  it('builds the row filter from the constants', () => {
+    expect(bosRowFilter()).toEqual({ featurePrefix: BOS_FEATURE_FILTER_PREFIX, features: BOS_LEGACY_FEATURES_FLAT });
+    for (const area of BOS_LLM_AREAS) expect(bosFeature(area).startsWith(BOS_FEATURE_FILTER_PREFIX)).toBe(true);
+  });
+
+  it('recognises current, legacy and misspelled Business OS values, and nothing else', () => {
+    for (const area of BOS_LLM_AREAS) expect(isBusinessOsFeature(bosFeature(area))).toBe(true);
+    for (const legacy of BOS_LEGACY_FEATURES_FLAT) expect(isBusinessOsFeature(legacy)).toBe(true);
+    expect(isBusinessOsFeature('business-os-webiste')).toBe(true);
+    expect(isBusinessOsFeature('onboarding')).toBe(false);
+    expect(isBusinessOsFeature('chat-v3')).toBe(false);
+    expect(isBusinessOsFeature('')).toBe(false);
+  });
+});
+
+describe('known non-catalog components (FR-6)', () => {
+  it('keys each entry by its component, in a real area, and is not a catalog call name', () => {
+    for (const [key, entry] of Object.entries(BOS_KNOWN_NON_CATALOG_COMPONENTS)) {
+      expect(entry.component).toBe(key);
+      expect(BOS_LLM_AREAS).toContain(entry.area);
+      expect((BOS_LLM_CALLS[entry.area] as readonly string[]).includes(entry.component)).toBe(false);
+      expect(entry.reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('exempts the plan-cache row from the call-name flag only, and the intent parser from both', () => {
+    expect([...BOS_KNOWN_NON_CATALOG_COMPONENTS.BizQLPlanCache.exemptFrom]).toEqual(['unknown_call_name']);
+    expect([...BOS_KNOWN_NON_CATALOG_COMPONENTS.IntentParser.exemptFrom].sort()).toEqual([
+      'missing_group_id',
+      'unknown_call_name',
+    ]);
+  });
+
+  it('pins the legacy helper label', () => {
+    expect(BOS_LEGACY_HELPER_LABEL).toEqual({ feature: 'onboarding', component: 'simple-complete' });
   });
 });

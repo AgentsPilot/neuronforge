@@ -12,7 +12,7 @@ jest.mock('@/lib/logger', () => ({
 
 import { ProviderFactory, getProviderFactory } from '@/lib/ai/providerFactory';
 import type { BaseAIProvider, CallContext } from '@/lib/ai/providers/baseProvider';
-import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
+import { BOS_LEGACY_HELPER_LABEL, buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
 
 const U1 = '11111111-1111-4111-8111-111111111111';
 const G1 = '33333333-3333-4333-8333-333333333333';
@@ -65,6 +65,16 @@ describe('getProviderFactory().complete', () => {
       userId: 'system',
       feature: 'onboarding',
       component: 'simple-complete',
+    });
+  });
+
+  it('records the labels the catalog names as the legacy helper label (Layer 1.1 AC-5)', async () => {
+    await getProviderFactory().complete(params);
+
+    const recorded = chatCompletion.mock.calls[0][1] as CallContext;
+    expect({ feature: recorded.feature, component: recorded.component }).toStrictEqual({
+      feature: BOS_LEGACY_HELPER_LABEL.feature,
+      component: BOS_LEGACY_HELPER_LABEL.component,
     });
   });
 

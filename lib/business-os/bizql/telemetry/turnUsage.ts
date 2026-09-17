@@ -29,7 +29,7 @@
 import { createLogger } from '@/lib/logger';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { supabaseServer } from '@/lib/supabaseServer';
-import { BOS_CHAT_FEATURE } from '@/lib/business-os/llm/callCatalog';
+import { BOS_CHAT_FEATURE, BOS_KNOWN_NON_CATALOG_COMPONENTS } from '@/lib/business-os/llm/callCatalog';
 
 const logger = createLogger({ module: 'BizQLTurnUsage' });
 
@@ -105,7 +105,7 @@ export async function recordCachedTurn(args: CachedTurnArgs): Promise<void> {
       session_id: args.turnId,
       // Same label as the chat's LLM rows, so the turn counts; still not an LLM call.
       feature: BOS_CHAT_FEATURE,
-      component: 'BizQLPlanCache',
+      component: BOS_KNOWN_NON_CATALOG_COMPONENTS.BizQLPlanCache.component,
       request_type: 'chat',
       activity_type: 'cache_hit',
       activity_name: args.servedBy,

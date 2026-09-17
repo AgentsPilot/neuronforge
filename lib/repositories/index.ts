@@ -40,6 +40,18 @@ export type {
   CreateWorkflowGroupInput,
   UpdateWorkflowGroupInput,
 } from './WorkflowGroupRepository';
+// Row types live in the repository file: `TokenUsage` in ./types is an unrelated
+// execution-token type (Layer 1.1 workplan Q-9).
+export { TokenUsageRepository, tokenUsageRepository } from './TokenUsageRepository';
+export type {
+  LedgerCallRow,
+  LedgerLabelRow,
+  LedgerSummaryRow,
+  TokenUsageFeatureFilter,
+  TokenUsageMatch,
+  TokenUsageWindow,
+  UsageSummaryRpcRow,
+} from './TokenUsageRepository';
 
 // Types
 export type {
