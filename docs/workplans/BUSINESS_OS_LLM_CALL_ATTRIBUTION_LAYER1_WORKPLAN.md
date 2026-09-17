@@ -7,7 +7,7 @@
 **Evidence:** [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md)
 **Branch:** `feature/business-os-llm-attribution-layer1` (worktree `neuronforge-llm-attribution`, off `origin/main` @ `6351ebb1`)
 **Date:** 2026-09-17
-**Status:** SA code review 2026-09-17: Approved with fixes (CR-1 docs only, §13.5; applied). User-approved addition T46–T47 (scoped CI type-check gate + chat label constant, §12.2) implemented; SA review §13.6: T47 approved; T46 approved after CR-2 + S-5 re-verification (§13.6.3). Layer 1 fully SA-approved. **QA 2026-09-17: PASS WITH ISSUES (§14): no Layer 1 bugs; pre-existing P-1/P-2 and test-strength notes W-1 to W-5 are non-blocking. Awaiting user approval.** S-6 (required check on main) is an admin setting. (SA workplan review 2026-09-17: Approved with changes; WC-1 to WC-10 applied, see §13.4. Implementation 2026-09-17, see §12.1. Not committed; RM commits after SA code review, QA and user approval.)
+**Status:** SA code review 2026-09-17: Approved with fixes (CR-1 docs only, §13.5; applied). User-approved addition T46–T47 (scoped CI type-check gate + chat label constant, §12.2) implemented; SA review §13.6: T47 approved; T46 approved after CR-2 + S-5 re-verification (§13.6.3). Layer 1 fully SA-approved. **QA 2026-09-17: PASS WITH ISSUES (§14): no Layer 1 bugs; pre-existing P-1/P-2 and test-strength notes W-1 to W-5 are non-blocking. User approved; committed and PR #47 opened (§15).** S-6 (required check on main) is recorded as open issue OI-3 in the requirement. (SA workplan review 2026-09-17: Approved with changes; WC-1 to WC-10 applied, see §13.4. Implementation 2026-09-17, see §12.1. Not committed; RM commits after SA code review, QA and user approval.)
 
 ## Overview
 
@@ -54,7 +54,7 @@ This workplan traces each FR and AC to tasks and tests. It verifies every line r
 | Usage card | `app/api/business-os/usage/route.ts` | Imports the extracted mapping; new + legacy values |
 | DB | `token_usage` | Writes only. **No schema change, no migration, no backfill** |
 
-**Not touched:** `lib/analytics/aiAnalytics.ts`, `lib/ai/providers/baseProvider.ts` (read only), `turnUsage.ts`, `ChatBudget.ts`, `usageReport.ts`, `UsageCard.tsx`, and all excluded calls: `AIDataLayerService.ts`, `IntentParser.ts`, `story/route.ts`, `WebsiteAnalyzer.ts`, `OnboardingConversationManager.ts`, `ServiceGeneratorService.ts` (broken; excluded per user decision 2026-09-17) and `GeneratedImageService.ts` (website image generation; moved to Layer 1.5 per user decision 2026-09-17). Also untouched: `lib/repositories/InsightRepository.ts`, the agents-side "insights" system. Per the `business-os-insights` skill (Rule 1), it is a different class from `lib/business-os/insight/repository/InsightRepository.ts`. `lib/pilot/insight/BusinessInsightGenerator.ts:765` uses that other class and is unaffected.
+**Not touched:** `lib/analytics/aiAnalytics.ts`, `lib/ai/providers/baseProvider.ts` (read only), `UsageCard.tsx`, and all excluded calls: `AIDataLayerService.ts`, `IntentParser.ts`, `story/route.ts`, `WebsiteAnalyzer.ts`, `OnboardingConversationManager.ts`, `ServiceGeneratorService.ts` (broken; excluded per user decision 2026-09-17) and `GeneratedImageService.ts` (website image generation; moved to Layer 1.5 per user decision 2026-09-17). Also untouched: `lib/repositories/InsightRepository.ts`, the agents-side "insights" system. Per the `business-os-insights` skill (Rule 1), it is a different class from `lib/business-os/insight/repository/InsightRepository.ts`. `lib/pilot/insight/BusinessInsightGenerator.ts:765` uses that other class and is unaffected.
 
 **V6 protocol:** not applicable. No V6, pilot or plugin-system code is touched.
 
@@ -356,7 +356,7 @@ All account and grouping sources are server-side: `getUser()`, DB-iterated ids, 
 | `app/api/business-os/usage/route.ts` | modify | Import extracted mapping |
 | `docs/architecture/BUSINESS_OS_INSIGHTS_MODULE.md` | modify | One line: insight LLM calls attributed to the business, `session_id = runId` (per `business-os-insights` skill close-out) |
 
-**Explicitly unchanged (AC-21, AC-24):** `lib/analytics/aiAnalytics.ts`, `lib/ai/providers/baseProvider.ts`, `lib/business-os/ai-data-layer/AIDataLayerService.ts`, `lib/business-os/IntentParser.ts`, `app/api/business-os/story/route.ts`, `lib/services/WebsiteAnalyzer.ts` (broken: calls non-existent `getDefaultModel` / `BaseAIProvider.complete`, no LLM call; FU-4), `lib/services/OnboardingConversationManager.ts`, `lib/services/ServiceGeneratorService.ts` (F-2, excluded: broken), `lib/services/GeneratedImageService.ts` (F-3, Layer 1.5), `turnUsage.ts`, `ChatBudget.ts`, `usageReport.ts`, `UsageCard.tsx`, `scripts/verify-insights.ts`, `app/api/cron/insight-detect/route.ts` (already passes a `string` `runId`). No `supabase/migrations/**` file.
+**Explicitly unchanged (AC-21, AC-24):** `lib/analytics/aiAnalytics.ts`, `lib/ai/providers/baseProvider.ts`, `lib/business-os/ai-data-layer/AIDataLayerService.ts`, `lib/business-os/IntentParser.ts`, `app/api/business-os/story/route.ts`, `lib/services/WebsiteAnalyzer.ts` (broken: calls non-existent `getDefaultModel` / `BaseAIProvider.complete`, no LLM call; FU-4), `lib/services/OnboardingConversationManager.ts`, `lib/services/ServiceGeneratorService.ts` (F-2, excluded: broken), `lib/services/GeneratedImageService.ts` (F-3, Layer 1.5), `UsageCard.tsx`, `scripts/verify-insights.ts`, `app/api/cron/insight-detect/route.ts` (already passes a `string` `runId`). No `supabase/migrations/**` file. **Update (T47, user-approved addition):** `turnUsage.ts`, `ChatBudget.ts` and `usageReport.ts` were later changed to read the chat label from `BOS_CHAT_FEATURE`: identical string, no behaviour change (§12.2, §13.6).
 
 ---
 
@@ -1384,7 +1384,15 @@ None.
 
 ## 15. Commit Info
 
-_RM to populate._
+| Item | Value |
+|---|---|
+| Branch | `feature/business-os-llm-attribution-layer1` (from `origin/main` `718524e9`) |
+| Docs commits | `6351ebb1` requirement + investigation; `9e904f32` workplan (SA approved) + requirement updates |
+| Implementation | `18bd120e` feat(business-os): attribution across all 6 areas, `callCatalog.ts`, `usageCategories.ts`, 10 test files |
+| CI | `9bd48f96` ci(business-os): scoped type check (`scripts/typecheck-bos-llm.ts`, baseline, `bos-llm-typecheck.yml`) |
+| Docs | `f4c93a64` docs(business-os): SA review, QA report, known issues |
+| Pull request | [#47](https://github.com/AgentsPilot/neuronforge/pull/47) to `main`: CI 3/3 passing at open; not merged, auto-merge off |
+| Open after merge | OI-3: make `bos-llm-typecheck` a required check on `main` (GitHub admin) |
 
 ---
 
@@ -1403,3 +1411,4 @@ _RM to populate._
 | 2026-09-17 | CR-2 + S-5 applied (T46) | Gate scope now derived from compiler-resolved imports: core (catalog, usage mapping, catalog importers, attribution tests), re-export barrels to a fixed point, and direct callers. 36 → 96 files. Baseline 21 → 30 errors / 17 → 23 keys (+9 pre-existing on untouched lines in 5 caller files); named-union ordering normalised. Proven: dropped `runId` in `insight-detect/route.ts` → exit 1, dropped `userId` at `BriefingStore.ts:51` → exit 1, `'ful_site'` → exit 1, clean → exit 0 (~65 s); tree restored byte-identical. Workflow hardened (permissions, concurrency, timeout). Pending SA spot-check |
 | 2026-09-17 | SA re-verification of CR-2 / S-5 — T46 approved | §13.6.3: SA reran the proofs (cron `runId` and BriefingStore `userId` each TS2554, exit 1; restored byte-identical; clean run 0 new). Confirmed the 9 baseline additions are pre-existing (files unchanged since `9e904f32`). One caller level is sufficient: all required signature changes are in core; out-of-core changes are optional params. Union normalization is commutative-only and fail-safe. Workflow YAML valid. Layer 1 (incl. T46/T47) fully SA-approved for QA |
 | 2026-09-17 | QA — PASS WITH ISSUES | §14 populated. Part 1: Jest 94 suites / 1,512 passed; `typecheck:bos-llm` 96 files, 30 known, 0 new; full `tsc` 2,045 with per-file counts identical to a clean `9e904f32` archive (0 new, 0 TS2578); AC mapping spot-checked, with weak spots W-1 to W-5 (route-level coverage, stale comment). Part 2: live run on test account `2f734ed5…` against the current Supabase project with real OpenAI. 30 ledger rows across chat (planner, analysis, verified-question lookup/store), insights (per-user + cron over 4 businesses: `insight_content`, `health_summary`, one run id across accounts), briefing (stable v5 group), leads, intake and website (full_site, landing_page, testimonial_enhance, field_regenerate). All on the correct account with catalog names and UUID groups; 0 system/all-zero rows; usage card shows all six categories, no `other`, 26 calls matching the ledger. No Layer 1 bugs. Pre-existing P-1 (intake generation always falls back on Zod rejection) and P-2 (lead reply fallback, parked). Not live: correlated_insight (no pattern matched), plan-cache embeddings (semantic cache off), cache-hit row, generate-from-profile / regenerate routes, LeadAlertService (would notify). No external messages sent |
+| 2026-09-17 | Committed + PR #47 | §15 populated with commit hashes and PR. Corrected §1 and §5 "not touched" lists: `turnUsage.ts`, `ChatBudget.ts` and `usageReport.ts` were changed by the later user-approved T47 (label constant only). S-6 (required check on `main`) recorded as open issue OI-3 in the requirement |
