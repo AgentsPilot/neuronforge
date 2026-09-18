@@ -17,6 +17,7 @@ import { ProviderFactory, PROVIDERS } from '@/lib/ai/providerFactory'
 import type { CallContext } from '@/lib/ai/providers/baseProvider'
 import { SystemConfigService } from './SystemConfigService'
 import { createLogger } from '@/lib/logger'
+import { platformAccountId } from '@/lib/platformAccount'
 
 const logger = createLogger({ service: 'EmbeddingService' })
 
@@ -43,7 +44,7 @@ interface BatchEmbeddingResult {
  * intent. Read at call time, not module scope, so a late-loading env still applies.
  */
 function systemUserId(): string {
-  return process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000'
+  return platformAccountId()
 }
 
 export class EmbeddingService {

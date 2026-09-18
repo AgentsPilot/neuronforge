@@ -16,7 +16,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import {
   OnboardingConversationManager,
   ONBOARDING_STEPS,
-  OnboardingState,
+  type AttributedOnboardingState,
   Language,
 } from '@/lib/services/OnboardingConversationManager';
 import { onboardingConfigurationService } from '@/lib/services/OnboardingConfigurationService';
@@ -99,7 +99,9 @@ export async function POST(request: NextRequest) {
     const manager = new OnboardingConversationManager();
 
     // 3. Load existing conversation state or initialize new
-    let currentState: OnboardingState;
+    // Always carries its ledger grouping id (Layer 1.5 FR-4), so the owner passed
+    // to the manager below needs no non-null assertion.
+    let currentState: AttributedOnboardingState;
     let messageSequence = 0;
 
     // Valid steps for the enhanced onboarding flow (with Q4 and Q5 smart questions)
@@ -124,7 +126,12 @@ export async function POST(request: NextRequest) {
 
       // Restore state from last snapshot
       if (lastMessage.metadata?.state_snapshot) {
-        const restoredState = JSON.parse(lastMessage.metadata.state_snapshot);
+        // A snapshot saved before Layer 1.5 has no grouping id: backfill it here,
+        // before the state is persisted with the user message below, so a resumed
+        // conversation never records a call without a group. Assigned, not called
+        // for effect — the manager returns a new state. The reset branch below
+        // discards it, which is right: a reset is a new conversation.
+        const restoredState = manager.ensureAttributionGroupId(JSON.parse(lastMessage.metadata.state_snapshot));
 
         // Check if the restored state uses old step names (from previous onboarding flow)
         // A step this build does not recognise means the conversation was
@@ -204,7 +211,14 @@ export async function POST(request: NextRequest) {
       message: data.message
     }, 'Processing onboarding message');
 
-    const result = await manager.processUserMessage(user.id, data.message, currentState, data.services);
+    // The account is the signed-in user and the group comes from the persisted
+    // state — never from the request body's `conversationId` (FR-1, FR-4b).
+    const result = await manager.processUserMessage(
+      { userId: user.id, groupId: currentState.attributionGroupId },
+      data.message,
+      currentState,
+      data.services
+    );
 
     // 6. Store assistant response
     const { error: assistantMessageError } = await supabaseServer

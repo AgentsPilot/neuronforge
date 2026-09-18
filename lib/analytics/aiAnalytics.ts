@@ -1,4 +1,5 @@
 // lib/analytics/aiAnalytics.ts
+import { platformAccountId } from '@/lib/platformAccount';
 export interface AICallData {
   // Required fields
   user_id: string;
@@ -118,7 +119,7 @@ export class AIAnalyticsService {
       };
 
       // ✅ System user fallback for orchestration/system operations
-      const SYSTEM_USER_ID = process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000';
+      const SYSTEM_USER_ID = platformAccountId();
 
       // Use system user if user_id is null/undefined/invalid
       const finalUserId = callData.user_id && isValidUUID(callData.user_id)

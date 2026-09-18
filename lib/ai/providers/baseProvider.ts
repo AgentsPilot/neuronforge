@@ -15,6 +15,12 @@ export interface CallContext {
   agent_id?: string;
   execution_id?: string;
   activity_step?: string;
+  /**
+   * The ledger's `request_type`. Defaults to 'chat'; a call of another kind
+   * (e.g. image generation) passes its own. Free text, used only as an admin
+   * reporting dimension.
+   */
+  requestType?: string;
 }
 
 export abstract class BaseAIProvider {
@@ -100,7 +106,7 @@ export abstract class BaseAIProvider {
         latency_ms: Date.now() - startTime,
         response_size_bytes: metrics.responseSize,
         success: true,
-        request_type: 'chat',
+        request_type: context.requestType ?? 'chat',
         // Activity tracking fields
         activity_type: context.activity_type,
         activity_name: context.activity_name,
@@ -130,7 +136,7 @@ export abstract class BaseAIProvider {
         success: false,
         error_code: error.code || 'UNKNOWN',
         error_message: error.message,
-        request_type: 'chat',
+        request_type: context.requestType ?? 'chat',
         // Activity tracking fields
         activity_type: context.activity_type,
         activity_name: context.activity_name,

@@ -370,3 +370,55 @@ describe('known non-catalog components (FR-6)', () => {
     expect(BOS_LEGACY_HELPER_LABEL).toEqual({ feature: 'onboarding', component: 'simple-complete' });
   });
 });
+
+describe('Layer 1.5 areas (FR-2, FR-6, AC-5)', () => {
+  it('adds onboarding and images with their stable call names', () => {
+    expect(BOS_LLM_AREAS).toEqual(
+      expect.arrayContaining(['onboarding', 'images'])
+    );
+    expect(BOS_LLM_CALLS.onboarding).toEqual([
+      'business_story_extraction',
+      'client_workflow_extraction',
+      'client_tracking_extraction',
+      'adjustment_intent_extraction',
+    ]);
+    expect(BOS_LLM_CALLS.images).toEqual(['image_generation']);
+    expect(bosFeature('onboarding')).toBe('business-os-onboarding');
+    expect(bosFeature('images')).toBe('business-os-images');
+  });
+
+  it('leaves the legacy feature list exactly as it was before Layer 1.5', () => {
+    expect(BOS_LEGACY_FEATURES.onboarding).toEqual([]);
+    expect(BOS_LEGACY_FEATURES.images).toEqual([]);
+    expect(BOS_LEGACY_FEATURES_FLAT).toEqual([
+      'insight-generation',
+      'correlated-insight-generation',
+      'health-summary-generation',
+      'business-os',
+      'landing-page-generation',
+      'lead-reply',
+    ]);
+    // The legacy helper label's feature is not a Business OS value (Check 2).
+    expect(isBusinessOsFeature(BOS_LEGACY_HELPER_LABEL.feature)).toBe(false);
+  });
+
+  it('requires a grouping id for both new areas, by type', () => {
+    // @ts-expect-error: onboarding requires a grouping id
+    const noGroupOnboarding: BosLlmAttribution = { userId: U1, area: 'onboarding', callName: 'business_story_extraction', groupId: undefined };
+    // @ts-expect-error: image_generation is not an onboarding call
+    const wrongCall: BosLlmAttribution = { userId: U1, area: 'onboarding', callName: 'image_generation', groupId: G1 };
+    // @ts-expect-error: images requires a grouping id
+    const noGroupImages: BosLlmAttribution = { userId: U1, area: 'images', callName: 'image_generation', groupId: undefined };
+    expect([noGroupOnboarding, wrongCall, noGroupImages]).toHaveLength(3);
+
+    const context = buildBosCallContext(
+      { userId: U1, area: 'images', callName: 'image_generation', groupId: G1 }
+    );
+    expect(context).toMatchObject({
+      userId: U1,
+      feature: 'business-os-images',
+      component: 'image_generation',
+      sessionId: G1,
+    });
+  });
+});

@@ -43,6 +43,40 @@ export const OPENAI_MODELS = {
 
 export type OpenAIModelName = typeof OPENAI_MODELS[keyof typeof OPENAI_MODELS];
 
+/**
+ * The ledger `request_type` of an image generation call. Named once so the call
+ * and its tests cannot drift. A global endpoint-kind dimension, like
+ * 'thread_create' below — not the Business OS call name, which goes in
+ * `component`.
+ */
+export const IMAGE_GENERATION_REQUEST_TYPE = 'image_generation';
+
+/** What an image generation call asks for. */
+export interface ImageGenerationParams {
+  model: string;
+  prompt: string;
+  size: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming['size']>;
+  quality: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming['quality']>;
+  /**
+   * Must be 1. The ledger records ONE row per call, so a row priced for n
+   * images would break "one ledger row per generated image". Supporting n > 1
+   * means writing one row per image first.
+   */
+  n: 1;
+}
+
+/** The quality the provider reports it actually used, when it reports one. */
+export type ReportedImageQuality = OpenAI.Images.ImagesResponse['quality'];
+
+/**
+ * Prices ONE generated image, in USD, from the quality the provider reports it
+ * used. Called after the call returns, inside the usage tracking, so the ledger
+ * row carries the price of what was really generated (a request for `auto`
+ * cannot be priced before the call). Supplied by the caller, so no pricing
+ * policy lives in the provider layer. Must not throw.
+ */
+export type ImagePriceResolver = (reportedQuality: ReportedImageQuality) => number;
+
 export class OpenAIProvider extends BaseAIProvider {
   private openai: OpenAI;
 
@@ -187,6 +221,52 @@ export class OpenAIProvider extends BaseAIProvider {
         responseSize: 0,
       })
     ) as Promise<OpenAI.Embeddings.CreateEmbeddingResponse>;
+  }
+
+  /**
+   * Generate an image, recorded in the usage ledger like every other call.
+   *
+   * An image has no tokens, and recording it as some number of tokens would be
+   * a false figure in the column credits are computed from, so the row carries
+   * zero input and output tokens and a per-image dollar cost.
+   *
+   * The cost comes from `priceFor(response.quality)`: `callWithTracking` calls
+   * the metrics function with the response BEFORE it writes the ledger row, so
+   * the quality the provider reports reaches `cost_usd` directly.
+   *
+   * A thrown call writes the standard failure row (zero tokens, zero cost) and
+   * re-throws.
+   */
+  async generateImage(
+    params: ImageGenerationParams,
+    context: CallContext,
+    priceFor: ImagePriceResolver
+  ): Promise<OpenAI.Images.ImagesResponse> {
+    // Enforced at runtime too: `n` can arrive from an untyped caller.
+    if (params.n !== 1) {
+      throw new Error('generateImage records one ledger row per call, so n must be 1');
+    }
+
+    return this.callWithTracking(
+      { ...context, requestType: IMAGE_GENERATION_REQUEST_TYPE },
+      'openai',
+      params.model,
+      'images/generate',
+      () =>
+        this.openai.images.generate({
+          model: params.model,
+          prompt: params.prompt,
+          size: params.size,
+          quality: params.quality,
+          n: params.n,
+        }),
+      (result: OpenAI.Images.ImagesResponse) => ({
+        inputTokens: 0,
+        outputTokens: 0,
+        cost: priceFor(result.quality) * params.n,
+        responseSize: 0,
+      })
+    );
   }
 
   async chatCompletionJson<T>(

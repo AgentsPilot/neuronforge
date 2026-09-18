@@ -90,6 +90,20 @@ export class ProviderFactory {
   }
 
   /**
+   * The concrete OpenAI provider, for OpenAI-only capabilities (image
+   * generation). Use `getProvider()` for anything provider-agnostic.
+   *
+   * Same singleton as `getProvider('openai')`; this only spares the caller an
+   * unchecked `as OpenAIProvider`.
+   *
+   * @returns OpenAI provider instance
+   * @throws Error if OPENAI_API_KEY not configured
+   */
+  static getOpenAI(): OpenAIProvider {
+    return this.getOpenAIProvider();
+  }
+
+  /**
    * Get OpenAI provider instance (singleton)
    *
    * @private

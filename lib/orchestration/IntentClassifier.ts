@@ -17,6 +17,7 @@ import type {
   IIntentClassifier,
 } from './types';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
+import { platformAccountId } from '@/lib/platformAccount';
 
 export class IntentClassifier implements IIntentClassifier {
   private supabase: SupabaseClient;
@@ -176,7 +177,7 @@ Respond with ONLY valid JSON, no additional text.`;
 
     try {
       // Use system admin user ID for orchestration overhead tracking
-      const SYSTEM_USER_ID = process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000';
+      const SYSTEM_USER_ID = platformAccountId();
 
       const completion = await provider.chatCompletion(
         {
@@ -695,7 +696,7 @@ Respond with ONLY valid JSON, no additional text.`;
 
     try {
       const provider = ProviderFactory.getProvider('anthropic');
-      const SYSTEM_USER_ID = process.env.SYSTEM_ADMIN_USER_ID || '00000000-0000-0000-0000-000000000000';
+      const SYSTEM_USER_ID = platformAccountId();
 
       const completion = await provider.chatCompletion(
         {

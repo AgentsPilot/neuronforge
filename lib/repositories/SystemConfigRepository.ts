@@ -6,6 +6,107 @@ import { supabaseServer as defaultSupabase } from '@/lib/supabaseServer';
 import { createLogger, Logger } from '@/lib/logger';
 import type { SystemSettingsConfig, AgentRepositoryResult } from './types';
 
+/** The crops an owner can ask a generated image for. */
+export type ImageGenerationAspect = 'wide' | 'portrait' | 'square';
+
+/** The `system_settings_config` keys image generation reads, all in one round trip. */
+export const IMAGE_GENERATION_CONFIG_KEYS = {
+  model: 'image_generation_model',
+  sizes: 'image_generation_sizes',
+  quality: 'image_generation_quality',
+  pricesUsd: 'image_generation_prices_usd',
+} as const;
+
+export interface ImageGenerationConfig {
+  model: string;
+  /** Aspect → the size string the provider is asked for. */
+  sizes: Record<ImageGenerationAspect, string>;
+  /**
+   * Sent on every request. `auto` (the default) lets the provider choose; the
+   * price is then keyed on the quality the provider REPORTS it used.
+   */
+  quality: string;
+  /** `"<model>:<size>:<reported quality>"` → USD per image. Empty when nothing is configured. */
+  pricesUsd: Record<string, number>;
+}
+
+/**
+ * Documented in-code defaults, overridden by configuration (Layer 1.5 FR-10).
+ *
+ * - model: the literal GeneratedImageService used before this was configurable.
+ * - sizes: the aspect → size map it used, unchanged.
+ * - quality: 'auto' — what the provider applied before Layer 1.5, when the call
+ *   sent no quality at all. Kept by user decision (CR-1, option C, 2026-09-18),
+ *   so images look and cost exactly as they did. `auto` is priced AFTER the
+ *   call, by the quality the provider reports it used; configure
+ *   `image_generation_quality` to pin `low`, `medium` or `high` instead.
+ * - pricesUsd: empty. The documented per-image fallback prices are
+ *   IMAGE_FALLBACK_PRICING below, applied only when configuration has no entry.
+ */
+export const IMAGE_GENERATION_CONFIG_DEFAULTS: Readonly<ImageGenerationConfig> = Object.freeze({
+  model: 'gpt-image-1',
+  sizes: Object.freeze({ wide: '1536x1024', portrait: '1024x1536', square: '1024x1024' }),
+  quality: 'auto',
+  pricesUsd: Object.freeze({}),
+});
+
+/**
+ * Documented fallback per-image prices in USD, keyed `model:size:quality`,
+ * where quality is the one the provider reports it used (never `auto`).
+ *
+ * Provenance: gpt-image-1's per-image price table (low / medium / high at
+ * 1024x1024 and at 1024x1536 / 1536x1024). On 2026-09-18 all nine values were
+ * confirmed against OpenAI's own model page
+ * (developers.openai.com/api/docs/models/gpt-image-1, "Image generation — Per
+ * image"). Re-check that page when prices change. These are the
+ * DEFAULT, not the rule: `image_generation_prices_usd` in configuration
+ * overrides any entry, and is where a price change belongs. This mirrors
+ * `FALLBACK_PRICING` in lib/ai/pricing.ts for token models. Resolved by
+ * `resolveImagePrice` in GeneratedImageService; kept here, beside the other
+ * documented defaults, so no model name is written in the service.
+ */
+export const IMAGE_FALLBACK_PRICING: Readonly<Record<string, number>> = Object.freeze({
+  'gpt-image-1:1024x1024:low': 0.011,
+  'gpt-image-1:1024x1536:low': 0.016,
+  'gpt-image-1:1536x1024:low': 0.016,
+  'gpt-image-1:1024x1024:medium': 0.042,
+  'gpt-image-1:1024x1536:medium': 0.063,
+  'gpt-image-1:1536x1024:medium': 0.063,
+  'gpt-image-1:1024x1024:high': 0.167,
+  'gpt-image-1:1024x1536:high': 0.25,
+  'gpt-image-1:1536x1024:high': 0.25,
+});
+
+/** A JSONB value may arrive as the object itself or as a JSON string. */
+function asObject(value: unknown): Record<string, unknown> | null {
+  let candidate = value;
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return null;
+    }
+  }
+  return candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate)
+    ? (candidate as Record<string, unknown>)
+    : null;
+}
+
+/** A JSONB string value may arrive bare or JSON-quoted. */
+function asText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  let text = value.trim();
+  if (text.startsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      text = typeof parsed === 'string' ? parsed.trim() : '';
+    } catch {
+      return null;
+    }
+  }
+  return text.length > 0 ? text : null;
+}
+
 export class SystemConfigRepository {
   private supabase: SupabaseClient;
   private logger: Logger;
@@ -375,6 +476,76 @@ export class SystemConfigRepository {
     ]);
 
     return { provider, model };
+  }
+
+  /**
+   * Image generation configuration: model, sizes, quality and per-image prices,
+   * in ONE read (`getByKeys`, a single `.in('key', …)` select).
+   *
+   * Never throws. A failed read, a missing key or a malformed value falls back
+   * to the documented default for THAT key only, with a warning — one bad row
+   * must not leave images both unsized and unpriced. Logs key names and counts,
+   * never configuration values.
+   *
+   * The price key lives here while no per-image price table exists; it moves
+   * if one arrives with the credit-deduction layer.
+   */
+  async getImageGenerationConfig(): Promise<ImageGenerationConfig> {
+    const methodLogger = this.logger.child({ method: 'getImageGenerationConfig' });
+    const defaults = IMAGE_GENERATION_CONFIG_DEFAULTS;
+    const keys = Object.values(IMAGE_GENERATION_CONFIG_KEYS);
+
+    const { data, error } = await this.getByKeys(keys);
+    if (error || !data) {
+      methodLogger.warn('Image generation config unreadable; using the documented defaults');
+      return { ...defaults, sizes: { ...defaults.sizes }, pricesUsd: {} };
+    }
+
+    const byKey = new Map(data.map((row) => [row.key, row.value as unknown]));
+    const invalid: string[] = [];
+
+    const readText = (key: string, fallback: string): string => {
+      if (!byKey.has(key)) return fallback;
+      const text = asText(byKey.get(key));
+      if (text === null) invalid.push(key);
+      return text ?? fallback;
+    };
+
+    const model = readText(IMAGE_GENERATION_CONFIG_KEYS.model, defaults.model);
+    const quality = readText(IMAGE_GENERATION_CONFIG_KEYS.quality, defaults.quality);
+
+    const sizes = { ...defaults.sizes };
+    if (byKey.has(IMAGE_GENERATION_CONFIG_KEYS.sizes)) {
+      const configured = asObject(byKey.get(IMAGE_GENERATION_CONFIG_KEYS.sizes));
+      if (!configured) invalid.push(IMAGE_GENERATION_CONFIG_KEYS.sizes);
+      for (const aspect of Object.keys(sizes) as ImageGenerationAspect[]) {
+        const size = asText(configured?.[aspect]);
+        if (size) sizes[aspect] = size;
+      }
+    }
+
+    const pricesUsd: Record<string, number> = {};
+    if (byKey.has(IMAGE_GENERATION_CONFIG_KEYS.pricesUsd)) {
+      const configured = asObject(byKey.get(IMAGE_GENERATION_CONFIG_KEYS.pricesUsd));
+      if (!configured) invalid.push(IMAGE_GENERATION_CONFIG_KEYS.pricesUsd);
+      let dropped = 0;
+      for (const [priceKey, raw] of Object.entries(configured ?? {})) {
+        const usd = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+        if (Number.isFinite(usd) && usd > 0) pricesUsd[priceKey] = usd;
+        else dropped++;
+      }
+      if (dropped > 0) methodLogger.warn({ dropped }, 'Ignored image prices that are not positive numbers');
+    }
+
+    if (invalid.length > 0) {
+      methodLogger.warn({ keys: invalid }, 'Malformed image generation config; using the default for those keys');
+    }
+    methodLogger.debug(
+      { configuredKeys: byKey.size, priceEntries: Object.keys(pricesUsd).length },
+      'Image generation config read'
+    );
+
+    return { model, sizes, quality, pricesUsd };
   }
 
   /**
