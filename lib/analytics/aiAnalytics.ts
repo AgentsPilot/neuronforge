@@ -1,5 +1,9 @@
 // lib/analytics/aiAnalytics.ts
 import { platformAccountId } from '@/lib/platformAccount';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ service: 'AIAnalyticsService' });
+
 export interface AICallData {
   // Required fields
   user_id: string;
@@ -95,18 +99,21 @@ export class AIAnalyticsService {
 
   async trackAICall(callData: AICallData): Promise<void> {
     if (!this.supabase) {
-      console.warn('⚠️ AI Analytics: No Supabase client available, skipping tracking');
+      logger.warn(
+        { feature: callData.feature, component: callData.component, model: callData.model_name },
+        'No Supabase client; AI call not tracked'
+      );
       return;
     }
 
-    console.log('📊 Starting AI call tracking:', {
-      user_id: callData.user_id,
+    logger.debug({
+      userId: callData.user_id,
       feature: callData.feature,
       component: callData.component,
       model: callData.model_name,
-      cost: callData.cost_usd,
-      activity_type: callData.activity_type
-    });
+      costUsd: callData.cost_usd,
+      activityType: callData.activity_type
+    }, 'Tracking AI call');
 
     try {
       const call_id = callData.call_id || this.generateCallId();
@@ -127,7 +134,7 @@ export class AIAnalyticsService {
         : SYSTEM_USER_ID;
 
       if (callData.user_id && !isValidUUID(callData.user_id)) {
-        console.warn(`⚠️ Invalid user_id format: "${callData.user_id}", using SYSTEM_USER_ID`);
+        logger.warn({ invalidUserId: callData.user_id }, 'Invalid user_id; recording against the platform account');
       }
 
       const validSessionId = callData.session_id && isValidUUID(callData.session_id)
@@ -135,7 +142,7 @@ export class AIAnalyticsService {
         : null;
 
       if (callData.session_id && !validSessionId) {
-        console.warn(`⚠️ Invalid session_id format: "${callData.session_id}", setting to null`);
+        logger.warn({ invalidSessionId: callData.session_id }, 'Invalid session_id; recording with no session');
       }
 
       // Build the complete insert data using your full schema
@@ -184,21 +191,21 @@ export class AIAnalyticsService {
         }
       };
 
-      console.log('[AI ANALYTICS] 💾 Inserting to token_usage table:', {
-        call_id,
-        user_id: insertData.user_id,
-        model_name: insertData.model_name,
-        input_tokens: insertData.input_tokens,
-        output_tokens: insertData.output_tokens,
-        total_tokens: insertData.input_tokens + insertData.output_tokens,
+      logger.debug({
+        callId: call_id,
+        userId: insertData.user_id,
+        model: insertData.model_name,
+        inputTokens: insertData.input_tokens,
+        outputTokens: insertData.output_tokens,
+        totalTokens: insertData.input_tokens + insertData.output_tokens,
         feature: insertData.feature,
         component: insertData.component,
-        activity_type: insertData.activity_type,
-        agent_id: insertData.agent_id,
-        execution_id: insertData.execution_id,  // ✅ Show the actual execution_id being inserted
-        cost_usd: insertData.cost_usd,
+        activityType: insertData.activity_type,
+        agentId: insertData.agent_id,
+        executionId: insertData.execution_id,
+        costUsd: insertData.cost_usd,
         success: insertData.success
-      });
+      }, 'Inserting token_usage row');
 
       const { data, error } = await this.supabase
         .from('token_usage')
@@ -206,45 +213,39 @@ export class AIAnalyticsService {
         .select('id, call_id, created_at, input_tokens, output_tokens'); // Return some data to confirm insert
 
       if (error) {
-        console.error('[AI ANALYTICS] ❌ Failed to track AI call - Database error:', error);
-        console.error('[AI ANALYTICS] ❌ Failed insert data sample:', {
-          user_id: insertData.user_id,
-          model_name: insertData.model_name,
-          call_id: insertData.call_id,
-          tokens: `${insertData.input_tokens} + ${insertData.output_tokens} = ${insertData.input_tokens + insertData.output_tokens}`
-        });
+        logger.error({
+          err: error,
+          userId: insertData.user_id,
+          model: insertData.model_name,
+          callId: insertData.call_id,
+          inputTokens: insertData.input_tokens,
+          outputTokens: insertData.output_tokens
+        }, 'Failed to insert token_usage row');
       } else {
-        console.log('[AI ANALYTICS] ✅ AI call tracked successfully in database');
-        console.log('[AI ANALYTICS] 📊 Database returned:', data);
-        console.log('[AI ANALYTICS] 📊 Tracked call summary:', {
+        logger.debug({
           id: data?.[0]?.id,
-          call_id: data?.[0]?.call_id,
+          callId: data?.[0]?.call_id,
           feature: callData.feature,
-          activity_type: callData.activity_type,
-          agent_id: callData.agent_id,
-          execution_id: (callData.metadata as any)?.execution_id,
+          activityType: callData.activity_type,
+          agentId: callData.agent_id,
+          executionId: (callData.metadata as any)?.execution_id,
           tokens: {
             input: data?.[0]?.input_tokens,
             output: data?.[0]?.output_tokens,
             total: (data?.[0]?.input_tokens || 0) + (data?.[0]?.output_tokens || 0)
           },
-          cost: callData.cost_usd,
-          created_at: data?.[0]?.created_at
-        });
+          costUsd: callData.cost_usd,
+          createdAt: data?.[0]?.created_at
+        }, 'AI call tracked');
       }
     } catch (error) {
-      console.error('❌ AI tracking error - Exception:', error);
-      console.error('❌ Error details:', {
-        name: error.name,
-        message: error.message,
-        stack: error.stack?.slice(0, 500)
-      });
+      logger.error({ err: error }, 'AI call tracking threw; row not written');
     }
   }
 
   async getUsageAnalytics(filters: AnalyticsFilters): Promise<UsageReport> {
     if (!this.supabase) {
-      console.warn('⚠️ AI Analytics: No Supabase client available for analytics');
+      logger.warn('No Supabase client; returning the placeholder usage report');
       return this.getMockUsageReport();
     }
 
@@ -295,7 +296,7 @@ export class AIAnalyticsService {
 
       return this.processUsageData(data, filters);
     } catch (error) {
-      console.error('Error fetching usage analytics:', error);
+      logger.error({ err: error }, 'Failed to fetch usage analytics');
       return this.getMockUsageReport();
     }
   }
@@ -321,9 +322,9 @@ export class AIAnalyticsService {
     }
 
     if (rows.length >= maxRows) {
-      console.warn(
-        `⚠️ AI Analytics: hit the ${maxRows}-row ceiling; this report is understated. ` +
-          'Aggregate in SQL rather than fetching rows.'
+      logger.warn(
+        { maxRows, rowsFetched: rows.length },
+        'Row ceiling reached; this report is understated. Aggregate in SQL instead'
       );
     }
 
@@ -370,7 +371,7 @@ export class AIAnalyticsService {
         }))
       };
     } catch (error) {
-      console.error('Error fetching agent analytics:', error);
+      logger.error({ err: error }, 'Failed to fetch agent analytics');
       return { totalCost: 0, totalCalls: 0, avgLatency: 0, activities: [] };
     }
   }
