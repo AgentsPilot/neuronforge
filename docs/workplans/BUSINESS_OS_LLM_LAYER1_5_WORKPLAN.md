@@ -1,6 +1,6 @@
 # Workplan: Business OS LLM — Layer 1.5
 
-> **Last Updated**: 2026-09-17
+> **Last Updated**: 2026-09-18
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) (26 FRs / 24 ACs; SA approved, RC-1 to RC-20 applied; D-1 to D-5; OQ-A to OQ-J decided; **OQ-U2 / F-8 open**)
@@ -8,7 +8,7 @@
 **Layer 1.1 context:** [BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_WORKPLAN.md)
 **Branch:** `feature/business-os-llm-layer1-5` (worktree `neuronforge-llm-layer15`, off `main` @ `68938031`, Layer 1 PR #47 and Layer 1.1 PR #48 merged)
 **Date:** 2026-09-17
-**Status:** SA reviewed 2026-09-17 — **approved to implement** with WC-1 to WC-12 (§11); S11 stays user-gated; BA-1 / BA-2 pending on the requirement
+**Status:** SA code re-check 2026-09-18 — **APPROVED for QA** (§11.4). T43 (QA live run) pending; S11 declined by the user (D-6), tracked as OI-4 to OI-6
 
 ## Overview
 
@@ -851,72 +851,72 @@ Twelve steps. Each is independently shippable and leaves the tree green; **S1** 
 ## 10. Task Checklist
 
 **S1 — Shared platform-account helper**
-- [ ] **T1** Create `lib/platformAccount.ts` (`ALL_ZERO_UUID`, `platformAccountId()`), importing nothing; write the header explaining the typecheck-gate rule and the `AuditTrailService` non-target
-- [ ] **T2** Replace `lib/analytics/aiAnalytics.ts:121` — **that line only**
-- [ ] **T3** Replace `lib/services/EmbeddingService.ts:46`, `lib/orchestration/IntentClassifier.ts:179` and `:698`
-- [ ] **T4** Rebuild `callCatalog.ts`'s `ALL_ZERO_UUID` / `isPlatformAccount` / `platformAccountIds` / `isPlatformAccountEnvIgnored` on the helper, behaviour identical
-- [ ] **T4b** Add `lib/__tests__/platformAccount.test.ts`; confirm the Layer 1.1 catalog assertions pass **unedited**
+- [x] **T1** Create `lib/platformAccount.ts` (`ALL_ZERO_UUID`, `platformAccountId()`), importing nothing; write the header explaining the typecheck-gate rule and the `AuditTrailService` non-target
+- [x] **T2** Replace `lib/analytics/aiAnalytics.ts:121` — **that line only**
+- [x] **T3** Replace `lib/services/EmbeddingService.ts:46`, `lib/orchestration/IntentClassifier.ts:179` and `:698`
+- [x] **T4** Rebuild `callCatalog.ts`'s `ALL_ZERO_UUID` / `isPlatformAccount` / `platformAccountIds` / `isPlatformAccountEnvIgnored` on the helper, behaviour identical
+- [x] **T4b** Add `lib/__tests__/platformAccount.test.ts`; confirm the Layer 1.1 catalog assertions pass **unedited**
 
 **S2 — Catalog and categories**
-- [ ] **T5** `BOS_LLM_AREAS` += `onboarding`, `images`; `BOS_LLM_CALLS` += the five call names
-- [ ] **T6** `BOS_LEGACY_FEATURES` += two **empty** lists, with the RC-3 comment spelling out the Check 2 / `help` / catalog-test consequence
-- [ ] **T7** `USAGE_CATEGORIES` += exactly one line per area; extend `usageCategories.catalog.test.ts` and `callCatalog.test.ts`
+- [x] **T5** `BOS_LLM_AREAS` += `onboarding`, `images`; `BOS_LLM_CALLS` += the five call names
+- [x] **T6** `BOS_LEGACY_FEATURES` += two **empty** lists, with the RC-3 comment spelling out the Check 2 / `help` / catalog-test consequence
+- [x] **T7** `USAGE_CATEGORIES` += exactly one line per area; extend `usageCategories.catalog.test.ts` and `callCatalog.test.ts`
 
 **S3 — Onboarding attribution**
-- [ ] **T11** `processUserMessage(owner: BosLlmOwner, …)`; thread `owner` through `updateStateFromMessage`; update the single caller
-- [ ] **T12** `attributionGroupId` on `OnboardingState`; minted in `getInitialState`; add `ensureAttributionGroupId`
-- [ ] **T13** Call `ensureAttributionGroupId` in the route right after the snapshot parse (`:127`), before the persist (`:181`). **Add no `supabaseServer` call**
-- [ ] **T14** Build and pass a catalog context in all four extractors; model, prompts, parsing and fallbacks untouched
-- [ ] **T15** Add `OnboardingConversationManager.attribution.test.ts` (T-U4 to T-U7)
+- [x] **T11** `processUserMessage(owner: BosLlmOwner, …)`; thread `owner` through `updateStateFromMessage`; update the single caller
+- [x] **T12** `attributionGroupId` on `OnboardingState`; minted in `getInitialState`; add `ensureAttributionGroupId`
+- [x] **T13** Call `ensureAttributionGroupId` in the route right after the snapshot parse (`:127`), before the persist (`:181`). **Add no `supabaseServer` call**
+- [x] **T14** Build and pass a catalog context in all four extractors; model, prompts, parsing and fallbacks untouched
+- [x] **T15** Add `OnboardingConversationManager.attribution.test.ts` (T-U4 to T-U7)
 
 **S4 — Provider image path**
-- [ ] **T16** `CallContext.requestType?: string`
-- [ ] **T17** `callWithTracking`: `context.requestType ?? 'chat'` at `:103` and `:133`
-- [ ] **T18** `OpenAIProvider.generateImage(params, context, pricing)` + `ProviderFactory.getOpenAI()` (Q-2); add `openaiProvider.image.test.ts`
+- [x] **T16** `CallContext.requestType?: string`
+- [x] **T17** `callWithTracking`: `context.requestType ?? 'chat'` at `:103` and `:133`
+- [x] **T18** `OpenAIProvider.generateImage(params, context, pricing)` + `ProviderFactory.getOpenAI()` (Q-2); add `openaiProvider.image.test.ts`
 
 **S5 — Image configuration and pricing**
-- [ ] **T19** `SystemConfigRepository.getImageGenerationConfig()` on `getByKeys` — **one** read (Q-3)
-- [ ] **T20** Documented in-code defaults for model, sizes and quality; malformed-JSON warn-and-fall-back per key
-- [ ] **T21** `resolveImagePrice(config, model, size, quality)`: config → `IMAGE_FALLBACK_PRICING` → `0` with an error log naming all three
+- [x] **T19** `SystemConfigRepository.getImageGenerationConfig()` on `getByKeys` — **one** read (Q-3)
+- [x] **T20** Documented in-code defaults for model, sizes and quality; malformed-JSON warn-and-fall-back per key
+- [x] **T21** `resolveImagePrice(config, model, size, quality)`: config → `IMAGE_FALLBACK_PRICING` → `0` with an error log naming all three — Done by Dev: `resolveImagePrice` in the service; the fallback map lives in `SystemConfigRepository` (DV-1)
 
 **S6 — Image service and route**
-- [ ] **T22** `GeneratedImageService`: required `BosLlmOwner`; drop `new OpenAI`; `isProviderAvailable('openai')` for the `unavailable` path; call the provider with an explicit `quality` and `n: 1`; the five no-row edges, the priced-no-data row and row-stays-after-upload-failure; cap untouched
-- [ ] **T23** Add `GeneratedImageService.attribution.test.ts` (T-U9, T-U10)
-- [ ] **T24** `app/api/website/media/generate/route.ts`: mint with `newBosGroupId()`, log with the correlation id, pass the owner
-- [ ] **T25** Add `media/generate/__tests__/route.test.ts` (T-U12)
+- [x] **T22** `GeneratedImageService`: required `BosLlmOwner`; drop `new OpenAI`; `isProviderAvailable('openai')` for the `unavailable` path; call the provider with an explicit `quality` and `n: 1`; the five no-row edges, the priced-no-data row and row-stays-after-upload-failure; cap untouched
+- [x] **T23** Add `GeneratedImageService.attribution.test.ts` (T-U9, T-U10)
+- [x] **T24** `app/api/website/media/generate/route.ts`: mint with `newBosGroupId()`, log with the correlation id, pass the owner
+- [x] **T25** Add `media/generate/__tests__/route.test.ts` (T-U12)
 
 **S7 — Verification coverage**
-- [ ] **T26** Zero-token fixtures and assertions in `app/api/business-os/usage/__tests__/route.test.ts` and `usageCategories.test.ts`; the `UsageCard` source assertion
-- [ ] **T27** The explanatory note in `AreaTotalsPanel`; extend `LlmUsageVerification.test.tsx`
-- [ ] **T28** Check 3(c)'s updated Info sentence (logic unchanged); the `generate-prompt-ideas` non-trip case
-- [ ] **T29** Extend `llmUsageVerification.test.ts` / `llmUsageReport.test.ts` for both new areas (T-U17, T-U19)
+- [x] **T26** Zero-token fixtures and assertions in `app/api/business-os/usage/__tests__/route.test.ts` and `usageCategories.test.ts`; the `UsageCard` source assertion — Done by Dev: in a new `route.zeroToken.test.ts` and `usageCategories.catalog.test.ts`, keeping the Layer 1.1 files unedited; the `UsageCard` source assertion dropped per WC-6 (DV-5, DV-7)
+- [x] **T27** The explanatory note in `AreaTotalsPanel`; extend `LlmUsageVerification.test.tsx` — Done by Dev: tested in a new `CheckPanels.layer15.test.tsx` (DV-5)
+- [x] **T28** Check 3(c)'s updated Info sentence (logic unchanged); the `generate-prompt-ideas` non-trip case
+- [x] **T29** Extend `llmUsageVerification.test.ts` / `llmUsageReport.test.ts` for both new areas (T-U17, T-U19) — Done by Dev: includes the `client_workflow_extraction ×2` case (SA Q-1)
 
 **S8 — F-1, chat usage**
-- [ ] **T30** `TOKEN_USAGE_COLUMNS.chat` + `TOKEN_USAGE_CHAT_READ_LIMITS` (caps unchanged, own constants, documented)
-- [ ] **T31** `listChatCallsForAccountInWindow` and `listChatCallsAllAccountsInWindow`, paging and `reachedCeiling` as `listCallsInWindow`; export `LedgerChatRow`
-- [ ] **T32** Extend `TokenUsageRepository.test.ts` and `tokenUsageRepository.contract.test.ts` (no optional account filter; no catalog import; column allow-list)
-- [ ] **T33** `getChatUsage` / `getChatPricing` → result unions with `truncated` + `cap`; remove the `supabaseServer` import
-- [ ] **T34** `app/api/admin/chat-usage/route.ts`: 503 on `ok: false`, truncation surfaced; add its route test
-- [ ] **T35** `scripts/chat-usage-report.ts` prints both states
+- [x] **T30** `TOKEN_USAGE_COLUMNS.chat` + `TOKEN_USAGE_CHAT_READ_LIMITS` (caps unchanged, own constants, documented)
+- [x] **T31** `listChatCallsForAccountInWindow` and `listChatCallsAllAccountsInWindow`, paging and `reachedCeiling` as `listCallsInWindow`; export `LedgerChatRow` — Done by Dev: `LedgerChatRow` NOT exported from the barrel (WC-12)
+- [x] **T32** Extend `TokenUsageRepository.test.ts` and `tokenUsageRepository.contract.test.ts` (no optional account filter; no catalog import; column allow-list)
+- [x] **T33** `getChatUsage` / `getChatPricing` → result unions with `truncated` + `cap`; remove the `supabaseServer` import
+- [x] **T34** `app/api/admin/chat-usage/route.ts`: 503 on `ok: false`, truncation surfaced; add its route test
+- [x] **T35** `scripts/chat-usage-report.ts` prints both states
 
 **S9 — F-6, allowance config**
-- [ ] **T36** `ConfigRepository.getSystemConfigs(keys)`
-- [ ] **T37** `readAllowanceCredits` through it, constructed with `supabaseServer`, injectable deps; adapt the fake; **snapshot byte-identical**
+- [x] **T36** `ConfigRepository.getSystemConfigs(keys)`
+- [x] **T37** `readAllowanceCredits` through it, constructed with `supabaseServer`, injectable deps; adapt the fake; **snapshot byte-identical** — Done by Dev: no injectable deps and no fake adaptation needed; snapshot and `route.test.ts` unedited (DV-4)
 
 **S10 — Documentation**
-- [ ] **T38** `docs/BUSINESS_OS_TEST_PAGE_SCOPE.md`: both areas, the image call, zero-token reading, the FR-21 note, KI-B; ToC + Change History
-- [ ] **T39** Layer 1 requirement roadmap: Layer 1.5's four parts and what is parked; Change History
-- [ ] **T40** `docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md`: the `images` area decision, OQ-7 / OI-1 / UD-1; Change History
+- [x] **T38** `docs/BUSINESS_OS_TEST_PAGE_SCOPE.md`: both areas, the image call, zero-token reading, the FR-21 note, KI-B; ToC + Change History
+- [x] **T39** Layer 1 requirement roadmap: Layer 1.5's four parts and what is parked; Change History
+- [x] **T40** `docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md`: the `images` area decision, OQ-7 / OI-1 / UD-1; Change History
 
-**S11 — Optional, user-gated (do not start without an explicit yes)**
-- [ ] **T44** *(S11a)* `lib/analytics/aiAnalytics.ts` — 16 `console.*` → Pino (F-8 / OQ-U2); restate AC-14
-- [ ] **T45** *(S11b)* `lib/orchestration/IntentClassifier.ts` — 16 `console.*` → Pino
-- [ ] **T46** *(S11c)* `lib/ai/providers/openaiProvider.ts` — 4 `console.*` → Pino
+**S11 — DECLINED by the user (D-6, 2026-09-18) — tracked as OI-4 to OI-6. Not implemented.**
+- [ ] ~~**T44** *(S11a)* `lib/analytics/aiAnalytics.ts` — 16 `console.*` → Pino (F-8 / OQ-U2); restate AC-14~~ — declined — tracked as OI-4
+- [ ] ~~**T45** *(S11b)* `lib/orchestration/IntentClassifier.ts` — 16 `console.*` → Pino~~ — declined — tracked as OI-5
+- [ ] ~~**T46** *(S11c)* `lib/ai/providers/openaiProvider.ts` — 4 `console.*` → Pino~~ — declined — tracked as OI-6
 
 **S12 — Gates and handoff**
-- [ ] **T41** `npm test` green, including every §5.6 regression and the untouched snapshot
-- [ ] **T42** `npm run typecheck:bos-llm` — expect **124 files, 0 new, baseline unchanged**; record the numbers in §4.2
-- [ ] **T43** QA live run §5.7 Q1–Q11; write the AC-23 credits measurement into §12, this workplan and UD-1
+- [x] **T41** `npm test` green, including every §5.6 regression and the untouched snapshot — Done by Dev: see §11.1 (the whole-repo run fails the same 21 suites as the clean base)
+- [x] **T42** `npm run typecheck:bos-llm` — expect **124 files, 0 new, baseline unchanged**; record the numbers in §4.2 — Done by Dev: **131 files** (119 + 5 production + 7 tests), 30 errors, 0 new, baseline byte-identical
+- [x] **T43** QA live run §5.7 Q1–Q11; write the AC-23 credits measurement into §12, this workplan and UD-1 — Done by QA 2026-09-18 (§12): PASS; UD-1 = 554 credits / 5,539 tokens per onboarding conversation. Copying it into the requirement's UD-1 is left to the BA
 
 ---
 
@@ -991,9 +991,447 @@ The code-reality check is the strongest part of this plan: six mismatches found 
 
 ---
 
+### 11.1 Implementation Notes (Dev, 2026-09-18)
+
+S1–S10 and S12 (except T43, the QA live run) are implemented on `feature/business-os-llm-layer1-5`, uncommitted. **S11 is declined by the user (D-6, 2026-09-18)** and tracked as OI-4 to OI-6. Task numbers T8–T10 were never used; nothing was lost between T7 and T11.
+
+**Gates, after every step:**
+
+| Gate | Before (`90181610`) | After S12 |
+|---|---|---|
+| `npm run typecheck:bos-llm` | 119 files, 30 errors, 0 new | **131 files, 30 errors, 0 new, passed** |
+| Baseline JSON (`sha1 8f9d70ce…`) | — | **byte-identical** (no addition) |
+| Full `tsc --noEmit` | **2,045** errors | **2,045**, same per-file distribution after every step (S1–S9) |
+| Jest, the touched-area set used at the start | 15 suites, 292 tests, 2 snapshots | 18 suites, 339 tests, 2 snapshots — all pass |
+| Jest, whole repo | 21 failed / 298 passed suites; 129 failed / 4,505 passed tests | 21 failed / 310 passed suites; 129 failed / 4,628 passed tests. **The same 21 suites fail on the clean base**, including `IntentClassifier.test.ts` (1 failure, identical before and after) |
+| Usage-route snapshot + `route.test.ts` | — | **unedited, passing** |
+| NUL bytes in new or modified files | — | **0** in all 43 files |
+
+**Scope delta (§4.2):** 119 → 131. The +5 production files are exactly those predicted (`OnboardingConversationManager.ts`, `GeneratedImageService.ts`, `media/generate/route.ts`, `onboarding/chat/route.ts`, `media/route.ts`); the other +7 are the new test files that import the catalog. `lib/platformAccount.ts` is not in scope.
+
+**Deviations from the approved design, with reasons:**
+
+| # | Where | Deviation | Why |
+|---|---|---|---|
+| DV-1 | §3.5, AC-8 | `IMAGE_FALLBACK_PRICING` lives in `SystemConfigRepository.ts` beside `IMAGE_GENERATION_CONFIG_DEFAULTS`, not in `GeneratedImageService.ts`. `resolveImagePrice` (the precedence) stays in the service | Its keys contain the model name (`gpt-image-1:…`). AC-8 says no image model name may remain in the service; the other documented image defaults already live in the repository |
+| DV-2 — **SUPERSEDED by CR-1 option C (user decision 2026-09-18); see §11.3** | §3.4, WC-8 | `image_generation_quality` defaults to **`high`**. The previous call omitted `quality`, so the provider used `auto` ("best quality for the model"), which is not a price point | Pinned value, per WC-8: `high` never shows an owner lower quality than `auto`'s best-quality choice and makes the recorded price an upper bound. **Cost consequence:** if `auto` was in practice choosing `medium`, images now cost more (gpt-image-1: $0.25 vs $0.063 per 1536×1024). A mismatch between the requested and the provider-reported quality is logged at warn. **SA/user should confirm `high` vs `medium`** |
+| DV-3 | §3.4 | A configured size or quality the model doesn't accept falls back to the documented default (with a warn), rather than being sent | Keeps the SDK's typed params with no cast. WC-10 is unaffected: the **model** is never validated, so QA's non-existent model still fails at the provider and writes the failure row |
+| DV-4 | §3.9, T37 | `readAllowanceCredits` constructs `new ConfigRepository(supabaseServer)` inline; no injectable `deps` | A route module may export only handlers, so injected deps could not be used by a test. The characterization test needed **no** adaptation at all: the fake PostgREST already supports `.in()`, so `route.test.ts` and its snapshot pass unedited |
+| DV-5 | §4.1 #17, #27, #33 | New test files are named `route.attribution.test.ts` (both routes), `usage-report.reads.test.ts` (beside the existing `usage-report.test.ts`), `route.zeroToken.test.ts`, `CheckPanels.layer15.test.tsx`, `ConfigRepository.getSystemConfigs.test.ts` | `*attribution*` puts the route tests in the gate (their `@ts-expect-error`s are enforced); the others keep `route.test.ts`, `usageCategories.test.ts` and `LlmUsageVerification.test.tsx` unedited as Layer 1.1 regression guards |
+| DV-6 | T-U17 | The "synthetic extra catalog area" case is replaced by the two real new areas | `onboarding` and `images` were added with only the catalog entries and one `USAGE_CATEGORIES` line each, and every check picks them up with no logic change — the proof T-U17 wanted, without mocking a `const` catalog |
+| DV-7 | T-U15 / WC-6 | Dropped as instructed | See the review citation below |
+| DV-8 | `components/test-business-os/llm-usage/__tests__/boundaries.static.test.ts:89-91` | One Layer 1.1 assertion changed: it pinned `ais_system_config` as the usage route's **last** direct read; F-6 removes that read, so it now asserts **no** direct read | Intended consequence of FR-25; the rest of that test is unchanged |
+| DV-9 | `aiAnalytics.ts`, `IntentClassifier.ts`, `EmbeddingService.ts` | Each also gains one `import { platformAccountId } from '@/lib/platformAccount'` line | Unavoidable for FR-18; `aiAnalytics.ts` diff is exactly the import plus line `:121` (AC-14) |
+
+**Behaviour notes for SA:**
+- **F-1 paging.** The old `getChatUsage` asked PostgREST for `.limit(10000)` in one request. Supabase caps a single response at its `max-rows` setting (1,000 by default), so the old report could have been silently truncated at 1,000 rows. The new reads page 1,000 at a time up to the unchanged caps (10,000 / 50,000) and report `truncated` honestly. Figures for busy windows may therefore **rise** compared with the old report.
+- **F-1 numeric.** `cost_usd` arriving as a string is now converted to a number before summing (the old code assumed a number).
+- **`getChatPricing`** now bounds the window at "now" (the old read had no upper bound; F-14). Same rows in practice.
+- **Onboarding reset path.** When the manager resets an unknown step (`:521`), the calls of that turn are recorded under the **fresh** group, not the stale one (tested).
+- **`n` pinned (WC-3)** both by type (`n: 1`) and at runtime (throws before any call or row).
+- **`console.*`:** none added in `lib/`, `app/` or `components/`. `scripts/chat-usage-report.ts` gained two `console` lines — its output medium, outside CLAUDE.md's scope (SA confirmed). The three frozen files keep 16 / 16 / 4.
+
+**WC-6 review citation (AC-10):** `components/business-os/UsageCard.tsx` renders credits and remaining only; its header comment states the API's `breakdown` array "is deliberately not read here", and it declares `calls` in its data type (`:35`) but never renders it. The behavioural proof is `app/api/business-os/usage/__tests__/route.zeroToken.test.ts` (credits, allowance, `remaining`, daily series and breakdown identical with an image row, on both the database and the row-fallback path; `calls` exactly +1), plus the unedited characterization snapshot.
+
+**WC resolution:**
+
+| WC | Resolved by |
+|---|---|
+| WC-1 | `AttributedOnboardingState`; `getInitialState` and `ensureAttributionGroupId` return it; the route's `currentState` is typed with it, so the owner is passed with no `!` |
+| WC-2 | `const restoredState = manager.ensureAttributionGroupId(JSON.parse(…))`; comment notes the reset branch discards it, correctly |
+| WC-3 | `ImageGenerationParams.n: 1` plus a runtime throw; one row per call |
+| WC-4 | Asserted in `openaiProvider.image.test.ts` and `GeneratedImageService.attribution.test.ts`: no `request_payload`, no prompt in the row or in any log line; the unpriced error log is exactly `{ model, size, quality }` |
+| WC-5 | `tokenUsageRepository.contract.test.ts`: `@ts-expect-error` for both new methods, arity pins for every public method, the only unscoped query is the `AllAccounts` one, no `lib/business-os` import |
+| WC-6 | T-U15 dropped; citation above |
+| WC-7 | `lib/__tests__/platformAccount.test.ts` pins the relationship for unset / UUID / non-UUID; the two modules cross-reference each other |
+| WC-8 | DV-2 |
+| WC-9 | 401 → 403 → 400 unchanged, then 503 on a failed read; `truncated` and `cap` in the info log and the body (route test) |
+| WC-10 | §5.7 Q7 below |
+| WC-11 | Rollout note added to the scope doc ("Mid-rollout") |
+| WC-12 | No barrel export: `usageReport.ts` imports `LedgerChatRow` from the module path |
+| Q-2 conditions | `getOpenAI()` doc comment scopes it to OpenAI-only capabilities; `GeneratedImageService` states OpenAI is the only image provider today (F-15), with no provider key |
+| Q-3 condition | `getImageGenerationConfig` logs key names and counts only; a test asserts no value reaches the logs |
+| Q-5 conditions | contract lines (WC-5); the all-accounts read logs at **info** with rows and `reachedCeiling`; its doc comment names both callers and the admin gate |
+| Q-7 condition | `IMAGE_GENERATION_REQUEST_TYPE = 'image_generation'`, exported from `openaiProvider.ts` |
+
+**§5.7 Q7 (WC-10), the induced image failure, made specific:** in the non-production project, temporarily set `system_settings_config` key `image_generation_model` to a non-existent model (e.g. `gpt-image-does-not-exist`), generate one image from the website editor, then restore the key. Expected: **one** row under `images` / `image_generation`, on the owner's account, carrying the request's group, `0` tokens, `$0.0000`, `Success: no`. The service does not validate the model, so the failure happens at the provider and the row is written.
+
+**Anything SA should examine closely:** DV-2 (the pinned quality and its cost effect), DV-1 (where the fallback price map lives), the F-1 paging note (report figures may rise), and DV-8 (a Layer 1.1 assertion changed on purpose).
+
+### 11.2 SA Code Review
+
+**Code Review by SA — 2026-09-18**
+**Status:** 🔄 **Fix Required — one item, CR-1, which needs a user decision first.** Everything else is approved: CR-2 to CR-5 are Low and can be fixed alongside CR-1 without another full review. Once CR-1 is resolved and CR-2 to CR-5 are applied, the code is approved for QA; SA re-checks only the CR-1 diff.
+
+This is careful, well-tested work. Every WC is in the code, the tenant boundaries hold, the frozen files moved by exactly what AC-14 allows, and the tests are behavioural rather than decorative. The one real problem is a product decision that was made inside a tracking layer: DV-2.
+
+**Gates, re-run by SA on the uncommitted tree (base `90181610`):**
+
+| Gate | Dev reported | SA re-run |
+|---|---|---|
+| `npm run typecheck:bos-llm` | 131 / 30 / 0 new | **131 files, 30 errors, 0 new, passed** (84 s) |
+| `scripts/typecheck-bos-llm.baseline.json` | byte-identical | **unchanged** (`git diff --quiet`) |
+| Jest | 18 suites / 339 pass | **58 suites / 839 tests / 2 snapshots, all pass.** A wider set than the Dev's: every suite under the touched directories, including all of `lib/business-os/bizql/__tests__`, `lib/ai`, `lib/business-os/llm` and `lib/business-os/usage` |
+| Usage-route snapshot | unedited | Not in `git status`; passes |
+| `console.*` added in `lib/`, `app/`, `components/` | none | **none** (`git diff -U0` grep) |
+| Hardcoded image model in the service | none | **none** — no `gpt-` string in `GeneratedImageService.ts` |
+
+The full-repo `tsc` count (2,045) and the 21 pre-existing failing suites were not re-run; the gate and the touched-area suites are the binding checks, and both are green.
+
+#### Review focus — findings
+
+1. **Tenant isolation — passes.**
+   - Onboarding: the owner is `{ userId: user.id, groupId: currentState.attributionGroupId }` (`app/api/onboarding/chat/route.ts:216-221`). `user.id` comes from `getUser()`; the group comes from persisted state. The body's `conversationId` is never read, and `route.attribution.test.ts` sends one to prove it.
+   - Grouping id: minted in `getInitialState` (`newBosGroupId()`). The pre-1.5 backfill is assignment-based at the parse (`route.ts:134`), before the persist and before any call; there is no `!` anywhere (WC-1, WC-2). The reset paths mint a fresh group, and the calls of a reset turn go under it (`OnboardingConversationManager.ts` `updateStateFromMessage`) — tested. One hardening item: CR-3.
+   - Image route: `{ userId: user.id, groupId: newBosGroupId() }` with the group logged against the correlation id (`media/generate/route.ts:42-52`). Nothing is read from the body for attribution; tested.
+   - Chat usage: `listChatCallsAllAccountsInWindow` is the only unscoped query in the repository and is named so. The shared pager is private, and the `accountId: null` branch is reachable only through that method. It logs at **info**. It is reached only when the admin-gated route has no `userId`, or from the CLI. The contract test pins arity, `@ts-expect-error` on both methods and "one unscoped query" (WC-5).
+2. **Image path — passes, except DV-2 (CR-1).**
+   - `generateImage` goes through `callWithTracking` with `requestType` overridden to the exported constant `IMAGE_GENERATION_REQUEST_TYPE`.
+   - `n` is pinned by type (`n: 1`) and at runtime, throwing before any call or row.
+   - Rows are zero tokens plus `usdPerImage` on success; a failure writes the standard failure row and re-throws.
+   - The prompt reaches neither the row nor any log (WC-4, tested in both suites).
+   - The daily cap is untouched (FR-16, tested).
+   - Price precedence is config → `IMAGE_FALLBACK_PRICING` → 0 with `logger.error({ model, size, quality })`, and it is tested in that order.
+   - The `unavailable` path uses `ProviderFactory.isProviderAvailable('openai')`.
+   - There is no model literal in the service.
+3. **DV-1 — accepted.** The fallback map is, in substance, the documented default of the `image_generation_prices_usd` key, and the repository is already where this codebase keeps config defaults (`getAgentCreationConfig`'s `'gpt-4o'`). The only other home would be `lib/ai/**`, which RC-7 forbids. Precedence stays in the service, which keeps the `config | fallback | unpriced` source visible in the log. See CR-4 for the source comment.
+4. **DV-2 — not accepted as a silent default. See CR-1 and the options below.** Quality is already config-driven: `image_generation_quality` is read from `system_settings_config` alongside model, sizes and price, which is exactly OQ-E. So the decision is only which **default** applies, and whether `auto` is allowed.
+5. **F-1 — passes, and the figures will go up.**
+   - The result union (`ChatUsageResult`, `ChatPricingResult`) is in place, and `truncated` and `cap` are on both reports.
+   - A failed read gives `503 { success: false }` after the unchanged 401 → 403 → 400 gates, and is never a 200 with zeros (route test).
+   - The CLI exits 1 on a failed read.
+   - Paging matches `listCallsInWindow`: newest-first by `(created_at, id)`, offset pages, id de-duplication (a row inserted mid-read is read twice, never skipped), ceiling-bounded, and `reachedCeiling` reported.
+   - The Dev's note about the old read is correct. `.limit(10000)` was silently capped at PostgREST's 1,000-row maximum — this codebase already documents that cap in `usageSummary.ts`. Because the order is newest-first, the old report covered only the **most recent 1,000 chat calls** of the window. For a busy window the new turn counts, cost totals and per-user figures will **rise**. That is a correction of an understatement, not a regression, and the QA report should say so explicitly so nobody reads it as a cost jump.
+   - `cost_usd` coerced from a string is also a correctness fix.
+   - `getChatPricing` has **no caller anywhere** (grep). Its 50-page worst case is therefore theoretical today; noted as a follow-up.
+6. **F-6, DV-4, DV-8 — accepted.**
+   - `getSystemConfigs` is a single `.in()` and never throws. The route constructs `new ConfigRepository(supabaseServer)` inline, with a comment explaining why.
+   - Behaviour is identical in all three states: rows present; a read error, which falls back to `10` / `0.00048` exactly as the old `data ?? []` did; and an invalid value, which gives `null`.
+   - DV-4 is right: a route module cannot export deps, and the characterization test and snapshot pass unedited.
+   - DV-8 is the intended consequence of FR-25. Changing `[".from('ais_system_config'"]` to `[]` makes the Layer 1.1 boundary test **stricter**, not looser.
+7. **Zero-token behaviour — passes against FR-14 as corrected by RC-1.**
+   - `route.zeroToken.test.ts` runs on **both** the database and the row-fallback path. Credits, allowance, `remaining`, the daily series and the breakdown are identical with an image row, and `calls` is exactly +1.
+   - The `images` category is absent from `breakdown`.
+   - WC-6 citation verified: `UsageCard.tsx` declares `calls` in its data type (`:35`) and never renders it, and its header says the `breakdown` array "is deliberately not read here".
+   - No owner-visible figure moves because of an image.
+8. **Onboarding — passes.**
+   - All four extractors are attributed through one private `callContext(owner, callName)`, typed `BosLlmCallName<'onboarding'>`, so a wrong name is a compile error.
+   - The dead extractor carries the "UNREACHABLE as of 2026-09-17" comment in both the service and the catalog, and it is covered by the unit test only (KI-D).
+   - `client_workflow_extraction` ×2 in one group is tested.
+   - The restart call is recorded under the ending group; the reset-turn calls under the fresh one.
+   - Model, prompts, `response_format` and the fallbacks are unchanged (AC-4 tests). The `'gpt-4o'` literals are carried as KI-C.
+9. **Layer 1.1 tab and report — passes.**
+   - No check logic changed. The new areas flow through Check 1, Check 4, the area totals and Check 5 purely from `BOS_LLM_AREAS` plus one `USAGE_CATEGORIES` line each.
+   - Both legacy lists are empty, with the RC-3 comment in place, and `onboarding` is still under `help`.
+   - The images note (`data-testid="llm-usage-images-note"`) and the 3(c) sentence are the only UI edits.
+10. **Deviations.**
+    - DV-1: accepted.
+    - DV-2: **CR-1**.
+    - DV-3: accepted. A configured value the model can't take falls back with a warning, and the model itself is never validated, so WC-10's induced failure still reaches the provider. Revisit together with CR-1 if `auto` becomes allowed.
+    - DV-4: accepted.
+    - DV-5: accepted. The `*attribution*` names put the route tests' `@ts-expect-error` lines under the gate, which is the point.
+    - DV-6: accepted. Two real areas added with no logic change is better proof than a mocked `const`.
+    - DV-7 and DV-8: accepted.
+    - DV-9: accepted. The `aiAnalytics.ts` diff is the import plus `:121`, nothing else, which satisfies AC-14. `IntentClassifier.ts` and `EmbeddingService.ts` are likewise import-plus-lines only, and the `console.*` counts are unchanged at 16 / 16 / 4, per D-6.
+11. **CLAUDE.md and scope — passes.**
+    - No new direct Supabase call outside `lib/repositories/`; the one route read moved *into* a repository.
+    - Zod unchanged on every touched route; Pino everywhere, with correlation ids on the request paths.
+    - No hardcoded image model or price outside the documented defaults.
+    - No charging, deduction, audit event, migration or new route.
+
+#### Code Review Comments
+
+1. **CR-1 — `SystemConfigRepository.ts` `IMAGE_GENERATION_CONFIG_DEFAULTS.quality: 'high'` (DV-2) — Priority: High (blocked on a user decision).**
+   - Before Layer 1.5, every generated image was requested at the provider's `auto` quality. The new default requests `high` for every image.
+   - This is a change to **what the product generates and what it costs**, made inside a layer whose contract is "track, don't change" (D-1), and made on an assumption: that `auto` might have been choosing `medium` or might have been choosing `high` — nobody knows which.
+   - At the worst case the Dev names, spend per image rises about 4× ($0.063 → $0.25 at 1536×1024), and generation gets slower.
+   - Neither the Dev nor SA should choose that silently. The options and my recommendation are below; the fix is whichever the user picks.
+2. **CR-2 — `lib/ai/providerFactory.ts:99-110` — Priority: Low.** `getOpenAI()` and its doc comment were inserted **between** the existing JSDoc of `getOpenAIProvider` ("Get OpenAI provider instance (singleton) · @private · @throws…") and its declaration. So the public method now sits under two stacked doc blocks, the first of which says `@private`, and the private method has none. Move the new method above the old comment, or after `getOpenAIProvider`.
+3. **CR-3 — `OnboardingConversationManager.ensureAttributionGroupId` — Priority: Low.** It accepts any non-empty string as an existing group. The snapshot is persisted JSON, not a validated input: a malformed or legacy value would pass. `buildBosCallContext` would then warn on every call, and the tracker would store `session_id: null` for the whole conversation, silently ungrouping it. Use the catalog's `isUuid` and re-mint (with the existing info log) when the value is not a UUID. Add one test case for it.
+4. **CR-4 — `SystemConfigRepository.ts` `IMAGE_FALLBACK_PRICING` source comment — Priority: Low.** "OpenAI's published per-image output prices for gpt-image-1 … as of 2026-09-18" asserts a check on a date. The nine values match gpt-image-1's published launch price table. State what was actually verified, and when — e.g. "gpt-image-1 published prices, verified against <source> on <date>" — or drop the date. A price default is only as trustworthy as its provenance, and this one will be what images are costed at until someone seeds configuration.
+5. **CR-5 — `GeneratedImageService.ts` quality-mismatch warning — Priority: Low.** The only untested branch in the service: `response.quality && response.quality !== quality` → warn. Add one case, with no prompt in the log line. If CR-1 resolves to option C below, this branch becomes the **pricing path** and its test becomes mandatory rather than Low.
+
+#### DV-2 / CR-1 — the options
+
+**Key fact the options turn on:** the provider's response reports the quality it actually used. The installed SDK (`openai` 5.23.2) types `ImagesResponse.quality?: 'low' | 'medium' | 'high'` and `size?`, plus `usage` token counts for gpt-image-1. The service already reads `response.quality` for its warning. So `auto` is not unpriceable — it is priceable **after** the call.
+
+| Option | Owner sees | Spend per 1536×1024 image | Recorded price | Code change from today's diff |
+|---|---|---|---|---|
+| **A. Pin `high`** (current diff) | Top quality, possibly better than before; slower generation | $0.25 — up to **4×** more than before if `auto` was choosing `medium`; same if it was choosing `high` | Exact | None |
+| **B. Pin `medium`** | Possibly **lower** quality than before if `auto` was choosing `high` | $0.063 | Exact | Change one default |
+| **C. Keep `auto`, price by the quality the provider reports** *(SA recommendation)* | **Exactly what they saw before** | **Unchanged from before** | Exact — from `response.quality` + size; a response with no reported quality is priced at `high` (an upper bound), with a warning | Small: allow `auto` in the quality set; pass the provider a price *resolver* supplied by the service (`(reported) => usd`) instead of a number, so pricing policy still stays out of `lib/ai/**`; the mismatch warning becomes the pricing path (CR-5 mandatory) |
+| **D. Config-driven with a default** | — | — | — | **Already the case.** `image_generation_quality` lives in `system_settings_config` beside model, sizes and price (OQ-E). A–C are choices of the *default*, and any of them can be overridden in configuration later without a deploy |
+
+**Technical recommendation: C.** It is the only option that changes nothing the owner sees or the business pays, which is the stated contract of this layer, while still recording an exact price per image. It also answers RC-8's actual concern — "a provider-side default change would silently invalidate the price" — better than pinning, because the price follows what was really generated. A and B are each a legitimate *product* decision, but they are product decisions: if the user wants one of them, it should be recorded as a user decision (D-7), with its cost effect stated, not arrive as a code default.
+
+If C is chosen, the requirement's RC-8/FR-10 wording ("the request must send an explicit `quality`") needs a one-line BA amendment: *"quality is `auto` by default, and the price is keyed on the quality the provider reports."*
+
+#### Optimisation Suggestions (not blocking)
+
+- `pageChatCalls` sets `reachedCeiling` when exactly `ceiling` rows exist, so a window with exactly 10,000 rows reads as truncated. Reading `ceiling + 1` would make `truncated` exact. Harmless as it stands — the flag errs toward "floor".
+- `usageReport.ts` `defaultDeps()` builds a new `TokenUsageRepository` per call; the exported `tokenUsageRepository` singleton would do.
+- **Follow-up F-16:** `getChatPricing` has no caller in the repo (route, script or test harness aside from its own tests). Either wire it to the CLI or delete it in a later cleanup.
+
+### Code Approved for QA: **No — pending CR-1 (user decision, then a small change) and CR-2 to CR-5.** SA re-checks only the CR-1 diff; CR-2 to CR-5 are verified at that re-check.
+
+### 11.3 CR fixes applied (Dev, 2026-09-18)
+
+**User decision CR-1 = option C (2026-09-18): keep `auto`, record the true cost.** DV-2 is superseded.
+
+| CR | Status | What changed |
+|---|---|---|
+| **CR-1** | ✅ Applied — **SA re-check** | `IMAGE_GENERATION_CONFIG_DEFAULTS.quality` is **`auto`** again, so images are requested exactly as before Layer 1.5. `image_generation_quality` stays configurable. `auto` is now an allowed request quality (`IMAGE_QUALITIES`); an unsupported configured value falls back to `auto` with a warning (DV-3). **Pricing moved after the call:** `OpenAIProvider.generateImage(params, context, priceFor)` takes an `ImagePriceResolver` `(reportedQuality) => usd` instead of a fixed price. **How the reported quality reaches `cost_usd`:** `callWithTracking` (`baseProvider.ts`) awaits the API call, then calls `extractMetrics(result)`, and only then writes the row with `cost_usd: metrics.cost`. The image method's `extractMetrics` is `(result) => ({ …, cost: priceFor(result.quality) * n })`, so the ledger row carries the price of the quality the provider reported. The resolver is built by the service (`imagePriceResolver` in `GeneratedImageService.ts`), so no pricing policy is in `lib/ai/**`: key = model + requested size + **reported** quality; precedence config → `IMAGE_FALLBACK_PRICING` → $0 with `logger.error({ model, size, quality })`. No reported quality → priced at `UNREPORTED_QUALITY_PRICED_AS = 'high'` with a warning. A pinned (non-`auto`) quality that differs from the reported one → priced by the reported one, with a warning. The resolver never throws (a throw inside the tracking would turn a paid-for image into a failure row); a failed call never calls it, so the failure row stays $0. The service's success log carries `priceSource`, `pricedQuality` and `usdPerImage` (via `last()`) |
+| **CR-2** | ✅ Applied | `providerFactory.ts`: `getOpenAI()` now sits above the original JSDoc with its own doc block (plus `@returns` / `@throws`); `getOpenAIProvider` keeps its original `@private` comment directly above it |
+| **CR-3** | ✅ Applied | `ensureAttributionGroupId` uses the catalog's `isUuid`; a stored value that is not a UUID is re-minted with the existing info log. Test: four non-UUID values (text, empty, blank, one character short) |
+| **CR-4** | ✅ Applied | `IMAGE_FALLBACK_PRICING`'s comment now states its provenance precisely: the nine values were checked on 2026-09-18 against a web search that returned the same figures from third-party calculators (e.g. langcopilot.com); **OpenAI's own model page was not opened**, so it says to check that page before treating the values as exact |
+| **CR-5** | ✅ Applied (mandatory under option C) | `GeneratedImageService.attribution.test.ts` → "pricing by the reported quality": reported `medium` / `high` / `low` each priced at that level (no warning, request still `auto`); a configured price for the reported quality wins over the fallback; no reported quality → `high` + warning (exact fields, no prompt); pinned `high` vs reported `medium` → priced as `medium` + warning; unknown reported quality → $0 + error; unknown model/size → $0 + error; a throwing price table → $0, no throw; `last()`. `openaiProvider.image.test.ts` → the resolver receives `response.quality` (or `undefined`), its value lands in `cost_usd` of the same row, and a failed call never calls it |
+
+**Re-run gates (2026-09-18):**
+
+| Gate | Result |
+|---|---|
+| Jest, every suite under the touched areas (`lib/services`, `lib/ai`, `lib/repositories`, `lib/business-os`, `lib/__tests__`, `app/api/{onboarding,website,business-os,admin}`, `components/test-business-os`) | **131 suites, 1,970 passed, 28 skipped (pre-existing), 2 snapshots — all pass** |
+| `npm run typecheck:bos-llm` | **131 files, 30 errors, 0 new, passed**; baseline JSON byte-identical |
+| Full `tsc --noEmit` | **2,045** = baseline, same per-file distribution, 0 new |
+| Usage-route snapshot and `route.test.ts` | unedited, passing |
+| NUL bytes | 0 in all 45 new and modified files |
+| Freeze (D-6) | `console.*` still 16 / 16 / 4; `openaiProvider.ts` diff has **no removed lines** (additions only, now the resolver type and method change) |
+
+**Knock-on for the BA (not edited by Dev — `docs/requirements/**` is off-limits in this round):** the Change History row "Layer 1.5 implemented (code complete)" that Dev added on 2026-09-18 to `docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md` says the image quality is "pinned to `high`". Under option C that is wrong; it should read that the request keeps `auto` and each image is priced by the quality the provider reports. The same row in `docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md` has been corrected by Dev.
+
+**For SA's CR-1 re-check:** a missing `response.quality` is priced at `high` even when a lower quality was pinned in configuration, which is the literal decision; pricing at the pinned quality would be more accurate in that one case. Size is keyed on the **requested** size, not `response.size`.
+
+### 11.4 SA Re-check of CR-1 to CR-5
+
+**Re-checked by SA — 2026-09-18**
+**Status:** ✅ **APPROVED — Code Approved for QA: Yes.** No CR remains open. The two suggestions below are optional.
+
+**Gates, re-run by SA:**
+- `typecheck:bos-llm`: 131 files, 30 errors, 0 new, passed. The baseline file is unchanged.
+- Jest, image, onboarding, usage, catalog and provider suites: 16 suites, 287 tests, 2 snapshots, all passing. The usage-route snapshot is unedited.
+- Frozen files (D-6): `console.*` counts are still 16 / 16 / 4. The `aiAnalytics.ts` diff is still the import plus `:121` only (+2/−1).
+
+**CR-1 (option C, D-7) — resolved.** `image_generation_quality` defaults to `auto`, and `auto` is in the accepted set. The request is therefore exactly what it was before Layer 1.5. Each image is priced by `priceFor(response.quality)`. Precedence is config → fallback → $0 plus an error log. Pricing policy stays in `GeneratedImageService.ts`, and `lib/ai/**` receives only a function type.
+
+**CR-2 to CR-5 — resolved.**
+- **CR-2:** `getOpenAI()` now sits above the private method's JSDoc, with its own doc.
+- **CR-3:** `ensureAttributionGroupId` uses `isUuid`, re-mints anything else, and is tested with four bad values.
+- **CR-4:** the provenance is honest (see (d)).
+- **CR-5:** reported, unreported, mismatched, unknown and throwing cases are all tested.
+
+**Answers to the Dev's questions:**
+- **(a) Missing reported quality → `high` even when a lower level is pinned.** Acceptable as shipped. The default is `auto`, and under `auto` an upper bound with a warning is the right answer. gpt-image-1 reports `quality` on every response (SDK 5.23.2 types it), so this is an edge path. Pricing at the pinned level when configuration names one (`low`/`medium`/`high`), and at `high` only under `auto`, would be more accurate in that one case and is a one-line change. **Optional, not required:** it only matters if someone pins a lower quality in configuration *and* the provider stops reporting quality.
+- **(b) Requested vs reported size.** The SDK does report `size?`. It doesn't matter here: the service always sends one of the three explicit sizes and never `auto`, and the provider honours an explicit size. Requested size is a correct key. Revisit only if `size: 'auto'` is ever allowed.
+- **(c) Pricing inside `callWithTracking` — wired correctly; tracker untouched.**
+  - `extractMetrics(result)` runs after `apiCall()` resolves and before the success row is written, so `cost_usd` on that same row is the price of the reported quality.
+  - The failure branch never calls `priceFor`; it writes `cost_usd: 0` as before.
+  - `aiAnalytics.ts` is unchanged apart from the helper line.
+  - **One residual, optional hardening item (F-17):** the provider trusts its resolver not to throw. If a future caller passed one that did, the throw would happen inside `callWithTracking`'s `try`. The paid-for image would be recorded as a failure, and the owner would lose it. The only caller today wraps its resolver in `try/catch` → $0 + error log, and that is tested (`GeneratedImageService.attribution.test.ts:402`). A one-line guard inside `generateImage`'s metrics function would make the provider independent of its caller's discipline.
+- **(d) CR-4 sourcing — acceptable.** The comment states what was checked (third-party calculators, 2026-09-18), what was not (OpenAI's own page), and where to confirm. That is the honest provenance CR-4 asked for. Since these defaults price every image until configuration is seeded, **confirming them against OpenAI's pricing page, or seeding `image_generation_prices_usd`, is a pre-release checklist item for the QA/RM step**, not a code change.
+
+**Knock-on for the BA** (noted by the Dev, confirmed): the Layer 1 requirement's Change History row still says quality is "pinned to `high`". It should say the request keeps `auto` and each image is priced by the reported quality. This goes with the FR-10 / RC-8 / D-7 edit the BA is making.
+
+---
+
 ## 12. QA Testing Report
 
-*(QA populates this section, including the AC-23 before/after usage-card figures and the credits one onboarding conversation consumed.)*
+### QA Report — 2026-09-18
+
+**Test mode:** full, run efficiently at the user's request: no repeated work and as few live calls as possible
+**Strategy used:** A/B (the touched-area Jest set, the scoped gate, full `tsc`, a NUL scan, and spot checks that the high-risk ACs have real assertions), then C (`tsx` driver scripts calling the real manager, service, owner usage route, report orchestrator and `getChatUsage` against the live Supabase project with real OpenAI calls). Read-only SQL through a raw service client was the oracle
+**Focus:** all (api, security, schema, pipeline-adjacent tracking)
+**Skipped / handed off:** see §12.8
+**Input source:** TL trigger prompt (Part 1 / Part 2) plus workplan §5.7 and §11.1 (WC-10)
+
+#### 12.1 Environment
+
+| Item | Value |
+|---|---|
+| Code | Worktree `neuronforge-llm-layer15`, branch `feature/business-os-llm-layer1-5`, uncommitted on `90181610` (CR-1 to CR-5 applied, SA-approved §11.4) |
+| Database | Current Supabase project (user-approved for QA). Real OpenAI calls through the provider factory |
+| Env | The worktree's own `.env.local` (the user runs the app from it). No secret was printed or written. Left in place. `SYSTEM_ADMIN_USER_ID` is set to a valid UUID |
+| Drivers | Temporary scripts in the session scratchpad, run with `npx tsx --require <stub> --import ./scripts/env-preload.ts`. The preload stubbed `server-only` and, for the owner usage route only, `@/lib/auth` so it returned the test account. No admin route was called and no admin session was forged. The scripts were deleted afterwards |
+| **Test account** | **`2f734ed5-3681-4049-880d-3de7b096bea3`** (the Layer 1 / 1.1 account). It has a business profile. It is not in `admin_users`, not `SYSTEM_ADMIN_USER_ID` and not the all-zero UUID. It had no `onboarding_conversations` rows and no generated images in the last 24 h |
+| Window | **Start `2026-09-18T08:52:03.993Z`**, recorded before the first flow. Report end `2026-09-18T08:55:12.563Z` |
+| Image config | `system_settings_config` has **no** `image_generation_*` rows, so the documented defaults applied: `gpt-image-1`, quality `auto`, and the fallback prices (`priceSource: fallback`) |
+
+#### 12.2 Part 1: automated verification
+
+| Check | Expected | Result |
+|---|---|---|
+| Jest, touched areas (`lib/services lib/ai lib/repositories lib/business-os lib/__tests__ app/api/{onboarding,website,business-os,admin} components/test-business-os`) | 131 suites / 1,970 pass | ✅ **131 suites passed; 1,970 passed, 28 skipped, 0 failed; 2 snapshots passed** (26.9 s) |
+| `npm run typecheck:bos-llm` | 131 / 30 / 0 new | ✅ **131 files in scope, 30 errors, 0 new, passed** (122 s) |
+| Baseline JSON | unchanged | ✅ `git diff --quiet` clean; blob `8cff995b…` |
+| Full `tsc --noEmit -p tsconfig.json` | 2,045, 0 new | ✅ **2,045** on the first run. A later run gave 2,049. The extra 4 are all in `.next/types/app/api/{generate-clarification-questions,plugins/user-status,test-integration-connectivity}`, which the user's running dev server generates. Those routes weren't touched (see O-1). **Excluding `.next/`: 2,045.** Touched files with errors: `aiAnalytics.ts` (9, lines 238–395) and `EmbeddingService.ts` (2, `:130`, `:186`). None of those lines are in the diff (`aiAnalytics` changed `:2`, `:122`; `EmbeddingService` changed `:20`, `:47`), so **0 new** |
+| NUL bytes in new and modified files (45 files, including untracked directories) | 0 | ✅ **0** |
+
+**Spot check: do the high-risk ACs map to real assertions?**
+
+| Risk | Test | Real assertion? |
+|---|---|---|
+| Onboarding account and group don't come from the body | `app/api/onboarding/chat/__tests__/route.attribution.test.ts:98-135` | ✅ The owner is `USER.id` from `getUser()`. The group is a UUID and `≠` the body's `conversationId`. The serialized inserts never contain the body id. A resume keeps its group; a pre-1.5 snapshot is backfilled **before** the persisted user-message row. 401 is returned before any attribution |
+| Image route account | `app/api/website/media/generate/__tests__/route.attribution.test.ts:64-97` | ✅ A body with `userId`/`groupId`/`sessionId` = OTHER still gives `owner.userId === USER.id` and a fresh group. A second request gets a different group. The correlation id is on the log line. 401 is returned before minting |
+| Image failure row | `GeneratedImageService.attribution.test.ts:207-222` | ✅ A thrown provider call gives exactly 1 row: `success: false`, 0/0 tokens, `cost_usd: 0`, the right feature, component and group. The service resolves `{ ok: false, reason: 'failed' }` |
+| Prompt never logged | same file `:149-154` | ✅ The prompt is absent from `JSON.stringify(row)` and from every captured log line. **Also proven live:** 0 occurrences of either image prompt in the run's full Pino output, including the provider-error log |
+| F-1: never a 200 with zeros | `app/api/admin/chat-usage/__tests__/route.test.ts:81-90` | ✅ A failed read gives `503`, `success: false`, after the 401 → 403 → 400 gates |
+| Zero-token owner card unchanged | `app/api/business-os/usage/__tests__/route.zeroToken.test.ts:106-120` | ✅ With an image row, the whole response except `calls` is `toEqual` to the run without it, and `calls` is exactly +1 |
+
+#### 12.3 Part 2: live results per area
+
+| # | Area | Expected | Actual | Result |
+|---|---|---|---|---|
+| L1 | **Onboarding, attribution** (AC-3, AC-23) | Every call type that fires is on the owner's account, under `onboarding`, in one group; at most 3 types; no `client_tracking_extraction` | 4 rows, all `user_id = 2f734ed5…`, `feature business-os-onboarding`, `request_type chat`, `gpt-4o`, `success true`. **One group `a4bd953a-3396-4868-a2c9-9072c6946daf`** (the one minted by `getInitialState`; it held for all 9 turns). Call types: `business_story_extraction`, `client_workflow_extraction` ×2, `adjustment_intent_extraction`. No `client_tracking_extraction` | ✅ Pass |
+| L2 | **Onboarding, card** (AC-23, UD-1) | Before/after recorded | See §12.4 | ✅ Measured |
+| L3 | **Image, success** (AC-6, AC-8, AC-23) | 1 row under `images` / `image_generation`, 0 tokens, a cost matching model + size + reported quality, the group | See §12.5 | ✅ Pass |
+| L4 | **Image, reuse cache** (AC-7a, KI-B) | No row | The identical request returned `ok: true` (the existing picture). **0** `token_usage` rows for the test account after it; 0 rows for its group | ✅ Pass |
+| L5 | **Image, induced failure** (AC-7b, WC-10) | Failure row: 0 tokens, $0, `success false`, area, call name and group; the service doesn't throw | The model was overridden **in-process only**: `systemConfigRepository.getImageGenerationConfig` was wrapped to return `model: 'gpt-image-does-not-exist'`, then restored. `system_settings_config` was **not written**. OpenAI answered `400 invalid_value` ("model does not exist"). One row: `business-os-images` / `image_generation`, `request_type image_generation`, `model_name gpt-image-does-not-exist`, 0/0/0 tokens, `cost_usd 0`, **`success false`**, group `61368620-c5f8-4861-aa67-b9ceaa9d3d28`. The service returned `{ ok: false, reason: 'failed' }`; nothing threw | ✅ Pass |
+| L6 | **Daily cap** (AC-11, FR-16) | Unchanged | `DAILY_GENERATION_LIMIT = 10`. `generationAllowance` went from `0/10` before to `1/10` after: only the successful image counted. The failure and the reuse hit didn't | ✅ Pass |
+| L7 | **Zero-token effect** (AC-24) | Image rows move no credit, allowance, remaining or gauge | Between "after onboarding" and "after images": credits 14,654 → **14,654**, remaining 6,179 → **6,179**, allowance 20,833 → **20,833**, tokens 146,540 → **146,540**, breakdown identical (no `images` line). Only `calls` rose, 48 → 50 (+2 image rows; `UsageCard` doesn't render it) | ✅ Pass |
+| L8 | **Verification report** (AC-15, AC-16, AC-17, AC-23) | Checks as below, equal to SQL | See §12.6 | ✅ Pass |
+| L9 | **F-1** `getChatUsage` (AC-18) | `ok: true` with `truncated`/`cap`; figures equal SQL; `ok: false` on a failed read | See §12.7 | ✅ Pass |
+| L10 | **F-6** allowance (AC-19) | The route's allowance equals `ais_system_config` | `ais_system_config`: `monthly_ai_allowance_usd = 10`, `pilot_credit_cost_usd = 0.00048` → `round(10 / 0.00048)` = **20,833**. The route returned **20,833** on all three card reads (`summedBy: database`) | ✅ Pass |
+
+**How the onboarding ran:** through `OnboardingConversationManager.processUserMessage` directly, from `getInitialState('en')`, with canned answers and an **in-memory state only**. Nothing was persisted: the route wasn't called, so no `onboarding_conversations` or `onboarding_messages` row was written, and the account's profile and onboarding data are untouched. The 9 turns were: language → name → story → "services with fixed prices" → services text → "that's all" → acquisition → preview ("I would like to change something") → adjustment ("add a way for clients to pay online"). It ended at `preview` with 2 services.
+
+#### 12.4 UD-1: what one onboarding conversation costs the owner (AC-23)
+
+Owner usage card (`GET /api/business-os/usage?range=last_30d`, the real route handler, `summedBy: database`, 10 tokens per credit):
+
+| Figure | Before (08:52:05Z) | After onboarding (08:52:14Z) | **Delta** | After images (08:53:01Z) |
+|---|---|---|---|---|
+| Credits used | 14,100 | 14,654 | **+554** | 14,654 |
+| Allowance | 20,833 | 20,833 | 0 | 20,833 |
+| Remaining | 6,733 | 6,179 | **−554** | 6,179 |
+| Tokens (`readUsageSummary`) | 141,001 | 146,540 | **+5,539** | 146,540 |
+| Calls | 44 | 48 | +4 | 50 |
+| Breakdown | 6 categories | + **`onboarding` 554 credits / 4 calls** (3.78%) | — | unchanged (no `images` line) |
+
+**UD-1 number: one onboarding conversation, including one preview adjustment, used 5,539 tokens = 554 Pilot Credits. That is about 2.7% of the 20,833-credit monthly allowance, at an estimated $0.0166 in provider cost.** Per call: business story 952 tokens, client workflow 2,100 + 2,256, adjustment intent 231. A conversation with no adjustment would come to about 5,308 tokens (531 credits). Longer free-text answers raise it, because the workflow extraction prompt is about 2k input tokens per call. The account isn't brand new, so the delta was measured rather than read from an empty card. BA should copy this figure into the requirement's UD-1 entry (QA doesn't edit `docs/requirements/**`).
+
+#### 12.5 Image row details (AC-6, AC-8, D-7)
+
+| Column | Success row | Failure row (WC-10) |
+|---|---|---|
+| `id` | `c83cd299-a378-4c2c-8275-57a652ee9f28` | `cb1bd930-006e-456a-9b22-0ff684a5fab9` |
+| `created_at` | 2026-09-18T08:52:56.492Z | 2026-09-18T08:53:00.044Z |
+| `user_id` | test account | test account |
+| `feature` / `component` | `business-os-images` / `image_generation` | same |
+| `request_type` | `image_generation` | `image_generation` |
+| `session_id` (group) | `5e812123-66d4-414b-94fc-81c6deb35c6e` (minted for the request, and the same id is in the service's log line) | `61368620-c5f8-4861-aa67-b9ceaa9d3d28` |
+| `model_name` | `gpt-image-1` | `gpt-image-does-not-exist` |
+| input / output / total tokens | 0 / 0 / 0 | 0 / 0 / 0 |
+| `cost_usd` | **0.167** | 0 |
+| `success` | true | **false** (Check 1 shows `errorCode: invalid_value`) |
+
+- **Requested:** size `1024x1024` (aspect `square`), quality **`auto`** (the default; no config row exists).
+- **Reported quality: `high`.** The service log shows `pricedQuality: "high"`, `priceSource: "fallback"` and `usdPerImage: 0.167`. The "provider reported no image quality" warning **did not** fire, so `high` was the quality the provider reported, not the unreported upper bound.
+- **Price check:** `IMAGE_FALLBACK_PRICING['gpt-image-1:1024x1024:high']` = 0.167 (medium 0.042, low 0.011). The row's cost equals the price for model + requested size + reported quality. ✅
+- **Other effects of the one real image:** one PNG in the `website-images` bucket under the test account's `generated/` folder, and one `user_media` row (`source generated`, `section qa-layer15`, `aspect square`). Both are part of the normal flow and stay in the account's library.
+
+#### 12.6 Verification report vs SQL (`buildLlmUsageReport`, `trigger=manual`, window 08:52:03.993Z → 08:55:12.563Z)
+
+This used the same path as the admin route: `buildReportQuerySchema(receivedAt)` → `resolveReportWindow` → `buildLlmUsageReport` with the real repositories. Header: `incomplete: false`, `startClamped: false`, `profileLookup: found`, `platformAccountIdsChecked` = the all-zero UUID and `SYSTEM_ADMIN_USER_ID`, `platformAccountEnvIgnored: false`.
+
+| Check | Expected (SQL) | Report | Result |
+|---|---|---|---|
+| **1. Calls** | 6 Business OS rows for the account (and 6 of any feature): 4 onboarding + 2 images, every pair in the catalog, none with a null `session_id` | `rowsRead` 6, `flaggedRows` 0, every flag count 0, status **pass**. Both image rows are classified `area images`, 0 tokens, cost 0.167 / 0 | ✅ |
+| **1. Area totals** | onboarding 4 calls / 5,539 tok / $0.016556; images 2 / 0 / $0.167; every other area 0 | `onboarding` 4 / 5,539 / $0.016556; **`images` 2 / 0 / $0.167** (the cost shows with 0 tokens); chat, insights, briefing, website, intake, leads and legacy all 0; total 6 / 5,539 / $0.183556; status `complete` | ✅ |
+| **2. Platform account** | 0 rows of **any** feature on the platform ids in the window | `count` 0, breakdown empty, **pass** | ✅ |
+| **3. Legacy labels** | (a) selected 0, platform 0; (b) helper label on selected 0; (c) helper label on platform 0 | (a) 0 / 0; (b) 0; (c) 0, `timestamps: []`; **pass** | ✅ |
+| **4. Groups** | 3 groups, 0 ungrouped | `groupsTotal` 3, `ungroupedTotal` 0, **pass**. Onboarding group `a4bd953a…`: 4 calls, 5,539 tok, summary **`business_story_extraction, client_workflow_extraction ×2, adjustment_intent_extraction`**. Two image groups, 1 call each | ✅ |
+| **5. Usage card** | Categories `onboarding` 5,539 / 4 and `images` 0 / 2; nothing in `other` | `onboarding` 5,539 tok / 4 calls / 554 credits / `shownOnCard: true`; `images` 0 / 2 / 0 / **`shownOnCard: false`** (the tab renders "no (no tokens)"); `otherFeatures: []`; **pass** | ✅ |
+
+#### 12.7 F-1 `getChatUsage` vs SQL
+
+| Case | Report | SQL | Result |
+|---|---|---|---|
+| Per account (test account, last 7 days) | `ok: true`, turns 9, calls 24, total $0.020174, prompt 123,455, completion 2,778, **`truncated: false`, `cap: 10000`** | 24 rows, 9 distinct turns, 24 non-cache calls, $0.020174, 123,455 / 2,778 | ✅ Equal |
+| All accounts (last 1 day; the admin-route path with no `userId`) | `ok: true`, turns 9, $0.020174, `truncated: false`, `cap: 10000` | `count` 24, 9 turns, $0.020174 | ✅ Equal |
+| Injected read failure (in-process fake `tokenUsage` for both methods; no DB) | `{ ok: false, error: 'Chat usage could not be read' }` for both the account and the all-accounts call. No zeroed report | — | ✅ |
+| Injected truncation (fake returns `reachedCeiling: true`) | `ok: true`, `truncated: true`, `cap: 10000` | — | ✅ |
+| Route 503 mapping | Not called live: the route is admin-gated, the test account isn't an admin, and auth wasn't forged. The `ok: false` → 503 mapping is proven by the route test (§12.2) | — | ✅ (unit) |
+
+No live DB writes for F-1 or F-6.
+
+**SQL used** (read-only, through a raw service-role client with hand-typed filters; `:start` / `:end` are the report's own window):
+
+```sql
+-- Check 1 / area totals / Check 4 / image + onboarding rows
+select id, created_at, feature, component, session_id, request_type, model_name,
+       input_tokens, output_tokens, total_tokens, cost_usd, success, user_id
+from token_usage
+where user_id = '2f734ed5-3681-4049-880d-3de7b096bea3'
+  and created_at >= :start and created_at <= :end
+  and (feature like 'business-os%' or feature in ('insight-generation','correlated-insight-generation',
+       'health-summary-generation','business-os','landing-page-generation','lead-reply'))
+order by created_at desc;
+select count(*) from token_usage where user_id = :test and created_at between :start and :end;   -- any feature
+
+-- Check 2: any feature on the platform ids
+select created_at, feature, component from token_usage
+where user_id in ('00000000-0000-0000-0000-000000000000', :system_admin_user_id)
+  and created_at >= :start and created_at <= :end;
+
+-- Check 3
+select count(*) from token_usage where user_id = :test            and created_at between :start and :end and feature in (/* legacy list */);   -- (a) selected
+select count(*) from token_usage where user_id in (/* platform */) and created_at between :start and :end and feature in (/* legacy list */);   -- (a) platform
+select count(*) from token_usage where user_id = :test            and created_at between :start and :end and feature = 'onboarding' and component = 'simple-complete';  -- (b)
+select count(*) from token_usage where user_id in (/* platform */) and created_at between :start and :end and feature = 'onboarding' and component = 'simple-complete';  -- (c)
+
+-- Reuse check (L4): no row after the identical request
+select count(*) from token_usage where user_id = :test and created_at >= :reuse_start;
+select count(*) from token_usage where session_id = :reuse_group;
+
+-- Daily cap (L6) and media side effect
+select source, section, aspect, created_at from user_media
+where user_id = :test and source = 'generated' and created_at >= :start;
+
+-- F-1 oracle
+select session_id, activity_type, cost_usd, input_tokens, output_tokens from token_usage
+where user_id = :test and feature = 'business-os-chat' and created_at between now() - interval '7 days' and now();
+select session_id, cost_usd from token_usage          -- count(*) exact; 24 < 1,000 so a single page is complete
+where feature = 'business-os-chat' and created_at between now() - interval '1 day' and now();
+
+-- F-6 oracle
+select config_key, config_value from ais_system_config
+where config_key in ('monthly_ai_allowance_usd', 'pilot_credit_cost_usd');
+
+-- Preflight (read-only)
+select user_id from admin_users where user_id = :test;                                   -- 0 rows
+select key, value from system_settings_config where key in ('image_generation_model',
+  'image_generation_sizes','image_generation_quality','image_generation_prices_usd');     -- 0 rows → defaults
+```
+
+#### 12.8 Issues, observations and skipped items
+
+**Bugs (must fix before commit):** **none.**
+
+**Performance issues:** none observed. Each onboarding extraction took about 1.5–2 s, as before. Image generation took about 42 s end to end, which is provider time.
+
+**Edge cases / observations (non-blocking):**
+1. **O-1: full `tsc` count depends on `.next/`.** Because the user runs the dev server from this worktree, `tsconfig`'s `.next/types/**` include adds 4 generated-route errors. None of those routes were touched, so the count reads 2,049 instead of 2,045. RM and future gates should compare counts excluding `.next/`, or on a checkout with no dev server. Not a code defect.
+2. **O-2: onboarding logs the owner's free text. This predates Layer 1.5 and isn't in its scope.** `OnboardingConversationManager` logs `message` at **debug** ("Processing user message"; Layer 1.5 only added `groupId` to that line) and the raw text at **info** ("Extracting business story from message", `:601`). The Layer 1.5 no-prompt rule covers image prompts, and those are clean. Worth a follow-up alongside OI-4 to OI-6 if owner text in logs is a concern.
+3. **O-3: the failure row records the configured model name** (`gpt-image-does-not-exist`). This is correct: it's the model that was asked for, and it makes a misconfiguration visible in Check 1.
+
+**Skipped, with reasons:**
+
+| Item | Reason |
+|---|---|
+| Browser run of the LLM Usage tab (the images note text, "Start now") | The user is testing the UI in parallel. The same report object the tab renders was verified against SQL (§12.6), and the note and 3(c) copy are covered by `CheckPanels.layer15.test.tsx` |
+| Onboarding through `POST /api/onboarding/chat` | Calling it would persist conversation rows on the test account. The manager was driven directly with an in-memory state, and the route's attribution is covered by `route.attribution.test.ts` |
+| Image through `POST /api/website/media/generate` | The route only mints the group and calls the service, which is covered by its route test. The service was called directly with a group minted by the same `newBosGroupId()` |
+| `/api/admin/chat-usage` 503 live | Admin-gated; no admin session and no forged auth. Covered by the route test plus the in-process `ok: false` |
+| Full `tsc` on a clean `main` copy | Per instructions: SA and Dev already did it |
+| A "brand-new owner" | This is the existing test account, so the UD-1 figure is a before/after delta. That is the same number a new owner would see for the same conversation |
+
+**Safety:** no email, WhatsApp, SMS or notification; no payment, purge or delete; no cron. Nothing was written to `system_settings_config`, `ais_system_config` or any other shared config table (the failure model was an in-process override). Exactly **one** real image was generated ($0.167). Live writes: 6 `token_usage` rows, 1 storage object and 1 `user_media` row, all on the test account. Onboarding state was never persisted. `.env.local` was kept, and the temporary scripts were deleted.
+
+#### 12.9 Verdict
+
+**PASS: ready for TL review and user approval.** All 24 ACs are covered. AC-1 to AC-22 are proven by the automated gates and tests (§12.2 and the SA-verified suites). **AC-23 and AC-24 are proven live** (§12.3 to §12.6). There are no bugs. The only open items are observations O-1 and O-2 and the BA knock-ons already recorded in §11.4 (copy the UD-1 figure into the requirement; correct "pinned to `high`" in the Layer 1 requirement row).
+
+- [x] All acceptance criteria pass: ready for commit (after TL / user approval)
+- [ ] Issues found: Dev must address before commit
 
 ---
 
@@ -1009,3 +1447,9 @@ The code-reality check is the strongest part of this plan: six mismatches found 
 |------|--------|---------|
 | 2026-09-17 | Created (Planning) | Workplan for Layer 1.5 (26 FRs / 24 ACs). Code-reality check against `68938031` found **6 mismatches**, 2 material: **M-1** `extractClientTracking` is dead code, so only three onboarding call types can fire live (AC-3 / AC-23 need rewording — Q-1); **M-2** the cited `getAgentCreationConfig` is two round trips, so FR-10's "one read" is built on `getByKeys` instead (Q-3). Also **M-4**: two further touched files log via `console.*` (`IntentClassifier` 16, `openaiProvider` 4) beyond the one the requirement names — all three flagged in §6.3, with the freeze planned and optional conversion tasks S11a–S11c; and **M-5**: there is no `UsageCard` test, so the "owner-card snapshot" is the usage-route characterization snapshot. Typecheck gate measured: **119 → 124 files, 30 errors, 0 new, no baseline addition needed**. 46 tasks in 12 steps; 24 unit/route tests plus 11 live QA steps |
 | 2026-09-17 | SA review — approved with required changes | All six code-reality findings independently confirmed; a seventh file check added (`providerFactory.ts` is Pino-clean, closing M-4's list at three). Q-1 agreed (all four names kept, with an "unreachable" catalog comment and unit coverage for the dead extractor; AC wording goes back to the BA as BA-1); **Q-2 signed off here** — `getOpenAI()` is a factory *surface* addition, not an abstraction change, and is preferred over a cast, with a capability interface recorded as F-15; Q-3 approved (`getByKeys`, values never logged); **Q-4 partly overruled** — drop the `UsageCard` source assertion, prove the claim with T-U13, the untouched route snapshot and a review citation; Q-5 approved with `@ts-expect-error` contract lines and an info-level log on the cross-tenant read; Q-6 freeze confirmed as the default, with per-file risk recorded for the user's decision; Q-7 approved as `'image_generation'` via a named constant. WC-1 to WC-12 required: no `!` at the onboarding boundary, assignment-based backfill, `n === 1` pinned against FR-9, a prompt-never-logged assertion, contract-test lines, drop T-U15, pin the two platform-account notions against each other, name the `quality` literal, log truncation on the route, name the induced image failure, note the inert empty area lines mid-rollout, justify or drop the barrel export. BA-1 (AC-3 / AC-23 wording + KI-D) and BA-2 (M-2 / M-3 / M-4 corrections) go back to the BA |
+| 2026-09-18 | Implemented — Code Complete | S1–S10 and S12 implemented (T43 QA live run pending); S11 declined by the user (D-6), tracked as OI-4 to OI-6. All WC-1 to WC-12 applied. Gates: typecheck:bos-llm 131 files / 0 new, baseline byte-identical; full tsc 2,045 = baseline; whole-repo Jest fails only the 21 suites that fail on the clean base; usage-route snapshot unedited; no NUL bytes. Nine deviations recorded in §11.1 (DV-1 to DV-9), notably the pinned image quality `high` (DV-2) |
+| 2026-09-18 | SA code review — Fix Required | Gates re-run by SA: `typecheck:bos-llm` 131 / 30 / 0 new, baseline unchanged; Jest 58 suites / 839 tests / 2 snapshots green across the touched directories; no `console.*` added; no image model in the service. Tenant isolation, image path, F-1, F-6, zero-token behaviour, onboarding and the Layer 1.1 tab all pass; every WC-1 to WC-12 found in code. DV-1 and DV-3 to DV-9 accepted. **CR-1 (High): DV-2 pinned image quality to `high`, a cost and product change inside a track-only layer.** Options A (pin high), B (pin medium), C (keep `auto`, price by the quality the provider reports — SA recommendation, no owner-visible or spend change) go to the user. CR-2 to CR-5 (Low): misplaced JSDoc on `getOpenAI()`, UUID-validate the backfilled group, state the fallback price source honestly, test the quality-mismatch branch. F-1 note: the old chat report was silently capped at the latest 1,000 calls, so figures will rise — a correction. New follow-up F-16 (`getChatPricing` has no caller). Not yet approved for QA |
+| 2026-09-18 | SA code review fixes CR-1 to CR-5 applied | CR-1 per user decision option C: quality `auto` by default, each image priced after the call by the provider-reported quality through an `ImagePriceResolver` passed to the provider (DV-2 superseded). CR-2 doc comments, CR-3 `isUuid` re-mint, CR-4 price provenance, CR-5 reported-quality pricing tests. Gates: 131 suites green, typecheck:bos-llm 131/0 new, full tsc 2,045, snapshot unedited, no NUL. Awaiting SA re-check of the CR-1 diff (§11.3) |
+| 2026-09-18 | SA re-check — APPROVED for QA | CR-1 resolved per user decision D-7 (option C): quality stays `auto`, each image priced by the provider-reported quality inside `callWithTracking` before the row is written; failures never priced; tracker untouched. CR-2 to CR-5 resolved. Gates re-run: typecheck 131 / 30 / 0 new, baseline unchanged; 16 suites / 287 tests / 2 snapshots green; freeze 16 / 16 / 4. Optional: price a missing reported quality at the pinned level when one is configured; F-17 guard the resolver inside the provider. Pre-release: confirm the fallback prices against OpenAI or seed `image_generation_prices_usd`. BA knock-on: Layer 1 requirement row still says "pinned to `high`" |
+| 2026-09-18 | Image fallback prices confirmed first-party (TL) | CR-4 follow-up: all nine `IMAGE_FALLBACK_PRICING` values checked against OpenAI's own gpt-image-1 model page ("Image generation — Per image") and match exactly; the provenance comment in `SystemConfigRepository.ts` now says so. Also noted on that page: `gpt-image-1` is labelled "previous image generation model" with its snapshot marked Deprecated — the model is configurable (`image_generation_model`), so moving to a newer model needs no code change; recorded as a follow-up, out of Layer 1.5 scope |
+| 2026-09-18 | QA report — PASS | §12 added. Part 1: Jest 131 suites / 1,970 pass / 2 snapshots; `typecheck:bos-llm` 131 / 30 / 0 new, baseline unchanged; full `tsc` 2,045 excluding the dev server's `.next/types` (O-1); 0 NUL bytes in 45 files; high-risk ACs spot-checked. Part 2 live on test account `2f734ed5…`: one onboarding conversation → 4 rows (`business_story_extraction`, `client_workflow_extraction` ×2, `adjustment_intent_extraction`) in one group on the owner's account; **UD-1 = +5,539 tokens / +554 credits (about 2.7% of the 20,833-credit allowance, $0.0166)**; one real image (`gpt-image-1`, 1024×1024, requested `auto`, reported `high`, $0.167, 0 tokens); reuse hit wrote no row; in-process induced failure wrote a $0 / 0-token / `success false` row without throwing; image rows moved no credit or remaining figure; cap 1/10. Report Checks 1–5 and area totals equal SQL; F-1 equals SQL with `truncated`/`cap`, `ok: false` on an injected failure; F-6 allowance 20,833 = config. No bugs; observations O-1 to O-3 |
