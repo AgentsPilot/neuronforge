@@ -11,9 +11,18 @@ import { NextRequest } from 'next/server';
 const getUser = jest.fn();
 jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
 
+/** Every log call, serialized at call time as Pino would (OI-7 test below). */
+const mockLogged: Array<{ level: string; fields: Record<string, unknown>; msg: string }> = [];
 jest.mock('@/lib/logger', () => {
   const make = (): Record<string, unknown> => {
-    const logger: Record<string, unknown> = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+    const logger: Record<string, unknown> = {};
+    for (const level of ['trace', 'debug', 'info', 'warn', 'error', 'fatal']) {
+      logger[level] = (first: unknown, second?: unknown) => {
+        const fields = typeof first === 'object' && first !== null ? JSON.parse(JSON.stringify(first)) : {};
+        const msg = typeof first === 'string' ? first : String(second ?? '');
+        mockLogged.push({ level, fields, msg });
+      };
+    }
     logger.child = () => logger;
     return logger;
   };
@@ -139,5 +148,23 @@ describe('POST /api/onboarding/chat — attribution', () => {
     const res = await POST(req({ message: 'x' }));
     expect(res.status).toBe(401);
     expect(processSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/onboarding/chat — the owner\'s text is never logged (OI-7)', () => {
+  const SENTINEL = 'OWNER-SENTINEL-kqxz private words the owner typed';
+
+  it('logs the message length, never the message, on a new and a resumed conversation', async () => {
+    const resumed = snapshotRow({ currentStep: 'business_story', collectedData: {}, language: 'en', attributionGroupId: EXISTING_GROUP });
+    for (const snapshot of [[], [resumed]]) {
+      mockLogged.length = 0;
+      lastMessages = snapshot;
+      const res = await POST(req({ message: SENTINEL }));
+      expect(res.status).toBe(200);
+
+      expect(JSON.stringify(mockLogged)).not.toContain(SENTINEL);
+      const processing = mockLogged.find((l) => l.msg === 'Processing onboarding message');
+      expect(processing).toMatchObject({ level: 'info', fields: { userId: USER.id, messageLength: SENTINEL.length } });
+    }
   });
 });

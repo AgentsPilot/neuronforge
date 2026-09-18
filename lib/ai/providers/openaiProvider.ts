@@ -4,6 +4,9 @@ import { BaseAIProvider, CallContext } from './baseProvider';
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 import { calculateCostSync } from '@/lib/ai/pricing';
 import { getModelMaxOutputTokens } from '../context-limits';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ service: 'OpenAIProvider' });
 
 /**
  * OpenAI model name constants
@@ -111,12 +114,12 @@ export class OpenAIProvider extends BaseAIProvider {
    */
   static getInstance(aiAnalytics: AIAnalyticsService): OpenAIProvider {
     if (!process.env.OPENAI_API_KEY) {
-      console.error('❌ Missing OpenAI API key');
+      logger.error('OpenAI API key not configured');
       throw new Error('OpenAI API key not configured', { cause: 400 } as any);
     }
 
     if (!aiAnalytics) {
-      console.error('❌ AI Analytics service not provided');
+      logger.error('AI analytics service not provided');
       throw new Error('AI Analytics service not initialized', { cause: 500 } as any);
     }
 
@@ -400,7 +403,7 @@ export class OpenAIProvider extends BaseAIProvider {
       // @ts-ignore - Using correct delete method
       await this.openai.beta.threads.delete(threadId);
     } catch (error: any) {
-      console.error(`⚠️ Failed to delete thread ${threadId}:`, error.message);
+      logger.error({ err: error, threadId }, 'Failed to delete thread');
       // Don't throw - deletion failures shouldn't break the flow
     }
   }
@@ -432,7 +435,7 @@ export class OpenAIProvider extends BaseAIProvider {
       return thread;
     } catch (error: any) {
       // Cleanup: delete the thread since we couldn't inject the prompt
-      console.error('❌ Failed to inject system prompt, cleaning up thread:', error.message);
+      logger.error({ err: error, threadId: thread.id }, 'Failed to inject system prompt; deleting the thread');
       await this.deleteThread(thread.id);
 
       throw new Error(`Failed to inject system prompt into thread: ${error.message}`);

@@ -1,0 +1,250 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`trackAICall: the inserted row (T-5) (a) a full, valid call 1`] = `
+{
+  "activity_name": "extract_story",
+  "activity_step": "story",
+  "activity_type": "extraction",
+  "agent_id": "agent-1",
+  "call_id": "call-fixed",
+  "category": "onboarding",
+  "component": "business_story_extraction",
+  "cost_usd": 0.0021,
+  "endpoint": "/api/example",
+  "error_code": undefined,
+  "error_message": undefined,
+  "execution_id": "exec-1",
+  "feature": "business-os-onboarding",
+  "input_tokens": 120,
+  "latency_ms": 812,
+  "metadata": {
+    "execution_id": "exec-1",
+    "extra": "PAYLOAD-SENTINEL-rq8m metadata",
+    "timestamp": "2026-09-18T10:00:00.000Z",
+    "tracked_by": "ai_analytics_service",
+    "version": "2.0",
+  },
+  "model_name": "gpt-4o",
+  "output_tokens": 30,
+  "provider": "openai",
+  "request_payload": {
+    "prompt": "PAYLOAD-SENTINEL-rq8m prompt",
+  },
+  "request_type": "chat",
+  "response_metadata": {
+    "note": "PAYLOAD-SENTINEL-rq8m response",
+  },
+  "response_size_bytes": 2048,
+  "session_id": "33333333-3333-4333-8333-333333333333",
+  "success": true,
+  "user_id": "2f734ed5-3681-4049-880d-3de7b096bea3",
+  "workflow_step": "step-1",
+}
+`;
+
+exports[`trackAICall: the inserted row (T-5) (a) a full, valid call 2`] = `"{"user_id":"2f734ed5-3681-4049-880d-3de7b096bea3","model_name":"gpt-4o","provider":"openai","input_tokens":120,"output_tokens":30,"cost_usd":0.0021,"request_type":"chat","session_id":"33333333-3333-4333-8333-333333333333","category":"onboarding","call_id":"call-fixed","endpoint":"/api/example","feature":"business-os-onboarding","component":"business_story_extraction","workflow_step":"step-1","execution_id":"exec-1","latency_ms":812,"response_size_bytes":2048,"success":true,"request_payload":{"prompt":"PAYLOAD-SENTINEL-rq8m prompt"},"response_metadata":{"note":"PAYLOAD-SENTINEL-rq8m response"},"activity_type":"extraction","activity_name":"extract_story","agent_id":"agent-1","activity_step":"story","metadata":{"timestamp":"2026-09-18T10:00:00.000Z","version":"2.0","tracked_by":"ai_analytics_service","execution_id":"exec-1","extra":"PAYLOAD-SENTINEL-rq8m metadata"}}"`;
+
+exports[`trackAICall: the inserted row (T-5) (a2) the defaults: request type, category, success, no session, execution id from metadata 1`] = `
+{
+  "activity_name": undefined,
+  "activity_step": undefined,
+  "activity_type": undefined,
+  "agent_id": undefined,
+  "call_id": "call-min",
+  "category": "general",
+  "component": undefined,
+  "cost_usd": 0,
+  "endpoint": undefined,
+  "error_code": undefined,
+  "error_message": undefined,
+  "execution_id": "exec-from-metadata",
+  "feature": undefined,
+  "input_tokens": 5,
+  "latency_ms": undefined,
+  "metadata": {
+    "execution_id": "exec-from-metadata",
+    "timestamp": "2026-09-18T10:00:00.000Z",
+    "tracked_by": "ai_analytics_service",
+    "version": "2.0",
+  },
+  "model_name": "claude-x",
+  "output_tokens": 0,
+  "provider": "anthropic",
+  "request_payload": undefined,
+  "request_type": "chat",
+  "response_metadata": undefined,
+  "response_size_bytes": undefined,
+  "session_id": null,
+  "success": true,
+  "user_id": "2f734ed5-3681-4049-880d-3de7b096bea3",
+  "workflow_step": undefined,
+}
+`;
+
+exports[`trackAICall: the inserted row (T-5) (b1) an invalid user_id with SYSTEM_ADMIN_USER_ID set: the platform account 1`] = `
+{
+  "activity_name": "extract_story",
+  "activity_step": "story",
+  "activity_type": "extraction",
+  "agent_id": "agent-1",
+  "call_id": "call-fixed",
+  "category": "onboarding",
+  "component": "business_story_extraction",
+  "cost_usd": 0.0021,
+  "endpoint": "/api/example",
+  "error_code": undefined,
+  "error_message": undefined,
+  "execution_id": "exec-1",
+  "feature": "business-os-onboarding",
+  "input_tokens": 120,
+  "latency_ms": 812,
+  "metadata": {
+    "execution_id": "exec-1",
+    "extra": "PAYLOAD-SENTINEL-rq8m metadata",
+    "timestamp": "2026-09-18T10:00:00.000Z",
+    "tracked_by": "ai_analytics_service",
+    "version": "2.0",
+  },
+  "model_name": "gpt-4o",
+  "output_tokens": 30,
+  "provider": "openai",
+  "request_payload": {
+    "prompt": "PAYLOAD-SENTINEL-rq8m prompt",
+  },
+  "request_type": "chat",
+  "response_metadata": {
+    "note": "PAYLOAD-SENTINEL-rq8m response",
+  },
+  "response_size_bytes": 2048,
+  "session_id": "33333333-3333-4333-8333-333333333333",
+  "success": true,
+  "user_id": "44444444-4444-4444-8444-444444444444",
+  "workflow_step": "step-1",
+}
+`;
+
+exports[`trackAICall: the inserted row (T-5) (b2) an invalid user_id with SYSTEM_ADMIN_USER_ID unset: the all-zero account 1`] = `
+{
+  "activity_name": "extract_story",
+  "activity_step": "story",
+  "activity_type": "extraction",
+  "agent_id": "agent-1",
+  "call_id": "call-fixed",
+  "category": "onboarding",
+  "component": "business_story_extraction",
+  "cost_usd": 0.0021,
+  "endpoint": "/api/example",
+  "error_code": undefined,
+  "error_message": undefined,
+  "execution_id": "exec-1",
+  "feature": "business-os-onboarding",
+  "input_tokens": 120,
+  "latency_ms": 812,
+  "metadata": {
+    "execution_id": "exec-1",
+    "extra": "PAYLOAD-SENTINEL-rq8m metadata",
+    "timestamp": "2026-09-18T10:00:00.000Z",
+    "tracked_by": "ai_analytics_service",
+    "version": "2.0",
+  },
+  "model_name": "gpt-4o",
+  "output_tokens": 30,
+  "provider": "openai",
+  "request_payload": {
+    "prompt": "PAYLOAD-SENTINEL-rq8m prompt",
+  },
+  "request_type": "chat",
+  "response_metadata": {
+    "note": "PAYLOAD-SENTINEL-rq8m response",
+  },
+  "response_size_bytes": 2048,
+  "session_id": "33333333-3333-4333-8333-333333333333",
+  "success": true,
+  "user_id": "00000000-0000-0000-0000-000000000000",
+  "workflow_step": "step-1",
+}
+`;
+
+exports[`trackAICall: the inserted row (T-5) (c) an invalid session_id: recorded as null 1`] = `
+{
+  "activity_name": "extract_story",
+  "activity_step": "story",
+  "activity_type": "extraction",
+  "agent_id": "agent-1",
+  "call_id": "call-fixed",
+  "category": "onboarding",
+  "component": "business_story_extraction",
+  "cost_usd": 0.0021,
+  "endpoint": "/api/example",
+  "error_code": undefined,
+  "error_message": undefined,
+  "execution_id": "exec-1",
+  "feature": "business-os-onboarding",
+  "input_tokens": 120,
+  "latency_ms": 812,
+  "metadata": {
+    "execution_id": "exec-1",
+    "extra": "PAYLOAD-SENTINEL-rq8m metadata",
+    "timestamp": "2026-09-18T10:00:00.000Z",
+    "tracked_by": "ai_analytics_service",
+    "version": "2.0",
+  },
+  "model_name": "gpt-4o",
+  "output_tokens": 30,
+  "provider": "openai",
+  "request_payload": {
+    "prompt": "PAYLOAD-SENTINEL-rq8m prompt",
+  },
+  "request_type": "chat",
+  "response_metadata": {
+    "note": "PAYLOAD-SENTINEL-rq8m response",
+  },
+  "response_size_bytes": 2048,
+  "session_id": null,
+  "success": true,
+  "user_id": "2f734ed5-3681-4049-880d-3de7b096bea3",
+  "workflow_step": "step-1",
+}
+`;
+
+exports[`trackAICall: the inserted row (T-5) (d) no call_id: one is generated from the clock and Math.random 1`] = `
+{
+  "activity_name": "extract_story",
+  "activity_step": "story",
+  "activity_type": "extraction",
+  "agent_id": "agent-1",
+  "call_id": "call_1789725600000_4fzzzxjyl",
+  "category": "onboarding",
+  "component": "business_story_extraction",
+  "cost_usd": 0.0021,
+  "endpoint": "/api/example",
+  "error_code": undefined,
+  "error_message": undefined,
+  "execution_id": "exec-1",
+  "feature": "business-os-onboarding",
+  "input_tokens": 120,
+  "latency_ms": 812,
+  "metadata": {
+    "execution_id": "exec-1",
+    "extra": "PAYLOAD-SENTINEL-rq8m metadata",
+    "timestamp": "2026-09-18T10:00:00.000Z",
+    "tracked_by": "ai_analytics_service",
+    "version": "2.0",
+  },
+  "model_name": "gpt-4o",
+  "output_tokens": 30,
+  "provider": "openai",
+  "request_payload": {
+    "prompt": "PAYLOAD-SENTINEL-rq8m prompt",
+  },
+  "request_type": "chat",
+  "response_metadata": {
+    "note": "PAYLOAD-SENTINEL-rq8m response",
+  },
+  "response_size_bytes": 2048,
+  "session_id": "33333333-3333-4333-8333-333333333333",
+  "success": true,
+  "user_id": "2f734ed5-3681-4049-880d-3de7b096bea3",
+  "workflow_step": "step-1",
+}
+`;
