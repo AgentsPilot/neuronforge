@@ -3,6 +3,9 @@
 
 import { NextResponse, NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getUser } from '@/lib/auth';
+import { AdminAccessService } from '@/lib/services/AdminAccessService';
+import { createLogger } from '@/lib/logger';
 
 // Initialize service role client for admin operations
 const supabaseServiceRole = createClient(
@@ -10,12 +13,35 @@ const supabaseServiceRole = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+const logger = createLogger({ module: 'AdminAuditTrailAPI' });
+const ROUTE = '/api/admin/audit-trail';
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // GET - Fetch audit trail logs with filters
 export async function GET(request: NextRequest) {
   try {
+    // Admin only (Layer 3 step 0, Q-3). Middleware does not protect /api, and
+    // this route reads every account's audit rows with the service role, so it
+    // gates itself: 401 signed out, 403 not an admin. Admin identity comes from
+    // AdminAccessService (the admin_users table), never a user-writable role.
+    const adminUser = await getUser();
+    if (!adminUser) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+    let isAdmin = false;
+    try {
+      isAdmin = await AdminAccessService.getInstance().isAdmin({ id: adminUser.id, email: adminUser.email });
+    } catch (err) {
+      // Fail closed: an admin check that cannot answer is a "no".
+      logger.error({ err, userId: adminUser.id }, 'Admin check threw; denying access');
+    }
+    if (!isAdmin) {
+      logger.warn({ userId: adminUser.id, route: ROUTE }, 'Non-admin attempted to read audit data');
+      return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
+    }
+
     // TODO: Add admin role check here
     const searchParams = request.nextUrl.searchParams;
 

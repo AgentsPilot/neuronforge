@@ -2,10 +2,14 @@
 // API route to cancel user's Stripe subscription
 
 import { NextRequest, NextResponse } from 'next/server';
+import { AuditTrail as auditTrail } from '@/lib/services/AuditTrailService';
+import { createLogger } from '@/lib/logger';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import Stripe from 'stripe';
+
+const logger = createLogger({ module: 'StripeCancelSubscriptionAPI' });
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-10-29.clover'
@@ -88,18 +92,15 @@ export async function POST(request: NextRequest) {
     }
 
     // AUDIT TRAIL: Log subscription cancellation
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || request.headers.get('origin') || 'http://localhost:3000';
-    await fetch(`${baseUrl}/api/audit/log`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': user.id
-      },
-      body: JSON.stringify({
+    // In-process, not an HTTP call to /api/audit/log: that route now takes the
+    // account from the session, which a server-to-server fetch does not carry.
+    // Severity and flags come from EVENT_METADATA, set to exactly what this
+    // route sent before (Layer 3 step 0, Q-1, WC-12). Not awaited.
+    void auditTrail
+      .log({
         action: 'SUBSCRIPTION_CANCELED',
         entityType: 'subscription',
         entityId: subscription.id,
-        userId: user.id,
         resourceName: 'Subscription Cancellation',
         details: {
           subscription_id: subscription.id,
@@ -107,10 +108,9 @@ export async function POST(request: NextRequest) {
           current_period_end: subscription.current_period_end,
           timestamp: new Date().toISOString()
         },
-        severity: 'info',
-        complianceFlags: ['SOC2', 'FINANCIAL']
+        userId: user.id,
       })
-    });
+      .catch((err: unknown) => logger.error({ err, userId: user.id }, 'Audit entry could not be queued'));
 
     return NextResponse.json({
       success: true,
