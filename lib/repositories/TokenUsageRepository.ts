@@ -3,11 +3,18 @@
 //
 // INTENTIONAL SERVICE-ROLE CLIENT (RLS bypass). CLAUDE.md Rule 4 is enforced by
 // SIGNATURE instead: every method REQUIRES an account id or a non-empty list of
-// account ids, and no method can read "all accounts". Callers:
+// account ids — with ONE deliberate, named exception below. Callers:
 //   - the owner usage card (`lib/business-os/usage/usageSummary.ts`), which
 //     passes the session user's own id;
 //   - the admin LLM usage report (`lib/business-os/usage/llmUsageReport.ts`),
-//     whose routes are admin-gated through AdminAccessService before any read.
+//     whose routes are admin-gated through AdminAccessService before any read;
+//   - the admin chat usage report (`lib/business-os/bizql/telemetry/usageReport.ts`).
+//
+// THE ONE ALL-ACCOUNTS READ is `listChatCallsAllAccountsInWindow`. "All
+// accounts" is reached by calling a differently NAMED method, never by leaving
+// an argument out, which is the mistake the rule exists to prevent. No other
+// method has, or may gain, an optional account filter
+// (lib/business-os/usage/__tests__/tokenUsageRepository.contract.test.ts).
 //
 // Deliberately imports nothing from `lib/business-os/**` (Layer 1.1 RC-7): the
 // feature lists, prefixes and account ids are passed in as plain data. Importing
@@ -56,6 +63,24 @@ export interface LedgerCallRow {
   error_code: string | null;
 }
 
+/** One chat-telemetry ledger row (Layer 1.5 F-1). No payloads, metadata or error text. */
+export interface LedgerChatRow {
+  /** uuid. Only used to de-duplicate pages. */
+  id: string;
+  user_id: string;
+  session_id: string | null;
+  activity_type: string | null;
+  activity_name: string | null;
+  model_name: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  /** numeric; PostgREST may return it as a string. */
+  cost_usd: number | string | null;
+  latency_ms: number | null;
+  success: boolean | null;
+  created_at: string;
+}
+
 export interface LedgerLabelRow {
   created_at: string;
   feature: string | null;
@@ -82,12 +107,31 @@ export const TOKEN_USAGE_COLUMNS = {
   label: 'created_at, feature, component',
   summary: 'feature, total_tokens, created_at',
   count: 'id',
+  /**
+   * Chat telemetry (Layer 1.5 F-1): the account and the activity, model and
+   * latency dimensions the chat report groups by. `id` only de-duplicates pages.
+   * Payloads, metadata and error_message stay excluded.
+   */
+  chat: 'id, user_id, session_id, activity_type, activity_name, model_name, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at',
 } as const;
 
 export const TOKEN_USAGE_READ_LIMITS = {
   MAX_PAGE_SIZE: 1000,
   MAX_CEILING: 5000,
   MAX_LABEL_LIMIT: 500,
+} as const;
+
+/**
+ * The chat report's own limits (Layer 1.5 RC-12d). They are the caps the
+ * report already used (10,000 rows for usage, 50,000 for pricing), kept AS
+ * THEY WERE: deliberately above MAX_CEILING, which bounds the per-account
+ * verification reads, and not silently raised. A read that reaches its ceiling
+ * says so (`reachedCeiling`), and the report surfaces it as truncated.
+ */
+export const TOKEN_USAGE_CHAT_READ_LIMITS = {
+  PAGE_SIZE: 1000,
+  USAGE_CEILING: 10_000,
+  PRICING_CEILING: 50_000,
 } as const;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -328,6 +372,118 @@ export class TokenUsageRepository {
     } catch (error) {
       return this.fail('listCallsInWindow', error);
     }
+  }
+
+  // ============ Chat telemetry (admin chat usage report) ============
+
+  /**
+   * Chat calls of ONE account in the window, newest first, paged, up to
+   * `ceiling` rows. `feature` is the chat feature value, passed in as data so
+   * this module never imports the call catalog.
+   */
+  async listChatCallsForAccountInWindow(
+    userId: string,
+    window: TokenUsageWindow,
+    feature: string,
+    opts: { pageSize: number; ceiling: number }
+  ): Promise<RepositoryResult<{ rows: LedgerChatRow[]; reachedCeiling: boolean }>> {
+    const method = 'listChatCallsForAccountInWindow';
+    try {
+      this.assertAccount(userId);
+      this.assertChatRead(window, feature, opts);
+      const result = await this.pageChatCalls(method, window, feature, opts, userId);
+      this.logger.debug({ method, rows: result.rows.length, reachedCeiling: result.reachedCeiling }, 'Chat calls read');
+      return { data: result, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  /**
+   * Chat calls of EVERY account in the window — the one deliberate all-accounts
+   * read in this repository, and named so.
+   *
+   * Callers: `getChatUsage` / `getChatPricing` in
+   * lib/business-os/bizql/telemetry/usageReport.ts, reached only from
+   * `app/api/admin/chat-usage/route.ts` (admin-gated through AdminAccessService
+   * before any read) and the operator CLI `scripts/chat-usage-report.ts`.
+   * Never call it from an owner-facing path.
+   *
+   * Logged at info, not debug: it is the only cross-tenant read here.
+   */
+  async listChatCallsAllAccountsInWindow(
+    window: TokenUsageWindow,
+    feature: string,
+    opts: { pageSize: number; ceiling: number }
+  ): Promise<RepositoryResult<{ rows: LedgerChatRow[]; reachedCeiling: boolean }>> {
+    const method = 'listChatCallsAllAccountsInWindow';
+    try {
+      this.assertChatRead(window, feature, opts);
+      const result = await this.pageChatCalls(method, window, feature, opts, null);
+      this.logger.info(
+        { method, rows: result.rows.length, reachedCeiling: result.reachedCeiling },
+        'Chat calls read across all accounts'
+      );
+      return { data: result, error: null };
+    } catch (error) {
+      return this.fail(method, error);
+    }
+  }
+
+  private assertChatRead(window: TokenUsageWindow, feature: string, opts: { pageSize: number; ceiling: number }): void {
+    this.assertWindow(window);
+    this.assertFeatures([feature], false);
+    this.assertIntRange(opts?.pageSize, 1, TOKEN_USAGE_READ_LIMITS.MAX_PAGE_SIZE, 'pageSize');
+    this.assertIntRange(opts?.ceiling, 1, TOKEN_USAGE_CHAT_READ_LIMITS.PRICING_CEILING, 'ceiling');
+  }
+
+  /**
+   * The shared pager behind the two named chat reads. Private on purpose: the
+   * `accountId: null` branch is reachable only through the method whose name
+   * says "AllAccounts". Same order, paging and de-duplication as
+   * `listCallsInWindow`.
+   */
+  private async pageChatCalls(
+    method: string,
+    window: TokenUsageWindow,
+    feature: string,
+    opts: { pageSize: number; ceiling: number },
+    accountId: string | null
+  ): Promise<{ rows: LedgerChatRow[]; reachedCeiling: boolean }> {
+    const rows: LedgerChatRow[] = [];
+    const seen = new Set<string>();
+
+    for (let from = 0; rows.length < opts.ceiling; from += opts.pageSize) {
+      const to = from + Math.min(opts.pageSize, opts.ceiling - from) - 1;
+      let query = this.supabase
+        .from('token_usage')
+        .select(TOKEN_USAGE_COLUMNS.chat)
+        .eq('feature', feature)
+        .gte('created_at', window.start.toISOString())
+        .lte('created_at', window.end.toISOString());
+      if (accountId !== null) query = query.eq('user_id', accountId);
+
+      const { data, error } = await query
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to);
+      if (error) throw error;
+
+      const page = (data ?? []) as LedgerChatRow[];
+      for (const row of page) {
+        const key = String(row.id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push(row);
+      }
+
+      if (page.length < to - from + 1) break;
+      if (from + opts.pageSize >= opts.ceiling) break;
+    }
+
+    const reachedCeiling = rows.length >= opts.ceiling;
+    if (reachedCeiling) this.logger.warn({ method, ceiling: opts.ceiling }, 'Chat calls read reached its ceiling');
+    return { rows: rows.slice(0, opts.ceiling), reachedCeiling };
   }
 
   /** Exact number of matching rows for the given accounts in the window. */

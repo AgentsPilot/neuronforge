@@ -185,9 +185,9 @@ export function LegacyLabelsPanel({ check }: { check: LegacyLabelsCheck }) {
         <li>
           (c) <code>{helper}</code> on the platform account — Info only, never Fail:{' '}
           {check.helperLabelOnPlatform ? formatNumber(check.helperLabelOnPlatform.count) : '—'}
-          <div style={{ color: '#666' }}>
-            Since Layer 1 the only live source is the onboarding conversation. A website or intake call that lost its
-            context would also appear here; this tab can&apos;t prove it is absent. Match these times to your own test
+          <div style={{ color: '#666' }} data-testid="llm-usage-helper-label-note">
+            Since Layer 1.5 no live caller should write this label, so any row here is worth investigating: a website,
+            intake or onboarding call that lost its context would appear with it. Match these times to your own test
             actions.
           </div>
           {check.helperLabelOnPlatform && check.helperLabelOnPlatform.timestamps.length > 0 && (
@@ -362,6 +362,11 @@ export function AreaTotalsPanel({ totals }: { totals: AreaTotals }) {
           </tbody>
         </table>
       )}
+      <div style={{ color: '#666', fontSize: '12px', marginTop: '6px' }} data-testid="llm-usage-images-note">
+        Image rows show 0 tokens: that is expected. An AI image is priced per image, not per token, so its cost is in
+        the images line and adds no credits. A repeated identical request is served from the image library and writes
+        no row, so these count images generated, not requests.
+      </div>
     </section>
   );
 }

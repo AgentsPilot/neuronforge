@@ -28,10 +28,22 @@
 import { createHash, randomUUID } from 'crypto';
 import type { CallContext } from '@/lib/ai/providers/baseProvider';
 import { createLogger } from '@/lib/logger';
+// Imported BY the catalog, never the reverse: lib/platformAccount.ts imports
+// nothing, so its other importers stay out of the typecheck:bos-llm gate.
+import { ALL_ZERO_UUID } from '@/lib/platformAccount';
 
 const logger = createLogger({ module: 'BosLlmCallCatalog' });
 
-export const BOS_LLM_AREAS = ['chat', 'insights', 'briefing', 'website', 'intake', 'leads'] as const;
+export const BOS_LLM_AREAS = [
+  'chat',
+  'insights',
+  'briefing',
+  'website',
+  'intake',
+  'leads',
+  'onboarding',
+  'images',
+] as const;
 export type BosLlmArea = (typeof BOS_LLM_AREAS)[number];
 
 /** Stable identifiers: Layer 2 config keys. Never rename without a migration plan. */
@@ -58,6 +70,17 @@ export const BOS_LLM_CALLS = {
   ],
   intake: ['form_generation', 'question_inference'],
   leads: ['reply_recommendation'],
+  onboarding: [
+    'business_story_extraction',
+    'client_workflow_extraction', // can fire twice in one conversation (two steps)
+    // UNREACHABLE as of 2026-09-17: extractClientTracking has no caller (its
+    // step is retired). Kept so the method stays attributed and type-safe if it
+    // is ever re-wired; its absence from the ledger is not a defect (KI-D, F-12).
+    'client_tracking_extraction',
+    'adjustment_intent_extraction',
+  ],
+  // OpenAI is the only image provider today (see GeneratedImageService).
+  images: ['image_generation'],
 } as const satisfies Record<BosLlmArea, readonly string[]>;
 
 export type BosLlmCallName<A extends BosLlmArea> = (typeof BOS_LLM_CALLS)[A][number];
@@ -72,7 +95,7 @@ export function bosFeature<A extends BosLlmArea>(area: A): BosLlmFeature<A> {
 /**
  * Feature values each area's calls wrote BEFORE Layer 1 renamed them to
  * `business-os-<area>`. Keyed by area so the usage-card categories and the
- * verification checks cannot drift apart. Chat and intake had none.
+ * verification checks cannot drift apart. Chat, intake, onboarding and images had none.
  */
 export const BOS_LEGACY_FEATURES = {
   chat: [],
@@ -82,6 +105,18 @@ export const BOS_LEGACY_FEATURES = {
   website: ['landing-page-generation'],
   intake: [],
   leads: ['lead-reply'],
+  /*
+   * EMPTY, AND BOTH MUST STAY EMPTY (Layer 1.5 FR-6, RC-3).
+   * The legacy `onboarding` feature value is still written today, with real
+   * users, by the onboarding chat service and generate-prompt-ideas. Listing it
+   * here would put it into BOS_LEGACY_FEATURES_FLAT -> bosRowFilter() -> Check
+   * 1's read, Check 2's platform-account read and isBusinessOsFeature: every
+   * historical `onboarding` row would join the Business OS filter, Check 2
+   * ("nothing on the platform account") would fail, the value would leave the
+   * `help` category, and usageCategories.catalog.test.ts would break.
+   */
+  onboarding: [],
+  images: [],
 } as const satisfies Record<BosLlmArea, readonly string[]>;
 
 /** Every legacy Business OS feature value, in area order. */
@@ -186,7 +221,6 @@ export type BosCallContextExtras = Omit<
 >;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ALL_ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 
 export function isUuid(value: string | undefined | null): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value);
@@ -209,6 +243,9 @@ export function isPlatformAccount(userId: string): boolean {
 /**
  * The account ids calls land on when they have no valid account
  * (`aiAnalytics.ts` tracker fallback), for queries that look for them.
+ *
+ * The tracker writes `platformAccountId()` (lib/platformAccount.ts) verbatim;
+ * this is the QUERY form of the same rule, UUID-only on purpose.
  *
  * Same two sources as `isPlatformAccount`, read at call time. The env value is
  * included only when it is a UUID: the tracker cannot write anything else into

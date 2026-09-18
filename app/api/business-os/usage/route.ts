@@ -41,6 +41,7 @@ import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
+import { ConfigRepository } from '@/lib/repositories/ConfigRepository';
 import {
   buildCardBreakdown,
   readTokensPerCredit,
@@ -113,12 +114,15 @@ function fillGaps(
  */
 async function readAllowanceCredits(): Promise<number | null> {
   try {
-    const { data } = await supabaseServer
-      .from('ais_system_config')
-      .select('config_key, config_value')
-      .in('config_key', ['monthly_ai_allowance_usd', 'pilot_credit_cost_usd']);
+    // Through the repository (Layer 1.5 F-6). Built with the SERVER client on
+    // purpose: ConfigRepository defaults to the browser client, which fails
+    // from a route (see readTokensPerCredit in usageSummary.ts).
+    const { data } = await new ConfigRepository(supabaseServer).getSystemConfigs([
+      'monthly_ai_allowance_usd',
+      'pilot_credit_cost_usd',
+    ]);
 
-    const byKey = new Map((data ?? []).map((r) => [r.config_key, r.config_value]));
+    const byKey = new Map(Object.entries(data ?? {}));
 
     const allowanceUsd = parseFloat(String(byKey.get('monthly_ai_allowance_usd') ?? '10'));
     // Same documented fallback the Stripe routes use.

@@ -262,3 +262,45 @@ describe('buildLlmUsageReport', () => {
     });
   });
 });
+
+/*
+ * Layer 1.5 (FR-22, FR-23, AC-17): which rows the platform-account and
+ * helper-label queries can match. `matches` mirrors the repository's filter
+ * semantics (prefix OR listed feature; label = feature AND component).
+ */
+describe('Layer 1.5: platform-account and helper-label query coverage', () => {
+  type Match =
+    | { kind: 'row_filter'; filter: { featurePrefix: string; features: readonly string[] } }
+    | { kind: 'features'; features: readonly string[] }
+    | { kind: 'label'; feature: string; component: string };
+
+  function matches(row: { feature: string; component: string }, match: Match): boolean {
+    if (match.kind === 'row_filter') {
+      return row.feature.startsWith(match.filter.featurePrefix) || match.filter.features.includes(row.feature);
+    }
+    if (match.kind === 'features') return match.features.includes(row.feature);
+    return row.feature === match.feature && row.component === match.component;
+  }
+
+  async function matchesUsed() {
+    const deps = makeDeps();
+    await buildLlmUsageReport({ accountId: ACCOUNT, window: WINDOW, trigger: 'manual' }, log(), asDeps(deps));
+    const counts = deps.tokenUsage.countInWindow.mock.calls;
+    return { check2: counts[0][2] as Match, check3c: counts[3][2] as Match };
+  }
+
+  it('Check 2 includes the new Business OS areas and excludes the legacy onboarding value', async () => {
+    const { check2 } = await matchesUsed();
+    expect(matches({ feature: 'business-os-onboarding', component: 'business_story_extraction' }, check2)).toBe(true);
+    expect(matches({ feature: 'business-os-images', component: 'image_generation' }, check2)).toBe(true);
+    expect(matches({ feature: 'onboarding', component: 'simple-complete' }, check2)).toBe(false);
+    expect(matches({ feature: 'onboarding', component: 'generate-prompt-ideas' }, check2)).toBe(false);
+  });
+
+  it('Check 3(c) detects the helper label but not a generate-prompt-ideas row', async () => {
+    const { check3c } = await matchesUsed();
+    expect(matches({ feature: 'onboarding', component: 'simple-complete' }, check3c)).toBe(true);
+    expect(matches({ feature: 'onboarding', component: 'generate-prompt-ideas' }, check3c)).toBe(false);
+    expect(matches({ feature: 'business-os-onboarding', component: 'business_story_extraction' }, check3c)).toBe(false);
+  });
+});

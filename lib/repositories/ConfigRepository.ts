@@ -38,6 +38,37 @@ export class ConfigRepository {
   }
 
   /**
+   * Several system config values in ONE round trip, as a key → value map.
+   *
+   * `getSystemConfig` reads one key with `.single()`; this is `.in()`, for a
+   * caller that needs more than one key per request (the owner usage card
+   * reads two on every dashboard load). A key with no row is simply absent
+   * from the map. Never throws.
+   *
+   * Server callers must construct this repository with `supabaseServer`: the
+   * default client is the browser one.
+   */
+  async getSystemConfigs(configKeys: string[]): Promise<AgentRepositoryResult<Record<string, string>>> {
+    try {
+      const { data, error } = await this.supabase
+        .from('ais_system_config')
+        .select('config_key, config_value')
+        .in('config_key', configKeys);
+
+      if (error) throw error;
+
+      const byKey: Record<string, string> = {};
+      for (const row of (data ?? []) as Array<{ config_key: string; config_value: string }>) {
+        byKey[row.config_key] = row.config_value;
+      }
+      return { data: byKey, error: null };
+    } catch (error) {
+      this.logger.warn({ err: error, keyCount: configKeys.length }, 'System config read failed');
+      return { data: null, error: error as Error };
+    }
+  }
+
+  /**
    * Get a system config as number
    */
   async getSystemConfigAsNumber(configKey: string, defaultValue: number = 0): Promise<number> {

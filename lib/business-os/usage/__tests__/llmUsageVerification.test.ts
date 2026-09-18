@@ -570,3 +570,93 @@ describe('area totals (AC-11)', () => {
     expect(computeAreaTotals(READ_FAILED)).toMatchObject({ status: 'error', lines: [] });
   });
 });
+
+// ─── Layer 1.5: onboarding and images (FR-20, FR-21, AC-15, AC-16) ───────────
+
+describe('Layer 1.5 areas flow through every check with no check-logic change', () => {
+  const ONBOARDING = bosFeature('onboarding');
+  const IMAGES = bosFeature('images');
+  const t = (s: number) => new Date(RECEIVED.getTime() - s * 1000).toISOString();
+
+  function onboardingConversation(): LedgerCallRow[] {
+    return [
+      ledger({ feature: ONBOARDING, component: 'business_story_extraction', session_id: S1, created_at: t(40) }),
+      ledger({ feature: ONBOARDING, component: 'client_workflow_extraction', session_id: S1, created_at: t(30) }),
+      // The workflow extraction legitimately fires twice in one conversation (SA Q-1).
+      ledger({ feature: ONBOARDING, component: 'client_workflow_extraction', session_id: S1, created_at: t(20) }),
+    ];
+  }
+
+  function imageRow(overrides: Partial<LedgerCallRow> = {}): LedgerCallRow {
+    return ledger({
+      feature: IMAGES,
+      component: 'image_generation',
+      session_id: S2,
+      input_tokens: 0,
+      output_tokens: 0,
+      cost_usd: '0.25',
+      created_at: t(10),
+      ...overrides,
+    });
+  }
+
+  it('Check 1 classifies onboarding and image rows with no flags', () => {
+    const check = evaluateCallsCheck(paged([...onboardingConversation(), imageRow()]));
+    expect(check.status).toBe('pass');
+    expect(check.flaggedRows).toBe(0);
+    expect(check.rows.map((r) => [r.area, r.areaKind])).toEqual([
+      ['onboarding', 'current'],
+      ['onboarding', 'current'],
+      ['onboarding', 'current'],
+      ['images', 'current'],
+    ]);
+    const image = check.rows[3];
+    expect(image).toMatchObject({ tokens: 0, estimatedCostUsd: 0.25, flags: [] });
+  });
+
+  it('Check 4 groups one onboarding conversation, with the workflow extraction ×2', () => {
+    const check = evaluateGroupsCheck(paged([...onboardingConversation(), imageRow()]));
+    const onboarding = check.groups.find((g) => g.sessionId === S1);
+    expect(onboarding).toMatchObject({
+      areaLabel: 'onboarding',
+      callCount: 3,
+      callSummary: 'business_story_extraction, client_workflow_extraction ×2',
+    });
+    const image = check.groups.find((g) => g.sessionId === S2);
+    expect(image).toMatchObject({ areaLabel: 'images', callCount: 1, tokens: 0, callSummary: 'image_generation' });
+    expect(image?.estimatedCostUsd).toBeCloseTo(0.25);
+  });
+
+  it('area totals carry separate onboarding and images lines, the image cost on its own line', () => {
+    const totals = computeAreaTotals(paged([...onboardingConversation(), imageRow(), imageRow({ success: false, cost_usd: 0 })]));
+    const images = totals.lines.find((l) => l.key === 'images');
+    const onboarding = totals.lines.find((l) => l.key === 'onboarding');
+    expect(images).toMatchObject({ kind: 'area', calls: 2, tokens: 0 });
+    expect(images?.estimatedCostUsd).toBeCloseTo(0.25);
+    expect(onboarding).toMatchObject({ kind: 'area', calls: 3, tokens: 360 });
+    expect(totals.total.calls).toBe(5);
+  });
+
+  it('Check 5 keeps both out of other; the tokenless images category is not shown on the card', () => {
+    const byFeature = new Map([
+      [CHAT, { tokens: 1000, calls: 4 }],
+      [ONBOARDING, { tokens: 360, calls: 3 }],
+      [IMAGES, { tokens: 0, calls: 2 }],
+    ]);
+    const usage: UsageSummary = { byFeature, byDay: new Map(), totalTokens: 1360, totalCalls: 9 };
+    const check = evaluateUsageCardCheck({ summary: readOk({ summary: usage, summedBy: 'database' }), tokensPerCredit: 10 });
+
+    expect(check.status).toBe('pass');
+    expect(check.otherFeatures).toEqual([]);
+    expect(check.categories.find((c) => c.key === 'images')).toMatchObject({ tokens: 0, calls: 2, credits: 0, shownOnCard: false });
+    expect(check.categories.find((c) => c.key === 'onboarding')).toMatchObject({ shownOnCard: true, credits: 36 });
+    // No credit comes from the image rows.
+    expect(check.totals?.credits).toBe(136);
+  });
+
+  it('a failed image row is classified and grouped like any other call', () => {
+    const failed = imageRow({ success: false, cost_usd: 0, error_code: 'model_not_found' });
+    const check = evaluateCallsCheck(paged([failed]));
+    expect(check.rows[0]).toMatchObject({ area: 'images', success: false, tokens: 0, estimatedCostUsd: 0, flags: [] });
+  });
+});

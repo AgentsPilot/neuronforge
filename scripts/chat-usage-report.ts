@@ -28,6 +28,9 @@ function render(report: ChatUsageReport, days: number, scope: string) {
 
   console.log(`\nBusiness OS chat — last ${days} day${days === 1 ? '' : 's'}   (${scope})`);
   console.log('─'.repeat(64));
+  if (report.truncated) {
+    console.log(`  Truncated at ${report.cap.toLocaleString()} rows — every figure below is a floor, not a total.`);
+  }
 
   if (report.turns === 0) {
     console.log('  No turns recorded in this window.');
@@ -79,8 +82,13 @@ async function main() {
   const userId = arg('user');
   const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-  const report = await getChatUsage({ from, userId });
-  render(report, days, userId ? `user ${userId.slice(0, 8)}` : 'all users');
+  const result = await getChatUsage({ from, userId });
+  if (!result.ok) {
+    // Printed, not rendered as zeros: a failed read is not "no usage".
+    console.error(`Could not read chat usage: ${result.error}`);
+    process.exit(1);
+  }
+  render(result.report, days, userId ? `user ${userId.slice(0, 8)}` : 'all users');
 }
 
 main()
