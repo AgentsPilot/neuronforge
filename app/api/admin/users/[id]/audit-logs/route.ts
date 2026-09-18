@@ -57,7 +57,7 @@ export async function GET(
       .range(offset, offset + limit - 1);
 
     if (auditError) {
-      console.error('Error fetching audit logs:', auditError);
+      logger.error({ err: auditError, targetUserId: userId }, 'Fetching audit logs failed');
       return NextResponse.json(
         { success: false, error: 'Failed to fetch audit logs' },
         { status: 500 }
@@ -71,7 +71,7 @@ export async function GET(
       .eq('user_id', userId);
 
     if (countError) {
-      console.error('Error counting audit logs:', countError);
+      logger.error({ err: countError, targetUserId: userId }, 'Counting audit logs failed');
     }
 
     return NextResponse.json({
@@ -81,7 +81,7 @@ export async function GET(
     });
 
   } catch (error) {
-    console.error('Error in GET /api/admin/users/[id]/audit-logs:', error);
+    logger.error({ err: error }, 'Admin user audit-logs request failed');
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }

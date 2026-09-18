@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('🔄 [Reactivate Subscription] Request from user:', user.id);
+    logger.info({ userId: user.id }, 'Reactivate subscription requested');
 
     // Get user's subscription
     const { data: userSub } = await supabaseAdmin
@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    console.log('✅ [Reactivate Subscription] Subscription reactivated:', subscription.id);
+    logger.info({ userId: user.id, subscriptionId: subscription.id }, 'Subscription reactivated');
 
     // Update database
     const { error: updateError } = await supabaseAdmin
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id);
 
     if (updateError) {
-      console.error('❌ [Reactivate Subscription] Database update failed:', updateError);
+      logger.error({ err: updateError, userId: user.id }, 'Subscription reactivate: database update failed');
     }
 
     // AUDIT TRAIL: Log subscription reactivation
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('❌ [Reactivate Subscription] Error:', error);
+    logger.error({ err: error }, 'Reactivate subscription failed');
     return NextResponse.json(
       { error: error.message || 'Failed to reactivate subscription' },
       { status: 500 }

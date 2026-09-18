@@ -29,14 +29,10 @@ export async function POST(request: NextRequest) {
     // Get authenticated user
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-    console.log('👤 [Stripe Checkout] Auth check:', {
-      hasUser: !!user,
-      userId: user?.id,
-      error: authError?.message
-    });
+    logger.debug({ hasUser: !!user, userId: user?.id, hasAuthError: !!authError }, 'Stripe checkout auth check');
 
     if (authError || !user) {
-      console.error('❌ [Stripe Checkout] Auth failed:', authError);
+      logger.error({ err: authError }, 'Stripe checkout auth failed');
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -167,7 +163,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error creating checkout session:', error);
+    logger.error({ err: error }, 'Creating the checkout session failed');
     return NextResponse.json(
       { error: error.message || 'Failed to create checkout session' },
       { status: 500 }

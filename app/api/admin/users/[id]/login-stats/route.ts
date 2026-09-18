@@ -51,7 +51,7 @@ export async function GET(
       .or('action.eq.USER_LOGIN,action.eq.USER_LOGIN_FAILED');
 
     if (auditError) {
-      console.error('Error fetching audit logs:', auditError);
+      logger.error({ err: auditError, targetUserId: userId }, 'Fetching login audit logs failed');
       return NextResponse.json(
         { success: false, error: 'Failed to fetch login statistics' },
         { status: 500 }
@@ -86,7 +86,7 @@ export async function GET(
     });
 
   } catch (error) {
-    console.error('Error in GET /api/admin/users/[id]/login-stats:', error);
+    logger.error({ err: error }, 'Admin user login-stats request failed');
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }

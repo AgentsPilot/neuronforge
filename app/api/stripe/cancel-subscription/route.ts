@@ -52,7 +52,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('🚫 [Cancel Subscription] Request from user:', user.id);
+    logger.info({ userId: user.id }, 'Cancel subscription requested');
 
     // Get user's subscription
     const { data: userSub } = await supabaseAdmin
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
       }
     );
 
-    console.log('✅ [Cancel Subscription] Subscription canceled at period end:', subscription.id);
+    logger.info({ userId: user.id, subscriptionId: subscription.id }, 'Subscription set to cancel at period end');
 
     // Update database
     const { error: updateError } = await supabaseAdmin
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id);
 
     if (updateError) {
-      console.error('❌ [Cancel Subscription] Database update failed:', updateError);
+      logger.error({ err: updateError, userId: user.id }, 'Subscription cancel: database update failed');
     }
 
     // AUDIT TRAIL: Log subscription cancellation
@@ -119,7 +119,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('❌ [Cancel Subscription] Error:', error);
+    logger.error({ err: error }, 'Cancel subscription failed');
     return NextResponse.json(
       { error: error.message || 'Failed to cancel subscription' },
       { status: 500 }

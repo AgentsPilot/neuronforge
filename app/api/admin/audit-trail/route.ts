@@ -58,17 +58,10 @@ export async function GET(request: NextRequest) {
     // Calculate offset for pagination
     const offset = (page - 1) * pageSize;
 
-    console.log('🔍 [Audit Trail] Fetching logs with filters:', {
-      action,
-      severity,
-      entityType,
-      dateFrom,
-      dateTo,
-      search,
-      page,
-      pageSize,
-      offset
-    });
+    logger.debug(
+      { adminUserId: adminUser.id, action, severity, entityType, dateFrom, dateTo, hasSearch: !!search, page, pageSize, offset },
+      'Fetching audit logs with filters'
+    );
 
     // Build query - get ALL audit records with count
     let query = supabaseServiceRole
@@ -111,7 +104,7 @@ export async function GET(request: NextRequest) {
     const { data: logs, error, count } = await query;
 
     if (error) {
-      console.error('❌ [Audit Trail] Error fetching logs:', error);
+      logger.error({ err: error }, 'Fetching audit logs failed');
       return NextResponse.json({
         success: false,
         error: 'Failed to fetch audit logs: ' + error.message
@@ -173,7 +166,7 @@ export async function GET(request: NextRequest) {
       users: log.user_id ? usersMap[log.user_id] : null
     }));
 
-    console.log(`✅ [Audit Trail] Found ${logsWithUsers.length} logs on page ${page} (searched in JSONB: ${search ? 'yes' : 'no'})`);
+    logger.debug({ count: logsWithUsers.length, page, searched: !!search }, 'Audit logs fetched');
 
     // Calculate pagination metadata
     const totalCount = count || 0;
@@ -194,7 +187,7 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('❌ [Audit Trail] Exception:', error);
+    logger.error({ err: error }, 'Admin audit-trail request failed');
     return NextResponse.json({
       success: false,
       error: error.message || 'Internal server error'
