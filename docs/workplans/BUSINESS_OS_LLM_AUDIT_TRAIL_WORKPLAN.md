@@ -7,7 +7,7 @@
 **Context:** [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md), and the Layer 1, 1.1 and 1.5 requirements (grouping ids per area).
 **Branch:** `feature/business-os-llm-layer1-5` (worktree `neuronforge-llm-layer15`, at `main` `7646760a` — the logging clean-up, PR #50, is merged). This branch name is the user's instruction for this cycle (same folder, same branch). **Step 0 must merge and deploy before the AI-entry steps merge** (FR-21), so RM needs either two PRs from this branch or a split. See §7.
 **Date:** 2026-09-18
-**Status:** SA reviewed 2026-09-18. **Approved to implement**, with WC-1 to WC-12 (§10). Step 0 can start now. Steps 3 and 4 remain gated on step 0 being deployed and on the Q-4 SQL read. No code written.
+**Status:** **Step 0 — SA re-check 2026-09-18: APPROVED for QA** (§14 re-check). Next: QA (L-0), then step 0 as its own PR. Previously: Fix Required, CR-1 to CR-4, now applied. Uncommitted, in two separable parts: the security change and the Pino conversion (Q-6). Steps 1 to 5 are **not started**: they stay gated on step 0 being deployed on its own PR, and on OQ-11. SA approved the workplan with WC-1 to WC-12 (§10).
 
 ## Overview
 
@@ -38,6 +38,9 @@ This workplan:
 10. [SA Review](#10-sa-review)
 11. [QA Testing Report](#11-qa-testing-report)
 12. [Commit Info](#12-commit-info)
+13. [Step 0 Implementation Notes](#13-step-0-implementation-notes)
+14. [SA Code Review — Step 0](#14-sa-code-review--step-0)
+15. [QA Report — Step 0 (pre-deploy)](#15-qa-report--step-0-pre-deploy)
 
 ---
 
@@ -147,6 +150,8 @@ All of these were verified at the cited lines (± 1):
 | **M-13** | **Fire-and-forget work started inside a scope inherits the `AsyncLocalStorage` context.** The plan-cache store embedding (KI-A) would notify the chat turn's scope **after** its entry was emitted | Node semantics | The scope is **closed** at emission. Later notifications are ignored and logged at debug (§3.4) |
 | **M-14** | The `new-api-route` skill's "admin-only" variation checks `user.app_metadata?.role`, which contradicts CLAUDE.md § Security Rules | `.claude/skills/new-api-route/SKILL.md` | Admin checks here use `AdminAccessService` only |
 | **M-15** | Six non-compliant files are in step 0's reach:<ul><li>`console.*` in `stripe/*` (4, 3, 1, 4), `allocate-free-tier` (13), and the three admin audit routes (4, 3, 2);</li><li>the three audit routes (1, 1, 4) are already required by FR-26.</li></ul>`monitoring/page.tsx` has 6, but is **not** touched | grep | CLAUDE.md § Logging: flagged. Whether to convert depends on Q-1 and Q-3 (see Q-6) |
+| **S-6** *(SA, P0, outside this layer; WC-11)* | **`POST /api/onboarding/allocate-free-tier` grants free credits to any account, unauthenticated, repeatedly.** It takes `userId` from the body, writes `user_subscriptions` with the service role (adds to the balance, sets `account_frozen: false`), and has no once-only guard | SA §10 | **Not touched in step 0** (WC-2). Its audit call and its 13 `console.*` calls stay as they are and are fixed with the route, in the separate P0 task |
+| **Overlap** *(WC-11)* | The queued "unauthenticated admin routes" task and step 0 both touch admin routes | SA §10 | **That task must leave out** `app/api/admin/audit-trail/route.ts`, `app/api/admin/users/[id]/audit-logs/route.ts` and `app/api/admin/users/[id]/login-stats/route.ts`: step 0 gates them. S-6 belongs in that queue and is its most urgent item |
 
 ### 2.3 RC-11: the live schema check (read-only)
 
@@ -156,13 +161,36 @@ All of these were verified at the cited lines (± 1):
 |---|---|
 | Columns and types | `id uuid`, `user_id uuid`, `actor_id uuid`, `action text`, `entity_type text`, `entity_id text`, `resource_name text`, `changes jsonb`, `details jsonb`, `ip_address text`, `user_agent text`, `session_id text`, `severity text`, `compliance_flags text[]`, `hash text`, `created_at timestamptz`, **`user_email text`** (not in the script). Required: `id`, `action`, `entity_type`, `created_at` |
 | `entity_type` `CHECK` | Not readable via PostgREST. **Indirect evidence says there is none:** five live values sit outside the TS union |
-| `user_id` FK | Not readable. The column comment suggests it may have been renamed or re-created to avoid the `auth.users` validation |
-| RLS policies | Not readable |
+| `user_id` FK | Not readable via PostgREST. **Resolved by the SQL read below: there is none** |
+| RLS policies | Not readable via PostgREST. **Resolved by the SQL read below** |
 | `insert_audit_log` (SECURITY DEFINER, granted to `authenticated` in `SQL Scripts/20251030_create_audit_log_function.sql`) | **Not exposed:** absent from the OpenAPI paths for both the service and anon keys. Good: no RPC forgery path |
 | `timestamp` column (M-7) | Does not exist (`42703`) |
 | Local `SYSTEM_ADMIN_USER_ID` | Is a UUID. The production value must be checked the same way (§3.6) |
 
-**What still needs a SQL read (Supabase SQL editor, read-only).** This needs Q-4:
+**The SQL read (Q-4), run by the user on 2026-09-18.** Results:
+
+| Object | Live state | Consequence |
+|---|---|---|
+| Policy "Users can view their own audit logs" | `SELECT`, roles `{}` (PUBLIC), `USING auth.uid() = user_id`, no `WITH CHECK` | The owner policy OQ-11 narrows (step 1, before step 3 deploys) |
+| Policy "service_role_bypass_rls" | `ALL`, roles `{service_role}` only, `USING true`, `WITH CHECK true` | Harmless: service role only |
+| Policy "Admins can view all audit logs" (the `raw_user_meta_data` role check in the SQL script) | **Not live** | **M-6 resolved.** Nothing to drop |
+| Constraints | Only `audit_trail_pkey` (`id`) and `audit_trail_severity_check` (`severity IN ('info','warning','critical')`) | **There is NO foreign key on `user_id`** (see the S-3 correction below). No `CHECK` on `entity_type`: no migration for `ai_action` |
+| Trigger | `trigger_sync_audit_user_email`, `BEFORE INSERT`, runs `sync_audit_user_email()` | Its body is not visible through PostgREST. **Open:** whether it can raise on an unknown or null `user_id` (which would fail a whole batch). Needs one more read-only query (below) |
+
+**S-3 corrected.** An unknown account does **not** fail a batch (no FK). What still does:
+- a malformed UUID in `user_id` / `actor_id` (the column type);
+- a severity outside the three allowed values (the CHECK). Step 0 found one live example: the V2 security tab's `USER_DATA_EXPORTED` sent `'medium'`, which failed every batch it joined (§13.3);
+- possibly the trigger (open).
+
+So FR-3 / RC-3's UUID validation is still required. The "platform account" rejection stays for attribution correctness, not for batch safety.
+
+**Still to run (read-only), for the trigger:**
+
+```sql
+SELECT pg_get_functiondef('public.sync_audit_user_email'::regproc);
+```
+
+The original queries, for reference:
 
 ```sql
 SELECT polname, polcmd, pg_get_expr(polqual, polrelid) AS using_expr
@@ -529,7 +557,7 @@ Otherwise the action **succeeded**, with `failedCallCount` still counting repair
 | Gate | Rule |
 |---|---|
 | G1 `npm run typecheck:bos-llm` | 0 new; baseline JSON byte-identical. The scope count is recorded with `--list` and explained |
-| G2 full `tsc` (excluding `.next/`) | 2,042 → the per-step expectation in §4.2. The per-file distribution is diffed |
+| G2 full `tsc` (excluding `.next/`) | 2,042 → the per-step expectation in §4.2. The per-file distribution is diffed. **Standing rule (SA, step-0 review):** always run with `NODE_OPTIONS=--max-old-space-size=8192`, and treat a **0-error result as a crashed run**, not a pass (this repo cannot produce 0) |
 | G3 NUL bytes | 0 in changed files |
 | G4 usage-route snapshot | `app/api/business-os/usage/__tests__/__snapshots__/route.test.ts.snap` untouched and passing |
 | G5 static | No `console.*` in new or touched files (Q-6); `AuditTrailService.ts` unchanged (T-S1) |
@@ -592,21 +620,21 @@ Each step is independently shippable and leaves the product working. **Step 0 me
 
 **Step 0: secure the audit routes**
 - [ ] **T0.0** Record the baselines (G1 `--list`, G2 per-file) on the step's base
-- [ ] **T0.1** `types.ts`: add `AUDIT_ENTITY_TYPES` and derive `EntityType`. `events.ts`: add metadata for `USER_LOGOUT`, plus `USER_DATA_EXPORTED` and the six server events (Q-1/Q-2)
-- [ ] **T0.2** `lib/audit/requestSchemas.ts` and `lib/repositories/AuditTrailRepository.ts` (the owner read with the AI exclusion)
-- [ ] **T0.3** Rewrite `app/api/audit/query/route.ts` (session, Zod, repository, Pino, dev-only details)
-- [ ] **T0.4** `lib/audit/clientAuditWrite.ts`; `app/api/audit/log/route.ts` delegates
-- [ ] **T0.5** `app/api/audit-trail/route.ts`: POST delegates, GET removed
-- [ ] **T0.6** Confirm the logout order at `business-os/settings/page.tsx:401` (log before `signOut`)
-- [ ] **T0.7** (Q-1) Convert the six server self-calls to in-process `log()`
-- [ ] **T0.8** (Q-3) Gate the three admin audit reads with `AdminAccessService`
-- [ ] **T0.9** (Q-6) Separate commit: convert `console.*` → Pino in the step-0 files
-- [ ] **T0.10** Tests T-R*, T-W*, T-C1, T-A1, T-O1, T-G1; gates G1–G6
+- [x] **T0.1** `types.ts`: add `AUDIT_ENTITY_TYPES` and derive `EntityType`. `events.ts`: add metadata for `USER_LOGOUT`, plus `USER_DATA_EXPORTED` and the ~~six~~ five Stripe events (Q-1/Q-2). Done by Dev: plus `COMPLIANCE_FLAGS` with `FINANCIAL` (WC-12); `USER_DATA_EXPORTED` at `warning` (DV-2)
+- [x] **T0.2** `lib/audit/requestSchemas.ts` and `lib/repositories/AuditTrailRepository.ts` (the owner read with the AI exclusion)
+- [x] **T0.3** Rewrite `app/api/audit/query/route.ts` (session, Zod, repository, Pino, dev-only details)
+- [x] **T0.4** `lib/audit/clientAuditWrite.ts`; `app/api/audit/log/route.ts` delegates
+- [x] **T0.5** `app/api/audit-trail/route.ts`: POST delegates, GET removed
+- [x] **T0.6** Confirm the logout order at `business-os/settings/page.tsx:401` (log before `signOut`). Done by Dev: confirmed there and in `LogoutButton.tsx`
+- [x] **T0.7** (Q-1) Convert the ~~six~~ **four Stripe** server self-calls (five call sites) to in-process `log()`. Done by Dev: `allocate-free-tier` untouched (WC-2, S-6)
+- [x] **T0.8** (Q-3) Gate the three admin audit reads with `AdminAccessService`
+- [x] **T0.9** (Q-6, user approved) Separate commit: convert `console.*` → Pino in the four Stripe routes and the three admin audit reads (21 calls)
+- [x] **T0.10** Tests T-R*, T-W*, T-C1, T-A1, T-O1, T-G1; gates G1–G6. Done by Dev: §13.2, §13.3
 - [ ] **T0.11** SA code review, then QA (L-0), then the user, then RM merges and deploys **step 0 alone**
 - [ ] **T0.12** Record the step-0 commit and deploy in §12; run L-0b
 
 **Step 1: RLS (if OQ-11 = a)**
-- [ ] **T1.0** (Q-4) Obtain the live policy, constraint and trigger read
+- [x] **T1.0** (Q-4) Obtain the live policy, constraint and trigger read. Done: by the user, 2026-09-18 (§2.3). Pending: the trigger function body
 - [ ] **T1.1** Write the migration; SA approves; applied manually before step 3 deploys; L-3
 
 **Step 2: the accumulator and entry (inert)**
@@ -759,9 +787,346 @@ The code-reality check is thorough: fifteen findings, each with evidence. I re-v
 
 *(QA to populate. L-2 records the first KI-B measurement.)*
 
+- **Step 0, pre-deploy:** see [§15](#15-qa-report--step-0-pre-deploy) (2026-09-18, PASS). The post-deploy L-0 check will be added there.
+
 ## 12. Commit Info
 
 *(RM to populate. FR-21 / AC-25: record the step-0 commit and deploy **before** the step-3 merge.)*
+
+---
+
+## 13. Step 0 Implementation Notes
+
+**Status:** code-complete 2026-09-18, uncommitted, awaiting SA code review. Steps 1 to 5 not started.
+
+### 13.1 Files, split for RM (two commits, step 0's PR only)
+
+**Commit A: security (`fix(audit): authenticate the audit routes and gate the admin audit reads (Layer 3 step 0)`)**
+
+| File | Change |
+|---|---|
+| `lib/audit/types.ts` | `AUDIT_ENTITY_TYPES` and `COMPLIANCE_FLAGS` runtime lists; `EntityType` / `ComplianceFlag` derived from them. Adds `subscription`, `boost_pack` and `FINANCIAL`. **Not** `ai_action` (step 2) |
+| `lib/audit/events.ts` | Registers `USER_DATA_EXPORTED` and the five Stripe events; metadata for those and `USER_LOGOUT` |
+| `lib/audit/requestSchemas.ts` *(new)* | Read schema (identifier pattern, WC-6; `offset` accepted and ignored). Write schema: **the browser allow-list** (CR-1: `CLIENT_WRITABLE_EVENTS`, `CLIENT_WRITABLE_ENTITY_TYPES`), never AI. `stripReservedDetailKeys` (CR-2) |
+| `lib/audit/clientAuditWrite.ts` *(new)* | The one write handler: session → 401 (the WC-10 log, dated, F-C), Zod → 400, reserved `details` keys stripped (CR-2), `log()` not awaited, severity and flags from metadata |
+| `lib/repositories/AuditTrailRepository.ts` *(new)* | `listOwnerEntries`: `.eq('user_id')`, `.neq('entity_type','ai_action')`, `.not('action','like','BUSINESS_AI_ACTION_%')`, explicit columns (no `hash`, no `user_email`) |
+| `app/api/audit/query/route.ts` | Rewritten: session, Zod, repository, Pino, no error text outside development, the WC-10 log (dated, F-C; CR-3) |
+| `app/api/audit/log/route.ts` | Delegates to the shared handler |
+| `app/api/audit-trail/route.ts` | POST delegates; **GET removed** |
+| `app/api/stripe/{cancel-subscription,create-checkout,create-portal,reactivate-subscription}/route.ts` | The `fetch('/api/audit/log')` self-calls become in-process `AuditTrail.log()`, not awaited, with `.catch` and a module logger. Same action, entity, id, resource name and details; severity and flags now come from metadata (identical values) |
+| `app/api/admin/audit-trail/route.ts`, `app/api/admin/users/[id]/audit-logs/route.ts`, `app/api/admin/users/[id]/login-stats/route.ts` | `getUser()` → 401, `AdminAccessService.isAdmin` → 403 (fails closed), before any read; module logger |
+| Tests *(new)*: `app/api/audit/__tests__/auditRoutes.test.ts`, `lib/repositories/__tests__/AuditTrailRepository.test.ts`, `lib/audit/__tests__/stepZeroRegistrations.test.ts`, `app/api/admin/__tests__/auditAdminGate.test.ts`, `app/api/stripe/__tests__/stripeAuditEntries.test.ts` | §13.2 |
+
+**Commit B: logging (`refactor(logging): Pino in the Stripe and admin audit routes (Layer 3 step 0, Q-6)`)**
+- The same seven files: the four Stripe routes and the three admin audit reads. `console.*` → Pino only: 12 in Stripe (4 / 3 / 1 / 4), 9 in the admin reads (4 / 3 / 2). No other line changes.
+- **These seven files are in both commits,** so RM splits by hunk. Commit A's exact file states are kept as a reference for the split. The commit-B hunks are exactly the `console.*` statements (including their argument objects).
+- **Mapping:**
+  - `console.log` → `info` where it records a request or a state change;
+  - `console.log` → `debug` for the checkout auth check, the admin filter echo and the admin result count;
+  - every `console.error` → `error`, with `{ err }`.
+
+  No level is raised. The admin filter log records `hasSearch`, not the search text.
+
+### 13.2 Tests (all new; 102 tests)
+
+| Suite | Covers | Red on the old code |
+|---|---|---|
+| `auditRoutes.test.ts` (62; 47 before the CR fixes) | <ul><li>**CR-1:** a registered but server-only event (`PAYMENT_REFUNDED`, `BUSINESS_DATA_PURGED`, `SUBSCRIPTION_CANCELED`, `AGENT_DELETED`) or entity type (`payment_transaction`, `subscription`) → 400, nothing written, on both write routes. The allow-list is pinned to exactly 10 events and 3 entity types.</li><li>**CR-2:** `system_action` and `changeSummary` are stripped from client `details`.</li><li>**AC-21:** 401 with a header, body or `anonymous` identity.</li><li>**AC-22:** cross-account denial on read and write.</li><li>**AC-23:** the happy path, the page's own `limit=1000&offset=0`, shape unchanged, the 400s, no AI writes, client severity and flags ignored.</li><li>No error text; GET removed.</li><li>**T-C1:** the 11 distinct browser payloads (covering all 15 call sites) are accepted.</li><li>The WC-10 log records presence, never values.</li></ul> | 39 of 47 fail |
+| `AuditTrailRepository.test.ts` (7) | T-O1: owner scope, both exclusions, the count on the same query, explicit columns, AI filters short-circuit, inclusive range | new module |
+| `stepZeroRegistrations.test.ts` (14) | WC-12: each registered event stores the literal severity and flags its caller sent; every registered severity passes the table's CHECK; `ai_action` not yet registered | new |
+| `auditAdminGate.test.ts` (12) | For each of the three admin reads: 401, 403, fails closed, 200, and no table read before the gate | 9 of 12 fail |
+| `stripeAuditEntries.test.ts` (7) | Each of the five Stripe entries is written in-process under the session user, never through `fetch('/api/audit/log')`; a failing audit write does not fail the payment action; no entry without a session | 5 of 7 fail |
+
+**WC-7 is live-only:** whether real PostgREST accepts the encoding of the `not like` filter. It is proven at L-0 with one seeded `ai_action` row in non-production, or at the step-3 run.
+
+### 13.3 Gates
+
+| Gate | Result |
+|---|---|
+| Touched Jest (`lib/audit`, `lib/repositories`, `app/api/admin`, `app/api/audit`, `app/api/stripe`, `app/api/business-os/usage`; `--ci`) | Before CR: **28 suites, 290 tests, all pass.** After CR-1 to CR-3, the step-0 suites (the five new files, plus `app/api/business-os/usage`): **7 suites, 130 tests, all pass; 2 snapshots.** OI-10 and OI-11 are not in these directories |
+| `typecheck:bos-llm` | **140 files, 30 errors, 0 new, passed.** Scope list identical; baseline JSON untouched |
+| Full `tsc` (excluding `.next/`, with `NODE_OPTIONS=--max-old-space-size=8192`, because the default heap crashed once with no diagnostics) | **2,042 → 2,038** after commit A, unchanged after commit B and after the CR fixes. Only two files move: `app/api/audit-trail/route.ts` −2 (the GET, as planned) and **`app/api/stripe/webhook/route.ts` −2** (DV-1) |
+| NUL bytes | 0 |
+| Usage-route snapshot | Untouched, passing |
+
+**CR-4 — commit A proven on its own (2026-09-18).**
+- **Method:**
+  - a temporary worktree at `b6f8ff1c`, in the scratchpad;
+  - applied: every commit-A file, with the seven shared files taken from the saved A states (`scratchpad/s0sec/`, which the CR fixes do not touch) and every other file from the tree, the CR fixes included;
+  - `node_modules` linked by junction;
+  - the worktree was removed afterwards, junction first, so the main `node_modules` stayed untouched.
+
+  The commit-A diff and the untracked list were saved as `s0sec/commitA-tracked.patch` / `commitA-untracked.txt` for RM.
+
+| Gate on commit A alone | Result |
+|---|---|
+| Step-0 suites (`--ci`) | **7 suites, 130 tests, all pass; 2 snapshots** |
+| `typecheck:bos-llm` | **131 files, 30 errors, 0 new, passed; baseline untouched.** 131, not 140: the clean tree has no `.next/types` build output, and the 9-file difference is exactly those generated files. The source scope is identical |
+| Full `tsc` (8192 MB) | **2,038**; per-file distribution identical to the step-0 tip |
+
+The A states still contain their `console.*` calls (4 / 3 / 1 / 4 / 4 / 3 / 2), as expected. Commit B removes only those.
+
+### 13.3a Follow-ups recorded from the step-0 review
+
+| Id | Follow-up | Due / owner |
+|---|---|---|
+| **F-B** | The Stripe routes (the `{ error: error.message \|\| … }` pattern across `app/api/stripe/**`, 13 routes) and the admin audit routes return internal error text to the client; apply the CLAUDE.md dev-only `details` pattern. Same item: the admin routes' `[id]` path parameter and query parameters are not validated with Zod, and `admin/audit-trail`'s `search` should be checked for PostgREST filter interpolation. **Out of step 0's scope** (SA ruling): changing payment-flow error messages is a behaviour change the billing UI may depend on | Later; with the queued admin-routes task |
+| **F-C** | Review the WC-10 "rejected" counts (`Audit read rejected: no session`, `Audit write rejected: no session`, `legacy…Present`), then **remove both temporary logs**: in `app/api/audit/query/route.ts` and `lib/audit/clientAuditWrite.ts`. Both carry the dated marker "remove after 2026-09-25" | **Due 2026-09-25** |
+| **F-E** | **Stripe data access bypasses the repository layer** (CLAUDE.md rule 1; requirement OI-F). 97 direct `.from(` / `.rpc(` calls: `app/api/stripe/webhook/route.ts` (72), `sync-subscription` (8), `update-subscription` (3), `cancel-subscription` (2), `invoices` (2), `reactivate-subscription` (2), `create-checkout` (1), `create-portal` (1), `lib/stripe/StripeService.ts` (6). Step 0 changed only how four of these routes write audit entries; their data access was deliberately left alone. Move it into subscription/billing repositories with `user_id` scoping and a `tenant-isolation-guard` review of the service-role paths, webhook first | Separate fix (raised by the user 2026-09-18) |
+
+### 13.4 Deviations
+
+| # | Deviation | Why |
+|---|---|---|
+| DV-1 | `tsc` ends at **2,038, not 2,040** | Adding `subscription` to `EntityType` fixed two pre-existing `TS2322` errors in `app/api/stripe/webhook/route.ts` (`:290`, `:415`). That route already writes `subscription` entries in-process, which confirms the registration. The file is not edited |
+| DV-2 | `USER_DATA_EXPORTED` is registered at **`warning`**, not the caller's `'medium'` | `'medium'` violates `audit_trail_severity_check`, so every one of those entries failed its **whole batch**, losing up to 99 other products' entries with it. There is no stored data to preserve. `warning` is the valid level between the two `'medium'` could have meant. Flags kept: `GDPR`, `CCPA` |
+| DV-3 | The Stripe calls pass neither `severity` nor `complianceFlags`; they rely on metadata equal to the old literals | One source of truth. The WC-12 test pins the equality |
+| DV-4 | The Stripe audit calls pass no request | The old HTTP self-call never carried the browser's request: it recorded the **server's** own IP and user agent. Passing none also avoids OI-B's credential copy |
+| DV-5 | The Stripe entries are no longer awaited | Before, a failing `fetch` could throw into the route's `catch` and return 500 **after** the subscription had already changed. Now an audit failure cannot fail the payment action (tested) |
+| DV-6 | The Q-5 comment in `app/api/user/data-export/route.ts` was **not** added | That file has 5 `console.*` calls, so touching it triggers the conversion rule, and the user approved conversion only for the Stripe and admin files. The known issue stands without the comment: the export reads a non-existent `timestamp` column, so it exports no audit rows. When it is fixed (with OI-B), it must read through `listOwnerEntries` (no AI rows, no `session_id` / `ip_address` / `hash`) |
+| DV-7 | 11 distinct browser payloads are tested, not 15 | The V1/V2 settings tabs and `useOnboarding_old` send payloads identical to their counterparts |
+
+### 13.5 Callers and their status
+
+| Caller | Route | After step 0 |
+|---|---|---|
+| `app/(protected)/monitoring/page.tsx:53` | GET `/api/audit/query` | Works: session cookie; the header is ignored; `offset` accepted; shape unchanged (T-R2) |
+| `auth/callback/page.tsx:98`, `business-os/settings/page.tsx:401`, `LogoutButton.tsx:21`, `useOnboarding.ts:506`, `:542`, `useOnboarding_old.ts:333`, `:369`, `settings/NotificationsTab.tsx:54`, `ProfileTab.tsx:282`, `SecurityTab.tsx:79`, `:152`, `v2/settings/NotificationsTabV2.tsx:46`, `ProfileTabV2.tsx:252`, `SecurityTabV2.tsx:60`, `:131` | POST `/api/audit/log` | Work: same origin, session cookie; payloads accepted (T-C1). Both logouts log **before** `signOut`. `SecurityTabV2:131` is now actually stored (DV-2) |
+| `components/settings/PluginsTab.tsx:207` | POST `/api/audit-trail` | Works: the body `userId` is ignored (T-C1) |
+| `stripe/cancel-subscription`, `create-checkout` (×2), `create-portal`, `reactivate-subscription` | *(were HTTP self-calls)* | In-process; still written (Stripe test) |
+| `onboarding/allocate-free-tier:147` | *(posts to the Supabase host)* | Unchanged: it never worked, and it belongs to S-6 |
+| `app/admin/audit-trail/page.tsx:77`, `app/admin/users/page.tsx:274-275` | the three admin reads | Work for admins (same origin, session); 403 for anyone else |
+| — | GET `/api/audit-trail` | Removed (no caller) |
+
+**Live checks still to do (QA, L-0, after deploy):**
+- `/monitoring` loads, charts and exports;
+- a settings save, a logout and a Stripe portal open each produce their row;
+- unauthenticated calls return 401;
+- a non-admin gets 403 from the admin audit screens;
+- WC-7;
+- WC-9's production check that `SYSTEM_ADMIN_USER_ID` is a UUID;
+- after a week, the WC-10 "rejected" count, which should show no `legacy…Present: true` from a real caller.
+
+---
+
+## 14. SA Code Review — Step 0
+
+**Code Review by SA — 2026-09-18**
+**Status:** 🔄 **Fix Required: CR-1 (Medium) and CR-2 to CR-4 (Low).** All four are small. The security design of step 0 is right, and everything else is approved. SA re-checks only the CR hunks. Steps 1 to 5 have not started (verified: no `usageScope.ts`, no `aiActionAudit.ts`, no migration, no `BUSINESS_AI_ACTION_*` registration).
+
+### Re-run by SA
+
+| Gate | Result |
+|---|---|
+| Step-0 suites (`app/api/admin/__tests__`, `app/api/audit`, `app/api/stripe/__tests__`, `lib/audit`, `AuditTrailRepository.test.ts`, `app/api/business-os/usage`), `--ci` | **7 suites, 115 tests, all pass; 2 snapshots** |
+| `typecheck:bos-llm` | **140 files, 30 errors, 0 new, passed.** Baseline unchanged |
+| Usage-route snapshot | Untouched |
+| Commit A → B | For each of the seven shared files, the saved A state (`scratchpad/s0sec/`) differs from the current file **only** in logging lines. `console.*` goes 4/3/2/4/3/1/4 → 0, and nothing else moves. **B is purely logging** |
+| Full `tsc` | Not re-run. DV-1's explanation (registering `subscription` clears the two `TS2322` in `stripe/webhook/route.ts`) is consistent with the diff |
+
+### Security review
+
+- **No path trusts a client account.**
+  - `/api/audit/query` reads `getUser()`; the `x-user-id` header is only *counted* (WC-10), never used.
+  - Both write routes go through `handleClientAuditWrite`, which records `userId = actorId = user.id`. The body's `userId`, `severity` and `complianceFlags` are parsed and discarded.
+  - The Stripe routes pass the `user.id` from their own `supabase.auth.getUser()`.
+  - All of this is tested: T-R1, T-R3, T-W1, T-W3, T-W5, and the Stripe suite.
+- **Ordering.** Every changed route checks the session first (401), then validation (400) or the admin check (403), before any read or write. The admin check is `AdminAccessService.getInstance().isAdmin({ id, email })`, which uses the `admin_users` source of truth and never `profiles.role` / `app_metadata`. It **fails closed** to 403 when it throws (tested in all three routes).
+- **Zod.**
+  - Reads use lenient identifiers (WC-6), `limit` 1–1000, `page` ≥ 1, and a severity enum, with `offset` accepted.
+  - Writes accept registered events and entity types only, refuse AI entries, and cap `details` at 8 KB and each snapshot at 16 KB.
+  - **CR-1** tightens the event rule.
+- **No internal error text** reaches the client from the three audit routes outside development (T-R5, and the write handler's 500 path).
+- **The owner read.** `AuditTrailRepository.listOwnerEntries` uses `supabaseServer`, `.eq('user_id')`, `.neq('entity_type', 'ai_action')`, `.not('action', 'like', 'BUSINESS_AI_ACTION_%')`, and an exact count over the same filter. An AI filter short-circuits to empty. The explicit column list drops `hash` and `user_email`. The response shape is unchanged.
+- **Stripe entries.** The session user; the event names map one to one; metadata supplies `['SOC2', 'FINANCIAL']` at `info` (`CUSTOMER_PORTAL_ACCESSED`: `['SOC2']`). The WC-12 test pins these equal to the old literals. Not awaited, no request, and a failing write cannot fail the payment (tested).
+- **WC-10.** Both rejection paths log at info with presence flags only, never values. The write path carries a dated removal marker ("remove after 2026-09-25"). See CR-3.
+- **Live database (§2.3).**
+  - The self-editable admin policy is **not live**. Q-4's worst case is closed, and there is nothing to drop.
+  - There is **no FK on `user_id`**, so S-3's foreign-key poison pill does not exist. The UUID-type poison pill does, so RC-3's guard is still required in step 2.
+  - `sync_audit_user_email` (BEFORE INSERT) is awaiting its definition. It does not block step 0, which adds no new writer beyond the Stripe calls already made before. It **must** be read before step 3: if it can raise, for example on an account with no `auth.users` row, it is a batch poison pill, and RC-3's guard must cover that case too.
+
+### Rulings on the deviations
+
+- **(a) / DV-2 — accepted, and it is a real fix.** `'medium'` violated `audit_trail_severity_check`, so every V2 data-export entry failed its batch and silently took up to 99 other entries with it. `warning` with `GDPR`/`CCPA` is the right registration. There was no stored data to preserve, so WC-12 is satisfied.
+- **(b) / DV-4, DV-5 — accepted.** Passing no request is strictly better. The old self-call recorded the **server's** IP and user agent, and passing none avoids OI-B's credential copy. Not awaiting means an audit failure can no longer turn into a 500 after the subscription changed.
+- **(c) / DV-6 — accepted.** The known issue in §13.4 carries the condition for the eventual fix. Adding a comment is not worth triggering the file's `console.*` conversion without approval.
+- **(d) — accepted, and made a gate rule.**
+  - Full `tsc` runs with `NODE_OPTIONS=--max-old-space-size=8192`.
+  - A run that reports **0** errors is treated as a **crashed run**, not a pass: this repo cannot produce 0.
+  - Add this to G2 in §5.3 for every later step.
+- **DV-1, DV-3, DV-7 — accepted.**
+- **Internal error text in the admin and Stripe routes: a follow-up, not step 0.**
+  - The admin routes are admin-only now, so the exposure is to admins only.
+  - The Stripe pattern (`{ error: error.message || … }`) spans **13 routes** in `app/api/stripe/`, most of them untouched here. The billing UI may display those messages. Changing them is a behaviour change to payment flows.
+  - Record it as follow-up **F-B**: "Stripe and admin routes return internal error text; apply the CLAUDE.md dev-only `details` pattern across `app/api/stripe/**` and the admin audit routes". Same follow-up: the admin routes' path parameter (`[id]`) and query parameters are not validated with Zod, and `admin/audit-trail`'s `search` should be checked for PostgREST filter interpolation.
+
+### Code Review Comments
+
+1. **CR-1 — `lib/audit/requestSchemas.ts` `AuditWriteBodySchema.action` — Priority: Medium.**
+   - "Any registered event" lets a signed-in user write **server-only** events into their own trail, including `critical` ones such as `BUSINESS_DATA_PURGED` or `PAYMENT_REFUNDED`.
+   - Before step 0 anyone could forge anything, so this is a big improvement. But the compliance log should not let a business fabricate "a refund happened" under its own account.
+   - Replace the rule with an explicit **client-writable allow-list**: exactly the events the surveyed callers send — `USER_LOGIN`, `USER_LOGOUT`, `USER_ONBOARDING_COMPLETED`, `USER_ONBOARDING_FAILED`, `SETTINGS_NOTIFICATIONS_UPDATED`, `SETTINGS_PROFILE_UPDATED`, `SETTINGS_SECURITY_UPDATED`, `USER_PASSWORD_CHANGED`, `USER_DATA_EXPORTED`, `PLUGIN_DISCONNECTED` — and the entity types `user`, `settings`, `connection`.
+   - T-C1 already proves those are sufficient. Add a case that a registered **server-only** event (e.g. `PAYMENT_REFUNDED`) returns 400.
+2. **CR-2 — `lib/audit/clientAuditWrite.ts` — Priority: Low.**
+   - The service spreads the caller's `details` **first** and then adds its own keys only conditionally (`AuditTrailService.buildLogEntry`). A client can therefore send `details.system_action: true` and have its own entry look like a platform action.
+   - Strip the service-reserved keys (`system_action`, `changeSummary`) from client `details` before `log()`, and test it.
+3. **CR-3 — the WC-10 temporary logging — Priority: Low.**
+   - The write path carries "remove after 2026-09-25", but the read path's 401 log in `app/api/audit/query/route.ts` has no removal marker.
+   - Neither is tracked anywhere that will fire.
+   - Add the same dated marker to the read path, and a follow-up task (**F-C**, due 2026-09-25) to check the count and remove both.
+   - The write path's rejection also parses an unauthenticated JSON body just to report `userId` presence. That is acceptable for a week, and one more reason the removal must actually happen.
+4. **CR-4 — RM split — Priority: Low.** Two commits share seven files, so commit A must be **proven on its own**. Before committing B, apply A only (the `security-tracked.patch` plus the untracked files in `s0sec/`) to a clean tree, run the step-0 suites and `typecheck:bos-llm`, and record the result in §13.3. Every commit must pass the gates, not only the tip.
+
+### Optimisation suggestions (not blocking)
+
+- The admin gate (getUser → 401 → `isAdmin` with fail-closed → 403) is now copied into three routes, and it exists in `admin/business-os/llm-usage`. A small shared `requireAdmin(request)` helper would stop the copies drifting. That belongs with the queued admin-routes task, not here.
+
+### Code Approved for QA: **No — pending CR-1 to CR-4.** Everything else in step 0 is approved.
+
+### Dev response (2026-09-18) — CR-1 to CR-4 applied; ready for the SA re-check of the CR hunks
+
+| CR | Applied | Where |
+|---|---|---|
+| CR-1 ✅ | The write schema accepts only `CLIENT_WRITABLE_EVENTS`: `USER_LOGIN`, `USER_LOGOUT`, `USER_ONBOARDING_COMPLETED`, `USER_ONBOARDING_FAILED`, `SETTINGS_NOTIFICATIONS_UPDATED`, `SETTINGS_PROFILE_UPDATED`, `SETTINGS_SECURITY_UPDATED`, `USER_PASSWORD_CHANGED`, `USER_DATA_EXPORTED`, `PLUGIN_DISCONNECTED`. It accepts only `CLIENT_WRITABLE_ENTITY_TYPES`: `user`, `settings`, `connection`. Verified against §13.5: every browser caller sends one of these, and T-C1 still passes. Server-only events (4 cases) and entity types (2 cases) → 400 with nothing written, on both routes; the list is pinned by a test | `lib/audit/requestSchemas.ts`; tests in `auditRoutes.test.ts` |
+| CR-2 ✅ | `stripReservedDetailKeys` drops `system_action` and `changeSummary` from client `details` before `log()`; tested on both routes | `requestSchemas.ts`, `clientAuditWrite.ts` |
+| CR-3 ✅ | The query route's 401 log carries the same dated marker ("remove after 2026-09-25"); both logs point to follow-up **F-C** (§13.3a) | `app/api/audit/query/route.ts`, `clientAuditWrite.ts` |
+| CR-4 ✅ | Commit A proven alone in a clean worktree at `b6f8ff1c`: 130 of 130 tests; `typecheck:bos-llm` 0 new (131 files, no `.next`); `tsc` 2,038 (§13.3) | scratchpad, removed afterwards |
+
+Also recorded: the G2 standing rule (8192 MB; 0 errors = crashed run) in §5.3, and **F-B** as out of scope (§13.3a). The CR fixes touch none of the seven shared files, so the A/B split is unchanged: the CR hunks all belong to commit A.
+
+### SA Re-check — Step 0 (2026-09-18)
+
+**Status:** ✅ **APPROVED — Code Approved for QA: Yes.** Step 0 then goes to its own PR (Q-9 / FR-21), merged and deployed before any step-3 code merges.
+
+**Re-run:** the step-0 suites pass, 7 suites / 130 tests / 2 snapshots, under `--ci`. `console.*` and the seven shared files are untouched by the fixes.
+
+- **CR-1 — the allow-list is complete and closed.**
+  - `CLIENT_WRITABLE_EVENTS` is exactly the ten events the eleven browser caller files send. I extracted them from the call sites independently, and they match: `auth/callback`, `business-os/settings`, `LogoutButton`, `useOnboarding` (+ `_old`), the V1 and V2 Notifications, Profile and Security tabs, and `PluginsTab`.
+  - The entity types are exactly `user`, `settings` and `connection`.
+  - Every server-only event is now refused, including the critical ones the review named (`PAYMENT_REFUNDED`, `BUSINESS_DATA_PURGED`, tested on both routes). A test pins the 13 values, so widening the list is a visible, reviewed change.
+  - **One noted limitation, not a defect:** two allow-listed events have `critical` metadata (`SETTINGS_SECURITY_UPDATED`, `USER_PASSWORD_CHANGED`). They are allowed because the browser is where those actions are recorded today, and an owner can write them only into their own trail. The proper end state is to record them server-side where the change happens. That is follow-up **F-D**, alongside F-B.
+- **CR-2 — the stripping cannot be bypassed in any way that matters.**
+  - `AuditTrailService.buildLogEntry` spreads `...input.details` and sets `system_action` / `changeSummary` **at the top level only** (`AuditTrailService.ts:135-141`), and every reader looks at those top-level keys. So top-level removal is the right scope:
+    - a nested `details.x.system_action` is inert data;
+    - JSON keys are case-sensitive, so `System_Action` is a different key that nothing reads.
+  - `__proto__` in the body: `stripReservedDetailKeys` copies into a fresh object. At worst that assignment sets the fresh object's own prototype, and the service's spread copies own properties only. Nothing global is affected.
+  - Tested on both routes with a forged `system_action` and `changeSummary`.
+- **CR-3 — done.** Both temporary logs carry "remove after 2026-09-25" (`audit/query/route.ts:28`, `clientAuditWrite.ts:60`), and F-C is recorded with that due date.
+- **CR-4 — the commit-A proof is sound.**
+  - It ran on a clean worktree at `b6f8ff1c`, with commit A only.
+  - It ran 130 tests, the same count as the finished tree, so it **included** the CR fixes. That is correct: they belong to commit A.
+  - `typecheck:bos-llm` reported 0 new. The scope of 131 instead of 140 is explained by the absent `.next/types` folder, whose generated route types count as gate callers in the main worktree. The error count is identical.
+  - Full `tsc` gave 2,038 with the same distribution, under the 8 GB heap rule.
+  - Commit B is logging-only (verified in the §14 review), so both commits pass the gates.
+
+**Next:** QA runs L-0 after the step-0 deploy (list in §13.5), with WC-7 and WC-9 included. RM commits A then B, and ships them as the step-0 PR alone. F-C is due 2026-09-25. The `sync_audit_user_email` trigger definition is needed before step 3.
+
+---
+
+## 15. QA Report — Step 0 (pre-deploy)
+
+**QA — 2026-09-18**
+**Test mode:** full, for step 0 only (pre-deploy). L-0 comes after the merge and deploy.
+**Strategy used:**
+- **A/B:** the step-0 Jest suites and the gates.
+- **C, live against the current Supabase project:**
+  - **Unauthenticated:** a local `next dev` server (port 3057) with real `getUser()`; no cookies, so this is the true signed-out path.
+  - **Authenticated:** the route handlers run in-process under Jest. Only `@/lib/auth.getUser` is mocked, to the test account, as the route tests do. The real `AuditTrailService`, `AuditTrailRepository`, `AdminAccessService` and `supabaseServer` were used.
+- A real admin session was not available. The admin happy path is covered by the tests only (see below).
+
+**Focus:** api, security. **Skipped:** e2e/browser (no real session; `/monitoring` is covered by L-0). **Input source:** prompt keywords.
+**Tree:** worktree `neuronforge-llm-layer15`, `feature/business-os-llm-layer1-5`, uncommitted on `b6f8ff1c`. No product code was changed.
+
+### 15.1 Automated gates
+
+| Gate | Expected | Result |
+|---|---|---|
+| Step-0 suites (`--ci`: `app/api/admin/__tests__`, `app/api/audit`, `app/api/stripe/__tests__`, `lib/audit`, `AuditTrailRepository.test.ts`, `app/api/business-os/usage`) | 7 / 130 | ✅ **7 suites, 130 tests, 2 snapshots, all pass** |
+| G1 `typecheck:bos-llm` | 140 / 30 / 0 new | ✅ **140 files, 30 errors, 0 new, passed.** `git diff` on `scripts/` is empty, so the baseline is unchanged |
+| G2 full `tsc` (`--max-old-space-size=8192`, excluding `.next/`) | 2,038 | ✅ **2,038.** Not 0, so the run did not crash |
+| G3 NUL bytes, every modified and untracked file | 0 | ✅ 0 |
+| G4 usage-route snapshot | untouched | ✅ no diff, no untracked change under `app/api/business-os/usage/`; snapshot passes |
+| G5 static | — | ✅ `AuditTrailService.ts` unchanged. No `console.*` in the new or touched step-0 files. The one hit, `admin/users/[id]/stats/route.ts`, is not a step-0 file |
+
+### 15.2 Live checks
+
+**Unauthenticated (local server, real `getUser`):**
+
+| Call | Result |
+|---|---|
+| `GET /api/audit/query?limit=1000&offset=0` | ✅ 401 |
+| the same, with `x-user-id: <test account>` | ✅ 401 |
+| `POST /api/audit/log` with `x-user-id` plus body `userId` = test account | ✅ 401 |
+| `POST /api/audit/log` with body `userId: 'anonymous'` | ✅ 401 |
+| `POST /api/audit-trail` with body `userId` = test account | ✅ 401 |
+| `GET /api/audit-trail?userId=…` | ✅ **405** (GET removed) |
+| `GET /api/admin/audit-trail`, `/api/admin/users/[id]/audit-logs`, `/api/admin/users/[id]/login-stats` | ✅ 401 ×3 |
+| Written rows, checked after a wait of 12 s or more | ✅ **0**: no rows for the test account since the run started; no rows carrying the run's marker; no null-`user_id` rows in the window |
+| WC-10 logs | ✅ 2 × "Audit read rejected", 3 × "Audit write rejected". They carry presence booleans only (`legacyHeaderPresent`, `legacyBodyUserIdPresent`); the account id appears in none of them |
+
+**Authenticated as `2f734ed5-…-3de7b096bea3` (in-process, real DB):**
+
+| Check | Result |
+|---|---|
+| `GET /api/audit/query?limit=1000&offset=0` with `x-user-id: <another account>` | ✅ 200. Keys are exactly `success, logs, total, page, limit, hasMore`. The 6 existing rows all have `user_id` = the test account. No `hash`, no `user_email`, 0 `ai_action` / `BUSINESS_AI_ACTION_*` rows. `offset` accepted |
+| `?limit=0` | ✅ 400 |
+| `?entityType=ai_action` | ✅ 200, empty (short-circuit) |
+| `POST /api/audit/log` `USER_LOGIN`. Forged: header and body `userId` = another account, client `severity: 'critical'`, `complianceFlags: ['HIPAA']`, `details.system_action: true`, `details.changeSummary` | ✅ 200, response unchanged (`Audit log recorded`) |
+| `POST /api/audit-trail` `USER_DATA_EXPORTED`, body `userId` = another account | ✅ 200 (`Audit trail logged successfully`) |
+| `PAYMENT_REFUNDED` on both write routes | ✅ 400 ×2, nothing written |
+| `BUSINESS_AI_ACTION_COMPLETED` / `ai_action` | ✅ 400, nothing written |
+| The three admin reads as the test account (non-admin; real `AdminAccessService`) | ✅ 403 ×3, with the "Non-admin attempted to read audit data" warn log |
+| The same with no session | ✅ 401 ×3 |
+
+**The stored rows** (read-only query, after a 12 s wait; the service logged "Flushed audit logs, count 2" at about 5 s):
+
+| Row | `user_id` / `actor_id` | Severity | Flags | `user_email` (trigger) | `details` |
+|---|---|---|---|---|---|
+| `c30c6023-80e9-4fdc-b680-372dcc0a7c5f` `USER_LOGIN` / `user` | test account / test account | `info`: the registry value, not the client's `critical` | `['SOC2']`, not the client's `HIPAA` | filled, and equal to the account's auth email | marker present; `system_action` and `changeSummary` **absent** (CR-2) |
+| `431804f3-42cd-43e2-9b56-54aec121f3cc` `USER_DATA_EXPORTED` / `user` | test account / test account | `warning` | `['GDPR','CCPA']` | filled, and equal | marker present |
+
+- The second row also proves **DV-2 live**: `warning` passes `audit_trail_severity_check`, and the batch landed whole.
+- The trigger fired on insert without error.
+- There are 0 rows under the other account named in the forged requests, and 0 rows carrying the run's marker under any account other than the test account.
+- There are 0 `BUSINESS_AI_ACTION_%` rows anywhere in this project, which is the current L-0b state.
+
+**Stripe in-process audit (code and tests; no Stripe call made):**
+- All five call sites (`cancel-subscription`, `create-checkout` ×2, `create-portal`, `reactivate-subscription`) use `void AuditTrail.log({...}).catch(logger.error)`. None is awaited, and no `fetch('/api/audit/log')` remains.
+- The metadata gives `SOC2` + `FINANCIAL` at `info` for the four subscription and checkout events, and `SOC2` for `CUSTOMER_PORTAL_ACCESSED`.
+- The tests pin this. `stripeAuditEntries.test.ts` checks the 5 entries under the session user, no self-fetch, and that a failing audit does not fail the payment. `stepZeroRegistrations.test.ts` checks that the metadata equals the old literals.
+
+**Admin happy path:** tested only, as instructed (not faked live). `auditAdminGate.test.ts` → "reads the audit data for an admin" for each of the three routes, plus 401, 403 and fail-closed.
+
+### 15.3 Rows written
+
+**2 rows** in the test account's own trail: `c30c6023-…` (`USER_LOGIN`) and `431804f3-…` (`USER_DATA_EXPORTED`). Both carry `details.qa_marker = qa-s0-<timestamp>`. They were left in place, as instructed; nothing was deleted. No other account received a row.
+
+### 15.4 Issues
+
+- **Bugs:** none.
+- **Performance:** none. Writes return immediately, and the flush lands in about 5 s.
+- **Edge cases / notes (no action for step 0):**
+  1. The live read had no `ai_action` row to exclude, so the **`.not('action','like','BUSINESS_AI_ACTION_%')` encoding (WC-7) is not yet proven against real PostgREST.** The read did return 200 with that filter applied, so PostgREST accepts the syntax. Whether it actually excludes rows remains for L-0 or step 3.
+  2. `user_email` is visible to the service role only. The owner read omits it, as designed.
+
+### 15.5 Deferred to the post-deploy L-0 check
+
+| Item | Why it cannot be done pre-deploy |
+|---|---|
+| L-0: a signed-in owner opens `/monitoring`; entries load, charts render, CSV downloads | Needs a real browser session on the deployed build |
+| L-0: a settings save, a logout and a **Stripe portal open** each produce their row | Real user flows; no Stripe call was allowed here |
+| L-0: an unauthenticated `curl` of each kept handler on the **deployed** URL → 401, and `GET /api/audit-trail` → 405 | Done locally only |
+| L-0: a non-admin gets 403 from the admin audit screens in the deployed UI | Done in-process only |
+| **WC-7:** the real-DB AI-exclusion filter (one seeded `ai_action` row in non-production, or at the step-3 run) | No AI rows exist; seeding one was out of scope for minimal writes |
+| **WC-9:** confirm production `SYSTEM_ADMIN_USER_ID` is a UUID | Production env; local `.env.local` has the variable set (value not printed) |
+| WC-10 / **F-C:** review the week's "rejected" counts for `legacy…Present: true` from a real caller, then remove both temporary logs | Due 2026-09-25 |
+
+### 15.6 Final status
+
+- [x] All step-0 pre-deploy acceptance checks pass (AC-21, AC-22, AC-23, the AC-24 read shape, FR-23 admin gate, FR-25 GET removed, CR-1, CR-2, DV-2), and the gates match the expected numbers.
+- [x] No High, Medium or Low bugs are open.
+
+**Verdict: PASS. Step 0 is ready for RM** (commit A then B, as its own PR). L-0 (§15.5) must run after the deploy and before any step-3 merge.
 
 ---
 
@@ -771,3 +1136,9 @@ The code-reality check is thorough: fifteen findings, each with evidence. I re-v
 |------|--------|---------|
 | 2026-09-18 | Created | Dev workplan for Layer 3. Traceability for 28 FRs / 27 ACs. Code-reality check on `7646760a`: citations hold. **15 mismatches or findings**, material: M-1 (21 `/api/audit/log` call sites, six server-side self-calls that step 0 would silently break), M-3 (unregistered events and types used by live callers), M-5 (three unauthenticated admin audit reads), M-6 (a script-defined RLS admin policy on user-writable metadata, unverified live), M-7 (the self-service export reads a non-existent column and exports no audit rows). The RC-11 live schema was read through PostgREST (read-only): no `entity_type` CHECK on the evidence; the FK, policies and triggers need SQL. Design for step 0, the owner read, the RLS option, `usageScope` + the `callWithTracking` hook, `runAiAction` + the entry builder, UUID validation and the failure mapping. Gate scope 140 (predicted ~142–146, baseline unchanged); full `tsc` 2,042 → 2,040 after step 0. Six steps, 36 tasks, questions OQ-11 to OQ-13 and Q-1 to Q-9 |
 | 2026-09-18 | SA review — approved with required changes | M-1 to M-15 verified. New **S-6 (P0, outside this layer)**: `allocate-free-tier` grants credits to any body-supplied account, unauthenticated and repeatable, and unfreezes frozen accounts, so it is excluded from Q-1 (WC-2) and raised to the user. Rulings: Q-1 A for the four Stripe routes only; Q-2 register first, preserving stored severity and flags; M-4 remove GET; Q-3 gate the three admin reads in step 0, with the overlap noted for the queued task; Q-4 if the metadata admin policy is live, drop it alone and immediately, do not replace it; Q-5 (i); OQ-11 (a) after the read; OQ-12 approved; Q-7 accepted; Q-8 as a rename, not a move; Q-9 two PRs. WC-1 to WC-12: one notification per call; `getBriefing` trigger position; multi-area `area`; zero group-check exclusions live; lenient read filters; live proof of the exclusion filter; insight catch path; platform actor check; 401 telemetry; S-6 recorded; stored data unchanged for registered events. User asks: S-6 urgent fix, the Q-4 SQL read, the Q-6 approval |
+| 2026-09-18 | Step 0 code-complete | The live DB facts from the user's Q-4 read are recorded in §2.3:<ul><li>the owner policy is PUBLIC SELECT;</li><li>`service_role_bypass_rls` applies to the service role only;</li><li>the metadata admin policy is **not** live, so M-6 is resolved;</li><li>only the pkey and severity constraints exist, with **no FK on `user_id`** (S-3 corrected);</li><li>a `sync_audit_user_email` BEFORE INSERT trigger exists; its definition query is pending.</li></ul>S-6 and the admin-routes overlap are recorded (WC-11). Step 0 is implemented, uncommitted, as two separable commits (security; Pino, Q-6):<ul><li>session-only audit routes and the shared write handler;</li><li>the `AuditTrailRepository` owner read with the AI exclusion;</li><li>GET `/api/audit-trail` removed;</li><li>the four Stripe routes write in-process;</li><li>the three admin reads are gated;</li><li>the missing events and entity types are registered (WC-12).</li></ul>87 new tests. `typecheck:bos-llm` 140 / 30 / 0 new, baseline untouched. `tsc` 2,042 → 2,038 (DV-1). Deviations DV-1 to DV-7 are in §13 |
+| 2026-09-18 | SA code review, step 0 — Fix Required | Re-run: 7 suites and 115 tests green, 2 snapshots; typecheck 140 / 30 / 0 new, baseline unchanged; commit B verified as logging-only against the saved commit-A states; steps 1 to 5 not started. Security design approved: session-only identity, 401 → 400/403 ordering, `AdminAccessService` failing closed, owner read excludes AI entries and drops `hash` / `user_email`, Stripe in-process writes under the session user with `FINANCIAL` kept. Deviations (a) to (d) and DV-1 to DV-7 accepted; (d) becomes a G2 rule (8 GB heap; a 0-error run counts as a crash). The self-editable admin policy is not live, and there is no user_id FK; `sync_audit_user_email` must be read before step 3. CR-1 (Medium): a client-writable event allow-list instead of any registered event. CR-2: strip reserved `details` keys. CR-3: dated removal marker on the read path plus follow-up F-C. CR-4: prove commit A alone before B. Follow-up F-B: internal error text and Zod gaps in the Stripe and admin routes |
+| 2026-09-18 | Step 0 SA code-review fixes | **CR-1:** the client write routes accept only an allow-list of 10 browser events and 3 entity types; registered server-only events → 400. **CR-2:** service-reserved `details` keys are stripped. **CR-3:** a dated removal marker on the query route's 401 log, and follow-up F-C (due 2026-09-25). **CR-4:** commit A proven alone in a clean worktree: 130 of 130 tests; `typecheck:bos-llm` 0 new; `tsc` 2,038. Recorded the G2 rule (8192 MB; 0 errors = crashed run) and F-B (internal error text and unvalidated params in the Stripe and admin routes; out of step 0 scope). Gates on the tip: 7 suites / 130 tests; `typecheck:bos-llm` 140 / 30 / 0 new, baseline untouched; `tsc` 2,038 with an unchanged distribution; NUL 0; usage snapshot untouched |
+| 2026-09-18 | SA re-check, step 0 — APPROVED for QA | CR-1: the allow-list matches the ten events the eleven browser caller files send, plus three entity types; server-only and critical events are refused on both routes; the 13 values are pinned by a test. CR-2: the service reads only top-level reserved keys, so top-level stripping is sufficient (nested or case variants are inert; `__proto__` is harmless). CR-3: both temporary logs are dated and F-C is due 2026-09-25. CR-4: the commit-A proof is sound (clean worktree, 130 tests including the fixes, 0 new, tsc 2,038). Suites re-run: 7 / 130 / 2 snapshots. New follow-up F-D: record `SETTINGS_SECURITY_UPDATED` / `USER_PASSWORD_CHANGED` server-side. Next: QA L-0, then the step-0 PR alone |
+| 2026-09-18 | QA, step 0 pre-deploy — PASS | §15 added; pointer in §11; §14 and §15 added to the ToC. Gates: 7 suites / 130 tests / 2 snapshots; `typecheck:bos-llm` 140 / 30 / 0 new, baseline unchanged; full `tsc` (8 GB) 2,038; NUL 0; usage snapshot untouched. Live against the current project: unauthenticated query and both writes → 401 (with a header, a body `userId` or `anonymous`), `GET /api/audit-trail` → 405, admin reads → 401, nothing written. As the test account (in-process, session simulated): the owner-only read with no `hash` / `user_email` / AI rows and `offset` accepted; `PAYMENT_REFUNDED` and AI writes → 400; admin reads → 403. 2 rows written (`USER_LOGIN` info/SOC2; `USER_DATA_EXPORTED` warning/GDPR+CCPA, proving DV-2 live); client severity and flags ignored, `system_action` / `changeSummary` stripped, `user_email` filled by the trigger. Stripe is verified by code and tests (not awaited, SOC2/FINANCIAL). No bugs. Deferred to L-0: `/monitoring` in a browser, real-flow rows (settings, logout, Stripe portal), deployed 401s, WC-7, WC-9, F-C |
+| 2026-09-18 | Follow-up F-E added | Stripe data access bypasses repositories (97 direct calls; requirement OI-F), raised by the user; separate fix outside Layer 3 |
