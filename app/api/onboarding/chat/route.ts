@@ -208,7 +208,8 @@ export async function POST(request: NextRequest) {
     requestLogger.info({
       userId: user.id,
       currentStep: currentState.currentStep,
-      message: data.message
+      // Never the owner's raw text (OI-7).
+      messageLength: data.message.length
     }, 'Processing onboarding message');
 
     // The account is the signed-in user and the group comes from the persisted
