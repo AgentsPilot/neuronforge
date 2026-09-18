@@ -213,8 +213,11 @@ export class AIAnalyticsService {
         .select('id, call_id, created_at, input_tokens, output_tokens'); // Return some data to confirm insert
 
       if (error) {
+        // Only the code, message and hint: on a NOT NULL or CHECK violation,
+        // Postgres puts the whole failing row — prompt payload and metadata
+        // included — in `details`, so it is never logged.
         logger.error({
-          err: error,
+          err: { code: error.code, message: error.message, hint: error.hint },
           userId: insertData.user_id,
           model: insertData.model_name,
           callId: insertData.call_id,

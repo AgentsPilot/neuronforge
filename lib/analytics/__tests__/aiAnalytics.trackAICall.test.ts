@@ -246,6 +246,37 @@ describe('trackAICall: payloads never reach the logs (T-6)', () => {
     expect(allOutput()).not.toContain(SENTINEL);
   });
 
+  // Step 4c (WC-1). This case could not live in 4a: the untouched tracker
+  // printed the whole database error, `details` included.
+  it('on a constraint violation whose details hold the failing row', async () => {
+    const violation = {
+      message: 'null value in column "provider" violates not-null constraint',
+      code: '23502',
+      details: `Failing row contains (${SENTINEL} prompt, ${SENTINEL} metadata).`,
+      hint: null,
+    };
+    await track(fullCall(), () => Promise.resolve({ data: null, error: violation }));
+    expect(allOutput()).not.toContain(SENTINEL);
+    // What is logged is still enough to act on.
+    const failure = mockLogged.find((l) => l.level === 'error');
+    expect(String(failure?.args[0])).toContain('23502');
+    expect(String(failure?.args[0])).toContain('violates not-null constraint');
+  });
+
+  // R-4: the old catch block read `error.name`, so a thrown null escaped it.
+  it('a thrown null is swallowed too (the tracker never throws)', async () => {
+    const db = {
+      from: () => ({
+        insert: () => ({
+          select: () => {
+            throw null;
+          },
+        }),
+      }),
+    };
+    await expect(new AIAnalyticsService(db).trackAICall(fullCall())).resolves.toBeUndefined();
+  });
+
   it('the output is not empty: the check above is looking at something', async () => {
     await track(fullCall());
     expect(allOutput()).toContain('gpt-4o');
