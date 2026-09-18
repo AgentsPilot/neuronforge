@@ -1,13 +1,13 @@
-# Workplan: Business OS LLM — Logging Clean-ups (OI-4 to OI-7)
+# Workplan: Business OS LLM — Logging Clean-ups (OI-4 to OI-8)
 
 > **Last Updated**: 2026-09-18
 
 **Developer:** Dev
-**Requirement:** [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md): open items **OI-4, OI-5, OI-6, OI-7**, decision **D-6**, NFR Logging
+**Requirement:** [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md): open items **OI-4, OI-5, OI-6, OI-7**, plus **OI-8**, which the user folded into OI-7 (**D-OI8**, §15.1). Decision **D-6**, NFR Logging
 **Context:** [BUSINESS_OS_LLM_LAYER1_5_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_LAYER1_5_WORKPLAN.md). The per-file risk notes are in SA's Q-6 answer (§11). The privacy finding is QA observation O-2 (§12).
 **Branch:** `feature/business-os-llm-layer1-5` (worktree `neuronforge-llm-layer15`, fast-forwarded to `origin/main` @ `816ef757`, with Layers 1, 1.1 and 1.5 merged)
 **Date:** 2026-09-18
-**Status:** SA reviewed 2026-09-18. **Approved to implement** with WC-1 to WC-5 (§12); step 4 becomes 4a / 4b / 4c. No code written.
+**Status:** **QA PASSED 2026-09-18** (§13). **SA re-check 2026-09-18 — APPROVED for QA** (§16.1). Previously: Code Complete — CR-1 to CR-4 applied (§15.7). SA code review 2026-09-18 approved steps 1, 3, 4a, 4b and 4c as they stand (§16). SA approved the workplan with WC-1 to WC-5 (§12); all five are applied. The implementation notes, per-step file lists and gate results are in §15. Nothing is committed: RM commits per step (§15.3).
 
 ## Overview
 
@@ -29,6 +29,7 @@ Layer 1.5 deliberately left three files logging through `console.*`. This was us
 12. [SA Review Notes](#12-sa-review-notes)
 13. [QA Testing Report](#13-qa-testing-report)
 14. [Commit Info](#14-commit-info)
+15. [Implementation Notes](#15-implementation-notes)
 
 ---
 
@@ -60,7 +61,15 @@ Every line below was re-read on `816ef757`.
 
   Production runs at `info` (`lib/logger.ts:16`), so every `debug` line goes quiet in production. That is intended: today those lines print on every LLM call.
 - **Messages:** no emojis and no `[Prefix]` tags. The `module` / `service` binding replaces the prefix.
-- **Content:** a converted call logs **the same fields as today or fewer**. The only exceptions are the non-sensitive context keys named in the tables below. No conversion reads `request_payload`, `response_metadata`, `metadata`, `error_message`, a prompt, or owner text.
+- **Content:** a converted call logs **the same fields as today or fewer**, with two named exceptions (WC-2). No conversion reads `request_payload`, `response_metadata`, `metadata`, `error_message`, a prompt, or owner text.
+  - **Exception 1, the non-sensitive context keys** named in the tables below (for example `feature`, `threadId`, `fallbackThreshold`).
+  - **Exception 2, `{ err }` detail (WC-2).** `openaiProvider.ts:403` and `:435` logged only `error.message`. They now log `{ err }`, which adds the stack and the OpenAI `APIError`'s own fields: `status`, request id, the error body and the **response** headers (including `openai-organization` / `openai-project`). `IntentClassifier.ts:410` logged no error at all and now logs `{ err }` (a Supabase config-read error). **SA accepted these:**
+    - they are error paths only, and rare;
+    - there are no credentials (the request headers, which carry the key, are not on the error);
+    - the SDK does not echo prompts;
+    - `{ err }` is the CLAUDE.md convention.
+
+  So this diff is **not** strictly subtractive on those three lines.
 
 ---
 
@@ -86,6 +95,26 @@ Every line below was re-read on `816ef757`.
 | Manager `:1425` | `info({ message, extracted: parsed }, 'Extracted price from message')` | `info({ extracted: parsed, messageLength }, …)` | The number is the derived field. `extractPriceFromMessage` has no `owner`, and its signature is not changed |
 | Manager `:1430` | `warn({ message }, 'Could not extract numeric price from message')` | `warn({ messageLength }, …)` | Same as `:1425` |
 | Route `:208` | `requestLogger.info({ userId, currentStep, message: data.message }, 'Processing onboarding message')` | `requestLogger.info({ userId, currentStep, messageLength: data.message.length }, …)` | `correlationId` is already bound on `requestLogger` |
+| **Manager `:595`** *(found during implementation, DV-1)* | `info({ companyName: name }, 'Business name given')` | `info({ userId, groupId, nameLength: name.length }, …)` | `name` **is** the raw message (`message.trim()`, "taken exactly as typed"). It is the eighth raw-text line; §4 had mislabelled it a derived fact |
+
+As implemented, `:704` logs `step: 'service_details'`: the price question is asked in that step, not in `client_workflow`.
+
+### 3.2a OI-8: derived owner text at debug only (D-OI8, folded into the OI-7 step)
+
+Everything below is text the model derived from what the owner typed. It is kept for local debugging, but **only at `debug`**. Production runs at `info` (`lib/logger.ts:16`), so none of it reaches production logs. Where the line also marks an event worth seeing in production, that event stays at its level **without the text**, and the text moves to a separate `debug` line.
+
+| File:line (at `816ef757`) | Before | After |
+|---|---|---|
+| Manager `:604` | `info({ businessStory }, 'Business story extracted')` | `debug(…)` |
+| Manager `:859` *(DV-2: missed in §4)* | `info({ adjustment }, 'Adjustment intent extracted')`, where `adjustment.details` is the model's reading of the owner's request | `info({ intent }, …)` + `debug({ adjustment }, 'Adjustment intent extracted: details')` |
+| Manager `:997` | `info({ extracted }, 'Extracted business story')` | `debug(…)` |
+| Manager `:1043` | `info({ extracted }, 'Extracted client workflow')` | `debug(…)` |
+| Manager `:1151` | `info({ extracted }, 'Extracted client tracking')` (unreachable, KI-D) | `debug(…)` |
+| Manager `:1547, :1552, :1557` | `info({ details }, '… requested (not yet implemented)')` | `debug(…)` |
+| Manager `:1561` | `info({ intent, details }, 'Unknown adjustment intent')` | `info({ intent, detailsLength }, …)` + `debug({ details }, 'Unknown adjustment intent: details')` |
+| `OnboardingChatService.ts:179` | `error({ err: parseError, content }, 'Failed to parse LLM JSON response')` | `error({ errName, contentLength }, …)` + `debug({ err: parseError, content }, 'Unparseable LLM JSON response')`. See DV-3: a JSON `SyntaxError`'s **message quotes the start of the text** (`Unexpected token 'D', "DERIVED-MA"... is not valid JSON`), so even `{ err }` alone at error would leak it |
+
+**Kept at their level:** `:697` (`price`, a number), `:778` (service names), `:813` (`clientAcquisition`: channel labels and booleans). These are structured facts, not free text. They are recorded for SA in §15.4.
 
 ### 3.3 OI-5: `lib/orchestration/IntentClassifier.ts` (16 → 16)
 
@@ -110,7 +139,9 @@ None of these calls logs prompt text today, and none will.
 | `:854` | `log('Validation detected disagreement, escalating …')` | `info('Validation disagreed; escalating to enhanced classification')` | **info**: this escalation leads to an extra LLM call |
 | `:900` | `error('Bulletproof classification failed:', error)` | `error({ err: error }, 'Bulletproof classification failed; falling back to generate')` | Unchanged |
 
-### 3.4 OI-4: `lib/analytics/aiAnalytics.ts` (16 → 13)
+### 3.4 OI-4: `lib/analytics/aiAnalytics.ts` (16 → 12)
+
+*(The planned "16 → 13" was a miscount. The three merges below remove 4 calls, not 3: 16 − 1 − 2 − 1 = 12.)*
 
 **Untouched:** the `insertData` literal (`:144-185`), `isValidUUID`, `platformAccountId()`, `finalUserId`, `validSessionId`, the `.insert(...).select(...)` call and every branch condition. The only other additions are the `createLogger` import and the `logger` constant.
 
@@ -121,7 +152,7 @@ None of these calls logs prompt text today, and none will.
 | `:130` | `warn(\`⚠️ Invalid user_id format: "${user_id}", using SYSTEM_USER_ID\`)` | `logger.warn({ invalidUserId: callData.user_id }, 'Invalid user_id; recording against the platform account')` | Unchanged level and value (the value was already in the message) |
 | `:138` | `warn(\`⚠️ Invalid session_id format: "${session_id}", setting to null\`)` | `logger.warn({ invalidSessionId: callData.session_id }, 'Invalid session_id; recording with no session')` | Unchanged |
 | `:187` | `log('💾 Inserting to token_usage table:', {13 scalar fields})` | `logger.debug({ callId, userId, model, inputTokens, outputTokens, totalTokens, feature, component, activityType, agentId, executionId, costUsd, success }, 'Inserting token_usage row')` | **debug**: once per call. It reads **the same 13 scalars and nothing else**: no `request_payload`, no `metadata` |
-| `:209` + `:210` | two `console.error`s: the DB error, then a sample of four fields | **one** `logger.error({ err: error, userId, model, callId, inputTokens, outputTokens }, 'Failed to insert token_usage row')` | Unchanged level. Merged because `{ err }` plus the fields carries both. **See Q-2 about what a Postgres error can contain** |
+| `:209` + `:210` | two `console.error`s: the DB error, then a sample of four fields | **4b:** **one** `logger.error({ err: error, userId, model, callId, inputTokens, outputTokens }, 'Failed to insert token_usage row')`. **4c (WC-1):** `err: { code, message, hint }`, which drops `details` | Unchanged level. Merged because `{ err }` plus the fields carries both. 4c exists because a Postgres `details` holds "Failing row contains (…)" (Q-2) |
 | `:217` + `:218` + `:219` | three `console.log`s: "tracked", the raw `data` dump, a summary | **one** `logger.debug({ id, callId, feature, activityType, agentId, executionId, tokens: { input, output, total }, costUsd, createdAt }, 'AI call tracked')` | **debug**: once per call. `data` holds only the five columns in `.select(...)`, and all five are already in the summary, so merging loses nothing |
 | `:236` + `:237` | two `console.error`s: the exception, then `{ name, message, stack.slice(0,500) }` | **one** `logger.error({ err: error }, 'AI call tracking threw; row not written')` | Unchanged level. The `err` serializer carries the name, message and full stack. This **removes 3 pre-existing TS18046 errors** (`:238-240`) — see §6 |
 | `:247` | `warn('⚠️ No Supabase client available for analytics')` | `logger.warn('No Supabase client; returning the placeholder usage report')` | Unchanged |
@@ -192,10 +223,11 @@ These are in rising order of risk. Each commit is independently revertible, and 
 | Step | Open item | Files | Commit (Conventional) |
 |---|---|---|---|
 | 1 | OI-6 | `lib/ai/providers/openaiProvider.ts` | `refactor(ai): log OpenAIProvider through Pino (OI-6)` |
-| 2 | OI-7 | `lib/services/OnboardingConversationManager.ts`, `app/api/onboarding/chat/route.ts`, the two existing `*.attribution.test.ts` files | `fix(onboarding): never log the owner's raw chat text (OI-7)` |
+| 2 | OI-7 + OI-8 | `lib/services/OnboardingConversationManager.ts`, `app/api/onboarding/chat/route.ts`, `lib/services/OnboardingChatService.ts`, the two existing `*.attribution.test.ts` files, **new** `lib/services/__tests__/OnboardingChatService.logging.test.ts` | `fix(onboarding): never log the owner's raw text; derived text at debug only (OI-7, OI-8)` |
 | 3 | OI-5 | `lib/orchestration/IntentClassifier.ts` | `refactor(orchestration): log IntentClassifier through Pino (OI-5)` |
 | 4a | OI-4 | **new** `lib/analytics/__tests__/aiAnalytics.trackAICall.test.ts` + its snapshot | `test(analytics): characterize trackAICall's inserted row (OI-4)` |
 | 4b | OI-4 | `lib/analytics/aiAnalytics.ts` **only** | `refactor(analytics): log the AI tracker through Pino (OI-4)` |
+| 4c | OI-4 (WC-1) | `lib/analytics/aiAnalytics.ts` (one call) + `lib/analytics/__tests__/aiAnalytics.trackAICall.test.ts` (two cases) | `fix(analytics): never log a failed token_usage row's contents (OI-4)` |
 
 **Why step 4 is two commits (Q-7):**
 - The characterization snapshot is recorded against the **untouched** tracker.
@@ -235,29 +267,34 @@ These are in rising order of risk. Each commit is independently revertible, and 
 
 ## 10. Task List
 
-- [ ] **T0** SA reviews this workplan; answers Q-1 to Q-8 recorded in §12
-- [ ] **T1** Record the G1 `--list` and G2 per-file baseline to scratch (not committed)
-- [ ] **T2** Step 1 (OI-6): convert `openaiProvider.ts` per §3.1; run G1–G7
-- [ ] **T3** Step 2 (OI-7): add the T-2 / T-3 sentinel tests (they fail first on today's code), then change the 7 calls per §3.2; run G1–G7
-- [ ] **T4** Step 3 (OI-5): convert `IntentClassifier.ts` per §3.3; run G1–G7 (same single pre-existing test failure)
-- [ ] **T5** Step 4a: write the T-5 / T-6 characterization test against the untouched tracker; commit the snapshot; run G1–G7
-- [ ] **T6** Step 4b: convert `aiAnalytics.ts` per §3.4; the T-5 snapshot and test file unedited and passing; G2 = 2,042 (Q-6); G7 = single file
+- [x] **T0** SA reviews this workplan; answers Q-1 to Q-8 recorded in §12. Done by SA: approved with WC-1 to WC-5
+- [x] **T1** Record the G1 `--list` and G2 per-file baseline to scratch (not committed). Done by Dev: 140 files; 2,045 errors across 387 files
+- [x] **T2** Step 1 (OI-6): convert `openaiProvider.ts` per §3.1; run G1–G7. Done by Dev
+- [x] **T3** Step 2 (OI-7 + OI-8): the T-2 / T-3 sentinel tests plus the OI-8 debug-only tests; then change the raw-text and derived-text lines per §3.2 / §3.2a; run G1–G7. Done by Dev: **8** raw-text lines (DV-1) and 12 derived-text lines. Each new test was **proven red** against the untouched file: manager 8 of 8 fail, route 1 of 1, `OnboardingChatService` 1 of 1
+- [x] **T4** Step 3 (OI-5): convert `IntentClassifier.ts` per §3.3; run G1–G7 (same single pre-existing test failure). Done by Dev
+- [x] **T5** Step 4a: write the T-5 / T-6 characterization test against the untouched tracker, with the snapshot; run G1–G7. Done by Dev: 14 tests, 7 snapshots (WC-4)
+- [x] **T6** Step 4b: convert `aiAnalytics.ts` per §3.4; the T-5 snapshot and test file unedited and passing; G2 = 2,042 (Q-6); G7 = single file. Done by Dev: 4a's test and `.snap` are byte-identical (`cmp`), with 14 of 14 passing
+- [x] **T6c** Step 4c (WC-1): narrow `:209` to `{ code, message, hint }` and add the `details`-sentinel case (plus R-4's null-throw case, DV-4); G2 = 2,042. Done by Dev: the details case fails on 4b and passes on 4c
 - [ ] **T7** Hand to SA for code review, then QA
-- [ ] **T8** On completion: update the requirement and the investigation doc (§11)
+- [x] **T8** On completion: update the requirement, the investigation doc and `SYSTEM_LOGGING_GUIDELINES.md` (§11, WC-5). Done by Dev
 
 ---
 
 ## 11. Closure
 
-This workplan closes **OI-4, OI-5, OI-6 and OI-7**. When it is complete, BA or Dev updates the following:
+This workplan closes **OI-4, OI-5, OI-6, OI-7 and OI-8** (OI-8 was folded in by the user, D-OI8). It opens two follow-ups, **OI-9** and **OI-10** (WC-5). Done by Dev on 2026-09-18:
 
-- [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md):
-  - set rows OI-4 to OI-7 in the open-items table to **Closed**, with the commit refs;
-  - annotate the NFR Logging table and D-6 ("converted in a follow-up");
-  - add a Change History row.
-- [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md): note that the tracker, the classifier and the OpenAI provider now log through Pino, and that onboarding no longer logs owner text. Add a Change History row.
-- If SA accepts Q-4: add **OI-8**, derived owner text in onboarding logs, with the §4 list.
-- The Layer 1.5 workplan's SA Q-6 note: the correction in Q-8.
+- [x] [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md):
+  - OI-4 to OI-8 marked **Resolved (code complete, pending SA code review, QA and commit)**, with this workplan as the reference;
+  - OI-9 and OI-10 added as **Open**;
+  - a Change History row. RM adds the commit refs.
+- [x] [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md): a status note and a Change History row.
+- [x] [SYSTEM_LOGGING_GUIDELINES.md](/docs/SYSTEM_LOGGING_GUIDELINES.md) § Sensitive Data Redaction now says redaction is **not** active (OI-9), and that nothing sensitive may rely on it.
+- [x] The Layer 1.5 workplan's Q-6 note was already corrected by SA (Q-8).
+
+**The follow-ups:**
+- **OI-9: redaction is never switched on.** `lib/logger.ts` shadows `lib/logger/index.ts` and `config.ts`, so no server logger applies the `redact` list. The fix changes every log line in the product and needs its own workplan. **It also carries D-OI8's assumption:** derived onboarding text is kept at `debug`, and stays out of production **only because production runs at `info`** (`lib/logger.ts:16`). If anyone lowers the production level, those lines would appear. That could happen by editing `:16`, or by adding the `LOG_LEVEL` override that `lib/logger/config.ts` has and `lib/logger.ts` does not. OI-9's workplan must keep that in view.
+- **OI-10: the pre-existing `IntentClassifier.test.ts` failure** ("should cache confidence threshold": `mockSupabase.from` call counts leak across tests because nothing clears them).
 
 ---
 
@@ -347,11 +384,302 @@ The redaction section of the guidelines is itself wrong today (WC-5, OI-9). No s
 
 ## 13. QA Testing Report
 
-*(QA to populate.)*
+**QA — 2026-09-18** (short QA, as requested)
+**Test mode:** smoke+ (all gates once, plus one live conversation)
+**Strategy used:** A/B (the touched Jest set) and C (a live test script driving `OnboardingConversationManager` directly, with real Pino output)
+**Focus:** logging privacy (OI-7/OI-8), OI-4 tracker behaviour
+**Skipped:** E2E and the chat route over HTTP. The route's `:208` line is covered by T-3.
+**Input source:** prompt keywords
+
+### Automated results
+
+| Check | Result |
+|---|---|
+| Touched Jest set (G6, `--ci`: 9 suites, i.e. G6 paths + `OnboardingChatService.logging.test.ts`, excluding `TokenBudget*`) | ✅ **145 of 146 pass**, 9 snapshots pass. The only failure is the known OI-10 test, `IntentClassifier › Confidence Threshold › should cache confidence threshold`. *(The plain §6 G6 command also selects `TokenBudgetManager.test.ts` (OI-11) and `TokenBudgetPredictor.test.ts`, which passes 23 of 23; neither is in the 146.)* |
+| `npm run typecheck:bos-llm` | ✅ 140 files, 30 errors, 0 new, passed. `git diff --exit-code scripts/typecheck-bos-llm.baseline.json` is clean |
+| Full `tsc --noEmit`, excluding `.next/` | ✅ **2,042** |
+| NUL bytes (all 12 modified + 3 untracked files) | ✅ 0 |
+| `console.*` in `openaiProvider.ts` / `IntentClassifier.ts` / `aiAnalytics.ts` | ✅ 0 / 0 / 0 |
+| Usage-route snapshot directory | ✅ untouched |
+
+### Live onboarding conversation: log checks
+
+**Setup.** One conversation for test account `2f734ed5-…-bea3` (group `a91e7d95-8c39-4316-99d8-87c47cf71164`). It used a throwaway in-memory state and wrote no onboarding data: the manager itself does no DB writes. It had 7 turns: language → business name → business story (LLM) → "Services with fixed prices" chip (LLM) → service names (LLM) → price "175 ILS each, note …" (parsed) → "No, that's all" → `client_acquisition`. The three LLM calls were the only live AI calls.
+
+**Sentinels:** name `QASENTNAMEKVRQ`, description `QASENTDESCMXWB`, services `QASENTSVCAHJPL` / `QASENTSVCBYTDN`, price `QASENTPRICEWGZ`. None contains a digit or `0` (the price-parser bug).
+
+**How the logs were captured.** The app's own `lib/logger.ts` base logger was captured through a `pino.multistream`, with one destination at `info` and one at `debug`. Product code was not changed; pino was wrapped at load time in the script only. A separate check confirmed that `NODE_ENV=production` gives `level: 'info'` with debug disabled, and development gives `debug`. No other file on this path reads `NODE_ENV`. The `info` stream is therefore exactly what production would emit.
+
+| Level | What was searched for | Result |
+|---|---|---|
+| **(a) info (production)**: 9 lines, all level 30 | All 5 sentinels; raw-message phrases (`Pawsome`, `studio in Haifa, tag`, `175 ILS each`, `each takes about an hour`, `No, that`); AI summary text (`A small dog grooming studio`, `gentle care`, `pet owners`, `client_tracking`, `full bath`, `breed trim`) | ✅ **None found.** The lines carry only ids, `nameLength`, `messageLength`, `pricingModel: fixed`, `servicesMissingPriceCount: 2`, `extracted/price: 175` and counts |
+| **(b) debug (development)**: 31 lines (22 debug) | The same terms | ✅ **The AI summaries are present, at debug only:** `Extracted business story`, `Business story extracted` (the model's `description`, logged before the owner's own words overwrite it) and `Extracted client workflow`. ✅ **No raw-message phrase and no raw-message field** (`message`, `content`, `text`, `companyName`) at any level. ✅ **The name and price sentinels appear nowhere**; neither is ever sent to the model |
+
+**Observation (not a bug, D-OI8 as designed).** At debug, the description and service sentinels do appear, but **only inside model-returned fields**. The model copied `QASENTDESCMXWB` into `company_name` and kept the service names verbatim in `services[].name`. So "derived" text at debug can be near-verbatim owner text. D-OI8 accepts this because it stays at debug. The OI-9 assumption (production stays at `info`) is what keeps it out of production.
+
+### Ledger check (`trackAICall`, read-only)
+
+`token_usage` where `user_id` is the test account and `session_id` is the group: **3 rows, one per LLM call**. They are `business_story_extraction` (865/106 tokens, $0.003222), `client_workflow_extraction` (2047/54, $0.005658) and `client_workflow_extraction` (2073/193, $0.007113). All three have feature `business-os-onboarding`, provider `openai`, `success: true` and the correct user and session. Their ids match the debug `AI call tracked` lines, and no tracker warn or error was logged. ✅ Rows are written normally.
+
+### Bugs
+
+None in this change.
+
+Already known and still open, not caused by this change:
+- OI-10 (IntentClassifier test);
+- OI-11 (TokenBudgetManager tests);
+- the price parser's `'0'` substring bug (§16).
+
+### Final Status
+
+- [x] All checks pass — **QA PASSED, ready for commit** (RM split per §15.3)
+- [ ] Issues found
 
 ## 14. Commit Info
 
 *(RM to populate.)*
+
+---
+
+## 15. Implementation Notes
+
+### 15.1 User decision D-OI8 (2026-09-18)
+
+**Derived owner text is kept at `debug` only, never at `info` or above.** This covers the model's extractions of what the owner typed (the business story, the client workflow, the adjustment details) and `OnboardingChatService`'s unparseable model response.
+
+- **Why:** `lib/logger.ts:16` sets the level to `'info'` in production and `'debug'` otherwise. These lines therefore appear in local development, where the user wants them for debugging, and never in production.
+- **Raw typed text is different.** It is removed at **every** level (OI-7).
+- **The assumption:** this holds only while production stays at `info`. It is recorded under OI-9 (§11).
+- **Folded into step 2** as OI-7 + OI-8.
+
+### 15.2 SA's required changes
+
+| WC | How it was applied |
+|---|---|
+| WC-1 | Step **4c**. 4b logs `{ err: error, … }`, which is today's data. 4c narrows that one call to `err: { code, message, hint }`. 4c's new test case gives the fake Postgres error a `details` of `Failing row contains (<sentinel> …)`. It **fails on 4b and passes on 4c**, and it also asserts that `23502` and the message are still logged |
+| WC-2 | §2 now names the three `{ err }` exceptions and says why they are accepted |
+| WC-3 | The per-line map is in the test's header comment (`OnboardingConversationManager.attribution.test.ts`) and in §15.5. Every raw-text line is reached by a named case. Each case asserts `messageLength` (or `nameLength`) is logged. An `afterEach` asserts that **no model response** contains the sentinel, that no log line contains it, and that no non-debug line contains the derived marker. The mock serializes each log call's fields **at call time**, as Pino does, because the manager mutates `businessStory` after logging it |
+| WC-4 | Frozen clock (`jest.useFakeTimers` + `setSystemTime`), fixed `Math.random`, **no property matchers**. `SYSTEM_ADMIN_USER_ID` is saved, cleared and restored per test. Every row case asserts **exactly one** insert, the table `token_usage` and the unchanged `.select(...)` column string. Because Jest snapshots sort keys, case (a) also snapshots `JSON.stringify(row)`, which pins the row's **key order** |
+| WC-5 | OI-9 and OI-10 recorded (§11, requirement, investigation doc). The guidelines doc was corrected |
+
+### 15.3 Files per step (for RM: one commit each)
+
+Nothing is committed. Each step's files are distinct, **except two overlaps** that RM must split by hunk (`git add -p`):
+
+| Step | Files | Notes |
+|---|---|---|
+| 1 (OI-6) | `lib/ai/providers/openaiProvider.ts` | — |
+| 2 (OI-7 + OI-8) | `lib/services/OnboardingConversationManager.ts`, `lib/services/OnboardingChatService.ts`, `app/api/onboarding/chat/route.ts`, `lib/services/__tests__/OnboardingConversationManager.attribution.test.ts`, `app/api/onboarding/chat/__tests__/route.attribution.test.ts`, **new** `lib/services/__tests__/OnboardingChatService.logging.test.ts` | — |
+| 3 (OI-5) | `lib/orchestration/IntentClassifier.ts` | — |
+| 4a | **new** `lib/analytics/__tests__/aiAnalytics.trackAICall.test.ts` **without** its two 4c cases; **new** `lib/analytics/__tests__/__snapshots__/aiAnalytics.trackAICall.test.ts.snap` | **Overlap 1:** the test file's two cases "on a constraint violation whose details hold the failing row" and "a thrown null is swallowed too" belong to 4c. The `.snap` is identical in 4a and 4c |
+| 4b | `lib/analytics/aiAnalytics.ts` **without** the 4c hunk | **Overlap 2:** the one hunk at the `logger.error` in the insert's error branch, i.e. the 3-line comment plus `err: { code: error.code, message: error.message, hint: error.hint }` (4b has `err: error`), belongs to 4c |
+| 4c | the 4c hunk of `aiAnalytics.ts` + the two 4c test cases | — |
+| docs | this workplan, `docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md`, `docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md`, `docs/SYSTEM_LOGGING_GUIDELINES.md` | A `docs:` commit, or folded into the last step |
+
+### 15.4 Deviations from the plan
+
+| # | Deviation | Why |
+|---|---|---|
+| DV-1 | An **eighth raw-text line**, `OnboardingConversationManager.ts:595`. `companyName` is `message.trim()`, the whole message, logged at info. It is now `nameLength` | Found while mapping the tests; §4 had mislabelled it a derived fact |
+| DV-2 | `:859` `info({ adjustment })` (not in §4) is now split: `intent` at info, the whole object at debug | Its `details` is derived owner text (D-OI8) |
+| DV-3 | `OnboardingChatService.ts:179` does **not** keep `{ err }` at error. It logs `errName` + `contentLength` at error, and `{ err, content }` at debug | A JSON `SyntaxError`'s message quotes the start of the text it failed on (verified in Node 22: ``Unexpected token 'D', "DERIVED-MA"... is not valid JSON``), so `{ err }` at error would leak derived text |
+| DV-4 | R-4's thrown-null case is pinned in **4c**, not in T-5(f) in 4a | On the untouched tracker a thrown null **rejects** (the catch reads `error.name`), so 4a cannot assert "resolves". After 4b it resolves. Putting the case in 4b would break "4b leaves 4a's tests unedited" |
+| DV-5 | `aiAnalytics.ts`: 16 → **12** logger calls, not 13 | The planned count was an arithmetic slip; the mapping itself is unchanged |
+| DV-6 | T-2's sentinel has no digit, and the parseable-price case uses `175` | See the price-parser finding in §15.6 |
+
+### 15.5 Test and gate results
+
+**Raw-text lines and the cases that reach them (WC-3):**
+
+| Line (at `816ef757`) | Case |
+|---|---|
+| `:510` Processing user message | every case (`afterEach`) |
+| `:595` Business name given | business_name |
+| `:602` Extracting business story | business_story |
+| `:704` Could not extract price | an unparseable price |
+| `:1124` Extracted client acquisition | client_acquisition |
+| `:1425` Extracted price | a parseable price |
+| `:1430` Could not extract numeric price | an unparseable price |
+| route `:208` Processing onboarding message | route: a new and a resumed conversation |
+
+**Gates after each step:**
+
+| Step | G1 `typecheck:bos-llm` | G2 full `tsc` (excl. `.next/`) | G3 NUL | G4 usage snapshot | Step tests |
+|---|---|---|---|---|---|
+| 1 | 140 files, 30 errors, 0 new; scope and baseline identical | 2,045, per-file distribution identical | 0 | 2 pass, file untouched | provider + image suites: 39 of 39 |
+| 2 | same | 2,045, identical | 0 | same | onboarding: 32 of 32. New tests red on the old code: 8 of 8, 1 of 1, 1 of 1 |
+| 3 | same | 2,045, identical | 0 | same | `IntentClassifier.test.ts`: 22 of 23; the one failure is the pre-existing OI-10 |
+| 4a | same | 2,045, identical | 0 | same | 14 of 14, 7 snapshots written, then passing under `--ci` |
+| 4b | same | **2,042**: only `aiAnalytics.ts` changes (9 → 6), exactly the three TS18046 at `:238-240` | 0 | same | 4a's files unedited (`cmp`): 14 of 14, 7 snapshots |
+| 4c | same | **2,042**, same as 4b | 0 | same | 16 of 16; the `details` case fails on 4b |
+
+**Final G5:** `console.*` count is 0 in all three converted files. The OI-7 regex finds no logger payload (a quick check only; the sentinel tests are the binding proof).
+
+**Final G6** (every suite that imports a touched module, plus the usage route): 9 suites, 138 tests, 137 pass, 9 snapshots. The one failure is OI-10.
+
+### 15.6 For SA
+
+1. **Derived text still reaches `error` through `{ err }` on the manager's extractor failures.** The catch blocks at original `:1013`, `:1053`, `:1163` and `:1457` log `{ err: error }`. If the model returns non-JSON, that `SyntaxError` quotes about the first 10 characters of the model's output. I left them as they are: they are outside the listed lines, and narrowing them loses the provider-error detail they exist for. **Suggest folding this into OI-9, or a small follow-up.**
+2. **A pre-existing functional bug, not a logging one.** `extractPriceFromMessage` treats a reply as "free" when it merely **contains** `'0'` (`freePatterns` includes `'0'`, and the check uses `.includes`). So "100", "150" and "₪250" all record a price of **0**. Not fixed here. It needs its own `fix/` item, and the user should hear about it.
+3. **Kept at info as structured facts:** `:697` (price), `:778` (service names), `:813` (acquisition channels and booleans). Tell us if you read service names as owner text.
+4. **Unrelated pre-existing failures** in `lib/orchestration/__tests__/TokenBudgetManager.test.ts`: 17 of 21 fail on the untouched code too. They do not import `IntentClassifier` and are not counted in G6. *(Recorded as **OI-11** per SA ruling (c).)*
+
+### 15.7 SA code-review fixes (CR-1 to CR-4), 2026-09-18
+
+All four are in step 2's files plus one doc, so the RM split (§15.3) is unchanged. They go in step 2's commit, and the guidelines doc goes with the docs.
+
+| CR | Hunk | Test (in the existing `OnboardingConversationManager.attribution.test.ts`; gate scope stays 140) |
+|---|---|---|
+| CR-1 ✅ | `OnboardingConversationManager.ts` "Services missing price": `servicesMissingPrice.map(s => s.name)` → `servicesMissingPriceCount`. The names are not moved to debug; they are raw text | Two form-submitted services whose names carry the sentinel: the line is exactly `{ servicesMissingPriceCount: 2 }` at info, and the sentinel appears at **no** level |
+| CR-2 ✅ | A module helper `logExtractionFailure(error, message)` replaces `logger.error({ err: error }, …)` in the four extractor catch blocks (originally `:1013, :1053, :1163, :1457`, now the four `… extraction failed` lines). A `SyntaxError` logs `{ errName }` at error and `{ err }` at debug (`…: parse error detail`). Any other error keeps `{ err }` at error. The response length is not in scope inside the catch, so only the name is logged | Non-JSON model output carrying the derived marker, for business story, client workflow and adjustment intent through `processUserMessage`, and client tracking directly (KI-D): the error line is exactly `{ errName: 'SyntaxError' }`, the detail line is at debug and holds the quoted text. The same three with a provider `Error`: full `{ err }` still at error. The log mock now serializes errors to `{ name, message }`, as Pino does, because plain JSON reduced them to `{}` and would have hidden a leak |
+| CR-3 ✅ | A module constant `KNOWN_ADJUSTMENT_INTENTS` (the seven intents `PREVIEW_ADJUSTMENT_PROMPT` allows) and a helper `intentFields(intent)`, which gives `{ intent }` for a known label and `{ intentLength }` otherwise. Used at "Adjustment intent extracted" and "Unknown adjustment intent". The value itself is at debug | A known label (`modify_services`) is logged as `{ intent }` at info. A model-invented intent carrying the derived marker gives `{ intentLength }` on both info lines, no `intent` key, and the value only on the debug line |
+| CR-4 ✅ | `docs/SYSTEM_LOGGING_GUIDELINES.md`: `Last Updated` header, a TOC entry, a Change History section with the row "Redaction marked not active (OI-9); owner-text rule added", and the owner-text rule written into the redaction warning | — |
+| OI-11 ✅ | Recorded beside OI-10 in the requirement's open items and in the investigation doc | — |
+
+**Red first:** against the pre-CR manager, 6 of the 9 new cases fail. They are CR-1, CR-3, the three `SyntaxError` cases and client tracking. The three provider-error cases pass both before and after, as they should, because that behaviour is unchanged.
+
+**Gates after the CRs:**
+
+| Gate | Result |
+|---|---|
+| `typecheck:bos-llm` | 140 files, 30 errors, 0 new, passed. Scope list identical; baseline JSON untouched |
+| Full `tsc` (excl. `.next/`) | 2,042, the same per-file distribution as after 4b |
+| Manager test file | 33 of 33 |
+| Touched Jest set (G6, `--ci`) | 9 suites, 146 tests: 145 pass, 9 snapshots. The one failure is OI-10 |
+| NUL bytes | 0 |
+| Usage-route snapshot | 2 pass, file untouched |
+
+---
+
+## 16. SA Code Review
+
+**Code Review by SA — 2026-09-18**
+**Status:** 🔄 **Fix Required: CR-1 (Medium), CR-2 to CR-4 (Low).** All four are small and sit in step 2's files plus one doc. **Steps 1, 3, 4a, 4b and 4c are approved as they stand**, and the RM split is unaffected. SA re-checks only the CR hunks.
+
+The mechanical steps are exactly mechanical, the 4a → 4b proof is real, and the privacy tests are built the right way: a sentinel, the model proven not to echo it, and fields captured at call time. The CRs apply the user's own D-OI8 rule to the last few lines it reaches.
+
+### Gates, re-run by SA
+
+| Gate | Result |
+|---|---|
+| `typecheck:bos-llm` | **140 files, 30 errors, 0 new, passed.** Baseline unchanged |
+| Jest, G6 set, `--ci` | **9 suites, 138 tests: 137 pass, 9 snapshots.** The one failure is OI-10 ("should cache confidence threshold") |
+| `console.*` in the three converted files | **0 / 0 / 0** |
+| Usage-route snapshot | Untouched |
+| 4b vs 4a | Diffing the saved `step4b/aiAnalytics.ts` against the current file gives **exactly the 4c hunk**: the 3-line comment, and `err: error` → `err: { code, message, hint }`. The saved 4a test differs from the current one **only** by the two appended 4c cases. The saved 4a `.snap` is **byte-identical** to the current one (`cmp`) |
+| Snapshot determinism (WC-4) | Fake timers with `setSystemTime`, a fixed `Math.random`, **no property matchers**, the env saved and restored per case, and `JSON.stringify(row)` pinning key order. It passes under `--ci`, so nothing was written |
+
+Full `tsc` (2,045 → 2,042) was not re-run. The Dev's per-file evidence is consistent with Q-6, and the binding gate is green.
+
+### Findings by focus area
+
+1. **Privacy.**
+   - Raw text is gone from every listed line, plus DV-1's `:595`, where the business name is the whole message. The route logs `messageLength`.
+   - Derived text now appears at **debug only**: `businessStory`, the three extractions, the adjustment `details`, and `OnboardingChatService`'s `content`.
+   - **DV-3 is correct, and it is the pattern to reuse.** A JSON `SyntaxError`'s message quotes the text it failed on, so the error line carries `errName` + `contentLength` and the detail goes to debug.
+   - Three places still leak: CR-1 to CR-3.
+2. **OI-4 is purely mechanical in 4b.**
+   - The 4b diff touches only logger calls, the import and the `logger` constant.
+   - The `insertData` literal, `isValidUUID`, `platformAccountId()`, `finalUserId`, `validSessionId`, the `.insert().select()` and every branch condition are unchanged.
+   - The 4a snapshot passes unedited against 4b.
+   - 4c touches only the insert's failure-path log. Its test proves `details` ("Failing row contains …") is gone while `23502` and the message remain.
+   - **DV-4 is right.** On the untouched tracker, a thrown `null` makes the catch itself throw. The case can therefore be pinned only once the catch stops reading `error.name`, and 4c keeps "4b passes 4a unedited" intact.
+3. **Levels and WC-2.**
+   - Every mapping follows §3. No line became more visible: `log` → `debug` is quieter; `log` → `info` appears only on LLM-spend, batch or cache events; `warn` and `error` are unchanged.
+   - The three accepted `{ err }` additions (`openaiProvider.ts:403`/`:435`, `IntentClassifier.ts:410`) are as documented in §2.
+   - DV-2 (splitting `adjustment`) and DV-5 (12 calls, not 13) are accepted.
+4. **Docs.**
+   - The requirement's OI-4 to OI-8 rows read "Resolved 2026-09-18: code complete, pending SA code review, QA and commit".
+   - OI-9's row records the D-OI8 assumption: derived text stays out of production only while production stays at `info`.
+   - OI-10 is open.
+   - `SYSTEM_LOGGING_GUIDELINES.md` opens its redaction section with an explicit "not active today" warning. Correct and clear; see CR-4 for its metadata.
+5. **RM split — feasible.**
+   - Both overlaps are single contiguous hunks: one in `aiAnalytics.ts`, and the two 4c cases appended at the end of their `describe`.
+   - `git add -p` separates them, and the scratchpad copies are a reference to diff against.
+   - The CR fixes touch only step 2's files and one doc.
+
+### Rulings on §15.6
+
+- **(a) Extractor catch blocks** — `OnboardingConversationManager.ts` `:1026`, `:1066`, `:1176`, `:1470` on the current tree (originally `:1013`, `:1053`, `:1163`, `:1457`). **Narrow them now (CR-2).**
+  - They are in step 2's file, and DV-3 already set the shape.
+  - D-OI8 says derived text goes to debug only, and a `SyntaxError`'s message *is* derived text, even at ~10 characters.
+  - Narrowing loses nothing the Dev wants to keep: only a `SyntaxError` loses its message at error, and provider errors keep the full `{ err }`.
+- **(b) Price, service names, channels at info.**
+  - Price (`:704`, a number), collection method (`:813`, a label) and the acquisition result (`:823`, `:1137`, derived deterministically from chip labels) are **structured facts**. They are fine at info.
+  - **Service names are not.** From the services form they are the owner's verbatim typing; from the model they are a paraphrase. So `:788` is out: **CR-1**.
+- **(c) `TokenBudgetManager.test.ts` — confirmed unrelated.**
+  - It fails **17 of 21** on this tree.
+  - Neither the test nor `TokenBudgetManager.ts`, `TokenBudgetPredictor.ts` or `types.ts` imports any changed file, and none of them is in the diff.
+  - Record it as **OI-11** beside OI-10 (pre-existing test failures on `main`).
+
+### Code Review Comments
+
+1. **CR-1 — `OnboardingConversationManager.ts:788` — Priority: Medium.**
+   - `logger.info({ servicesMissingPrice: servicesMissingPrice.map(s => s.name) }, …)` logs service names at info, which reaches production. With the services form, these are verbatim owner input, which D-OI8 removes at every level.
+   - Log `servicesMissingPriceCount` only. Do **not** move the names to debug: when they came from the form they are raw text, not derived.
+   - Add the sentinel to a form-submitted service name in the existing `service_details` test case.
+2. **CR-2 — extractor catch blocks `:1026`, `:1066`, `:1176`, `:1470` — Priority: Low.**
+   - Apply DV-3's shape: a `SyntaxError` logs `errName` at error, with `{ err }` at debug.
+   - Any other error keeps `{ err }` at error.
+   - Add one test: a non-JSON model reply carrying the derived marker reaches no non-debug line.
+3. **CR-3 — `:871` and `:1575`, `intent` at info — Priority: Low.**
+   - `adjustment.intent` is whatever the model returned. In the `default` branch it is, by definition, not a known label, so it can be arbitrary model text.
+   - Log it at info only when it is a known label. Otherwise log `intentLength` at info and the value at debug.
+4. **CR-4 — `docs/SYSTEM_LOGGING_GUIDELINES.md` — Priority: Low.** It now makes a materially different security statement but has no `Last Updated` header and no Change History (CLAUDE.md § Documentation Standards). Add both, with a row like "Redaction marked not active (OI-9); owner-text rule added".
+
+### Pre-existing bug found alongside (not a logging item; for the coordinator)
+
+**Onboarding records many prices as 0.** The root cause is in `lib/services/OnboardingConversationManager.ts:1419-1420`:
+
+```typescript
+const freePatterns = ['free', 'חינם', 'gratis', '0', 'nothing', 'no charge', 'בחינם', 'ללא תשלום'];
+if (freePatterns.some(p => trimmed.toLowerCase() === p || trimmed.toLowerCase().includes(p))) {
+```
+
+- `'0'` is a "free" pattern, and the test is a substring `includes`, so any reply containing the digit 0 ("100", "150", "250 ILS", "₪1,200") returns **0** before the number is parsed. "175" survives only because it contains no zero.
+- `'free'` has the same flaw on a smaller scale (e.g. "freelance rate 90").
+- The fix belongs in its own `fix/` item: whole-word matching for the free words, and `0` counts as free only when the whole reply is zero.
+
+### Code Approved for QA: **No — pending CR-1 to CR-4.** Steps 1, 3, 4a, 4b and 4c are approved as they stand.
+
+**Dev response (2026-09-18):** CR-1 to CR-4 are applied, and OI-11 is recorded. See §15.7. Ready for the SA re-check of the CR hunks.
+
+### 16.1 SA Re-check of CR-1 to CR-4
+
+**Re-checked by SA — 2026-09-18**
+**Status:** ✅ **APPROVED — Code Approved for QA: Yes.** No CR remains open. The two notes below are optional.
+
+**Gates, re-run by SA:**
+
+| Gate | Result |
+|---|---|
+| `typecheck:bos-llm` | 140 files, 30 errors, 0 new; the baseline is unchanged |
+| Jest, G6 set, `--ci` | 145 of 146 pass, 9 snapshots. The one failure is the known OI-10 test |
+| Usage-route snapshot | Untouched |
+
+**Confinement (the per-step split still holds):**
+- Only three files changed after the §16 review: `OnboardingConversationManager.ts`, its `attribution.test.ts`, and `docs/SYSTEM_LOGGING_GUIDELINES.md` (by modification time).
+- Step 4 is unchanged. The saved `step4b/aiAnalytics.ts` still differs from the current file by exactly the 4c hunk. The 4a test still differs only by the two 4c cases (31 added lines). The `.snap` is byte-identical.
+- So RM's split in §15.3 is still valid as written: the CR hunks join step 2, and CR-4 joins the docs commit.
+
+**Findings:**
+- **CR-1:** `:827` now logs `servicesMissingPriceCount` only, and names are logged at no level. `:1719` builds the service names into the **reply** to the owner, not into a log call.
+- **CR-2:** `logExtractionFailure` behaves as specified, and all four catch blocks use it:
+  - a `SyntaxError` logs `{ errName }` at error and `{ err }` at debug;
+  - any other error keeps `{ err }` at error.
+
+  `JSON.parse` failures are same-realm `SyntaxError`s, so `instanceof` is reliable.
+- **CR-3:** `KNOWN_ADJUSTMENT_INTENTS` is exactly the seven labels in `PREVIEW_ADJUSTMENT_PROMPT`'s `"intent"` enum (`:472`): `add_capability`, `remove_capability`, `modify_services`, `modify_pipeline`, `change_payment_mode`, `restart`, `confirm`. `intentFields()` is used at both info sites.
+- **CR-4:** the guidelines doc has `Last Updated`, a ToC entry, the owner-text rule and a Change History row.
+- **Onboarding path at info and above.** Every `info`/`warn`/`error` call in `OnboardingConversationManager.ts`, `OnboardingChatService.ts` and the onboarding route was re-read. They carry only ids, lengths, counts, numbers, step names, or labels that are chip-derived or code-defined. No raw or derived owner text appears at info or above.
+- **The mock change doesn't mask anything; it removes a mask.**
+  - Serialising `Error` values as `{ name, message }`, recursively via the replacer, captures the message, which is exactly where a `SyntaxError` quotes text. The old `{}` hid it.
+  - Pino's serializer also emits `stack` and own properties. `stack` repeats the message, and no owner text is carried in custom error properties on this path.
+  - Skipping *rejected* model calls in the echo check is correct: a rejected call returned nothing to echo.
+
+**Optional, not blocking:**
+- `:709` (`pricingModel`) and `:1024` (`vertical`) log model-returned values at info. Both are prompted enums with defaults, so the risk is far lower than CR-3's `default` branch. If they are ever hardened, `intentFields`' known-label pattern applies.
+- The direct-extractor test at `attribution.test.ts:439-440` pushes a synthetic "Processing user message" line so the shared `afterEach` passes. It hides no leak check, but scoping that one assertion to cases that go through `processUserMessage` would be cleaner.
 
 ---
 
@@ -361,3 +689,8 @@ The redaction section of the guidelines is itself wrong today (WC-5, OI-9). No s
 |------|--------|---------|
 | 2026-09-18 | Created | Dev workplan for OI-4 to OI-7: inventory verified on `816ef757`, per-line mappings, test plan, gates with measured baselines, 8 questions for SA |
 | 2026-09-18 | SA review: approved with required changes | Inventory, the six surprises and the pre-existing test failure verified. Q-1, Q-3, Q-5, Q-6, Q-7 agreed. Q-2 ruled: narrow the tracker's DB-error log to `{ code, message, hint }`, as its own step **4c** so 4b stays mechanical (WC-1). Q-4 ruled: OI-8 as a **priority** follow-up. Q-8 correction made in the Layer 1.5 workplan. WC-2: correct §2's "same fields or fewer" (`{ err }` adds stack and SDK fields on three lines, accepted). WC-3: sentinel coverage mapped per line, LLM mock proven not to echo. WC-4: deterministic snapshot. WC-5: record OI-9 (redaction never applied; correct the guidelines doc) and OI-10 (the pre-existing IntentClassifier test failure) |
+| 2026-09-18 | Code complete | Steps 1, 2 (OI-7 + OI-8 per user decision D-OI8), 3, 4a, 4b and 4c implemented, uncommitted. WC-1 to WC-5 applied. Deviations DV-1 to DV-6. Gate results per step, the RM split and items for SA are in §15. Requirement, investigation doc and logging guidelines updated |
+| 2026-09-18 | SA code review: Fix Required | Gates re-run: typecheck 140 / 30 / 0 new, baseline unchanged; G6 Jest 137 of 138 (OI-10 only), 9 snapshots under `--ci`; `console.*` 0 / 0 / 0. 4b vs saved 4a state: exactly the 4c hunk differs, snapshot byte-identical. Steps 1, 3, 4a, 4b, 4c approved; DV-1 to DV-6 accepted. CR-1 (Medium): `:788` logs owner-typed service names at info. CR-2: narrow the four extractor catch blocks to the DV-3 shape (ruling (a)). CR-3: model-returned `intent` at info only when it is a known label. CR-4: `SYSTEM_LOGGING_GUIDELINES.md` needs Last Updated and Change History. Ruling (b): price, collection and channel labels OK at info; service names are not. Ruling (c): TokenBudgetManager 17 of 21 failures unrelated, record as OI-11. Pre-existing price-parser root cause recorded (`:1419-1420`, `'0'` matched by substring) |
+| 2026-09-18 | CR-1 to CR-4 applied | CR-1: service names out of the logs (a count at info). CR-2: `logExtractionFailure`: a `SyntaxError` gets its name at error and detail at debug; other errors unchanged. CR-3: `KNOWN_ADJUSTMENT_INTENTS` + `intentFields`: an unknown model intent is logged by length at info, value at debug. CR-4: logging guidelines get Last Updated, Change History and the owner-text rule. OI-11 recorded. 9 new test cases (6 red on the pre-CR code). Gates: typecheck 140 / 30 / 0 new, baseline untouched; `tsc` 2,042; G6 145 of 146 (OI-10 only); NUL 0; usage snapshot untouched (§15.7) |
+| 2026-09-18 | SA re-check: APPROVED for QA | CR-1 to CR-4 verified. Service names no longer logged; `logExtractionFailure` narrows only `SyntaxError`; `KNOWN_ADJUSTMENT_INTENTS` equals the preview prompt's seven intents; guidelines doc has Last Updated + Change History. No raw or derived owner text at info or above in the onboarding path. Test mock change removes a mask rather than adding one. Gates: typecheck 140 / 30 / 0 new, baseline unchanged; Jest 145 of 146 (OI-10 only), 9 snapshots. Only step 2 files and the guidelines doc changed; step 4a/4b/4c states re-verified, so the RM split in §15.3 stands. Optional notes: `pricingModel` / `vertical` labels, synthetic log line in one test |
+| 2026-09-18 | QA: PASSED | Jest 145 of 146 (OI-10 only), 9 snapshots; typecheck 140 / 30 / 0 new, baseline unchanged; `tsc` 2,042; NUL 0; `console.*` 0 / 0 / 0. One live onboarding conversation, with real Pino output captured at info and at debug. Info: no sentinel, no raw phrase, no AI summary. Debug: AI summaries present; no raw-message field; model-echoed sentinels only inside model-returned fields (D-OI8). Ledger: 3 `token_usage` rows, correct user and session. No bugs (§13) |
