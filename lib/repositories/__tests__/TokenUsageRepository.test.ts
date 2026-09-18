@@ -15,6 +15,7 @@ jest.mock('@/lib/logger', () => {
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  TOKEN_USAGE_CHAT_READ_LIMITS,
   TOKEN_USAGE_COLUMNS,
   TokenUsageRepository,
   type TokenUsageFeatureFilter,
@@ -347,5 +348,93 @@ describe('listLabelsInWindow', () => {
     expect((await repo.listLabelsInWindow([A], WINDOW, match, 501)).error).toBeTruthy();
     expect((await repo.listLabelsInWindow([A], WINDOW, match, 0)).error).toBeTruthy();
     expect(fake.queries).toHaveLength(0);
+  });
+});
+
+// ─── Layer 1.5 F-1: the chat telemetry reads (FR-24, AC-18) ──────────────────
+
+describe('chat telemetry reads', () => {
+  const CHAT = 'business-os-chat';
+  const OPTS = { pageSize: TOKEN_USAGE_CHAT_READ_LIMITS.PAGE_SIZE, ceiling: TOKEN_USAGE_CHAT_READ_LIMITS.USAGE_CEILING };
+
+  function chatRows(n: number, overrides: Row = {}, idPrefix = String(overrides.user_id ?? A).slice(0, 4)): Row[] {
+    return Array.from({ length: n }, (_, i) =>
+      row({
+        id: `chat-${idPrefix}-${String(i).padStart(5, '0')}`,
+        created_at: new Date(WINDOW.end.getTime() - (i + 1) * 1000).toISOString(),
+        activity_type: 'plan',
+        activity_name: 'planner',
+        model_name: 'gpt-4o',
+        latency_ms: 120,
+        ...overrides,
+      })
+    );
+  }
+
+  it('keeps the report caps as they were, above the verification ceiling (RC-12d)', () => {
+    expect(TOKEN_USAGE_CHAT_READ_LIMITS.USAGE_CEILING).toBe(10_000);
+    expect(TOKEN_USAGE_CHAT_READ_LIMITS.PRICING_CEILING).toBe(50_000);
+  });
+
+  it('the per-account read filters on the account and the chat feature, newest first', async () => {
+    const { fake, repo } = setup({
+      tables: { token_usage: [...chatRows(3), ...chatRows(2, { user_id: B }), ...chatRows(1, { feature: 'business-os-leads' })] },
+    });
+    const result = await repo.listChatCallsForAccountInWindow(A, WINDOW, CHAT, OPTS);
+
+    expect(result.error).toBeNull();
+    expect(result.data?.rows).toHaveLength(3);
+    expect(result.data?.reachedCeiling).toBe(false);
+    const q = fake.queries[0];
+    expect(accountFilterOf(q)).toEqual([{ op: 'eq', column: 'user_id', value: A }]);
+    expect(q.filters).toEqual(expect.arrayContaining([{ op: 'eq', column: 'feature', value: CHAT }]));
+    expect(q.select).toBe(TOKEN_USAGE_COLUMNS.chat);
+    expect(JSON.stringify(result.data)).not.toMatch(/SECRET/);
+    expectAllowListed(fake.queries);
+  });
+
+  it('the all-accounts read applies no account filter, and only the chat feature', async () => {
+    const { fake, repo } = setup({ tables: { token_usage: [...chatRows(3), ...chatRows(2, { user_id: B })] } });
+    const result = await repo.listChatCallsAllAccountsInWindow(WINDOW, CHAT, OPTS);
+
+    expect(result.data?.rows).toHaveLength(5);
+    expect(accountFilterOf(fake.queries[0])).toEqual([]);
+    expect(result.data?.rows.map((r) => r.user_id).sort()).toEqual([A, A, A, B, B]);
+  });
+
+  it('reports reachedCeiling at the cap, exactly as listCallsInWindow does', async () => {
+    const { repo } = setup({ tables: { token_usage: chatRows(2500) } });
+    const capped = await repo.listChatCallsAllAccountsInWindow(WINDOW, CHAT, { pageSize: 1000, ceiling: 2000 });
+    expect(capped.data?.rows).toHaveLength(2000);
+    expect(capped.data?.reachedCeiling).toBe(true);
+
+    const exact = await repo.listChatCallsAllAccountsInWindow(WINDOW, CHAT, { pageSize: 1000, ceiling: 2500 });
+    expect(exact.data?.reachedCeiling).toBe(true);
+
+    const under = await repo.listChatCallsAllAccountsInWindow(WINDOW, CHAT, { pageSize: 1000, ceiling: 3000 });
+    expect(under.data?.reachedCeiling).toBe(false);
+  });
+
+  it('refuses a bad account, feature, window or limits before any query, without throwing', async () => {
+    const { fake, repo } = setup({ tables: { token_usage: chatRows(3) } });
+    const bad = await Promise.all([
+      repo.listChatCallsForAccountInWindow('not-a-uuid', WINDOW, CHAT, OPTS),
+      repo.listChatCallsAllAccountsInWindow(WINDOW, 'Bad Feature!', OPTS),
+      repo.listChatCallsAllAccountsInWindow({ start: WINDOW.end, end: WINDOW.start }, CHAT, OPTS),
+      repo.listChatCallsAllAccountsInWindow(WINDOW, CHAT, { pageSize: 5000, ceiling: 10 }),
+      repo.listChatCallsAllAccountsInWindow(WINDOW, CHAT, { pageSize: 1000, ceiling: 50_001 }),
+    ]);
+    for (const result of bad) {
+      expect(result.data).toBeNull();
+      expect(result.error).toBeInstanceOf(Error);
+    }
+    expect(fake.queries).toHaveLength(0);
+  });
+
+  it('returns a read error without throwing', async () => {
+    const { repo } = setup({ tables: { token_usage: chatRows(1) }, errorWhen: () => ({ message: 'boom' }) });
+    const result = await repo.listChatCallsAllAccountsInWindow(WINDOW, CHAT, OPTS);
+    expect(result.data).toBeNull();
+    expect(result.error).toBeTruthy();
   });
 });

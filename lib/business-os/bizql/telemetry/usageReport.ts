@@ -28,8 +28,14 @@
  */
 
 import { createLogger } from '@/lib/logger';
-import { supabaseServer } from '@/lib/supabaseServer';
 import { BOS_CHAT_FEATURE } from '@/lib/business-os/llm/callCatalog';
+// The module path, not the repositories barrel: nothing else needs the chat
+// row type, and a smaller barrel surface keeps files out of gates and cycles.
+import {
+  TOKEN_USAGE_CHAT_READ_LIMITS,
+  TokenUsageRepository,
+  type LedgerChatRow,
+} from '@/lib/repositories/TokenUsageRepository';
 
 const logger = createLogger({ module: 'BizQLUsageReport' });
 
@@ -46,7 +52,17 @@ export interface UsageRow {
   created_at: string;
 }
 
-export interface ChatUsageReport {
+/**
+ * How much of the window a read covered (Layer 1.5 F-1). `truncated` means the
+ * read stopped at `cap` rows, so every figure is a floor, not a total.
+ */
+export interface ReadCoverage {
+  truncated: boolean;
+  cap: number;
+}
+
+/** The summarised figures, before read coverage is attached. */
+export interface ChatUsageSummary {
   from: string;
   to: string;
 
@@ -96,6 +112,14 @@ export interface ChatUsageReport {
   turnsCovered: number;
 }
 
+export type ChatUsageReport = ChatUsageSummary & ReadCoverage;
+
+/**
+ * A failed read is `ok: false` — never an all-zero report that reads as "no
+ * usage". A truncated read is `ok: true` with `truncated: true`.
+ */
+export type ChatUsageResult = { ok: true; report: ChatUsageReport } | { ok: false; error: string };
+
 function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -109,7 +133,7 @@ function median(values: number[]): number | null {
  * Pure, so it can be tested without a database — the arithmetic here is the part
  * worth being sure about.
  */
-export function summarise(rows: UsageRow[], from: string, to: string): ChatUsageReport {
+export function summarise(rows: UsageRow[], from: string, to: string): ChatUsageSummary {
   const withTurn = rows.filter((r) => r.session_id);
   const turnIds = new Set(withTurn.map((r) => r.session_id!));
 
@@ -172,35 +196,60 @@ export function summarise(rows: UsageRow[], from: string, to: string): ChatUsage
   };
 }
 
-/** Fetch and summarise a window. `userId` omitted reports across all users. */
-export async function getChatUsage(args: {
-  from: Date;
-  to?: Date;
-  userId?: string;
-}): Promise<ChatUsageReport> {
+/** The reads this module needs; injectable so the result states can be tested. */
+export interface UsageReportDeps {
+  tokenUsage: Pick<TokenUsageRepository, 'listChatCallsForAccountInWindow' | 'listChatCallsAllAccountsInWindow'>;
+}
+
+// Service role, through the repository: the all-accounts read cannot run under RLS.
+const defaultDeps = (): UsageReportDeps => ({ tokenUsage: new TokenUsageRepository() });
+
+/** A ledger row in the shape the summaries take. `cost_usd` numeric may arrive as a string. */
+function toUsageRow(row: LedgerChatRow): UsageRow & { user_id: string } {
+  const cost = row.cost_usd === null ? null : Number(row.cost_usd);
+  return {
+    user_id: row.user_id,
+    session_id: row.session_id,
+    activity_type: row.activity_type,
+    activity_name: row.activity_name,
+    model_name: row.model_name,
+    input_tokens: row.input_tokens,
+    output_tokens: row.output_tokens,
+    cost_usd: cost !== null && Number.isFinite(cost) ? cost : null,
+    latency_ms: row.latency_ms,
+    success: row.success,
+    created_at: row.created_at,
+  };
+}
+
+/**
+ * Fetch and summarise a window. With `userId`, one account; without it, every
+ * account — through the repository's explicitly named all-accounts read.
+ */
+export async function getChatUsage(
+  args: { from: Date; to?: Date; userId?: string },
+  deps: UsageReportDeps = defaultDeps()
+): Promise<ChatUsageResult> {
   const to = args.to ?? new Date();
+  const window = { start: args.from, end: to };
+  const cap = TOKEN_USAGE_CHAT_READ_LIMITS.USAGE_CEILING;
+  const opts = { pageSize: TOKEN_USAGE_CHAT_READ_LIMITS.PAGE_SIZE, ceiling: cap };
 
-  let query = supabaseServer
-    .from('token_usage')
-    .select(
-      'session_id, activity_type, activity_name, model_name, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at'
-    )
-    .eq('feature', BOS_CHAT_FEATURE)
-    .gte('created_at', args.from.toISOString())
-    .lte('created_at', to.toISOString())
-    .order('created_at', { ascending: false })
-    .limit(10000);
+  const { data, error } = args.userId
+    ? await deps.tokenUsage.listChatCallsForAccountInWindow(args.userId, window, BOS_CHAT_FEATURE, opts)
+    : await deps.tokenUsage.listChatCallsAllAccountsInWindow(window, BOS_CHAT_FEATURE, opts);
 
-  if (args.userId) query = query.eq('user_id', args.userId);
-
-  const { data, error } = await query;
-
-  if (error) {
-    logger.error({ err: error }, 'Failed to read chat usage');
-    return summarise([], args.from.toISOString(), to.toISOString());
+  if (error || !data) {
+    logger.error({ err: error, scope: args.userId ? 'account' : 'all_accounts' }, 'Failed to read chat usage');
+    return { ok: false, error: 'Chat usage could not be read' };
   }
 
-  return summarise((data ?? []) as UsageRow[], args.from.toISOString(), to.toISOString());
+  if (data.reachedCeiling) {
+    logger.warn({ cap }, 'Chat usage read reached its cap; figures are a floor');
+  }
+
+  const summary = summarise(data.rows.map(toUsageRow), args.from.toISOString(), to.toISOString());
+  return { ok: true, report: { ...summary, truncated: data.reachedCeiling, cap } };
 }
 
 
@@ -345,31 +394,34 @@ export function summarisePricing(
   };
 }
 
-export async function getChatPricing(args: {
-  days: number;
-}): Promise<PricingReport> {
+/** Same contract as `ChatUsageResult`: never a zeroed report on a failed read. */
+export type ChatPricingResult = { ok: true; report: PricingReport & ReadCoverage } | { ok: false; error: string };
+
+export async function getChatPricing(
+  args: { days: number },
+  deps: UsageReportDeps = defaultDeps()
+): Promise<ChatPricingResult> {
   const to = new Date();
   const from = new Date(Date.now() - args.days * 24 * 60 * 60 * 1000);
+  const cap = TOKEN_USAGE_CHAT_READ_LIMITS.PRICING_CEILING;
 
-  const { data, error } = await supabaseServer
-    .from('token_usage')
-    .select(
-      'user_id, session_id, activity_type, activity_name, model_name, input_tokens, output_tokens, cost_usd, latency_ms, success, created_at'
-    )
-    .eq('feature', BOS_CHAT_FEATURE)
-    .gte('created_at', from.toISOString())
-    .order('created_at', { ascending: false })
-    .limit(50000);
+  // The window now ends at "now"; before, it had no upper bound, which is the
+  // same set of rows (none are written in the future).
+  const { data, error } = await deps.tokenUsage.listChatCallsAllAccountsInWindow(
+    { start: from, end: to },
+    BOS_CHAT_FEATURE,
+    { pageSize: TOKEN_USAGE_CHAT_READ_LIMITS.PAGE_SIZE, ceiling: cap }
+  );
 
-  if (error) {
+  if (error || !data) {
     logger.error({ err: error }, 'Failed to read pricing data');
-    return summarisePricing([], from.toISOString(), to.toISOString(), args.days);
+    return { ok: false, error: 'Chat pricing data could not be read' };
   }
 
-  return summarisePricing(
-    (data ?? []) as Array<UsageRow & { user_id: string }>,
-    from.toISOString(),
-    to.toISOString(),
-    args.days
-  );
+  if (data.reachedCeiling) {
+    logger.warn({ cap }, 'Chat pricing read reached its cap; figures are a floor');
+  }
+
+  const report = summarisePricing(data.rows.map(toUsageRow), from.toISOString(), to.toISOString(), args.days);
+  return { ok: true, report: { ...report, truncated: data.reachedCeiling, cap } };
 }

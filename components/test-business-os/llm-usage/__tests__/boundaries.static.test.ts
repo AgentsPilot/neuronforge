@@ -86,9 +86,10 @@ describe('Layer 1.1 boundaries', () => {
     expect(code).not.toMatch(/token_usage/);
     expect(code).not.toMatch(/\.rpc\s*\(/);
     expect(code).not.toMatch(/createClient\s*\(/);
-    // readAllowanceCredits stays in the route by FR-23 and still reads ais_system_config: the only direct read left.
+    // Layer 1.1 left one direct read here (readAllowanceCredits → ais_system_config).
+    // Layer 1.5 F-6 moved it into ConfigRepository.getSystemConfigs, so none is left.
     const directReads = code.match(/\.from\(\s*['"]([a-z_]+)['"]/g) ?? [];
-    expect(directReads).toEqual([".from('ais_system_config'"]);
+    expect(directReads).toEqual([]);
   });
 
   it.each([...ROUTES, ...NEW_SERVER_MODULES, ...CLIENT_FILES])(

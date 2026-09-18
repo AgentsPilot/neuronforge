@@ -62,10 +62,36 @@ export async function GET(request: NextRequest) {
     }
 
     const from = new Date(Date.now() - parsed.data.days * 24 * 60 * 60 * 1000);
-    const report = await getChatUsage({ from, userId: parsed.data.userId });
+    const result = await getChatUsage({ from, userId: parsed.data.userId });
 
+    /*
+     * A failed read is a failed dependency, not "no usage": answering
+     * `200 { success: true }` with zeros is exactly the quiet lie Layer 1.5 F-1
+     * removes. The admin gate above still runs first.
+     */
+    if (!result.ok) {
+      requestLogger.error({ days: parsed.data.days }, 'Chat usage could not be read');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Chat usage is temporarily unavailable',
+          details: process.env.NODE_ENV === 'development' ? result.error : undefined,
+        },
+        { status: 503 }
+      );
+    }
+
+    const report = result.report;
+    // Truncation goes in the log too: an operator reading logs must be able to
+    // tell that a figure was a floor (WC-9).
     requestLogger.info(
-      { days: parsed.data.days, turns: report.turns, costPerTurn: report.costPerTurnUsd },
+      {
+        days: parsed.data.days,
+        turns: report.turns,
+        costPerTurn: report.costPerTurnUsd,
+        truncated: report.truncated,
+        cap: report.cap,
+      },
       'Chat usage reported'
     );
 
