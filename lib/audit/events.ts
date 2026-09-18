@@ -105,6 +105,9 @@ export const AUDIT_EVENTS = {
   // DATA EVENTS (GDPR compliance)
   // ==========================================
   DATA_EXPORTED: 'DATA_EXPORTED', // User data export
+  // The owner's own data download from the V2 security settings. Distinct from
+  // DATA_EXPORTED, which is the server-side GDPR export.
+  USER_DATA_EXPORTED: 'USER_DATA_EXPORTED',
   DATA_DELETED: 'DATA_DELETED', // Right to erasure
   DATA_ANONYMIZED: 'DATA_ANONYMIZED', // PII anonymization
   // Business OS purge (Reset / Purge of one business's data). Distinct from
@@ -196,6 +199,13 @@ export const AUDIT_EVENTS = {
   PILOT_DISABLED: 'PILOT_DISABLED', // Pilot disabled - execution blocked
   PILOT_CONFIG_UPDATED: 'PILOT_CONFIG_UPDATED', // Pilot settings changed
   PILOT_STRUCTURAL_REPAIR_APPLIED: 'PILOT_STRUCTURAL_REPAIR_APPLIED', // Pre-execution auto-repair fired — indicates a generator bug
+
+  // Subscription and boost-pack billing (the Stripe routes)
+  SUBSCRIPTION_CHECKOUT_INITIATED: 'SUBSCRIPTION_CHECKOUT_INITIATED',
+  BOOST_PACK_CHECKOUT_INITIATED: 'BOOST_PACK_CHECKOUT_INITIATED',
+  SUBSCRIPTION_CANCELED: 'SUBSCRIPTION_CANCELED',
+  SUBSCRIPTION_REACTIVATED: 'SUBSCRIPTION_REACTIVATED',
+  CUSTOMER_PORTAL_ACCESSED: 'CUSTOMER_PORTAL_ACCESSED',
 
   // Business OS money
   PAYMENT_REFUNDED: 'PAYMENT_REFUNDED',
@@ -367,6 +377,22 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'User logged in',
+  },
+  // Registered for Layer 3 step 0 (WC-12): the client write routes now take
+  // severity and flags from here, so these carry exactly what the logout
+  // buttons sent before.
+  [AUDIT_EVENTS.USER_LOGOUT]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'User logged out',
+  },
+  // The V2 security tab sent severity 'medium', which the table's severity
+  // CHECK rejects: every such row failed its whole batch and none was stored.
+  // 'warning' is the valid level between the two it was presumably meant as.
+  [AUDIT_EVENTS.USER_DATA_EXPORTED]: {
+    severity: 'warning',
+    complianceFlags: ['GDPR', 'CCPA'],
+    description: 'User downloaded their own data from settings',
   },
   [AUDIT_EVENTS.USER_LOGIN_FAILED]: {
     severity: 'warning',
@@ -826,6 +852,35 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'warning',
     complianceFlags: ['SOC2'],
     description: 'An invoice was marked paid manually',
+  },
+
+  // Subscription billing. Registered for Layer 3 step 0 (WC-12) with exactly the
+  // severity and flags the Stripe routes sent before, including FINANCIAL, so
+  // their stored rows do not change.
+  [AUDIT_EVENTS.SUBSCRIPTION_CHECKOUT_INITIATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Subscription checkout started',
+  },
+  [AUDIT_EVENTS.BOOST_PACK_CHECKOUT_INITIATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Boost pack checkout started',
+  },
+  [AUDIT_EVENTS.SUBSCRIPTION_CANCELED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Subscription set to cancel at period end',
+  },
+  [AUDIT_EVENTS.SUBSCRIPTION_REACTIVATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Subscription reactivated',
+  },
+  [AUDIT_EVENTS.CUSTOMER_PORTAL_ACCESSED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'Stripe customer portal opened',
   },
 };
 
