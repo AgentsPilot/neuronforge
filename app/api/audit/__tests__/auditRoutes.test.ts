@@ -12,8 +12,12 @@ const mockGetUser = jest.fn();
 jest.mock('@/lib/auth', () => ({ getUser: () => mockGetUser() }));
 
 const mockLog = jest.fn();
+const mockFlush = jest.fn();
 jest.mock('@/lib/services/AuditTrailService', () => ({
-  AuditTrail: { log: (...args: unknown[]) => mockLog(...args) },
+  AuditTrail: {
+    log: (...args: unknown[]) => mockLog(...args),
+    flush: (...args: unknown[]) => mockFlush(...args),
+  },
 }));
 
 const mockListOwnerEntries = jest.fn();
@@ -70,6 +74,8 @@ beforeEach(() => {
   mockGetUser.mockReset();
   mockLog.mockReset();
   mockLog.mockResolvedValue(undefined);
+  mockFlush.mockReset();
+  mockFlush.mockResolvedValue(undefined);
   mockListOwnerEntries.mockReset();
   mockListOwnerEntries.mockResolvedValue({ data: PAGE, error: null });
   mockLogged.length = 0;
@@ -245,6 +251,59 @@ describe.each(WRITE_URLS)('POST %s', (url) => {
     mockLog.mockReturnValue(new Promise(() => undefined)); // never settles
     const res = await handler(post(url, valid));
     expect(res.status).toBe(200);
+  });
+});
+
+/**
+ * FR-29 (Layer 3, KI-F): a logout is usually the last request on its serverless
+ * instance, so its queued entry was lost in production. The logout write queues
+ * the entry and then flushes, within about 2 s, before responding; nothing else
+ * flushes, and a failed or slow flush never blocks the logout.
+ */
+describe('flush on logout (FR-29)', () => {
+  const logout = { action: 'USER_LOGOUT', entityType: 'user', entityId: OWNER_A.id, details: { method: 'settings' } };
+
+  it.each(WRITE_URLS)('%s: a logout queues the entry, then flushes exactly once, then answers success', async (url) => {
+    mockGetUser.mockResolvedValue(OWNER_A);
+    const order: string[] = [];
+    mockLog.mockImplementation(async () => void order.push('log'));
+    mockFlush.mockImplementation(async () => void order.push('flush'));
+
+    const res = await writeHandler(url)(post(url, logout));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).success).toBe(true);
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['log', 'flush']); // queued before the flush looks at the queue
+    expect(mockLog.mock.calls[0][0]).toMatchObject({ action: 'USER_LOGOUT', userId: OWNER_A.id });
+  });
+
+  it('still answers success when the flush throws, and logs it without content', async () => {
+    mockGetUser.mockResolvedValue(OWNER_A);
+    mockFlush.mockRejectedValue(new Error('database unreachable'));
+    const res = await logPOST(post('http://localhost/api/audit/log', logout));
+    expect(res.status).toBe(200);
+    expect(mockLogged.some((l) => l.level === 'error' && l.msg === 'Audit flush on logout failed; logout continues')).toBe(true);
+  });
+
+  it('still answers success, after about 2 s, when the flush hangs', async () => {
+    mockGetUser.mockResolvedValue(OWNER_A);
+    mockFlush.mockReturnValue(new Promise(() => undefined)); // never settles
+    const started = Date.now();
+    const res = await logPOST(post('http://localhost/api/audit/log', logout));
+    const elapsed = Date.now() - started;
+    expect(res.status).toBe(200);
+    expect(elapsed).toBeGreaterThanOrEqual(1900);
+    expect(elapsed).toBeLessThan(5000);
+    expect(mockLogged.some((l) => l.level === 'warn' && l.msg === 'Audit flush on logout timed out; logout continues')).toBe(true);
+  }, 10_000);
+
+  it('any other event does not flush', async () => {
+    mockGetUser.mockResolvedValue(OWNER_A);
+    await logPOST(post('http://localhost/api/audit/log', { action: 'SETTINGS_PROFILE_UPDATED', entityType: 'user' }));
+    await logPOST(post('http://localhost/api/audit/log', { action: 'USER_LOGIN', entityType: 'user' }));
+    expect(mockLog).toHaveBeenCalledTimes(2);
+    expect(mockFlush).not.toHaveBeenCalled();
   });
 });
 

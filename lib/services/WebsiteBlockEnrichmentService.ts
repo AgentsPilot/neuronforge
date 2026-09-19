@@ -16,6 +16,7 @@ import { BusinessProfileRepository } from '@/lib/repositories/BusinessProfileRep
 import { UserCapabilityRepository } from '@/lib/repositories/UserCapabilityRepository';
 import { websiteAIContentService, type WebsiteLanguage } from './WebsiteAIContentService';
 import { newBosGroupId, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 
 const logger = createLogger({ service: 'WebsiteBlockEnrichmentService' });
 
@@ -249,16 +250,30 @@ export class WebsiteBlockEnrichmentService {
     const sharedGroupId =
       groupId ?? (useAI ? this.mintGroupId({ userId, blockCount: blocks.length }) : undefined);
 
-    const enrichedBlocks = await Promise.all(
-      blocks.map(async (block) => {
-        const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI, userEmail, isSingleServicePage, sharedGroupId);
-        return {
-          ...block,
-          content: result.content,
-          enriched: result.enriched
-        };
-      })
-    );
+    const enrichAll = () =>
+      Promise.all(
+        blocks.map(async (block) => {
+          const result = await this.enrichBlock(userId, block.block_type, block.content, language, useAI, userEmail, isSingleServicePage, sharedGroupId);
+          return {
+            ...block,
+            content: result.content,
+            enriched: result.enriched
+          };
+        })
+      );
+
+    /*
+     * An audit entry only when THIS call minted the group, i.e. it is its own
+     * owner action (Layer 3, FR-12). A caller that passed a group owns the
+     * action and its entry. Dormant: no production trigger today (KI-3).
+     */
+    const enrichedBlocks =
+      !groupId && sharedGroupId
+        ? await runAiAction(
+            { area: 'website', actionType: 'website_block_enrichment', groupId: sharedGroupId, trigger: 'user', accountId: userId },
+            enrichAll
+          )
+        : await enrichAll();
 
     const enrichedCount = enrichedBlocks.filter(b => b.enriched).length;
     logger.info({ userId, totalBlocks: blocks.length, enrichedCount, language, useAI }, 'Blocks enrichment complete');

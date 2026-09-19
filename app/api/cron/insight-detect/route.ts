@@ -46,6 +46,7 @@ import { DetectorEngine } from '@/lib/business-os/insight/detectors';
 import { InsightPrioritizer } from '@/lib/business-os/insight/prioritizer';
 import { InsightRepository } from '@/lib/business-os/insight/repository';
 import { getCorrelationEngine } from '@/lib/business-os/insight/correlation';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 
 const logger = createLogger({ module: 'InsightDetectCron' });
 
@@ -204,75 +205,88 @@ export async function GET(request: NextRequest) {
     // Process each user
     for (const userId of userIds) {
       try {
-        // Get user's locale preferences for localized content
-        const userLocale = await getUserLocale(userId);
+        /*
+         * One AI action per business per run (Layer 3, FR-10, D-3): its insight,
+         * correlated-insight and health-summary calls share the run's group and
+         * become ONE entry, on the platform actor, trigger `scheduled`. A throw is
+         * recorded as that business's FAILED entry and rethrown unchanged to the
+         * catch below, which logs it and moves on to the next business (WC-8). A
+         * business with no detections makes no call and writes no entry.
+         */
+        await runAiAction(
+          { area: 'insights', actionType: 'insight_run', groupId: runId, trigger: 'scheduled', accountId: userId, correlationId },
+          async () => {
+            // Get user's locale preferences for localized content
+            const userLocale = await getUserLocale(userId);
 
-        // Run all detectors
-        const detections = await detectorEngine.runForUser(userId);
-        // Detectors whose vector is dark are skipped, so count what ran.
-        stats.detectorsRun += detectorEngine.getLastEvaluatedCount();
+            // Run all detectors
+            const detections = await detectorEngine.runForUser(userId);
+            // Detectors whose vector is dark are skipped, so count what ran.
+            stats.detectorsRun += detectorEngine.getLastEvaluatedCount();
 
-        if (detections.length > 0) {
-          stats.detectionsFound += detections.length;
+            if (detections.length > 0) {
+              stats.detectionsFound += detections.length;
 
-          // Set locale for this user before correlating
-          correlationEngine.setLocale(userLocale);
+              // Set locale for this user before correlating
+              correlationEngine.setLocale(userLocale);
 
-          // Run correlation engine to find connected patterns
-          const correlationSummary = correlationEngine.correlate(detections);
-          stats.patternsMatched += correlationSummary.patternsMatched;
+              // Run correlation engine to find connected patterns
+              const correlationSummary = correlationEngine.correlate(detections);
+              stats.patternsMatched += correlationSummary.patternsMatched;
 
-          // Map to track detector -> insight ID for linking
-          const detectorToInsightId = new Map<string, string>();
+              // Map to track detector -> insight ID for linking
+              const detectorToInsightId = new Map<string, string>();
 
-          // Prioritize ALL detections (both correlated and standalone)
-          const prioritized = await prioritizer.getTopInsights(userId, detections, 10);
+              // Prioritize ALL detections (both correlated and standalone)
+              const prioritized = await prioritizer.getTopInsights(userId, detections, 10);
 
-          // Store individual insights first
-          const result = await repository.createBatch(userId, prioritized, runId);
+              // Store individual insights first
+              const result = await repository.createBatch(userId, prioritized, runId);
 
-          if (result.data) {
-            stats.insightsCreated += result.data.length;
+              if (result.data) {
+                stats.insightsCreated += result.data.length;
 
-            // Build detector -> insight ID mapping
-            for (const insight of result.data) {
-              detectorToInsightId.set(insight.detector_id, insight.id);
-            }
-          }
+                // Build detector -> insight ID mapping
+                for (const insight of result.data) {
+                  detectorToInsightId.set(insight.detector_id, insight.id);
+                }
+              }
 
-          // If we have correlated insights, save them with health summary
-          if (correlationSummary.correlatedInsights.length > 0) {
-            const correlationResult = await repository.saveCorrelationResults(
-              userId,
-              correlationSummary,
-              detectorToInsightId,
-              runId
-            );
+              // If we have correlated insights, save them with health summary
+              if (correlationSummary.correlatedInsights.length > 0) {
+                const correlationResult = await repository.saveCorrelationResults(
+                  userId,
+                  correlationSummary,
+                  detectorToInsightId,
+                  runId
+                );
 
-            if (correlationResult.data) {
-              stats.correlatedInsightsCreated += correlationResult.data.correlatedInsights.length;
-              if (correlationResult.data.healthSummary) {
-                stats.healthSummariesCreated++;
+                if (correlationResult.data) {
+                  stats.correlatedInsightsCreated += correlationResult.data.correlatedInsights.length;
+                  if (correlationResult.data.healthSummary) {
+                    stats.healthSummariesCreated++;
+                  }
+                }
+              } else {
+                // No correlations but we might still want a health summary
+                const { data: allInsights } = await repository.findActive(userId, 50);
+                if (allInsights && allInsights.length > 0) {
+                  const healthResult = await repository.createOrUpdateHealthSummary(
+                    userId,
+                    correlationSummary,
+                    allInsights,
+                    runId
+                  );
+                  if (healthResult.data) {
+                    stats.healthSummariesCreated++;
+                  }
+                }
               }
             }
-          } else {
-            // No correlations but we might still want a health summary
-            const { data: allInsights } = await repository.findActive(userId, 50);
-            if (allInsights && allInsights.length > 0) {
-              const healthResult = await repository.createOrUpdateHealthSummary(
-                userId,
-                correlationSummary,
-                allInsights,
-                runId
-              );
-              if (healthResult.data) {
-                stats.healthSummariesCreated++;
-              }
-            }
-          }
-        }
 
-        stats.usersProcessed++;
+            stats.usersProcessed++;
+          }
+        );
 
       } catch (error) {
         requestLogger.error(

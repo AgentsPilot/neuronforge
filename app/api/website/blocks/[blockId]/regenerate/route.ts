@@ -10,6 +10,7 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { WebsiteBlockRepository } from '@/lib/repositories/WebsiteBlockRepository';
 import { WebsiteAIContentService, type WebsiteLanguage } from '@/lib/services/WebsiteAIContentService';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'RegenerateFieldAPI' });
@@ -70,13 +71,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Use AI service to regenerate the field
     const aiService = new WebsiteAIContentService();
-    const regeneratedValue = await aiService.regenerateField({
-      blockType: validated.blockType,
-      targetLanguage: validated.language as WebsiteLanguage,
-      businessProfile: profile || undefined,
-      existingContent: validated.context?.existingContent || blockResult.data.content,
-      fieldToRegenerate: validated.field
-    }, { userId: user.id, groupId });
+    // Read before the callback: TypeScript does not carry the null check into it.
+    const existingContent = validated.context?.existingContent || blockResult.data.content;
+    // One AI action, one audit entry (Layer 3, FR-12).
+    const regeneratedValue = await runAiAction(
+      { area: 'website', actionType: 'website_field_regenerate', groupId, trigger: 'user', accountId: user.id },
+      () =>
+        aiService.regenerateField({
+          blockType: validated.blockType,
+          targetLanguage: validated.language as WebsiteLanguage,
+          businessProfile: profile || undefined,
+          existingContent,
+          fieldToRegenerate: validated.field
+        }, { userId: user.id, groupId })
+    );
 
     requestLogger.info(
       { userId: user.id, blockId, field: validated.field },

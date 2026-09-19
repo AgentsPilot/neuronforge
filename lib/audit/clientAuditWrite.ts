@@ -18,8 +18,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getUser } from '@/lib/auth';
-import { createLogger } from '@/lib/logger';
+import { createLogger, type Logger } from '@/lib/logger';
 import { AuditTrail } from '@/lib/services/AuditTrailService';
+import { AUDIT_EVENTS } from './events';
 import { generateDiff } from './diff';
 import { AuditWriteBodySchema, stripReservedDetailKeys } from './requestSchemas';
 import type { EntityType } from './types';
@@ -33,6 +34,55 @@ const SUCCESS_MESSAGE: Record<ClientAuditWriteRoute, string> = {
   '/api/audit/log': 'Audit log recorded',
   '/api/audit-trail': 'Audit trail logged successfully',
 };
+
+/**
+ * FR-29 (Layer 3, KI-F): how long a logout waits for the audit queue to be
+ * written. A logout is usually the last request its serverless instance serves,
+ * so an entry left in the queue is lost when the instance freezes; production
+ * showed exactly that on 2026-09-19. Bounded, so a slow database never holds
+ * up signing out.
+ */
+export const LOGOUT_FLUSH_TIMEOUT_MS = 2000;
+
+/**
+ * Queue the logout entry and write the queue before responding, within
+ * LOGOUT_FLUSH_TIMEOUT_MS. Never throws: a failure or a timeout is logged
+ * (ids only) and the logout proceeds. AuditTrailService itself is unchanged
+ * (D-4); this uses its public `log()` and `flush()`.
+ *
+ * `log()` is awaited here, unlike every other write: it resolves once the entry
+ * is QUEUED (it writes nothing unless the batch is full), and `flush()` called
+ * before that would find the entry not yet in the queue.
+ */
+async function logAndFlushOnLogout(
+  entry: Parameters<typeof AuditTrail.log>[0],
+  requestLogger: Logger
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), LOGOUT_FLUSH_TIMEOUT_MS);
+  });
+  try {
+    const outcome = await Promise.race([
+      (async () => {
+        await AuditTrail.log(entry);
+        await AuditTrail.flush();
+        return 'flushed' as const;
+      })(),
+      timeout,
+    ]);
+    if (outcome === 'timeout') {
+      requestLogger.warn(
+        { userId: entry.userId, timeoutMs: LOGOUT_FLUSH_TIMEOUT_MS },
+        'Audit flush on logout timed out; logout continues'
+      );
+    }
+  } catch (err) {
+    requestLogger.error({ err, userId: entry.userId }, 'Audit flush on logout failed; logout continues');
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** Whether a value is a plain JSON object (used only to inspect a rejected body). */
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -97,9 +147,7 @@ export async function handleClientAuditWrite(
     const body = parsed.data;
     const changes = body.before && body.after ? generateDiff(body.before, body.after) : null;
 
-    // Not awaited: an audit write never holds up the caller. The service queues
-    // the entry and never rejects (silent by default); the catch is a backstop.
-    void AuditTrail.log({
+    const entry = {
       action: body.action,
       entityType: body.entityType as EntityType, // checked against CLIENT_WRITABLE_ENTITY_TYPES by the schema
       entityId: body.entityId ?? null,
@@ -110,9 +158,18 @@ export async function handleClientAuditWrite(
       // The service's own keys (system_action, changeSummary) are never taken from a client (CR-2).
       details: body.details ? stripReservedDetailKeys(body.details) : undefined,
       request,
-    }).catch((err: unknown) =>
-      requestLogger.error({ err, userId: user.id, action: body.action }, 'Audit write could not be queued')
-    );
+    };
+
+    if (body.action === AUDIT_EVENTS.USER_LOGOUT) {
+      // FR-29: the one write that flushes, bounded (see logAndFlushOnLogout).
+      await logAndFlushOnLogout(entry, requestLogger);
+    } else {
+      // Not awaited: an audit write never holds up the caller. The service queues
+      // the entry and never rejects (silent by default); the catch is a backstop.
+      void AuditTrail.log(entry).catch((err: unknown) =>
+        requestLogger.error({ err, userId: user.id, action: body.action }, 'Audit write could not be queued')
+      );
+    }
 
     return NextResponse.json({ success: true, message: SUCCESS_MESSAGE[route] });
   } catch (error) {

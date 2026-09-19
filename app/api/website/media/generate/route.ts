@@ -13,6 +13,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { generateImage, generationAllowance } from '@/lib/services/GeneratedImageService';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 
 const logger = createLogger({ module: 'WebsiteMediaGenerateAPI' });
 
@@ -48,11 +49,20 @@ export async function POST(request: NextRequest) {
     const groupId = newBosGroupId();
     requestLogger.info({ userId: user.id, groupId, section: validated.section }, 'Image generation requested');
 
-    const result = await generateImage(
-      { userId: user.id, groupId },
-      validated.prompt,
-      validated.aspect,
-      validated.section ?? 'custom'
+    // One AI action, one audit entry (Layer 3, FR-15). A reuse-cache hit, a
+    // refusal or the daily cap makes no provider call, so it writes none.
+    const result = await runAiAction(
+      { area: 'images', actionType: 'image_generation', groupId, trigger: 'user', accountId: user.id, correlationId },
+      async (h) => {
+        const outcome = await generateImage(
+          { userId: user.id, groupId },
+          validated.prompt,
+          validated.aspect,
+          validated.section ?? 'custom'
+        );
+        if (!outcome.ok && outcome.reason === 'failed') h.markFailed('image_failed');
+        return outcome;
+      }
     );
 
     if (!result.ok) {

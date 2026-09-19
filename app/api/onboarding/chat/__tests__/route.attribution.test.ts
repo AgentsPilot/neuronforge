@@ -29,6 +29,12 @@ jest.mock('@/lib/logger', () => {
   return { createLogger: () => make() };
 });
 
+// Layer 3: the AI audit entry is observed at AuditTrail.log.
+const mockAuditLog = jest.fn();
+jest.mock('@/lib/services/AuditTrailService', () => ({
+  AuditTrail: { log: (...a: unknown[]) => mockAuditLog(...a) },
+}));
+
 // No LLM runs in this test: processUserMessage is spied on below.
 jest.mock('@/lib/ai/providerFactory', () => ({
   getProviderFactory: () => ({ complete: jest.fn().mockResolvedValue({ content: '{}' }) }),
@@ -60,7 +66,9 @@ jest.mock('@/lib/supabaseServer', () => ({
 
 import { POST } from '../route';
 import { OnboardingConversationManager, type OnboardingState } from '@/lib/services/OnboardingConversationManager';
-import { isUuid, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { buildBosCallContext, isUuid, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { BaseAIProvider } from '@/lib/ai/providers/baseProvider';
+import type { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 
 const USER = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'owner@example.com' };
 const BODY_CONVERSATION_ID = '99999999-9999-4999-8999-999999999999';
@@ -166,5 +174,78 @@ describe('POST /api/onboarding/chat — the owner\'s text is never logged (OI-7)
       const processing = mockLogged.find((l) => l.msg === 'Processing onboarding message');
       expect(processing).toMatchObject({ level: 'info', fields: { userId: USER.id, messageLength: SENTINEL.length } });
     }
+  });
+});
+
+/**
+ * Layer 3 (FR-14, AC-13): one audit entry per onboarding turn that made an LLM
+ * call, every turn of a conversation sharing its group, each with only its own
+ * calls. The manager is faked to make real tracked calls through
+ * BaseAIProvider.callWithTracking under the owner it is handed.
+ */
+describe('POST /api/onboarding/chat — AI audit entry per turn (Layer 3)', () => {
+  class FakeProvider extends BaseAIProvider {
+    readonly defaultModel = 'm';
+    readonly defaultMaxTokens = 1;
+    readonly supportsResponseFormat = false;
+    getMaxOutputTokens(): number {
+      return 1;
+    }
+    async chatCompletion(): Promise<unknown> {
+      throw new Error('unused');
+    }
+  }
+  const provider = new FakeProvider({ trackAICall: async () => undefined } as unknown as AIAnalyticsService);
+  const OWNER_TEXT = 'OWNER-TEXT-MARKER-o7 we sell private yoga';
+
+  function turnMakes(calls: number) {
+    processSpy.mockImplementation(async (owner: BosLlmOwner, _message: string, currentState: OnboardingState) => {
+      for (let i = 0; i < calls; i++) {
+        await provider.callWithTracking(
+          buildBosCallContext({ userId: owner.userId, area: 'onboarding', callName: 'business_story_extraction', groupId: owner.groupId }),
+          'openai',
+          'gpt-test',
+          'chat/completions',
+          async () => ({}),
+          () => ({ inputTokens: 100, outputTokens: 30, cost: 0.002 })
+        );
+      }
+      return { response: 'ok', updatedState: currentState };
+    });
+  }
+
+  const aiEntries = () => mockAuditLog.mock.calls.map((c) => c[0]).filter((e) => e.entityType === 'ai_action');
+
+  beforeEach(() => {
+    mockAuditLog.mockReset();
+    mockAuditLog.mockResolvedValue(undefined);
+  });
+
+  it('writes one entry per turn, on the owner, grouped by the conversation, with only that turn\'s calls', async () => {
+    lastMessages = [snapshotRow({ currentStep: 'business_story', collectedData: {}, language: 'en', attributionGroupId: EXISTING_GROUP })];
+    turnMakes(2);
+    await POST(req({ message: OWNER_TEXT }));
+    turnMakes(1);
+    await POST(req({ message: OWNER_TEXT }));
+
+    const entries = aiEntries();
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(entry).toMatchObject({
+        action: 'BUSINESS_AI_ACTION_COMPLETED',
+        entityId: EXISTING_GROUP,
+        userId: USER.id,
+        actorId: USER.id,
+        details: expect.objectContaining({ area: 'onboarding', actionType: 'onboarding_turn', trigger: 'user' }),
+      });
+    }
+    expect(entries.map((e) => e.details.callCount)).toEqual([2, 1]);
+    expect(JSON.stringify(entries)).not.toContain('OWNER-TEXT-MARKER-o7');
+  });
+
+  it('writes nothing for a turn that made no LLM call', async () => {
+    turnMakes(0);
+    await POST(req({ message: 'English' }));
+    expect(aiEntries()).toHaveLength(0);
   });
 });

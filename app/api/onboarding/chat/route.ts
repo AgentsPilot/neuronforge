@@ -20,6 +20,7 @@ import {
   Language,
 } from '@/lib/services/OnboardingConversationManager';
 import { onboardingConfigurationService } from '@/lib/services/OnboardingConfigurationService';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'OnboardingChatAPI' });
@@ -214,11 +215,24 @@ export async function POST(request: NextRequest) {
 
     // The account is the signed-in user and the group comes from the persisted
     // state — never from the request body's `conversationId` (FR-1, FR-4b).
-    const result = await manager.processUserMessage(
-      { userId: user.id, groupId: currentState.attributionGroupId },
-      data.message,
-      currentState,
-      data.services
+    // One owner turn, one AI action and audit entry (Layer 3, FR-14). Every turn
+    // of the conversation shares its group; a turn with no LLM call writes none.
+    const result = await runAiAction(
+      {
+        area: 'onboarding',
+        actionType: 'onboarding_turn',
+        groupId: currentState.attributionGroupId,
+        trigger: 'user',
+        accountId: user.id,
+        correlationId,
+      },
+      () =>
+        manager.processUserMessage(
+          { userId: user.id, groupId: currentState.attributionGroupId },
+          data.message,
+          currentState,
+          data.services
+        )
     );
 
     // 6. Store assistant response

@@ -19,6 +19,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { intakeGenerationService } from '@/lib/services/IntakeGenerationService';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActionAudit';
 
 const logger = createLogger({ module: 'IntakeGenerateAPI' });
 
@@ -49,10 +50,18 @@ export async function POST(request: NextRequest) {
     const groupId = newBosGroupId();
     requestLogger.info({ userId: user.id, groupId }, 'Generating intake form');
 
-    const result = await intakeGenerationService.generateIntakeForm(user.id, {
-      groupId,
-      regenerate: parsed.data.regenerate,
-    });
+    // One AI action, one audit entry (Layer 3, FR-12).
+    const result = await runAiAction(
+      { area: 'intake', actionType: 'intake_form_generation', groupId, trigger: 'user', accountId: user.id },
+      async (h) => {
+        const generated = await intakeGenerationService.generateIntakeForm(user.id, {
+          groupId,
+          regenerate: parsed.data.regenerate,
+        });
+        markGenerationResult(h, generated);
+        return generated;
+      }
+    );
 
     if (!result.success) {
       requestLogger.error({ userId: user.id, error: result.error }, 'Intake generation failed');
