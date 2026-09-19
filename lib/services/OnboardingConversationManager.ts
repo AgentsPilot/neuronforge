@@ -508,6 +508,32 @@ function needsAPrice(service: { price?: number | null; sale_mode?: 'direct' | 'p
   return service.price === null || service.price === undefined;
 }
 
+/** Words and phrases that mean "no charge", in each onboarding language. Matched whole, lowercased. */
+const FREE_PRICE_WORDS = [
+  'free', 'no charge', 'free of charge',
+  'חינם', 'בחינם', 'ללא תשלום', 'בלי תשלום', 'ללא עלות',
+  'gratis', 'gratuito', 'gratuita', 'sin costo', 'sin cargo',
+];
+
+/** Free only as the entire reply — inside a sentence they hedge ("nothing fixed yet"). */
+const FREE_WHOLE_REPLIES = ['nothing', 'nada'];
+
+/** Currency words stripped before the number is read, bounded like whole words (see `containsWholeWord`). */
+const PRICE_CURRENCY_WORDS =
+  /(?<![\p{L}\p{N}])(?:שקלים|שקל|ש"ח|שח|nis|ils|usd|eur|dollars|dollar|euros|euro)(?![\p{L}\p{N}])/gu;
+
+/**
+ * Whether `word` appears in `text` as a whole word or phrase.
+ *
+ * Unicode-aware: `\b` treats Hebrew letters as non-word characters, so it
+ * cannot bound a Hebrew word. A letter or digit on either side disqualifies
+ * the match — "freelance" does not contain "free", "100" does not contain "0".
+ */
+function containsWholeWord(text: string, word: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'u').test(text);
+}
+
 export class OnboardingConversationManager {
   private configService: OnboardingConfigurationService;
 
@@ -1451,35 +1477,48 @@ export class OnboardingConversationManager {
     return 'client_acquisition';
   }
 
+  /**
+   * The price in a reply to "what does X cost?", 0 for an explicit "free",
+   * null when there is no price in it.
+   *
+   * "Free" is a whole word or phrase, never a substring: the list used to hold
+   * '0' and was matched with `includes`, so "100", "250 ILS" and "₪1,200" were
+   * all recorded as free, and "freelance rate 90" matched 'free'. A bare zero
+   * counts as free only when it is the whole reply, currency aside ("0", "$0").
+   *
+   * Logs lengths and the parsed value only — never the owner's text (OI-7).
+   */
   private extractPriceFromMessage(message: string): number | null {
     const trimmed = message.trim();
+    const lower = trimmed.toLowerCase();
 
-    // Check for explicit "free" indicators
-    const freePatterns = ['free', 'חינם', 'gratis', '0', 'nothing', 'no charge', 'בחינם', 'ללא תשלום'];
-    if (freePatterns.some(p => trimmed.toLowerCase() === p || trimmed.toLowerCase().includes(p))) {
+    // Remove currency symbols and common currency words to extract the number.
+    // `\b` does not see Hebrew letters as word characters, so the edges are
+    // Unicode-aware lookarounds instead.
+    const cleanedMessage = lower
+      .replace(/[₪$€]/g, ' ')
+      .replace(PRICE_CURRENCY_WORDS, ' ')
+      .trim();
+
+    if (/^0+(?:\.0+)?$/.test(cleanedMessage)
+      || FREE_WHOLE_REPLIES.includes(cleanedMessage.replace(/[.!]+$/, ''))
+      || FREE_PRICE_WORDS.some(word => containsWholeWord(lower, word))) {
+      logger.info({ messageLength: trimmed.length, extracted: 0 }, 'Extracted free price from message');
       return 0;
     }
 
-    // Remove currency symbols and common currency words to extract the number
-    // Supports: ₪, $, €, שקל, שקלים, dollar, dollars, euro, euros, NIS, ILS, USD, EUR
-    const cleanedMessage = trimmed
-      .replace(/[₪$€]/g, '')
-      .replace(/\b(שקל|שקלים|ש"ח|שח|nis|ils|usd|eur|dollar|dollars|euro|euros)\b/gi, '')
-      .trim();
-
-    // Try to find a number in the cleaned message
-    // Match integers or decimals (e.g., 100, 99.99, 1,500)
-    const numberMatch = cleanedMessage.match(/[\d,]+(?:\.\d+)?/);
+    // Integers or decimals, with thousands separators (100, 99.99, 1,500).
+    // Starts on a digit so a stray comma is never taken as the number.
+    const numberMatch = cleanedMessage.match(/\d[\d,]*(?:\.\d+)?/);
     if (numberMatch) {
-      // Remove commas and parse as float
       const parsed = parseFloat(numberMatch[0].replace(/,/g, ''));
       if (!isNaN(parsed) && parsed >= 0) {
-        logger.info({ extracted: parsed, messageLength: message.length }, 'Extracted price from message');
+        logger.info({ messageLength: trimmed.length, extracted: parsed }, 'Extracted price from message');
         return parsed;
       }
     }
 
-    logger.warn({ messageLength: message.length }, 'Could not extract numeric price from message');
+    logger.warn({ messageLength: trimmed.length }, 'Could not extract numeric price from message');
     return null;
   }
 
