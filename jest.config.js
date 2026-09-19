@@ -33,7 +33,16 @@ const config = {
   testPathIgnorePatterns: [
     '/node_modules/',
     '/.next/',
+    // Agent worktrees live under .claude/worktrees/ inside the repo. Without
+    // this, Jest collects their (stale, other-branch) copies of every test too.
+    // Anchored to <rootDir> on purpose: an unanchored '/.claude/' matches EVERY
+    // path when Jest itself runs from inside a .claude/worktrees/* checkout, so
+    // that checkout would silently collect 0 tests.
+    '<rootDir>/.claude/',
   ],
+  // Same reason, for module resolution: without this, the worktrees' copies of
+  // __mocks__/ trigger "duplicate manual mock found" warnings.
+  modulePathIgnorePatterns: ['<rootDir>/.claude/'],
   // Setup files — set Supabase env stubs before module loading (harmless if already set)
   setupFiles: ['<rootDir>/tests/plugins/jest-setup.ts'],
   setupFilesAfterEnv: [],

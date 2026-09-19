@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for AgentPilot
 
-> **Last Updated**: 2026-04-07  
+> **Last Updated**: 2026-09-19  
 > This file is the project's root context document and is exempt from the standard docs ToC requirement.
 
 ## Overview
@@ -646,22 +646,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 |---|---|---|
 | Unit | Jest | Pure functions, hooks, utilities, Zod schemas |
 | Integration | Jest + Supabase test client | API routes, repositories, service logic |
-| E2E | Playwright | Critical user journeys (agent creation, plugin connection, execution) |
+| E2E | **Not set up yet** | Playwright is not installed: no config, no `e2e/` folder, no `test:e2e` script. Critical user journeys are verified manually by QA for now. |
 
-**File location:** Co-located (`*.test.ts`) for unit tests, `__tests__/` for integration, `e2e/` for Playwright.
+**File location:** Co-located (`*.test.ts`) for unit tests, `__tests__/` for integration.
 
 **Coverage expectations:**
 - New API routes: integration test covering happy path + auth failure + invalid input
 - New repositories: unit test for each method
-- New UI flows: Playwright test for the critical path
+- New UI flows: until E2E exists, QA records a manual check of the critical path in the workplan's QA report. A source-level Jest guard can back it up where one fits (e.g. `lib/__tests__/system-initializer-removed.guard.test.ts`).
 
 **Before any code is committed:** QA agent must confirm at minimum the happy path and one failure path are tested.
+
+> Adding Playwright (or any E2E tool) is a new tooling pattern and needs SA review first.
 
 ### Commands
 
 ```bash
-npm test           # Run Jest tests
-npm run test:e2e   # Run Playwright tests
+npm test                     # Run the full Jest suite (jest.config.js ignores .claude/ worktrees)
+npm test -- path/to/tests    # Run a subset (any extra Jest args after --)
+npm run test:plugins         # Plugin tests only (tests/plugins/)
 ```
 
 ---
@@ -776,3 +779,4 @@ npm run lint       # ESLint
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-04-07 | Resolved merge conflicts | Merged 13 conflicts between comprehensive (agent team, design principles, security, testing, deprecated) and lean branches. Kept comprehensive version with additional Code Quality gotcha entries from lean branch. |
+| 2026-09-19 | Corrected Testing section | E2E/Playwright is documented as not set up yet (it was never installed, and `npm run test:e2e` did not exist). `npm test` now exists and runs Jest; `jest.config.js` ignores `.claude/` worktrees. Adding E2E needs SA review. |
