@@ -553,24 +553,31 @@ Log: `✅ Generated: lib/server/{pluginName}-plugin-executor.ts`
 
 **If `mode = "extend"`**: Skip (already registered).
 
-#### **9a. Register in Plugin Manager**
+#### **9a. Register in the Plugin Profile**
 
-**File**: `lib/server/plugin-manager-v2.ts`
+**File**: `lib/server/plugin-profile.ts`
 
-**Read the file**, then add to `corePluginFiles` array:
+**Read the file**, then add the plugin **key** (not the filename; the loader derives `{pluginName}-plugin-v2.json`) to `PLUGIN_PROFILES.all`:
 
 ```typescript
-const corePluginFiles = [
-  'google-mail-plugin-v2.json',
-  // ... existing plugins
-  '{pluginName}-plugin-v2.json',
-  // Add other plugin files here as you create them
-];
+export const PLUGIN_PROFILES = Object.freeze({
+  all: Object.freeze([
+    'google-mail',
+    // ... existing plugins
+    '{pluginName}',
+  ]),
+  business_os: Object.freeze([
+    // Add '{pluginName}' here ONLY if Business OS invokes it at runtime,
+    // keeping business_os an ordered subsequence of all.
+  ]),
+});
 ```
+
+`all` must list every definition file exactly once; `tests/plugins/unit-tests/plugin-registry-integrity.test.ts` enforces it. While the committed active profile is `business_os`, a new non-BOS plugin is registered but **not loaded**: to test it, set `ACTIVE_PLUGIN_PROFILE` to `'all'` locally and do not commit that change.
 
 **Use Edit tool** to update the file.
 
-Log: `✅ Updated: lib/server/plugin-manager-v2.ts`
+Log: `✅ Updated: lib/server/plugin-profile.ts`
 
 #### **9b. Register in Plugin Executor**
 
@@ -901,7 +908,7 @@ Create a unit test file at `tests/plugins/unit-tests/{pluginName}.test.ts`.
 5. Cover every action with minimum 3 tests: happy-path (smoke), error-path (full), edge-case (full)
 6. If the plugin uses an external SDK (not raw `fetch`), mock the SDK module with `jest.mock()`
 7. If the plugin needs non-standard connection fields (e.g., `instance_url`), add defaults to `PLUGIN_DEFAULTS` in `tests/plugins/common/mock-connection.ts`
-8. Ensure the plugin JSON definition is listed in `corePluginFiles` in `lib/server/plugin-manager-v2.ts`
+8. Ensure the plugin key is listed in `PLUGIN_PROFILES.all` in `lib/server/plugin-profile.ts`
 
 **Verify tests pass:**
 ```bash

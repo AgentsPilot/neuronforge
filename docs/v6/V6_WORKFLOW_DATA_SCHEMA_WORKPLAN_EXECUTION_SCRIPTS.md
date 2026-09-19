@@ -1,6 +1,6 @@
 # V6 Pipeline — QA Testing Manual
 
-> **Last Updated**: 2026-03-26
+> **Last Updated**: 2026-09-19
 > **Branch**: `feature/v6-intent-contract-data-schema`
 > **Parent workplans**: [Execution Workplan](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_EXECUTION.md) · [Intent Contract Workplan](./V6_WORKFLOW_DATA_SCHEMA_WORKPLAN_INTENT_CONTRACT.md)
 
@@ -26,6 +26,7 @@ Before starting, ensure:
 - [ ] `.env.local` configured with Supabase URL/key, OpenAI API key, `TEST_USER_ID`
 - [ ] Dependencies installed (`npm install`)
 - [ ] On the correct branch (`feature/v6-intent-contract-data-schema` or the branch under test)
+- [ ] **Plugin profile set to `all` locally.** The committed plugin profile is `business_os`, so Gmail/Drive/Sheets (and other non-Business-OS) scenarios cannot ground or compile as committed. Set `ACTIVE_PLUGIN_PROFILE` to `'all'` in `lib/server/plugin-profile.ts` locally before running; **never commit that change**.
 
 ---
 
@@ -539,3 +540,4 @@ git commit -m "test(v6-regression): add <scenario-name> scenario"
 | 2026-03-23 | Initial version | Documented all 5 testing scripts with usage, arguments, I/O files |
 | 2026-03-26 | Rewritten as QA manual | Step-by-step testing flow, EP key hints validation, QA verdict format, regression suite integration |
 | 2026-05-17 | Phase E: `--use-db-dsl` flag added | New Mode B for `test-live-agent-execution.ts`: load DSL + workflow_config from agent's DB record instead of file; skips the agent-update step. Required for testing V2-UI-generated agents whose DSL only lives in DB. Step 7 expanded with mode-selection table; Quick Reference + CLI Arguments tables updated. Branch: `feature/v6-v2-integration`. |
+| 2026-09-19 | Plugin-profile prerequisite | Added the prerequisite to set `ACTIVE_PLUGIN_PROFILE` to `'all'` locally (never committed) before running, because the committed `business_os` profile does not load non-Business-OS plugins. User decision Option A in [BUSINESS_OS_PLUGIN_PROFILE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLUGIN_PROFILE_REQUIREMENT.md). |
