@@ -38,6 +38,43 @@ import {
 
 const logger = createLogger({ service: 'OnboardingConversationManager' });
 
+/**
+ * The adjustment intents the preview prompt allows (PREVIEW_ADJUSTMENT_PROMPT).
+ * The intent is whatever the model returned, so only one of these is logged at
+ * info as a label; anything else is model text and goes to debug (CR-3).
+ */
+const KNOWN_ADJUSTMENT_INTENTS: ReadonlySet<string> = new Set([
+  'add_capability',
+  'remove_capability',
+  'modify_services',
+  'modify_pipeline',
+  'change_payment_mode',
+  'restart',
+  'confirm',
+]);
+
+/** Info-safe fields for a model-returned intent: the label if known, else its length. */
+function intentFields(intent: unknown): { intent: string } | { intentLength: number } {
+  return typeof intent === 'string' && KNOWN_ADJUSTMENT_INTENTS.has(intent)
+    ? { intent }
+    : { intentLength: String(intent ?? '').length };
+}
+
+/**
+ * Logs an extractor failure. A JSON SyntaxError's message quotes the start of
+ * the model's output, which is derived owner text, so it gets only its name at
+ * error and the full error at debug (D-OI8, CR-2). Any other error, e.g. from
+ * the provider, keeps its full detail at error.
+ */
+function logExtractionFailure(error: unknown, message: string): void {
+  if (error instanceof SyntaxError) {
+    logger.error({ errName: error.name }, message);
+    logger.debug({ err: error }, `${message}: parse error detail`);
+    return;
+  }
+  logger.error({ err: error }, message);
+}
+
 // ============================================================
 // TYPES
 // ============================================================
@@ -533,8 +570,9 @@ export class OnboardingConversationManager {
     updatedState: OnboardingState;
     showPreview?: boolean;
   }> {
+    // Never the owner's raw text, at any level (OI-7): its length is enough to debug with.
     logger.debug(
-      { userId: owner.userId, groupId: owner.groupId, currentStep: currentState.currentStep, message },
+      { userId: owner.userId, groupId: owner.groupId, currentStep: currentState.currentStep, messageLength: message.length },
       'Processing user message'
     );
 
@@ -618,16 +656,22 @@ export class OnboardingConversationManager {
           language: updatedState.language,
         };
 
-        logger.info({ companyName: name }, 'Business name given');
+        // The name is the owner's raw text (it is the whole message), so only its length is logged (OI-7).
+        logger.info({ userId: owner.userId, groupId: owner.groupId, nameLength: name.length }, 'Business name given');
         updatedState.currentStep = 'business_story';
         break;
       }
 
       case 'business_story':
         // Deep extraction of business context
-        logger.info({ message }, 'Extracting business story from message');
+        logger.info(
+          { userId: owner.userId, groupId: owner.groupId, step: 'business_story', messageLength: message.length },
+          'Extracting business story from message'
+        );
         const businessStory = await this.extractBusinessStory(message, owner);
-        logger.info({ businessStory }, 'Business story extracted');
+        // The extraction paraphrases what the owner typed: debug only, so it
+        // shows locally and never in production, which runs at info (OI-8).
+        logger.debug({ businessStory }, 'Business story extracted');
 
         // Their own words win over the model's paraphrase.
         //
@@ -727,7 +771,10 @@ export class OnboardingConversationManager {
             break;
           }
           // If we couldn't extract a price, ask again (fall through to normal flow)
-          logger.warn({ messageLength: message.length }, 'Could not extract price from message');
+          logger.warn(
+            { userId: owner.userId, groupId: owner.groupId, step: 'service_details', messageLength: message.length },
+            'Could not extract price from message'
+          );
         }
 
         // Check if user just said "that's all" to the "more services?" question
@@ -801,7 +848,9 @@ export class OnboardingConversationManager {
         if (servicesMissingPrice.length > 0) {
           // Need to ask for price
           updatedState.pendingQuestion = 'need_price';
-          logger.info({ servicesMissingPrice: servicesMissingPrice.map(s => s.name) }, 'Services missing price');
+          // A count only: service names are what the owner typed on the form, or
+          // the model's paraphrase of it (CR-1).
+          logger.info({ servicesMissingPriceCount: servicesMissingPrice.length }, 'Services missing price');
           break;
         }
 
@@ -882,7 +931,10 @@ export class OnboardingConversationManager {
         // Recorded under the current group even when the intent is a restart:
         // this call belongs to the conversation that is ending.
         const adjustment = await this.extractAdjustmentIntent(message, owner);
-        logger.info({ adjustment }, 'Adjustment intent extracted');
+        // The intent is a label; its details are the owner's request as the
+        // model read it, so they go to debug only (OI-8).
+        logger.info(intentFields(adjustment.intent), 'Adjustment intent extracted');
+        logger.debug({ adjustment }, 'Adjustment intent extracted: details');
 
         if (adjustment.intent === 'confirm') {
           updatedState.currentStep = 'building';
@@ -1020,7 +1072,7 @@ export class OnboardingConversationManager {
       }, context);
 
       const extracted = JSON.parse(response.content);
-      logger.info({ extracted }, 'Extracted business story');
+      logger.debug({ extracted }, 'Extracted business story'); // derived owner text: debug only (OI-8)
 
       return {
         company_name: extracted.company_name || undefined,
@@ -1036,7 +1088,7 @@ export class OnboardingConversationManager {
         needs_booking: extracted.needs_booking ?? undefined,
       };
     } catch (error) {
-      logger.error({ err: error }, 'Business story extraction failed');
+      logExtractionFailure(error, 'Business story extraction failed');
       // Return defaults
       return {
         vertical: 'other',
@@ -1066,7 +1118,7 @@ export class OnboardingConversationManager {
       }, context);
 
       const extracted = JSON.parse(response.content);
-      logger.info({ extracted }, 'Extracted client workflow');
+      logger.debug({ extracted }, 'Extracted client workflow'); // derived owner text: debug only (OI-8)
 
       return {
         services: extracted.services || [],
@@ -1076,7 +1128,7 @@ export class OnboardingConversationManager {
         needs_more_details: extracted.needs_more_details ?? false,
       };
     } catch (error) {
-      logger.error({ err: error }, 'Client workflow extraction failed');
+      logExtractionFailure(error, 'Client workflow extraction failed');
       return {
         services: [],
         pricing_model: 'fixed',
@@ -1147,7 +1199,7 @@ export class OnboardingConversationManager {
       needs_channel_insights: needsChannels,
     };
 
-    logger.info({ message, result }, 'Extracted client acquisition from multi-select');
+    logger.info({ result, messageLength: message.length }, 'Extracted client acquisition from multi-select');
     return result;
   }
 
@@ -1174,7 +1226,7 @@ export class OnboardingConversationManager {
       }, context);
 
       const extracted = JSON.parse(response.content);
-      logger.info({ extracted }, 'Extracted client tracking');
+      logger.debug({ extracted }, 'Extracted client tracking'); // derived owner text: debug only (OI-8)
 
       return {
         current_method: extracted.current_method || 'nothing',
@@ -1186,7 +1238,7 @@ export class OnboardingConversationManager {
         needs_pipeline: extracted.needs_pipeline ?? false,
       };
     } catch (error) {
-      logger.error({ err: error }, 'Client tracking extraction failed');
+      logExtractionFailure(error, 'Client tracking extraction failed');
       return {
         current_method: 'nothing',
         current_tools: [],
@@ -1493,7 +1545,7 @@ export class OnboardingConversationManager {
       const extracted = JSON.parse(response.content);
       return extracted;
     } catch (error) {
-      logger.error({ err: error }, 'Adjustment intent extraction failed');
+      logExtractionFailure(error, 'Adjustment intent extraction failed');
       return { intent: 'confirm', details: '' };
     }
   }
@@ -1583,21 +1635,23 @@ export class OnboardingConversationManager {
 
       case 'modify_services':
         // For now, just log - future: allow adding/editing services
-        logger.info({ details }, 'Service modification requested (not yet implemented)');
+        // `details` is the owner's request as the model read it: debug only (OI-8).
+        logger.debug({ details }, 'Service modification requested (not yet implemented)');
         break;
 
       case 'modify_pipeline':
         // For now, just log - future: allow editing pipeline stages
-        logger.info({ details }, 'Pipeline modification requested (not yet implemented)');
+        logger.debug({ details }, 'Pipeline modification requested (not yet implemented)');
         break;
 
       case 'change_payment_mode':
         // For now, just log - future: allow changing payment mode
-        logger.info({ details }, 'Payment mode change requested (not yet implemented)');
+        logger.debug({ details }, 'Payment mode change requested (not yet implemented)');
         break;
 
       default:
-        logger.info({ intent: adjustment.intent, details }, 'Unknown adjustment intent');
+        logger.info({ ...intentFields(adjustment.intent), detailsLength: details.length }, 'Unknown adjustment intent');
+        logger.debug({ intent: adjustment.intent, details }, 'Unknown adjustment intent: details');
     }
   }
 

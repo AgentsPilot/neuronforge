@@ -176,7 +176,15 @@ Return ONLY a JSON object with these fields (use null if not found):
       try {
         extracted = JSON.parse(content);
       } catch (parseError) {
-        logger.error({ err: parseError, content }, 'Failed to parse LLM JSON response');
+        // The response is an extraction of the owner's bio, and a JSON
+        // SyntaxError's message quotes the start of it. So the error line
+        // carries only the error's name and the length; the text itself goes to
+        // debug, which shows locally and never in production (OI-8).
+        logger.error(
+          { errName: parseError instanceof Error ? parseError.name : typeof parseError, contentLength: content.length },
+          'Failed to parse LLM JSON response'
+        );
+        logger.debug({ err: parseError, content }, 'Unparseable LLM JSON response');
         throw new Error('Failed to parse profile extraction');
       }
 

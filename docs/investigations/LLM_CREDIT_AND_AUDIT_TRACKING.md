@@ -13,7 +13,14 @@ This investigation maps how LLM calls are metered (tokens, dollar cost, Pilot Cr
 Requirements are written layer by layer (see [Decisions & Direction](#e-decisions--direction)):
 - Layer 1 (merged, PR #47): [BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md).
 - Layer 1.1 (merged, PR #48): [BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md).
-- Layer 1.5 (**SA approved 2026-09-17**, RC-1 to RC-20 applied; workplan-review amendments BA-1 / BA-2 and user decision D-6 applied 2026-09-18): [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md).
+- Layer 1.5 (merged): [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md).
+- Logging clean-up (merged, PR #50): [BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md). It resolves Layer 1.5's open items OI-4 to OI-8:
+  - the tracker (`aiAnalytics.ts`), `IntentClassifier.ts` and `openaiProvider.ts` now log through Pino;
+  - a failed `token_usage` insert no longer logs the failing row;
+  - onboarding never logs the owner's raw text, and logs text derived from it at `debug` only.
+
+  OI-9 (log redaction is not active), OI-10 and OI-11 (pre-existing orchestration test failures) are open.
+- **Layer 3 — AI activity audit trail (SA approved 2026-09-18, ready for Dev workplan; user decisions D-1 to D-6 recorded):** [BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md) — standard #3; see E.12.
 
 **Status:** Draft — BA investigation. Line numbers were accurate on 2026-09-16 (branch `feature/business-os-purge-slice-2`). Findings refined by SA code checks are recorded in the Layer 1 requirement's SA Review and in the Layer 1 workplan §13.
 
@@ -43,7 +50,7 @@ Requirements are written layer by layer (see [Decisions & Direction](#e-decision
 |---|---|
 | 1. Model in DB + admin entry | 3 of 18 Business OS call sites read a DB key. None of those keys can be edited in any admin page. |
 | 2. Credit cost tracked | Partly. Every call through the provider layer writes a `token_usage` row with tokens and `cost_usd`. Business OS credits are only derived when the usage screen is read, and nothing is deducted. Only agent runs deduct credits. AI image generation isn't recorded at all (Layer 1.5 records it in its own `business-os-images` area, without charging for it). |
-| 3. Every call in the audit trail | No. There is no LLM-call event, and the provider layer never writes to `audit_trail`. The agents side audits per run and per step, not per call. |
+| 3. Every call in the audit trail | No. There is no LLM-call event, and the provider layer never writes to `audit_trail`. The agents side audits per run and per step, not per call. **Layer 3 (draft) writes one audit entry per AI action, linked to its ledger rows by the grouping id** (E.12). By user decision the entries use the existing queued audit path, so some may occasionally be lost (Layer 3 KI-B). |
 | 4. Real user ID | 8 of the 18 Business OS sites didn't pass one and landed on the system user (fixed by Layer 1). The same gap exists on the agents side for V6 intent generation and in the onboarding conversation (fixed by Layer 1.5). |
 
 **Urgent finding (section I.3):** most `/api/admin/**` routes have **no authentication**. Middleware skips every `/api` path and the admin layout has no gate. This is being handled as a separate security fix outside this effort.
@@ -120,6 +127,16 @@ Requirements are written layer by layer (see [Decisions & Direction](#e-decision
 - **Nothing logs LLM calls automatically.**
 - A missing `userId` becomes `SYSTEM_ADMIN_USER_ID` with `system_action: true` (`AuditTrailService.ts:105-126`).
 - **Risk:** the in-memory queue plus a 5s timer can lose entries when a serverless function freezes.
+
+**Re-checked for Layer 3 (2026-09-18, `main` 7646760a)** — detail in the [Layer 3 requirement, Findings](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md#findings-from-the-code):
+
+- `log()` returns once the entry is **queued**, not written; batches go out every 5 seconds or at 100 entries (`AuditTrailService.ts:43-44`, `:86-102`). So a caller's `.catch` never sees a write failure.
+- A failed write **loses its whole batch** — the queue is emptied before the insert (`:224-248`).
+- The loss risk is **structural**: the flush timer is `unref`'d and the only safety net is `beforeExit` (`:260-282`, `:525-529`), which does not run when a serverless function is frozen. The framework is **Next.js 14.2.35** (no `after()`), and `@vercel/functions` (`waitUntil`) is **not installed**. Even the business purge's *critical* events are not flushed before the response (`ResetService.ts:100-119`, `:231-253`). The loss **rate** is unknown.
+- Passing the HTTP request stores an **auth credential** in the audit entry's `session_id` (the Supabase access / refresh cookie or the start of the `Authorization` header, `:182-190`).
+- The entity-type list is a closed union (`lib/audit/types.ts:17-51`).
+- `applyRetentionPolicy()` exists (`:468-485`) but no scheduled job in `vercel.json` runs it.
+- **User decision (Layer 3 D-4, 2026-09-18): the audit service is kept exactly as it is.** Layer 3's AI entries use this queued path, and the loss risk is accepted as Layer 3 **KI-B**, with a recommended later change (**OI-D**).
 
 ---
 
@@ -201,7 +218,8 @@ All calls go to OpenAI. The after-state is in the Layer 1 requirement.
 
 ### E.6 Q1 and Q4
 
-- Remain open for the later layers that need them.
+- Q1 remains open for the deduction layer.
+- **Q4 (audit granularity) is resolved by the user (2026-09-18, Layer 3 D-1):** one audit entry per user action or background job, not per call (E.12).
 
 ### E.7 Layer 1 decisions (2026-09-16)
 
@@ -247,7 +265,7 @@ Requirement: [BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md](/docs/
 
 ### E.11 Layer 1.5 decisions (2026-09-17, after Layer 1.1 merged as PR #48)
 
-Layer 1.5 is **four parts**, and it changes nothing about what anyone is charged. Requirement: [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) (26 FRs, 24 ACs; **SA approved 2026-09-17**, RC-1 to RC-20 applied; BA-1, BA-2 and D-6 applied 2026-09-18; ready for the Dev workplan).
+Layer 1.5 is **four parts**, and it changes nothing about what anyone is charged. Requirement: [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) (26 FRs, 24 ACs; **SA approved 2026-09-17**, RC-1 to RC-20 applied; BA-1, BA-2 and D-6 applied 2026-09-18; **merged**).
 
 **User decisions:**
 
@@ -259,7 +277,7 @@ Layer 1.5 is **four parts**, and it changes nothing about what anyone is charged
 3. **One shared platform-account helper** replaces the four copies of `SYSTEM_ADMIN_USER_ID || '00000000-…'` (`aiAnalytics.ts:121`, `EmbeddingService.ts:46`, `IntentClassifier.ts:179` and `:698`) and backs the catalog's `isPlatformAccount` / `platformAccountIds`. No behaviour change.
 4. **Small follow-ups folded in:** Layer 1.1 **F-1** (the chat usage report's silent 10,000-row cap and its all-zero report on a failed read; its reads move onto `TokenUsageRepository`) and **F-6** (the allowance config read moves into `ConfigRepository`). **Out of scope: OI-1** — decided with the deduction layer.
 5. **The verification tab is updated** so the new areas and calls are covered, "otherwise Layer 1.5 has no proof". Zero-token, non-zero-cost rows must read correctly in the tab and in the area totals.
-6. **D-6 (2026-09-18, OQ-U2 / F-8) — option A, keep the freeze.** Layer 1.5 converts **none** of the three touched files that still log through `console.*` — `lib/analytics/aiAnalytics.ts` (16), `lib/orchestration/IntentClassifier.ts` (16), `lib/ai/providers/openaiProvider.ts` (4). Only the lines the FRs need are changed. This is a **deliberate, user-approved exception** to CLAUDE.md § Logging's "convert touched files" rule: all three sit on paths Layer 1.5 is already changing, and mixing a mechanical logging rewrite into that diff would bury the attribution change the reviewers need to see. The three conversions are open items **OI-4, OI-5, OI-6** (K).
+6. **D-6 (2026-09-18, OQ-U2 / F-8) — option A, keep the freeze.** Layer 1.5 converts **none** of the three touched files that still log through `console.*` — `lib/analytics/aiAnalytics.ts` (16), `lib/orchestration/IntentClassifier.ts` (16), `lib/ai/providers/openaiProvider.ts` (4). Only the lines the FRs need are changed. This is a **deliberate, user-approved exception** to CLAUDE.md § Logging's "convert touched files" rule: all three sit on paths Layer 1.5 is already changing, and mixing a mechanical logging rewrite into that diff would bury the attribution change the reviewers need to see. The three conversions are open items **OI-4, OI-5, OI-6** (K). *(Done since by the logging clean-up, PR #50.)*
 
 **SA decisions (review 2026-09-17, RC-1 to RC-20 applied by the BA):**
 
@@ -278,6 +296,21 @@ Layer 1.5 is **four parts**, and it changes nothing about what anyone is charged
 
 - **BA-1 — three live onboarding call types, not four.** `extractClientTracking` (`OnboardingConversationManager.ts:1093`) is dead code: its step (`:803-806`) is retired. All four catalog names are kept (the dead one with an "unreachable as of 2026-09-17" comment and unit coverage), the live QA run now expects **three** call types at most, and the dead extractor is Layer 1.5 **KI-D**, with **F-12** (delete it, or re-wire the question) as the fix. `client_workflow_extraction` can legitimately fire twice in one conversation.
 - **BA-2 — three corrections.** The image configuration read is `getImageGenerationConfig()` on the existing `getByKeys` (one round trip), not modelled on the two-round-trip `getAgentCreationConfig()` (M-2); the `aiAnalytics.ts` `console.*` line list is `:97, :101, :129, :137, :186, :208, :209, :216, :217, :218, :235, :236, :246, :297, :323, :372` (M-3); and **three** touched files are non-compliant, not one — `aiAnalytics.ts`, `IntentClassifier.ts` and `openaiProvider.ts` (M-4). `EmbeddingService.ts` and `providerFactory.ts` are clean.
+
+### E.12 Layer 3 — AI activity audit trail (2026-09-18)
+
+Standard #3. Requirement: [BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md) (28 FRs, 27 ACs; **SA approved 2026-09-18, RC-1 to RC-12 applied, ready for Dev workplan**). **The user decided all four business questions on 2026-09-18:**
+
+1. **D-1 — Granularity: agreed.** One audit entry per user action or background job, linked to its calls through the Layer 1 grouping id — the same shape as the agents side (§G). **Resolves Q4.**
+2. **D-2 — What is recorded: agreed**, including the AI call names and model names: who (the business account; the actor — the owner, or the platform for background jobs), area, action type, grouping id, number of LLM calls and failed calls, tokens, estimated cost, success or failure. **Never** prompts, owner text, AI output, error message text, the business name or request metadata.
+3. **D-3 — Background jobs: agreed.** One entry per business per insight run and per briefing narration, at info severity, marked as scheduled, with the platform as the actor.
+4. **D-4 — Reliability: not changed now.** The audit service is **kept exactly as it is**; AI audit entries use the existing queued `AuditTrailService.log()` path with a non-blocking `.catch`, like every other audit event.
+   - **Known risk of the layer (Layer 3 KI-B):** entries are queued and flushed in batches (every 5 s or 100 entries); the queue is cleared before the insert, so a failed insert loses the whole batch; and nothing forces a flush before a serverless function freezes after its response (Next.js 14.2.35 has no `after()`; `@vercel/functions` / `waitUntil` isn't installed). **Some AI audit entries may occasionally be lost.** Every call is still in the usage ledger under the same grouping id.
+   - **Recommendation to change it later (Layer 3 OI-D):** write AI entries immediately and await confirmation with a short time limit (about 1–2 s), so owner actions are never held up and background jobs are unaffected.
+   - The **service-wide** fix stays a separate item (Layer 3 OI-A).
+   - Layer 3's QA check tolerates the documented loss: it waits for the flush, and records any missing entry as a KI-B occurrence, not a defect.
+
+**After the SA review (2026-09-18):** **D-5** — the audit API routes, which trusted a client-sent user id and checked no login, are fixed as **step 0 of Layer 3**, before any AI entry is written; **D-6** — AI entries are **hidden from owners** (`/monitoring`, its CSV export, any owner-scoped read) until the charging decision. Detail, and SA's RC-1 to RC-12, in the requirement.
 
 ---
 
@@ -351,7 +384,7 @@ No event is written per LLM call.
 
 ### G.3 Reusable for Business OS?
 
-Yes, it is the same infrastructure. Business OS needs a real user, area/call names and a grouping id, which Layer 1 provides. Suggested audit granularity for a later layer: per action.
+Yes, it is the same infrastructure. Business OS needs a real user, area/call names and a grouping id, which Layer 1 provides. Suggested audit granularity for a later layer: per action. *(Decided by the user, Layer 3 D-1, 2026-09-18: one entry per AI action, joined to the ledger by the grouping id.)*
 
 ---
 
@@ -362,23 +395,25 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
 | Capability | Reuse for Business OS |
 |---|---|
 | Per-call ledger (`token_usage`) | Yes, as is — including zero-token rows, which already exist (the chat cache-hit row) and are what an image row looks like with a cost added |
-| Correlation fields | Yes. Layer 1 uses `feature` = area, `component` = call name, `session_id` = UUID grouping id. Layer 1.5 adds an optional `request_type` for images, which the tracker already forwards |
-| Per-action audit events carrying token totals | Yes, as the pattern |
+| Correlation fields | Yes. Layer 1 uses `feature` = area, `component` = call name, `session_id` = UUID grouping id. Layer 1.5 adds an optional `request_type` for images, which the tracker already forwards. Layer 3 uses the grouping id to join its audit entries to these rows |
+| Per-action audit events carrying token totals | Yes, as the pattern (Layer 3) |
 | DB-driven provider + model per purpose | Yes, as the pattern — `system_settings_config` is also where the image model, sizes, quality and price go (Layer 1.5), read in one round trip with `getByKeys` |
 | Admin price table | Yes, once read reliably (per token only; per-image price is separate, Layer 1.5) |
 | Admin-gated chat usage report (`/api/admin/chat-usage` + `usageReport.ts`) | Pattern for the Layer 1.1 report API (admin gate, Zod, Pino). Its own two silent failures are fixed by Layer 1.5 (F-1) |
-| `TokenUsageRepository` + `usageSummary.ts` (Layer 1.1) | Yes. Layer 1.5 moves the chat usage report onto the repository with one explicitly named all-accounts method (F-1) |
+| `TokenUsageRepository` + `usageSummary.ts` (Layer 1.1) | Yes. Layer 1.5 moves the chat usage report onto the repository with one explicitly named all-accounts method (F-1). Layer 3 may read the ledger back by grouping id through it (Layer 3 OQ-4) |
+| `AuditTrailService.log()` (queued) | Yes, **as is** — Layer 3's write path by user decision (D-4), with its accepted loss risk (Layer 3 KI-B) |
 
 ### H.2 What's missing
 
-1. Correct attribution (Layer 1, merged; onboarding conversation Layer 1.5; V6 separate).
+1. Correct attribution (Layer 1, merged; onboarding conversation Layer 1.5, merged; V6 separate).
 2. A stable naming scheme (Layer 1, merged).
 3. A reliable dollar figure.
 4. Per-call model configuration (Layer 2).
-5. Per-action audit events.
+5. Per-action audit events (**Layer 3**, draft; decisions made).
 6. A completeness report (**Layer 1.1**, merged; single business at a time, E.10.5).
 7. Admin identity on pricing and config changes, and authentication on `/api/admin/**` (separate security fix).
 8. Image-generation tracking: an image method in the provider layer, image pricing, and a credits rule. **Layer 1.5 delivers the first two — in a dedicated `business-os-images` area — and deliberately leaves the credits rule open** (track only, don't charge; OQ-7 parked).
+9. A reliable audit write path: the audit service can silently lose entries for every product (Layer 3 OI-A), and for AI entries specifically (Layer 3 KI-B, change recommended as OI-D).
 
 ### H.3 Layers (as decided)
 
@@ -388,9 +423,11 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
 |---|---|---|
 | **1** | Every in-scope Business OS AI call recorded against the right business, with area, call name and UUID grouping id, through a call catalog and attribution builder. Usage category mapping updated in the same release. `providerFactory.ts` and `EmbeddingService.ts` converted to Pino. Proof by QA test evidence and code review. [Requirement](/docs/requirements/BUSINESS_OS_LLM_CALL_ATTRIBUTION_LAYER1_REQUIREMENT.md) (26 FRs, 24 ACs) | Merged (PR #47) |
 | **1.1** | **LLM Usage verification tab and report API.** An admin-only, read-only tab on `/test-business-os`. Choose **one business** and a start time, refresh, and see five checks: calls, nothing on the platform account (platform-wide), no legacy labels, grouped by action, usage-card view. Also area totals, display caps, and an Incomplete status when the 5,000-row read ceiling is hit. Takes over the extended usage report (I.5) (E.10). One business at a time is enough for now (E.10.5). Adds `TokenUsageRepository`, `usageSummary.ts` and shared catalog constants; no migration. [Requirement](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md) (24 FRs, 24 ACs) | Merged (PR #48) |
-| **1.5** | **Four parts** (E.11). **(a)** Onboarding conversation attributed to the **owner** under a new `business-os-onboarding` area, with a grouping id minted per conversation and required attribution on `processUserMessage` ("attributed" ≠ "charged"; user note UD-1). Four methods attributed, **three can fire live** (KI-D, F-12). **(b)** AI image generation through the provider layer, recorded in its **own `business-os-images` area** with zero tokens, a dollar cost, and a configurable model, size, quality and per-image price read in one `getByKeys` round trip (configuration → documented fallback → 0 with an error log). **Track only, don't charge** — credits, allowance, ring and `remaining` don't move; call counts do, and nothing owner-facing renders them. Whether images consume credits is **parked** (OQ-7, with OI-1, UD-1 and Q1 in the deduction layer). **(c)** One dependency-free `lib/platformAccount.ts` replacing the four copies of the platform-account rule, imported *by* the catalog so the type-check gate doesn't grow; `AuditTrailService.ts:121` is a different rule and is not touched. **(d)** The Layer 1.1 verification tab and report cover both new areas. **Folded in:** F-1 (chat usage report truncation and failed-read zeros surfaced as a result union; reads move to `TokenUsageRepository` with one named all-accounts method) and F-6 (allowance config through `ConfigRepository`, new multi-key method, `supabaseServer`). **Out of scope:** OI-1, and — by user decision D-6 — the `console.*` → Pino conversion of the three touched files (OI-4 to OI-6). [Requirement](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) (26 FRs, 24 ACs) | SA approved, ready for Dev workplan |
+| **1.5** | **Four parts** (E.11). **(a)** Onboarding conversation attributed to the **owner** under a new `business-os-onboarding` area, with a grouping id minted per conversation and required attribution on `processUserMessage` ("attributed" ≠ "charged"; user note UD-1). Four methods attributed, **three can fire live** (KI-D, F-12). **(b)** AI image generation through the provider layer, recorded in its **own `business-os-images` area** with zero tokens, a dollar cost, and a configurable model, size, quality and per-image price read in one `getByKeys` round trip (configuration → documented fallback → 0 with an error log). **Track only, don't charge** — credits, allowance, ring and `remaining` don't move; call counts do, and nothing owner-facing renders them. Whether images consume credits is **parked** (OQ-7, with OI-1, UD-1 and Q1 in the deduction layer). **(c)** One dependency-free `lib/platformAccount.ts` replacing the four copies of the platform-account rule, imported *by* the catalog so the type-check gate doesn't grow; `AuditTrailService.ts:121` is a different rule and is not touched. **(d)** The Layer 1.1 verification tab and report cover both new areas. **Folded in:** F-1 (chat usage report truncation and failed-read zeros surfaced as a result union; reads move to `TokenUsageRepository` with one named all-accounts method) and F-6 (allowance config through `ConfigRepository`, new multi-key method, `supabaseServer`). **Out of scope:** OI-1, and — by user decision D-6 — the `console.*` → Pino conversion of the three touched files (OI-4 to OI-6, since done by the logging clean-up, PR #50). [Requirement](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) (26 FRs, 24 ACs) | Merged |
+| **Logging clean-up** | Pino for the tracker, the intent classifier and the OpenAI provider; no ledger row or raw owner text in logs (Layer 1.5 OI-4 to OI-8). [Workplan](/docs/workplans/BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md) | Merged (PR #50) |
 | **2** | JSON model configuration per area, keyed by the Layer 1 call names — including the onboarding conversation's `'gpt-4o'` literals (Layer 1.5 KI-C / F-9) | Planned |
-| **Later** | Cost accuracy; per-action audit events; admin UI; deduction and enforcement, including **whether AI images consume credits (OQ-7)**, the "credits remaining" treatment of background work (OI-1) and onboarding spend inside a new owner's first month (UD-1); owner-facing visibility of image spend; an all-businesses usage overview if needed (needs a database function, Layer 1.1 F-2); the deferred Pino conversions (OI-4 to OI-6) | Planned |
+| **3** | **AI activity audit trail** (standard #3, E.12). One audit entry per AI action or background job (D-1) — chat turn, insight run per business, briefing, website / intake / landing generation, lead reply, onboarding turn, image request — with who, area, action type, grouping id, call count, tokens, estimated cost, outcome, call names and model names; never prompts, owner text or AI output (D-2). Background jobs audited per business per run, info, scheduled, platform as actor (D-3). Written through the **existing queued audit path, unchanged** (D-4): occasional loss is the accepted known risk **KI-B**, with **OI-D** (immediate, awaited AI writes with a ~1–2 s cap) recommended for later. **Step 0 secures the audit API routes (D-5); AI entries are hidden from owners (D-6).** [Requirement](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md) (28 FRs, 27 ACs) | SA approved — changes applied, ready for Dev workplan |
+| **Later** | Cost accuracy; admin UI; deduction and enforcement, including **whether AI images consume credits (OQ-7)**, the "credits remaining" treatment of background work (OI-1) and onboarding spend inside a new owner's first month (UD-1); owner-facing visibility of image spend; an all-businesses usage overview if needed (needs a database function, Layer 1.1 F-2); immediate, awaited AI audit writes (Layer 3 OI-D) and a platform-wide durable audit write path (Layer 3 OI-A) | Planned |
 
 ---
 
@@ -467,14 +504,17 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
 | Drill-down comparison ignores feature/component/request_type/endpoint filters | `drill-down/route.ts:331-353` | Open |
 | Pricing audit events have no admin identity | `pricing/route.ts:102`, `:167`, `:234` | Open |
 | V6 intent-contract route trusts `x-user-id` header | `app/api/v6/generate-ir-intent-contract/route.ts:41-43` | Needs SA check |
-| Several audit actions have no `EVENT_METADATA` entry | `AGENT_EXECUTED`, `PILOT_STEP_EXECUTED`, `TOKEN_DISCREPANCY_DETECTED` | Open |
+| Several audit actions have no `EVENT_METADATA` entry | `AGENT_EXECUTED`, `PILOT_STEP_EXECUTED`, `TOKEN_DISCREPANCY_DETECTED` | Open — Layer 3 OQ-6 (BA suggests a separate follow-up) |
+| **Audit entries can be silently lost, for every product** | `AuditTrailService.ts:43-44`, `:86-102`, `:224-248`, `:260-282`, `:525-529`; Next.js 14.2.35 (no `after()`), no `@vercel/functions`; the purge's critical events are not flushed (`ResetService.ts:100-119`, `:231-253`) | **Layer 3 OI-A** — separate, service-wide decision. For AI entries, the user accepted the risk for now (Layer 3 D-4 → **KI-B**) and a later change is recommended (**OI-D**) |
+| **The audit service stores an auth credential in `session_id` when a request is passed** | `AuditTrailService.ts:182-190` (access / refresh cookie, or the start of the `Authorization` header) | **Layer 3 OI-B** — separate security fix; Layer 3 never passes the request |
+| **No scheduled audit retention** | `applyRetentionPolicy()` (`AuditTrailService.ts:468-485`) is not called by any job in `vercel.json` | **Layer 3 OI-C** — SA to confirm |
 | Story route always throws | `app/api/business-os/story/route.ts:183` | Excluded from Layer 1 |
 | **WebsiteAnalyzer is dead and broken, no LLM spend** | `lib/services/WebsiteAnalyzer.ts:123-139`: calls non-existent methods (`getDefaultModel`, and `complete` on the wrong type) and reads `.choices` from the helper's result, so its LLM call always fails. It is **not** a working caller of the simple completion helper (SA code review CR-1, 2026-09-17) | Excluded from Layer 1; fix vs retire decided separately |
 | The platform-account rule is written out four times | `aiAnalytics.ts:121`, `EmbeddingService.ts:46`, `IntentClassifier.ts:179`, `:698`, mirrored in `callCatalog.ts` | **Layer 1.5 part (c)** — one dependency-free `lib/platformAccount.ts`, no behaviour change. `AuditTrailService.ts:121` is a **different** rule (falls back to `null`) and is explicitly not a target |
 | The allowance config is read directly from `ais_system_config` in a route | `app/api/business-os/usage/route.ts` (`readAllowanceCredits`) | **Layer 1.5, F-6** — moves into `ConfigRepository` (new multi-key method, constructed with `supabaseServer`) |
 | The image reuse key is a 32-bit non-cryptographic hash | `GeneratedImageService.ts:243-247` — scoped per user, so no cross-tenant leak, but a collision silently suppresses a legitimate regeneration | Layer 1.5 follow-up F-11 |
 | `usage.category.*` dictionary entries are missing for several areas | `lib/business-os/LanguageContext.tsx:1139-1147` — harmless while the card doesn't render the breakdown | Layer 1.5 follow-up F-10 |
-| `console.*` logging in touched or admin files | `lib/ai/providerFactory.ts` (6 real calls), `lib/services/EmbeddingService.ts` (16) — both **converted in Layer 1** (user-approved 2026-09-17). Layer 1.5 touches three more non-compliant files: `lib/analytics/aiAnalytics.ts` (16), `lib/orchestration/IntentClassifier.ts` (16), `lib/ai/providers/openaiProvider.ts` (4). Also the `token-usage/stats`, `users/[id]/stats`, `system-config`, `system-config/pricing` routes | Layer 1.5's three: **deliberately not converted, by user decision D-6 (2026-09-18)** — open items **OI-4, OI-5, OI-6** (K). The admin routes convert when touched |
+| `console.*` logging in touched or admin files | `lib/ai/providerFactory.ts` (6 real calls), `lib/services/EmbeddingService.ts` (16) — both **converted in Layer 1** (user-approved 2026-09-17). Layer 1.5 touched three more non-compliant files: `lib/analytics/aiAnalytics.ts` (16), `lib/orchestration/IntentClassifier.ts` (16), `lib/ai/providers/openaiProvider.ts` (4). Also the `token-usage/stats`, `users/[id]/stats`, `system-config`, `system-config/pricing` routes | Layer 1.5's three: deliberately not converted in Layer 1.5 (D-6), then **converted by the logging clean-up (PR #50)**. The admin routes convert when touched |
 
 ---
 
@@ -483,6 +523,7 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
 **Resolved:**
 
 - [x] **Q2 — Does automatic AI work count against the business?** (raised by: BA | status: **resolved 2026-09-16**) Yes; implemented in Layer 1 FR-1, FR-2.
+- [x] **Q4 — Audit granularity** (raised by: BA | status: **resolved by the user 2026-09-18, Layer 3 D-1**) One audit entry per user action or background job, not per call, linked to its calls by the grouping id. With it the user decided D-2 (fields, including call and model names), D-3 (background jobs audited per business per run, info, scheduled, platform as actor) and D-4 (the audit service unchanged; loss accepted as Layer 3 KI-B; change recommended as OI-D). See E.12.
 - [x] **Q8 — Legacy and broken calls** (raised by: BA | status: **resolved 2026-09-16**) Excluded from Layer 1 with reasons. Extended 2026-09-17 with the service generator. WebsiteAnalyzer's reason was sharpened by CR-1 (dead and broken, no LLM spend).
 - [x] **Q9 — Past usage recorded under the system user** (raised by: BA | status: **resolved 2026-09-16**) Left as is, no backfill.
 - [x] **Q10 — V6 intent-generation attribution** (raised by: BA | status: **resolved 2026-09-16**) Separate item.
@@ -493,7 +534,8 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
 - [x] **Pino conversion of `providerFactory.ts` / `EmbeddingService.ts`** (raised by: SA | status: **approved by the user 2026-09-17**) In Layer 1.
 - [x] **Layer 1.1 OQ-U1 — Is one business at a time enough to replace the all-businesses report?** (raised by: BA | status: **resolved 2026-09-17**) Yes, for now: one business plus the platform-wide check. An all-businesses overview may come later and would need a database change (F-2) (E.10.5).
 - [x] **Layer 1.5 OQ-A to OQ-J** (raised by: BA | status: **decided by SA 2026-09-17**) Onboarding area and call names approved; images in their own area; grouping id minted in `getInitialState`; image method on `OpenAIProvider` via `callWithTracking` with an optional request type; model, sizes and price together in `system_settings_config`; no migration; a dependency-free `lib/platformAccount.ts`; the legacy-helper-label check stays Info; one explicitly named all-accounts repository method; failed images write a failure row. All are written into the Layer 1.5 FRs and ACs.
-- [x] **Layer 1.5 OQ-U2 — Convert the touched `console.*` files to Pino in Layer 1.5 (F-8)?** (raised by: SA, widened to three files by the workplan review | status: **resolved by the user 2026-09-18 — option A, keep the freeze (D-6)**). None of `aiAnalytics.ts`, `IntentClassifier.ts` or `openaiProvider.ts` is converted; only the lines the FRs need are changed. The conversions are **OI-4, OI-5, OI-6** below. A deliberate, user-approved exception to CLAUDE.md § Logging (E.11.6).
+- [x] **Layer 1.5 OQ-U2 — Convert the touched `console.*` files to Pino in Layer 1.5 (F-8)?** (raised by: SA, widened to three files by the workplan review | status: **resolved by the user 2026-09-18 — option A, keep the freeze (D-6)**). None of `aiAnalytics.ts`, `IntentClassifier.ts` or `openaiProvider.ts` was converted in Layer 1.5. A deliberate, user-approved exception to CLAUDE.md § Logging (E.11.6).
+- [x] **OI-4, OI-5, OI-6 — Pino conversion of `aiAnalytics.ts`, `IntentClassifier.ts`, `openaiProvider.ts`** (raised by: SA / Dev | status: **resolved by the logging clean-up, PR #50**, 2026-09-18). OI-7 and OI-8 resolved there too; OI-9 to OI-11 are open and tracked in the Layer 1.5 requirement and the logging clean-up workplan.
 
 **Open items (handle later):**
 
@@ -506,22 +548,16 @@ Yes, it is the same infrastructure. Business OS needs a real user, area/call nam
   - **Evidence first:** the Layer 1.5 live run records the owner's card figures before and after an onboarding conversation, so the real number is known.
   - **The question:** should onboarding count against the owner's monthly allowance, or be attributed but excluded from the gauge? Decide with OI-1 and OQ-7 in the deduction layer.
 - [ ] **OI-2 — Website block regenerate cross-tenant read.** (raised by: SA | status: open issue, handle later — user decision 2026-09-17) See J.
-- [ ] **OI-4 — `lib/analytics/aiAnalytics.ts`: convert 16 `console.*` calls to Pino.** (raised by: SA, Layer 1.5 RC-16 | status: **open, handle later** — deferred by user decision D-6, 2026-09-18; formerly F-8)
-  - **Where:** `:97, :101, :129, :137, :186, :208, :209, :216, :217, :218, :235, :236, :246, :297, :323, :372`.
-  - **SA risk: highest.** Every ledger row in the product passes through `trackAICall`, and its `console.*` calls sit inside the insert's success and failure branches.
-  - **How:** a separate, purely mechanical commit, with the insert payload, the UUID validation and the platform-account fallback untouched; the file's diff reviewed on its own.
-- [ ] **OI-5 — `lib/orchestration/IntentClassifier.ts`: convert 16 `console.*` calls to Pino.** (raised by: Dev workplan M-4 / SA | status: **open, handle later** — D-6, 2026-09-18)
-  - **SA risk: medium.** An orchestration hot path with no Layer 1.5 test coverage, so a mechanical conversion would be unverified by anything that layer runs.
-  - **How:** a standalone commit.
-- [ ] **OI-6 — `lib/ai/providers/openaiProvider.ts`: convert 4 `console.*` calls to Pino.** (raised by: Dev workplan M-4 / SA | status: **open, handle later** — D-6, 2026-09-18)
-  - **SA risk: low.** All four sit in `getInstance`'s configuration guards, outside the image path, so a conversion cannot affect a tracked call.
-  - **How:** a standalone commit.
+- [ ] **Layer 3 KI-B — Some AI audit entries may occasionally be lost.** (raised by: BA, Layer 3 | status: **accepted known risk — user decision D-4, 2026-09-18**) AI entries use the existing queued path (5 s / 100-entry batches; a failed insert loses the batch; no flush before a serverless freeze). Every call is still in the usage ledger. Layer 3's live QA run takes the first measurement.
+- [ ] **Layer 3 OI-D — Recommended later change: write AI audit entries immediately and await them with a ~1–2 s cap.** (raised by: BA, Layer 3 | status: **open — recommended, not scheduled**) Owner actions are never held up by more than the cap; background jobs are unaffected; closes KI-B for AI entries only. BA suggestion: revisit once the Layer 3 QA run and early production show how often KI-B occurs, or together with OI-A.
+- [ ] **Layer 3 OI-A — Audit entries can be silently lost, for every product.** (raised by: BA, Layer 3 | status: open — separate, service-wide decision) See J and the [Layer 3 requirement](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md#known-issues-and-open-items).
+- [ ] **Layer 3 OI-B — The audit service stores an auth credential in `session_id` when a request is passed.** (raised by: BA, Layer 3 | status: open — separate security fix) See J.
+- [ ] **Layer 3 OI-C — No scheduled audit retention.** (raised by: BA, Layer 3 | status: open — SA to confirm) See J.
 
 **Deferred questions:**
 
 - [ ] **OQ-7 — Should AI-generated images count against a business's monthly credits, and how many credits is one image worth?** (raised by: SA / BA | status: **open and parked by the user, 2026-09-17**). Images are priced per image, not per token, so today's rule (credits = tokens ÷ tokens per credit) can't express them. **Layer 1.5 deliberately makes image spend visible first, without charging for it** — and, with the dedicated `business-os-images` area, the per-month image cost is readable as one figure, which is the evidence this decision needs. *BA suggestion:* decide together with OI-1, UD-1 and Q1 in the deduction layer. A follow-on question belongs with it: once charging is decided, should the owner see image spend on the usage card, and in what unit?
 - [ ] **Q1 — What should a credit represent?** (raised by: BA | status: open, deferred to the deduction layer). *BA suggestion:* decide in the deduction layer; make the dollar figure trustworthy first.
-- [ ] **Q4 — Audit granularity** (raised by: BA | status: open, deferred to the audit layer). *BA suggestion:* per action.
 - [ ] **Q6 — Should failed or discarded attempts count?** (raised by: BA | status: deferred to the deduction layer).
 
 Layer 1.1's open questions are all resolved; the SA's decisions and follow-ups (F-1 to F-4) are in the [Layer 1.1 requirement](/docs/requirements/BUSINESS_OS_LLM_USAGE_VERIFICATION_LAYER1_1_REQUIREMENT.md#sa-review). F-1 and F-6 are folded into Layer 1.5; F-2, F-3 and F-4 remain open follow-ups, joined by the Layer 1.5 follow-ups F-7, F-9, F-10, F-11 and F-12 ([Layer 1.5 requirement](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md#sa-review)). F-8 became OI-4.
@@ -547,3 +583,8 @@ Layer 1.1's open questions are all resolved; the SA's decisions and follow-ups (
 | 2026-09-18 | Layer 1.5 workplan amendments (BA-1, BA-2) + user decision D-6 — mirrored | **D-6 (user, 2026-09-18) — keep the freeze:** Layer 1.5 converts none of the three touched non-compliant files; recorded in E.11.6 as a deliberate, user-approved exception to CLAUDE.md § Logging, with the reason; OQ-U2 moved to Resolved; the three conversions added to K's open items as **OI-4** (`aiAnalytics.ts`, 16, highest risk, separate mechanical commit), **OI-5** (`IntentClassifier.ts`, 16, medium risk, no Layer 1.5 test coverage) and **OI-6** (`openaiProvider.ts`, 4, low risk, `getInstance` guards only); J's `console.*` row and H.3 updated; F-8 superseded by OI-4. **BA-1:** `extractClientTracking` is dead code, so three onboarding call types can fire live — new J row, D onboarding row and E.11 amendment (Layer 1.5 KI-D, F-12). **BA-2:** image config read is `getImageGenerationConfig()` on `getByKeys` (one round trip), not the two-round-trip `getAgentCreationConfig()` (C, H.1, H.3); corrected `aiAnalytics.ts` line list; three non-compliant touched files named. Summary and overview updated |
 | 2026-09-18 | Layer 1.5 implemented (code complete) — mirrored | E.11 is implemented and awaits SA code review ([workplan](/docs/workplans/BUSINESS_OS_LLM_LAYER1_5_WORKPLAN.md)). Image rows: zero tokens and a per-image cost; the request keeps quality `auto` and each image is priced by the quality the provider reports it used (CR-1 option C, user decision 2026-09-18), from `image_generation_prices_usd` with a documented fallback map; the charging decision (OQ-7) stays parked with OI-1 and UD-1. F-1: the chat usage report now reports a failed read as a failure and a capped read as truncated. F-6: the allowance read goes through `ConfigRepository.getSystemConfigs` |
 | 2026-09-18 | Layer 1.5 image quality (SA code review CR-1, user decision D-7) — one-line mirror | E.11's "Price precedence" bullet no longer says quality is pinned: per D-7 the request stays at `auto` (images unchanged) and each image is priced after the call at the quality the provider reports, or at `high` with a warning if none is reported. Detail in the Layer 1.5 requirement (D-7, FR-10, FR-13, AC-8, KI-E) |
+| 2026-09-18 | Logging clean-up (OI-4 to OI-8) — mirrored | The [logging clean-up workplan](/docs/workplans/BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md) is code complete: the tracker, the intent classifier and the OpenAI provider log through Pino; a failed ledger insert no longer logs the row; onboarding logs no raw owner text, and logs derived text at debug only (D-OI8). OI-9 (redaction not active) and OI-10 added as open in the Layer 1.5 requirement |
+| 2026-09-18 | Logging clean-up SA code review (CR-1 to CR-4) — mirrored | Onboarding no longer logs service names (a count instead), an extractor parse error logs only its name at error, and a model-returned adjustment intent reaches info only as a known label. OI-11 (pre-existing `TokenBudgetManager.test.ts` failures, 17 of 21) added as open beside OI-10 |
+| 2026-09-18 | Layer 3 (AI activity audit trail) requirement drafted; Q4 advanced | Added E.12 and the [Layer 3 requirement](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md) (20 FRs, 20 ACs, draft). **Q4 advanced:** agreed direction one audit event per user action or background job, linked to the ledger by the grouping id, pending the user's confirmation (BD-1); BD-3 (audit background jobs — BA: yes, one per business per run) and BD-4 (make AI events durable — BA: yes) put to the user. §B re-checked against `main` 7646760a: entries are queued, not written, when `log()` returns; a failed write drops its batch; no `after()` / `waitUntil` (Next.js 14.2.35, no `@vercel/functions`) so queued entries can be lost when a serverless function freezes — even the purge's critical events are not flushed; an auth credential is stored in `session_id` when a request is passed; no scheduled retention. New J rows and K open items **Layer 3 OI-A to OI-C**; the unregistered agents events row points at Layer 3 OQ-6. H.2 items 5 and 9, H.3 (Layer 1.5 and the logging clean-up marked merged; new Layer 3 row; "per-action audit events" removed from Later) and G.3 updated; OI-4 to OI-6 moved to Resolved (logging clean-up, PR #50); overview and Summary link Layer 3 |
+| 2026-09-18 | Layer 3 user decisions D-1 to D-4 — mirrored; Q4 resolved | **Q4 resolved** (Layer 3 D-1: one entry per user action or background job, linked by the grouping id). E.12 rewritten with the four user decisions: D-2 fields agreed including call and model names; D-3 background jobs audited per business per run, info, scheduled, platform as actor; **D-4 reliability not changed** — the audit service stays as it is and AI entries use the existing queued `log()` path. The loss is recorded as Layer 3 **KI-B** (accepted known risk) and the recommended later change — immediate AI writes awaited with a ~1–2 s cap — as Layer 3 **OI-D**; OI-A stays the service-wide item. Summary, §B, G.3, H.1, H.2 item 9, H.3 (Layer 3 row: decisions recorded, pending SA; Later adds OI-D), J (audit-loss row) and K (Q4 moved to Resolved; KI-B and OI-D added to open items) updated |
+| 2026-09-18 | Layer 3 SA approved (RC-1 to RC-12 applied) + user decisions D-5, D-6 — one-line mirrors | Overview, E.12 (header counts and one closing line) and the H.3 Layer 3 row now record: SA approved, ready for Dev workplan (28 FRs, 27 ACs); **D-5** the audit API routes are secured as step 0 of Layer 3, before any AI entry is written; **D-6** AI entries hidden from owners until the charging decision. Other Layer 3 references in this doc (H.1 read-back, J / K OI-C "SA to confirm") are superseded by the requirement and left as they were |

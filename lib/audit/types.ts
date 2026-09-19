@@ -12,48 +12,76 @@ import { NextRequest } from 'next/server';
 export type AuditSeverity = 'info' | 'warning' | 'critical';
 
 /**
- * Entity types that can be audited
+ * Entity types that can be audited.
+ *
+ * A runtime list, not only a type: the client write routes validate `entityType`
+ * against it (Layer 3 step 0, FR-24), and the type is derived from it so the
+ * two can never drift.
  */
-export type EntityType =
-  | 'agent'
-  | 'shared_agent'
-  | 'user'
-  | 'plugin'
-  | 'settings'
-  | 'profile'
-  | 'connection'
-  | 'execution'
-  | 'system'
-  | 'scheduling_service'
-  | 'scheduling_booking'
-  | 'payment_invoice'
+export const AUDIT_ENTITY_TYPES = [
+  'agent',
+  'shared_agent',
+  'user',
+  'plugin',
+  'settings',
+  'profile',
+  'connection',
+  'execution',
+  'system',
+  'scheduling_service',
+  'scheduling_booking',
+  'payment_invoice',
   // A payment and a refund are audited against the transaction, which was not
   // in this union — so the refund route's audit entry, written at severity
   // `critical`, did not typecheck against the service it calls.
-  | 'payment_transaction'
+  'payment_transaction',
   // Stopping a client's payment plan changes what they will be charged, so it
   // is audited like money moving — and the plan is the entity it happened to.
-  | 'payment_plan_subscription'
+  'payment_plan_subscription',
   // A milestone billed is a charge the client will see, and the stage is the
   // thing it happened to — the invoice it produces is audited separately, so
   // without this "when was milestone 2 billed" has no entity to hang off.
-  | 'payment_plan_installment'
+  'payment_plan_installment',
   // A quote is a commitment the business made to a client at a moment in time,
   // and what it later became. "What did we offer, and when" has to be
   // answerable independently of the invoice it produced.
-  | 'proposal'
-  | 'crm_contact'
-  | 'business_profile'
-  | 'website_page'
+  'proposal',
+  'crm_contact',
+  'business_profile',
+  'website_page',
   // Publishing an intake decides what every future client is asked, so it is
   // audited against the form version that went live rather than against the
   // business — "which questions did we send in September" has to be answerable.
-  | 'intake_form';
+  'intake_form',
+  // Subscription and boost-pack purchases. Written by the Stripe routes, which
+  // used these values before the list was enforced; registered so their stored
+  // rows stay exactly as they were (Layer 3 step 0, WC-12).
+  'subscription',
+  'boost_pack',
+  // One Business OS AI action (Layer 3). The entity id is the action's usage
+  // grouping id, so an entry links to its rows in token_usage. Server-written
+  // only, and hidden from owners (lib/audit/requestSchemas.ts,
+  // AuditTrailRepository).
+  'ai_action',
+] as const;
+
+export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
 /**
  * Compliance frameworks this event relates to
  */
-export type ComplianceFlag = 'GDPR' | 'SOC2' | 'HIPAA' | 'ISO27001' | 'CCPA';
+export const COMPLIANCE_FLAGS = [
+  'GDPR',
+  'SOC2',
+  'HIPAA',
+  'ISO27001',
+  'CCPA',
+  // The Stripe routes have always stored 'FINANCIAL' on their subscription
+  // events; it is kept so what they store does not change (Layer 3 step 0, WC-12).
+  'FINANCIAL',
+] as const;
+
+export type ComplianceFlag = (typeof COMPLIANCE_FLAGS)[number];
 
 /**
  * Change record for UPDATE operations

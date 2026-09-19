@@ -1,5 +1,7 @@
 # System Logging Guidelines
 
+> **Last Updated**: 2026-09-18
+
 ## Table of Contents
 - [Overview](#overview)
 - [Logging Philosophy](#logging-philosophy)
@@ -16,6 +18,7 @@
 - [Integration with AuditTrailService](#integration-with-audittrailservice)
 - [Migration Guide](#migration-guide)
 - [Best Practices](#best-practices)
+- [Change History](#change-history)
 
 ---
 
@@ -794,9 +797,11 @@ function logMemoryUsage() {
 
 ## Sensitive Data Redaction
 
-Sensitive data is automatically redacted based on the configuration in `lib/logger/config.ts`.
+> **Warning: not active today (verified 2026-09-18, open item OI-9).** Server code imports `@/lib/logger`, which resolves to `lib/logger.ts`, a bare `pino({ level, browser })` with **no `redact` list**. The list in `lib/logger/config.ts` is applied by no server logger, because `lib/logger.ts` shadows `lib/logger/index.ts`. **Nothing below is redacted automatically**, and no code may rely on it. Keep secrets, prompts, payloads and owners' raw text out of log calls yourself: log lengths, counts, ids and labels instead. **Owner text rule:** what a user typed is never logged at any level; text a model derived from it (summaries, extractions, a JSON `SyntaxError`'s message, which quotes its input) is logged at `debug` only, which production (`info`, `lib/logger.ts:16`) does not print. The examples below describe the **intended** configuration, which OI-9 will restore. Tracked in [BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_LAYER1_5_REQUIREMENT.md) § Known Issues and Open Items.
 
-### Automatic Redaction
+The intended configuration lives in `lib/logger/config.ts`.
+
+### Automatic Redaction (intended; not active, OI-9)
 
 ```typescript
 // These fields are automatically redacted:
@@ -828,7 +833,7 @@ function sanitizeUserData(user: any) {
 logger.info(sanitizeUserData(userData), 'User data processed');
 ```
 
-### Request Header Redaction
+### Request Header Redaction (intended; not active, OI-9)
 
 ```typescript
 // Authorization and Cookie headers are automatically redacted
@@ -1432,3 +1437,11 @@ Understanding what your logs will look like in different scenarios:
 
 **Questions or Issues?**
 Refer to the [Pino documentation](https://getpino.io/) for advanced usage and configuration options.
+
+---
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-09-18 | Redaction marked not active (OI-9); owner-text rule added | `@/lib/logger` resolves to `lib/logger.ts`, which has no `redact` list, so the Sensitive Data Redaction section now states that nothing is redacted automatically and describes the intended configuration only. Added the rule: raw user text is never logged, and model-derived text is logged at `debug` only. See [BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md](/docs/workplans/BUSINESS_OS_LLM_LOGGING_CLEANUP_WORKPLAN.md) |

@@ -1,5 +1,6 @@
 // lib/ai/providers/baseProvider.ts
 import { AIAnalyticsService, AICallData } from '@/lib/analytics/aiAnalytics';
+import { notifyUsage } from '@/lib/ai/usageScope';
 
 
 export interface CallContext {
@@ -83,10 +84,29 @@ export abstract class BaseAIProvider {
   ): Promise<T> {
     const startTime = Date.now();
     const callId = this.generateCallId();
+    // Exactly one usage-scope notification per call (Layer 3, SA WC-1): if the
+    // success branch's tracker throws, the catch below must not report the
+    // same call a second time as a failure.
+    let notified = false;
     
     try {
       const result = await apiCall();
       const metrics = extractMetrics(result);
+
+      // Before the tracker, so a slow or failing ledger write cannot drop it.
+      // A no-op outside a usage scope (lib/ai/usageScope.ts).
+      notified = true;
+      notifyUsage({
+        feature: context.feature,
+        component: context.component,
+        provider,
+        model,
+        sessionId: context.sessionId,
+        inputTokens: metrics.inputTokens,
+        outputTokens: metrics.outputTokens,
+        costUsd: metrics.cost,
+        success: true,
+      });
       
       // Track successful call with all context fields
       await this.analytics.trackAICall({
@@ -117,6 +137,21 @@ export abstract class BaseAIProvider {
       
       return result;
     } catch (error: any) {
+      if (!notified) {
+        notifyUsage({
+          feature: context.feature,
+          component: context.component,
+          provider,
+          model,
+          sessionId: context.sessionId,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          success: false,
+          errorCode: error?.code || 'UNKNOWN',
+        });
+      }
+
       // Track failed call
       await this.analytics.trackAICall({
         call_id: callId,
