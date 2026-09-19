@@ -694,13 +694,8 @@ function formatDay(dateLocal: string, language: BriefingLanguage): string {
   }
 }
 
-/** Split a narration into the lines the card renders. */
-export function briefingLines(narrative: string): string[] {
-  return narrative
-    .split('\n')
-    .map(line => line.replace(/^\s*[-•*\d.]+\s*/, '').trim())
-    .filter(Boolean);
-}
+/** Split a narration into the lines the card renders. Lives in `./briefingLines` so the browser can import it. */
+export { briefingLines } from './briefingLines';
 
 /** Shared by the prompt and the fallback so both render money identically. */
 export function formatMoney(amount: number, currency: string): string {
