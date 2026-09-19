@@ -48,6 +48,7 @@ This workplan:
 20. [Steps 3–5 Implementation Notes](#20-steps-35-implementation-notes)
 21. [SA Code Review — Steps 3–5 and FR-29](#21-sa-code-review--steps-35-and-fr-29)
 22. [QA Report — Steps 3–5 live (L-1..L-4)](#22-qa-report--steps-35-live-l-1l-4)
+23. [QA Report — Deployed KI-B measurement](#23-qa-report--deployed-ki-b-measurement-2026-09-19)
 
 ---
 
@@ -827,6 +828,7 @@ The code-reality check is thorough: fifteen findings, each with evidence. I re-v
 
 - **Step 0, pre-deploy:** see [§15](#15-qa-report--step-0-pre-deploy) (2026-09-18, PASS). The post-deploy L-0 check is in [§19](#19-qa-report--post-deploy-l-0-2026-09-19) (2026-09-19, PASS for the automated scope).
 - **Steps 3–5 and FR-29, live local L-1..L-4:** see [§22](#22-qa-report--steps-35-live-l-1l-4) (2026-09-19, PASS; one Low tolerance-wording item).
+- **First KI-B measurement, deployed production (`01d0116b`):** see [§23](#23-qa-report--deployed-ki-b-measurement-2026-09-19) (2026-09-19). 6 entries sent, 0 lost. Every entry that was not flushed on purpose was delayed, by 7 s to about 3.5 min, until later traffic reached the instance. Recommendation: prioritise OI-D.
 
 ## 12. Commit Info
 
@@ -1823,6 +1825,108 @@ WHERE user_id = '<test account>' AND action = 'USER_LOGOUT' AND details @> '{"qa
 
 ---
 
+## 23. QA Report — Deployed KI-B measurement (2026-09-19)
+
+**QA — 2026-09-19.** **Test mode:** smoke, post-deploy, read-mostly. **Strategy:** C: one Node script sends HTTP requests to the deployment and runs read-only service-role polls on the DB. **Focus:** api, performance (KI-B delay and loss; FR-29 on the deployed build). **Skipped:** browser flows. **Input source:** prompt keywords. **Account:** `2f734ed5-3681-4049-880d-3de7b096bea3` only. **Run marker:** `qa-kib-mu8d7vtm` (in `details.qa_marker`). **Window:** 12:30:14Z–12:33:49Z.
+
+### 23.1 Target and session
+
+- **Target:** the public production alias `https://neuronforge-kohl.vercel.app` (edge `fra1`, function `iad1`). The per-deployment URLs are behind Vercel protection and were not used. The Supabase project is the same one as `.env.local` (confirmed in §19.1).
+- **The alias serves `01d0116b`.** Two behaviours exist only in this build:
+  - the logout rows land in under 1.1 s, while every unflushed write took 7 s or more (FR-29);
+  - a `BUSINESS_AI_ACTION_COMPLETED` entry was written for the intake inference (step 3 wiring).
+- **Session:** an admin magic link verified with `verifyOtp`, so no email was sent (the same method as §19 and §22). The session was turned into the real `@supabase/ssr` cookie (`sb-<ref>-auth-token`, one chunk) and sent as a cookie. Afterwards it was revoked with `admin.signOut(jwt, 'local')`, with no error. The account's other sessions were not touched.
+
+### 23.2 Results
+
+| # | Request (production) | Response | Queued (`created_at`) | Found in DB | Class |
+|---|---|---|---|---|---|
+| 1a | `POST /api/audit/log` `USER_LOGOUT` | 200, 809 ms (cold) | 12:30:15.093 | **+1.05 s** (`b42fe343…`) | immediate (FR-29) |
+| 1b | same | 200, 387 ms | 12:30:16.858 | **+0.64 s** (`e8c834c5…`) | immediate (FR-29) |
+| 1c | same | 200, 307 ms | 12:30:18.452 | **+0.59 s** (`d2778824…`) | immediate (FR-29) |
+| 3 | `POST /api/intake/form/infer-question` `{text:"ask how many people will attend"}` | 200, 2.56 s; a question was returned | 12:30:22.384 | **not at +60 s** (DB-only polling every 0.5 s, no other requests), and not at ≈ +61 s (the §23.3 count was still 12). **Present by +3 min 27 s** | **delayed**, 61 s–3.5 min |
+| 2b | `POST /api/audit/log` `SETTINGS_PROFILE_UPDATED` (no flush) | 200, 688 ms | 12:31:22.263 | not in the first 6 s (polled every 0.3 s). A harmless `GET /api/audit/query?limit=5` at +6.0 s (200, 640 ms). **Found at +7.06 s**, i.e. within about 0.4 s of the follow-up request's response | **delayed**, landed only after the follow-up request |
+| 2a | `POST /api/audit/log` `SETTINGS_PROFILE_UPDATED`, **the last request** | 200, 443 ms | 12:31:29.079 | **Found at +119.4 s** (≈ 12:33:28), with no further request from QA. DB-only polling every 1 s | **delayed** ~2 min |
+
+**The AI entry** (`BUSINESS_AI_ACTION_COMPLETED`, group `e8eef398-09c9-41a4-b619-a89eab03d447`):
+- `info`, outcome `succeeded`, trigger `user`, `callCount` 1, cost $0.000048;
+- this matches the ledger exactly: 1 `token_usage` row, `business-os-intake`, $0.000048, the same session id.
+
+**Summary in §5.2's terms:**
+
+| Measure | Count |
+|---|---|
+| Entries expected | 6 |
+| Found at +10 s | 4. The 3 logouts, plus 2b at 7 s, but only after the follow-up |
+| Found later | 2 (the AI entry, 2a) |
+| Delayed (every unflushed entry) | 3 of 3 |
+| Lost | **0** |
+
+### 23.3 Owners still can't see AI entries (production data)
+
+The test session read `audit_trail` directly, with the anon key and its own JWT, so RLS applied:
+- **14 rows, 0 `ai_action` / `BUSINESS_AI_ACTION_*`, 0 of other users.** Filtering `entity_type = 'ai_action'` also returned 0.
+- The service role, for the same account at the same moment: 26 rows, 12 `ai_action`. So 14 = every ordinary row.
+- `GET /api/audit/query` on production (step 2b's follow-up): 200, 5 logs, 0 AI.
+- **PASS.**
+
+### 23.4 What this shows
+
+1. **FR-29 works on production.** The logout row landed within 0.6–1.1 s in 3 of 3 runs, inside the ~2 s bound. The first call was a cold start, at 809 ms.
+2. **Every other audit write waits for later traffic.** No unflushed entry was written by its own request. Vercel freezes the instance once the response is sent, so the 5 s flush timer does not fire until something wakes the instance:
+   - 2b was written about 1 s after our next request;
+   - 2a and the AI entry were written 1–3.5 min later, with no request from us. Most likely other production traffic or a cron woke the same warm instance. Which one cannot be told from outside.
+   - If nothing reaches that instance before Vercel recycles it, the entry is lost. That is KI-B.
+   - Nothing was lost in this sample, but only because the alias had enough traffic within a few minutes.
+3. **The actions most exposed are those that run when nobody else is active.** A small number of test requests cannot measure that loss rate, because it depends on how much traffic production gets. The most exposed are:
+   - the scheduled runs (the briefing and the insights cron, which are often an instance's last request);
+   - the lead reply, which runs detached;
+   - an owner's single AI action late at night.
+4. **Delay cannot be seen afterwards.** `created_at` is the queue time, not the write time. Every delayed row in this run carries its request's timestamp. The only way to find a lost AI entry later is the ledger ↔ audit join (§22.6): a ledger group with no entry. A production-wide join over other accounts was **not** run: it is outside this task's scope (the test account only).
+
+### 23.5 Issues
+
+**Bugs:** none. KI-B is an accepted known risk (D-4), not a defect.
+
+**Performance:**
+1. **Audit writes are delayed from 7 s to minutes on production** (KI-B / OI-A). Severity: **Medium** for AI entries (OI-D); it is the same for ordinary events. File: `lib/services/AuditTrailService.ts` (queue and interval flush, unchanged under D-4).
+   - **Steps:** §23.2, 2a.
+   - **Expected (FR-1 intent):** the entry is stored shortly after the action.
+   - **Actual:** it stays in the instance's memory until later traffic wakes the instance. It is lost if no traffic comes before the instance is recycled.
+
+**Edge cases:** the ordinary events (settings, profile) show the same delay. That is OI-A, the service-wide fix, not Layer 3.
+
+### 23.6 Recommendation on OI-D
+
+**Prioritise OI-D. Treat it as the next small reliability item for this layer: not an emergency, but before launch.**
+
+- **Why:**
+  - The measured behaviour is "written only when later traffic arrives", on every unflushed entry. Before launch, traffic is low, especially at night when the scheduled AI runs happen.
+  - That makes the loss risk real and highest exactly where the entries matter most: the platform-triggered actions an owner did not see happen.
+  - The FR-29 pattern (a bounded flush before responding) is proven on production at under 1.1 s. An equivalent bounded flush when an AI action finishes would give the same result for AI entries.
+- **Why it is not an emergency:** cost and billing truth is unaffected. Every AI call is still in the usage ledger, which is written directly. A lost audit entry loses the activity record, not the money.
+- **Ask SA:** choose the OI-D mechanism (a bounded flush after each AI action, or Vercel `waitUntil`). Also consider whether OI-A should follow, for ordinary events.
+
+### 23.7 Spend and rows left behind
+
+- **Spend:** one intake inference, $0.000048.
+- **Rows added (nothing deleted), all tagged `qa-kib-mu8d7vtm` except the AI entry:** in `audit_trail` for the test account,
+  - 3 `USER_LOGOUT` (`b42fe343…`, `e8c834c5…`, `d2778824…`);
+  - 2 `SETTINGS_PROFILE_UPDATED`;
+  - 1 `BUSINESS_AI_ACTION_COMPLETED`.
+- **Also added:** 1 `token_usage` row.
+- **Not written:** no emails, messages, payments, deletes or config writes. The intake route persists nothing besides the ledger and the audit entry.
+
+### 23.8 Final status
+
+- [x] FR-29 is verified on the deployed build, 3 of 3 runs under the 2 s bound.
+- [x] KI-B is measured: 0 of 6 lost; 3 of 3 unflushed entries delayed (7 s, ~2 min, and 61 s–3.5 min).
+- [x] One AI action on production wrote its entry correctly (it matches the ledger), but late.
+- [x] Owners see no AI entries on production.
+- [ ] OI-D: prioritisation is recommended; an SA and user decision is needed.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -1846,3 +1950,4 @@ WHERE user_id = '<test account>' AND action = 'USER_LOGOUT' AND details @> '{"qa
 | 2026-09-19 | SA §21 CR-1/CR-2 applied (TL) | CR-1: L-1 now includes a chat request that creates a landing page (two entries: chat turn + nested website operation). CR-2: requirement FR-7/AC-7 reworded — only an exact plan-cache hit writes no entry; a semantic hit (one embedding call) writes a one-call entry |
 | 2026-09-19 | QA, steps 3–5 and FR-29, live local L-1..L-4 — PASS | §22 added. In-process, one long-lived process (chat-probe preload; real providers, scope, audit flush, DB); test account `2f734ed5…`. **L-1:** chat question, chat landing page (proposing turn + nested `chat_website_operation`; the website calls are only in the latter, which closes DV-17), website testimonial, intake inference, image, onboarding turn, briefing `user` + `scheduled` (same group, owner vs platform actor), lead reply (external, platform), insight cron (3 entries across all businesses). 11 ledger sessions → 12 entries, none missing, none orphaned. Calls and tokens exact; cost within 5e-7 for 12 of 14 entries; 2 chat entries are off by 1e-6 because of the ledger's per-row rounding (Bug 1, Low, a tolerance-wording fix for SA). 0 content hits; 0 WC-5 exclusions. **L-2:** an in-process invalid image model gives one FAILED/warning entry with `image_failed` only. **L-3:** the owner session sees 10/10 ordinary rows and 0 of 12 AI rows; `/api/audit/query` 0 AI; `not.like` proven on PostgREST (WC-7 closed). **L-4:** the `USER_LOGOUT` row is present 823 ms after the request, with no wait. Spend ≈ $0.269. A pre-existing info log of the landing title and description in `WebsiteGenerationService.ts:209` was noted as a follow-up |
 | 2026-09-19 | QA §22 follow-ups recorded (TL) | F-F (WebsiteGenerationService logs landing page title/description at info) and F-G (cost tolerance rule widened to (callCount + 1) × 5e-7 because the ledger rounds each row to a micro-dollar; code unchanged) |
+| 2026-09-19 | QA, deployed KI-B measurement on production (`01d0116b`) | §23 added, plus pointers in the ToC and §11. The public alias `neuronforge-kohl.vercel.app` was confirmed as `01d0116b` by the FR-29 flush and a new AI entry. Test account only; session from an admin magic link as a real SSR cookie, revoked (local) after. **FR-29:** the logout row landed at +1.05 / +0.64 / +0.59 s. **Ordinary writes:** one was not written until a follow-up request (+7.06 s); the last request's write took +119 s with no further request from QA. **AI action** (intake inference, $0.000048): the entry matches the ledger, but was not in the DB at +61 s and landed by +3.5 min. 6 sent, **0 lost, 3 of 3 unflushed entries delayed**. `created_at` is the queue time, so delay is invisible afterwards. Owners on production see 14/14 ordinary rows and 0 AI rows. Recommendation: **prioritise OI-D** before launch (a bounded flush per AI action, as FR-29); SA to choose the mechanism |
