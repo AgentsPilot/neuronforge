@@ -1,0 +1,77 @@
+-- Business OS Layer 3, workplan Step 1 (OQ-11 option a): owners cannot read
+-- AI audit entries directly.
+--
+-- ---------------------------------------------------------------------------
+-- WHY
+--
+-- User decision D-6 ("2A", 2026-09-18): AI audit entries (entity_type
+-- 'ai_action', events BUSINESS_AI_ACTION_*) are operator-only until the charging
+-- decision. The product already never shows them: every owner read goes through
+-- AuditTrailRepository.listOwnerEntries, which excludes them in the query
+-- (Layer 3 step 0). But the RLS policy below lets a signed-in owner read ALL of
+-- their own audit rows directly with their own session (PostgREST + anon key).
+-- This narrows that one policy so a direct read cannot see AI entries either
+-- (requirement FR-28, AC-27; closes the conditional known issue KI-D).
+--
+-- Must be APPLIED MANUALLY (SQL editor), after Layer 3 step 0 is deployed and
+-- BEFORE step 3 (the first code that writes AI entries) is deployed. Until
+-- step 3 there are no ai_action rows, so applying it early changes nothing an
+-- owner can see today.
+--
+-- WHY `IS DISTINCT FROM`, NOT `<>`
+--
+-- `entity_type <> 'ai_action'` is NULL when entity_type is NULL, and an RLS
+-- predicate that is NULL hides the row. The column is NOT NULL today, so both
+-- forms behave the same now. But if that constraint were ever relaxed, `<>`
+-- would silently hide an owner's own ordinary rows with a NULL type, which are
+-- not AI entries. `IS DISTINCT FROM` is null-safe: it hides exactly
+-- 'ai_action' and nothing else, whatever happens to the constraint.
+--
+-- WHAT IT DOES NOT TOUCH
+--
+-- Only the USING expression of "Users can view their own audit logs" changes,
+-- through ALTER POLICY: its name, command (SELECT) and roles (PUBLIC) are kept
+-- exactly as they are, and if the policy has been renamed or dropped the
+-- statement FAILS instead of quietly creating a second policy. The policy
+-- "service_role_bypass_rls" (ALL, {service_role}) is left exactly as it is: the
+-- server (AuditTrailService, the repositories, operators) keeps reading and
+-- writing everything.
+--
+-- ---------------------------------------------------------------------------
+-- PRE-CHECK (run first; read-only). Expect the two live policies, with
+-- "Users can view their own audit logs" = polcmd 'r' (SELECT), polroles {0},
+-- using_expr (auth.uid() = user_id), no WITH CHECK. `polroles` shows OIDs, and
+-- {0} means PUBLIC; a query that lists role NAMES shows {} for it instead,
+-- because PUBLIC has no name. Both mean the same thing:
+--
+--   SELECT polname, polcmd, polroles,
+--          pg_get_expr(polqual, polrelid)      AS using_expr,
+--          pg_get_expr(polwithcheck, polrelid) AS with_check_expr
+--   FROM pg_policy
+--   WHERE polrelid = 'public.audit_trail'::regclass
+--   ORDER BY polname;
+--
+-- STOP only if the owner policy shows a NAMED role (a real role OID, or a role
+-- name when listing names) or a USING expression other than
+-- (auth.uid() = user_id). Then send the output to the Dev.
+--
+-- POST-CHECK (read-only). Expect the owner policy's using_expr to read
+--   ((auth.uid() = user_id) AND (entity_type IS DISTINCT FROM 'ai_action'::text))
+-- and "service_role_bypass_rls" unchanged:
+--
+--   (the same query as the pre-check)
+--
+-- ROLLBACK (restores the exact expression that was live on 2026-09-18):
+--
+--   ALTER POLICY "Users can view their own audit logs" ON public.audit_trail
+--     USING (auth.uid() = user_id);
+-- ---------------------------------------------------------------------------
+
+-- A single ALTER POLICY is atomic on its own; the transaction is kept so the
+-- file reads as one unit. Safe to re-run: it sets the same expression again.
+BEGIN;
+
+ALTER POLICY "Users can view their own audit logs" ON public.audit_trail
+  USING (auth.uid() = user_id AND entity_type IS DISTINCT FROM 'ai_action');
+
+COMMIT;
