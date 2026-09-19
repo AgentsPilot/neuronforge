@@ -2,6 +2,7 @@
 
 > **Last Updated**: 2026-09-18
 > **Branch:** `fix/onboarding-price-parser`
+> **Status:** ✅ Merged to `main` via [PR #54](https://github.com/AgentsPilot/neuronforge/pull/54) (merge commit `66461a6e`, 2026-09-19)
 
 ## Overview
 
@@ -172,6 +173,19 @@ Still open before the cycle closes (not a commit blocker): the read-only existin
 
 ---
 
+## Release
+
+| Item | Value |
+|------|-------|
+| PR | [#54](https://github.com/AgentsPilot/neuronforge/pull/54), merged 2026-09-19 |
+| Merge commit on `main` | `66461a6e` |
+| Fix commit (code + tests) | `e6a7ad5f` |
+| Docs commit (workplan) | `4c86680a` |
+| Merge of `origin/main` into the branch | `9e8e8ec9` (conflict with OI-7 commit `d23e946d` on the parser log lines; kept main's `need_price` warn, our parser) |
+| Tests after merge | 70/70 pass (`npx jest lib/services/__tests__/OnboardingConversationManager`) |
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -180,3 +194,4 @@ Still open before the cycle closes (not a commit blocker): the read-only existin
 | 2026-09-18 | SA code review | Approved with notes; approved for QA |
 | 2026-09-18 | QA | PASS; caller-path test added; edge cases and pre-existing need_price fall-through logged as follow-ups |
 | 2026-09-19 | User approval | Code approved. Existing-data check dropped by user decision. OI-7 follow-up removed (fixed on main in `d23e946d`). |
+| 2026-09-19 | Released | Merged via PR #54 (`66461a6e`); commit SHAs recorded in the Release section |
