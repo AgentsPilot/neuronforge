@@ -8,6 +8,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { WebsiteAIContentService } from '@/lib/services/WebsiteAIContentService';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'EnhanceTestimonialAPI' });
@@ -35,10 +36,15 @@ export async function POST(request: NextRequest) {
     requestLogger.info({ userId: user.id, language: validated.language, groupId }, 'Enhancing testimonial');
 
     const aiService = new WebsiteAIContentService();
-    const enhancedQuote = await aiService.enhanceTestimonial(validated.quote, validated.language, {
-      userId: user.id,
-      groupId,
-    });
+    // One AI action, one audit entry (Layer 3, FR-12).
+    const enhancedQuote = await runAiAction(
+      { area: 'website', actionType: 'website_testimonial_enhance', groupId, trigger: 'user', accountId: user.id },
+      () =>
+        aiService.enhanceTestimonial(validated.quote, validated.language, {
+          userId: user.id,
+          groupId,
+        })
+    );
 
     requestLogger.info({ userId: user.id }, 'Testimonial enhanced successfully');
 

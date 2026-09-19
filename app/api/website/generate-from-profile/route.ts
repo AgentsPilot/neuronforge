@@ -14,6 +14,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { WebsiteGenerationService } from '@/lib/services/WebsiteGenerationService';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActionAudit';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'WebsiteGenerationAPI' });
@@ -78,7 +79,15 @@ export async function POST(request: NextRequest) {
 
     // 4. Generate website for the signed-in account (checked equal above)
     const generationService = new WebsiteGenerationService();
-    const result = await generationService.generateWebsite(user.id, { groupId, pageId, templateId });
+    // One AI action, one audit entry (Layer 3, FR-12). Never awaited on the audit.
+    const result = await runAiAction(
+      { area: 'website', actionType: 'website_full_site', groupId, trigger: 'user', accountId: user.id, correlationId },
+      async (h) => {
+        const generated = await generationService.generateWebsite(user.id, { groupId, pageId, templateId });
+        markGenerationResult(h, generated);
+        return generated;
+      }
+    );
 
     if (!result.success) {
       requestLogger.error({ userId, error: result.error }, 'Website generation failed');

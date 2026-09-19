@@ -9,6 +9,7 @@ import { createLogger } from '@/lib/logger';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'LandingPageGenerateAPI' });
@@ -105,47 +106,64 @@ export async function POST(request: NextRequest) {
     // Generate content using AI - use gpt-4o for better content quality
     const provider = ProviderFactory.getProvider('openai');
 
-    const response = await provider.chatCompletion(
-      {
-        model: 'gpt-4o',
-        messages: [
+    // The call and the parse are one AI action, one audit entry (Layer 3,
+    // FR-12). Content replaced by the defaults is recorded as a failure.
+    const generatedContent = await runAiAction(
+      { area: 'website', actionType: 'website_landing_page', groupId, trigger: 'user', accountId: user.id, correlationId },
+      async (h): Promise<Record<string, unknown>> => {
+        const response = await provider.chatCompletion(
           {
-            role: 'system',
-            content: systemPrompt
+            model: 'gpt-4o',
+            messages: [
+              {
+                role: 'system',
+                content: systemPrompt
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            temperature: 0.7,
+            response_format: { type: 'json_object' }
           },
-          {
-            role: 'user',
-            content: prompt
+          buildBosCallContext({
+            userId: user.id,
+            area: 'website',
+            callName: 'landing_page',
+            groupId,
+            correlationId,
+          })
+        );
+
+        // Parse the generated content
+        try {
+          const responseText = response.choices[0]?.message?.content || '{}';
+          requestLogger.info({ responseLength: responseText.length }, 'AI response received');
+          const parsed: Record<string, unknown> = JSON.parse(responseText);
+
+          // Validate that we got real content, not empty objects
+          if (!parsed.hero || !parsed.features || !parsed.faq) {
+            // The model's output: keys only at warn, the content at debug
+            // (bos-llm-call-standards, Standard 5).
+            requestLogger.warn({ keys: Object.keys(parsed) }, 'AI response missing expected fields');
+            requestLogger.debug({ generatedContent: parsed }, 'AI response missing expected fields: content');
+            h.markFailed('content_fallback');
+            return getDefaultContent(validated);
           }
-        ],
-        temperature: 0.7,
-        response_format: { type: 'json_object' }
-      },
-      buildBosCallContext({
-        userId: user.id,
-        area: 'website',
-        callName: 'landing_page',
-        groupId,
-        correlationId,
-      })
-    );
-
-    // Parse the generated content
-    let generatedContent: Record<string, unknown>;
-    try {
-      const responseText = response.choices[0]?.message?.content || '{}';
-      requestLogger.info({ responseLength: responseText.length }, 'AI response received');
-      generatedContent = JSON.parse(responseText);
-
-      // Validate that we got real content, not empty objects
-      if (!generatedContent.hero || !generatedContent.features || !generatedContent.faq) {
-        requestLogger.warn({ generatedContent }, 'AI response missing expected fields');
-        generatedContent = getDefaultContent(validated);
+          return parsed;
+        } catch (parseError) {
+          // A JSON SyntaxError quotes the model's output: name at warn, detail at debug.
+          requestLogger.warn(
+            { errName: parseError instanceof Error ? parseError.name : typeof parseError },
+            'Failed to parse AI response, using defaults'
+          );
+          requestLogger.debug({ err: parseError }, 'Failed to parse AI response: detail');
+          h.markFailed('content_fallback');
+          return getDefaultContent(validated);
+        }
       }
-    } catch (parseError) {
-      requestLogger.warn({ err: parseError }, 'Failed to parse AI response, using defaults');
-      generatedContent = getDefaultContent(validated);
-    }
+    );
 
     requestLogger.info({
       serviceId: validated.serviceId,

@@ -29,6 +29,7 @@ import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { getProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext, newBosGroupId, type BosLlmOwner } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
 import { INTAKE_QUESTION_TYPES, isIntakeQuestionType } from '@/lib/business-os/intake/types';
 import { stripForbiddenQuestions } from '@/lib/business-os/intake/verticalKnowledge';
@@ -67,7 +68,11 @@ export async function POST(request: NextRequest) {
     const groupId = newBosGroupId();
     requestLogger.info({ userId: user.id, groupId }, 'Inferring intake question');
 
-    const inferred = await infer(text, language, { userId: user.id, groupId });
+    // One AI action, one audit entry (Layer 3, FR-12).
+    const inferred = await runAiAction(
+      { area: 'intake', actionType: 'intake_question_inference', groupId, trigger: 'user', accountId: user.id },
+      () => infer(text, language, { userId: user.id, groupId })
+    );
 
     /*
      * The same filter the generator runs. An owner typing "ask about their

@@ -24,6 +24,7 @@
 import { randomUUID } from 'crypto';
 import { createLogger } from '@/lib/logger';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActionAudit';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
 import { crmTaskRepository } from '@/lib/repositories/CRMTaskRepository';
 import { settleInvoicePaid } from '@/lib/payments/invoiceSettlement';
@@ -811,15 +812,25 @@ const HANDLERS: Record<string, Record<string, Handler>> = {
         const groupId = newBosGroupId();
         logger.info({ userId: ctx.userId, pageId: created.data.id, groupId }, 'Generating landing page content');
 
-        const generated = await new WebsiteGenerationService().generateWebsite(ctx.userId, {
-          groupId,
-          pageId: created.data.id,
-          ...(templateId ? { templateId } : {}),
-          focus: {
-            title,
-            ...(data.description ? { description: String(data.description) } : {}),
-          },
-        });
+        // Its own AI action with its own group, nested inside the chat turn's:
+        // its calls go to this entry, not the turn's (FR-9, innermost scope).
+        const pageId = created.data.id;
+        const generated = await runAiAction(
+          { area: 'website', actionType: 'chat_website_operation', groupId, trigger: 'user', accountId: ctx.userId },
+          async (h) => {
+            const result = await new WebsiteGenerationService().generateWebsite(ctx.userId, {
+              groupId,
+              pageId,
+              ...(templateId ? { templateId } : {}),
+              focus: {
+                title,
+                ...(data.description ? { description: String(data.description) } : {}),
+              },
+            });
+            markGenerationResult(h, result);
+            return result;
+          }
+        );
 
         if (!generated.success) {
           logger.warn(
