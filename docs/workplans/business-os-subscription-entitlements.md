@@ -1048,6 +1048,50 @@ The requirement doc (owned by BA) must be updated to match: FR-3 ("every tier (B
 
 [x] Workplan approved with conditions. Dev addresses the scope change and RC-1 to RC-17 in this document. SA re-checks the revised sections (short delta review), and then implementation proceeds. G-1 to G-3 gate later slices.
 
+### 13.1 SA Re-check of Revision 2
+
+**Re-checked by SA — 2026-09-19** (commit `dffea8e2`)
+**Status:** ✅ **CLEARED FOR SLICE 1 IMPLEMENTATION**, with four small conditions (R2-1 to R2-4). Dev applies them during implementation. SA verifies them at code review, and they need no further workplan round.
+
+**Migration SQL (S1-T0): approved as sketched in §4.3.** Dev may write it to the repo as specified, and QA runs the verification script on a branch DB. Checked:
+- RLS on, with zero user policies and `REVOKE ALL` from `anon`/`authenticated` on all three tables.
+- Actor columns without FK. `plan_version DEFAULT 0` with the tier CHECK.
+- The trigger reads only `NEW.user_id`, with `search_path=''`, `lock_timeout 2s`, EXCEPTION→WARNING, and a fact-only `ON CONFLICT … DO UPDATE … WHERE … IS NULL` that cannot touch cohort, tier or pins.
+- One transaction in the order tables → RLS → functions → triggers → backfill.
+- The champion backfill uses `ON CONFLICT DO NOTHING`. The shadow RPC is INVOKER + REVOKE + service_role.
+
+The definer function is owned by the migration role, which owns the plan table and therefore bypasses its RLS. That is intended.
+
+| Section | Result |
+|---|---|
+| §4.3 | ✅ Approved (above). |
+| §4.6 | ✅ Zero production tiers, with the fixture served through an injectable source. The `{ all: true }` base has explicit quantity/metered/fair-use values. `durationHistory`/`graceHistory`. `clockStartsAt`. The send policy is keyed by send id. See R2-4 for AC-37. |
+| §4.7 | ✅ Zero-tier Zod handled with `z.never()`. Lazy first `load()`. The history and `client_render` rules are right. |
+| §4.8 | ✅ The tier wins over the cohort. Open-ended champions are active with no fallback. The trial clock comes from pins, then facts, then config history. `not_built` is never on. Beta comes only via `includeLifecycle` or an override. `lowestTier` is nullable. The combination test matrix is sufficient. See R2-3. |
+| §4.9 | ✅ Input cache, LRU 5,000, read-through for report/batch, a 100-id cap with chunking, and stale data only for fail-open audiences. |
+| §4.10 | ✅ `mode.ts` has no config import. `shadow.ts` loads config through a dynamic import inside the try. All outcomes are recorded, including `allowed`. `asTier` is fixture-proven. The report exposure is tested. |
+| §4.11 | ✅ Matches S-8 and RC-3. |
+| §4.12 | ✅ with R2-2 and R2-3. The gate order, the tenant pre-check through existing repositories, 409 `plan_row_missing`, and the champion `expiresAt` required key are all right. |
+| §5 B-3 row | ✅ Design approved: its own route, a dry run, idempotent, audited per account plus a summary, and it leaves tier accounts and existing champions alone. See R2-1 for timing. |
+| §8 | ✅ Gates are placed correctly. G-1, G-2 and UD-2 are preconditions at step 7, and the launch op runs before `enforce`. |
+
+**Requirement changes (BA).** B-13 to B-15, FR-43 to FR-45 and AC-36/AC-37 are consistent with the workplan, apart from R2-1 and R2-4. On AC-36 "quantities at their highest declared value": for quantity, metered and fair-use capabilities, the "highest declared value" **is** the champion cohort's explicit config value (RC-2). There is no catalog maximum. BA should word it that way at the next edit.
+
+**§21.3 trial-reset step: re-confirmed.** If P-2 is confirmed, the launch op makes every account that exists at switch-on and has no tier an open-ended champion, including trials from the Slice 1 era. The §21.3 "reset `trial_ends_at` at flag-flip" step then **applies to no existing account**, and only signups after switch-on are trials. If the user does not confirm P-2, the reset applies as written to whatever accounts are left as trials, and the launch op's selection is where that would change. The rest of the design is unaffected either way.
+
+**Trial beta (pending with the user):** confirmed as a **single config value**, `COHORTS.trial.includeLifecycle` (`['beta']` = yes, `[]` = no). No code or schema depends on it. The resolver tests must cover both values with a fixture beta capability. Keep Dev's current default until the user answers.
+
+#### Conditions (apply during implementation, verified at SA code review)
+
+| # | Condition |
+|---|---|
+| **R2-1** | **Build `launch_champion_existing` in Slice 1**, with `dryRun`. The updated requirement (FR-14, AC-26 dry-run part, §16) makes the dry run a Slice 1 deliverable, but §4.1 currently defers the op to Slice 2. A non-dry run returns 409 `launch_preconditions_unmet` while `TIER_ORDER` is empty (same condition as UD-2), so it cannot be executed early by accident. Add the route and its tests (auth matrix, dry run changes nothing, dry run is idempotent, non-dry run refused) to S1-T12/T13 and §4.2. |
+| **R2-2** | **`ensure_plan_row` must not silently create a trial for a pre-rollout tenant.** A tenant with no row after the backfill is a trigger failure, and under U-2 an existing tenant should be a champion. Make `cohort` an explicit required body field (`'trial' \| 'champion'`, where champion also needs the `expiresAt` key). The inspect/report response shows the tenant's facts so the admin can choose. |
+| **R2-3** | **No admin op may leave an account with neither a tier nor a cohort.** `set_cohort { cohort: null }` on a tierless account, and `assign_tier { tier: null }` on a cohort-less account, return 409 `would_leave_no_basis`. Otherwise an admin action creates the "anomaly: deny owner-paid" state. Add tests. |
+| **R2-4** | **AC-37 must be provable on the production config, not only a fixture.** Declare the intake-request send id (and any other send ids the Slice 1 tests need) in `config/lifecycle.ts` now, as a minimal seed of the Slice 2 send registry with `messageClass` and `initiator`. A test then asserts that the production config's `paused` view suppresses it, and that one override entry flips it. |
+
+**Items for the user:** no new ones. P-1 (trial contents, including whether the trial gets beta features) and P-2 (existing accounts become open-ended champions at switch-on) are still pending with the user. Both are config or launch-step values, so either answer needs no rework.
+
 ## 14. QA Testing Report
 
 _QA to populate._
@@ -1065,3 +1109,4 @@ _RM to populate._
 | 2026-09-19 | Initial workplan (Dev) | Branch `feature/business-os-entitlements` from `origin/main` 94f9cfcd. Slice 1 in full detail (catalog, matrix, cohorts, lifecycle overlay, chat action map, loader, pure resolver, plan rows + triggers + backfill, admin routes, shadow report, tests, CI gate). Slices 2 to 4 outlined. B-11 and B-12 treated as authoritative. WC-1 to WC-22 traced. 4 business questions, 12 SA items. |
 | 2026-09-19 | SA workplan review: APPROVED WITH CONDITIONS (SA) | Added the §13 SA Workplan Review. Folded in the user's scope change (infrastructure only with no tier contents; champions get all capabilities and every existing account becomes a champion at rollout; the four business questions become config). Checked WC-1 to WC-22 against the tasks. Decided S-1 to S-12. Required changes RC-1 to RC-17. Most significant: no production tiers, with fixtures for the tests; a catalog-derived `{ all: true }` cohort base; open-ended champion backfill in place of the trial reset; lazy config load so chat-v4 cannot break with the flag off; no user RLS policies (override reasons would leak); actor columns without an FK; trigger hardening (`search_path=''`, `lock_timeout`, fact-only COALESCE upsert, single-transaction ordering). Later-slice gates: service-role key rotation before `enforce` (G-1), required CI checks (G-2), WCs restated in each addendum (G-3). SA re-checks the revised sections before code. |
 | 2026-09-19 | Rev 2: scope change + RC-1 to RC-17 applied (Dev) | Infrastructure only: production `TIER_ORDER = []` and an empty matrix. Eyal's matrix moved to a test fixture, and the tier-semantics tests run on it. Cohort base `{ tier } \| { all: true }` with explicit quantity/metered values. Champions get everything, and the backfill makes every existing tenant an open-ended champion. `launch_champion_existing` replaces `launch_reset_trials` on its own route, run at switch-on. Business questions Q-B1/B3/B4 and user defaults UD-1 to UD-4 became config/launch values. Migration: no user policies + REVOKE ALL, actor ids without FK, `plan_version DEFAULT 0` + CHECK, fact columns, hardened fact-only triggers (S-8 a–i), single transaction. Lazy config load in `shadow.ts` (RC-7). Shadow records all outcomes + `asTier` retroactive report with no names or reasons. Input cache with LRU + read-through + 100-id batches. RC-11 precedence. Duration/grace histories (S-7). `ensure_plan_row` + tenant pre-check through existing repos. S-11 statuses. Gates G-1 (key rotation before `enforce` and Slice 4), G-2 (required CI checks), G-3 (addenda restate WCs). S-12 skill fix listed as a separate change needing user approval. Added §0 (what changed, SA re-check list) and §9.2 RC traceability. |
+| 2026-09-19 | SA re-check of rev 2: CLEARED FOR SLICE 1 IMPLEMENTATION (SA) | Added §13.1. Migration SQL approved (S1-T0). Re-checked §4.3, §4.6 to §4.12, the §5 B-3 row and §8. Re-confirmed that the §21.3 trial-reset step applies to no existing account under P-2. Confirmed trial beta is the single value `COHORTS.trial.includeLifecycle`. Four implementation-time conditions: R2-1 build the `launch_champion_existing` dry run in Slice 1 (AC-26), with a non-dry run refused while no tier exists; R2-2 `ensure_plan_row` requires an explicit cohort; R2-3 no admin op may leave an account with no tier and no cohort; R2-4 seed the intake-request send id so AC-37 is provable on production config. |
