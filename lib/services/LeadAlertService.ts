@@ -46,6 +46,7 @@ import { resolveBookingUrl } from '@/lib/branding/platformSite';
 import { buildLeadReplyCandidates } from '@/lib/business-os/leads/leadReplyCandidates';
 import { recommendLeadReply } from '@/lib/business-os/leads/LeadReplyRecommender';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction } from '@/lib/business-os/llm/aiActionAudit';
 import { automationById } from '@/lib/business-os/gaps/automations';
 import { businessEventService } from '@/lib/business-os/insight/events/BusinessEventService';
 import { defaultLocale, isValidLocale, type Locale } from '@/lib/i18n/config';
@@ -336,16 +337,26 @@ async function queueLeadReply(
   const groupId = newBosGroupId();
   log.debug({ groupId }, 'Lead reply recommendation group');
 
-  const recommendation = await recommendLeadReply(
-    candidates,
-    {
-      message: input.message,
-      serviceInterest: input.serviceInterest,
-      businessType: profile?.sub_vertical || profile?.vertical,
-      language: locale,
-    },
-    input.ownerId,
-    groupId
+  // One enquiry, one AI action and audit entry (Layer 3, FR-13). The trigger is
+  // the outside visitor, so the actor is the platform; nothing about the visitor
+  // is recorded.
+  const recommendation = await runAiAction(
+    { area: 'leads', actionType: 'lead_reply_recommendation', groupId, trigger: 'external', accountId: input.ownerId },
+    async (h) => {
+      const recommended = await recommendLeadReply(
+        candidates,
+        {
+          message: input.message,
+          serviceInterest: input.serviceInterest,
+          businessType: profile?.sub_vertical || profile?.vertical,
+          language: locale,
+        },
+        input.ownerId,
+        groupId
+      );
+      if (!recommended) h.markFailed('generation_failed');
+      return recommended;
+    }
   );
 
   if (!recommendation) {

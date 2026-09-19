@@ -219,7 +219,7 @@ async function dispatchOne(
    * would compute a different hash from the same facts, miss the row the
    * dashboard just wrote, and pay for a second narration of the same day.
    */
-  const briefing = await getBriefing(userId, facts, language, {
+  const briefing = await getBriefing(userId, facts, language, 'scheduled', {
     vertical: profile.data?.vertical as string | null,
     subVertical: profile.data?.sub_vertical as string | null,
     name: profile.data?.company_name as string | null,
