@@ -5,7 +5,7 @@
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md). This workplan was written against the uncommitted copy in the main working tree on 2026-09-19, which includes §21 SA Review and conditions WC-1 to WC-22. The user's scope change of 2026-09-19 (§1.1) supersedes parts of that requirement, and TL is routing the requirement update to BA (§12.4).
 **Date:** 2026-09-19
-**Status:** Revised (rev 2) for the user's scope change, RC-1 to RC-17 and the S-1 to S-12 decisions from the SA workplan review (§13, APPROVED WITH CONDITIONS). **Waiting for the SA delta re-check** of the sections listed in §0. No code has been written.
+**Status:** Revised (rev 2) for the user's scope change, RC-1 to RC-17 and S-1 to S-12. **SA re-check 2026-09-19: CLEARED FOR SLICE 1 IMPLEMENTATION**, with conditions R2-1 to R2-4 (see §13.1). No code has been written.
 **Branch:** `feature/business-os-entitlements`, created from `origin/main` at `94f9cfcd` (WC-1). Dev created it on TL's instruction. The Dev role normally leaves branch creation to RM, and this deviation is recorded here for RM.
 
 ## Overview
