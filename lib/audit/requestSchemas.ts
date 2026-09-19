@@ -21,7 +21,7 @@ import type { EntityType } from './types';
  * AI audit entries (Layer 3) are written by the server only. A client can
  * neither create one nor read one back (D-6, FR-24, FR-27).
  */
-export const AI_ACTION_ENTITY_TYPE = 'ai_action';
+export const AI_ACTION_ENTITY_TYPE = 'ai_action' satisfies EntityType;
 export const AI_ACTION_EVENT_PREFIX = 'BUSINESS_AI_ACTION_';
 
 export function isAiAuditFilter(filter: { action?: string; entityType?: string }): boolean {

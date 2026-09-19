@@ -7,7 +7,7 @@
 **Context:** [LLM_CREDIT_AND_AUDIT_TRACKING.md](/docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md), and the Layer 1, 1.1 and 1.5 requirements (grouping ids per area).
 **Branch:** `feature/business-os-llm-layer1-5` (worktree `neuronforge-llm-layer15`, at `main` `7646760a` — the logging clean-up, PR #50, is merged). This branch name is the user's instruction for this cycle (same folder, same branch). **Step 0 must merge and deploy before the AI-entry steps merge** (FR-21), so RM needs either two PRs from this branch or a split. See §7.
 **Date:** 2026-09-18
-**Status:** **Step 0 — SA re-check 2026-09-18: APPROVED for QA** (§14 re-check). Next: QA (L-0), then step 0 as its own PR. Previously: Fix Required, CR-1 to CR-4, now applied. Uncommitted, in two separable parts: the security change and the Pino conversion (Q-6). Steps 1 to 5 are **not started**: they stay gated on step 0 being deployed on its own PR, and on OQ-11. SA approved the workplan with WC-1 to WC-12 (§10).
+**Status:** **Step 2 approved by SA (§17; re-check approved 2026-09-19). Step 1 migration approved by SA (§18.1) for the user's manual apply** after step 0 deploys and before step 3 deploys (§18, apply guide in §9). All uncommitted. Nothing writes AI entries yet. Step 0 is merged (PR #51) but not yet deployed. Steps 3 to 5 are not started. SA approved the workplan with WC-1 to WC-12 (§10).
 
 ## Overview
 
@@ -41,6 +41,9 @@ This workplan:
 13. [Step 0 Implementation Notes](#13-step-0-implementation-notes)
 14. [SA Code Review — Step 0](#14-sa-code-review--step-0)
 15. [QA Report — Step 0 (pre-deploy)](#15-qa-report--step-0-pre-deploy)
+16. [Step 2 Implementation Notes](#16-step-2-implementation-notes)
+17. [SA Code Review — Step 2](#17-sa-code-review--step-2)
+18. [Step 1 Implementation Notes — the owner-policy migration](#18-step-1-implementation-notes--the-owner-policy-migration-oq-11-option-a)
 
 ---
 
@@ -202,6 +205,22 @@ FROM pg_constraint WHERE conrelid = 'public.audit_trail'::regclass;
 SELECT tgname, pg_get_triggerdef(oid)
 FROM pg_trigger WHERE tgrelid = 'public.audit_trail'::regclass AND NOT tgisinternal;
 ```
+
+**Closed 2026-09-19 (SA, from the user's `pg_get_functiondef` read): the `sync_audit_user_email` trigger cannot fail a batch.** Its body is:
+
+```sql
+BEGIN
+  IF NEW.user_id IS NOT NULL THEN
+    SELECT email INTO NEW.user_email FROM auth.users WHERE id = NEW.user_id;
+  END IF;
+  RETURN NEW;
+END;
+```
+
+- It is a plpgsql `SELECT … INTO` **without `STRICT`**, so a missing user leaves `user_email` NULL and raises nothing.
+- A null `user_id` skips the lookup entirely.
+
+Together with the confirmed absence of a `user_id` FK, the only remaining batch poison pill is a non-UUID value in a `uuid` column. That is exactly what RC-3's guard (`validateIdentities`, `platformActorId`) prevents.
 
 ### 2.4 Caller survey (FR-25)
 
@@ -547,7 +566,7 @@ Otherwise the action **succeeded**, with `failedCallCount` still counting repair
 |---|---|---|
 | L-0 | After step 0 deploys: a signed-in owner opens `/monitoring`; the entries load, the charts render and the CSV downloads. An unauthenticated `curl` of each kept handler returns 401. A settings save, a logout and a Stripe portal open still produce their rows (direct query) | AC-24, AC-21 |
 | L-0b | Before step 3 merges, in every environment: `SELECT count(*) FROM audit_trail WHERE action LIKE 'BUSINESS_AI_ACTION_%'` = 0 | AC-25 |
-| **L-1 (a) Long-lived server** (`next start` or `npm run dev`, kept running) | Run one action per area: a chat question, `insight-detect` (cron route with `CRON_SECRET`), a briefing (My Day, and the `daily-briefing` cron), a website generation, an intake generation, an enquiry through the contact form, an onboarding conversation, an image. **Wait ≥ 10 s with the server still running.** Then, by direct query, list every distinct `session_id` in `token_usage` for the test business in the window and join each to `audit_trail` (`entity_type = 'ai_action'`, `entity_id = session_id`, `user_id` = the business). **Every expected entry must be present; any miss is a defect.** For each entry: totals = the sum of its ledger rows (except KI-A), the fields = FR-4, no prompt or owner text (a grep for the test's own input phrases) | AC-19(a) |
+| **L-1 (a) Long-lived server** (`next start` or `npm run dev`, kept running) | Run one action per area: a chat question, `insight-detect` (cron route with `CRON_SECRET`), a briefing (My Day, and the `daily-briefing` cron), a website generation, an intake generation, an enquiry through the contact form, an onboarding conversation, an image. **Wait ≥ 10 s with the server still running.** Then, by direct query, list every distinct `session_id` in `token_usage` for the test business in the window and join each to `audit_trail` (`entity_type = 'ai_action'`, `entity_id = session_id`, `user_id` = the business). **Every expected entry must be present; any miss is a defect.** For each entry:<ul><li>**totals match the ledger rows** (except KI-A): the call count and input, output and total tokens **exactly**; the estimated cost within **5e-7**, i.e. `\|details.estimatedCostUsd − Σ cost_usd\| ≤ 5e-7`. The entry is rounded to a micro-dollar (DV-10, SA CR-2);</li><li>the fields match FR-4;</li><li>no prompt or owner text (grep for the test's own input phrases).</li></ul>**WC-5, as corrected by SA CR-3:** count the "different grouping id; left out of the scope" warnings per area. **Only those whose `feature` starts with `business-os` are defects** (a Business OS call wired to the wrong group, or to none) and must be fixed before release. A left-out call from **another** feature is expected: the action triggered other product work inline. It must **not** be "fixed" by widening the scope. Record its count for information | AC-19(a) |
 | **L-2 (b) Deployed preview** | The same actions on a Vercel preview. Look 1 at **+10 s**; look 2 after **one unrelated request to the same deployment**, and again at **+1 h**. Entries found only in look 2 are **delayed**; entries still missing are **lost** and recorded as KI-B occurrences (group id, time), not as defects. The expected / found@10s / found@later / delayed / lost counts go into §11 as the first KI-B measurement | AC-19(b) |
 | L-3 | If OQ-11 = a: signed in as the test owner, query `audit_trail` with the anon key and the owner's JWT. No `ai_action` rows come back, and other rows still do | AC-27 |
 | L-4 | Restate the volume table with measured rows per action type for the QA window (FR volume recommendation) | Volume |
@@ -635,14 +654,28 @@ Each step is independently shippable and leaves the product working. **Step 0 me
 
 **Step 1: RLS (if OQ-11 = a)**
 - [x] **T1.0** (Q-4) Obtain the live policy, constraint and trigger read. Done: by the user, 2026-09-18 (§2.3). Pending: the trigger function body
-- [ ] **T1.1** Write the migration; SA approves; applied manually before step 3 deploys; L-3
+- [x] **T1.1a** Write the migration. Done by Dev 2026-09-19: `supabase/migrations/20260930_audit_trail_owner_policy_hides_ai_actions.sql` (§18), plus the static test `lib/audit/__tests__/ownerPolicyMigration.test.ts`
+- [ ] **T1.1b** SA reviews the migration file
+- [ ] **T1.1c** The user applies it manually (apply guide below): after step 0 is deployed, before step 3 is deployed
+- [ ] **T1.1d** QA L-3: an owner's own-session query returns no `ai_action` row but still returns their other rows
+
+**Step 1 apply guide (for the user).** The file is `supabase/migrations/20260930_audit_trail_owner_policy_hides_ai_actions.sql`.
+1. **When:** after step 0 is **deployed**, and **before** step 3 (the first code that writes AI entries) is deployed. Applying it early is harmless: no `ai_action` rows exist until step 3.
+2. **Where:** the Supabase dashboard → SQL Editor, on the production project (and on any other environment that will run step 3).
+3. **Pre-check** (read-only): run the `pg_policy` query from the file header. Expect "Users can view their own audit logs" = `SELECT`, `polroles` `{0}`, `USING (auth.uid() = user_id)`, no WITH CHECK, and "service_role_bypass_rls" unchanged.
+   - **`{0}` is PUBLIC.** Your earlier query showed `{}` because it listed role *names*, and PUBLIC has none; both mean the same.
+   - **Stop only if** a named role or a different USING expression appears, and send the output to the Dev.
+4. **Apply:** run the whole file: a single `ALTER POLICY`, safe to re-run. If it errors with "policy … does not exist", stop: the policy was renamed. Nothing will have changed.
+5. **Post-check** (read-only): run the same query. The owner policy's `using_expr` must read `((auth.uid() = user_id) AND (entity_type IS DISTINCT FROM 'ai_action'::text))`, and "service_role_bypass_rls" must be unchanged. Then open `/monitoring` as an owner: it should load exactly as before.
+6. **Rollback** (only if something is wrong): run the ROLLBACK `ALTER POLICY` from the file header. It restores `USING (auth.uid() = user_id)`, the expression live on 2026-09-18.
+7. **Tell the RM/QA** it has been applied, with the post-check output, so AC-27 / L-3 can be recorded.
 
 **Step 2: the accumulator and entry (inert)**
-- [ ] **T2.1** `events.ts`: `BUSINESS_AI_ACTION_COMPLETED` / `_FAILED`. `types.ts`: `ai_action`
-- [ ] **T2.2** `lib/ai/usageScope.ts`
-- [ ] **T2.3** The `baseProvider.callWithTracking` hook (two lines, placed before `trackAICall`)
-- [ ] **T2.4** `lib/business-os/llm/aiActionAudit.ts`: `runAiAction`, `buildAiAuditEntry`, `validateIdentities`, the failure mapping
-- [ ] **T2.5** Tests T-U1–T-U7, T-E1–T-E7, T-W1/2 (write), T-S1; gates
+- [x] **T2.1** `events.ts`: `BUSINESS_AI_ACTION_COMPLETED` / `_FAILED`. `types.ts`: `ai_action`. Done by Dev: `AI_ACTION_ENTITY_TYPE` now `satisfies EntityType`
+- [x] **T2.2** `lib/ai/usageScope.ts`
+- [x] **T2.3** The `baseProvider.callWithTracking` hook (two lines, placed before `trackAICall`). Done by Dev: with a per-call `notified` flag (WC-1)
+- [x] **T2.4** `lib/business-os/llm/aiActionAudit.ts`: `runAiAction`, `buildAiAuditEntry`, `validateIdentities`, the failure mapping
+- [x] **T2.5** Tests T-U1–T-U7, T-E1–T-E7, T-W1/2 (write), T-S1; gates. Done by Dev: §16.2, §16.3
 
 **Step 3: request-path wiring**
 - [ ] **T3.1** Chat: mechanical extract to `handleChatTurn` (its own commit), then the wrap
@@ -1130,6 +1163,231 @@ Also recorded: the G2 standing rule (8192 MB; 0 errors = crashed run) in §5.3, 
 
 ---
 
+## 16. Step 2 Implementation Notes
+
+**Status:** code-complete 2026-09-19, uncommitted, awaiting SA code review.
+- The branch is `feature/business-os-llm-layer1-5`, fast-forwarded to `main` `5789df3d` (PRs #51 and #52).
+- **Inert:** nothing calls `runAiAction`, so no AI audit entry can be written.
+- The `AsyncLocalStorage` scope is opened only by `runAiAction`, so outside it the `callWithTracking` hook is a single store lookup and returns.
+
+### 16.1 Scope and naming
+
+The coordinator split this work as "step 1 (the accumulator)" and "step 2 (the entry builder and events)". Both are this workplan's **Step 2** (§7, T2.1–T2.5). This workplan's **Step 1** is different: the OQ-11 owner-policy migration (T1.1). It is **not** done here, and it is still needed before step 3 deploys.
+
+### 16.2 Files
+
+| File | Change |
+|---|---|
+| `lib/ai/usageScope.ts` *(new)* | `withUsageScope(groupId, fn)` returns `{ ok, value / error, usage }` and never throws; `notifyUsage(call)` never throws; `hasActiveUsageScope()`. The rules (all tested):<ul><li>only the innermost scope is notified;</li><li>a mismatched or missing `sessionId` is excluded and warned;</li><li>the scope closes once its function settles, and later (fire-and-forget) calls are dropped with a debug log;</li><li>no Business OS imports</li></ul> |
+| `lib/ai/providers/baseProvider.ts` | `callWithTracking` calls `notifyUsage` once per call: on success **before** the tracker, and in the catch only `if (!notified)` (WC-1). It reports tokens, cost, model, feature, component, `sessionId`, success, and the error **code**. The tracker payload is untouched |
+| `lib/business-os/llm/aiActionAudit.ts` *(new; in the gate's core dir)* | Exports:<ul><li>`runAiAction(spec, fn)`, with a handle offering `setAccount` and `markFailed`;</li><li>`buildAiAuditEntry` (pure);</li><li>`validateIdentities` (RC-3);</li><li>`platformActorId` (resolved once, with one warning if the id is not a UUID, WC-9);</li><li>`sanitizeErrorCode` / `errorCodeOf`;</li><li>the types `AiActionType`, `AiTrigger`, `AiFailureCode`, `AiAuditDetails`.</li></ul>It emits with `void AuditTrail.log(entry).catch(…)` |
+| `lib/audit/events.ts` | `BUSINESS_AI_ACTION_COMPLETED` (info, `SOC2`), `BUSINESS_AI_ACTION_FAILED` (warning, `SOC2`) |
+| `lib/audit/types.ts` | `ai_action` added to `AUDIT_ENTITY_TYPES` |
+| `lib/audit/requestSchemas.ts` | `AI_ACTION_ENTITY_TYPE = 'ai_action' satisfies EntityType` (a typo would now fail to compile). The step-0 allow-lists are unchanged |
+| Tests | New: `lib/ai/__tests__/usageScope.test.ts` (10), `lib/business-os/llm/__tests__/aiActionAudit.test.ts` (27). Changed: `lib/audit/__tests__/stepZeroRegistrations.test.ts` (its "not registered yet" case now asserts exactly the two events and `ai_action`); `app/api/audit/__tests__/auditRoutes.test.ts` (+8: the registered AI events and entity are still rejected by both browser write routes) |
+| **Not changed** | `lib/services/AuditTrailService.ts` (D-4); `lib/analytics/aiAnalytics.ts` |
+
+**The entry's `details`** has exactly these keys: `schema`, `area`, `areas`, `actionType`, `groupId`, `trigger`, `callCount`, `failedCallCount`, `inputTokens`, `outputTokens`, `totalTokens`, `estimatedCostUsd`, `callNames`, `models`, `outcome`, plus `errorCode` on failure and `correlationId` where present.
+- `areas` comes from the calls, in catalog order, and is authoritative. `area` is the declared primary area (WC-4).
+- The top level carries `action`, `entityType: 'ai_action'`, `entityId` = the group, `userId`, `actorId`.
+- **Never set:** `severity`, `complianceFlags`, `resourceName`, `changes`, `request`.
+
+### 16.3 Tests and gates (measured on `5789df3d` first)
+
+| Gate | Baseline (`main` 5789df3d) | After |
+|---|---|---|
+| New tests | — | **37 new, all pass:** `usageScope` 10, `aiActionAudit` 27. Plus 8 new route cases |
+| Touched and neighbouring suites (`lib/ai`, `lib/business-os/llm`, `lib/audit`, `lib/analytics`, the step-0 suites, `lib/services/__tests__`, insight, briefing, `app/api/{onboarding,website,intake,business-os/usage}`; `--ci`) | — | **41 suites, 536 tests, all pass; 9 snapshots** |
+| Wider run (`lib/business-os`, `app/api/business-os`, `lib/orchestration`) | — | 93 suites, 1,635 pass, 28 skipped, **18 fail: exactly OI-10 (1) and OI-11 (17)**, both pre-existing |
+| `typecheck:bos-llm` | 131 files, 30 errors, 0 new | **133 files, 30 errors, 0 new; baseline JSON untouched.** Scope +2, both new core files (`aiActionAudit.ts` and its test). No existing file entered or left scope. (131, not 140 as earlier, because this tree has no `.next/types` build output) |
+| Full `tsc` (8192 MB) | **2,038** | **2,038**, per-file distribution identical |
+| NUL bytes | — | 0 |
+| Usage-route snapshot; the `trackAICall` characterization snapshot (4a) | — | Both untouched and passing |
+| `AuditTrailService.ts` | — | Unchanged (T-S1 checks it statically too) |
+
+**Proof points:**
+- **WC-1** is mutation-tested. With the catch notifying unconditionally, the "tracker throws" test fails.
+- **T-U6:** the tracker payload is byte-identical with and without a scope (ignoring `call_id` / `latency_ms`, which vary per call).
+- **The sentinel test** puts markers in the prompt, owner text (as a header correlation id), model output and error message. None of them appears in the entry or in any log line; a free-text correlation id is dropped.
+
+### 16.4 Deviations and notes for SA
+
+| # | Item |
+|---|---|
+| DV-8 | **`correlationId` is kept only if it is a short identifier** (`/^[A-Za-z0-9_.:-]{1,64}$/`). It can come from a request header, so free text is dropped rather than stored (FR-5) |
+| DV-9 | **Error codes are sanitized** by the same pattern. A thrown error with no usable `code` records its class name (`TypeError`), else `UNKNOWN`. Never the message |
+| DV-10 | **`estimatedCostUsd` is rounded to 6 decimals** (a micro-dollar) to avoid float noise in the sum. The ledger rows keep their exact values |
+| DV-11 | **A pre-existing edge in `callWithTracking`, unchanged:** if the success-branch tracker throws, the catch writes a second, failure row to the ledger. The scope still counts the call once, as a success (WC-1). Whether the ledger behaviour should change is outside Layer 3 (FR-19) |
+| DV-12 | **An action whose account is never set,** but which made calls, logs an error and writes nothing. One with no calls writes nothing silently (FR-7) |
+| DV-13 | **The coordinator's step numbering differs from the workplan's** (§16.1) |
+| Open | The `sync_audit_user_email` trigger definition (§2.3) is still unread. It must be read before step 3, because a trigger that raises would be a batch poison pill that the RC-3 guard does not cover |
+
+## 17. SA Code Review — Step 2
+
+**Code Review by SA — 2026-09-19**
+**Status:** ✅ **Code Approved**, with three Low CRs to be applied **before step 3 wires anything** (they add no risk while nothing calls this code). There is one follow-up, F-E. The trigger question is **closed** (§2.3).
+
+### Re-run by SA (base `5789df3d`, uncommitted tree)
+
+| Gate | Result |
+|---|---|
+| Jest: `lib/ai`, `lib/business-os/llm`, `lib/audit`, `app/api/audit`, `app/api/admin/__tests__`, `app/api/stripe/__tests__`, `AuditTrailRepository.test.ts`, `lib/services/__tests__`, `app/api/business-os/usage`, `--ci` | **25 suites, 374 tests, all pass; 2 snapshots** |
+| `typecheck:bos-llm` | **133 files, 30 errors, 0 new, passed.** Baseline unchanged (+2 = `aiActionAudit.ts` and its test, both in the core dir) |
+| `AuditTrailService.ts`, `aiAnalytics.ts` | **No diff** (D-4, FR-19) |
+| NUL / `console.*` in the three new or changed code files | 0 / 0 |
+
+### Review
+
+- **`AsyncLocalStorage` correctness.**
+  - `withUsageScope` uses `storage.run(scope, fn)`, so each invocation gets its own store: nested scopes shadow their parent (T-U2), and concurrent actions in one process cannot share a store. That is correct by construction, but not yet tested with **two independent concurrent scopes** → CR-1.
+  - Work started inside the scope and awaited is counted, including `Promise.all` branches (T-U1).
+  - Work detached from the scope keeps the context and, after `finally` sets `closed`, is dropped with a debug log (T-U4, the KI-A case).
+  - The snapshot is taken before `closed` is set, and nothing can interleave between them, because both run synchronously after the awaited `run`.
+  - **Streaming:** none of the providers streams inside `callWithTracking`. OpenAI and Kimi force `stream: false`; Groq and Mistral default `stream = false`, and no Business OS caller passes `true`. So every call reports inside its scope. Any future streaming call would report only when the tracking wrapper completes, which is the same rule as the ledger.
+- **The agents side is unaffected.** Outside a scope, `notifyUsage` is one `getStore()` and a return. The tracker payload is byte-identical with and without a scope (T-U6), and nothing is awaited. If a Business OS action ever triggers agent work inline, those calls carry other ids: they are **excluded and warned**, never counted → CR-3 for how QA reads those warnings.
+- **WC-1 exactly-once.**
+  - A `notified` flag is set **before** `notifyUsage` in the success branch, and checked in the `catch`.
+  - A throwing success-branch tracker therefore yields one success notification and no failure notification. The test proves it, and deliberately breaking the guard makes that test fail.
+  - A throw from `extractMetrics` (e.g. image pricing) happens before `notified` is set, so it yields exactly one failure notification, matching the ledger's single failure row.
+- **Latency and behaviour outside a scope:** unchanged. The per-call object literal is allocated regardless, which is negligible.
+- **Privacy of the entry.** `buildAiAuditEntry` is pure and emits exactly the `AiAuditDetails` key set (key-set test). `callNames` are catalog components and `models` are configured model ids. Error codes pass `/^[A-Za-z0-9_.:-]{1,64}$/`, falling back to the class name or `UNKNOWN`, never the message. `correlationId` is kept only when it matches that pattern. No `request`, `resourceName`, `changes`, `severity` or flags are passed. The sentinel test covers the entry **and** every log line.
+- **Identity guard (RC-3).**
+  - `validateIdentities` checks `isUuid(groupId)`, `isUuid(accountId)` and `!isPlatformAccount(accountId)`.
+  - The actor is the owner for `user`. Otherwise it is `platformActorId()`: resolved once, the platform account if it is a UUID, else the all-zero UUID with one warning (WC-9).
+  - An account never set, with calls → error log, no entry. No calls → nothing (FR-7).
+- **Never awaited.** `void AuditTrail.log(entry).catch(…)` runs after the scope settles. Entry building sits in a `try` that logs and drops, and `runAiAction` returns or rethrows the **original** value or error. The static T-S1 test forbids `await`, `flush(`, `shutdown(` and `auditFlush(`.
+- **`EVENT_METADATA` and the allow-list.**
+  - `BUSINESS_AI_ACTION_COMPLETED` is `info` and `_FAILED` is `warning`, both `['SOC2']`, neither `critical`.
+  - `ai_action` is in `AUDIT_ENTITY_TYPES`, and `AI_ACTION_ENTITY_TYPE` now `satisfies EntityType`.
+  - The browser write routes still refuse both events and the entity type: they are outside `CLIENT_WRITABLE_EVENTS` and blocked by the prefix refine, with 8 route cases.
+- **CLAUDE.md and `bos-llm-call-standards`.**
+  - Pino only; no model or price literals.
+  - The generic module has no Business OS imports; the product rules live in `lib/business-os/llm/`.
+  - The gate grew by exactly the two core-dir files, and `lib/ai/usageScope.ts` stays out of scope.
+  - The skill's Standard 6 can move from "coming" to "available, not yet wired" once this merges. The TL/Dev should update it as part of step 5, as planned.
+
+### Rulings on the deviations and notes
+
+- **(a) DV-8, correlation id filter — accepted.** It is header-derived, so free text is dropped. UUIDs pass (36 characters).
+- **(b) DV-9, error-code sanitising — accepted.** This is the rule RC-6 asked for.
+- **(c) DV-10, 6-decimal rounding — accepted, with CR-2.** A single embedding call costs well under a micro-dollar, so an entry's cost can differ from its ledger sum by up to 5e-7. FR-8's comparison needs that tolerance, stated.
+- **(d) DV-12 — accepted.** It matches §3.6.
+- **Note 1 / DV-11 — a follow-up, F-E, not Layer 3.**
+  - If the success-branch tracker throws, `callWithTracking` writes a *failure* ledger row **and rethrows**, so a call the provider completed and billed becomes an error for the caller.
+  - In practice `trackAICall` swallows its own errors, so only a missing `analytics` instance reaches this path.
+  - Fix separately: wrap the success-branch tracker so a tracking failure never turns a completed call into an error. That would be a provider-layer behaviour change, so it is not part of this layer (FR-19).
+- **Note 2 — closed.** Recorded in §2.3: a non-`STRICT` `SELECT INTO` and a null guard mean the trigger cannot raise. The RC-3 guard covers the only remaining poison pill.
+- **Note 3 — confirmed, still open before step 3:** step 0 deployed with L-0 run, and the workplan's step 1 (OQ-11 migration, applied before step 3 deploys, or KI-D reported).
+
+### Code Review Comments
+
+1. **CR-1 — `lib/ai/__tests__/usageScope.test.ts` — Priority: Low.** Add one test: two **independent** `withUsageScope` calls started concurrently (`Promise.all`), with interleaved `await`s and notifications, each collect only their own calls. This is the property serverless instances with concurrent requests (and any cron that runs businesses in parallel) depend on. It is correct by construction today, and the test keeps it so.
+2. **CR-2 — §5.2 L-1 and `aiActionAudit.test.ts` — Priority: Low.** State the FR-8 cost tolerance: `|entry.estimatedCostUsd − Σ ledger cost_usd| ≤ 5e-7`, per DV-10. Assert it in the totals test with sub-micro-dollar embedding costs. Tokens and call counts stay exact.
+3. **CR-3 — §5.2 L-1 / WC-5 wording — Priority: Low.** The group-check warning logs the call's `feature`. Count **only exclusions whose feature starts with `business-os`** as WC-5 defects. An excluded non-Business-OS feature means the action legitimately triggered other product work inline: it is expected and must not be "fixed" by widening the scope.
+
+### Follow-up
+
+| # | Item |
+|---|---|
+| **F-E** | `BaseAIProvider.callWithTracking`: a throwing success-branch tracker turns a completed, billed call into a thrown error, plus a failure ledger row. Wrap that tracker so tracking can never fail a completed call. A provider-layer change outside Layer 3 (FR-19). Low likelihood (`trackAICall` swallows its own errors) |
+
+### Code Approved: **Yes** (step 2 is inert until step 3). Apply CR-1 to CR-3 before step 3 is wired.
+
+### Dev response (2026-09-19): CR-1 to CR-3 applied
+
+| CR | Applied |
+|---|---|
+| CR-1 ✅ | `usageScope.test.ts`: two independent `withUsageScope` calls under `Promise.all`, with interleaved awaits (`setImmediate` ticks, order asserted to interleave). Each collects only its own calls; 0 exclusions |
+| CR-2 ✅ | `aiActionAudit.test.ts`: four sub-micro-dollar embedding costs. `\|estimatedCostUsd − exact sum\| ≤ 5e-7`, and the value **is** rounded, so the tolerance is exercised. Tokens and call count are exact. §5.2 L-1 now states the tolerance |
+| CR-3 ✅ | §5.2 L-1: only left-out calls whose `feature` starts with `business-os` are WC-5 defects. Other features are expected and only counted |
+
+F-E is recorded as a follow-up (provider layer, outside Layer 3).
+
+### SA Re-check — Step 2 (2026-09-19)
+
+**Status:** ✅ **APPROVED.** CR-1 to CR-3 are resolved. The affected suites were re-run (`lib/ai/__tests__/usageScope.test.ts`, `lib/business-os/llm`, `lib/audit`): **5 suites, 100 tests, all pass.**
+
+- **CR-1:** the new test starts two independent scopes under `Promise.all`, with `setImmediate` ticks. It **asserts the interleaving happened** (`b1` before `a2`), so it cannot pass by running sequentially. Each scope collects only its own calls, and `excluded` totals 0.
+  - That last assertion is what gives the test teeth. If the two scopes shared one store, B's calls would reach A's scope and be excluded for their group id, making the count non-zero.
+- **CR-2:** four sub-micro-dollar costs, with the value confirmed as actually rounded, so the tolerance is exercised rather than trivially met. `|estimatedCostUsd − exact| ≤ 5e-7`, with tokens and call count exact. §5.2 L-1 states the same rule.
+- **CR-3:** §5.2 L-1 now counts only `business-os*` exclusions as WC-5 defects. Other features are counted for information and must not be "fixed" by widening the scope.
+
+---
+
+## 18. Step 1 Implementation Notes — the owner-policy migration (OQ-11 option a)
+
+**Status:** file written 2026-09-19, **not applied**, pending SA review and then the user's manual apply (apply guide in §9, Step 1).
+
+- **File:** `supabase/migrations/20260930_audit_trail_owner_policy_hides_ai_actions.sql`. It follows the repo's `YYYYMMDD_description.sql` convention. The date is the next after the newest existing file (`20260929_usage_summary.sql`), so it sorts last.
+- **SQL**, one transaction:
+
+```sql
+BEGIN;
+ALTER POLICY "Users can view their own audit logs" ON public.audit_trail
+  USING (auth.uid() = user_id AND entity_type IS DISTINCT FROM 'ai_action');
+COMMIT;
+```
+
+- **`ALTER POLICY`, not DROP + CREATE** (SA CR-S1-1, adopted 2026-09-19):
+  - only the USING expression changes, so the name, command (SELECT) and roles (PUBLIC) are kept exactly;
+  - if the policy was renamed or dropped, the statement **fails loudly** instead of quietly creating a second policy.
+  - "service_role_bypass_rls" is not touched.
+- **`IS DISTINCT FROM`, not `<>`.** `entity_type` is `NOT NULL` today (it is `required` in the live PostgREST schema, §2.3), so both behave the same now. But `<>` returns NULL for a NULL `entity_type`, and a NULL RLS predicate hides the row: if the constraint were ever relaxed, an owner's own ordinary rows with no type would silently disappear. `IS DISTINCT FROM` hides exactly `'ai_action'` and nothing else.
+- **The header comment** covers the purpose (D-6 / 2A, FR-28, KI-D), when to apply, the `pg_policy` pre-check, the expected post-check expression, and the exact rollback.
+- **Verification in the repo:** `lib/audit/__tests__/ownerPolicyMigration.test.ts` checks the file statically, following the existing pattern in `lib/website-builder/__tests__/archetypeSeed.test.ts`. The 6 tests pin:
+  - one transaction;
+  - exactly one `ALTER POLICY` on that policy, and no DROP or CREATE;
+  - no `TO`, `FOR`, WITH CHECK or RENAME;
+  - the exact `USING` expression, built from `AI_ACTION_ENTITY_TYPE`, with no `<>`;
+  - no reference to `service_role_bypass_rls` and no other DDL or DML;
+  - the pre-check (with the `{0}` = PUBLIC note), the post-check and the `ALTER POLICY` rollback are present.
+- **Live verification** is the post-check query and QA's L-3 (AC-27).
+
+### 18.1 SA Review — Step 1 migration (2026-09-19)
+
+**Status:** ✅ **APPROVED for the user to apply manually**, with the conditions below. It must be applied **after step 0 is deployed** and **before step 3 deploys**. One optional improvement: CR-S1-1.
+
+- **Policy correctness.**
+  - The new `USING (auth.uid() = user_id AND entity_type IS DISTINCT FROM 'ai_action')` keeps the live owner rule unchanged. It is the same `auth.uid()` call, evaluated per row as before. It hides exactly the `ai_action` rows, so an owner still reads every non-AI row they read today.
+  - `anon` still gets nothing, because `auth.uid()` is null.
+  - Policies are permissive and OR-ed. The only other policy, `service_role_bypass_rls`, applies to `{service_role}` only and is untouched, so no path re-exposes AI rows to an owner.
+  - `IS DISTINCT FROM` is the right choice. It behaves identically to `<>` while `entity_type` is `NOT NULL`, and it stays correct if that ever changes.
+- **Roles.** `CREATE POLICY` without `TO` stores `polroles = {0}`, which is PUBLIC, the same as the live policy.
+  - **Note for the pre-check:** `pg_policy.polroles` shows PUBLIC as `{0}`. The file's header expects `{0}`. If the user's earlier read displayed `{}` or `{public}`, that is the same thing rendered differently.
+  - The pre-check must fail on a **named role** (e.g. `{authenticated}`) or a different `USING` — not on how PUBLIC is displayed. See CR-S1-1, which removes the question entirely.
+- **DROP + CREATE in one transaction.**
+  - Postgres DDL is transactional, so no other session ever sees the table without its owner policy.
+  - Both statements take an `ACCESS EXCLUSIVE` lock on `audit_trail` for the (millisecond) duration. A concurrent audit flush simply waits.
+  - Re-running ends in the same state (DROP IF EXISTS + CREATE).
+- **The rollback is exact.** It restores the live definition: `SELECT`, no `TO` (PUBLIC), `USING (auth.uid() = user_id)`, no WITH CHECK, same name, matching §2.3's live read and the original script.
+- **The pre-check catches drift** as long as the user **compares, not just runs** it: exactly two policies; the owner policy is `SELECT` / PUBLIC / `(auth.uid() = user_id)` / no WITH CHECK; `service_role_bypass_rls` is `ALL` / `{service_role}`. "STOP if different" is stated in the header. The post-check pins the new expression.
+- **Migration runner and ordering.**
+  - Nothing applies migrations automatically: no CI workflow, no `package.json` script, and `APPLY_MIGRATIONS.md` documents manual SQL-editor / `psql` / `supabase db push` only. The file is applied by hand, per past practice.
+  - `supabase/config.toml` exists, so **if** anyone runs `supabase db push`, **every** pending file in the folder is applied, including this one.
+  - **That early application is harmless:** until step 3 no `ai_action` row exists, so owners see exactly what they see today. The only ordering that matters is "before step 3 deploys", and applying early satisfies it.
+  - The future-dated name (`20260930`, sorting after `20260929_usage_summary.sql`) follows the folder's existing convention and has no effect on a manual apply.
+- **What step 3 relies on.** Owner reads never depend on this policy: the product's only owner read path, `AuditTrailRepository.listOwnerEntries`, uses the service role and excludes `ai_action` in SQL (step 0). The policy is defence in depth for a **direct** PostgREST read with the owner's own session (FR-28, AC-27). QA's L-3 is the live proof. If it were not applied, KI-D would have to be reported instead (§3.3).
+- **The static test** (`ownerPolicyMigration.test.ts`, 6 cases) pins exactly the properties above and passed in the re-run.
+
+**CR-S1-1 (Low, optional but recommended): use `ALTER POLICY` instead of DROP + CREATE.**
+
+```sql
+ALTER POLICY "Users can view their own audit logs" ON public.audit_trail
+  USING (auth.uid() = user_id AND entity_type IS DISTINCT FROM 'ai_action');
+```
+
+It is a single atomic statement that preserves the policy's command and roles exactly **whatever they are**, which removes the `{0}`/`{}` question. It also **fails loudly** if the policy has been renamed or dropped, whereas `DROP IF EXISTS` + `CREATE` would silently create a second policy next to a renamed permissive one. The rollback becomes the same `ALTER POLICY` with the old `USING`. If adopted, update the static test and the header. If not, the current file is correct and safe to apply with the pre-check honoured.
+
+**Apply sequence for the user** (unchanged from §9 Step 1):
+1. Step 0 deployed.
+2. Run the pre-check and compare it.
+3. Run the file.
+4. Run the post-check.
+5. Record the date in §12.
+6. Step 3 may deploy.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -1142,3 +1400,8 @@ Also recorded: the G2 standing rule (8192 MB; 0 errors = crashed run) in §5.3, 
 | 2026-09-18 | SA re-check, step 0 — APPROVED for QA | CR-1: the allow-list matches the ten events the eleven browser caller files send, plus three entity types; server-only and critical events are refused on both routes; the 13 values are pinned by a test. CR-2: the service reads only top-level reserved keys, so top-level stripping is sufficient (nested or case variants are inert; `__proto__` is harmless). CR-3: both temporary logs are dated and F-C is due 2026-09-25. CR-4: the commit-A proof is sound (clean worktree, 130 tests including the fixes, 0 new, tsc 2,038). Suites re-run: 7 / 130 / 2 snapshots. New follow-up F-D: record `SETTINGS_SECURITY_UPDATED` / `USER_PASSWORD_CHANGED` server-side. Next: QA L-0, then the step-0 PR alone |
 | 2026-09-18 | QA, step 0 pre-deploy — PASS | §15 added; pointer in §11; §14 and §15 added to the ToC. Gates: 7 suites / 130 tests / 2 snapshots; `typecheck:bos-llm` 140 / 30 / 0 new, baseline unchanged; full `tsc` (8 GB) 2,038; NUL 0; usage snapshot untouched. Live against the current project: unauthenticated query and both writes → 401 (with a header, a body `userId` or `anonymous`), `GET /api/audit-trail` → 405, admin reads → 401, nothing written. As the test account (in-process, session simulated): the owner-only read with no `hash` / `user_email` / AI rows and `offset` accepted; `PAYMENT_REFUNDED` and AI writes → 400; admin reads → 403. 2 rows written (`USER_LOGIN` info/SOC2; `USER_DATA_EXPORTED` warning/GDPR+CCPA, proving DV-2 live); client severity and flags ignored, `system_action` / `changeSummary` stripped, `user_email` filled by the trigger. Stripe is verified by code and tests (not awaited, SOC2/FINANCIAL). No bugs. Deferred to L-0: `/monitoring` in a browser, real-flow rows (settings, logout, Stripe portal), deployed 401s, WC-7, WC-9, F-C |
 | 2026-09-18 | Follow-up F-E added | Stripe data access bypasses repositories (97 direct calls; requirement OI-F), raised by the user; separate fix outside Layer 3 |
+| 2026-09-19 | Step 2 code-complete (the accumulator, the entry builder, the two events) | `lib/ai/usageScope.ts` and the `callWithTracking` hook (one notification per call, WC-1); `lib/business-os/llm/aiActionAudit.ts` (`runAiAction`, `buildAiAuditEntry`, `validateIdentities`, `platformActorId`); `BUSINESS_AI_ACTION_COMPLETED` / `_FAILED` registered; `ai_action` added. Not wired, so nothing is written. 37 new tests plus 8 route cases. `typecheck:bos-llm` 131 → 133 files, 0 new, baseline untouched. `tsc` 2,038 unchanged. Snapshots untouched. Deviations DV-8 to DV-13 (§16) |
+| 2026-09-19 | SA code review, step 2 — Code Approved | Re-run: 25 suites and 374 tests green, 2 snapshots; typecheck 133 / 30 / 0 new, baseline unchanged; `AuditTrailService.ts` and `aiAnalytics.ts` untouched. AsyncLocalStorage checked: innermost scope, detached work dropped after close, no streaming inside `callWithTracking`, agents side a no-op outside a scope, byte-identical tracker payload. WC-1 exactly-once confirmed. Entry privacy, the RC-3 identity guard, never-awaited emission, and the event registration with the browser still refusing it all confirmed. DV-8 to DV-12 accepted. Trigger question closed in §2.3 (a non-STRICT SELECT INTO cannot raise). CR-1: test concurrent independent scopes. CR-2: FR-8 cost tolerance 5e-7. CR-3: count only `business-os-*` exclusions as WC-5 defects. Follow-up F-E: a throwing success-branch tracker turns a completed call into an error (provider layer, outside Layer 3) |
+| 2026-09-19 | Step 2 CR-1 to CR-3 applied; Step 1 migration written | **CR-1:** a concurrent independent-scopes test. **CR-2:** the 5e-7 cost tolerance in L-1, asserted in a sub-micro-dollar totals test. **CR-3:** only `business-os-*` exclusions count as WC-5 defects. **Step 1:** `supabase/migrations/20260930_audit_trail_owner_policy_hides_ai_actions.sql` narrows "Users can view their own audit logs" to `auth.uid() = user_id AND entity_type IS DISTINCT FROM 'ai_action'` (null-safe; same name, command and roles; `service_role_bypass_rls` untouched; one transaction; rollback in the header). Static test `ownerPolicyMigration.test.ts`; apply guide in §9. **Not applied:** pending SA review and the user's manual apply |
+| 2026-09-19 | SA re-check of step 2, and SA review of step 1 — both APPROVED | Step 2 CR-1 to CR-3 verified: the concurrent-scope test asserts real interleaving and zero exclusions; the sub-micro-dollar cost test exercises rounding within 5e-7; the WC-5 rule counts only `business-os*` exclusions. 5 suites and 100 tests re-run green. Step 1 migration approved for manual apply after step 0 deploys and before step 3 deploys: owners keep every non-AI row; roles stay PUBLIC (`polroles {0}`); `service_role_bypass_rls` is untouched; the DROP+CREATE transaction is safe and re-runnable; the rollback is exact; the pre-check catches drift if compared; no automatic runner exists, and an early `db push` would be harmless. Optional CR-S1-1: `ALTER POLICY` (preserves roles, fails loudly on drift) |
+| 2026-09-19 | Step 1 migration switched to `ALTER POLICY` (SA CR-S1-1, adopted by the coordinator) | A single `ALTER POLICY "Users can view their own audit logs" … USING (auth.uid() = user_id AND entity_type IS DISTINCT FROM 'ai_action')` replaces DROP + CREATE: the roles are kept exactly, and a renamed policy fails loudly. The rollback is an `ALTER POLICY` back to `USING (auth.uid() = user_id)`. The pre-check note now says `polroles` `{0}` = PUBLIC (a names query shows `{}`), and to stop only on a named role or a different USING. The static test, §18 and the apply guide are updated. Still not applied |

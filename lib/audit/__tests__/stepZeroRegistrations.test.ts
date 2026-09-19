@@ -43,9 +43,14 @@ describe('registered events store what their callers stored before step 0 (WC-12
     expect(COMPLIANCE_FLAGS).toContain('FINANCIAL');
   });
 
-  it('does not register the AI audit entity type or events yet (step 2)', () => {
-    expect(AUDIT_ENTITY_TYPES).not.toContain('ai_action' as never);
-    expect(Object.values(AUDIT_EVENTS).some((e) => e.startsWith('BUSINESS_AI_ACTION_'))).toBe(false);
+  // Layer 3 step 2 registers them (server-written only; see auditRoutes.test.ts
+  // for the browser rejection). Step 0's registrations are unaffected.
+  it('registers the AI audit entity type and exactly its two events (Layer 3 step 2)', () => {
+    expect(AUDIT_ENTITY_TYPES).toContain('ai_action');
+    expect(Object.values(AUDIT_EVENTS).filter((e) => e.startsWith('BUSINESS_AI_ACTION_')).sort()).toEqual([
+      'BUSINESS_AI_ACTION_COMPLETED',
+      'BUSINESS_AI_ACTION_FAILED',
+    ]);
   });
 
   it('every registered severity is one the table accepts', () => {

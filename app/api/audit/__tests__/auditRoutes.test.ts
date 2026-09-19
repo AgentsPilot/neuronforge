@@ -44,6 +44,7 @@ import { GET as queryGET } from '../query/route';
 import { POST as logPOST } from '../log/route';
 import * as auditTrailRoute from '../../audit-trail/route';
 import { CLIENT_WRITABLE_ENTITY_TYPES, CLIENT_WRITABLE_EVENTS } from '@/lib/audit/requestSchemas';
+import { AUDIT_EVENTS } from '@/lib/audit/events';
 
 const OWNER_A = { id: '2f734ed5-3681-4049-880d-3de7b096bea3', email: 'a@example.com' };
 const OWNER_B_ID = '99999999-9999-4999-8999-999999999999';
@@ -182,6 +183,21 @@ describe.each(WRITE_URLS)('POST %s', (url) => {
     [{ entityType: 'user' }],
     [{ ...valid, details: { blob: 'x'.repeat(9000) } }],
   ])('rejects %j with 400 and writes nothing (AC-23)', async (body) => {
+    mockGetUser.mockResolvedValue(OWNER_A);
+    const res = await handler(post(url, body));
+    expect(res.status).toBe(400);
+    expect(mockLog).not.toHaveBeenCalled();
+  });
+
+  // Layer 3 step 2 registers the AI events and entity type. Registration must not
+  // make them browser-writable: the step 0 allow-list still refuses every form.
+  it.each([
+    [{ ...valid, action: 'BUSINESS_AI_ACTION_COMPLETED', entityType: 'ai_action' }],
+    [{ ...valid, action: 'BUSINESS_AI_ACTION_FAILED', entityType: 'ai_action' }],
+    [{ ...valid, action: 'BUSINESS_AI_ACTION_FAILED' }],
+    [{ ...valid, entityType: 'ai_action' }],
+  ])('keeps rejecting a registered AI audit event or entity %j with 400 (Layer 3 step 2)', async (body) => {
+    expect(Object.values(AUDIT_EVENTS)).toContain('BUSINESS_AI_ACTION_COMPLETED');
     mockGetUser.mockResolvedValue(OWNER_A);
     const res = await handler(post(url, body));
     expect(res.status).toBe(400);
