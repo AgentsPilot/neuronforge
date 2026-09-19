@@ -180,7 +180,7 @@ vercel env add GOOGLE_CLIENT_SECRET production
 
 4. **Test Specific Routes**
    ```
-   - Test: https://neuronforge-kohl.vercel.app/api/system/health
+   - Test: https://neuronforge-kohl.vercel.app/api/system/health (liveness only: confirms the app is serving; it no longer tests the DB or env vars)
    - Test: https://neuronforge-kohl.vercel.app/admin
    - Check browser console for specific errors
    ```

@@ -15,6 +15,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "jest",
     "schema:check": "tsx scripts/schema-check.ts",
     "typecheck:bos-llm": "tsx scripts/typecheck-bos-llm.ts",
     "backfill:intensity": "tsx scripts/backfill-agent-intensity.ts",
