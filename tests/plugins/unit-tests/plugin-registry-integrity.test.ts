@@ -9,10 +9,16 @@
  *
  * These are source/filesystem checks rather than runtime ones so they cost
  * nothing and can't be skipped by a mock.
+ *
+ * The catalog check is against definition FILES, not the active plugin profile
+ * (lib/server/plugin-profile.ts). Under a narrower profile the UI can still show a
+ * card for a plugin the deployment does not load; that is an accepted consequence
+ * (see docs/requirements/BUSINESS_OS_PLUGIN_PROFILE_REQUIREMENT.md).
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { PLUGIN_PROFILES } from '@/lib/server/plugin-profile';
 
 const ROOT = path.join(__dirname, '../../..');
 const DEFINITIONS_DIR = path.join(ROOT, 'lib/plugins/definitions');
@@ -40,11 +46,6 @@ function registeredExecutorKeys(): string[] {
   return [...registry[1].matchAll(/'([a-z0-9-]+)'\s*:/g)].map(m => m[1]).sort();
 }
 
-/** Definition filenames listed in the plugin manager's corePluginFiles. */
-function managerPluginKeys(): string[] {
-  const source = fs.readFileSync(path.join(ROOT, 'lib/server/plugin-manager-v2.ts'), 'utf8');
-  return [...source.matchAll(/'([a-z0-9-]+)-plugin-v2\.json'/g)].map(m => m[1]).sort();
-}
 
 describe('[smoke] plugin registry integrity', () => {
   it('finds the three registries', () => {
@@ -68,11 +69,47 @@ describe('[smoke] plugin registry integrity', () => {
     expect(missingExecutor).toEqual([]);
   });
 
-  it('loads every plugin definition in the plugin manager', () => {
-    const loaded = managerPluginKeys();
-    const notLoaded = definedPluginKeys().filter(k => !loaded.includes(k));
+  it('the all profile lists every plugin definition exactly once', () => {
+    // `all` is the "switch back" profile: it must restore every plugin the backend
+    // can load, with no extras (typos) and no duplicates.
+    const all = [...PLUGIN_PROFILES.all];
 
-    expect(notLoaded).toEqual([]);
+    expect([...all].sort()).toEqual(definedPluginKeys());
+    expect(new Set(all).size).toBe(all.length);
+  });
+
+  it('every key in every profile has a definition file', () => {
+    const defined = definedPluginKeys();
+    const missing = Object.entries(PLUGIN_PROFILES).flatMap(([profile, keys]) =>
+      keys.filter(k => !defined.includes(k)).map(k => `${profile}: ${k}`)
+    );
+
+    // A missing file here means the loader logs an error at every cold start.
+    expect(missing).toEqual([]);
+  });
+
+  it('business_os is an ordered subsequence of all', () => {
+    // Same relative order as `all`, so discovery / LLM-context order is stable
+    // whichever profile is active.
+    const all = PLUGIN_PROFILES.all;
+    let cursor = 0;
+    const outOfOrder: string[] = [];
+    for (const key of PLUGIN_PROFILES.business_os) {
+      const index = all.indexOf(key, cursor);
+      if (index === -1) outOfOrder.push(key);
+      else cursor = index + 1;
+    }
+
+    expect(outOfOrder).toEqual([]);
+    expect(new Set(PLUGIN_PROFILES.business_os).size).toBe(PLUGIN_PROFILES.business_os.length);
+  });
+
+  it('business_os keeps both Business OS plugin surfaces', () => {
+    // `business-os` is what agent generation grounds against; the four internal
+    // plugins are what ChatCommandExecutor invokes by key (INTERIM DUPLICATION).
+    expect(PLUGIN_PROFILES.business_os).toEqual(
+      expect.arrayContaining(['business-os', 'crm', 'scheduling', 'payments', 'website'])
+    );
   });
 
   it('exports only real plugin keys from PLUGIN_KEYS', () => {

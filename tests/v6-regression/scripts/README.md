@@ -1,12 +1,14 @@
 # V6 Regression — Scenario Authoring Scripts
 
-> **Last Updated**: 2026-06-09
+> **Last Updated**: 2026-09-19
 
 ## Overview
 
 Scenario-authoring tools for the V6 regression suite. These build/capture/import
 the per-scenario snapshot files under `tests/v6-regression/scenarios/<slug>/`.
 **Run all of them from the project root** (paths and `env-preload` assume cwd = repo root).
+
+> **Plugin profile:** The committed plugin profile is `business_os`, so Gmail/Drive/Sheets (and other non-Business-OS) scenarios cannot ground or compile as committed. Set `ACTIVE_PLUGIN_PROFILE` to `'all'` in `lib/server/plugin-profile.ts` locally before running; **never commit that change**.
 
 ## Scripts in this folder
 
