@@ -43,6 +43,8 @@ export type {
 // Row types live in the repository file: `TokenUsage` in ./types is an unrelated
 // execution-token type (Layer 1.1 workplan Q-9).
 export { TokenUsageRepository, tokenUsageRepository } from './TokenUsageRepository';
+// S-6 free-tier grant (docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md)
+export { UserSubscriptionRepository, userSubscriptionRepository } from './UserSubscriptionRepository';
 export type {
   LedgerCallRow,
   LedgerLabelRow,
@@ -78,6 +80,13 @@ export type {
   RewardConfig,
   // Plugin connection types
   UpsertPluginConnectionInput,
+  // User subscription (free-tier grant) types
+  UserSubscriptionGrantState,
+  FreeTierNewRowValues,
+  FreeTierNewRow,
+  FreeTierGrantPatch,
+  FreeTierInsertOutcome,
+  FreeTierUpdateOutcome,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

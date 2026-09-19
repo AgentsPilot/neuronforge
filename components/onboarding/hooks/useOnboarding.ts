@@ -409,7 +409,8 @@ export const useOnboarding = () => {
       // Save onboarding data (creates/updates profile)
       await saveOnboardingData();
 
-      // Allocate free tier quotas (tokens, storage, executions)
+      // Allocate free tier quotas (tokens, storage, executions).
+      // The route grants to the signed-in session user only, once; no user id is sent (S-6 fix).
       console.log('🎁 Allocating free tier quotas...');
       try {
         const allocationResponse = await fetch('/api/onboarding/allocate-free-tier', {
@@ -417,12 +418,15 @@ export const useOnboarding = () => {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ userId: user.id }),
+          body: JSON.stringify({}),
         });
 
         const allocationResult = await allocationResponse.json();
 
-        if (allocationResult.success) {
+        if (allocationResult.success && allocationResult.alreadyGranted) {
+          // A repeat completion (e.g. a second tab) is a success: the grant happened earlier.
+          console.log('✅ Free tier quotas already granted');
+        } else if (allocationResult.success) {
           console.log('✅ Free tier quotas allocated:', allocationResult.allocation);
         } else {
           console.error('⚠️ Failed to allocate free tier quotas:', allocationResult.error);

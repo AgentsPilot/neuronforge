@@ -878,8 +878,8 @@ export default function TestPluginsPage() {
     response: any;
   }>>([]);
 
-  // Free Tier Users state
-  const [freeTierUserId, setFreeTierUserId] = useState('');
+  // Free Tier Users state. The grant always targets the signed-in user (S-6 fix),
+  // so there is no user-id input any more.
   const [freeTierResponse, setFreeTierResponse] = useState<any>(null);
 
   // Agent Execution state
@@ -2217,8 +2217,8 @@ export default function TestPluginsPage() {
 
   // Free Tier User Creation Functions
   const createFreeTierUser = async () => {
-    if (!freeTierUserId.trim()) {
-      addDebugLog('error', 'User ID is required');
+    if (!sessionUser) {
+      addDebugLog('error', 'Sign in first: the free tier is granted to the signed-in user only');
       return;
     }
 
@@ -2226,22 +2226,24 @@ export default function TestPluginsPage() {
     setFreeTierResponse(null);
 
     try {
-      addDebugLog('info', `Creating free tier subscription for user: ${freeTierUserId}`);
+      addDebugLog('info', `Requesting the free tier grant for the signed-in user: ${sessionUser.id}`);
 
+      // No user id in the body: the route grants to the session user only, once (S-6 fix).
       const response = await fetch('/api/onboarding/allocate-free-tier', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          userId: freeTierUserId
-        }),
+        body: JSON.stringify({}),
       });
 
       const data = await response.json();
 
-      if (response.ok && data.success) {
-        addDebugLog('success', `Free tier created successfully for ${freeTierUserId}`);
+      if (response.ok && data.success && data.alreadyGranted) {
+        addDebugLog('info', 'Free tier already granted to this account; nothing was changed');
+        setFreeTierResponse(data);
+      } else if (response.ok && data.success) {
+        addDebugLog('success', `Free tier granted to ${sessionUser.id}`);
         setFreeTierResponse(data);
       } else {
         addDebugLog('error', `Failed to create free tier: ${data.error || 'Unknown error'}`);
@@ -2256,7 +2258,6 @@ export default function TestPluginsPage() {
   };
 
   const resetFreeTierForm = () => {
-    setFreeTierUserId('');
     setFreeTierResponse(null);
     addDebugLog('info', 'Free tier form reset');
   };
@@ -4705,69 +4706,49 @@ export default function TestPluginsPage() {
         <>
           {/* Free Tier User Creation Form */}
           <div style={{ marginBottom: '30px', padding: '15px', border: '1px solid #ccc', borderRadius: '5px' }}>
-            <h2>Create Free Tier User Subscription</h2>
+            <h2>Grant Free Tier to the Signed-in User</h2>
             <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#e7f3ff', borderRadius: '3px' }}>
               <p style={{ margin: 0, fontSize: '14px', color: '#0066cc' }}>
-                <strong>ℹ️ Info:</strong> This will create a new record in the <code>user_subscriptions</code> table with free tier quotas.
-                The user must already exist in the <code>auth.users</code> table (created during signup).
+                <strong>ℹ️ Info:</strong> Grants the one-time free tier to <strong>the account you are signed in as</strong>, the same way onboarding does.
+                It cannot target another user. If this account already received the grant, the response says <code>alreadyGranted: true</code> and nothing changes.
+              </p>
+              <p style={{ margin: '8px 0 0', fontSize: '14px', color: '#0066cc' }}>
+                Signed in as: <code>{sessionUser ? (sessionUser.email ?? sessionUser.id) : 'not signed in'}</code>
               </p>
             </div>
 
-            <div style={{ marginBottom: '15px' }}>
-              <label htmlFor="freeTierUserId" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-                User ID (UUID):
-              </label>
-              <input
-                id="freeTierUserId"
-                type="text"
-                value={freeTierUserId}
-                onChange={(e) => setFreeTierUserId(e.target.value)}
-                placeholder="e.g., 550e8400-e29b-41d4-a716-446655440000"
-                style={{
-                  width: '500px',
-                  padding: '10px',
-                  fontSize: '14px',
-                  fontFamily: 'monospace',
-                  border: '1px solid #ccc',
-                  borderRadius: '3px'
-                }}
-              />
-              <div style={{ marginTop: '5px', fontSize: '12px', color: '#666' }}>
-                Enter the UUID of the user from auth.users table
-              </div>
-            </div>
-
             <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: '#f8f9fa', borderRadius: '3px' }}>
-              <h4 style={{ marginTop: 0 }}>What will be created:</h4>
+              <h4 style={{ marginTop: 0 }}>What will be granted:</h4>
               <ul style={{ margin: '10px 0', paddingLeft: '20px', fontSize: '14px' }}>
                 <li><strong>Pilot Tokens:</strong> 20,834 tokens (from system config)</li>
                 <li><strong>Storage Quota:</strong> 1,000 MB (from system config)</li>
                 <li><strong>Execution Quota:</strong> Unlimited (null)</li>
                 <li><strong>Free Tier Duration:</strong> 30 days (from system config)</li>
                 <li><strong>Status:</strong> active</li>
-                <li><strong>Account Frozen:</strong> false</li>
+                <li><strong>Account Frozen:</strong> false on a new row only; never changed on an existing row</li>
               </ul>
               <div style={{ fontSize: '12px', color: '#666', marginTop: '10px' }}>
-                Note: If the user already has a subscription, the free tier allocation will be added to their existing balance.
+                Notes: the grant happens once per account. On an existing subscription the tokens are added to the balance and quotas are never lowered.
+                A frozen account is refused (409) and stays frozen.
               </div>
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
               <button
                 onClick={createFreeTierUser}
-                disabled={isLoading || !freeTierUserId.trim()}
+                disabled={isLoading || !sessionUser}
                 style={{
                   padding: '12px 24px',
-                  backgroundColor: !freeTierUserId.trim() ? '#ccc' : '#28a745',
+                  backgroundColor: !sessionUser ? '#ccc' : '#28a745',
                   color: 'white',
                   border: 'none',
                   borderRadius: '3px',
-                  cursor: !freeTierUserId.trim() ? 'not-allowed' : 'pointer',
+                  cursor: !sessionUser ? 'not-allowed' : 'pointer',
                   fontSize: '16px',
                   fontWeight: 'bold'
                 }}
               >
-                {isLoading ? 'Creating...' : 'Create Free Tier Subscription'}
+                {isLoading ? 'Granting...' : 'Grant Free Tier to Me'}
               </button>
               <button
                 onClick={resetFreeTierForm}
@@ -4817,6 +4798,12 @@ export default function TestPluginsPage() {
                   Copy to Clipboard
                 </button>
               </div>
+
+              {freeTierResponse.success && freeTierResponse.alreadyGranted && (
+                <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #28a745' }}>
+                  <strong>Already granted:</strong> this account received the free tier earlier. Nothing was changed.
+                </div>
+              )}
 
               {freeTierResponse.success && freeTierResponse.allocation && (
                 <div style={{ marginBottom: '15px', padding: '10px', backgroundColor: 'white', borderRadius: '3px', border: '1px solid #28a745' }}>

@@ -354,3 +354,91 @@ export interface SystemSettingsConfig {
   updated_at: string;
   updated_by?: string | null;
 }
+
+// ============ User Subscription (free-tier grant) Types ============
+//
+// S-6 fix (docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md). These types are
+// deliberately CLOSED (SA RC-4): no index signature, no Partial<Row>. The keys a
+// grant must never write on an existing row are declared `?: never`, so passing
+// an object that carries them is a compile error even when it is not a literal.
+
+/** The columns the free-tier grant reads. Allow-listed, never `select('*')`. */
+export interface UserSubscriptionGrantState {
+  user_id: string;
+  balance: number | null;
+  total_earned: number | null;
+  storage_quota_mb: number | null;
+  executions_quota: number | null;
+  account_frozen: boolean | null;
+  free_tier_granted_at: string | null;
+}
+
+/**
+ * Typed inputs for a brand-new `user_subscriptions` row. The repository builds
+ * the insert payload from these field by field; `user_id` comes from the
+ * authenticated caller as a separate argument.
+ */
+export interface FreeTierNewRowValues {
+  rawTokens: number;
+  storageMb: number;
+  /** `null` = unlimited. */
+  executionsQuota: number | null;
+  grantedAt: string;
+  expiresAt: string;
+}
+
+/**
+ * The exact insert payload for a new row. The ONLY free-tier type allowed to
+ * hold `account_frozen` — and only as `false` (a brand-new row may initialise it).
+ */
+export interface FreeTierNewRow {
+  readonly user_id: string;
+  readonly balance: number;
+  readonly total_earned: number;
+  readonly storage_quota_mb: number;
+  readonly storage_used_mb: 0;
+  readonly executions_quota: number | null;
+  readonly executions_used: 0;
+  readonly status: 'active';
+  readonly free_tier_granted_at: string;
+  readonly free_tier_expires_at: string;
+  readonly free_tier_initial_amount: number;
+  readonly account_frozen: false;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+/**
+ * The patch applied to an EXISTING row by the once-only grant. Built from
+ * numbers and dates only. `free_tier_expires_at` is present only when the row
+ * held no credits before (workplan Q3 (a)).
+ */
+export interface FreeTierGrantPatch {
+  readonly balance: number;
+  readonly total_earned: number;
+  readonly storage_quota_mb: number;
+  /** `null` = unlimited. */
+  readonly executions_quota: number | null;
+  readonly free_tier_granted_at: string;
+  readonly free_tier_initial_amount: number;
+  readonly free_tier_expires_at?: string;
+  readonly updated_at: string;
+  // Never written on an existing row. `never` turns an attempt into a compile error.
+  readonly account_frozen?: never;
+  readonly status?: never;
+  readonly user_id?: never;
+  readonly id?: never;
+  readonly storage_used_mb?: never;
+  readonly executions_used?: never;
+}
+
+/** Result of the plain (never upsert) insert. `conflict` = Postgres 23505 only. */
+export interface FreeTierInsertOutcome {
+  inserted: boolean;
+  conflict: boolean;
+}
+
+/** Result of the conditional update. `updated` = exactly one row matched. */
+export interface FreeTierUpdateOutcome {
+  updated: boolean;
+}
