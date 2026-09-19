@@ -1,6 +1,6 @@
 # Workplan: Business OS LLM — Layer 3: AI Activity Audit Trail
 
-> **Last Updated**: 2026-09-18
+> **Last Updated**: 2026-09-19
 
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md): 28 FRs and 27 ACs. SA approved; RC-1 to RC-12 applied; user decisions D-1 to D-6. OQ-11, OQ-12 and OQ-13 are open for this review.
@@ -46,6 +46,8 @@ This workplan:
 18. [Step 1 Implementation Notes — the owner-policy migration](#18-step-1-implementation-notes--the-owner-policy-migration-oq-11-option-a)
 19. [QA Report — Post-deploy L-0](#19-qa-report--post-deploy-l-0-2026-09-19)
 20. [Steps 3–5 Implementation Notes](#20-steps-35-implementation-notes)
+21. [SA Code Review — Steps 3–5 and FR-29](#21-sa-code-review--steps-35-and-fr-29)
+22. [QA Report — Steps 3–5 live (L-1..L-4)](#22-qa-report--steps-35-live-l-1l-4)
 
 ---
 
@@ -824,6 +826,7 @@ The code-reality check is thorough: fifteen findings, each with evidence. I re-v
 *(QA to populate. L-2 records the first KI-B measurement.)*
 
 - **Step 0, pre-deploy:** see [§15](#15-qa-report--step-0-pre-deploy) (2026-09-18, PASS). The post-deploy L-0 check is in [§19](#19-qa-report--post-deploy-l-0-2026-09-19) (2026-09-19, PASS for the automated scope).
+- **Steps 3–5 and FR-29, live local L-1..L-4:** see [§22](#22-qa-report--steps-35-live-l-1l-4) (2026-09-19, PASS; one Low tolerance-wording item).
 
 ## 12. Commit Info
 
@@ -909,6 +912,8 @@ The A states still contain their `console.*` calls (4 / 3 / 1 / 4 / 4 / 3 / 2), 
 | **F-B** | The Stripe routes (the `{ error: error.message \|\| … }` pattern across `app/api/stripe/**`, 13 routes) and the admin audit routes return internal error text to the client; apply the CLAUDE.md dev-only `details` pattern. Same item: the admin routes' `[id]` path parameter and query parameters are not validated with Zod, and `admin/audit-trail`'s `search` should be checked for PostgREST filter interpolation. **Out of step 0's scope** (SA ruling): changing payment-flow error messages is a behaviour change the billing UI may depend on | Later; with the queued admin-routes task |
 | **F-C** | Review the WC-10 "rejected" counts (`Audit read rejected: no session`, `Audit write rejected: no session`, `legacy…Present`), then **remove both temporary logs**: in `app/api/audit/query/route.ts` and `lib/audit/clientAuditWrite.ts`. Both carry the dated marker "remove after 2026-09-25" | **Due 2026-09-25** |
 | **F-E** | **Stripe data access bypasses the repository layer** (CLAUDE.md rule 1; requirement OI-F). 97 direct `.from(` / `.rpc(` calls: `app/api/stripe/webhook/route.ts` (72), `sync-subscription` (8), `update-subscription` (3), `cancel-subscription` (2), `invoices` (2), `reactivate-subscription` (2), `create-checkout` (1), `create-portal` (1), `lib/stripe/StripeService.ts` (6). Step 0 changed only how four of these routes write audit entries; their data access was deliberately left alone. Move it into subscription/billing repositories with `user_id` scoping and a `tenant-isolation-guard` review of the service-role paths, webhook first | Separate fix (raised by the user 2026-09-18) |
+| **F-F** | **`WebsiteGenerationService.ts:209` logs the landing page title and description at info** (found by QA §22; predates this layer, commit `3390050e`). Generated content at info breaks the logging standard (`bos-llm-call-standards` Standard 5): log lengths or ids at info, content at debug only | Small follow-up |
+| **F-G** | **Cost tolerance rule (QA §22 bug 1, TL ruling 2026-09-19).** The ledger stores each row's `cost_usd` rounded to $0.000001 (a ~$2.6e-7 embedding is stored as 0), while the audit entry sums unrounded costs, so with several calls the two can differ by more than 5e-7. The L-1 rule becomes `\|details.estimatedCostUsd − Σ cost_usd\| ≤ (callCount + 1) × 5e-7`. The entry is the more accurate figure; no code change | Rule updated; code unchanged |
 
 ### 13.4 Deviations
 
@@ -1649,6 +1654,175 @@ A random UUID (`870a79a7-…`) and a run marker were used. The test account is u
 
 ---
 
+## 22. QA Report — Steps 3–5 live (L-1..L-4)
+
+**QA — 2026-09-19.** **Test mode:** full, live, local, before merge (user-approved). **Tree:** worktree `neuronforge-llm-layer15`, `feature/business-os-llm-layer1-5` at `b63c92da` (PR #57 head), clean; no product code changed. **DB:** the current Supabase project (future staging), with the owner-policy migration applied. **Account:** `2f734ed5-3681-4049-880d-3de7b096bea3` (non-admin). **Window start:** `2026-09-19T12:07:39.697Z` (run started 12:00:28Z).
+**Input source:** prompt keywords. The prompt's numbering is used here: **L-1** = one action per area, **L-2** = failure path, **L-3** = owner visibility (and WC-7), **L-4** = logout flush (FR-29). The §5.2 deployed-preview KI-B measurement is **not** part of this run.
+
+**Method (Strategy C, in-process, one long-lived process).**
+- **The route handlers and services ran in-process** in one Node process (`tsx`, with `.env.local`), using the repo's own chat-probe preload (`scripts/chat-probe/preload.cjs`). The preload maps `server-only` to a no-op and replaces `@/lib/auth.getUser` with the test account. Everything else was real: providers, `usageScope`, `runAiAction`, `AuditTrailService` and its batch flush, the repositories and the DB.
+- After the last action, the process **stayed alive for 15 s**, so the timer flush ran. The log shows 10 × "Flushed audit logs".
+- A `next dev` server was not used. A real cookie session would have been needed for every route, and the in-process process gives the same flush behaviour.
+- The read-only analysis ran as separate service-role scripts.
+
+### 22.1 L-1 — one action per area
+
+| Area | Action | Method | Entries | Event / severity | Account / actor / trigger | Totals vs ledger | Fields (FR-4) | Result |
+|---|---|---|---|---|---|---|---|---|
+| Chat | Question: "How many contacts did I add this month?" | `chat-v4` `POST` (route) | 1 (`f479569c…`) | COMPLETED / info | owner / owner / user | calls 3 = 3; tokens 8113/124/8237 exact; **cost 0.001288 vs Σ 0.001287 (Δ 1.0e-6)** | ✅ (callNames `verified_question_embedding, planner, plan_cache_store_embedding`; 2 models; correlationId) | ⚠️ cost Δ > 5e-7, see Bug 1 |
+| Chat → landing page (SA §21 CR-1) | Turn 1: "Build me a landing page…" (confirmation card) | route | 1 (`be60c328…`, chat_turn, 2 calls) | COMPLETED / info | owner / owner / user | calls and tokens exact; **cost 0.001353 vs Σ 0.001352 (Δ 1.0e-6)** | ✅ | ⚠️ cost Δ, Bug 1 |
+| | Turn 2: "yes" (runs the website operation) | route | **1**: `chat_website_operation` (`33c6a1e2…`, 1 call `full_site`, gpt-4o). **No `chat_turn` entry**, because the confirming turn made no LLM call of its own (FR-7) | COMPLETED / info | owner / owner / user | exact (1 / 1245 / 876 / 2121 / 0.011873) | ✅ `area: website` | ✅ |
+| Website | Testimonial enhance | route | 1 (`821689b9…`) | COMPLETED / info | owner / owner / user | exact | ✅ | ✅ |
+| Intake | Question inference | route | 1 (`b686406d…`) | COMPLETED / info | owner / owner / user | exact | ✅ | ✅ |
+| Images | One generation (`wide`) | route | 1 (`ab8efbd4…`) | COMPLETED / info | owner / owner / user | exact (1 call, 0 tokens, **$0.25**) | ✅ `gpt-image-1` | ✅ |
+| Onboarding | One `business_story` turn, throwaway state | in-process, **mirrors the route's `runAiAction` spec**; nothing persisted | 1 (`27473d4a…`) | COMPLETED / info | owner / owner / user | exact | ✅ | ✅ |
+| Briefing, `user` | `getBriefing(…, 'es', 'user')` (language changed to miss the cache) | direct store call | 1 (group `25ed25a6…`) | COMPLETED / info | owner / **owner** / user | exact against its own ledger row (1257/49/1306/0.000218) | ✅ | ✅ |
+| Briefing, `scheduled` | `getBriefing(…, 'he', 'scheduled')`, 3 s later | direct store call (no dispatch, no cron, no email) | 1, **the same group** (same-day re-narration, as designed) | COMPLETED / info | owner / **platform** / scheduled | exact against its own row (1257/44/1301/0.000215) | ✅ | ✅ |
+| Lead reply | Recommendation for a synthetic enquiry | in-process, **mirrors `LeadAlertService.queueLeadReply`'s wrapper**; `recommendLeadReply` real; nothing enqueued, nothing sent | 1 (`7cc21493…`) | COMPLETED / info | owner / **platform** / external | exact | ✅ | ✅ (note 3) |
+| Insights | `insight-detect` `GET`, once, **all businesses** (no per-account path; accepted) | route | test account: 1 (`cbeaccd9…`, `health_summary`). Run: 4 businesses processed, **3 entries** (1 business made no call, so it has none, per FR-10) | COMPLETED / info | each account / **platform** / scheduled | exact for all 3 (test account 745 tokens / $0.000288; others 755 / $0.000282 and 717 / $0.000271) | ✅ | ✅ |
+
+**Join result:** 11 distinct `token_usage.session_id` values for the test account in the window, and 12 entries:
+- every session has an entry;
+- the briefing group has two entries (the `user` and the `scheduled` narration);
+- 0 entries have no ledger session;
+- **no expected entry is missing.**
+
+**Across all 14 AI entries in the window** (12 for the test account, 2 for other accounts):
+- `resource_name` and `changes` are null;
+- `compliance_flags` are `["SOC2"]`;
+- no entry is critical;
+- the platform actor `b9b462e4…` equals `platformActorId()`;
+- the owner actor equals the account.
+
+**No content (FR-5):** 11 input and output phrases were grepped across the JSON of all 14 AI rows: the marker `zebralantern`, "Mindful Mornings", "How many contacts", "new managers", "calm lake", "forest path", "helped me a lot", "goals for the next quarter", "confidence at work", "coaching sessions for my team", and the answer text "You added". **0 hits.**
+
+**The nesting on the real path (closes DV-17 / SA CR-1):**
+- The website operation's `full_site` call is counted **only** in the `chat_website_operation` entry. It appears in no `chat_turn` entry.
+- There were 0 group-check exclusions.
+- The only expectation that differs from §5.2: the confirming turn itself wrote no `chat_turn` entry, because it made no LLM call. That is correct under FR-7. The landing flow as a whole wrote 2 entries: the proposing turn, and the website operation.
+
+### 22.2 L-2 — failure path
+
+- **What was done:** an image with the model overridden **in-process only** to `qa-invalid-image-model`. `systemConfigRepository.getImageGenerationConfig` was patched on the instance and restored straight after. **No shared config was written.**
+- **The route:** answered 503 `reason: failed`. OpenAI returned 400 `invalid_value`, with no image billed.
+- **The entry:** exactly one entry (`282a7d0f…`), **`BUSINESS_AI_ACTION_FAILED` at `warning`**, with `outcome: failed`, `errorCode: image_failed`, `failedCallCount: 1`, `callCount: 1` and cost 0. These match the ledger's failure row (`success = false`, 0 tokens, $0).
+- **No error message** is stored in the entry: only the code. The provider's message appears in the server log only, at error level.
+- **Result: ✅ PASS.**
+
+### 22.3 L-3 — owners can't see AI entries; admins can (closes WC-7)
+
+| Check | Result |
+|---|---|
+| Service role (the admin read's source): the test account's rows | 22 in total: **12 `ai_action`** and 10 ordinary |
+| Owner session: anon key plus the account's own JWT (admin magic link, no email sent). Direct `select` on `audit_trail` | **10 rows, 0 `ai_action`, 0 `BUSINESS_AI_ACTION_*`, 0 of other users.** The ordinary rows are all still visible (10 = 10) |
+| Owner session, filtered `entity_type = 'ai_action'` | 0 rows |
+| Session revoked (`signOut({scope:'local'})`), then an anon read | ok; 0 rows |
+| `/api/audit/query?limit=1000&offset=0` as the owner (in-process) | 200, `logs` 10, `total` 10, **0 AI** |
+| The same with `entityType=ai_action`, and with `action=BUSINESS_AI_ACTION_COMPLETED` | 200, empty (the short-circuit) |
+| **WC-7**, service role, each guard alone: `.not('action','like','BUSINESS_AI_ACTION_%')` / `.neq('entity_type','ai_action')` | Each alone returns 11 = the ordinary rows (10, plus L-4's logout row). **Real PostgREST honours the `not.like` encoding** |
+| Admins | The service-role read sees all 12. The admin route's happy path is covered by `auditAdminGate.test.ts`; no admin session was used live |
+
+**Result: ✅ PASS**, and WC-7 is closed.
+
+### 22.4 L-4 — logout flush (FR-29)
+
+- **Method:** a fresh process, so nothing else was queued and no flush timer was running. `POST /api/audit/log` `USER_LOGOUT` (in-process, session stubbed to the test account). A service-role query ran **immediately** after the response, with no wait.
+- **The response:** 200, "Audit log recorded", after 612 ms.
+- **The row:** `6e4a70e2-7de8-4cc4-b5b6-f9f9dd2ec232` was **present at 823 ms** after the request started (`info`, `["SOC2"]`, `user_id` = `actor_id` = the account). The log shows exactly one "Flushed audit logs".
+- **Why this proves the flush:** the periodic flush interval had not yet elapsed, so only the FR-29 flush can explain the row being there.
+- **Result: ✅ PASS.**
+
+### 22.5 WC-5 — "left out of the scope" warnings
+
+**0 in total.** By feature: `business-os*` 0, other 0. There were also 0 "dropped after close" logs: the chat question's `plan_cache_store_embedding` (the KI-A late call) landed inside its scope this time, and it is counted in the entry and the ledger alike.
+
+### 22.6 SQL used (read-only; run as PostgREST queries with the service role, equivalent SQL shown)
+
+```sql
+-- L-1 join: every grouping id in the ledger for the test business in the window
+SELECT session_id, count(*) AS calls, sum(input_tokens), sum(output_tokens), sum(total_tokens), sum(cost_usd),
+       array_agg(DISTINCT feature), array_agg(DISTINCT component), array_agg(DISTINCT model_name),
+       count(*) FILTER (WHERE success = false) AS failed
+FROM token_usage
+WHERE user_id = '2f734ed5-3681-4049-880d-3de7b096bea3' AND created_at >= '2026-09-19T12:07:39.697Z'
+GROUP BY session_id;
+
+SELECT id, user_id, actor_id, action, severity, compliance_flags, resource_name, changes, details, created_at
+FROM audit_trail
+WHERE entity_type = 'ai_action' AND created_at >= '2026-09-19T12:07:39.697Z';
+-- joined in the script on audit_trail.entity_id = token_usage.session_id AND audit_trail.user_id = token_usage.user_id;
+-- |details.estimatedCostUsd - sum(cost_usd)| <= 5e-7; calls and tokens compared exactly.
+
+-- L-3 / WC-7
+SELECT count(*) FROM audit_trail WHERE user_id = '<test account>';                                   -- 22
+SELECT count(*) FROM audit_trail WHERE user_id = '<test account>' AND entity_type = 'ai_action';     -- 12
+SELECT count(*) FROM audit_trail WHERE user_id = '<test account>' AND action NOT LIKE 'BUSINESS_AI_ACTION_%'; -- 11 (after L-4)
+SELECT count(*) FROM audit_trail WHERE user_id = '<test account>' AND entity_type <> 'ai_action';    -- 11 (after L-4)
+-- owner session: SELECT id, user_id, entity_type, action FROM audit_trail;  (RLS applies) → 10, 0 ai_action
+
+-- L-4
+SELECT id, user_id, actor_id, severity, compliance_flags, created_at FROM audit_trail
+WHERE user_id = '<test account>' AND action = 'USER_LOGOUT' AND details @> '{"qa_marker":"qa-l4-…"}';
+```
+
+### 22.7 Spend
+
+| Item | Cost |
+|---|---|
+| **Test account, ledger in the window: $0.2685** | |
+| — the image | $0.25. The configured `gpt-image-1` wide price, not the ~$0.17 estimated |
+| — `full_site` (landing page) | $0.0119 |
+| — everything else | < $0.007 |
+| The failed image | $0 |
+| Insight runs for 2 other accounts | $0.00055 |
+| **Total** | **≈ $0.269** |
+
+### 22.8 Rows left behind (nothing deleted)
+
+| Rows | Detail |
+|---|---|
+| `audit_trail`, test account | 12 `ai_action` rows, plus 1 `USER_LOGOUT` (`6e4a70e2…`, `details.qa_marker`) |
+| `audit_trail`, 2 other accounts | 1 `insight_run` each (`08456106…`, `39c134b8…`) |
+| `token_usage` | 15 rows (test account), plus 2 (the other accounts' insights) |
+| Website | Draft landing page `8d02ac3b-9676-45b7-8ae4-a07cd6a595e1` ("Mindful Mornings zebralantern", `status: draft`, **not published**), with 10 blocks |
+| Media | 1 generated image: a `user_media` row and a storage object, test account |
+| Briefing cache | The test account's 2026-09-19 cache row now holds the Hebrew narration. The next My Day load (in `en`) re-narrates once |
+| Chat | The test account's chat memory and plan cache hold the QA turns |
+| Insights | The cron wrote 6 insights and 3 health summaries across the 4 processed businesses |
+| Not written | `onboarding_conversations` rows 0; `lead_responses` rows 0; no email, WhatsApp, SMS or notification; no payment, Stripe, purge or delete |
+
+### 22.9 Issues
+
+**Bugs**
+1. **The 5e-7 cost rule cannot hold for multi-call actions, because the ledger rounds each row to $0.000001.** Severity: **Low**. It is a criterion or spec issue, **not** an entry defect. Files: §5.2 L-1 and the SA step-2 CR-2 tolerance; the ledger's `cost_usd` scale.
+   - **Steps to reproduce:** a chat question with 2 embedding calls (13 tokens, about $2.6e-7 each, stored as `0`) and a planner call ($0.00128745, stored as `0.001287`).
+   - **Expected (by the rule):** \|entry − Σ ledger\| ≤ 5e-7.
+   - **Actual:** the entry is `0.001288` = round(Σ exact per-call costs) = round(0.00128797). Σ ledger = `0.001287`, so Δ = 1.0e-6. The same happened on the other chat entry. 2 of the 14 entries are affected; the other 12 are exact.
+   - **Why:** the entry is the more accurate figure. The ledger loses up to 5e-7 per row to its own rounding, which D-4 and FR-19 keep unchanged.
+   - **Ask SA/BA:** restate the tolerance as `(callCount + 1) × 5e-7`, or compare against Σ ledger with that bound. No code change is recommended.
+
+**Performance:** none. The entries landed within about 0.1–4 s of each action. The logout write returned in 612 ms.
+
+**Edge cases / notes**
+1. **Pre-existing, outside the PR:** `lib/services/WebsiteGenerationService.ts:209` logs `{ userId, ...options }` at **info**, including `focus.title` / `focus.description`. That is the owner's dictated page title and the model's paraphrase (seen live: the marker phrase at level 30). Introduced in `3390050e` (2026-08-26), not by this PR. It violates bos-llm-call-standards Standard 5. Suggest a small follow-up: keys at info, the content at debug.
+2. **§5.2's CR-1 wording** ("expect two entries: the chat turn plus the website operation") holds for the flow as a whole, but not per turn. The confirming "yes" turn makes no LLM call, so it writes no `chat_turn` entry (FR-7). Suggest rewording it to "the landing flow writes the proposing turn's `chat_turn` entry and one `chat_website_operation` entry; the website calls appear only in the latter".
+3. **The lead reply** made one billed call and then returned `source: 'fallback'`, with a recommendation. The entry says `succeeded`, which is correct under FR-6 / DV-16: a recommendation was returned. The fallback is the recommender's own behaviour, and not in Layer 3's scope.
+4. **Not exercised live:** an exact or semantic plan-cache hit (FR-7 / DV-18), and the onboarding build (`onboarding_build`, two areas). The unit tests cover both. The briefing `scheduled` path was exercised through the store, not through `DailyBriefingDispatchService`, which sends email. The lead and onboarding wrappers were exercised as exact mirrors of the production wrapper, not through the production caller (`notifyOwnerOfLead` emails the owner; the onboarding route persists the conversation).
+
+### 22.10 Final status
+
+- [x] L-1: every area wrote exactly one correct entry per action, with the right account, actor, trigger, event and severity. Calls and tokens match the ledger exactly. There is no content, and 0 WC-5 exclusions. The cost matches within 5e-7 for 12 of 14 entries; the 2 exceptions are explained by the ledger's per-row rounding (Bug 1, Low, a criterion fix).
+- [x] L-2: one `BUSINESS_AI_ACTION_FAILED` / warning, with a code only.
+- [x] L-3: owners see no AI entries, by direct read or `/api/audit/query`, and keep all ordinary rows. The service role sees them. WC-7 is closed.
+- [x] L-4: the `USER_LOGOUT` row is in the DB immediately (823 ms, no wait).
+- [x] No High or Medium bugs.
+
+**Verdict: PASS. Ready for TL / user approval and RM.** Bug 1 needs an SA ruling on the tolerance wording only. Still open after the merge:
+- the §5.2 deployed-preview KI-B measurement (delayed vs lost);
+- the owner's browser checks from §19.4.
+
+---
+
 ## Change History
 
 | Date | Change | Details |
@@ -1670,3 +1844,5 @@ A random UUID (`870a79a7-…`) and a run marker were used. The test account is u
 | 2026-09-19 | Steps 3–5 code-complete | Every area wired through `runAiAction`:<ul><li>chat (a thin `POST` over `handleChatTurn`) and the nested chat website operation;</li><li>insights per business (WC-8);</li><li>briefing, with a required trigger before `businessType` (WC-3);</li><li>the four website routes and the two intake routes;</li><li>the onboarding build (one entry, both areas, WC-4) and onboarding turns;</li><li>leads (external) and images;</li><li>the two dormant website services.</li></ul>New `markGenerationResult` helper and `generation_failed` code. Tests for every area, and `next build` passes (new mandatory gate). **FR-29** (KI-F): the audit queue is flushed on `USER_LOGOUT`, bounded to ~2 s, as its own separable change. Docs (FR-20) and the skill's Standard 6 are finalised. Details in §20 |
 | 2026-09-19 | SA code review, steps 3–5 and FR-29 — Code Approved for QA | Re-run: 117 suites and 1,916 tests pass (0 fail), 2 snapshots; typecheck 155 / 30 / 0 new, baseline unchanged; `AuditTrailService.ts` and `aiAnalytics.ts` untouched. Verified per area: one entry per action, server-side account, the platform actor for scheduled and external, never the platform account. No await except the bounded logout flush. Results and errors pass through unchanged; the chat-v4 rename is minimal. Insight failures continue the loop; briefing triggers are correct at both call sites. Failure mapping is correct; no content reaches entries or logs; no detached calls inside scopes. The skill Standard 6 is accurate. No file is shared between steps. DV-14 to DV-18 accepted (DV-18 needs a BA wording fix to FR-7 / AC-7). The regenerate cross-tenant read is Layer 1 OI-2 (no new F-F). CR-1: a live L-1 step for the chat website operation (two entries). CR-2: the FR-7 / AC-7 wording |
 | 2026-09-19 | SA §21 CR-1/CR-2 applied (TL) | CR-1: L-1 now includes a chat request that creates a landing page (two entries: chat turn + nested website operation). CR-2: requirement FR-7/AC-7 reworded — only an exact plan-cache hit writes no entry; a semantic hit (one embedding call) writes a one-call entry |
+| 2026-09-19 | QA, steps 3–5 and FR-29, live local L-1..L-4 — PASS | §22 added. In-process, one long-lived process (chat-probe preload; real providers, scope, audit flush, DB); test account `2f734ed5…`. **L-1:** chat question, chat landing page (proposing turn + nested `chat_website_operation`; the website calls are only in the latter, which closes DV-17), website testimonial, intake inference, image, onboarding turn, briefing `user` + `scheduled` (same group, owner vs platform actor), lead reply (external, platform), insight cron (3 entries across all businesses). 11 ledger sessions → 12 entries, none missing, none orphaned. Calls and tokens exact; cost within 5e-7 for 12 of 14 entries; 2 chat entries are off by 1e-6 because of the ledger's per-row rounding (Bug 1, Low, a tolerance-wording fix for SA). 0 content hits; 0 WC-5 exclusions. **L-2:** an in-process invalid image model gives one FAILED/warning entry with `image_failed` only. **L-3:** the owner session sees 10/10 ordinary rows and 0 of 12 AI rows; `/api/audit/query` 0 AI; `not.like` proven on PostgREST (WC-7 closed). **L-4:** the `USER_LOGOUT` row is present 823 ms after the request, with no wait. Spend ≈ $0.269. A pre-existing info log of the landing title and description in `WebsiteGenerationService.ts:209` was noted as a follow-up |
+| 2026-09-19 | QA §22 follow-ups recorded (TL) | F-F (WebsiteGenerationService logs landing page title/description at info) and F-G (cost tolerance rule widened to (callCount + 1) × 5e-7 because the ledger rounds each row to a micro-dollar; code unchanged) |
