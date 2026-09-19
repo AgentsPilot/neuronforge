@@ -58,6 +58,11 @@ export const AUDIT_ENTITY_TYPES = [
   // rows stay exactly as they were (Layer 3 step 0, WC-12).
   'subscription',
   'boost_pack',
+  // One Business OS AI action (Layer 3). The entity id is the action's usage
+  // grouping id, so an entry links to its rows in token_usage. Server-written
+  // only, and hidden from owners (lib/audit/requestSchemas.ts,
+  // AuditTrailRepository).
+  'ai_action',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

@@ -119,6 +119,12 @@ export const AUDIT_EVENTS = {
   // interesting event to have on record: it is the one where something was
   // wrong, and the one someone may later ask about.
   BUSINESS_DATA_PURGE_BLOCKED: 'BUSINESS_DATA_PURGE_BLOCKED',
+  // Business OS AI activity (Layer 3): one entry per AI action or background
+  // job, summarising its LLM calls. Written by the server only; a browser can
+  // never write one (lib/audit/requestSchemas.ts) and owners never read one
+  // (AuditTrailRepository.listOwnerEntries). Entity type 'ai_action'.
+  BUSINESS_AI_ACTION_COMPLETED: 'BUSINESS_AI_ACTION_COMPLETED',
+  BUSINESS_AI_ACTION_FAILED: 'BUSINESS_AI_ACTION_FAILED',
   DATA_ACCESSED: 'DATA_ACCESSED', // Who accessed what data
   CONSENT_GRANTED: 'CONSENT_GRANTED',
   CONSENT_REVOKED: 'CONSENT_REVOKED',
@@ -504,6 +510,18 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'critical',
     complianceFlags: ['GDPR', 'SOC2'],
     description: 'Business data reset or purged (irreversible; pre-purge snapshot recorded)',
+  },
+  // Layer 3. Severity comes only from here (the emitter never passes one), and
+  // neither is critical: these are kept for the default retention, not seven years.
+  [AUDIT_EVENTS.BUSINESS_AI_ACTION_COMPLETED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS AI action completed (its LLM calls summarised)',
+  },
+  [AUDIT_EVENTS.BUSINESS_AI_ACTION_FAILED]: {
+    severity: 'warning',
+    complianceFlags: ['SOC2'],
+    description: 'A Business OS AI action failed after making at least one LLM call',
   },
   [AUDIT_EVENTS.BUSINESS_DATA_PURGE_BLOCKED]: {
     severity: 'warning',
