@@ -5,7 +5,7 @@
 **Developer:** Dev
 **Requirement:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md). This workplan was written against the uncommitted copy in the main working tree on 2026-09-19, which includes §21 SA Review and conditions WC-1 to WC-22.
 **Date:** 2026-09-19
-**Status:** Planning. Waiting for the SA workplan review. No code has been written.
+**Status:** SA workplan review 2026-09-19: **APPROVED WITH CONDITIONS** (see [§13](#13-sa-review-notes)). Before any code, Dev revises the workplan for the user's scope change and required changes RC-1 to RC-17, and SA re-checks the revised sections. No code has been written.
 **Branch:** `feature/business-os-entitlements`, created from `origin/main` at `94f9cfcd` (WC-1). Dev created it on TL's instruction. The Dev role normally leaves branch creation to RM, and this deviation is recorded here for RM.
 
 ## Overview
@@ -788,7 +788,120 @@ B-1 (the five ambiguous rows) stays with Eyal. It does not block Slice 1.
 
 ## 13. SA Review Notes
 
-_SA to populate._
+### SA Workplan Review
+
+**Reviewed by SA — 2026-09-19** (worktree at `fbe151ac`, based on `origin/main` `94f9cfcd`; code facts checked against that tree)
+**Status:** 🔄 **APPROVED WITH CONDITIONS**
+
+The architecture is sound and is approved: config kept apart from the resolver, a pure resolver with an injected clock, lifecycle derived from timestamps, `business_os_*` tables keyed to `auth.users`, the admin route pattern copied from `llm-usage`, and a Jest CI job. Most of the plan's analysis checks out against the code: five `business_profiles` insert paths, `onboarding_conversations` written before the profile exists, the `USER_OWNED_TABLES` and descriptor invariants, the skill drift, and the absence of CI for `lib/**` Jest.
+
+**Condition to proceed.** Dev revises this workplan for the **user's scope change (2026-09-19, below)** and for RC-1 to RC-17. SA then re-checks the revised §4.3 (migration SQL), §4.6, §4.8, §4.11, §4.12 and §5 B-3 row. That re-check is a short delta review, not a new full review. After it, implementation starts at S1-T1. S1-T0 already requires SA approval of the migration SQL before it is written, and that still applies.
+
+#### User scope change (2026-09-19), which supersedes parts of the plan and requirement
+
+| # | User direction | Effect on this workplan |
+|---|---|---|
+| U-1 | Build the **infrastructure only**. Do not encode Eyal's tier contents. The user adds tiers as configuration later. | Production config ships **no** commercial tiers. The §4.6 example matrix becomes a **test fixture**. See RC-1. |
+| U-2 | Champions get **all** capabilities: every catalog capability at its highest variant/quantity, including beta. **All existing accounts become champions at rollout.** New signups still follow the trial lifecycle. | The cohort base is generalised to `{ all: true }` (RC-2). Backfill and launch go to champion instead of trial (RC-3). S-5 is revised (RC-4). B-3's "fresh trial for everyone else" is superseded. |
+| U-3 | Dev's four business questions become **configuration**, not code decisions. Keep Dev's defaults where the trial lifecycle needs one. | Q-B1, Q-B3 and Q-B4 become config values with Dev's defaults (RC-5). The user answered Q-B2 directly (champions get everything). |
+
+The requirement doc (owned by BA) must be updated to match: FR-3 ("every tier (Basic, Growth, Pro)"), D-2 "Growth-level trial", B-3, FR-14, AC-4 (becomes fixture-based), AC-7 and AC-26. **TL should route that to BA.** SA does not edit the requirement here.
+
+#### WC-1 to WC-22 verification (tasks, not just the §9 table)
+
+| WC | Verdict | Notes |
+|---|---|---|
+| WC-1 | ✅ | Branch from `origin/main` `94f9cfcd`. The branch-creation deviation is recorded for RM. |
+| WC-2 | ✅ with S-9 | S1-T1..T5 and S1-T14. Keep the existing check names (see S-9). |
+| WC-3 | ✅ | `resolveAccountId`, FKs to `auth.users`, `never` descriptors, `USER_OWNED_TABLES`, and the same-PR ordering (R-3) are all correct. The purge live-schema check really does enumerate every `public` table with a `user_id` column (`purge_schema_introspect`), so all three tables must be classified. |
+| WC-4 | ✅ with RC-10, RC-12, RC-15 | Repositories and documented `supabaseServer`. The admin pre-check and the report must read tenant tables through their existing repositories. |
+| WC-5 | ✅ | Admin union `.strict()`, load-time Zod, and report params. |
+| WC-6 | ✅ | Every Slice 1 file in the touch set has 0 `console.*`. Later slices are flagged in §10. |
+| WC-7 | ✅ with RC-9 | Gate order, fail-closed on throw, the `profiles.role` 403 test, and `log().catch()` then `await flush().catch()` are all correct. The actor-column FKs must change (RC-9). |
+| WC-8 | 🔄 RC-8 | An owner SELECT policy on overrides would expose admin `reason` text through PostgREST. |
+| WC-9 | ✅ with S-8 conditions | See S-8. |
+| WC-10 | ✅ | Audience-driven `decide` mapping, and `entitlement_unavailable` is kept separate from `not_entitled`. |
+| WC-11 | ✅ with S-6 | `effectiveWithinSeconds: 30` in responses, and the bound documented in the module header. |
+| WC-12 | ✅ | `deriveLifecycle` is pure. `check-free-tier-expiration` is untouched. RC-11 fixes a precedence gap. |
+| WC-13 to WC-18, WC-20 | ✅ at outline level | Acceptable because each later slice gets an SA-reviewed addendum. **Each addendum must restate its WCs as concrete tasks and tests.** An outline row is not enough at that stage. |
+| WC-19 | ✅ | Version, removals and snapshot test, with `'renewal'` rejected. Extended to cohort durations by S-7. |
+| WC-21 | 🔄 RC-7, RC-14 | The flag-off no-read test, the shadow no-throw test and the trigger never-raise design are right. Two gaps: (1) `chat-v4` importing the entitlements module would run load-time Zod at cold start **even with the flag off**, so a bad config could take chat down (RC-7). (2) The trigger needs a lock timeout and a concrete failure-injection test (RC-14). The launch migration is re-scoped by RC-3. |
+| WC-22 | ✅ | S1 tests are complete. Under U-1, the tier-semantics tests run against fixtures (RC-1). Route-declaration and per-surface integration tests are in Slice 2. |
+
+**Slice 1 zero-behaviour check.** With `BOS_ENTITLEMENTS_MODE=off`, the only production effects once RC-7 and RC-14 are in are: (a) the migration and backfill, and (b) the two AFTER INSERT triggers on `onboarding_conversations` and `business_profiles`. Both triggers never raise and are bounded by `lock_timeout`. There are no entitlement reads and no shadow writes, the chat-v4 hook returns synchronously, and no customer-visible route, page or cron changes. **Accepted.**
+
+#### Decisions on S-1 to S-12
+
+| # | Decision |
+|---|---|
+| **S-1** | **Approved.** Add audience `client_render` (branding), which needs no `messageClass`. FR-8 becomes: every automated client **send** declares `messageClass` **and** `initiator: 'client' \| 'system'` in the Slice 2 send registry. The overlay surface kind for a send is **derived from its registry entry**. A call site never chooses it, so it cannot pick the wrong one. Paused/grace behaviour is a config table keyed by **send id**, with defaults from (class, initiator). That is what makes Q-B4 a config value (RC-5). |
+| **S-2** | **Approved.** The key space is `entity.op` for `find` / `compute` / every `ActionDef`, plus `plan.for_each` and `plan.analyse`, cross-checked against the 107 plugin actions. `agents` / `agent_runs` → `{ ungated: 'agent platform, B-8' }` is confirmed: gating them would couple the two products, which B-8 forbids. The R-A/R-B read rule is a **config value** (`readRule`, default `'domain_group'` = R-A) (RC-5). The shadow recorder also records the `for_each` item count, so a bulk threshold can become config later without new instrumentation. |
+| **S-3** | **Approved.** The add-ons table is deferred to Slice 4. The resolver keeps an `addons` input, tested with fixtures. Comped add-ons before billing go through overrides (`add` on quantity, `set 'included'` on an addon). |
+| **S-4** | **Approved with changes.** Column is `plan_version integer NOT NULL DEFAULT 0`, so the trigger and backfill never name a version. Add `CHECK (tier IS NULL OR plan_version > 0)`: it names no tier, and it makes "tier with version 0" unrepresentable. `0` resolves to the current version only when `tier IS NULL`. |
+| **S-5** | **Revised under U-2.** On `set_cohort` for a champion, `expiresAt` is a **required key**. Its value is either an ISO date in the future or an **explicit `null`, meaning open-ended**. Both need a reason. Omitting the key returns 400. The resolver treats a champion with `cohort_expires_at IS NULL` as an **active champion**, with no anomaly and **no `defaultDurationDays` fallback**. Remove that fallback: it counts from `created_at`/anchor and would expire every migrated account on the same day. The report lists open-ended champions as an ops count. **For the all-existing-accounts rollout, open-ended is the safer choice**: nothing can lapse by accident for a live customer. The trade-off, free access until someone sets a date, is visible in the report and is a revenue risk rather than a customer-harm risk. An admin sets per-account dates later. |
+| **S-6** | **Approved as a refinement of T-5, within approved pattern 3.** Cache the **inputs** (plan row + overrides) for 30 s, resolve on every call with an injected `now`, and memoise the resolved snapshot per request/turn. Add a **size cap** (LRU, for example 5,000 entries), because the report and crons touch many accounts. The report and batch paths **read through without populating** the cache. Keep stale inputs for up to 10 minutes, and **only** as the T-3 fallback for fail-open audiences. Owner-paid capabilities never get stale data and return `entitlement_unavailable`. |
+| **S-7** | **Derived, not materialised on read.** The read path must never write: that would break resolver purity and T-5. Record **facts** on the plan row: `onboarding_started_at` and `profile_created_at`, both set by the triggers with COALESCE and never overwritten. Trial start = `trial_started_at` if pinned (admin), otherwise the fact selected by config `trial.clockStartsAt` (default `'first_onboarding_message'`, per Q-B3). Trial end = `trial_ends_at` if pinned, otherwise start + duration. **Shortening the trial length must not shorten trials already running.** Model the duration as an append-only `durationHistory: [{ effectiveFrom, days }]`, where a trial uses the entry in force at its start (pure, same idea as `removals`). Extend the snapshot test so that any change to `trial.durationDays` / `graceDays` without a history entry fails. AC-14 then holds for new signups. |
+| **S-8** | **Approved, with these mandatory conditions.** Verified: both parent tables have **user INSERT RLS policies** (`WITH CHECK (auth.uid() = user_id)`), so a signed-in user can fire these triggers directly through PostgREST. The plan table has no user write policy, which is why DEFINER is justified. (a) The function reads **only `NEW.user_id`** plus constants and `now()`. It must never copy `NEW.metadata` or any other parent column into plan fields. (b) `SET search_path = ''` with every name schema-qualified. (c) `SET lock_timeout = '2s'` on the function, so a lock on the plan table cannot stall an onboarding insert. (d) `EXCEPTION WHEN OTHERS → RAISE WARNING` (as planned). (e) Idempotency: `ON CONFLICT (user_id) DO UPDATE SET <fact> = COALESCE(plans.<fact>, EXCLUDED.<fact>) WHERE plans.<fact> IS NULL`. This never touches cohort, tier or trial fields, so an onboarding reset (`/api/onboarding/chat/reset` deletes conversation rows) or a business Reset **cannot restart a trial**, and it is tested. (f) REVOKE EXECUTE as planned. Firing a trigger does not check EXECUTE, so this is harmless. (g) Migration order in **one transaction**: tables → RLS/revokes → functions → triggers → backfill. There must be no window where a new tenant gets neither the trigger nor the backfill. (h) The trigger fires on every onboarding message, which is acceptable with the `WHERE … IS NULL` guard (no row write after the first). (i) The verification script proves never-raise with a concrete method inside a rolled-back transaction: `ALTER TABLE public.business_os_account_plans ADD CONSTRAINT tmp_fail CHECK (false) NOT VALID`, insert a parent row, assert the parent row exists, then `ROLLBACK`. This approval covers **this module's provisioning only**. It is not a general "provisioning trigger" pattern for other modules. |
+| **S-9** | **Extend `scripts/typecheck-bos-llm.ts` `SCOPED_DIRS`.** Do **not** rename the npm script (`typecheck:bos-llm`, cited by the `bos-llm-call-standards` skill and CLAUDE.md), the workflow `name`, the job id or the job display name. Only update the header comments. The new `bos-entitlements.yml` Jest workflow is approved. `tests/plugins/jest-setup.ts` already stubs Supabase env, so repository imports load in CI. **Verified:** `main` branch protection currently has **no required status checks**, so "fails in CI" is advisory today. See condition G-2. |
+| **S-10** | **Approved: one POST route with a Zod discriminated union** (one audit path, one allow-list per op). Recommendation: place it at `entitlements/accounts/[accountId]/route.ts` so the dynamic segment does not sit beside `shadow-report`. Multi-account ops (the RC-3 launch op) go on a **separate** route, not under `[accountId]`. |
+| **S-11** | **Slice 2:** `not_entitled` → **403** (not 402, which is reserved and handled inconsistently by clients and proxies). `read_only` → **409**. `entitlement_unavailable` → **503** with `Retry-After`. `limit_reached` (Slice 3) must **not** be 429, because clients auto-retry 429. It is decided in the Slice 3 addendum. Clients branch on the body `error` code, never on the status alone. The Slice 2 addendum checks that no global fetch wrapper treats 403 as "signed out". |
+| **S-12** | **Agreed, and it is a security hazard.** `.claude/skills/new-api-route/SKILL.md:118` tells admin routes to check `user.app_metadata?.role === 'admin'`, which contradicts CLAUDE.md. Fix: replace it with `AdminAccessService.getInstance().isAdmin(...)`, fail closed on throw, pointing to `app/api/admin/business-os/llm-usage/route.ts`. Deliver it as a separate `chore(skills)` change. `.claude/skills` is project configuration, so **TL gets user approval**. SA does not edit it here. It is not blocking for Slice 1, but it must land before the Slice 2 addendum. SA code review will confirm that S1-T12 did not follow the skill's variation. |
+
+#### Required changes before implementation (RC)
+
+**From the user's scope change:**
+
+| # | Required change |
+|---|---|
+| **RC-1** | **No commercial tiers in production config.** `TIER_ORDER = []` and `TIER_MATRIX = { version: 1, tiers: {}, removals: [] }`. The §4.6 example matrix moves to `entitlements/__tests__/fixtures/` and is validated by the **same** schema builder through an injectable `TierMatrixSource`. The mapped types and the Zod builder must accept zero tiers (`z.enum` needs a non-empty tuple, so handle the empty case). Every tier-semantics test runs on a fixture with at least 2 tiers: AC-2's deletion loop, AC-4's one-line change, grandfathering, `lowestTierFor`, and the variant/quantity/allowance merges. A separate test proves the production config loads. Drop "(S) rows exact" from S1-T3. `assign_tier` returns 400 `no_tiers_configured` when the tier list is empty. `lowestTier` may be `null`. The forbidden-literal deny list is `{'basic','growth','pro'} ∪ TIER_ORDER`. |
+| **RC-2** | **Generalise the cohort base:** `base: { tier: TierId } \| { all: true }`. `{ all: true }` is **derived from the catalog**: boolean/group on, variant = the top of its ordered list, addon = `included`. Quantity, metered and fair-use values have no natural maximum, so they are **explicit cohort config values**. Zod requires one for every such capability, so a new catalog entry fails CI until champions get a value. `beta` comes in via `includeLifecycle: ['beta']`. **`not_built` stays never** (FR-13 unchanged). Champion = `{ all: true }` (U-2). The trial's config default is also `{ all: true }` until a tier exists, because there is no Growth tier to point at. Switching it to a tier later is a one-line change. This default is listed for the user below. |
+| **RC-3** | **Rollout to champion.** The Slice 1 backfill writes existing Business OS users as `cohort = 'champion'`, `cohort_expires_at = NULL` (open-ended), `origin = 'backfill_slice1'`, with facts from `MIN(onboarding_conversations.created_at)` and `business_profiles.created_at`. New signups get a trial through the triggers. The Slice 2 `launch_reset_trials` op is **replaced** by `launch_champion_existing`. It sets every account that has no tier and is not already a champion to open-ended champion, including Slice-1-era signups, per the default below. It is idempotent (launch marker), writes one audit entry per account plus a summary, and lives on its own admin route. Update §4.3, §4.11, §5 (B-3 row), §8 step 6 and the §11 risks. |
+| **RC-4** | **S-5 as revised:** `expiresAt` is a required key (date or explicit `null`). Remove the `defaultDurationDays` champion fallback and its anomaly. The report counts open-ended champions. |
+| **RC-5** | **Business questions become config**, each with a test that flips the value. Q-B1: `chatActionMap.readRule` (default `'domain_group'`). Q-B2: closed by the user (RC-2). Q-B3: `trial.clockStartsAt` (default `'first_onboarding_message'`), backed by the recorded facts in S-7. Q-B4: the paused/grace send policy is keyed by send id, and the default for the intake request is **suppress in paused**. Remove §12.1 as open questions and restate the four items as config defaults. |
+| **RC-6** | **Record usage in shadow, not only denials.** With no tiers and every existing account a champion, a denials-only log would be nearly empty and would lose the data the user needs to design tiers. Record every (capability, surface, outcome, rule), **including `allowed`**, plus the `for_each` item count. The report accepts `asTier=<configured tier>` and computes would-be denials **retroactively** from recorded usage once tiers exist. AC-7 is proven in tests with the fixture matrix. |
+
+**Technical:**
+
+| # | Required change |
+|---|---|
+| **RC-7** | **Module-load safety (WC-21).** `chat-v4` imports only a thin `shadow.ts`, which imports only `mode.ts`. Config loading and Zod run **lazily inside `shadow.ts`'s try**, and `mode.ts` must not import config. Test: a config loader that throws does not affect chat-v4 in `off` (not called) or in `shadow` (swallowed and logged). Slice 2 relies on the CI gate (G-2) for bad config, not on runtime. |
+| **RC-8** | **RLS.** No user policy on `business_os_entitlement_overrides`: `reason`, `ended_reason` and actor ids are admin-internal and would otherwise be readable by the account owner through PostgREST. For Slice 1, define **no user policies on any of the three tables**. WC-8 allows "or none", and nothing reads them client-side. A future plan UI reads through a server route. Add `REVOKE ALL ON TABLE … FROM anon, authenticated` on all three. The verification script asserts both. |
+| **RC-9** | **Actor columns** (`actor_admin_id`, `ended_by_admin_id`, `updated_by_admin_id`) become plain `uuid` with **no FK** to `auth.users`. An FK with no ON DELETE blocks deleting an admin's auth user. `ON DELETE SET NULL` conflicts with NOT NULL and erases the durable record WC-7 requires. |
+| **RC-10** | **The admin target pre-check means "is a Business OS tenant"**: a `business_profiles` or `onboarding_conversations` row exists, read through their repositories. It does **not** mean "a plan row exists", because that would make the ops check's "tenant with no plan row" impossible to fix through the sanctioned path. Add an idempotent `ensure_plan_row` op. Return 404 only for non-tenants. |
+| **RC-11** | **Lifecycle precedence.** Define `accessEnd` and the grace basis deterministically when an account has both a tier and a cohort: the tier wins, cohort fields are ignored while it is present, and after `access_ends_at` the grace uses the subscription grace. Test every combination of tier and cohort. |
+| **RC-12** | **Batch reads.** The report pages the plan table with `.order('user_id').range(...)`. `findEntitlementInputsBatch` is capped at **100 ids** per `.in()` because of the PostgREST URL length. |
+| **RC-13** | S-6 cache size cap and read-through for the report and batch paths. |
+| **RC-14** | S-8 conditions (a) to (i), including `lock_timeout` and the rolled-back failure-injection check. |
+| **RC-15** | **Import-graph test.** Repositories are also exported from the `lib/repositories/index.ts` barrel (per the `new-repository` skill), so the test must detect **references to the write methods / class symbol**, not only direct module paths. Allowed referrers: the admin routes and the repository's own test. |
+| **RC-16** | **Report data exposure.** The shadow report returns account ids and aggregates only, never business names or override `reason` text. Override reasons appear only in the per-account inspect response. Add a report test that asserts this. |
+| **RC-17** | Record the scope change in §1 (inputs), and re-run the §9 traceability for the RC changes. |
+
+#### Gates on later slices (conditions, not Slice 1 blockers)
+
+| # | Gate |
+|---|---|
+| **G-1** | **Service-role key rotation gates the Slice 2 `enforce` flip (and all of Slice 4).** Every guarantee in this module (no user write policies, service-role-only RPCs, the admin gate on `admin_users`) assumes the service-role key is private. With the key public, anyone can make themselves a champion, give themselves any tier, or add themselves to `admin_users`, which makes enforcement meaningless and billing state untrustworthy. Slice 1 adds **no new exposure**: the leaked key already grants everything, and the new tables have no user policies. So Slice 1 may merge and run in shadow. **Before `BOS_ENTITLEMENTS_MODE=enforce`:** the key must be rotated, the old key revoked (not just replaced), and the rotation verified. This matches the purge Reset precedent. |
+| **G-2** | Before the Slice 2 flip, the Business OS type check and `bos-entitlements` jobs must be **required status checks** on `main`. This is a repository setting, so a user or repository-admin action. |
+| **G-3** | Each later slice addendum restates its WCs as concrete tasks and tests (see the WC table). |
+
+#### Items for the user (business terms; none of them blocks Slice 1)
+
+| # | Question | SA default (built as config) |
+|---|---|---|
+| U-Q1 | Until you define your plans, what should a **new signup's 14-day trial** include? | Everything, the same as design partners. When you define a plan, pointing the trial at it is a one-line change. |
+| U-Q2 | New signups' trials will run out before plans and payment exist. They would become read-only and then paused, with **no way to pay**. How should that be handled? | Don't switch enforcement on until at least one plan and a way to get onto it exist (payment, or an admin assigning it). Until then an admin can make individual late signups champions. |
+| U-Q3 | "All existing accounts become champions": existing as of **when**? | As of the day enforcement is switched on. Nobody who signed up in between is cut off. |
+| U-Q4 | When does a migrated champion's free access end? | **No end date** until an admin sets one per account. This is safer for customers, because nothing lapses by surprise. The cost is that free access continues until someone acts. The admin report lists these accounts. The alternative is one fixed end date for everyone, which risks every account lapsing on the same day. |
+
+#### Optimisation suggestions (non-blocking)
+
+- The chat-v4 shadow call is not awaited in a JSON (non-streaming) route. Because it starts at planning and the turn continues for seconds, it will almost always finish. Accept the rare loss for shadow data. Slice 2 enforcement must be awaited.
+- `shadow_events` retention: after the Slice 2 launch decision, either stop recording `allowed` or add a date-window purge. Not needed in Slice 1.
+- S1-T15 (setup-AI cost) is worth keeping. With U-2 it is the main real input for sizing the trial allowance.
+
+### Approval
+
+[x] Workplan approved with conditions. Dev addresses the scope change and RC-1 to RC-17 in this document. SA re-checks the revised sections (short delta review), and then implementation proceeds. G-1 to G-3 gate later slices.
 
 ## 14. QA Testing Report
 
@@ -805,3 +918,4 @@ _RM to populate._
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-09-19 | Initial workplan (Dev) | Branch `feature/business-os-entitlements` from `origin/main` 94f9cfcd. Slice 1 in full detail (catalog, matrix, cohorts, lifecycle overlay, chat action map, loader, pure resolver, plan rows + triggers + backfill, admin routes, shadow report, tests, CI gate). Slices 2 to 4 outlined. B-11 and B-12 treated as authoritative. WC-1 to WC-22 traced. 4 business questions, 12 SA items. |
+| 2026-09-19 | SA workplan review: APPROVED WITH CONDITIONS (SA) | Added the §13 SA Workplan Review. Folded in the user's scope change (infrastructure only with no tier contents; champions get all capabilities and every existing account becomes a champion at rollout; the four business questions become config). Checked WC-1 to WC-22 against the tasks. Decided S-1 to S-12. Required changes RC-1 to RC-17. Most significant: no production tiers, with fixtures for the tests; a catalog-derived `{ all: true }` cohort base; open-ended champion backfill in place of the trial reset; lazy config load so chat-v4 cannot break with the flag off; no user RLS policies (override reasons would leak); actor columns without an FK; trigger hardening (`search_path=''`, `lock_timeout`, fact-only COALESCE upsert, single-transaction ordering). Later-slice gates: service-role key rotation before `enforce` (G-1), required CI checks (G-2), WCs restated in each addendum (G-3). SA re-checks the revised sections before code. |
