@@ -3,19 +3,20 @@
 > **Last Updated**: 2026-09-19
 
 **Developer:** Dev
-**Requirement:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md). This workplan was written against the uncommitted copy in the main working tree on 2026-09-19, which includes §21 SA Review and conditions WC-1 to WC-22.
+**Requirement:** [BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_SUBSCRIPTION_ENTITLEMENTS_REQUIREMENT.md). This workplan was written against the uncommitted copy in the main working tree on 2026-09-19, which includes §21 SA Review and conditions WC-1 to WC-22. The user's scope change of 2026-09-19 (§1.1) supersedes parts of that requirement, and TL is routing the requirement update to BA (§12.4).
 **Date:** 2026-09-19
-**Status:** SA workplan review 2026-09-19: **APPROVED WITH CONDITIONS** (see [§13](#13-sa-review-notes)). Before any code, Dev revises the workplan for the user's scope change and required changes RC-1 to RC-17, and SA re-checks the revised sections. No code has been written.
+**Status:** Revised (rev 2) for the user's scope change, RC-1 to RC-17 and the S-1 to S-12 decisions from the SA workplan review (§13, APPROVED WITH CONDITIONS). **Waiting for the SA delta re-check** of the sections listed in §0. No code has been written.
 **Branch:** `feature/business-os-entitlements`, created from `origin/main` at `94f9cfcd` (WC-1). Dev created it on TL's instruction. The Dev role normally leaves branch creation to RM, and this deviation is recorded here for RM.
 
 ## Overview
 
-Business OS has no commercial gating today. This workplan delivers the subscription and entitlements module in the four slices set out in the requirement (§16). Slice 1 is planned in full. It ships the capability catalog, the tier matrix and cohort config, a Zod-validated loader, the pure resolver, the per-account plan row, admin operations, and a shadow-mode "what would be gated" report. All of it sits behind a server-only flag and changes nothing customers see. Slices 2 to 4 (enforcement, metering, billing) are planned at outline level and each gets a detailed workplan addendum before it starts. Every SA condition (WC-1 to WC-22) is mapped to a task in [§9](#9-wc-traceability).
+Business OS has no commercial gating today. This workplan builds the **infrastructure** for subscriptions and entitlements in the four slices of the requirement (§16): a capability catalog, a tier-matrix *mechanism*, cohorts, a pure resolver, per-account plan rows, admin operations, and a shadow-mode usage and "what would be gated" report. Under the user's scope change, **production config ships with no commercial tiers**. Eyal's example matrix exists only as a test fixture. Champions get every capability, and every existing account becomes a champion at rollout. Slice 1 is planned in full, sits behind a server-only flag, and changes nothing customers see. Slices 2 to 4 (enforcement, metering, billing) are outlined, and each gets an SA-reviewed addendum that restates its WCs as tasks and tests (G-3). Every WC and RC is traced in §9.
 
 ---
 
 ## Table of Contents
 
+0. [Revision 2: What Changed and What SA Re-checks](#0-revision-2-what-changed-and-what-sa-re-checks)
 1. [Inputs and Decisions Honoured](#1-inputs-and-decisions-honoured)
 2. [Analysis Summary (verified on origin/main)](#2-analysis-summary-verified-on-originmain)
 3. [Module Architecture](#3-module-architecture)
@@ -23,14 +24,38 @@ Business OS has no commercial gating today. This workplan delivers the subscript
 5. [Slice 2: Enforcement (outline)](#5-slice-2-enforcement-outline)
 6. [Slice 3: Metering (outline)](#6-slice-3-metering-outline)
 7. [Slice 4: Billing (outline)](#7-slice-4-billing-outline)
-8. [Rollout and Flag Plan](#8-rollout-and-flag-plan)
-9. [WC Traceability](#9-wc-traceability)
+8. [Rollout, Flag Plan and Gates](#8-rollout-flag-plan-and-gates)
+9. [Traceability (WC and RC)](#9-traceability-wc-and-rc)
 10. [console.* Files in the Touch Set](#10-console-files-in-the-touch-set)
 11. [Risks](#11-risks)
-12. [Open Questions](#12-open-questions)
+12. [Config Defaults, SA Decisions, Separate Changes, BA Follow-ups](#12-config-defaults-sa-decisions-separate-changes-ba-follow-ups)
 13. [SA Review Notes](#13-sa-review-notes)
 14. [QA Testing Report](#14-qa-testing-report)
 15. [Commit Info](#15-commit-info)
+
+---
+
+## 0. Revision 2: What Changed and What SA Re-checks
+
+| Section | Change | Driven by |
+|---|---|---|
+| §1 | Scope change U-1 to U-3, user defaults UD-1 to UD-4, gates G-1 to G-3 | U-1..3, RC-17 |
+| §3 | Fixtures folder. `shadow.ts` imports only `mode.ts`. Account route moved to `accounts/[accountId]`. | RC-1, RC-7, S-10 |
+| **§4.3** | **Migration SQL rewritten:** no user policies + `REVOKE ALL`; actor columns without FK; `plan_version DEFAULT 0` + CHECK; fact columns; hardened trigger (a)–(i); single-transaction order; champion backfill; shadow table records all outcomes + rule + item count | RC-3, RC-6, RC-8, RC-9, RC-14, S-4, S-7, S-8 |
+| §4.4 | `client_render` audience for branding. Sends are declared in the Slice 2 send registry with `initiator`. | S-1 |
+| §4.5 | `readRule` is a config value, and the recorder captures `for_each` item counts | RC-5, S-2 |
+| **§4.6** | **Production config has zero tiers.** Example matrix moved to a fixture. Cohort base `{ tier } \| { all: true }`. Explicit champion/trial values for quantity/metered/fair-use. `durationHistory`/`graceHistory`. `trial.clockStartsAt`. Send policy keyed by send id. Enforce precondition. | RC-1, RC-2, RC-5, S-7, UD-1, UD-2 |
+| §4.7 | Injectable source, zero-tier Zod handling, history validation | RC-1, S-7 |
+| **§4.8** | **Resolver:** `{ all: true }` derivation, tier wins over cohort (RC-11), open-ended champion is active with no fallback, trial clock from facts + history, `lowestTier` nullable | RC-2, RC-4, RC-11, S-5, S-7 |
+| §4.9 | Input cache with LRU cap, read-through for report/batch, stale data only for fail-open audiences, batch cap of 100 ids, paged report | RC-12, RC-13, S-6 |
+| §4.10 | Lazy config load inside `shadow.ts`. Record all outcomes including `allowed`. `asTier` retroactive report. No names or reasons. | RC-6, RC-7, RC-16 |
+| **§4.11** | **Provisioning:** fact-only trigger upsert, trial reset impossible, champion backfill | RC-3, RC-14, S-7, S-8 |
+| **§4.12** | **Admin ops:** tenant pre-check through existing repos, `ensure_plan_row`, champion `expiresAt` required key (date or `null`), `assign_tier` 400 `no_tiers_configured`, route path | RC-4, RC-10, S-5, S-10 |
+| §4.13–§4.16 | Tests moved to fixtures, plus tests for RC-7/11/15/16, S-7 and S-8. CI names unchanged. Tasks and exit criteria updated. | RC-1, RC-7, RC-11, RC-15, RC-16, S-9 |
+| **§5 (B-3 row)** | **`launch_champion_existing` replaces `launch_reset_trials`**, on its own route, evaluated at switch-on (UD-3). S-11 statuses. Preconditions G-1, G-2, UD-2. | RC-3, S-11, G-1, G-2, UD-2, UD-3 |
+| §8, §9, §11, §12 | Gates, full RC traceability, updated risks, config defaults in place of open questions, S-12 listed as a separate change | RC-5, RC-17, G-1..3 |
+
+**SA re-check list:** **§4.3, §4.6, §4.8, §4.11, §4.12 and the §5 B-3 row** (the ones SA named). Also, briefly, **§4.9 and §4.10**, because RC-6, RC-7, RC-12, RC-13 and RC-16 changed them materially, and **§8** for the gate placement.
 
 ---
 
@@ -38,12 +63,37 @@ Business OS has no commercial gating today. This workplan delivers the subscript
 
 | Source | Treated as |
 |---|---|
-| D-1 to D-14, B-2 to B-10 | Fixed business inputs (requirement §3, §19). |
-| B-1 (five ambiguous sheet rows) | Still open. These rows ship as catalog **placeholders** (`placeholder: 'B-1'`) with example tier values. The engine does not depend on how they are resolved. |
-| **B-11** (user, after SA review; the BA is recording it in parallel) | **Authoritative now.** In `paused`, invoice payment links, payment receipts and booking cancel/reschedule links **keep working** for clients. New bookings, the public website and reminder messages **stop**. Messages suppressed while paused are **never sent retroactively** on reactivation. This replaces the §9 footnote assumption. It shapes the lifecycle overlay in Slice 1 (data only) and enforcement in Slice 2. |
-| **B-12** (user, after SA review) | **Authoritative now.** Setup AI (onboarding, first website generation, services/intake generation) **counts** against the trial AI allowance. The trial allowance must cover a typical full setup with meaningful headroom, and the account is warned before setup regenerations use it up. This affects the Slice 1 report (it measures typical setup cost, see S1-T15), the Slice 3 inventory and the warning path, and where the trial clock starts (Q-B3). |
-| T-1 to T-12 | SA decisions (§21.1). They are implemented as decided. The few places where this plan refines a detail are listed under SA items in §12.2. |
-| WC-1 to WC-22 | Conditions on this workplan. See §9. |
+| D-1 to D-14, B-2 to B-10 | Fixed business inputs (requirement §3, §19), **except where the scope change below supersedes them** (D-2 "Growth-level trial", B-3 "fresh trial for everyone else", FR-3 "every tier (Basic, Growth, Pro)"). |
+| B-1 (five ambiguous sheet rows) | The capabilities stay in the catalog as placeholders (`placeholder: 'B-1'`). Their tier values exist only in the test fixture. |
+| B-11 | In `paused`, invoice pay links, receipts and booking cancel/reschedule stay live. New bookings, the website and reminders stop. Suppressed sends are never sent later. |
+| B-12 | Setup AI counts against the trial allowance, which must cover a typical setup with headroom. The owner is warned before setup regenerations use it up. |
+| T-1 to T-12, WC-1 to WC-22 | SA decisions and conditions (requirement §21). |
+| S-1 to S-12, RC-1 to RC-17, G-1 to G-3 | SA workplan review (§13). All applied in this revision, except S-12, which is a separate change needing user approval (§12.3). |
+
+### 1.1 User scope change (2026-09-19)
+
+| # | Direction | Where applied |
+|---|---|---|
+| U-1 | **Infrastructure only.** Production config ships **no commercial tiers**. Eyal's matrix is only a test fixture. The user adds tiers as config later. | §4.6 (`TIER_ORDER = []`), §4.13 (fixture tests) |
+| U-2 | **Champions get all capabilities**: every catalog capability at its highest variant/quantity, including beta. `not_built` stays off. **All existing accounts become champions at rollout.** New signups follow the trial lifecycle. | §4.6 (`{ all: true }`), §4.8, §4.11 backfill, §5 launch op |
+| U-3 | **The four business questions become config values**, with Dev's defaults. | §12.1 |
+
+### 1.2 User defaults for SA's open questions (the user will confirm; each one is a single config or launch-step value)
+
+| # | Default | Single place it lives |
+|---|---|---|
+| UD-1 | A new signup's trial includes **all capabilities**. | `COHORTS.trial.base = { all: true }` |
+| UD-2 | Enforcement is **not switched on until at least one plan and a path onto it exist**. Until then, admins can make late signups champions. | `LAUNCH.enforceRequiresConfiguredTier = true`. `mode.ts` refuses `enforce` (logs `error`, behaves as `shadow`) while `TIER_ORDER` is empty. The "path onto it" (payment or admin assignment) is a §8 launch checklist item. |
+| UD-3 | "Existing accounts become champions" is **evaluated as of the enforcement switch-on date**. | The `launch_champion_existing` op runs at switch-on (§5, §8 step 6). Its cutoff is the time it runs. |
+| UD-4 | Migrated champions are **open-ended** (explicit "no end date") until an admin sets a date per account. The admin report lists them. | `cohort_expires_at = NULL` written by backfill/launch. Report count "open-ended champions" (§4.10). |
+
+### 1.3 Gates on later slices (recorded, not Slice 1 blockers)
+
+| # | Gate |
+|---|---|
+| **G-1** | **The Slice 2 `enforce` switch-on and all of Slice 4 are blocked** until the Supabase service-role key is **rotated**, the **old key revoked** (not just replaced), and the rotation **verified**. Every guarantee here (no user write policies, service-role-only RPCs, the `admin_users` gate) assumes the key is private. Slice 1 adds no new exposure and may merge and run in shadow. |
+| **G-2** | Before `enforce`, the Business OS type-check job and the `bos-entitlements` Jest job must be **required status checks** on `main`. This is a repository setting, done by the user or a repository admin. `main` has no required checks today. |
+| **G-3** | Every later-slice addendum restates its WCs as **concrete tasks and tests**. An outline row is not enough at addendum stage. |
 
 ---
 
@@ -51,20 +101,20 @@ Business OS has no commercial gating today. This workplan delivers the subscript
 
 | Area | Finding on `origin/main` (94f9cfcd) | Impact on the plan |
 |---|---|---|
-| Entitlement code | None. `lib/business-os/entitlements/` does not exist, and no table uses a `bos_`/`business_os_` prefix. | Greenfield folder and tables. |
-| Chat action surface | `business-os-plugin-v2.json` has **107** actions. These are `find_*`/`aggregate_*` for each entity plus the `SEMANTIC_CATALOG` actions (`lib/business-os/catalog/catalog.ts`, `ActionDef` in `catalog.schema.ts`). A plan's steps use the ops `find`, `compute`, `mutate`, `for_each`, `analyse` (`lib/business-os/bizql/types.ts`). | The FR-6 map must cover mutate actions **and** read/compute/analyse/for_each ops, not only `ActionDef`s. See §4.5. |
-| Chat execution | `app/api/business-os/chat-v4/route.ts` gets the plan from `getBizQLPlanner().plan(...)` (~L777) and runs `executeMutate` in several places (confirm, dry run, direct) and `executeForEach` (~L1043). `saved-plans/[id]/run` also runs plans. | Slice 1 adds one shadow hook after planning. Slice 2 gates at execution, including confirm-time. |
-| Provisioning of a Business OS tenant | `business_profiles` is inserted from **five** paths: `BusinessProfileRepository.create/upsert` (onboarding build), `setup-status` route, `scheduling/availability` route, `AvailabilityService`, `ChatCommandExecutor`. `onboarding_conversations` rows are written **before** the profile exists. | A code hook at "the" creation path would miss paths. Plan: DB triggers, see §4.11. |
-| Purge classification | `lib/business-os/purge/descriptors.ts` (`never(...)` helper, `EXCLUDED` list) plus `classification-baseline.json` (SA-S3 frozen levels). `lib/business-os/businessOwnedTables.ts` plus its test parse **every migration** and fail when a new `user_id` table is in neither `BUSINESS_OWNED_TABLES` nor `USER_OWNED_TABLES`. | New tables are registered in **both** places, as person-owned and `never` (WC-3). |
-| Admin pattern | `app/api/admin/business-os/llm-usage/route.ts`: `getUser` → `AdminAccessService.getInstance().isAdmin(...)`, which fails closed on throw → Zod → work. It has tests. | Copied for T-7. Not copied: `app/api/admin/boost-packs/route.ts`, which has no auth. |
-| Skill drift | `.claude/skills/new-api-route/SKILL.md` "Admin-only" variation says to check `user.app_metadata?.role === 'admin'`. That contradicts CLAUDE.md (AdminAccessService only). | This plan follows CLAUDE.md and T-7. **Flagged to TL/SA** to fix the skill (not in scope here). |
-| Audit | `AuditTrailService.flush()` exists (L218). `AUDIT_EVENTS` plus a metadata registry live in `lib/audit/events.ts`. | New event constants go in both places. WC-7 log-then-flush. |
-| CI | Only two workflows: `plugin-tests.yml` (path-filtered, `tests/plugins/**`) and `bos-llm-typecheck.yml` (`scripts/typecheck-bos-llm.ts`, `SCOPED_DIRS` + baseline). **No workflow runs the `lib/**/__tests__` Jest suites.** | WC-2 extends the typecheck scope, **and** a new CI job runs the entitlement Jest suites. Without that, the FR-8 invariants would not be a CI gate. See §4.14. |
-| Service-role RPC convention | `20260929_usage_summary.sql` prefers **SECURITY INVOKER + REVOKE from public/anon/authenticated + GRANT service_role**, and records why definer rights were not used. | Slice 1 needs no RPC (single embedded select, §4.9). The shadow counter RPC uses INVOKER + REVOKE. The trigger functions are the only DEFINER code (WC-9). |
-| Tier-name literals | 13 existing `'basic' \| 'growth' \| 'pro'` literals in `lib/`, `app/`, `components/`, all unrelated (analytics, V6, website stats). | The forbidden-literal test uses a committed baseline, the same way the typecheck gate does. |
-| Server flags | Business OS has no server-only feature flags. `lib/utils/featureFlags.ts` holds `NEXT_PUBLIC_*` rendering hints. | A new server-only env var `BOS_ENTITLEMENTS_MODE`, read in one place (§4.10). |
-| Legacy chat (T-8) | `ChatCommandPanel.tsx:1247` still calls `/api/business-os/chat-v2`. `chat` and `chat-command` have no in-repo caller. | Retirement is in Slice 2 and is a prerequisite for the flag flip (§5). |
-| LLM foundations | `lib/business-os/llm/callCatalog.ts` (`BOS_LLM_CALLS`, 8 areas) and `aiActionAudit.ts` (`runAiAction`) are present. `docs/investigations/LLM_CREDIT_AND_AUDIT_TRACKING.md` is present. | Slice 3 builds on these (WC-18). Slice 1 adds an optional read-only setup-cost estimate (S1-T15). |
+| Entitlement code | None. No table uses a `business_os_` prefix. | Greenfield folder and tables. |
+| Chat action surface | `business-os-plugin-v2.json` has **107** actions (`find_*`/`aggregate_*` per entity plus the `SEMANTIC_CATALOG` actions). Plan ops are `find`, `compute`, `mutate`, `for_each`, `analyse`. | The FR-6 map covers read/compute/analyse/for_each as well as mutate actions (§4.5). |
+| Chat execution | `chat-v4/route.ts` gets the plan from `getBizQLPlanner().plan(...)` (~L777) and runs `executeMutate` in several places and `executeForEach` (~L1043). `saved-plans/[id]/run` also runs plans. | Slice 1: one shadow hook after planning. Slice 2: gate at execution time, including the confirm turn. |
+| Tenant provisioning | `business_profiles` is inserted from **five** paths. `onboarding_conversations` is written **before** the profile. **Both parent tables have a user INSERT RLS policy** (`WITH CHECK (auth.uid() = user_id)`), so a signed-in user can fire the triggers through PostgREST (SA-verified). | DB triggers, hardened per S-8 (§4.11). |
+| Purge classification | Descriptors + `classification-baseline.json`. `businessOwnedTables` test parses every migration. `purge_schema_introspect` enumerates every `public` table with a `user_id`. | All three new tables are classified `never` / person-owned in the **same PR** as the migration (WC-3). |
+| Admin pattern | `app/api/admin/business-os/llm-usage/route.ts` (fail-closed `AdminAccessService`). Not `admin/boost-packs` (no auth). | Copied for T-7. |
+| Skill drift | `.claude/skills/new-api-route/SKILL.md:118` tells admin routes to use `app_metadata.role`. | Not followed. Fixing it is a separate change needing user approval (S-12, §12.3). |
+| Tenant check repos | `BusinessProfileRepository.findByUserId` and `OnboardingConversationRepository.getLatestMessageAt` exist. | RC-10 pre-check reuses them. `ensure_plan_row` needs the first-message time: add a small `getFirstMessageAt(userId)` to the existing repository, following the skill, with a unit test. |
+| Audit | `AuditTrailService.flush()` exists. `AUDIT_EVENTS` + registry live in `lib/audit/events.ts`. | New `BOS_ENTITLEMENT_*` events. WC-7 log-then-flush. |
+| CI | `plugin-tests.yml` (path-filtered) and `bos-llm-typecheck.yml` only. No CI runs `lib/**/__tests__`. **`main` has no required status checks.** | New `bos-entitlements.yml` job. G-2 makes it required before `enforce`. |
+| Service-role RPC convention | `20260929_usage_summary.sql`: INVOKER + REVOKE + GRANT service_role. | Shadow RPC follows it. Trigger functions are the only DEFINER code. |
+| Tier-name literals | 13 unrelated existing hits. | Forbidden-literal test with a baseline. Deny list = `{'basic','growth','pro'} ∪ TIER_ORDER` (RC-1). |
+| Legacy chat (T-8) | `ChatCommandPanel.tsx:1247` calls `chat-v2`. `chat` and `chat-command` have no caller. | Retired in the first Slice 2 PR. |
+| LLM foundations | `callCatalog.ts` (`BOS_LLM_CALLS`), `aiActionAudit.ts` (`runAiAction`), and the investigation doc are all present. | Slice 3 (WC-18). S1-T15 setup-cost estimate. |
 
 ---
 
@@ -74,39 +124,46 @@ Business OS has no commercial gating today. This workplan delivers the subscript
 lib/business-os/entitlements/
   config/                      ← the ONLY place tier names may appear (FR-12)
     catalog.ts                 data-only capability catalog (engineering-owned)
-    tierMatrix.ts              data-only matrix + version + removals ledger (pricing-owned)
-    cohorts.ts                 trial / champion cohort config
-    lifecycle.ts               grace lengths + state overlay policy table (B-9, B-11)
-    chatActionMap.ts           chat op/action → capability map (FR-6)
-  types.ts                     shapes, mapped types (CapabilityId, ValueFor<C>, TierId…)
-  schema.ts                    Zod schemas for matrix/cohorts/lifecycle/override values
-  source.ts                    TierMatrixSource interface + CodeTierMatrixSource (Zod at load)
-  account.ts                   resolveAccountId(userId) – the single seam (T-2)
-  lifecycle.ts                 deriveLifecycle(plan, config, now) – pure, time-derived (T-9(5))
-  resolver.ts                  resolveEntitlements(...) – pure, layered, explained (FR-9/10)
+    tierMatrix.ts              TIER_ORDER = [] ; TIER_MATRIX = { version: 1, tiers: {}, removals: [] }  (U-1)
+    cohorts.ts                 trial / champion: base, histories, explicit values, clockStartsAt
+    lifecycle.ts               grace histories + state overlay table + send policy defaults/overrides
+    chatActionMap.ts           chat op/action → capability map + readRule (config value)
+    launch.ts                  LAUNCH = { enforceRequiresConfiguredTier: true }  (UD-2)
+  types.ts                     shapes, mapped types (CapabilityId, ValueFor<C>, TierId…) — zero-tier safe
+  schema.ts                    Zod builders (catalog-derived; zero-tier safe)
+  source.ts                    TierMatrixSource interface + CodeTierMatrixSource (lazy, Zod at first load)
+  account.ts                   resolveAccountId(userId) — the single seam (T-2)
+  lifecycle.ts                 deriveLifecycle(plan, config, now) — pure
+  resolver.ts                  resolveEntitlements(...) — pure, layered, explained
   decide.ts                    check(snapshot, capability, request) → EntitlementDecision
-  mode.ts                      BOS_ENTITLEMENTS_MODE reader (off | shadow; enforce in Slice 2)
-  EntitlementService.ts        getSnapshot / getSnapshots (memo + 30 s TTL + failure policy)
-  shadow.ts                    shadow recorder (never throws, flag-gated)
-  report.ts                    static + observed shadow report builder
-  index.ts                     server-only barrel
-  __tests__/…
+  mode.ts                      BOS_ENTITLEMENTS_MODE reader; imports NOTHING from config/schema (RC-7)
+  shadow.ts                    imports ONLY mode.ts at top level; lazy-imports the rest inside try (RC-7)
+  EntitlementService.ts        getSnapshot / getSnapshots (memo, 30 s input cache, LRU cap, failure policy)
+  report.ts                    static + observed + asTier-retroactive report builder
+  index.ts                     server-only barrel (NOT imported by chat-v4)
+  __tests__/
+    fixtures/exampleTierMatrix.ts   Eyal's example matrix (basic/growth/pro) — test only (U-1, RC-1)
+    fixtures/fixtureSource.ts       injectable TierMatrixSource over the fixture
 lib/repositories/
-  BusinessOsAccountPlanRepository.ts     plan row + overrides reads/writes (service role, documented)
-  BusinessOsEntitlementShadowRepository.ts  shadow counters (service role, documented)
+  BusinessOsAccountPlanRepository.ts          plan row + overrides (service role, documented)
+  BusinessOsEntitlementShadowRepository.ts    shadow counters (service role, documented)
+  OnboardingConversationRepository.ts         + getFirstMessageAt(userId)   (RC-10 ensure_plan_row facts)
 app/api/admin/business-os/entitlements/
-  [accountId]/route.ts         GET inspect (FR-10) + POST admin ops (discriminated union)
-  shadow-report/route.ts       GET report (AC-7)
+  accounts/[accountId]/route.ts   GET inspect + POST single-account ops (S-10)
+  shadow-report/route.ts          GET report
+  launch/route.ts                 Slice 2: launch_champion_existing (multi-account, own route — S-10, RC-3)
 supabase/migrations/2026MMDD_business_os_entitlements.sql
-scripts/typecheck-bos-entitlements.ts (or extension of typecheck-bos-llm, see §4.14)
+scripts/typecheck-bos-llm.ts   (SCOPED_DIRS extended; names unchanged — S-9)
 .github/workflows/bos-entitlements.yml
 ```
 
-Dependency rules, enforced by an import test (S1-T12):
-- `config/*` imports only `types.ts`. There is no I/O, no logger and no Node APIs, so it stays data-only (T-1).
-- `resolver.ts`, `lifecycle.ts` and `decide.ts` are **pure**: no I/O, no `Date.now()`, and `now` is injected (WC-22d).
-- Nothing under `entitlements/` imports billing (`lib/stripe/**`, `CreditService`) (§13 recommendation, B-8).
-- No `'use client'` file imports anything under `entitlements/` except `types.ts` (repositories are server-only).
+Dependency rules (import test S1-T13, RC-15):
+- `config/*` imports only `types.ts`: data only, no I/O.
+- `resolver.ts`, `lifecycle.ts` and `decide.ts` are pure, with `now` injected.
+- `mode.ts` imports nothing from `config/`, `schema.ts` or `source.ts`. `shadow.ts` has **only** `mode.ts` and the logger as top-level imports.
+- Nothing under `entitlements/` imports billing (`lib/stripe/**`, `CreditService`).
+- No `'use client'` file imports anything under `entitlements/` except `types.ts`.
+- The repository **write-method symbols** (`BusinessOsAccountPlanRepository` write methods, the class, and its singleton, including through the `lib/repositories/index.ts` barrel) are referenced only by the admin routes and the repository's own test (RC-15).
 
 ---
 
@@ -114,151 +171,194 @@ Dependency rules, enforced by an import test (S1-T12):
 
 ### 4.1 Scope and non-goals
 
-**In scope:** FR-1 to FR-13, FR-22, FR-31/32 (the Slice-1 admin ops), FR-34 to FR-39 as config and resolver semantics, AC-1 to AC-7, and the Slice-1 parts of WC-21.
+**In scope:** FR-1, FR-2, FR-5 to FR-13 as **mechanism**; FR-3/FR-4 as mechanism proven on the fixture (U-1); FR-22; FR-31/32 (Slice-1 admin ops); FR-34 to FR-39 as config and resolver semantics; AC-1 to AC-7, with AC-2/4/7 proven on the fixture (RC-1, RC-6); the Slice-1 parts of WC-21.
 
-**Explicitly not in Slice 1:** blocking anything; route, cron and public-page hooks (Slice 2); the B-3 launch migration (Slice 2, at flag flip, per §21.3); add-on and grant tables (Slice 3/4, see SA item S-3); `license_tier` (Slice 2); any change to the usage card or `monthly_ai_allowance_usd` (Slice 3); T-8 retirement (Slice 2).
+**Not in Slice 1:** commercial tier contents (U-1); blocking anything; route, cron and public-page hooks (Slice 2); `launch_champion_existing` (Slice 2, at switch-on); the add-ons table (Slice 4, S-3); the grants/usage tables (Slice 3); `license_tier` (Slice 2); usage card and `monthly_ai_allowance_usd` (Slice 3); T-8 retirement (Slice 2).
 
-**Zero-behaviour guarantee (WC-21):**
-1. `BOS_ENTITLEMENTS_MODE` unset or `off` (the default) means **no entitlement DB read and no shadow write** anywhere. A test asserts the repository is never called.
-2. Every shadow call site goes through `shadow.ts`, which wraps everything in `try/catch` and returns `void`. A test proves a throwing repository or resolver cannot reach the request.
-3. Creating the plan row can never fail signup or onboarding. The trigger function catches all errors and raises only a `WARNING` (§4.11), and a test inserts a `business_profiles` row with the plans table made unwritable.
-4. Customer-visible routes, pages and crons are not modified in Slice 1, apart from one `void shadowChatPlan(...)` line in chat-v4.
+**Zero-behaviour guarantee (WC-21, SA-accepted).** With `BOS_ENTITLEMENTS_MODE=off`, the only production effects are:
+1. The migration and backfill.
+2. The two AFTER INSERT triggers, which never raise and are bounded by `lock_timeout`.
+
+In addition:
+- There are no entitlement reads or shadow writes, and a test proves it.
+- The chat-v4 hook returns synchronously, and config is never loaded (RC-7).
+- The shadow path cannot throw.
+- No customer-visible route, page or cron changes.
 
 ### 4.2 Files to create / modify
 
 | File | Action | Reason |
 |---|---|---|
-| `lib/business-os/entitlements/config/catalog.ts` | create | FR-1/2, §4.4 |
-| `lib/business-os/entitlements/config/tierMatrix.ts` | create | FR-3/4, T-1, T-11 |
-| `lib/business-os/entitlements/config/cohorts.ts` | create | FR-5, D-2/D-4 |
-| `lib/business-os/entitlements/config/lifecycle.ts` | create | §9, B-9, B-11 (overlay as data) |
-| `lib/business-os/entitlements/config/chatActionMap.ts` | create | FR-6, §4.5 |
-| `lib/business-os/entitlements/{types,schema,source,account,lifecycle,resolver,decide,mode,EntitlementService,shadow,report,index}.ts` | create | §4.7 to §4.10 |
-| `lib/business-os/entitlements/__tests__/*.test.ts` + `tierMatrix.snapshot.json` + `tierLiteral.baseline.json` | create | §4.13 |
-| `lib/repositories/BusinessOsAccountPlanRepository.ts` | create | WC-4, `new-repository` skill |
-| `lib/repositories/BusinessOsEntitlementShadowRepository.ts` | create | Shadow counters |
+| `lib/business-os/entitlements/config/{catalog,tierMatrix,cohorts,lifecycle,chatActionMap,launch}.ts` | create | §4.4–§4.6 |
+| `lib/business-os/entitlements/{types,schema,source,account,lifecycle,resolver,decide,mode,EntitlementService,shadow,report,index}.ts` | create | §4.7–§4.10 |
+| `lib/business-os/entitlements/__tests__/fixtures/{exampleTierMatrix,fixtureSource}.ts` | create | U-1, RC-1 |
+| `lib/business-os/entitlements/__tests__/*.test.ts`, `tierMatrix.snapshot.json`, `tierLiteral.baseline.json` | create | §4.13 |
+| `lib/repositories/BusinessOsAccountPlanRepository.ts`, `BusinessOsEntitlementShadowRepository.ts` + unit tests | create | WC-4, `new-repository` skill |
+| `lib/repositories/OnboardingConversationRepository.ts` + test | modify | Add `getFirstMessageAt(userId)` (RC-10 `ensure_plan_row`) |
 | `lib/repositories/types.ts`, `lib/repositories/index.ts` | modify | Skill steps 2 and 4 |
-| `lib/repositories/__tests__/BusinessOsAccountPlanRepository.test.ts`, `…ShadowRepository.test.ts` | create | One unit test per method |
-| `supabase/migrations/2026MMDD_business_os_entitlements.sql` | create | §4.3. **Needs SA approval (Dev rule: no migration changes without SA).** |
-| `lib/business-os/purge/descriptors.ts` | modify | Three `never(...)` rows (WC-3) |
-| `lib/business-os/purge/__tests__/classification-baseline.json` | modify | Add the three new tables as `never`. This is a deliberate addition with a reason, not a level change. |
-| `lib/business-os/businessOwnedTables.ts` | modify | Add to `USER_OWNED_TABLES` with reasons (its test forces this) |
-| `app/api/admin/business-os/entitlements/[accountId]/route.ts` + `__tests__/route.test.ts` | create | T-7, AC-6 |
-| `app/api/admin/business-os/entitlements/shadow-report/route.ts` + `__tests__/route.test.ts` | create | AC-7 |
-| `lib/audit/events.ts` | modify | New `BOS_ENTITLEMENT_*` event constants + registry metadata |
-| `app/api/business-os/chat-v4/route.ts` | modify | **One** fire-and-forget `shadowChatPlan(...)` call after the plan is obtained (§4.10) |
-| `scripts/typecheck-bos-llm.ts` **or** new `scripts/typecheck-bos-entitlements.ts` + baseline, and `package.json` | modify/create | WC-2 (§4.14) |
-| `.github/workflows/bos-entitlements.yml` | create | Runs the scoped typecheck + entitlement Jest suites in CI |
-| `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | create | Module doc: config-change procedure (the one-line change, the removal + ledger procedure), the 30 s staleness bound, ops check for missing plan rows |
+| `supabase/migrations/2026MMDD_business_os_entitlements.sql` + `scripts/verify-bos-entitlements-migration.sql` | create | §4.3. **SA approves the SQL before it is written to the repo (S1-T0).** |
+| `lib/business-os/purge/descriptors.ts`, `purge/__tests__/classification-baseline.json`, `lib/business-os/businessOwnedTables.ts` | modify | Three `never` / person-owned tables (WC-3) |
+| `app/api/admin/business-os/entitlements/accounts/[accountId]/route.ts` + `__tests__/route.test.ts` | create | T-7, AC-6, S-10 |
+| `app/api/admin/business-os/entitlements/shadow-report/route.ts` + `__tests__/route.test.ts` | create | AC-7, RC-6, RC-16 |
+| `lib/audit/events.ts` | modify | `BOS_ENTITLEMENT_*` events + registry |
+| `app/api/business-os/chat-v4/route.ts` | modify | **One** `shadowChatPlan(...)` call. Imports `@/lib/business-os/entitlements/shadow` only (RC-7). |
+| `scripts/typecheck-bos-llm.ts` (+ baseline if needed) | modify | Add `lib/business-os/entitlements/` to `SCOPED_DIRS`. Header comments only; **no rename** of script, workflow, job id or display name (S-9). |
+| `.github/workflows/bos-entitlements.yml` | create | Jest CI for entitlements (G-2 makes it required before `enforce`) |
+| `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` | create | Adding a tier, the removal + ledger procedure, history entries, staleness bound, flag, launch preconditions, ops checks |
 | `.env.example` (if present) | modify | Document `BOS_ENTITLEMENTS_MODE` |
 
 ### 4.3 Data model and migration
 
-Three tables, all named `business_os_*` so they cannot be mistaken for the agent platform's `user_subscriptions`/`plans` or for client `payment_plan_subscriptions` (C-8). All are keyed by owner `user_id` with **FK to `auth.users(id)`**, and **not** to `business_profiles` (WC-3). A Business OS Reset/Purge therefore cannot cascade them, which closes the trial-reset loophole.
+Three tables named `business_os_*` (C-8 namespace). Each is keyed by owner `user_id`, with an FK to `auth.users(id)` and **not** to `business_profiles`, so a Business OS Reset/Purge cannot cascade them (WC-3). **Everything runs in one transaction**, in this order: tables → RLS/revokes → functions → triggers → backfill (S-8 g). There is no window where a new tenant gets neither the trigger nor the backfill.
 
 **File:** `supabase/migrations/2026MMDD_business_os_entitlements.sql` (sketch)
 
 ```sql
--- 1. One row per Business OS account. Lifecycle is DERIVED from these timestamps at
---    resolution time (T-9(5)); no state column is moved by a cron.
+BEGIN;
+
+-- ── 1. Tables ──────────────────────────────────────────────────────────────
+-- One row per Business OS account. Lifecycle is DERIVED from these columns at
+-- resolution time (T-9(5)); nothing here is moved by a cron.
 CREATE TABLE public.business_os_account_plans (
-  user_id              uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  tier                 text NULL,          -- validated in app (Zod vs config); NO CHECK listing tier names (FR-12: names live in config only)
-  cohort               text NULL,          -- 'trial' | 'champion' — validated in app (Zod), same reason
-  plan_version         integer NOT NULL,   -- matrix version the account subscribed/started at (T-11)
-  period_anchor        timestamptz NOT NULL DEFAULT now(),   -- T-6
-  trial_started_at     timestamptz NULL,
-  trial_ends_at        timestamptz NULL,   -- NULL ⇒ trial_started_at + config trial length (see §4.11)
-  cohort_expires_at    timestamptz NULL,   -- champion expiry (admin-set)
-  access_ends_at       timestamptz NULL,   -- admin-assigned tier end (comped/pre-billing); Stripe period end in Slice 4
-  grace_ends_at        timestamptz NULL,   -- admin override of the derived grace end
-  origin               text NOT NULL,      -- 'onboarding_trigger' | 'profile_trigger' | 'backfill_slice1' | 'admin'
-  updated_by_admin_id  uuid NULL REFERENCES auth.users(id),
-  created_at           timestamptz NOT NULL DEFAULT now(),
-  updated_at           timestamptz NOT NULL DEFAULT now()
+  user_id               uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  tier                  text NULL,          -- validated in app against config; no CHECK naming tiers (FR-12)
+  cohort                text NULL,          -- 'trial' | 'champion'; validated in app (same reason)
+  plan_version          integer NOT NULL DEFAULT 0,       -- S-4: 0 ⇒ current version, only while tier IS NULL
+  period_anchor         timestamptz NOT NULL DEFAULT now(),
+  -- FACTS (S-7): set once by the triggers via COALESCE, never overwritten, never reset.
+  onboarding_started_at timestamptz NULL,
+  profile_created_at    timestamptz NULL,
+  -- PINS (admin-only; NULL ⇒ derived from facts + config history):
+  trial_started_at      timestamptz NULL,
+  trial_ends_at         timestamptz NULL,
+  cohort_expires_at     timestamptz NULL,   -- champion: NULL = OPEN-ENDED (S-5/RC-4/UD-4)
+  access_ends_at        timestamptz NULL,   -- admin-assigned tier end; Stripe period end in Slice 4
+  grace_ends_at         timestamptz NULL,   -- admin override of the derived grace end
+  origin                text NOT NULL,      -- 'onboarding_trigger' | 'profile_trigger' | 'backfill_slice1' | 'admin' | 'launch'
+  updated_by_admin_id   uuid NULL,          -- RC-9: plain uuid, NO FK (durable record; never blocks auth-user deletion)
+  created_at            timestamptz NOT NULL DEFAULT now(),
+  updated_at            timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT business_os_account_plans_tier_versioned CHECK (tier IS NULL OR plan_version > 0)   -- S-4
 );
 
--- 2. Per-account admin overrides. Never deleted; ended by setting ended_at (§8 "never deleted silently").
+-- Per-account admin overrides. Never deleted; ended via ended_at (§8 "never deleted silently").
 CREATE TABLE public.business_os_entitlement_overrides (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id            uuid NOT NULL REFERENCES public.business_os_account_plans(user_id) ON DELETE CASCADE,
-                     -- FK to the plan row (itself FK'd to auth.users) so PostgREST can embed it:
-                     -- ONE round trip for plan + overrides (T-5), no RPC needed.
+                     -- FK to the plan row so PostgREST can embed: ONE round trip for plan + overrides (T-5)
   capability         text NOT NULL,       -- validated against the catalog in app (Zod)
-  op                 text NOT NULL CHECK (op IN ('set','add','revoke')),   -- T-4 ops are schema, not pricing
-  value              jsonb NULL,          -- shape-validated per capability in app; NULL for revoke
+  op                 text NOT NULL CHECK (op IN ('set','add','revoke')),   -- T-4 ops: schema, not pricing
+  value              jsonb NULL,          -- per-capability shape-validated in app; NULL for revoke
   reason             text NOT NULL CHECK (length(btrim(reason)) >= 3),
   expires_at         timestamptz NULL,
-  actor_admin_id     uuid NOT NULL REFERENCES auth.users(id),             -- WC-7 durable record
+  actor_admin_id     uuid NOT NULL,       -- RC-9: no FK
   created_at         timestamptz NOT NULL DEFAULT now(),
   ended_at           timestamptz NULL,
-  ended_by_admin_id  uuid NULL REFERENCES auth.users(id),
+  ended_by_admin_id  uuid NULL,           -- RC-9: no FK
   ended_reason       text NULL
 );
-CREATE INDEX ON public.business_os_entitlement_overrides (user_id) WHERE ended_at IS NULL;
+CREATE INDEX business_os_entitlement_overrides_active_idx
+  ON public.business_os_entitlement_overrides (user_id) WHERE ended_at IS NULL;
 
--- 3. Shadow-mode observed would-be decisions, aggregated per day (AC-7). Bounded: one row per
---    (account, capability, surface, outcome, day).
+-- Shadow observations (RC-6): EVERY outcome incl. 'allowed', per rule, with for_each item totals.
 CREATE TABLE public.business_os_entitlement_shadow_events (
-  user_id            uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  capability         text NOT NULL,
-  surface            text NOT NULL,       -- e.g. 'chat:mutate:invoices.create'
-  outcome            text NOT NULL,       -- would-be outcome
-  day                date NOT NULL,
-  hits               integer NOT NULL DEFAULT 0,
-  last_seen_at       timestamptz NOT NULL DEFAULT now(),
+  user_id               uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  capability            text NOT NULL,
+  surface               text NOT NULL,      -- e.g. 'chat:mutate:invoices.create', 'chat:plan.for_each'
+  outcome               text NOT NULL,      -- outcome for the account's ACTUAL entitlements
+  rule                  text NOT NULL,      -- readRule the capability set was computed under ('domain_group' | 'read_only_plans_need_search' | 'n/a')
+  day                   date NOT NULL,
+  hits                  integer NOT NULL DEFAULT 0,
+  items_total           bigint  NOT NULL DEFAULT 0,   -- sum of for_each item counts (S-2)
+  items_max             integer NOT NULL DEFAULT 0,
+  last_seen_at          timestamptz NOT NULL DEFAULT now(),
   sample_correlation_id text NULL,
-  PRIMARY KEY (user_id, capability, surface, outcome, day)
+  PRIMARY KEY (user_id, capability, surface, outcome, rule, day)
 );
 
--- RLS (WC-8): owner SELECT on plans + overrides (lets a future plan/usage UI read own state);
--- NO insert/update/delete policy for anon/authenticated. Shadow table: RLS on, NO policies at all.
-ALTER TABLE … ENABLE ROW LEVEL SECURITY;  -- all three
-CREATE POLICY business_os_account_plans_owner_select ON public.business_os_account_plans
-  FOR SELECT TO authenticated USING (user_id = auth.uid());
-CREATE POLICY business_os_entitlement_overrides_owner_select ON public.business_os_entitlement_overrides
-  FOR SELECT TO authenticated USING (user_id = auth.uid());
+-- ── 2. RLS + revokes (RC-8): NO user policies on any table in Slice 1 ────────
+ALTER TABLE public.business_os_account_plans             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.business_os_entitlement_overrides     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.business_os_entitlement_shadow_events ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.business_os_account_plans             FROM anon, authenticated;
+REVOKE ALL ON TABLE public.business_os_entitlement_overrides     FROM anon, authenticated;
+REVOKE ALL ON TABLE public.business_os_entitlement_shadow_events FROM anon, authenticated;
 
--- Shadow counter increment (atomic upsert). SECURITY INVOKER + REVOKE, following the
--- 20260929_usage_summary.sql convention: the only caller is the service role.
+-- ── 3. Functions ─────────────────────────────────────────────────────────────
+-- Shadow counter upsert: INVOKER + REVOKE (20260929_usage_summary.sql convention).
 CREATE FUNCTION public.business_os_record_shadow_events(p_rows jsonb) RETURNS void
-  LANGUAGE sql SECURITY INVOKER SET search_path = public, pg_temp AS $$ … INSERT … ON CONFLICT … DO UPDATE SET hits = hits + EXCLUDED.hits … $$;
+  LANGUAGE sql SECURITY INVOKER SET search_path = '' AS $$
+  INSERT INTO public.business_os_entitlement_shadow_events AS e (…)
+  SELECT … FROM jsonb_to_recordset(p_rows) AS r(…)
+  ON CONFLICT (user_id, capability, surface, outcome, rule, day) DO UPDATE
+     SET hits = e.hits + EXCLUDED.hits,
+         items_total = e.items_total + EXCLUDED.items_total,
+         items_max = GREATEST(e.items_max, EXCLUDED.items_max),
+         last_seen_at = EXCLUDED.last_seen_at,
+         sample_correlation_id = EXCLUDED.sample_correlation_id;
+$$;
 REVOKE EXECUTE ON FUNCTION public.business_os_record_shadow_events(jsonb) FROM public, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.business_os_record_shadow_events(jsonb) TO service_role;
 
--- Provisioning triggers (§4.11): SECURITY DEFINER (they must insert regardless of which client
--- inserted the parent row), search_path pinned, EXECUTE revoked (WC-9), and they never raise.
-CREATE FUNCTION public.business_os_ensure_account_plan() RETURNS trigger
-  LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+-- Provisioning trigger (S-8 a–i). DEFINER because both parent tables accept user INSERTs
+-- (WITH CHECK auth.uid() = user_id) while the plan table has no user write policy.
+-- One function per fact (static SQL — no dynamic column names).
+CREATE FUNCTION public.business_os_plan_fact_onboarding() RETURNS trigger
+  LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = ''                          -- (b) every name schema-qualified
+  SET lock_timeout = '2s'                       -- (c) never stall an onboarding insert
+AS $$
 BEGIN
   BEGIN
-    INSERT INTO public.business_os_account_plans (user_id, cohort, plan_version, trial_started_at, origin)
-    VALUES (NEW.user_id, 'trial', <current matrix version — see note>, now(), TG_ARGV[0])
-    ON CONFLICT (user_id) DO NOTHING;
+    -- (a) reads ONLY NEW.user_id; constants + now(); never copies any other parent column.
+    INSERT INTO public.business_os_account_plans AS p (user_id, cohort, origin, onboarding_started_at)
+    VALUES (NEW.user_id, 'trial', 'onboarding_trigger', now())
+    -- (e) fact-only idempotency: never touches cohort/tier/pins/trial fields, so an
+    --     onboarding reset or business Reset cannot restart a trial. (h) no write after first.
+    ON CONFLICT (user_id) DO UPDATE
+       SET onboarding_started_at = COALESCE(p.onboarding_started_at, EXCLUDED.onboarding_started_at)
+     WHERE p.onboarding_started_at IS NULL;
   EXCEPTION WHEN OTHERS THEN
-    RAISE WARNING 'business_os_ensure_account_plan failed for %: %', NEW.user_id, SQLERRM;  -- never fail onboarding (WC-21)
+    RAISE WARNING 'business_os_plan_fact_onboarding failed for %: %', NEW.user_id, SQLERRM;   -- (d)
   END;
   RETURN NEW;
 END $$;
-REVOKE EXECUTE ON FUNCTION public.business_os_ensure_account_plan() FROM public, anon, authenticated;
-CREATE TRIGGER business_os_plan_on_onboarding AFTER INSERT ON public.onboarding_conversations
-  FOR EACH ROW EXECUTE FUNCTION public.business_os_ensure_account_plan('onboarding_trigger');
-CREATE TRIGGER business_os_plan_on_profile AFTER INSERT ON public.business_profiles
-  FOR EACH ROW EXECUTE FUNCTION public.business_os_ensure_account_plan('profile_trigger');
+-- business_os_plan_fact_profile(): identical, with profile_created_at and origin 'profile_trigger'.
+REVOKE EXECUTE ON FUNCTION public.business_os_plan_fact_onboarding() FROM public, anon, authenticated;  -- (f)
+REVOKE EXECUTE ON FUNCTION public.business_os_plan_fact_profile()    FROM public, anon, authenticated;
 
--- Backfill (Slice 1): every existing Business OS user without a row. The B-3 launch migration
--- (Slice 2) later re-sets trial windows / champions at flag-flip time (§21.3).
-INSERT INTO public.business_os_account_plans (user_id, cohort, plan_version, trial_started_at, origin)
-SELECT DISTINCT u.user_id, 'trial', <v>, now(), 'backfill_slice1'
-FROM (SELECT user_id FROM business_profiles UNION SELECT user_id FROM onboarding_conversations) u
+-- ── 4. Triggers ──────────────────────────────────────────────────────────────
+CREATE TRIGGER business_os_plan_on_onboarding AFTER INSERT ON public.onboarding_conversations
+  FOR EACH ROW EXECUTE FUNCTION public.business_os_plan_fact_onboarding();
+CREATE TRIGGER business_os_plan_on_profile AFTER INSERT ON public.business_profiles
+  FOR EACH ROW EXECUTE FUNCTION public.business_os_plan_fact_profile();
+
+-- ── 5. Backfill (RC-3, U-2, UD-4): every EXISTING Business OS user → open-ended champion ─
+INSERT INTO public.business_os_account_plans
+  (user_id, cohort, cohort_expires_at, origin, onboarding_started_at, profile_created_at)
+SELECT u.user_id, 'champion', NULL, 'backfill_slice1', oc.first_at, bp.created_at
+FROM (SELECT user_id FROM public.business_profiles
+      UNION SELECT user_id FROM public.onboarding_conversations) u
+LEFT JOIN (SELECT user_id, MIN(created_at) AS first_at
+           FROM public.onboarding_conversations GROUP BY user_id) oc USING (user_id)
+LEFT JOIN public.business_profiles bp USING (user_id)
 ON CONFLICT (user_id) DO NOTHING;
+
+COMMIT;
 ```
 
 Notes:
-- **`plan_version` in SQL.** The matrix version lives in TS. The trigger inserts `plan_version = 0`, meaning "unversioned; treat as the version current at trial start". The resolver maps `0` to the current `TIER_MATRIX.version` when the account holds no tier, which is always true for trials. When an admin assigns a tier (Slice 1) or billing subscribes (Slice 4), a real version is written. This keeps pricing numbers out of SQL. SA item S-4.
-- **Cohort and tier stored as text with no CHECK.** A CHECK constraint would duplicate tier names into SQL and break FR-12's single source. Writes only happen through the admin route and repository, which Zod-validate against config. The resolver treats an unknown value as an anomaly (log `error`, T-3 policy).
-- **Grandfathering needs no per-account table.** Under T-11 it is derived from the matrix `removals` ledger plus `plan_version`. A per-account sunset exception is an override with `expires_at` (§12 "set a sunset date" op, see §4.12).
-- **The purge RPC's live-schema check must know the new tables.** The migration and the descriptor/`businessOwnedTables` edits ship **in the same PR**. Reset is inert today, so the exposure is small, but the order still matters.
+- **No `plan_version` literal anywhere in SQL** (S-4). Tierless rows keep `0`, which resolves to the current version. `assign_tier` writes the real version. The CHECK makes "tier with version 0" impossible to store.
+- **Trial dates are derived, not stored** (S-7). The trigger records facts only. Trial start = `trial_started_at` if pinned, otherwise the fact named by `COHORTS.trial.clockStartsAt`. Trial end = `trial_ends_at` if pinned, otherwise start + the `durationHistory` entry in force at the start (§4.8).
+- **Why there are no owner SELECT policies (RC-8):** `reason`, `ended_reason` and the actor ids are admin-internal. Nothing reads these tables client-side, and a future plan UI would read through a server route.
+- **The purge live-schema check** enumerates every `public` table with a `user_id`. The descriptor and `USER_OWNED_TABLES` edits therefore ship **in the same PR** as this migration (R-3).
+- **`scripts/verify-bos-entitlements-migration.sql`** (QA runs it on a branch DB, all inside `BEGIN … ROLLBACK`). It checks:
+  - RLS is on for all three tables, `pg_policies` has **zero** rows for them, and `anon`/`authenticated` have no table privileges.
+  - `has_function_privilege('authenticated', …)` is false for all three functions, and each function's `proconfig` contains `search_path=` and `lock_timeout=2s`.
+  - **Never-raise (S-8 i):** `ALTER TABLE public.business_os_account_plans ADD CONSTRAINT tmp_fail CHECK (false) NOT VALID`, then insert a `business_profiles` row and an `onboarding_conversations` row. Assert both parent rows exist, then `ROLLBACK`.
+  - **Trial cannot restart:** create a trial row, delete the account's onboarding rows (what `/api/onboarding/chat/reset` does), insert a new message. Assert `onboarding_started_at`, `cohort` and the pins are unchanged.
+  - Backfill count = distinct Business OS users, all `champion` with `cohort_expires_at IS NULL`.
+  - Inserting a tier with `plan_version = 0` fails the CHECK.
 
 ### 4.4 Capability catalog
 
@@ -267,96 +367,90 @@ Notes:
 ```typescript
 export type CapabilityShape =
   | { kind: 'boolean' }
-  | { kind: 'variant'; variants: readonly string[] }            // ORDERED low → high (T-4)
+  | { kind: 'variant'; variants: readonly string[] }        // ORDERED low → high (T-4); top = `{ all: true }` value
   | { kind: 'metered'; unit: 'ai_action' | 'sms'; period: 'month' }
   | { kind: 'quantity'; unit: 'seat' | 'location' }
-  | { kind: 'fair_use'; unit: 'email'; period: 'month' }        // alert-only, never blocks (B-7)
-  | { kind: 'group' }                                            // boolean-valued; members via chatActionMap
-  | { kind: 'addon' };                                           // tier value: 'unavailable' | 'purchasable' | 'included'
+  | { kind: 'fair_use'; unit: 'email'; period: 'month' }    // alert-only (B-7)
+  | { kind: 'group' }                                        // boolean-valued; members via chatActionMap
+  | { kind: 'addon' };                                       // value: 'unavailable' | 'purchasable' | 'included'
 
-export type Audience = 'owner' | 'client' | 'mixed';             // mixed = ai.actions: decided per call site (D-12)
+export type Audience = 'owner' | 'client' | 'client_render' | 'mixed';   // S-1: client_render = visible, not a send
 export type MessageClass = 'transactional' | 'marketing';
-export type AtLimit = 'none' | 'degrade_to_template' | 'pause' | 'block' | 'alert_only' | 'by_call_site_audience';
 
 export interface CapabilityDef {
-  labels: { en: string; he: string; es: string };  // customer-facing name, same Labels convention as the chat catalog
+  labels: { en: string; he: string; es: string };
   category: 'crm' | 'website_intake' | 'payments' | 'ai_chat' | 'marketing' | 'insights' | 'support' | 'platform' | 'addon';
   shape: CapabilityShape;
   lifecycle: 'available' | 'beta' | 'not_built';
   audience: Audience;
-  messageClass: MessageClass | null;   // REQUIRED non-null when audience === 'client' (type-level + FR-8 test)
-  atLimit: AtLimit;
+  messageClass: MessageClass | null;   // required iff audience === 'client' (a gated automated send); null for client_render
+  atLimit: 'none' | 'degrade_to_template' | 'pause' | 'block' | 'alert_only' | 'by_call_site_audience';
   sellableAsAddon: boolean;
-  placeholder?: 'B-1';                  // ambiguous row still with Eyal
+  placeholder?: 'B-1';
 }
-
-// config/catalog.ts
 export const CAPABILITIES = { /* … */ } as const satisfies Record<string, CapabilityDef>;
 export type CapabilityId = keyof typeof CAPABILITIES;
 ```
 
-**Full capability list (from §5.3).** "Lifecycle" is Dev's first reading. Task S1-T2 verifies each against the code and records the evidence in a comment beside the entry, because `not_built` means never entitled (FR-13).
+**Full capability list (from §5.3).** The lifecycle column is verified against the code in S1-T2, with the evidence recorded in a comment beside each entry. Tier values are **not** in production config (U-1). Under `{ all: true }`, the value is derived from the shape, except where the last column says an explicit cohort value is needed (RC-2).
 
-| ID | Category | Shape | Lifecycle (verify) | Audience | Msg class | At limit | Add-on | Notes |
+| ID | Category | Shape | Lifecycle (verify) | Audience | Msg class | At limit | Add-on | `{ all: true }` value |
 |---|---|---|---|---|---|---|---|---|
-| `crm.core` | crm | boolean | available | owner | — | none | no | |
-| `crm.documents` | crm | boolean | available | owner | — | none | no | |
-| `booking.calendar_sync` | crm | boolean | available | owner | — | none | no | `calendar-sync` cron |
-| `website.ai_site` | website_intake | boolean | available | owner | — | none | no | |
-| `website.branding` | website_intake | variant `['branded','unbranded']` | available | client | transactional* | none | no | *Not a send. Class is N/A. It is a render policy (see the note below this table). |
-| `intake.forms` | website_intake | variant `['manual','ai']` | available | owner | — | none | no | |
-| `intake.reminders` | website_intake | boolean | available | client | transactional | none | no | System-initiated (stops in `paused`, B-11) |
-| `payments.invoices` | payments | boolean | available | owner | — | none | no | **B-1 placeholder** |
-| `payments.card` | payments | boolean | available | owner | — | none | no | **B-1 placeholder** |
-| `payments.reminders` | payments | boolean | available | client | transactional | none | no | Sender is a stub (dependency, §16) |
-| `payments.multi_currency` | payments | boolean | available (verify) | owner | — | none | no | |
-| `chat.marketing` | ai_chat | group | available (verify) | owner | — | none | no | **B-1 placeholder** |
-| `chat.invoice_control` | ai_chat | group | available | owner | — | none | no | |
-| `chat.email` | ai_chat | group | available | owner | — | none | no | |
-| `chat.search` | ai_chat | group | available | owner | — | none | no | Meaning is open, see Q-B1 |
-| `chat.scheduling` | ai_chat | group | available | owner | — | none | no | |
-| `chat.quotes` | ai_chat | group | available | owner | — | none | no | |
-| `chat.reporting` | ai_chat | group | available | owner | — | none | no | |
-| `chat.bulk` | ai_chat | group | available | owner | — | none | no | = `for_each` steps |
-| `ai.actions` | ai_chat | metered ai_action/month | available | mixed | — | by_call_site_audience | no | Allowance **value** only in Slice 1. Counting is Slice 3. |
-| `marketing.mass_email` | marketing | boolean | not_built (verify) | client | marketing | none | no | **B-1 placeholder** |
-| `marketing.lead_response` | marketing | boolean | available | client | marketing | degrade_to_template | no | `lead-response` cron, `LeadReplyRecommender` |
-| `marketing.posts` | marketing | boolean | not_built (verify) | owner | — | none | no | |
-| `insights.checks` | insights | boolean | available | owner | — | none | no | All 34 detectors. New ones are covered automatically (FR-35) |
-| `insights.channels` | insights | boolean | available | owner | — | none | no | `channel-metrics-sync` |
-| `insights.daily_briefing` | insights | boolean | available | owner | — | pause | no | |
-| `support.level` | support | variant `['standard','priority']` | available | owner | — | none | no | No enforcement surface. Informational. |
-| `email.volume` | platform | fair_use email/month | available | client | — | alert_only | no | Never shown, never blocks (B-7) |
-| `addon.marketing_analytics` | addon | addon | not_built (verify) | owner | — | none | yes | **B-1 placeholder** |
-| `addon.mobile` | addon | addon | not_built | owner | — | none | yes | **B-1 placeholder** |
-| `addon.full_payment_cycle` | addon | addon | not_built (verify) | owner | — | none | yes | **B-1 placeholder** |
-| `addon.sms` | addon | addon | not_built | client | transactional | none | yes | SMS delivery out of scope |
-| `sms.messages` | addon | metered sms/month | not_built | client | transactional | block | yes | Hooks only |
-| `team.seats` | addon | quantity seat | available | owner | — | none | yes | Owner seat = 1. Invites not built (§18). |
-| `business.locations` | addon | quantity location | available | owner | — | none | yes | Modelled only |
-| `website.custom_domain` | addon | addon | available (verify) | client | — | none | yes | |
-| `addon.act_for_you` | addon | addon | not_built (verify) | owner | — | none | yes | |
+| `crm.core` | crm | boolean | available | owner | — | none | no | on |
+| `crm.documents` | crm | boolean | available | owner | — | none | no | on |
+| `booking.calendar_sync` | crm | boolean | available | owner | — | none | no | on |
+| `website.ai_site` | website_intake | boolean | available | owner | — | none | no | on |
+| `website.branding` | website_intake | variant `['branded','unbranded']` | available | **client_render** | — | none | no | `unbranded` |
+| `intake.forms` | website_intake | variant `['manual','ai']` | available | owner | — | none | no | `ai` |
+| `intake.reminders` | website_intake | boolean | available | client | transactional | none | no | on |
+| `payments.invoices` | payments | boolean | available | owner | — | none | no | on (B-1) |
+| `payments.card` | payments | boolean | available | owner | — | none | no | on (B-1) |
+| `payments.reminders` | payments | boolean | available | client | transactional | none | no | on |
+| `payments.multi_currency` | payments | boolean | available (verify) | owner | — | none | no | on |
+| `chat.marketing` | ai_chat | group | available (verify) | owner | — | none | no | on (B-1) |
+| `chat.invoice_control` | ai_chat | group | available | owner | — | none | no | on |
+| `chat.email` | ai_chat | group | available | owner | — | none | no | on |
+| `chat.search` | ai_chat | group | available | owner | — | none | no | on |
+| `chat.scheduling` | ai_chat | group | available | owner | — | none | no | on |
+| `chat.quotes` | ai_chat | group | available | owner | — | none | no | on |
+| `chat.reporting` | ai_chat | group | available | owner | — | none | no | on |
+| `chat.bulk` | ai_chat | group | available | owner | — | none | no | on |
+| `ai.actions` | ai_chat | metered ai_action/month | available | mixed | — | by_call_site_audience | no | **explicit** (champion per month; trial one-off total) |
+| `marketing.mass_email` | marketing | boolean | not_built (verify) | client | marketing | none | no | off while not_built (B-1) |
+| `marketing.lead_response` | marketing | boolean | available | client | marketing | degrade_to_template | no | on |
+| `marketing.posts` | marketing | boolean | not_built (verify) | owner | — | none | no | off while not_built |
+| `insights.checks` | insights | boolean | available | owner | — | none | no | on |
+| `insights.channels` | insights | boolean | available | owner | — | none | no | on |
+| `insights.daily_briefing` | insights | boolean | available | owner | — | pause | no | on |
+| `support.level` | support | variant `['standard','priority']` | available | owner | — | none | no | `priority` |
+| `email.volume` | platform | fair_use email/month | available | client | transactional | alert_only | no | **explicit** ceiling |
+| `addon.marketing_analytics` | addon | addon | not_built (verify) | owner | — | none | yes | off while not_built (B-1) |
+| `addon.mobile` | addon | addon | not_built | owner | — | none | yes | off while not_built (B-1) |
+| `addon.full_payment_cycle` | addon | addon | not_built (verify) | owner | — | none | yes | off while not_built (B-1) |
+| `addon.sms` | addon | addon | not_built | client | transactional | none | yes | off while not_built |
+| `sms.messages` | addon | metered sms/month | not_built | client | transactional | block | yes | **explicit** (0 while not_built) |
+| `team.seats` | addon | quantity seat | available | owner | — | none | yes | **explicit** |
+| `business.locations` | addon | quantity location | available | owner | — | none | yes | **explicit** |
+| `website.custom_domain` | addon | addon | available (verify) | client_render | — | none | yes | `included` |
+| `addon.act_for_you` | addon | addon | not_built (verify) | owner | — | none | yes | off while not_built |
 
-**Refinement flagged for SA (S-1):** `website.branding` is client-*visible* but it is not a *send*, so "message class" does not fit it. I will add a third audience value, `'client_render'`, which does not need a `messageClass`. The FR-8 rule then reads "every client **send** has a class". Automated client sends that are **not** gated capabilities (booking confirmations, receipts, cancel/reschedule confirmations) are declared in Slice 2's **send registry** (§5), not in this catalog. B-11 needs one more attribute on each send, `initiator: 'client' | 'system'`: client-initiated transactional sends continue in `paused`, and system-initiated ones stop.
+Rows with `client` audience are the ones whose capability *is* an automated client send, or is metered on such sends. `email.volume` is classed transactional as its default. Per-send classification lives in the Slice 2 send registry. **Send registry (S-1, Slice 2):** every automated client send, gated or not, is declared once by **send id**, with `messageClass` and `initiator: 'client' | 'system'`. The overlay surface kind for a send is **derived from that entry**, so a call site never picks it. FR-8 then reads: every automated client send declares a class and an initiator.
 
-### 4.5 Chat action → capability map (FR-6)
+### 4.5 Chat action → capability map (FR-6, S-2)
 
-**File:** `lib/business-os/entitlements/config/chatActionMap.ts`. Engineering-owned, beside the catalog.
+**File:** `config/chatActionMap.ts` (engineering-owned).
+- **Key space:** `` `${entity}.${op}` `` for every `SEMANTIC_CATALOG` entity × (`find`, `compute`, every `ActionDef` key), plus `plan.for_each` and `plan.analyse`. The invariant test cross-checks this against the 107 plugin actions.
+- **Values:** a `CapabilityId`, or `{ ungated: reason }`. `agents.*` and `agent_runs.*` map to `{ ungated: 'agent platform, B-8' }` (S-2 confirmed).
+- **`readRule` (RC-5, Q-B1) is a config value.** Default `'domain_group'` (R-A): a read step needs its entity's domain capability, `chat.search` covers reads of entities without a domain group, and `compute`/`analyse` need `chat.reporting`. The alternative is `'read_only_plans_need_search'` (R-B).
+- **`capabilitiesForPlan(plan, rule)`** is pure. Mutate steps contribute their action's capability. `for_each` adds `chat.bulk` and reports its item count.
+- The shadow recorder evaluates **both** rules and records them with the `rule` column. A test flips the config value and asserts the required capability set changes.
+- The provisional mapping table by entity is unchanged from rev 1:
 
-- **Key space:** `` `${entity}.${op}` `` for every entity in `SEMANTIC_CATALOG`. `op` is `find`, `compute` (the plugin's `aggregate_*`), or any `ActionDef` key. Plan-level ops add `plan.for_each` and `plan.analyse`. The invariant test derives the expected key set from `SEMANTIC_CATALOG` **and** cross-checks it against the 107 plugin actions in `business-os-plugin-v2.json`, so an action added to either one without a mapping fails (AC-3).
-- **Value:** a `CapabilityId`, or `{ ungated: '<reason>' }`, which must carry a reason (same pattern as the §10.2 route declarations).
-- **`capabilitiesForPlan(plan)`** (pure): the set of capabilities a plan needs. A mutate step contributes its action's capability. A `for_each` step adds `chat.bulk`. `analyse` maps to `chat.reporting`. **Read steps** (`find`/`compute`) follow a rule that is **provisional until Q-B1 is answered**.
-  - Rule R-A (proposed default): a read step needs the capability of its entity's domain group. For example, `bookings.find` needs `chat.scheduling` and `invoices.compute` needs `chat.invoice_control`. `chat.search` then covers only reads of entities that have no domain group, and `chat.reporting` covers `compute` and `analyse`.
-  - Rule R-B (alternative): a read-only plan needs `chat.search` for `find` and `chat.reporting` for `compute`, while reads inside a write plan are covered by the write's capability.
-  - Both rules are expressed in the map module as data plus a single rule switch. The shadow report counts would-be denials under **both**, so the business can decide with numbers.
-
-Provisional mapping by entity (placeholders except where the capability is obvious):
-
-| Entity | Mutate actions → capability | Reads (R-A) |
+| Entity | Mutate actions → capability | Reads (`domain_group`) |
 |---|---|---|
 | contacts | create/update/delete → `crm.core`; `statement` → `chat.invoice_control`; `send` → `chat.email` | `crm.core` |
 | invoices, installments, plans, plan_subscriptions (`cancel`), refunds, transactions (`create/update/refund`) | → `chat.invoice_control` | `chat.invoice_control` |
-| proposals | create/create_and_send/send/withdraw → `chat.quotes` | `chat.quotes` |
+| proposals | → `chat.quotes` | `chat.quotes` |
 | bookings, services, business_profile (`set/clear_availability`, `open_time`) | → `chat.scheduling` | `chat.scheduling` |
 | business_profile `export_ledger` | → `chat.reporting` | — |
 | tasks, activities, pipeline_stages | → `crm.core` | `crm.core` |
@@ -364,374 +458,410 @@ Provisional mapping by entity (placeholders except where the capability is obvio
 | insights | — | `insights.checks` |
 | channel_metrics, channel_connections (`disconnect/sync`) | → `insights.channels` | `insights.channels` |
 | emails | — | `chat.email` |
-| agents, agent_runs | — | `{ ungated: 'agent platform, B-8' }` (SA to confirm, S-2) |
+| agents, agent_runs | — | `{ ungated: 'agent platform, B-8' }` |
 
-Engineering owns this map, and pricing never edits it (§6.1). Moving `chat.search` between tiers is still a one-line matrix change (AC-4).
+### 4.6 Config: tiers, cohorts, lifecycle, launch
 
-### 4.6 Tier matrix, cohorts, lifecycle config (example config; all numbers are placeholders)
-
-**File:** `lib/business-os/entitlements/config/tierMatrix.ts`
+**Production tier matrix (U-1, RC-1).** **File:** `config/tierMatrix.ts`
 
 ```typescript
-export const TIER_ORDER = ['basic', 'growth', 'pro'] as const;   // T-4 tier order; ONLY place tier names are defined
-
-export const TIER_MATRIX = {
-  version: 1,
-  tiers: {
-    basic: {
-      'crm.core': true, 'crm.documents': true, 'booking.calendar_sync': true,
-      'website.ai_site': true, 'website.branding': 'branded',                 // (S)
-      'intake.forms': 'manual', 'intake.reminders': false,                    // (S)
-      'payments.invoices': true, 'payments.card': true,                       // B-1
-      'payments.reminders': false,                                            // (S)
-      'payments.multi_currency': false,
-      'chat.marketing': false, 'chat.invoice_control': false, 'chat.email': true, 'chat.search': false,
-      'chat.scheduling': true, 'chat.quotes': false, 'chat.reporting': false, 'chat.bulk': false,
-      'ai.actions': { perMonth: 100 },
-      'marketing.mass_email': false, 'marketing.lead_response': false, 'marketing.posts': false,
-      'insights.checks': false, 'insights.channels': false, 'insights.daily_briefing': false,   // checks (S)
-      'support.level': 'standard',
-      'email.volume': { ceilingPerMonth: 2000 },
-      'addon.marketing_analytics': 'purchasable', 'addon.mobile': 'purchasable',
-      'addon.full_payment_cycle': 'purchasable', 'addon.sms': 'purchasable', 'sms.messages': { perMonth: 0 },
-      'team.seats': { included: 1, purchasable: false }, 'business.locations': { included: 1, purchasable: false },
-      'website.custom_domain': 'purchasable', 'addon.act_for_you': 'purchasable',
-    },
-    growth: { /* every key again — mapped type makes a missing key a type error */ },
-    pro:    { /* … */ },
-  },
-  // T-11: append-only. Each entry is written in the same PR that lowers a tier value.
-  removals: [
-    // { version: 2, tier: 'growth', capability: 'chat.reporting', previousValue: true, grandfatherUntil: '2027-03-01' },
-  ],
-} as const satisfies TierMatrix;
+export const TIER_ORDER = [] as const;                       // no commercial tiers yet — the user adds them as config
+export const TIER_MATRIX = { version: 1, tiers: {}, removals: [] } as const satisfies TierMatrix;
 ```
 
-`TierMatrix` is a mapped type: `tiers: Record<TierId, { [C in CapabilityId]: ValueFor<C> }>`, where `ValueFor<C>` is derived from `CAPABILITIES[C].shape`. For a variant, the value must be one of that capability's variants. A missing capability, an unknown ID or a wrongly-shaped value is a **type error** (T-1). The Zod schema (§4.7) repeats every one of these checks at load, because the Next build ignores TS errors.
+The types stay zero-tier safe. `TierId` is `(typeof TIER_ORDER)[number]`, which is `never` today. `tiers` is `Record<TierId, …>`, which is `{}` today. The mapped type `{ [C in CapabilityId]: ValueFor<C> }` still forces **every** capability into a tier as soon as one is added.
 
-**File:** `config/cohorts.ts`
+**Adding a tier later** means three things: append its name to `TIER_ORDER`, add its full row to `tiers` (a missing key is a type error, a Zod load error, and an invariant failure), and refresh the snapshot. This is documented in `BUSINESS_OS_ENTITLEMENTS.md`.
+
+**Test fixture (U-1).** **File:** `__tests__/fixtures/exampleTierMatrix.ts` holds Eyal's example `basic`/`growth`/`pro` matrix, with rev 1's example values and a 2-entry `removals` example. It is served through `fixtureSource.ts` (an injectable `TierMatrixSource`) and validated by the **same** schema builder. All tier-semantics tests run on it (§4.13).
+
+**Cohorts (RC-2, S-7, UD-1).** **File:** `config/cohorts.ts`
 
 ```typescript
 export const COHORTS = {
   trial: {
-    baseTier: 'growth', durationDays: 14, graceDays: 7,
-    adjustments: { 'ai.actions': { op: 'set', value: { total: 150 } } },   // one-off total (D-2); size per B-12, see S1-T15
-    includeLifecycle: [],
+    base: { all: true },                                  // UD-1 — one-line switch to { tier: '<name>' } once a tier exists
+    clockStartsAt: 'first_onboarding_message',            // RC-5 / Q-B3 — or 'profile_created'
+    durationHistory: [{ effectiveFrom: '2026-09-19T00:00:00Z', days: 14 }],   // S-7 append-only
+    graceHistory:    [{ effectiveFrom: '2026-09-19T00:00:00Z', days: 7 }],
+    values: {                                             // RC-2: explicit for quantity/metered/fair_use (Zod-required)
+      'ai.actions': { total: 150 },                       // one-off trial total; sized from S1-T15 data (B-12)
+      'sms.messages': { perMonth: 0 }, 'email.volume': { ceilingPerMonth: 2000 },
+      'team.seats': { included: 1 }, 'business.locations': { included: 1 },
+    },
+    includeLifecycle: ['beta'],                           // follows UD-1 "all capabilities"; see note
   },
   champion: {
-    baseTier: 'growth',               // PLACEHOLDER — Q-B2
-    defaultDurationDays: 183, graceDays: 30,
-    adjustments: { 'ai.actions': { op: 'set', value: { perMonth: 3000 } } },
+    base: { all: true },                                  // U-2
+    graceHistory: [{ effectiveFrom: '2026-09-19T00:00:00Z', days: 30 }],
+    values: {
+      'ai.actions': { perMonth: 3000 }, 'sms.messages': { perMonth: 0 }, 'email.volume': { ceilingPerMonth: 10000 },
+      'team.seats': { included: 1 }, 'business.locations': { included: 1 },
+    },
     includeLifecycle: ['beta'],
   },
 } as const satisfies CohortConfig;
 ```
 
-**File:** `config/lifecycle.ts`. Subscription grace length (placeholder 7 days) plus the **overlay policy table**. The overlay is data, not branches, so a later B-9/B-11 change is a config edit.
+(All numbers are placeholders.) There is no `defaultDurationDays` for champions (RC-4). A champion has an admin-set end date or none. **Note for SA:** I read UD-1 ("all capabilities") as including beta for the trial, the same as champions. Setting `includeLifecycle: []` would keep beta for champions only, and it is a one-value change.
+
+**Lifecycle.** **File:** `config/lifecycle.ts`
+- `subscription.graceHistory` (placeholder 7 days, for tier accounts after `access_ends_at`).
+- The **state overlay table** (below).
+- **Send policy (RC-5, Q-B4):** defaults by `(messageClass, initiator)` plus `sendPolicyOverrides: Record<SendId, Partial<Record<State, 'allow' | 'suppress'>>>`, empty in Slice 1. The intake request is a **system-initiated transactional** send, so the default already **suppresses it in `paused`**. Changing Q-B4 is one override entry keyed by its send id once the Slice 2 registry exists. A test proves an override flips the outcome for a fixture send id.
 
 | Surface kind | trial / champion / active | past_due (S4) | grace | paused |
 |---|---|---|---|---|
 | `owner_read` (view/export) | allow | allow | allow | allow |
-| `owner_write` (incl. chat mutate) | allow | allow | **read_only** | **read_only** |
-| `owner_ai` (chat, briefing, insight write-ups) | allow | allow | **read_only** | **read_only** |
-| `public_business` (website, new booking, contact form, proposals) | allow | allow | allow + warning | **paused_public** (B-11) |
-| `public_self_service` (invoice pay link, booking cancel/reschedule) | allow | allow | allow + warning | **allow** (B-11) |
-| `send_transactional_client` (receipts, cancel/reschedule confirmations) | allow | allow | allow | **allow** (B-11) |
-| `send_transactional_system` (reminders, intake requests, confirmations of existing bookings) | allow | allow | allow (B-9) | **suppress** (B-11, never retro-sent) |
-| `send_marketing` | allow | allow | **suppress** (B-9) | **suppress** |
+| `owner_write` (incl. chat mutate) | allow | allow | read_only | read_only |
+| `owner_ai` | allow | allow | read_only | read_only |
+| `public_business` (website, new booking, contact, proposals) | allow | allow | allow + warning | paused_public (B-11) |
+| `public_self_service` (invoice pay, booking cancel/reschedule) | allow | allow | allow + warning | allow (B-11) |
+| send: transactional + client-initiated (receipts, cancel/reschedule confirmations) | allow | allow | allow | allow (B-11) |
+| send: transactional + system-initiated (reminders, intake requests, existing-booking confirmations) | allow | allow | allow (B-9) | suppress (B-11, Q-B4) |
+| send: marketing | allow | allow | suppress (B-9) | suppress |
 
-### 4.7 Loader seam and Zod validation (T-1, FR-7, FR-34, WC-5)
+**Launch (UD-2).** **File:** `config/launch.ts`: `LAUNCH = { enforceRequiresConfiguredTier: true }`.
+
+### 4.7 Loader seam and Zod validation (T-1, FR-7, FR-34, WC-5, RC-1)
 
 ```typescript
-export interface TierMatrixSource {
-  load(): EntitlementConfig;          // { catalog, matrix, cohorts, lifecycle, chatActionMap } — validated
-}
-export class CodeTierMatrixSource implements TierMatrixSource { … }   // imports config/*, runs Zod once, memoises
-export function getEntitlementConfig(): EntitlementConfig;           // module-level singleton via the active source
+export interface TierMatrixSource { load(): EntitlementConfig }   // catalog, matrix, cohorts, lifecycle, chatActionMap, launch
+export class CodeTierMatrixSource implements TierMatrixSource { … } // lazy: validates on FIRST load() call, memoises
+export function getEntitlementConfig(source?: TierMatrixSource): EntitlementConfig;   // injectable for tests (fixture)
 ```
 
-The Zod schema is **built from the catalog**, one schema per capability derived from its `shape`. It rejects:
-- a tier missing any capability, or an unknown capability ID (strict objects);
-- a wrongly-shaped value, or a variant outside the catalog list;
-- negative quantities;
-- a cohort or override naming an unknown capability;
-- a `baseTier` not in `TIER_ORDER`;
-- a `removals` entry with an unknown tier or capability, a `version` greater than `matrix.version`, or `grandfatherUntil: 'renewal'` (**rejected until Slice 4**, WC-19);
-- a client-audience capability without a `messageClass`;
-- a `chatActionMap` value that is not a capability or an `ungated` with a reason.
+- **Zero-tier safe (RC-1):** tier enums are built as `TIER_ORDER.length ? z.enum(TIER_ORDER as [string, ...string[]]) : z.never()`. `tiers` must have exactly the keys in `TIER_ORDER`, which is `{}` when there are none.
+- **The schema rejects:**
+  - a tier missing a capability, or unknown capability IDs;
+  - wrong shapes, variants outside the list, or negative quantities;
+  - a cohort `base.tier` not in `TIER_ORDER`;
+  - a cohort missing an explicit value for **any** quantity/metered/fair-use capability (RC-2), so a new catalog entry fails CI until champions get a value;
+  - `removals` referencing an unknown tier or capability, a version above `matrix.version`, or `grandfatherUntil: 'renewal'` (WC-19, until Slice 4);
+  - a `durationHistory`/`graceHistory` that is empty, unsorted, or has duplicate `effectiveFrom`;
+  - a client-audience capability without `messageClass`, or a `client_render` capability with one;
+  - `chatActionMap` values that are not capabilities or reasoned `ungated`;
+  - an unknown `readRule` or `clockStartsAt`.
+- **When validation runs (RC-7):** at first `load()`, which only happens inside the shadow try, the service, or admin routes, **never at chat-v4 module import**. CI catches bad config through the invariant tests (G-2 makes that binding before `enforce`).
 
-Validation runs **at module load**. An invalid config throws at load and fails in CI through the invariant tests. It never fails at request time, because the load happens at cold start before any request is answered (T-3(e)). A future DB-backed source (FR-34) implements the same interface and goes through the same schema.
+### 4.8 Resolver semantics (FR-9, FR-10, FR-13, T-4, T-11, RC-2, RC-4, RC-11, S-7)
 
-### 4.8 Resolver semantics (FR-9, FR-10, FR-13, T-4, T-11)
+`resolveEntitlements({ config, account, overrides, addons, now }) → EntitlementSnapshot` is pure. `addons` is always `[]` in Slice 1 and fixture-tested (S-3).
 
-`resolveEntitlements({ config, account, overrides, addons, now }) → EntitlementSnapshot` is **pure**. `addons` is always `[]` in Slice 1 (S-3).
+**Basis (RC-11: the tier wins).** If `account.tier` is set, the basis is that tier's matrix row, and **cohort layers and cohort lifecycle fields are ignored while the tier is present**. Otherwise the basis is the cohort's `base`: `{ tier }` gives that tier's row, and `{ all: true }` gives the **catalog-derived maximum**:
+- boolean/group on, variant = top of its list, addon = `included`;
+- quantity/metered/fair-use from the cohort's explicit `values`.
 
-**Layer order (§8) and per-shape merge (T-4):**
+A row with neither tier nor cohort, or with an unknown tier/cohort, is an **anomaly**.
+
+**Layer order and per-shape merge (T-4):**
 
 | Layer | boolean / group / variant / addon | quantity | metered / fair_use |
 |---|---|---|---|
-| 1 Tier defaults (`account.tier`, or the cohort's `baseTier` when there is no tier) | base | base | base |
-| 1a Grandfathered (removals ledger) | restore `previousValue` if **higher** | restore if higher | restore if higher |
-| 2 Add-ons (Slice 4 data) | `addon` → `included` | **add** | **add** |
-| 3 Cohort adjustments | **replace** (unless `additive: true`) | replace / additive | replace / additive |
+| 1 Basis (tier row, or cohort base) | base | base | base |
+| 1a Grandfathered (removals, tier accounts only) | restore `previousValue` if higher | restore if higher | restore if higher |
+| 2 Add-ons (Slice 4 data) | `addon` → `included` | add | add |
+| 3 Cohort adjustments (tierless accounts only; `{ all: true }` already applied as the base) | replace unless `additive` | replace / additive | replace / additive |
 | 4 Overrides (`op`) | `set` replaces, `revoke` → off/lowest | `set` / `add` / `revoke` → 0 | `set` / `add` / `revoke` → 0 |
-| 5 State overlay | **caps only** (never raises); applied per surface kind in `decide` | — | — |
+| 5 State overlay | caps only, applied per surface kind in `decide` | — | — |
 
-**Rules and edge cases (each has a test):**
-- **Grandfather (1a):** a removal applies when `removal.version > effectivePlanVersion(account)`, `removal.tier === basisTier`, and `now < grandfatherUntil`. Trials and champions have no paid tier, so they are never grandfathered (FR-38: "new subscribers and trials get the updated matrix"). `plan_version = 0` resolves to the current version.
-- **Lifecycle filter (FR-13):** `not_built` is always off, whatever any layer says, including overrides. `beta` is **off at layers 1 to 2**, and can be turned on only by a layer-3 cohort whose `includeLifecycle` contains `'beta'`, or by a layer-4 override.
-- **Expiry:** an override with `expires_at <= now` or `ended_at` set is ignored and appears in the trace as `expired`/`ended`. It is never deleted.
-- **Multiple overrides on one capability:** apply them in `created_at` order, so the last one wins for `set`. `add` values accumulate.
-- **Explain (FR-10):** each capability carries `value`, `decidedBy: LayerId`, and `trace: Array<{ layer, value, note }>`.
-- **Anomalies:** a missing plan row, an unknown `tier`/`cohort`, or a row with neither tier nor cohort produces `snapshot.anomaly = '<code>'`, `state: 'unknown'`, and a **full-deny basis for owner-paid capabilities**. `decide` then applies T-3 by audience. It never silently means "full access forever" (§21.3).
-- **Lifecycle derivation** (`deriveLifecycle`, pure, `now` injected). T-9(5) says no cron and no stored state:
-  ```
-  if tier && (access_ends_at == null || now < access_ends_at)      → active   (past_due: Slice 4)
-  elif cohort == 'champion' && (cohort_expires_at == null || now < cohort_expires_at) → champion
-  elif cohort == 'trial' && now < trialEnd(row)                    → trial    // trialEnd = trial_ends_at ?? trial_started_at + trial.durationDays
-                                                                               // Slice 3 adds: && !trialAllowanceExhausted
-  else accessEnd = the relevant end above; graceEnd = grace_ends_at ?? accessEnd + graceDays(cohort|subscription)
-       now < graceEnd → grace, else → paused
-  ```
-  A champion with no `cohort_expires_at` is treated as an anomaly-warning. It gets `defaultDurationDays` from `created_at` and is logged. SA item S-5: should the admin route require an expiry when setting champion? My proposal is yes.
-- **`lowestTierFor(capability, requested?)`:** the first tier in `TIER_ORDER` whose matrix value satisfies the request (FR-16). Slice 1 computes it only for the report.
-- **`decide(snapshot, capability, { surfaceKind, variant?, quantity? })`** returns `{ outcome: 'allowed' | 'not_entitled' | 'read_only' | 'paused_public' | 'suppressed' | 'entitlement_unavailable', capability, lowestTier?, reason }`. `limit_reached` is added in Slice 3.
+**Rules (each one tested):**
+- **`not_built` is always off**, including under `{ all: true }` and overrides (FR-13).
+- **`beta`** is off in the base unless the cohort's `includeLifecycle` contains `'beta'`, or a layer-4 override grants it. `{ all: true }` does not bypass this: champions get beta because their `includeLifecycle` says so.
+- **Grandfather (1a)** applies only to tier accounts, when `removal.version > effectivePlanVersion`, `removal.tier === account.tier`, and `now < grandfatherUntil`. `plan_version = 0` resolves to the current version (only possible while tierless, per S-4).
+- **Overrides:** expired or ended ones are ignored and shown in the trace, never deleted. Several on one capability apply in `created_at` order.
+- **Explain (FR-10):** per capability `{ value, decidedBy, trace[] }`.
+- **`lowestTierFor(capability, request)`** returns `TierId | null`. It is `null` when there are no tiers or no tier satisfies the request (RC-1).
+- **Anomalies:** a missing row, unknown tier/cohort, or neither set gives `snapshot.anomaly` and state `unknown`. Owner-paid capabilities are denied, and `decide` applies T-3 by audience. A champion with `cohort_expires_at IS NULL` is **not** an anomaly (RC-4).
 
-### 4.9 Account seam, service, caching, failure policy
+**Lifecycle derivation (`deriveLifecycle`, pure, `now` injected; RC-11 precedence):**
 
-- **`resolveAccountId(userId)` (T-2):** returns `userId` today. It is the **only** mapping, and callers never pass a raw user id to the service.
-- **Repository:** `BusinessOsAccountPlanRepository`
-  - `findEntitlementInputs(accountId)`: one query, `from('business_os_account_plans').select('*, business_os_entitlement_overrides(*)').eq('user_id', accountId).maybeSingle()`. That is **one round trip** with no RPC (T-5).
-  - `findEntitlementInputsBatch(accountIds[])`: the same query with `.in('user_id', ids)`. Used by crons (Slice 2) and the report.
-  - Write methods for admin ops. Each one scopes by `.eq('user_id', accountId)` and builds its payload from an **explicit field allow-list**.
-  - `supabaseServer` is used, with a code comment giving the reason: an admin/cron cross-account context in which the account id always comes from server context and never from client input (WC-4).
-- **Caching (T-5, WC-11):** `EntitlementService` caches the **inputs** (plan row plus overrides) per `accountId` for **30 s** in-process, and resolves on each call with the current `now`. Resolution is pure and cheap. Caching inputs rather than the resolved snapshot means a cached entry can never go stale across a trial or grace boundary. It is otherwise identical to T-5 (SA item S-6). Counters are never cached. Callers resolve **once per request/turn** and pass the snapshot down. `invalidate(accountId)` is called after every admin write, which affects the local instance only. **Staleness bound: 30 s cross-instance.** This is documented in the module header, and the admin route response carries `effectiveWithinSeconds: 30`.
-- **Failure policy (T-3, WC-10):** if the repository errors, the service keeps the **last-known inputs**. Expired cache entries are retained for up to 10 minutes as a fallback only, and are never served as fresh. It returns a snapshot with `unavailable: true` (plus the stale inputs if any), and logs at `error` with `accountId`, `surface` and `correlationId`. `decide` maps it by audience:
-  - client render/transactional: **allow**, using stale inputs if present;
-  - owner-paid: `entitlement_unavailable` (503 shape, never `not_entitled`);
-  - marketing cron: **defer**;
-  - metered pre-check: **allow**.
-  Slice 1 implements and tests this mapping. Nothing consumes it until Slice 2, apart from the shadow recorder, which records `entitlement_unavailable` as a would-be outcome.
+```
+if tier:                                                    // tier wins; cohort ignored
+    if access_ends_at == null || now < access_ends_at  → active          (past_due: Slice 4)
+    accessEnd = access_ends_at ; graceDays = subscription.graceHistory@accessEnd
+elif cohort == 'champion':
+    if cohort_expires_at == null                       → champion (open-ended, UD-4)
+    if now < cohort_expires_at                         → champion
+    accessEnd = cohort_expires_at ; graceDays = champion.graceHistory@accessEnd
+elif cohort == 'trial':
+    start = trial_started_at ?? fact(clockStartsAt)                              // S-7 / Q-B3
+    if start == null → anomaly 'trial_without_start'                             // cannot happen via triggers; ensure_plan_row fixes
+    end   = trial_ends_at ?? start + trial.durationHistory@start.days            // history: shortening never shortens running trials
+    if now < end (&& !trialAllowanceExhausted — Slice 3) → trial
+    accessEnd = end ; graceDays = trial.graceHistory@end
+graceEnd = grace_ends_at ?? accessEnd + graceDays
+now < graceEnd → grace ; else → paused
+```
 
-### 4.10 Mode flag and shadow mode (FR-22, AC-7, WC-21)
+`history@t` means the entry with the greatest `effectiveFrom ≤ t`. If `clockStartsAt` names a fact that isn't set yet (for example `'profile_created'` before profile creation), the trial is `trial` with `end = null`, meaning setup is still in progress. That is tested. An RC-11 matrix test covers {tier, no tier} × {no cohort, trial, champion open-ended, champion dated} × {before end, in grace, after grace}.
 
-- **`BOS_ENTITLEMENTS_MODE`:** a server-only env var, read in `mode.ts` only. Values: `off` (default) or `shadow`. `enforce` is accepted by the schema **only from Slice 2**. In Slice 1 it logs `error` once and behaves as `shadow`, so a mistaken setting can never block anything. The value is read per call (no module-level caching), so a Vercel env change plus redeploy flips it without a code change.
-- **`shadow.ts`:**
-  - `shadowChatPlan({ userId, plan, correlationId })` does nothing when mode is `off`: no read, no write, returns synchronously. Otherwise it is `void (async () => { try { … } catch (err) { logger.error(…) } })()`. It resolves the snapshot, computes `capabilitiesForPlan` under **R-A and R-B**, runs `decide` for each, and records every non-`allowed` outcome.
-  - Recording: one aggregated `business_os_record_shadow_events` RPC call per request, deduplicated per (capability, surface, outcome) inside the request, plus a Pino `info` log per would-be denial with `{ accountId, capability, surface, outcome, rule, correlationId }` (NFR Observability).
-- **Chat-v4 hook:** one line after the plan is obtained (~L777). It is not awaited. The confirm-turn and saved-plan paths are **not** hooked in Slice 1: the planning turn already sees the same plan, and Slice 2 gates both.
-- **Report, part 1 (static, no traffic needed):** for every account with a plan row (batched in pages of 500), resolve the snapshot. It lists the account's lifecycle state and would-be state at a configurable "as if enforced at" date, the anomalies (missing row, unknown tier, champion with no expiry), and for each capability whether it would be denied, with `lowestTier`. It also returns aggregate counts by capability and state, and an **ops check: Business OS tenants with no plan row** (count plus sample ids). That check covers AC-26 prep and the §21.3 "missing plan row" risk.
-- **Report, part 2 (observed):** `business_os_entitlement_shadow_events` grouped by capability × surface × outcome × rule, with distinct accounts and hits, for a date window.
-- Both parts are served by `GET /api/admin/business-os/entitlements/shadow-report`. The response holds account ids only and no business names, matching the llm-usage route's PII posture.
+### 4.9 Account seam, service, caching, failure policy (T-2, T-3, T-5, S-6, RC-12, RC-13)
 
-### 4.11 Plan-row provisioning and backfill (WC-21, §21.3 missing plan row)
+- **`resolveAccountId(userId)`:** returns the user id. It is the only mapping.
+- **Repository `BusinessOsAccountPlanRepository`:**
+  - `findEntitlementInputs(accountId)` is one embedded select (plan + overrides), `.eq('user_id', accountId).maybeSingle()`.
+  - `findEntitlementInputsBatch(accountIds)` **throws on more than 100 ids** (RC-12). `EntitlementService` chunks by 100.
+  - `pagePlans({ afterUserId?, limit })` does `.order('user_id').range(...)`, which the report uses (RC-12).
+  - Admin write methods scope by `.eq('user_id', accountId)` and build payloads from explicit allow-lists.
+  - `supabaseServer` is used, with a comment giving the reason: admin/cron/report cross-account context, where the account id always comes from server context.
+- **Cache (S-6, RC-13, approved pattern 3):**
+  - It holds the **inputs** (plan row + overrides) per account for **30 s**, in an **LRU capped at 5,000** entries. Every call resolves with the current `now`, and the resolved snapshot is memoised per request/turn.
+  - **Report and batch paths read through without populating** the cache.
+  - `invalidate(accountId)` runs after every admin write, on the local instance only.
+  - Cross-instance staleness is ≤ 30 s. This is documented in the module header, and responses carry `effectiveWithinSeconds: 30`.
+  - Counters are never cached.
+- **Failure policy (T-3, WC-10, S-6):**
+  - If the repository errors, return `unavailable: true` and log `error` with account, surface and correlationId.
+  - Stale inputs (retained for up to 10 minutes after TTL) are used **only for fail-open audiences**: client render/transactional allow on stale-or-open, marketing crons defer, metered pre-check allows.
+  - **Owner-paid capabilities never get stale data.** They return `entitlement_unavailable`, which is never `not_entitled`.
 
-- **Where:** DB triggers `AFTER INSERT` on `onboarding_conversations` **and** `business_profiles`, whichever comes first. Both use `ON CONFLICT DO NOTHING`. They cover all five profile-insert paths and any future ones without touching route code. Starting at the first onboarding message also means setup AI falls **inside** the trial window, which B-12 needs (see Q-B3).
-- **Never fails onboarding:** the trigger body is wrapped in `EXCEPTION WHEN OTHERS → RAISE WARNING`. It is DEFINER with a pinned `search_path` and revoked EXECUTE (WC-9). A trigger function cannot be called through PostgREST RPC, but EXECUTE is revoked anyway.
-- **Trial length stays in config:** the trigger writes `trial_started_at` only (`trial_ends_at` NULL). The resolver derives the end from `COHORTS.trial.durationDays` (AC-14). Side effect: changing the config trial length also moves the end date of **in-flight** derived trials. The B-3 launch migration writes explicit `trial_ends_at` values, which pins those accounts. SA item S-7: accept this, or materialise `trial_ends_at` on first resolve.
-- **Backfill:** in the same migration. Rows are `origin = 'backfill_slice1'`. Slice 2's launch migration re-sets all non-champion trial windows at flag-flip time (§21.3, WC-21).
-- **New pattern note:** Business OS already uses DB triggers widely (payments, purge analysis). A provisioning trigger that inserts into a table the user cannot write is covered by approved pattern 1 (the entitlements module). It is listed here for explicit SA acknowledgement (S-8).
+### 4.10 Mode flag, shadow mode and report (FR-22, AC-7, WC-21, RC-6, RC-7, RC-16)
 
-### 4.12 Admin operations (T-7, FR-31/32, AC-6, WC-7)
+- **`mode.ts`** reads `BOS_ENTITLEMENTS_MODE` on every call: `off` (default) or `shadow`. `enforce` exists from Slice 2 and is refused while `LAUNCH.enforceRequiresConfiguredTier` holds and `TIER_ORDER` is empty (UD-2): it logs `error` and behaves as `shadow`. In Slice 1, `enforce` always behaves as `shadow`. **It imports nothing from config** (RC-7).
+- **`shadow.ts` (RC-7).** Top-level imports are `mode.ts` and the logger only.
+  - `shadowChatPlan({ userId, plan, correlationId })` returns synchronously when mode is `off`: no config load, no read, no write.
+  - Otherwise: `void (async () => { try { const { getEntitlementService, capabilitiesForPlan, … } = await import('./index'); … } catch (err) { logger.error(…) } })()`. Config load, Zod, resolution and recording **all happen inside the try**.
+  - Tests: a throwing loader leaves chat-v4 unaffected in `off` (loader never called) and in `shadow` (swallowed and logged).
+- **What is recorded (RC-6):** for the account's **actual** snapshot, **every** `(capability, surface, outcome, rule)`, **including `allowed`**, plus `for_each` item counts. It is deduplicated and summed per request, sent as one RPC call, with Pino `debug` for `allowed` and `info` for anything else.
+- **Chat-v4 hook:** one un-awaited call after planning. Confirm-turn and saved-plan runs are not hooked in Slice 1.
+- **Report `GET /api/admin/business-os/entitlements/shadow-report`:**
+  1. **Static:** pages all plan rows (RC-12). Counts by lifecycle state and cohort. **Open-ended champions** (count + ids, UD-4/RC-4). Anomalies. **Business OS tenants with no plan row** (count + sample ids).
+  2. **Observed usage:** `shadow_events` by capability × surface × outcome × rule for a date window, with distinct accounts, hits and item stats.
+  3. **`asTier=<name>` (RC-6):** re-evaluates recorded usage **retroactively** as if each account were on that configured tier, giving would-be denials by capability and surface. `asTier` is Zod-validated against `TIER_ORDER`. It returns 400 `no_tiers_configured` today, and is proven on the fixture in tests (AC-7).
+  4. **Setup AI cost (S1-T15, B-12):** median, p90 and max distinct Layer-1 action groups for the onboarding, website and intake areas in each account's first 14 days, read through a repository.
+- **Data exposure (RC-16):** account ids and aggregates only. No business names, no override `reason`/`ended_reason`, no actor ids. A test asserts this. Reasons appear only in the per-account inspect response.
 
-**`GET /api/admin/business-os/entitlements/[accountId]`:** inspect. Returns the snapshot with the full trace (FR-10), the derived lifecycle with its dates, all overrides (including expired/ended), and `effectiveWithinSeconds`.
+### 4.11 Plan-row provisioning and backfill (WC-21, RC-3, RC-14, S-7, S-8)
 
-**`POST /api/admin/business-os/entitlements/[accountId]`:** one route with a Zod **discriminated union** on `op`. There is one audit path and no spreading of the body into writes:
+- **Triggers:** `AFTER INSERT` on `onboarding_conversations` and on `business_profiles`. Each records **only its fact** through the fact-only COALESCE upsert. A new signup gets a `trial` row on first contact, and **nothing a user can do (onboarding reset, business Reset) can restart a trial**, because cohort, tier, pins and facts are never overwritten.
+- **Conditions S-8 (a) to (i):** implemented as written in §4.3 (a–h) and proven by the verification script (i).
+- **The trial clock (Q-B3)** is `COHORTS.trial.clockStartsAt`, derived at resolution time from the recorded facts. Setup AI falls inside the trial under the default (B-12).
+- **Backfill (RC-3, U-2, UD-4):** every existing Business OS user becomes an **open-ended champion** (`cohort_expires_at = NULL`, `origin = 'backfill_slice1'`), with facts from `MIN(onboarding_conversations.created_at)` and `business_profiles.created_at`.
+- **Slice-1-era signups** stay trials in shadow. At switch-on, `launch_champion_existing` (§5) makes every account with no tier that isn't already a champion into an open-ended champion, evaluated at that moment (UD-3).
+- **This approval covers this module's provisioning only.** It is not a general provisioning-trigger pattern (S-8).
 
-| `op` | Body (Zod, all `.strict()`) | Effect (explicit allow-list) |
+### 4.12 Admin operations (T-7, FR-31/32, AC-6, WC-7, RC-4, RC-10, S-10)
+
+**`GET /api/admin/business-os/entitlements/accounts/[accountId]`:** inspect. Returns the snapshot + full trace (FR-10), the derived lifecycle with dates and which pin/fact/history entry produced each, all overrides **including reasons** (admin-only view), and `effectiveWithinSeconds`.
+
+**`POST /api/admin/business-os/entitlements/accounts/[accountId]`:** a Zod discriminated union on `op`. Every variant is `.strict()` and needs a `reason`:
+
+| `op` | Body | Effect (explicit allow-list) |
 |---|---|---|
-| `set_cohort` | `{ cohort: 'trial' \| 'champion' \| null, expiresAt?: ISO, reason }` | champion: `cohort`, `cohort_expires_at` (required, S-5), `period_anchor = now`. trial: `cohort`, `trial_started_at = now`, `trial_ends_at` optional |
+| `ensure_plan_row` | `{ reason }` | **Idempotent (RC-10).** If there is no row, insert `cohort='trial'`, `origin='admin'`, with facts from `OnboardingConversationRepository.getFirstMessageAt` and `BusinessProfileRepository.findByUserId().created_at`. If a row exists, no-op, return 200 `{ created: false }`. |
+| `set_cohort` | `{ cohort: 'trial' \| 'champion' \| null, expiresAt?: ISO \| null, reason }` | **champion:** `expiresAt` is a **required key** (a future ISO date, or explicit `null` = open-ended). Omitting it returns 400 (RC-4). Writes `cohort`, `cohort_expires_at`, `period_anchor = now`. **trial:** pins `trial_started_at = now`, optional `trial_ends_at`. **null:** clears cohort. |
 | `set_expiry` | `{ field: 'trial_ends_at' \| 'cohort_expires_at' \| 'access_ends_at' \| 'grace_ends_at', value: ISO \| null, reason }` | That one column |
-| `assign_tier` | `{ tier: TierId \| null, accessEndsAt?: ISO, reason }` | `tier`, `plan_version = TIER_MATRIX.version`, `period_anchor = now`, `access_ends_at` |
-| `add_override` | `{ capability, op: 'set' \| 'add' \| 'revoke', value?, expiresAt?, reason }` | Insert. `value` is validated with **that capability's** shape schema. This also covers email blocking (B-7) and a per-account grandfather sunset. |
-| `end_override` | `{ overrideId: uuid, reason }` | Sets `ended_at`, `ended_by_admin_id`, `ended_reason`. The override must belong to `accountId` (ownership pre-check). |
+| `assign_tier` | `{ tier: string \| null, accessEndsAt?: ISO, reason }` | **400 `no_tiers_configured` while `TIER_ORDER` is empty** (RC-1). Otherwise `tier` (validated against config), `plan_version = TIER_MATRIX.version`, `period_anchor = now`, `access_ends_at`. `null` clears the tier. |
+| `add_override` | `{ capability, op: 'set' \| 'add' \| 'revoke', value?, expiresAt?, reason }` | Insert. `value` is validated with that capability's shape schema. Also used for comped add-ons before billing (S-3), email abuse blocking (B-7), and a per-account grandfather extension. |
+| `end_override` | `{ overrideId: uuid, reason }` | Sets `ended_at`, `ended_by_admin_id`, `ended_reason`. The override must belong to `accountId`. |
 
-- `grant_ai_actions` is added in Slice 3.
-- `TierId` and the cohort enums are **derived from config** (`z.enum(TIER_ORDER)`), so the route contains no tier literals.
-
-**Order of checks** (copies llm-usage):
+**Order of checks (copies llm-usage):**
 1. 401 if signed out.
-2. 403 if `AdminAccessService.isAdmin` is false **or throws** (fail closed). `profiles.role` is never consulted, and a test shows `profiles.role = 'admin'` still gets 403.
-3. 400 for a bad `accountId` UUID or body.
-4. **Target pre-check** (tenant-isolation-guard): the plan row for `accountId` must exist, otherwise 404 `not_a_business_os_account`. For `end_override`, the override must be owned by that account.
+2. 403 if `AdminAccessService.isAdmin` is false or throws (fail closed). `profiles.role` is never read, and a test shows `profiles.role = 'admin'` still gets 403.
+3. 400 for a bad UUID or body.
+4. **Tenant pre-check (RC-10):** the target is a Business OS tenant if `BusinessProfileRepository.findByUserId` returns a row **or** `OnboardingConversationRepository.getLatestMessageAt` is non-null. Otherwise 404 `not_a_business_os_account`. For ops other than `ensure_plan_row`, a missing plan row returns 409 `plan_row_missing` with a hint to run `ensure_plan_row`. For `end_override`, the override must be owned by the account.
 5. Write through the repository.
 6. `invalidate(accountId)`.
-7. Audit.
+7. Audit: `auditTrail.log({ action: AUDIT_EVENTS.BOS_ENTITLEMENT_<OP>, userId: adminId, entityType: 'business_os_account', entityId: accountId, changes: { before, after }, severity: 'warning', details: { reason }, request }).catch(...)`, then `await auditTrail.flush().catch(...)` before responding. Rows also store the actor, reason and timestamps (WC-7, with no FK per RC-9).
 
-**Audit (WC-7):** `auditTrail.log({ action: AUDIT_EVENTS.BOS_ENTITLEMENT_<OP>, userId: adminId, entityType: 'business_os_account', entityId: accountId, changes: { before, after }, severity: 'warning', request, details: { reason } }).catch(...)`, then `await auditTrail.flush().catch(...)` before responding. The override and plan rows also store `actor_admin_id`/`updated_by_admin_id`, `reason` and the timestamps, so the durable record does not depend on the audit queue.
+**Self-service impossible (WC-8, FR-32, RC-8, RC-15):**
+1. There are no user policies and `REVOKE ALL` from `anon`/`authenticated`.
+2. The write-method and class symbols are referenced only by the admin routes and the repository test. The symbol-level import test covers the barrel.
+3. A route test sends `{ tier, cohort, plan_version, cohort_expires_at }` to `PUT /api/business-os/business-profile` and to `app/api/business-os/profile`, and asserts no entitlement repository call happens.
 
-**Self-service impossible (WC-8, FR-32):**
-1. RLS gives users no write policy.
-2. The repository write methods are imported **only** by the admin route. An import-graph test fails if any non-admin route or `'use client'` file imports them.
-3. A route test sends `{ tier: 'pro', cohort: 'champion', plan_version: 99 }` to `PUT /api/business-os/business-profile` and `app/api/business-os/profile`, and asserts no entitlement repository call happens and no field changes.
-
-The plan data lives in its own tables, so the fields cannot be reached by construction. The test keeps it that way.
-
-### 4.13 Tests (WC-22, FR-8, AC-1 to AC-7)
+### 4.13 Tests (WC-22, FR-8, AC-1 to AC-7, RC-1, RC-7, RC-11, RC-15, RC-16, S-7, S-8)
 
 | Test file | Asserts |
 |---|---|
-| `entitlements/__tests__/catalog.invariant.test.ts` | AC-1: every §5.3 capability is present with all §5.2 attributes. A client-send capability has a `messageClass`. Variant lists are non-empty and unique. |
-| `…/tierMatrix.invariant.test.ts` | AC-2: every capability is assigned in every tier. Deleting **any single** value (generated loop over tier × capability, run against the Zod loader) is rejected. Unknown IDs and wrong shapes are rejected. Cohort/override capability IDs exist. |
-| `…/chatActionMap.invariant.test.ts` | AC-3: every `SEMANTIC_CATALOG` entity × (find, compute, ActionDef key), plus `plan.for_each`/`plan.analyse`, is mapped. The map has no stale keys. It cross-checks the 107 plugin actions. Injecting an unmapped action fails. |
-| `…/tierMatrix.snapshot.test.ts` + `tierMatrix.snapshot.json` | T-11/WC-19: fails if any value was **lowered** (by the variant/tier/number/addon order) with no `removals` entry at `version > snapshot.version`, or if `version` changed without the snapshot being updated. `grandfatherUntil: 'renewal'` is rejected. Update procedure: `npm run entitlements:snapshot` rewrites the snapshot, and the diff is reviewed in the PR. |
-| `…/tierLiteral.forbidden.test.ts` + baseline | FR-12: no `'basic' \| 'growth' \| 'pro'` string literal in `lib/`, `app/`, `components/`, `hooks/` outside `lib/business-os/entitlements/config/`. The 13 existing unrelated hits are baselined per file with a count. A new hit fails. |
-| `…/oneLineChange.test.ts` | AC-4: in a cloned config with growth `chat.search = true`, a Growth account resolves it as entitled. A structural diff of the two configs has exactly one leaf difference. |
-| `…/resolver.test.ts` (injected clock) | AC-5: each layer overrides the one before it (1→1a→2→3→4). Overlay caps never raise. Override with expiry: active before, ignored after, shown in trace. `set`/`add`/`revoke` across all shapes. `beta` only via champion cohort or override. `not_built` never, even with an override. Grandfather active before sunset, gone after, ignored for trials. `plan_version = 0` handling. Anomalies deny owner-paid. Trace completeness. Purity: the same inputs give deep-equal output, and a spy shows no `Date` use. |
-| `…/lifecycle.test.ts` (injected clock) | Every state and boundary: trial → grace → paused; champion expiry → 30-day grace; active with/without `access_ends_at`; `grace_ends_at` override; derived vs explicit `trial_ends_at`; a config trial-length change moves derived trials (AC-14). |
-| `…/decide.test.ts` | Overlay table × surface kind (B-9/B-11 cells). T-3 mapping per audience on `unavailable`. `entitlement_unavailable` ≠ `not_entitled`. `lowestTier` correct. |
-| `…/EntitlementService.test.ts` | Memo per call. 30 s TTL (fake timers). `invalidate`. Stale fallback used only on error. **Mode `off` means the repository is never called (WC-21).** Batch uses one call. |
-| `…/shadow.test.ts` | A throwing repository, resolver or RPC never escapes (WC-21). Records both R-A and R-B. Deduplicates per request. No-op when `off`. |
-| `…/imports.test.ts` | Dependency rules in §3. Admin-write repository methods imported only by admin routes. |
-| `lib/repositories/__tests__/BusinessOsAccountPlanRepository.test.ts`, `…Shadow…` | One test per method (skill). Wrong user returns null. Allow-list: extra fields are dropped. Error path returns `{ data: null, error }`. |
-| `app/api/admin/business-os/entitlements/[accountId]/__tests__/route.test.ts` | AC-6: 401, 403 (non-admin), **403 when `profiles.role = 'admin'` but not in `admin_users`**, 403 when the admin check throws, 400 bad UUID/body/capability shape, 404 non-Business-OS target, 404 foreign override on `end_override`. Happy path for each op writes allow-listed fields, then calls `invalidate`, `log` with before/after/reason, and **`flush` awaited**. Response has `effectiveWithinSeconds`. |
-| `…/shadow-report/__tests__/route.test.ts` | Auth matrix as above. The report lists would-be denials by capability and surface (AC-7). The missing-plan-row count is present. |
-| `app/api/business-os/{business-profile,profile}/__tests__/entitlementFields.test.ts` | WC-8: entitlement fields cannot be written through user-facing routes. |
-| `lib/business-os/purge/__tests__/descriptors.invariant.test.ts` (existing) + `businessOwnedTables.test.ts` (existing) | Pass with the new tables classified `never` / person-owned. |
-| SQL verification script `scripts/verify-bos-entitlements-migration.sql` (run by QA on a branch DB) | RLS on for all three tables. No user write policies. REVOKE in effect: `has_function_privilege('authenticated', …)` is false. A trigger failure does not fail the parent insert. Backfill count matches distinct Business OS users. |
+| `catalog.invariant.test.ts` | AC-1 all capabilities + attributes. `client` ⇒ `messageClass`, `client_render` ⇒ none. Variant lists are non-empty and unique. |
+| `productionConfig.test.ts` | **Production config loads** with zero tiers (RC-1). `TIER_ORDER` is empty. The trial and champion `{ all: true }` bases resolve. Every quantity/metered/fair-use capability has an explicit cohort value. |
+| `tierMatrix.invariant.test.ts` *(fixture)* | AC-2: deleting any single tier × capability value is rejected by the loader. Unknown IDs and wrong shapes are rejected. Adding a catalog quantity/metered capability without cohort values is rejected. |
+| `chatActionMap.invariant.test.ts` | AC-3 key space vs `SEMANTIC_CATALOG` + 107 plugin actions. No stale keys. An injected unmapped action fails. **`readRule` flip** changes the required capabilities (RC-5). |
+| `tierMatrix.snapshot.test.ts` + snapshot | T-11/WC-19 lowered value without removal + version bump fails. `'renewal'` is rejected. **S-7:** a changed trial/champion/subscription duration or grace without a new history entry fails, and an edited or removed existing history entry fails. Runs on production config **and** the fixture. |
+| `tierLiteral.forbidden.test.ts` + baseline | FR-12: deny list = `{'basic','growth','pro'} ∪ TIER_ORDER` outside `entitlements/config/` and `__tests__/fixtures/`. The 13 existing hits are baselined. |
+| `oneLineChange.test.ts` *(fixture)* | AC-4: fixture growth `chat.search` false→true is a one-leaf diff, and a Growth fixture account then resolves it as entitled. |
+| `resolver.test.ts` *(fixture + prod config, injected clock)* | AC-5: every layer overriding the previous one. `{ all: true }` derivation per shape. `not_built` never (including under `all` and overrides). `beta` only via `includeLifecycle`/override. Expiring override. `set`/`add`/`revoke` per shape. Grandfather before/after sunset, tier accounts only. `plan_version 0`. `lowestTierFor` null with no tiers, correct on the fixture. Anomalies. Trace. Purity. |
+| `lifecycle.test.ts` *(injected clock)* | **RC-11 matrix**: {tier, none} × {no cohort, trial, champion open-ended, champion dated} × {before, grace, after}. Tier wins. `clockStartsAt` flip (RC-5). Pending-fact trial. **Shortening `durationHistory` does not shorten a running trial** (S-7). Pins beat facts. `grace_ends_at` override. |
+| `decide.test.ts` | Overlay cells (B-9/B-11). Send-policy defaults by (class, initiator). **An override for a fixture send id flips paused suppress→allow** (RC-5, Q-B4). T-3 per audience. Stale inputs never used for owner-paid (S-6). `entitlement_unavailable` ≠ `not_entitled`. |
+| `mode.test.ts` | `off` by default. `enforce` refused (acts as `shadow`, logs `error`) while no tier exists (UD-2), and always in Slice 1. `mode.ts` does not import config (static import check, RC-7). |
+| `EntitlementService.test.ts` | Memo. 30 s TTL (fake timers). LRU cap evicts. Report/batch read-through does not populate. `invalidate`. Batch chunking at 100. **Mode `off` means the repository is never called.** |
+| `shadow.test.ts` | **A throwing config loader, repository, resolver or RPC never escapes** (RC-7, WC-21). `off` means the loader is never called. Records `allowed` + both rules + item counts (RC-6). One RPC per request. |
+| `imports.test.ts` | §3 dependency rules. **Symbol-level** references to repository write methods/class/singleton, including via the barrel, only from the admin routes and the repository test (RC-15). chat-v4 imports only `entitlements/shadow`. |
+| `report.test.ts` + route test | Static counts incl. open-ended champions and missing plan rows. Observed aggregates. `asTier` on the fixture yields would-be denials by capability × surface (AC-7). `asTier` returns 400 with production config. **No names, reasons or actor ids in the output** (RC-16). Paging. |
+| Repository tests (`BusinessOsAccountPlan`, `…Shadow`, `OnboardingConversation.getFirstMessageAt`) | One test per method. Wrong user returns null. Allow-lists drop extra fields. `>100` ids throws. Error path returns `{ data: null, error }`. |
+| `accounts/[accountId]/__tests__/route.test.ts` | AC-6: 401; 403 non-admin; **403 when `profiles.role='admin'` but not in `admin_users`**; 403 when the check throws; 400 bad body/UUID/shape; **400 champion without `expiresAt` key**; accepts explicit `null`; **400 `no_tiers_configured`**; 404 non-tenant; 409 `plan_row_missing`; `ensure_plan_row` idempotent; foreign override 404. Happy path per op: allow-listed write → `invalidate` → `log` with before/after/reason → **awaited `flush`**. |
+| `business-profile` / `profile` `entitlementFields.test.ts` | WC-8. |
+| Existing purge `descriptors.invariant` + `businessOwnedTables` tests | Pass with the three new tables. |
+| `scripts/verify-bos-entitlements-migration.sql` | §4.3 list: no policies, revokes, function config, **tmp_fail never-raise**, **trial cannot restart**, backfill = open-ended champions, CHECK. |
 
-The Slice 2 route-declaration test (WC-22c) and per-surface integration tests are planned in §5.
+### 4.14 CI typecheck gate and test job (WC-2, S-9, G-2)
 
-### 4.14 CI typecheck gate and test job (WC-2)
-
-- **Option chosen:** extend the existing gate by adding `'lib/business-os/entitlements/'` to `SCOPED_DIRS` in `scripts/typecheck-bos-llm.ts`, rather than cloning a second 300-line script. The catalog-importer rule stays specific to the LLM catalog. For entitlements, the "direct callers" step (step 3) already brings in every file that imports the entitlements module, so admin routes and chat-v4 are covered. The script header and workflow name are renamed to "Business OS scoped type check". **SA item S-9:** if SA prefers `typecheck:bos-entitlements` as a separate script, the same `SCOPED_DIRS` logic is factored into a shared helper instead.
-- **New workflow `.github/workflows/bos-entitlements.yml`:** runs on PRs to main, with no path filter, for the same reason as the llm gate. It runs `npx jest lib/business-os/entitlements lib/repositories/__tests__/BusinessOs app/api/admin/business-os/entitlements lib/business-os/purge/__tests__/descriptors.invariant.test.ts lib/business-os/__tests__/businessOwnedTables.test.ts --ci`. **Without this job, "fail in CI" (FR-7, §10.6) is not true today**, because no workflow runs `lib/**/__tests__`.
+- **Typecheck:** add `'lib/business-os/entitlements/'` to `SCOPED_DIRS` in `scripts/typecheck-bos-llm.ts`, and update **header comments only**. The npm script `typecheck:bos-llm`, the workflow `name`, the job id and the job display name are **unchanged** (they are cited by the `bos-llm-call-standards` skill and CLAUDE.md). The direct-callers step brings in the admin routes and chat-v4.
+- **Tests:** a new `.github/workflows/bos-entitlements.yml` runs on PRs to main, with no path filter. It runs `npx jest lib/business-os/entitlements lib/repositories/__tests__/BusinessOs lib/repositories/__tests__/OnboardingConversationRepository app/api/admin/business-os/entitlements app/api/business-os/business-profile app/api/business-os/profile lib/business-os/purge/__tests__/descriptors.invariant.test.ts lib/business-os/__tests__/businessOwnedTables.test.ts --ci`. `tests/plugins/jest-setup.ts` already stubs the Supabase env.
+- **G-2:** both jobs become **required status checks** on `main` before `enforce`. This is a user or repository-admin action, listed in §8.
 
 ### 4.15 Slice 1 task list
 
-- [ ] **S1-T0** SA reviews this workplan. Address its notes. Migration SQL approved by SA before it is written to the repo.
-- [ ] **S1-T1** `types.ts`, plus `schema.ts` (shape-derived Zod builder).
-- [ ] **S1-T2** `config/catalog.ts` with the full §4.4 list. Verify each `lifecycle` against the code and record the evidence in a comment. Mark B-1 placeholders.
-- [ ] **S1-T3** `config/tierMatrix.ts` (example values from §5.3, (S) rows exact), `config/cohorts.ts`, `config/lifecycle.ts` (overlay table incl. B-11).
-- [ ] **S1-T4** `config/chatActionMap.ts` + `capabilitiesForPlan` (R-A/R-B switch).
-- [ ] **S1-T5** `source.ts` (`TierMatrixSource`, `CodeTierMatrixSource`, load-time Zod).
-- [ ] **S1-T6** `lifecycle.ts`, `resolver.ts`, `decide.ts` (pure, injected clock).
-- [ ] **S1-T7** Migration (§4.3): tables, RLS, shadow RPC, triggers, backfill. Plus `scripts/verify-bos-entitlements-migration.sql`. Apply to a branch or local DB only. Applying to prod is RM/user-gated.
-- [ ] **S1-T8** Purge descriptors (three `never` rows with notes), `classification-baseline.json`, and `USER_OWNED_TABLES` entries with reasons.
-- [ ] **S1-T9** Repositories (per the `new-repository` skill) and their unit tests. `supabaseServer` rationale comments.
-- [ ] **S1-T10** `account.ts`, `mode.ts`, `EntitlementService.ts` (memo, TTL, failure policy, batch).
-- [ ] **S1-T11** `shadow.ts`, `report.ts`, the one-line chat-v4 hook.
-- [ ] **S1-T12** Admin routes (per the `new-api-route` skill, **admin gate via AdminAccessService, not the skill's `app_metadata.role` variation**), audit events in `lib/audit/events.ts`, route tests.
-- [ ] **S1-T13** All §4.13 tests, including the forbidden-literal baseline and the matrix snapshot.
-- [ ] **S1-T14** CI: extend the typecheck scope (and baseline if needed), plus the `bos-entitlements.yml` workflow.
-- [ ] **S1-T15** *(B-12 input, read-only, can be cut if SA objects)* Add a "setup AI cost" section to the shadow report. For each account created in the last N days, count distinct Layer-1 action groups (`session_id`) in `token_usage` for the `business-os-onboarding`, `-website`, `-intake` areas during the first 14 days (median, p90, max). This gives real data to size the trial allowance with headroom before Slice 3. It reads through an existing or new usage repository method, not raw queries.
-- [ ] **S1-T16** `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md`: config-change procedure, removal procedure, staleness bound, flag, ops checks. Add a Key Documentation row in CLAUDE.md (TL/user approval, since CLAUDE.md is project config).
+- [ ] **S1-T0** SA delta re-check of this revision. SA approves the final migration SQL before it is written.
+- [ ] **S1-T1** `types.ts` (zero-tier safe) + `schema.ts` (catalog-derived builders, histories, zero-tier enums).
+- [ ] **S1-T2** `config/catalog.ts`: full §4.4 list with the `client_render` audience. Verify each `lifecycle` against the code and record the evidence. B-1 placeholders.
+- [ ] **S1-T3** `config/tierMatrix.ts` (**empty**), `config/cohorts.ts` (`{ all: true }`, histories, explicit values, `clockStartsAt`), `config/lifecycle.ts` (overlay, send-policy defaults + empty overrides, subscription grace history), `config/launch.ts`. Fixture `exampleTierMatrix.ts` + `fixtureSource.ts`.
+- [ ] **S1-T4** `config/chatActionMap.ts` + `readRule` + `capabilitiesForPlan` (item counts).
+- [ ] **S1-T5** `source.ts`: lazy `CodeTierMatrixSource`, injectable source.
+- [ ] **S1-T6** `lifecycle.ts`, `resolver.ts`, `decide.ts` (pure; RC-11 precedence; `{ all: true }`; S-7 histories).
+- [ ] **S1-T7** Migration (§4.3) + verification script. Applied to a branch/local DB only. Prod apply is RM/user-gated.
+- [ ] **S1-T8** Purge descriptors (three `never` rows with notes), `classification-baseline.json`, `USER_OWNED_TABLES` entries with reasons. Same PR as S1-T7.
+- [ ] **S1-T9** Repositories + `OnboardingConversationRepository.getFirstMessageAt` + unit tests (skill). `supabaseServer` rationale comments.
+- [ ] **S1-T10** `account.ts`, `mode.ts` (no config imports; UD-2 refusal), `EntitlementService.ts` (input cache, LRU, read-through, failure policy, 100-id chunking).
+- [ ] **S1-T11** `shadow.ts` (lazy imports inside the try), `report.ts` (static/observed/`asTier`/setup cost; no names or reasons), the one-line chat-v4 hook.
+- [ ] **S1-T12** Admin routes: `accounts/[accountId]` (GET + POST union incl. `ensure_plan_row`), `shadow-report`. `AdminAccessService` gate (**not** the skill's `app_metadata.role` line). Audit events. Route tests.
+- [ ] **S1-T13** All §4.13 tests.
+- [ ] **S1-T14** CI: `SCOPED_DIRS` + header comments, `bos-entitlements.yml`.
+- [ ] **S1-T15** Setup-AI-cost section of the report (B-12 sizing input). SA recommends keeping it.
+- [ ] **S1-T16** `docs/architecture/BUSINESS_OS_ENTITLEMENTS.md` (adding a tier, removal + ledger, history entries, staleness, flag, launch preconditions G-1/G-2/UD-2, ops checks). CLAUDE.md Key Documentation row needs TL/user approval.
 - [ ] **S1-T17** Hand to SA for code review, then QA.
 
 ### 4.16 Slice 1 exit criteria
 
-1. AC-1 to AC-7 pass.
-2. With `BOS_ENTITLEMENTS_MODE=off`, a test proves there are no entitlement reads or writes. **(WC-21)**
-3. A test proves the shadow path cannot throw into a request. **(WC-21)**
-4. A trigger-failure test proves onboarding and profile creation cannot fail because of plan-row creation. **(WC-21)**
-5. On preview/prod with `shadow` on for about a week, the report shows real accounts' would-be denials, and the "tenants without a plan row" count is **0**.
-6. Eyal's revised matrix, when it arrives, loads and validates. If it only changes values, it is a one-file PR.
+1. AC-1, AC-3, AC-5 and AC-6 pass on production config. AC-2, AC-4 and AC-7 pass on the fixture (RC-1, RC-6). The production-config load test passes.
+2. With the flag `off`: a test proves there are no entitlement reads or writes, and chat-v4 never loads config (WC-21, RC-7).
+3. A test proves the shadow path cannot throw, including with a throwing config loader.
+4. The verification script proves the triggers never raise (tmp_fail), a trial cannot restart, there are no user policies and the revokes are in effect.
+5. After the migration on prod: missing-plan-row count = 0, every pre-existing tenant is an open-ended champion, and the report lists them.
+6. With `shadow` on for about a week: the observed-usage report is populated (including `allowed`), and the setup-AI-cost section returns data for sizing the trial allowance.
 7. The CI typecheck and entitlement test job are green on the PR.
 
 ---
 
-## 5. Slice 2: Enforcement (outline)
-
-A detailed addendum will be added to this workplan before Slice 2 starts.
+## 5. Slice 2: Enforcement (outline; G-3: the addendum restates each WC as tasks + tests)
 
 | Area | Plan |
 |---|---|
-| **Prerequisite: T-8 (WC-17)** | **First PR of Slice 2, and it must merge before the flag flips.** `app/api/business-os/chat` and `chat-command` return 410 (and are deleted in a follow-up). The ungated V2/V4 comparison toggle in `ChatCommandPanel.tsx` is removed, and `chat-v2` returns 410. If comparison is still wanted, it is gated server-side by `AdminAccessService`. `chat-v2` is never mapped through the catalog. |
-| Mode | `BOS_ENTITLEMENTS_MODE` gains `enforce`. Every surface is wired in `shadow` first. The flag flips only when the report shows no unexplained denials (§16 exit). |
-| Route wrapper | `withEntitlement(capability \| { ungated: reason }, handler, { surfaceKind })` (approved pattern 2). It returns the structured `not_entitled` error `{ success:false, error:'not_entitled', capability, lowestTier }` (403), `entitlement_unavailable` (503), or `read_only` (409/423, SA to pick). The **route-declaration test** globs §10.2 + C-5 + C-6 (`app/api/business-os/**`, `crm`, `payments`, `website`, `intake`, `scheduling`, `email/sequences`, `email/enrollments`, `insights`, `smart-links`, `onboarding`, public APIs) and requires a declaration on every route (WC-22c). |
-| Chat | Gate at **execution** time in `MutateExecutor`/`ForEachExecutor`, including the confirm turn and `saved-plans/[id]/run`. The per-turn snapshot is passed down, not re-resolved. Chat explains the refusal and runs no mutation (AC-9). |
-| Crons (WC-13, `durable-queue-drain` skill) | Resolve once per claimed batch with `getSnapshots`. A suppressed row gets a terminal `suppressed` status plus `suppressed_reason`. It is never re-sent (B-11). A lookup failure **defers** (no status change). Each cron is declared gated (capability + message class + initiator) or `ungated`. Crons: payment-reminders, payment-retry, intake-reminders, lead-response, daily-briefing, insight-metrics/detect/automations, channel-metrics-sync, calendar-sync, abandoned-proposal-invoices. Status-column migrations are SA-gated. |
-| Send registry | Every automated client send (gated or not: confirmations, receipts, intake requests, reminders) is declared with `messageClass` and `initiator` (B-9/B-11). An invariant test fails on an unclassified send (FR-8, FR-39). |
-| Payment reminders (WC-14) | Check at schedule time in `BookingLifecycleService.scheduleInvoiceReminders` callers (cited by function, C-2) **and** at send time in `PaymentReminderService`. Send time is authoritative. |
-| Branding (WC-15) | `FooterBlock`, template `Footer`, site booking page (`book/page.tsx` label), and every `PublicFooter`/`PublicShell` consumer (`app/book/manage/[token]/**`, `app/c/[userCode]/**`, `app/proposal/[token]`). A `branded` variant forces the footer on at **server render**, whatever `show_powered_by` says. The owner toggle is disabled in the website editor UI. |
-| Public / paused (WC-16, B-11) | Owner resolved from subdomain/token server-side. `public_business` surfaces (site, new booking, `c/[userCode]`, contact, proposals, `go/[code]`) show the paused page, reusing `app/go/unavailable` / `PublicErrorScreen`. `public_self_service` surfaces (`app/invoice/[id]`, `api/public/invoice/[id]/pay`, `book/manage/[token]/**` cancel/reschedule) **stay live** in `paused`. Grace shows a warning banner. |
-| Read-only | `owner_write` routes return `read_only` in grace/paused. Export stays allowed. |
-| Grandfathering | Already resolved in Slice 1. Slice 2 adds the AC-28 integration test. |
-| T-12 (WC-20) | `lib/server/access-strategy.ts` `license_tier` case: `db_active` precondition **and** `resolver` check of `definition.accessStrategy.capability`. `access-strategy.test.ts:82` is updated in the same change. No tier logic in the plugin manager. |
-| **B-3 launch migration** | At flag-flip time, not at deploy (§21.3, WC-21). An admin sets champions first through the route. Then a one-off admin **route** op (not a script, per T-7), `launch_reset_trials`, sets `trial_started_at = now`, `trial_ends_at = now + config length`, `cohort='trial'` for every non-champion account without a tier, **including Slice-1-era signups**. It is audited, idempotent (guarded by a launch marker), and AC-26 is verified by the report's missing/anomaly counts. |
-| Tests | Integration per surface type: happy path, not entitled, read-only, lookup failure (AC-8 to AC-16, AC-26 to AC-29). |
+| **Prerequisites** | (1) **T-8 (WC-17)**, as the first PR: `chat` and `chat-command` return 410; the `chat-v2` toggle is removed and the route returns 410 (or becomes admin-only server-side). It is never mapped through the catalog. (2) **S-12** skill fix landed (user-approved separate change, §12.3) before the addendum. (3) Addendum SA-reviewed (G-3). |
+| Mode | `enforce` becomes selectable. `mode.ts` refuses it while `TIER_ORDER` is empty (UD-2). Every surface is wired in `shadow` first. |
+| Route wrapper | `withEntitlement(capability \| { ungated: reason }, handler, { surfaceKind })`. **S-11 statuses:** `not_entitled` → **403**; `read_only` → **409**; `entitlement_unavailable` → **503** + `Retry-After`. Clients branch on the body `error` code. The addendum checks that no global fetch wrapper treats 403 as signed-out. Route-declaration test over §10.2 + C-5 + C-6 (WC-22c). |
+| Chat | Gate at execution in `MutateExecutor`/`ForEachExecutor`, including the confirm turn and `saved-plans/[id]/run`. The per-turn snapshot is passed down. Enforcement calls are **awaited** (unlike shadow). |
+| Crons (WC-13) | `durable-queue-drain` skill. Batch resolve (≤100 per chunk). A suppressed row gets a terminal `suppressed` status + `suppressed_reason` and is never re-sent (B-11). A lookup failure defers. Per-cron declarations. |
+| **Send registry (S-1)** | Every automated client send is declared by **send id** with `messageClass` + `initiator`. The surface kind is derived from the entry, and `sendPolicyOverrides` is keyed by send id (Q-B4). Unclassified sends fail FR-8. |
+| Payment reminders (WC-14) | Schedule-time check (`scheduleInvoiceReminders` callers) + send-time check (`PaymentReminderService`). Send time is authoritative. |
+| Branding (WC-15) | `FooterBlock`, template `Footer`, booking page, and every `PublicFooter`/`PublicShell` consumer. `branded` forces the footer on at server render. The owner toggle is disabled in the UI. |
+| Public / paused (WC-16, B-11) | `public_business` shows the paused page (reusing `app/go/unavailable` / `PublicErrorScreen`). `public_self_service` stays live. Grace shows a warning. |
+| T-12 (WC-20) | The `license_tier` case goes through the resolver. `access-strategy.test.ts:82` is updated. |
+| **B-3 row: `launch_champion_existing` (RC-3, UD-3, UD-4)** | **Replaces `launch_reset_trials`.** It is on its **own** admin route, `POST /api/admin/business-os/entitlements/launch`, because it is multi-account (S-10). **Evaluated at the enforcement switch-on moment (UD-3):** every plan row with `tier IS NULL AND cohort IS DISTINCT FROM 'champion'` (trials, including Slice-1-era signups, and cleared cohorts) becomes `cohort='champion'`, `cohort_expires_at = NULL` (open-ended, UD-4), `origin='launch'`. Existing champions and tier accounts are untouched. It runs `ensure_plan_row` semantics first for any tenant without a row (from the report's missing-row list). **Idempotent** through a launch marker (a single audited marker row or config-keyed audit check, decided in the addendum). A second run is a no-op returning the marker. Zod body `{ confirm: 'launch_champion_existing', reason, dryRun?: boolean }`. `dryRun` returns counts only. **One audit entry per account + one summary entry**, then flush. AdminAccessService gate + the same test matrix as §4.12. Accounts that sign up **after** switch-on get a normal trial. Before a tier exists, admins can make them champions one by one (UD-2). |
+| Tests | Per surface type: happy path, not entitled (on the fixture tier set), read-only, lookup failure. AC-8 to AC-16, AC-26 (restated for champions), AC-27 to AC-29. |
 
-## 6. Slice 3: Metering (outline)
+## 6. Slice 3: Metering (outline; G-3 applies)
 
 | Area | Plan |
 |---|---|
-| Inventory (FR-30, WC-18) | Build it from `BOS_LLM_CALLS` (8 areas). For each call name record: counts-as-AI-action (yes/no), audience, message class/initiator if it sends, template fallback. Embedding calls do not count. **B-12:** `onboarding`, first `website` generation and `intake`/services generation calls **count**. |
-| Hook | `runAiAction` (one scope = one candidate AI action). Pre-check is a read (fail open, T-3(d)). The increment happens **after** the action and is non-blocking. A small overshoot is accepted (D-14). |
-| Tables | `business_os_ai_action_usage (user_id, period_start, used)` and `business_os_ai_action_grants (source, qty, remaining, expires_at, actor_admin_id, reason)`. Both FK `auth.users`, registered `never` in purge descriptors, RLS owner-select only. |
-| RPC (WC-9) | `business_os_consume_ai_action`: atomic; order is period allowance, then grants/boosts soonest-expiring first. SECURITY DEFINER only if INVOKER can't do it, and then REVOKE + service_role + pinned `search_path`. |
-| Periods (T-6) | Derived from `period_anchor` with day clamping. The trial is one period holding the one-off total. No reset cron. |
-| Degrade / pause (D-12) | Client-facing calls (mainly `LeadReplyRecommender`) use the template fallback. Owner-facing calls return `limit_reached` + pause, and chat explains. |
-| Trial ends on allowance (FR-27) | Adds `trial_allowance_exhausted_at` (set by the consume RPC) to the lifecycle derivation. |
-| **B-12 warnings** | Warnings at 80%/100% once per threshold per period (FR-26). **Plus a setup-specific warning:** before a setup regeneration (website regenerate, services/intake regenerate) runs, if the remaining trial allowance is below a configured multiple of that action's cost, the owner is warned first. Trial total is sized from S1-T15 data (typical setup plus headroom), and it is a config value. |
-| Admin | `grant_ai_actions` op (D-7), audited, grant-ledger row. |
-| Retire | `monthly_ai_allowance_usd` display. The usage card switches to AI actions (T-9(4)). `pricingConfig.ts` is only touched if needed (6 `console.*` calls, see §10). |
-| Email fair use (B-7) | Count sends and alert the platform team (Pino `warn` + admin notification). Never block. Blocking only through an admin `revoke` override. |
+| Inventory (FR-30, WC-18) | From `BOS_LLM_CALLS`: counts-as-AI-action, audience, class/initiator, template fallback. Embeddings don't count. **B-12:** onboarding, first website generation and services/intake generation **count**. |
+| Hook | `runAiAction`. Read pre-check fails open. Post-action increment is non-blocking. |
+| Tables | `business_os_ai_action_usage`, `business_os_ai_action_grants`. FK `auth.users`, `never` descriptors, **no user policies + REVOKE ALL** (as RC-8), actor columns without FK (as RC-9). |
+| RPC (WC-9) | Atomic `business_os_consume_ai_action`, soonest-expiring first. INVOKER + REVOKE preferred. If DEFINER, `search_path=''` + REVOKE + service_role. |
+| Periods (T-6) | From `period_anchor` with clamping. Trial = one period with the one-off total. No reset cron. |
+| Degrade / pause (D-12) | Template fallback for client-facing calls. Owner-facing: `limit_reached` + pause, with chat explaining. **HTTP status is decided in the addendum and must not be 429** (S-11). |
+| Trial ends on allowance | `trial_allowance_exhausted_at` fact joins `deriveLifecycle`. |
+| B-12 warnings | 80%/100% once per period. **Setup-regeneration warning** before a regeneration when the remaining trial allowance is below a configured multiple of its cost. The trial total is sized from S1-T15 data. |
+| Admin | `grant_ai_actions` op, audited, grant ledger. |
+| Retire | `monthly_ai_allowance_usd` display. The usage card moves to AI actions. `pricingConfig.ts` is only touched if needed (6 `console.*`). |
+| Email fair use (B-7) | Count + alert. Never block. Block only by admin override. |
 
-## 7. Slice 4: Billing (outline)
+## 7. Slice 4: Billing (outline; **gated by G-1**; G-3 applies)
 
-Stripe prices by `lookup_key` in config (`bos_<tier>_<interval>_v<n>`, resolved and cached) (T-10). Subscription metadata `product: business_os`, and the existing credit webhook ignores those events. Webhooks write account state only: `tier`, `plan_version`, `period_anchor` = the Stripe cycle anchor, `access_ends_at`. Founder coupon at champion conversion. Boost checkout and optional auto top-up with a customer cap. Add-on purchase (creates the add-ons table, S-3). Renewal bumps `plan_version`, which ends `'renewal'` grandfathering. The loader then accepts `'renewal'`. `StripeService` has 2 `console.*` calls and `app/api/stripe/webhook/route.ts` has 168. If either is touched, flag it and convert it. The 168-call webhook conversion is large enough to ask the user whether to do it as a separate PR.
+**It cannot start until G-1 is met:** service-role key rotated, old key revoked, rotation verified.
+- **Prices:** Stripe prices by `lookup_key` in config (T-10). Subscription metadata `product: business_os`, and the credit webhook ignores those events.
+- **Webhooks** write only `tier`, `plan_version`, `period_anchor`, `access_ends_at`.
+- **Also in this slice:** the founder coupon, boosts with auto top-up capped by the customer, and add-on purchase, which creates the add-ons table (S-3).
+- **Renewal** bumps `plan_version`, which ends `'renewal'` grandfathering. The loader then accepts `'renewal'`.
+- **Logging to convert when touched:** `StripeService` (2 `console.*`) and `app/api/stripe/webhook/route.ts` (168). I will propose a separate PR for the webhook.
 
 ---
 
-## 8. Rollout and Flag Plan
+## 8. Rollout, Flag Plan and Gates
 
-| Step | Env | `BOS_ENTITLEMENTS_MODE` | Gate |
+| Step | Env | `BOS_ENTITLEMENTS_MODE` | Gate / action |
 |---|---|---|---|
-| 1. Slice 1 merged | all | `off` (default) | SA ✅, QA ✅, user approval. Migration applied by RM/user (it includes the backfill). |
-| 2. Verify provisioning | prod | `off` | Report ops check: tenants without a plan row = 0. The trigger WARNING count in DB logs = 0. |
-| 3. Shadow on | preview, then prod | `shadow` | Env change + redeploy. Watch the Pino error rate from `shadow.ts` (should be 0) and the latency of chat-v4 (hook is not awaited). |
-| 4. Report review | prod | `shadow` | About one week of data. Business decides Q-B1 (chat reads) using the R-A vs R-B numbers. S1-T15 data sizes the trial allowance. |
-| 5. Slice 2 merged | all | `shadow` | All surfaces wired in shadow. T-8 retirement merged. |
-| 6. Launch | prod | admin sets champions, then `launch_reset_trials`, then `enforce` | The report shows no unexplained denials. User approval in session. |
-| Rollback | any | set `off` + redeploy | No data migration needs to be reversed. The tables stay (never purged). |
+| 1. Slice 1 merged | all | `off` (default) | SA ✅, QA ✅, user approval. RM/user applies the migration, which **backfills all existing tenants as open-ended champions**. |
+| 2. Verify provisioning | prod | `off` | Report: missing plan rows = 0. Open-ended champion count = pre-existing tenant count. DB logs show 0 trigger WARNINGs. |
+| 3. Shadow on | preview → prod | `shadow` | Env change + redeploy. `shadow.ts` error rate 0. No chat-v4 latency change. |
+| 4. Usage review | prod | `shadow` | About one week or more. The user designs tiers from observed usage (`allowed` included) and `readRule` comparisons. S1-T15 sizes the trial allowance. |
+| 5. Tiers added as config | all | `shadow` | Normal release (B-2). `asTier` report shows retroactive would-be denials per tier. |
+| 6. Slice 2 merged | all | `shadow` | All surfaces wired in shadow. T-8 retired. S-12 landed. |
+| 7. **Switch-on** | prod | `enforce` | **Preconditions, all required:** **G-1** key rotated + old key revoked + verified. **G-2** both CI jobs are required checks on `main`. **UD-2** at least one configured tier **and** a path onto it (admin `assign_tier` or Slice 4 checkout). The report shows no unexplained denials. User approval in session. **Then** `launch_champion_existing` (dry-run, then run) **at switch-on (UD-3)**, then set `enforce` + redeploy. |
+| 8. Ongoing | prod | `enforce` | Admins set end dates per open-ended champion (report list, UD-4). Late signups before billing can be made champions by an admin (UD-2). |
+| Rollback | any | `off` + redeploy | No data reversal needed. Tables are never purged. |
 
 ---
 
-## 9. WC Traceability
+## 9. Traceability (WC and RC)
 
-| WC | How it is met | Task(s) |
+### 9.1 WC-1 to WC-22
+
+| WC | How it is met | Task(s) / section |
 |---|---|---|
-| WC-1 | Branch `feature/business-os-entitlements` from `origin/main` 94f9cfcd | Header |
-| WC-2 | T-1 typed data-only modules + mapped types + `TierMatrixSource` + Zod at load. Entitlements folder added to the scoped typecheck gate. New CI job runs the invariants. | S1-T1..T5, S1-T14, §4.14 |
-| WC-3 | Owner `user_id` behind `resolveAccountId`. `business_os_*` tables FK `auth.users(id)`, not `business_profiles`. `never` purge descriptors + `USER_OWNED_TABLES`. | S1-T7, S1-T8, S1-T10, §4.3 |
-| WC-4 | New repositories only, `.eq('user_id', …)`, documented `supabaseServer` | S1-T9 |
-| WC-5 | Zod on admin inputs, matrix/cohort/lifecycle at load, and the report query. Slice 2 public/cron inputs. | S1-T5, S1-T12, §5 |
-| WC-6 | `createLogger` everywhere. Correlation IDs on routes. Structured logs for every would-be/actual outcome. `console.*` files flagged (§10). | S1-T10..T12, §10 |
-| WC-7 | AdminAccessService gate (profiles.role → 403 test), Zod, allow-list, target pre-check, `log().catch()` + `await flush().catch()`. Rows store actor/reason/timestamps. | S1-T12, §4.12 |
-| WC-8 | RLS owner-select only (none on shadow). No user write policies. User-facing profile route test. | S1-T7, S1-T13 |
-| WC-9 | Trigger functions: DEFINER, pinned `search_path`, REVOKE. Shadow RPC: INVOKER + REVOKE + service_role. Slice 3 consume RPC follows the same rules. | S1-T7, §6 |
-| WC-10 | `decide` maps failure by catalog audience/class. `entitlement_unavailable` ≠ `not_entitled`. | S1-T6, S1-T10 |
-| WC-11 | Per-request memo + 30 s TTL. Counters never cached. Bound documented in the module header + admin response. | S1-T10, S1-T12, S1-T16 |
-| WC-12 | `deriveLifecycle` from timestamps. No state cron. `check-free-tier-expiration` untouched and unscheduled. | S1-T6 |
-| WC-13 | Cron suppression terminal status, defer on failure, batch resolve, per-cron declarations | §5 (Slice 2) |
-| WC-14 | Schedule-time + send-time checks, send-time authoritative | §5 (Slice 2) |
-| WC-15 | All footer consumers incl. PublicFooter/PublicShell. Server-side override at render. | §5 (Slice 2) |
-| WC-16 | C-5 surface list. Paused page reuses `app/go/unavailable`. B-11 self-service stays live. | §4.6 overlay (S1), §5 |
-| WC-17 | Retire `chat`, `chat-command`, remove `chat-v2` toggle + route before flag flip | §5 prerequisite, §8 step 5 |
-| WC-18 | Metering via `runAiAction`. Inventory from `BOS_LLM_CALLS`. Embeddings excluded. Atomic soonest-expiring consumption. | §6 (Slice 3) |
-| WC-19 | Matrix `version` + `removals` + snapshot test. `'renewal'` rejected at load. | S1-T3, S1-T5, S1-T13 |
-| WC-20 | `license_tier` via resolver, `access-strategy.test.ts` updated | §5 (Slice 2) |
-| WC-21 | Flag off = no reads (test). Shadow cannot throw (test). Trigger cannot fail onboarding (test). Launch migration resets trials at flip time. | S1-T10, S1-T11, S1-T7, S1-T13, §5, §8 |
-| WC-22 | FR-8 invariants, forbidden literal, snapshot, resolver with injected clock (S1). Route-declaration + per-surface integration (S2). Admin route 401/403 (incl. profiles.role)/400. | S1-T13, §5 |
+| WC-1 | Branch from `origin/main` 94f9cfcd | Header |
+| WC-2 | T-1 typed modules + mapped types (zero-tier safe) + lazy `TierMatrixSource` + Zod. `SCOPED_DIRS` extended (names unchanged). Jest CI job. G-2 required checks. | S1-T1..T5, S1-T14, §4.14 |
+| WC-3 | `resolveAccountId`. `business_os_*` tables FK `auth.users`. `never` descriptors + `USER_OWNED_TABLES` in the same PR. | S1-T7, S1-T8, §4.3 |
+| WC-4 | New repositories. The tenant pre-check reuses existing repositories (RC-10). The report pages through a repository (RC-12). `supabaseServer` documented. | S1-T9, §4.9, §4.12 |
+| WC-5 | Zod: admin unions (`.strict()`), config at first load, report params (`asTier`, window). Slice 2 cron/public inputs. | S1-T5, S1-T12 |
+| WC-6 | Pino everywhere. Correlation IDs. All outcomes logged. §10 flags. | S1-T10..T12 |
+| WC-7 | AdminAccessService gate + `profiles.role` 403 test, allow-lists, pre-check, log + awaited flush. Durable actor/reason columns (no FK, RC-9). | S1-T12, §4.12 |
+| WC-8 | **No user policies + REVOKE ALL** (RC-8). User-facing profile route test. Symbol-level import test. | S1-T7, S1-T13 |
+| WC-9 | Trigger functions: DEFINER, `search_path=''`, `lock_timeout`, REVOKE. Shadow RPC: INVOKER + REVOKE. Slice 3 consume RPC follows the same rules. | S1-T7, §4.3 |
+| WC-10 | `decide` by audience. Stale inputs never for owner-paid. `entitlement_unavailable` separate. | S1-T6, S1-T10 |
+| WC-11 | Input cache 30 s + LRU + read-through. Bound documented and in responses. | S1-T10, S1-T12 |
+| WC-12 | `deriveLifecycle` from pins, facts and histories. No state cron. `check-free-tier-expiration` untouched. | S1-T6 |
+| WC-13 | Cron suppression/defer/batch/declarations | §5 (addendum per G-3) |
+| WC-14 | Schedule + send checks | §5 |
+| WC-15 | All footer consumers, server override | §5 |
+| WC-16 | C-5 list, paused page, B-11 self-service live | §4.6 overlay, §5 |
+| WC-17 | T-8 retirement before switch-on | §5 prerequisites, §8 step 6 |
+| WC-18 | `runAiAction`, `BOS_LLM_CALLS` inventory, atomic consumption | §6 |
+| WC-19 | Version + removals + snapshot. `'renewal'` rejected. Extended to duration/grace histories (S-7). | S1-T3, S1-T5, S1-T13 |
+| WC-20 | `license_tier` via resolver | §5 |
+| WC-21 | Flag-off no reads (test). **No config load in chat-v4 when off** (RC-7). Shadow never throws (test with throwing loader). Trigger never raises (tmp_fail) + `lock_timeout` (RC-14). Launch op at switch-on (RC-3). | S1-T7, S1-T10, S1-T11, S1-T13, §5, §8 |
+| WC-22 | FR-8 invariants, forbidden literal, snapshot, resolver/lifecycle with injected clock (fixture + prod config). Route-declaration + per-surface in Slice 2. Admin route matrix. | S1-T13, §5 |
+
+### 9.2 RC-1 to RC-17
+
+| RC | Where addressed | Task(s) |
+|---|---|---|
+| RC-1 No production tiers, fixture tests, zero-tier types/Zod, `no_tiers_configured`, nullable `lowestTier`, deny list ∪ `TIER_ORDER` | §4.6, §4.7, §4.8, §4.12, §4.13 | S1-T1, T3, T5, T6, T12, T13 |
+| RC-2 Cohort base `{ tier } \| { all: true }` + explicit values + `not_built` never | §4.4 (last column), §4.6, §4.8 | S1-T3, T6 |
+| RC-3 Champion backfill + `launch_champion_existing` | §4.3 step 5, §4.11, §5 B-3 row, §8 step 7, §11 | S1-T7 (Slice 2 for the op) |
+| RC-4 Champion `expiresAt` required key, no default-duration fallback, open-ended count | §4.8, §4.10, §4.12 | S1-T6, T11, T12 |
+| RC-5 Business questions as config (`readRule`, `clockStartsAt`, send-policy overrides) + flip tests | §4.5, §4.6, §4.13, §12.1 | S1-T3, T4, T13 |
+| RC-6 Record all outcomes + item counts + `asTier` retroactive | §4.3 (table), §4.10 | S1-T7, T11 |
+| RC-7 Module-load safety | §3, §4.7, §4.10, §4.13 | S1-T10, T11, T13 |
+| RC-8 No user policies + REVOKE ALL | §4.3 step 2 | S1-T7 |
+| RC-9 Actor columns without FK | §4.3 | S1-T7 |
+| RC-10 Tenant pre-check via existing repos + `ensure_plan_row` | §4.12, §2 | S1-T9, T12 |
+| RC-11 Tier-over-cohort precedence + combination tests | §4.8, §4.13 | S1-T6, T13 |
+| RC-12 Paged report + 100-id batch cap | §4.9, §4.10 | S1-T9, T10 |
+| RC-13 LRU cap + read-through | §4.9 | S1-T10 |
+| RC-14 Trigger conditions (a)–(i) | §4.3, §4.11 | S1-T7 |
+| RC-15 Symbol-level import test | §3, §4.12, §4.13 | S1-T13 |
+| RC-16 Report exposure (no names/reasons) + test | §4.10, §4.13 | S1-T11, T13 |
+| RC-17 Scope change in §1 + re-traced | §1, §9 | — |
 
 ---
 
 ## 10. console.* Files in the Touch Set
 
-Counted on `origin/main` 94f9cfcd. Per CLAUDE.md, each touched file with `console.*` is flagged and, with user approval, converted in the same slice.
+Counted on `origin/main` 94f9cfcd. Each touched file with `console.*` is flagged and, with user approval, converted in the same slice.
 
-| File | `console.*` count | Slice that touches it | Proposal |
+| File | `console.*` | Slice | Proposal |
 |---|---|---|---|
-| All Slice 1 modified files (`chat-v4/route.ts`, `lib/audit/events.ts`, `lib/repositories/{types,index}.ts`, `purge/descriptors.ts`, `businessOwnedTables.ts`) | 0 | 1 | Nothing to convert |
-| `scripts/typecheck-bos-llm.ts` | uses `console.error` for CLI output | 1 | Out of scope. It is a CLI script outside `lib/`/`app/`/`components/`, where stdout is the interface. |
-| `app/site/[subdomain]/book/page.tsx` | 1 | 2 | Convert when touched for branding |
-| `lib/utils/pricingConfig.ts` | 6 | 3 (only if touched) | Convert when touched |
+| Slice 1 modified files (`chat-v4/route.ts`, `lib/audit/events.ts`, `lib/repositories/{types,index}.ts`, `OnboardingConversationRepository.ts`, `purge/descriptors.ts`, `businessOwnedTables.ts`) | 0 | 1 | Nothing to convert. `OnboardingConversationRepository.ts` is re-counted when opened. |
+| `scripts/typecheck-bos-llm.ts` | CLI `console.error` | 1 | Out of scope (CLI script outside `lib/`/`app/`/`components/`) |
+| `app/site/[subdomain]/book/page.tsx` | 1 | 2 | Convert when touched |
+| `lib/utils/pricingConfig.ts` | 6 | 3 (if touched) | Convert when touched |
 | `lib/stripe/StripeService.ts` | 2 | 4 | Convert when touched |
-| `app/api/stripe/webhook/route.ts` | 168 | 4 (only if namespacing touches it) | Propose a separate conversion PR (size) |
-| `lib/services/CreditService.ts` | 20 | Not planned (B-8 keeps it separate) | Only if touched |
-| `QuotaAllocationService.ts`, `check-free-tier-expiration` | non-compliant (C-9, C-11) | Not planned | Not touched (T-9) |
+| `app/api/stripe/webhook/route.ts` | 168 | 4 (if touched) | Separate conversion PR |
+| `lib/services/CreditService.ts` | 20 | Not planned | Only if touched |
 
-All other Slice 2 candidates checked (the cron routes, `BookingLifecycleService`, `PaymentReminderService`, `ChatCommandPanel`, footers, public pages, legacy chat routes, profile routes) have 0.
+All other Slice 2 candidates checked have 0.
 
 ---
 
@@ -739,50 +869,65 @@ All other Slice 2 candidates checked (the cron routes, `BookingLifecycleService`
 
 | # | Risk | Likelihood / impact | Mitigation |
 |---|---|---|---|
-| R-1 | The shadow hook adds latency or errors to chat-v4 | Low / Med | Not awaited. No-op when `off`. Try/catch. One memoised read. Watch p95 in step 3. |
-| R-2 | The trigger breaks onboarding (e.g. RLS/privilege or FK race) | Low / High | DEFINER, `EXCEPTION → WARNING`. Tested with an unwritable target. `ON CONFLICT DO NOTHING`. `auth.users` FK always holds for a signed-in user. |
-| R-3 | A new table isn't recognised by the purge RPC's live-schema check, so Reset fails closed | Med / Low (Reset inert today) | Migration + descriptors + `USER_OWNED_TABLES` in one PR. The invariant tests force it. |
-| R-4 | Config trial length change silently moves in-flight trials | Med / Low | Documented (S-7). The launch migration writes explicit dates. |
-| R-5 | The chat read rule (Q-B1) cuts Basic chat to near-useless, or makes `chat.search` meaningless | Med / Med (commercial) | Report both rules in shadow. Business decides with numbers before Slice 2. |
-| R-6 | "Fails in CI" is untrue today (no Jest CI for `lib/`) | Certain unless fixed / High | New `bos-entitlements.yml` job (S1-T14). |
-| R-7 | Type-level exhaustiveness is ignored by the Next build | Certain / Med | Zod at load + invariant tests + scoped typecheck gate. |
-| R-8 | Cross-instance staleness after an admin write | Certain / Low | 30 s bound, documented, stated in the response. Local invalidation. |
-| R-9 | Backfill picks up users who only ever opened onboarding once | Med / Low | Harmless. They get a trial row. `origin` records it. The launch migration re-sets anyway. |
-| R-10 | `new-api-route` skill admin variation (`app_metadata.role`) misleads future work | Med / Med (security) | Not followed here. Flagged to TL/SA to fix the skill. |
-| R-11 | `PaymentReminderService.sendEmailReminder` is a stub, so `payments.reminders` is commercially meaningless | Certain / Med | Out of scope (§16 dependency). Called out again before Slice 2 launch. |
-| R-12 | The live Supabase service-role key is exposed (see memory: environments P0) | — / High | Not this module's fix, but every "service-role only" guarantee here assumes the key is private. Flagged to TL as a precondition for enforcement launch. |
+| R-1 | Shadow hook adds latency or errors to chat-v4 | Low / Med | Not awaited. Config loaded lazily inside the try (RC-7). No-op when `off`. |
+| R-2 | Trigger breaks onboarding | Low / High | DEFINER, `search_path=''`, `lock_timeout 2s`, `EXCEPTION → WARNING`, fact-only upsert. The tmp_fail check proves it. |
+| R-3 | Purge live-schema check sees unclassified tables | Med / Low | Same-PR ordering. Invariant tests. |
+| R-4 | A config trial-length change moves running trials | **Closed by S-7.** Histories apply at trial start. The snapshot test blocks history edits. | — |
+| R-5 | Chat read rule makes Basic chat weak or `chat.search` meaningless | Med / Med | `readRule` is config. Both rules are recorded in shadow. The user picks with data. |
+| R-6 | CI failures are advisory (no required checks) | Certain / High before `enforce` | **G-2.** |
+| R-7 | Next build ignores type errors | Certain / Med | Zod at first load + invariants + scoped typecheck. |
+| R-8 | Cross-instance staleness | Certain / Low | 30 s bound documented. |
+| R-9 | **Open-ended champions keep free access indefinitely** (UD-4, U-2) | Certain / Med (revenue, not customer harm) | The report lists open-ended champions. Admins set per-account dates. Access never lapses by surprise. |
+| R-10 | **Trials of new signups end before any plan or payment path exists**, leaving no way to pay (UD-2) | High if enforced early / High | `enforce` is refused while there are no tiers (mode check). The §8 step 7 checklist requires a path onto a plan. Admins can make late signups champions. In shadow, lifecycle is only reported. |
+| R-11 | `new-api-route` skill admin line misleads future work | Med / Med (security) | Not followed here. S-12 separate change, user approval via TL, must land before the Slice 2 addendum. |
+| R-12 | Stub reminder sender makes `payments.reminders` meaningless | Certain / Med | Dependency (§16). Raised again before switch-on. |
+| R-13 | **Service-role key is public** | — / High | **G-1** blocks `enforce` and Slice 4 until rotated, revoked and verified. Slice 1 adds no new exposure. |
+| R-14 | `launch_champion_existing` runs twice, or runs too early | Low / Med | Launch marker makes it idempotent. Dry-run first. Only in §8 step 7 after the preconditions. Audited per account. |
+| R-15 | `shadow_events` grows because `allowed` is recorded | Med / Low | One row per (account, capability, surface, outcome, rule, day). After the launch decision, stop recording `allowed` or add a date-window purge (SA suggestion). |
 
 ---
 
-## 12. Open Questions
+## 12. Config Defaults, SA Decisions, Separate Changes, BA Follow-ups
 
-### 12.1 Business decisions (for the user, in business terms)
+### 12.1 Business questions now resolved as config values (RC-5; the user will confirm the defaults)
 
-| # | Question | Why it matters | Dev default until decided |
+| # | Question (business terms) | Config value | Default |
 |---|---|---|---|
-| **Q-B1** | What does "search via chat" (Pro-only in the sheet) mean? (a) Basic owners can still ask chat about the areas their plan includes, e.g. "what's on my calendar tomorrow?", and "search" means only broader lookups. (b) Any chat question that just looks something up (not a change) needs the search feature, so Basic chat can mostly only *do* things, not *answer* things. | Decides how useful chat is on Basic. We will show you the numbers for both from the shadow report before anything is enforced. | (a) |
-| **Q-B2** | Should design partners (champions) get Growth-level features plus beta, or everything in Pro plus beta? | Sets what champions have during their free period. Conversion still lands them on Growth with the founder coupon. | Growth + beta |
-| **Q-B3** | Does the 14-day trial clock start when someone begins setting up their business (first onboarding message), or when setup finishes? | Setup AI counts against the trial (B-12). If the clock starts at setup completion, slow setups get extra days. If it starts at the first message, the trial covers setup. | First onboarding message |
-| **Q-B4** | When an account is paused after grace, should clients who already booked still receive the intake questionnaire for that booking? B-11 keeps payment and cancel/reschedule working and stops reminders, but it doesn't mention intake requests. | A client may turn up without the business having their intake answers. | Stop (treated like a reminder) |
+| Q-B1 | Can a lower-plan owner ask chat questions about the areas their plan includes, or does any look-up question need the search feature? | `chatActionMap.readRule` | `'domain_group'`: questions about included areas are allowed |
+| Q-B2 | What do design partners get? | `COHORTS.champion.base` | **Decided by the user:** everything (`{ all: true }`) |
+| Q-B3 | Does the trial clock start at the first onboarding message or at setup completion? | `COHORTS.trial.clockStartsAt` | `'first_onboarding_message'` |
+| Q-B4 | When paused, do clients still get the intake questionnaire for an existing booking? | Send-policy default for system-initiated transactional sends + `sendPolicyOverrides[sendId]` | Stop (suppress in `paused`) |
+| UD-1 | What does a new signup's trial include before plans exist? | `COHORTS.trial.base` | Everything |
+| UD-2 | When may enforcement be switched on? | `LAUNCH.enforceRequiresConfiguredTier` + §8 checklist | Not until at least one plan and a path onto it exist |
+| UD-3 | "Existing accounts" as of when? | `launch_champion_existing` run time | The enforcement switch-on date |
+| UD-4 | When does a migrated champion's free access end? | `cohort_expires_at = NULL` from backfill/launch | No end date until an admin sets one per account. The report lists these accounts. |
 
-B-1 (the five ambiguous rows) stays with Eyal. It does not block Slice 1.
+### 12.2 SA decisions applied
 
-### 12.2 Items for SA (technical, decided at workplan review)
+| # | Decision | Applied in |
+|---|---|---|
+| S-1 | `client_render` audience. Send registry with `initiator`. Surface kind derived from the registry. | §4.4, §4.6, §5 |
+| S-2 | Key space confirmed. Agents ungated. `readRule` config. Item counts. | §4.5 |
+| S-3 | Add-ons table deferred. Comps via overrides. | §4.8, §4.12, §7 |
+| S-4 | `plan_version DEFAULT 0` + CHECK | §4.3 |
+| S-5 | Champion `expiresAt` required key (date or `null`). No fallback. | §4.8, §4.12 |
+| S-6 | Input cache + LRU + read-through. Stale data only for fail-open audiences. | §4.9 |
+| S-7 | Facts + pins + histories. No write on read. | §4.3, §4.6, §4.8, §4.13 |
+| S-8 | Trigger conditions (a)–(i). Scoped approval. | §4.3, §4.11 |
+| S-9 | Extend `SCOPED_DIRS`. No renames. | §4.14 |
+| S-10 | Single POST union at `accounts/[accountId]`. Launch on its own route. | §3, §4.12, §5 |
+| S-11 | 403 / 409 / 503 + `Retry-After`. `limit_reached` is not 429. | §5, §6 |
+| S-12 | Skill fix is a separate change. | §12.3 |
 
-| # | Item |
-|---|---|
-| S-1 | Add audience `'client_render'` (branding) so message class applies only to sends. Per-send `initiator` attribute in the Slice 2 send registry for B-11. |
-| S-2 | Chat action map key space includes read/compute/analyse/for_each ops. `agents`/`agent_runs` reads are `ungated` (B-8). Confirm. |
-| S-3 | Defer the add-ons table to Slice 4 (the resolver takes `addons: []` input and is tested with fixtures). |
-| S-4 | `plan_version = 0` sentinel from the SQL trigger resolves to the current version for tierless accounts, keeping the matrix version out of SQL. |
-| S-5 | Require `expiresAt` when setting the champion cohort. A champion with no expiry is an anomaly-warning using `defaultDurationDays`. |
-| S-6 | Cache the **inputs** for 30 s and resolve per call with `now` (refines T-5, avoids stale lifecycle across boundaries). Stale inputs kept up to 10 min **only** as the T-3 fallback. |
-| S-7 | Derived `trial_ends_at` (from config) vs materialising it on first resolve. |
-| S-8 | Provisioning triggers on `onboarding_conversations` + `business_profiles` (DEFINER, never raises) instead of code hooks on the five profile-insert paths. Acknowledge as within approved pattern 1. |
-| S-9 | Extend `typecheck:bos-llm`'s `SCOPED_DIRS` (renamed "Business OS scoped type check") vs a separate `typecheck:bos-entitlements`. New Jest CI workflow for the invariants. |
-| S-10 | Single POST admin route with a discriminated `op` union vs one route per op. |
-| S-11 | Slice 2 HTTP status for `read_only` (409 vs 423) and whether `not_entitled` is 403 or 402. |
-| S-12 | `new-api-route` skill's `app_metadata.role` admin variation contradicts CLAUDE.md. Fix the skill (outside this feature). |
+### 12.3 Separate change requiring user approval (listed, not done)
+
+| Change | Detail | Owner / timing |
+|---|---|---|
+| **S-12: fix `.claude/skills/new-api-route/SKILL.md:118`** | Replace the "Admin-only" variation (`user.app_metadata?.role === 'admin'`) with `AdminAccessService.getInstance().isAdmin(...)`, fail closed on throw, pointing to `app/api/admin/business-os/llm-usage/route.ts`. Deliver as a separate `chore(skills)` change. | `.claude/skills` is project configuration, so **TL obtains user approval**. Not done in this workplan. Not blocking Slice 1. Must land before the Slice 2 addendum. |
+
+### 12.4 BA follow-ups (routed by TL)
+
+The requirement must be updated for the scope change: FR-3 ("every tier (Basic, Growth, Pro)"), D-2 ("Growth-level trial"), B-3 / FR-14 / AC-26 (champions in place of fresh trials, evaluated at switch-on), AC-4 and AC-7 (fixture-based), plus B-11, B-12 and UD-1 to UD-4.
 
 ---
 
@@ -919,3 +1064,4 @@ _RM to populate._
 |------|--------|---------|
 | 2026-09-19 | Initial workplan (Dev) | Branch `feature/business-os-entitlements` from `origin/main` 94f9cfcd. Slice 1 in full detail (catalog, matrix, cohorts, lifecycle overlay, chat action map, loader, pure resolver, plan rows + triggers + backfill, admin routes, shadow report, tests, CI gate). Slices 2 to 4 outlined. B-11 and B-12 treated as authoritative. WC-1 to WC-22 traced. 4 business questions, 12 SA items. |
 | 2026-09-19 | SA workplan review: APPROVED WITH CONDITIONS (SA) | Added the §13 SA Workplan Review. Folded in the user's scope change (infrastructure only with no tier contents; champions get all capabilities and every existing account becomes a champion at rollout; the four business questions become config). Checked WC-1 to WC-22 against the tasks. Decided S-1 to S-12. Required changes RC-1 to RC-17. Most significant: no production tiers, with fixtures for the tests; a catalog-derived `{ all: true }` cohort base; open-ended champion backfill in place of the trial reset; lazy config load so chat-v4 cannot break with the flag off; no user RLS policies (override reasons would leak); actor columns without an FK; trigger hardening (`search_path=''`, `lock_timeout`, fact-only COALESCE upsert, single-transaction ordering). Later-slice gates: service-role key rotation before `enforce` (G-1), required CI checks (G-2), WCs restated in each addendum (G-3). SA re-checks the revised sections before code. |
+| 2026-09-19 | Rev 2: scope change + RC-1 to RC-17 applied (Dev) | Infrastructure only: production `TIER_ORDER = []` and an empty matrix. Eyal's matrix moved to a test fixture, and the tier-semantics tests run on it. Cohort base `{ tier } \| { all: true }` with explicit quantity/metered values. Champions get everything, and the backfill makes every existing tenant an open-ended champion. `launch_champion_existing` replaces `launch_reset_trials` on its own route, run at switch-on. Business questions Q-B1/B3/B4 and user defaults UD-1 to UD-4 became config/launch values. Migration: no user policies + REVOKE ALL, actor ids without FK, `plan_version DEFAULT 0` + CHECK, fact columns, hardened fact-only triggers (S-8 a–i), single transaction. Lazy config load in `shadow.ts` (RC-7). Shadow records all outcomes + `asTier` retroactive report with no names or reasons. Input cache with LRU + read-through + 100-id batches. RC-11 precedence. Duration/grace histories (S-7). `ensure_plan_row` + tenant pre-check through existing repos. S-11 statuses. Gates G-1 (key rotation before `enforce` and Slice 4), G-2 (required CI checks), G-3 (addenda restate WCs). S-12 skill fix listed as a separate change needing user approval. Added §0 (what changed, SA re-check list) and §9.2 RC traceability. |
