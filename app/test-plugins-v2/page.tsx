@@ -18,6 +18,9 @@ import type {
   StructuredSelectAnswer,
   StructuredMultiSelectAnswer
 } from '@/components/agent-creation/types/agent-prompt-threads';
+import { clientLogger } from '@/lib/logger/client';
+
+const logger = clientLogger.child({ module: 'TestPluginsV2Page' });
 
 // Workflow step interface for step visualization
 interface WorkflowStep {
@@ -1110,9 +1113,9 @@ export default function TestPluginsPage() {
       }
 
       // Always refresh status after any refresh-token operation to sync UI with backend
-      console.log('DEBUG: About to call loadUserStatus after token refresh');
+      logger.debug({ pluginKey }, 'Reloading user status after token refresh');
       await loadUserStatus();
-      console.log('DEBUG: loadUserStatus completed');
+      logger.debug({ pluginKey }, 'User status reloaded after token refresh');
     } catch (error: any) {
       addDebugLog('error', `Token refresh error: ${error.message}`);
       setLastResponse({ success: false, error: error.message });
