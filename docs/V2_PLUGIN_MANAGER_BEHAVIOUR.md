@@ -546,7 +546,7 @@ try {
 ### 5. Adding a New Plugin
 
 1. Create JSON definition in `lib/plugins/definitions/<name>-plugin-v2.json`
-2. Add filename to `corePluginFiles` array in `plugin-manager-v2.ts`
+2. Add the plugin key to `PLUGIN_PROFILES.all` in `lib/server/plugin-profile.ts` (and to `PLUGIN_PROFILES.business_os` if Business OS uses it)
 3. Create executor in `lib/plugins/executors/<name>-plugin-executor.ts`
 4. Add OAuth callback route if needed: `app/oauth/callback/<name>/route.ts`
 5. Add required environment variables

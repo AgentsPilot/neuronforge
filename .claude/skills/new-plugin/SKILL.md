@@ -47,7 +47,7 @@ Ask before any code is written:
 |---|---|---|
 | both | `lib/plugins/definitions/<name>-plugin-v2.json` | new: create · extend: add to `actions{}` |
 | both | `lib/server/<name>-plugin-executor.ts` | new: create extending `BasePluginExecutor` · extend: add private methods + switch cases |
-| new only | `lib/server/plugin-manager-v2.ts` | add filename to `corePluginFiles[]` |
+| new only | `lib/server/plugin-profile.ts` | add the plugin **key** to `PLUGIN_PROFILES.all` (every definition file must be listed there; the integrity test enforces it). Also add it to `PLUGIN_PROFILES.business_os` **only** if Business OS invokes it at runtime, keeping `business_os` an ordered subsequence of `all` |
 | new only | `lib/server/plugin-executer-v2.ts` | add import + entry in `executorRegistry` |
 | new only | `lib/plugins/pluginList.tsx` | add UI metadata entry |
 | both | `app/test-plugins-v2/page.tsx` | add entries under `PARAMETER_TEMPLATES` for each new action |
@@ -79,7 +79,8 @@ These are the things most likely to be missed and they break the V6 pipeline sil
 
 ### Registry
 
-- [ ] Plugin key is identical in three places: filename (`<name>-plugin-v2.json`), `corePluginFiles[]`, and `executorRegistry` key.
+- [ ] Plugin key is identical in three places: filename (`<name>-plugin-v2.json`), `PLUGIN_PROFILES.all` in `lib/server/plugin-profile.ts`, and `executorRegistry` key.
+- [ ] While the committed active profile is `business_os`, a new non-BOS plugin is registered but not loaded. To test it, set `ACTIVE_PLUGIN_PROFILE` to `'all'` locally and do **not** commit that change.
 - [ ] UI metadata `category` is one of: `communication` · `productivity` · `crm` · `marketing` · `project` · `finance` · `integration` · `ai`.
 
 ### CLAUDE.md cross-cutting rules
