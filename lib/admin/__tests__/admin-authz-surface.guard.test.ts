@@ -118,7 +118,10 @@ const R1_ALLOW: ReadonlyArray<Exemption> = [
   { id: 'app/api/admin/dashboard/route.ts#HEAD', why: 'Slice 2 (2026-09-20), finding E-4: empty-200 probe. Confirms route existence to anonymous callers.' },
   { id: 'app/api/admin/token-usage/route.ts#HEAD', why: 'Slice 2 (2026-09-20), finding E-4: empty-200 probe. Confirms route existence to anonymous callers.' },
   { id: 'app/api/admin/users/[id]/stats/route.ts#GET', why: "Slice 2 (2026-09-20): any named user's usage." },
-  { id: 'app/api/admin/user-emails/route.ts#POST', why: 'Slice 2 (2026-09-20): a READ shaped as a POST — email addresses.' },
+  // `user-emails#POST` was here. GATED 2026-09-20 on fix/admin-user-emails-gate,
+  // ahead of slice 2, because slice 2 is parked and an anonymous caller could
+  // harvest platform email addresses through it. The allow-list shrinks; it
+  // never grows.
   { id: 'app/api/admin/onboarding-users/route.ts#GET', why: 'Slice 2 (2026-09-20): user onboarding state.' },
   { id: 'app/api/admin/messages/route.ts#GET', why: 'Slice 2 (2026-09-20): platform message log.' },
   { id: 'app/api/admin/dashboard/route.ts#GET', why: 'Slice 2 (2026-09-20): platform-wide operating metrics.' },
