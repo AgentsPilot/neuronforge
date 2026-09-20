@@ -213,6 +213,8 @@ export const AUDIT_EVENTS = {
   SUBSCRIPTION_CANCELED: 'SUBSCRIPTION_CANCELED',
   SUBSCRIPTION_REACTIVATED: 'SUBSCRIPTION_REACTIVATED',
   CUSTOMER_PORTAL_ACCESSED: 'CUSTOMER_PORTAL_ACCESSED',
+  // One-time free-tier grant at onboarding (S-6 fix). Written only on an actual grant.
+  FREE_TIER_ALLOCATED: 'FREE_TIER_ALLOCATED',
 
   // Business OS money
   PAYMENT_REFUNDED: 'PAYMENT_REFUNDED',
@@ -907,6 +909,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Stripe customer portal opened',
+  },
+  // Free credits and quotas granted once, at onboarding. Same severity and flags
+  // as the Stripe billing events: it changes an account's credit balance.
+  [AUDIT_EVENTS.FREE_TIER_ALLOCATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Free-tier credits and quotas granted',
   },
 };
 

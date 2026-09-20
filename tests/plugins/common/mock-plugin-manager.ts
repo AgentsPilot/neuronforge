@@ -8,6 +8,7 @@
  */
 
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
+import { getPluginProfile } from '@/lib/server/plugin-profile';
 import { createMockUserConnections } from './mock-user-connections';
 
 let cachedInstance: PluginManagerV2 | null = null;
@@ -27,7 +28,9 @@ export async function createTestPluginManager(): Promise<PluginManagerV2> {
 
   const mockUserConnections = createMockUserConnections();
   const pm = new PluginManagerV2(mockUserConnections);
-  await pm.initializeWithCorePlugins();
+  // Pin the 'all' profile: the per-plugin suites cover every plugin, not just the
+  // ones the committed (Business OS) profile loads. Explicit profile, no env var.
+  await pm.initializeWithCorePlugins(getPluginProfile('all'));
 
   cachedInstance = pm;
   return pm;

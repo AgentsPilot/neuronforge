@@ -5,71 +5,12 @@ import { PluginDefinition, ActionDefinition, ValidationResult, RuleDefinition, A
 import { PluginDefinitionContext } from '@/lib/types/plugin-definition-context'
 import { isPluginDiscoverable } from '@/lib/plugins/plugin-visibility';
 import { createLogger } from '@/lib/logger';
+import { type PluginProfile, getPluginProfile, resolveActivePluginProfile } from '@/lib/server/plugin-profile';
 import * as fs from 'fs';
 import * as path from 'path';
 
 // Create logger instance for plugin manager
 const logger = createLogger({ module: 'PluginManager', service: 'plugin-system' });
-
-const corePluginFiles = [
-      'google-mail-plugin-v2.json',
-      'google-drive-plugin-v2.json',
-      'google-sheets-plugin-v2.json',
-      'google-docs-plugin-v2.json',
-      'google-calendar-plugin-v2.json',
-      'slack-plugin-v2.json',
-      'whatsapp-business-plugin-v2.json',
-      'hubspot-plugin-v2.json',
-      'chatgpt-research-plugin-v2.json',
-      'document-extractor-plugin-v2.json',
-      'linkedin-plugin-v2.json',
-      'airtable-plugin-v2.json',
-      'discord-plugin-v2.json',
-      'dropbox-plugin-v2.json',
-      'meta-ads-plugin-v2.json',
-      'meta-insights-plugin-v2.json',
-      'google-analytics-plugin-v2.json',
-      'google-business-profile-plugin-v2.json',
-      'notion-plugin-v2.json',
-      'onedrive-plugin-v2.json',
-      'outlook-plugin-v2.json',
-      'salesforce-plugin-v2.json',
-      'stripe-plugin-v2.json',
-      // ---------------------------------------------------------------------
-      // INTERIM DUPLICATION - a decision is owed here. Two Business OS plugin
-      // surfaces are loaded on purpose, because they were built in parallel and
-      // each already has its own consumer:
-      //
-      //   business-os          one catalog-generated plugin (67 actions), backed
-      //                        by the BizQL compiler + MutateExecutor. Reached by
-      //                        DISCOVERY (no `visibility` field), so it is what
-      //                        the agent-generation pipeline grounds against
-      //                        (see lib/agentkit/convertPlugins.ts).
-      //
-      //   crm / scheduling /   five granular repository-backed internal plugins
-      //   payments / intake /  (71 actions), `visibility: "business_os"` so they
-      //   website              are HIDDEN from discovery. Reached only by explicit
-      //                        key from lib/business-os/ChatCommandExecutor.ts.
-      //
-      // They therefore do not contend: the generator never sees the five, and
-      // nothing invokes `business-os` by key. Keep it that way until the shape is
-      // decided - in particular do NOT add `visibility: "business_os"` to
-      // business-os-plugin-v2.json, which would hide it from the generator and
-      // break agent generation over the user's own records.
-      //
-      // See docs/requirements/BUSINESS_OS_REPORTS_MERGE_REQUIREMENT.md - decision
-      // D9, open questions Q2/Q3/Q4.
-      // ---------------------------------------------------------------------
-      // The user's own business records. Generated from the Business Catalog -
-      // see scripts/generate-business-os-plugin.ts. Regenerate after any catalog
-      // change; the drift test fails if this file falls behind.
-      'business-os-plugin-v2.json',
-      // Internal repository-backed Business OS plugins (db_active access strategy).
-      'crm-plugin-v2.json',
-      'scheduling-plugin-v2.json',
-      'payments-plugin-v2.json',
-      'website-plugin-v2.json',
-    ];
 
 // Use globalThis to ensure singleton persists across module reloads (important for Next.js dev mode)
 const globalForPluginManager = globalThis as unknown as {
@@ -77,17 +18,11 @@ const globalForPluginManager = globalThis as unknown as {
   pluginManagerInitPromise: Promise<PluginManagerV2> | null;
 };
 
-// Only log on first module load, not on every access
-if (!globalForPluginManager.pluginManagerInstance) {
-  logger.info({
-    pluginDefinitions: corePluginFiles,
-    totalPlugins: corePluginFiles.length
-  }, 'Plugin-Manager-v2 module loaded');
-}
-
 export class PluginManagerV2 {
   private plugins: Map<string, PluginDefinition> = new Map();
   private userConnections: UserPluginConnections;
+  // The plugin profile this instance loaded; set by initializeWithCorePlugins.
+  private profile: PluginProfile | null = null;
   public static debug = process.env.NODE_ENV === 'development';
   private debug = process.env.NODE_ENV === 'development';
   public initialized = false;
@@ -132,28 +67,55 @@ export class PluginManagerV2 {
     }
   }
 
-  // Initialize plugin manager with core plugins (called once per cold start)
-  async initializeWithCorePlugins(): Promise<void> {
+  // Initialize plugin manager with core plugins (called once per cold start).
+  // Production passes nothing, so the active profile comes from the resolver.
+  // Tests may pass an explicit profile (requirement SA Q5-a); no env var involved.
+  async initializeWithCorePlugins(profile: PluginProfile = resolveActivePluginProfile()): Promise<void> {
     if (this.initialized) {
       logger.debug('PluginManagerV2 already initialized, skipping');
       return;
     }
 
-    await this.loadCorePlugins();
+    this.profile = profile;
+    await this.loadCorePlugins(profile);
     this.initialized = true;
-    logger.info({ pluginCount: this.plugins.size }, 'Plugin manager initialized with core plugins');
+
+    const loadedPluginKeys = [...this.plugins.keys()];
+    // Skipped = everything outside the profile. These files are never read, so this
+    // one summary line is the only place they appear in the logs.
+    const skippedPluginKeys = getPluginProfile('all').pluginKeys.filter(key => !profile.pluginKeys.includes(key));
+    logger.info({
+      profile: profile.name,
+      loadedPluginKeys,
+      loadedCount: loadedPluginKeys.length,
+      skippedPluginKeys,
+      skippedCount: skippedPluginKeys.length,
+    }, 'Plugin manager initialized');
   }
 
-  // Load core plugins from JSON files with environment variable substitution
-  private async loadCorePlugins(): Promise<void> {
-    logger.debug('Loading core plugins from filesystem');
+  /**
+   * The plugin profile this instance loaded. Before initialization it returns the
+   * profile the manager WILL load by default (the resolver's answer), so it is
+   * truthful either way. It must never throw: PluginExecuterV2 calls it outside
+   * execute()'s try/catch, and execute() must always resolve.
+   */
+  getActiveProfile(): PluginProfile {
+    return this.profile ?? resolveActivePluginProfile();
+  }
+
+  // Load the profile's plugins from JSON files with environment variable substitution.
+  // Plugins outside the profile are never read, parsed or env-substituted.
+  private async loadCorePlugins(profile: PluginProfile): Promise<void> {
+    logger.debug({ profile: profile.name }, 'Loading core plugins from filesystem');
 
     // Get the plugins directory path (relative to project root)
     const pluginsDir = path.join(process.cwd(), 'lib', 'plugins', 'definitions');
 
-    for (const fileName of corePluginFiles) {
+    for (const pluginName of profile.pluginKeys) {
+      // A profile key with no file fails at readFileSync below and is logged once
+      // by the catch (requirement FR10); the integrity test guards against typos.
+      const fileName = `${pluginName}-plugin-v2.json`;
       try {
-        const pluginName = fileName.replace('-plugin-v2.json', '');
         const filePath = path.join(pluginsDir, fileName);
 
         logger.trace({ fileName, filePath }, 'Loading plugin file');
