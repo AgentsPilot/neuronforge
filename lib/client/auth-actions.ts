@@ -128,11 +128,16 @@ export async function signInWithPassword(
  * Google and comes back to `redirectPath` on this origin.
  *
  * The default lands on `/auth/callback`, the same place the product uses, which
- * ensures a profile row exists and then routes by onboarding state. Pass a path
- * to come straight back to a harness instead: the browser client has
+ * ensures a profile row exists and then routes by onboarding state.
+ *
+ * To return somewhere specific, keep the callback and give it a target —
+ * `'/auth/callback?next=/test-business-os'`. The callback validates `next` with
+ * `safeNextPath` and honours it only once onboarding is complete.
+ *
+ * Passing a path that BYPASSES the callback also works — the browser client has
  * `detectSessionInUrl` on, so it exchanges the PKCE `?code=` on whichever page
- * loads. The USER_LOGIN audit entry for OAuth is written by the callback page,
- * so a path that bypasses it records none — which is why the default keeps it.
+ * loads — but the OAuth USER_LOGIN audit entry is written by the callback page,
+ * so such a sign-in records none. Prefer `?next=`.
  */
 export async function signInWithGoogle(
   redirectPath = '/auth/callback'
