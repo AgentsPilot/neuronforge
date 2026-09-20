@@ -18,7 +18,8 @@ import {
   Info,
   List as ListIcon,
   Mail,
-  Globe
+  Globe,
+  RefreshCw
 } from 'lucide-react'
 import {
   SiGithub,
