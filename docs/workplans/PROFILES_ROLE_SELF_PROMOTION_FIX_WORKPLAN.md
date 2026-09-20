@@ -387,18 +387,49 @@ walk through this guard on the exempt `supabase_auth_admin` / `postgres` path �
 
 **Trigger 1 — `create_user_settings_trigger` on `auth.users` → `public.create_user_settings()`**
 
+> **CORRECTED 2026-09-20.** The block below was first written with
+> `ON CONFLICT … DO NOTHING` on every INSERT. **The live function has no
+> `ON CONFLICT` clauses at all.** The version now shown is the
+> `pg_get_functiondef` output re-read from production on 2026-09-20 while
+> codifying this trigger as a migration
+> (`supabase/migrations/20261003_codify_create_user_settings_trigger.sql`,
+> PR #71). A migration built from the earlier text would have *added* those
+> clauses to the live signup path — a silent behaviour change sourced from a
+> document that said it was quoting.
+>
+> **The finding this section supports is unaffected**, and that is worth being
+> precise about: the point here is what the function *writes* — `id` only, never
+> `raw_user_meta_data`, never `role` — and that is true of both versions. The
+> guard migration this evidence cleared remains correctly applied.
+>
+> Two consequences of the real definition, recorded because they matter
+> elsewhere: each INSERT runs inside the `auth.users` insert, so a conflict
+> **aborts the whole signup** rather than being skipped — signup fails closed,
+> which is why an `auth.users` row created since this trigger existed cannot be
+> missing its `profiles` row (the property PR #70 relies on when it deletes the
+> browser-side profile fallback). And making the function idempotent is
+> therefore a real production change, not a tidy-up.
+
 ```sql
 CREATE OR REPLACE FUNCTION public.create_user_settings()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
 AS $function$
 BEGIN
-  INSERT INTO public.profiles (id) VALUES (NEW.id) ON CONFLICT (id) DO NOTHING;
-  INSERT INTO public.user_preferences (user_id) VALUES (NEW.id) ON CONFLICT (user_id) DO NOTHING;
-  INSERT INTO public.notification_settings (user_id) VALUES (NEW.id) ON CONFLICT (user_id) DO NOTHING;
-  INSERT INTO public.security_settings (user_id) VALUES (NEW.id) ON CONFLICT (user_id) DO NOTHING;
-  RETURN NEW;
+    -- Create default profile
+    INSERT INTO public.profiles (id) VALUES (NEW.id);
+
+    -- Create default preferences
+    INSERT INTO public.user_preferences (user_id) VALUES (NEW.id);
+
+    -- Create default notification settings
+    INSERT INTO public.notification_settings (user_id) VALUES (NEW.id);
+
+    -- Create default security settings
+    INSERT INTO public.security_settings (user_id) VALUES (NEW.id);
+
+    RETURN NEW;
 END;
 $function$
 ```
@@ -769,6 +800,7 @@ Gates accepted as reported (tsc at the 2034 baseline, build 295/295, 58 tests). 
 | 2026-09-20 | Created | Workplan for the `profiles.role` self-promotion fix |
 | 2026-09-20 | SA delta re-check — APPROVED | Three Low items fixed. **R1**: `SHOW server_encoding;` added to the PRE-APPLY CHECK (expect UTF8, with an explicit STOP and the two ways out), **and** the normalisation wrapped in an exception block falling back to the pre-NFKC expression — `normalize()` can error on a non-UTF8 server and the trigger is on the signup path, so it must fail degraded, never fail open or fail signup. **R2**: the two surviving "preserves existing rows" sentences corrected (migration PRE-APPLY item 3; cleanup script header, where it contradicted the very rows the file records clearing). **R3**: the inherited-normaliser rule carried into `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md`, plus a correction there of the stale "nothing reads `profiles.role` for access" claim (the dropped `system_settings_config` policy and the profile PUT both trusted it) and of lifecycle scenario 4. Gates: tsc 2034 = baseline, build exit 0, jest 2 suites / 58 tests. |
 | 2026-09-20 | QA defects addressed | D1 **fixed** (`polname` → `policyname` in all three operator-facing queries, column names verified against the `pg_policies` view and the working sibling query, not recalled). D2 **decided**: keep the upsert wipe — preserving would need a SELECT of the existing row inside a BEFORE INSERT trigger on every signup, a read and a race spent conserving the one value the migration exists to remove — and correct all four places that claimed "preserved"; new verification step 5b exercises the real `ON CONFLICT DO UPDATE` shape and expects `(null)`. D4 **closed** by `normalize(…, NFKC)` (measured: folds full-width `ａｄｍｉｎ` → `admin`); D3 **accepted** — NFKC folds compatibility variants, not confusables, so Cyrillic/Greek homoglyphs and the unlisted neighbours stay, now written up as ACCEPTED RESIDUAL RISK with the rule that any future reader must use *this* normaliser, and handed to the admin-authz slice with SA's CI check. D5 **fixed**: both mirrors now NFKC → strip → lower, the SQL's order (`ADMİN` was the divergence). D6 **fixed**: writer inventory added; `auth/callback` confirmed unable to write a privileged role (hard-coded `'user'`). D7 drift fixed (51 tests; `ProfileTabV2:198-209`). Gates: tsc 2034 = baseline, build exit 0, jest 2 suites / 58 tests. |
+| 2026-09-20 | **Recorded function body corrected** | The `create_user_settings()` body under "Production evidence" was shown with `ON CONFLICT … DO NOTHING` on all four INSERTs; **the live function has none**. Caught while codifying the trigger as a repo migration (PR #71), by re-reading `pg_get_functiondef` before writing the file — a migration built from the text here would have added those clauses to the live signup path. The section's own finding is unaffected (the function writes `id` only, never `raw_user_meta_data` or `role`, in both versions), so the guard migration this evidence cleared stays correctly applied. Noted for reuse elsewhere: without `ON CONFLICT`, a conflict aborts the whole signup, so signup fails closed — which is why no `auth.users` row created since the trigger can lack its `profiles` row (relied on by PR #70), and why adding idempotency would be a production change. |
 | 2026-09-20 | Production evidence recorded | Pre-apply check run on production and **passed** — the only two triggers (`create_user_settings_trigger` on `auth.users`, `update_profiles_updated_at` on `profiles`) touch `role` in neither body, so SA finding 3's bypass does not exist and the migration is cleared to apply; both function bodies and the trigger-ordering analysis recorded. Census before cleanup: `admin` × 3, of which 2 were real `admin_users` — one was not. User cleared all three to `'user'`; re-census returned zero rows. Cleanup added to the repo as `scripts/cleanup-profiles-role-admin.ts` (idempotent, dry-run by default), kept out of the migration on purpose. Decisions (b) role picker and (c) `org_id` rewrite logged as still open. |
 | 2026-09-20 | SA review addressed | Findings 1, 2, 3 and 5 fixed: normalisation moved from `btrim` to stripping every non-alphanumeric character (equality kept, so `business_owner` ⊃ `owner` does not clamp); both `ProfileTabV2` `console.error` calls converted to `clientLogger`; the `auth.users` trigger + function-body queries carried **inline** in the migration's PRE-APPLY CHECK as the blocking item 4; four privileged synonyms added, `staff`/`moderator` deliberately excluded. Tests extended for the padded/separator spellings. Gates re-run: tsc 2034 = baseline, build ✓, jest 2 suites / 51 tests passed. |
 | 2026-09-20 | SA code review | APPROVED WITH CHANGES - 3 must-fix (btrim whitespace bypass; 2 leftover console.* in ProfileTabV2; pre-apply check misses auth.users triggers). Denylist design upheld, current_user upheld. Migration GO, conditional on the auth.users query. |
