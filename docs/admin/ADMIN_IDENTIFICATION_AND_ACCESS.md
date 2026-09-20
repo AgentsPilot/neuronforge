@@ -33,10 +33,16 @@ It exists because, before this work, the system had **no trustworthy admin signa
 
 | Problem | Evidence |
 |---------|----------|
-| **User-writable** — any authenticated user can self-promote to `'admin'` | `app/api/user/profile/route.ts` writes `updateData.role = role` straight from the request body; `components/v2/settings/ProfileTabV2.tsx` offers "Administrator" as a selectable option. |
+| **User-writable** — any authenticated user could self-promote to `'admin'` | The `profiles` UPDATE policy is `USING (auth.uid() = id)` with no `WITH CHECK` and no column restriction, so the browser anon key could write the column directly (`components/v2/settings/ProfileTabV2.tsx` upserts `profiles` including `role`, and offered "Administrator" as a selectable option). `app/api/user/profile/route.ts` also wrote `updateData.role = role` straight from the request body. **Closed 2026-09-20** — see the note below. |
 | **Overloaded** — the same column holds onboarding personas | `role` constraint allows `business_owner`, `manager`, `consultant`, `sales`, … alongside the legacy `admin` / `user` / `viewer` (`supabase/SQL Scripts/20251118_update_profiles_role_constraint.sql`). |
 
 Therefore admin identity lives in a **dedicated, service-role-only table** (`admin_users`), never in `profiles.role`. Do **not** seed admins from `profiles.role` — it would import self-promoted users.
+
+### The self-promotion write is closed — and there is one rule you must inherit
+
+`supabase/migrations/20261002_profiles_role_privilege_guard.sql` added a `BEFORE INSERT OR UPDATE OF role` trigger on `public.profiles` that silently drops a privileged value written by a non-service-role caller, the profile PUT no longer accepts `role`, and the "Administrator" option is gone. The three live `role = 'admin'` rows found on 2026-09-20 (two of them genuine `admin_users`) were cleared by `scripts/cleanup-profiles-role-admin.ts`.
+
+**The rule:** if you ever read `profiles.role` for a privilege-ish decision, compare against **that trigger's normaliser** — `lower(regexp_replace(normalize(v, NFKC), '[^a-zA-Z0-9]', '', 'g'))` — never your own. A reader that lowercases first, or trims instead of stripping, or skips NFKC, will disagree with the database about what `'admin'` is, and **the disagreement is the vulnerability** (a dotted capital `İ` alone is enough to split them). Two classes of spelling are knowingly left unclamped — cross-script homoglyphs (`аdmin` with a Cyrillic `а`) and near-misses like `admins` / `org_admin` — which is safe only for as long as nothing authorizes on the column. The CI check that enforces "nothing authorizes on `profiles.role`" is owned by the admin-authz slice.
 
 > Separately, `SYSTEM_ADMIN_USER_ID` / `system-admin@neuronforge.internal` is only an audit-trail attribution identity — it is **not** an operator-access concept and is unrelated to this table.
 
@@ -60,6 +66,8 @@ Therefore admin identity lives in a **dedicated, service-role-only table** (`adm
 ## Architecture at a Glance
 
 One authoritative allow-list (`admin_users`), reached only through one service (`AdminAccessService`). Bootstrap writes go in by **email**; consumers ask the service; nothing reads `profiles.role` for access.
+
+> **History, so the claim is not read as "it never happened".** Two things did trust that column, and both are gone: the `system_settings_config` write policy `"Only admins can modify settings"` (dropped by `20260920a_lock_system_settings_and_pricing_rls.sql`) and `PUT /api/user/profile`, which accepted `role` from the request body until 2026-09-20. The column is a persona label; keeping it one is an active rule, not a historical fact — see [Why not `profiles.role`](#why-not-profilesrole).
 
 ```
   Bootstrap (by email)             Runtime (identity check)              Consumers
@@ -160,7 +168,7 @@ The active-admin set is cached in memory for **60s** (the gate runs on every adm
 | 1 | **New operator, already a user** | Add email to seed/env → run it → `user_id` bound immediately → admin routes pass at step 1. |
 | 2 | **New operator, not yet signed up** | Seed by email (`user_id = NULL`) → they sign up and open an admin page → step 2 matches by email, binds `user_id`, grants → next request is step 1. |
 | 3 | **Revoke an admin** | `deactivateByEmail(...)` (or `is_active = false`) → within ≤60s (or immediately after `invalidateCache()`) the gate denies. |
-| 4 | **A user self-sets `profiles.role = 'admin'`** | **Irrelevant** — no code reads `profiles.role` for access; they never appear in `admin_users`. (Closing the leftover self-promotion write is a tracked follow-up.) |
+| 4 | **A user self-sets `profiles.role = 'admin'`** | **Can no longer happen, and would be irrelevant anyway** — since 2026-09-20 a database trigger drops the value on any non-service-role write, and no code reads `profiles.role` for access. They never appear in `admin_users`. |
 
 ---
 
@@ -240,3 +248,4 @@ Either path is idempotent (keyed on `email`) and re-activates a soft-revoked row
 | 2026-07-01 | Initial | Documented the `admin_users` source of truth, `AdminUserRepository` + `AdminAccessService`, env/SQL bootstrap, and open follow-ups. Prerequisite for the Admin Agent Health Dashboard (Q1). |
 | 2026-07-01 | Added runtime flows | Added Architecture diagram, Runtime Flows (3-step `isAdmin` resolution, `listAdminEmails` union, caching), and Lifecycle Scenarios sections. |
 | 2026-07-01 | Added unit tests | 21 passing tests for `AdminUserRepository` + `AdminAccessService` (query shape, self-heal, fail-closed, union, caching). |
+| 2026-09-20 | `profiles.role` self-promotion closed | Recorded the database guard (`20261002_profiles_role_privilege_guard.sql`), the route and UI changes, and the cleanup of the three live `admin` rows. Corrected the "nothing reads `profiles.role` for access" claim, which was true of the code but not of history — a dropped `system_settings_config` policy and the profile PUT both trusted it. Added the inherited-normaliser rule for any future reader, and the two knowingly-unclamped spelling classes. |
