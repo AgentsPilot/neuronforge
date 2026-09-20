@@ -27,17 +27,39 @@
  * That is what stops inline copy #8 appearing in a different folder the day
  * after the seven known copies are removed.
  *
- * ── The shrinking allow-list ───────────────────────────────────────────────
- * This guard ships WITH the first security slice, not after the last one, and
- * it ships RED-BY-ALLOW-LIST: every not-yet-gated handler is listed below with
- * a dated reason. Each subsequent slice's diff DELETES entries.
+ * ── WHAT THIS GUARD DELIVERS — read this before believing it does more ────
  *
- * The alternative — "introduce the gate once the repo is clean" — is the
- * standard way this kind of programme loses its only structural guarantee. The
- * gate becomes the cheapest thing to cut once the security slices have landed
- * and the urgency is gone. Landing it first inverts the incentive: the guard
- * protects the work WHILE it is in progress, and the final slice degrades from
- * "build the mechanism" to "delete the last few lines".
+ * The system is **partially unified**, and this guard's job is to hold the line
+ * rather than to certify a finished state. As of 2026-09-20, of **72 handlers**
+ * across the 44 `app/api/admin/**` route files:
+ *
+ *   38  on the canonical `requireAdmin` gate
+ *    7  correct, but each hand-rolling its own AdminAccessService check
+ *   27  KNOWINGLY OPEN — reachable without an admin check
+ *
+ * Slices 1L, 2, 3, 4, 5 and 7 are **PARKED** by user decision (2026-09-20), so
+ * the original goal — "the allow-list is empty" — is not reachable, and writing
+ * it here would be false. The true claim, and the one the caps enforce:
+ *
+ *   **THE REPO CAN NO LONGER GET DIRTIER WITHOUT SOMEONE SIGNING FOR IT.**
+ *
+ * A new ungated admin route fails the build. A 35th R1 exemption fails the
+ * build. Neither can happen by accident. What this guard does NOT claim: that
+ * the admin surface is secure today. It is not — see the 27.
+ *
+ * This also means "cannot recur" is true **for new surfaces only**. The
+ * existing 27 are not a recurrence; they are the unfinished part.
+ *
+ * ── The shrinking allow-list, and the ratchet ─────────────────────────────
+ * The guard shipped WITH the first security slice, not after the last one, and
+ * it shipped RED-BY-ALLOW-LIST. The alternative — "introduce the gate once the
+ * repo is clean" — is the standard way this kind of programme loses its only
+ * structural guarantee: the gate becomes the cheapest thing to cut once the
+ * urgency is gone. Landing it first inverted that, and it is why the guard
+ * still stands while six slices are parked.
+ *
+ * The caps below turn "it should shrink" into something enforced. See THE
+ * RATCHET RULE above the allow-lists.
  *
  * ── ALLOW-LIST, never a deny-list ──────────────────────────────────────────
  * A deny-list only forbids the shapes someone already thought of. An
@@ -57,7 +79,31 @@
  *   3. A handler-export form the parser does not recognise. All 44 current
  *      admin routes use `export async function GET`; a handler written
  *      `export const GET = async () => {}` is valid Next.js and would sail
- *      past a naive scan. Unrecognised export shapes are FLAGGED, not skipped.
+ *      past a naive scan. Unrecognised export shapes are FLAGGED, not skipped
+ *      — including one declared in a shape none of the strict forms match,
+ *      even when the same file also contains a parseable handler (D-Q3).
+ *
+ * ── KNOWN GAPS in this guard — stated, not glossed ────────────────────────
+ *
+ *   • **Precedence, not just presence (D-5 + D-Q2).** R1 asks whether a handler
+ *     body CONTAINS `requireAdmin(`. It does not prove the gate runs FIRST, and
+ *     it does not prove the gate is reached at all — a gate inside a closure
+ *     that is never invoked satisfies R1. Every one of the 38 gated handlers is
+ *     correct today (verified by hand and by the oracle), but that is a
+ *     measurement, not an invariant.
+ *     QA's refinement, which must not be lost: closing this needs the ORACLE's
+ *     instrumentation extended to cover the **body parse**, because
+ *     `mockTablesTouched` records DB/RPC/auth-API calls and not `request.json()`.
+ *     Without that, a precedence check is only half a check.
+ *
+ *   • **R7, the inverted rule, is PARKED — deliberately not built.** It would
+ *     ask "is everything that BEHAVES like an admin route gated, wherever it
+ *     lives?", complementing R1's path-based question. Reasons for parking:
+ *     R2 already catches the realistic recurrence (any `route.ts` importing
+ *     `AdminAccessService` must be allow-listed); a false positive on a
+ *     REQUIRED status check is the single thing most likely to get the check
+ *     switched off; and its marginal value is lowest while 27 handlers sit
+ *     exempted. Revisit once the parked slices land.
  *
  * @see docs/workplans/admin-authz-unification.md
  * @see docs/requirements/ADMIN_AUTHZ_UNIFICATION_REQUIREMENT.md (FR-10, FR-11, FR-17)
@@ -96,173 +142,200 @@ interface Exemption {
 const fileOf = (id: string) => id.split('#')[0];
 
 /**
- * R1 — admin route handlers not yet on `requireAdmin`.
+ * ── PARKED vs PERMANENT, and the ratchet ──────────────────────────────────
  *
- * SHRINKS TO EMPTY. Every entry names the slice that removes it, so a reviewer
- * can tell "not done yet" from "quietly exempted forever".
+ * Every exemption is one of exactly two things, and they are kept in separate
+ * arrays because **mixing them is the mechanism by which a new exemption looks
+ * normal**. A reader skimming one long list cannot tell "architecturally
+ * correct forever" from "we chose not to do this yet", so both decay into
+ * "that's just how it is".
+ *
+ *   PERMANENT — an architectural exception with a real reason. Today there is
+ *               exactly one: `calibrate/batch` uses `isAdmin` as a CAPABILITY
+ *               FLAG, not as authorization. There is no 401/403 to return, so
+ *               `requireAdmin` is the wrong tool. This will never be removed.
+ *
+ *   PARKED    — an open hole that a human decided not to close yet. NOT in
+ *               flight. Each says what an anonymous caller can actually do and
+ *               where the decision is tracked.
+ *
+ * ── THE RATCHET RULE ──────────────────────────────────────────────────────
+ *
+ *   **Any commit that removes an exemption MUST lower that list's cap by the
+ *   same number, in the same commit.**
+ *
+ * Without it the cap goes slack the first time anything is gated: gate three
+ * routes, delete three entries, and the list silently has room for three new
+ * ones that nobody signed for. The caps below are asserted, so a slack cap is
+ * a failing test rather than a comment nobody reads.
+ *
+ * Worked example — **PR #69**: `user-emails#POST` was gated, its R1 entry was
+ * deleted, and `R1.parked` went 35 → 34 in the same commit, with a comment
+ * left in place of the entry recording why.
+ *
+ * ── What this guard now delivers ──────────────────────────────────────────
+ *
+ * Slices 1L, 2, 3, 4, 5 and 7 are PARKED (2026-09-20, user decision), so the
+ * old goal — "the allow-list is empty" — is not reachable and claiming it
+ * would be false. What IS true, and what the caps enforce:
+ *
+ *   **The repo can no longer get dirtier without someone signing for it.**
+ *
+ * A new ungated admin route fails the build. A 35th R1 exemption fails the
+ * build. Raising a cap is a visible act in a diff that a reviewer must accept.
  */
-const R1_ALLOW: ReadonlyArray<Exemption> = [
-  // ── Slice 2 — cross-tenant and internal-config READS (2026-09-20) ────────
-  // Deliberately not in slice 1: slice 1 touches only write/action verbs, so
-  // it is provably incapable of breaking a customer-facing read. These are
-  // anonymous reads of other customers' data and of internal tuning config.
-  { id: 'app/api/admin/users/route.ts#GET', why: 'Slice 2 (2026-09-20): lists every platform user.' },
-  // ── E-4: three HEAD handlers the 2026-09-20 census MISSED ────────────────
-  // The census grepped for GET|POST|PUT|PATCH|DELETE and never saw these. This
-  // guard found them on its first run, which is the argument for scanning by
-  // shape rather than working from a list. Each returns an empty 200 and reads
-  // nothing, so they leak no data — but they DO confirm to an anonymous prober
-  // that the route exists, which NFR-Security forbids of a denial response.
-  // Gated in slice 2 alongside the GET in the same file.
-  { id: 'app/api/admin/users/route.ts#HEAD', why: 'Slice 2 (2026-09-20), finding E-4: empty-200 probe. Confirms route existence to anonymous callers.' },
-  { id: 'app/api/admin/dashboard/route.ts#HEAD', why: 'Slice 2 (2026-09-20), finding E-4: empty-200 probe. Confirms route existence to anonymous callers.' },
-  { id: 'app/api/admin/token-usage/route.ts#HEAD', why: 'Slice 2 (2026-09-20), finding E-4: empty-200 probe. Confirms route existence to anonymous callers.' },
-  { id: 'app/api/admin/users/[id]/stats/route.ts#GET', why: "Slice 2 (2026-09-20): any named user's usage." },
-  // `user-emails#POST` was here. GATED 2026-09-20 on fix/admin-user-emails-gate,
-  // ahead of slice 2, because slice 2 is parked and an anonymous caller could
-  // harvest platform email addresses through it. The allow-list shrinks; it
-  // never grows.
-  { id: 'app/api/admin/onboarding-users/route.ts#GET', why: 'Slice 2 (2026-09-20): user onboarding state.' },
-  { id: 'app/api/admin/messages/route.ts#GET', why: 'Slice 2 (2026-09-20): platform message log.' },
-  { id: 'app/api/admin/dashboard/route.ts#GET', why: 'Slice 2 (2026-09-20): platform-wide operating metrics.' },
-  { id: 'app/api/admin/execution-stats/route.ts#GET', why: 'Slice 2 (2026-09-20): platform-wide execution metrics.' },
-  { id: 'app/api/admin/storage-stats/route.ts#GET', why: 'Slice 2 (2026-09-20): platform-wide storage metrics.' },
-  { id: 'app/api/admin/token-usage/route.ts#GET', why: 'Slice 2 (2026-09-20): platform LLM spend. No in-repo caller (OI-17).' },
-  { id: 'app/api/admin/token-usage/drill-down/route.ts#GET', why: 'Slice 2 (2026-09-20): per-user LLM spend.' },
-  { id: 'app/api/admin/token-usage/stats/route.ts#GET', why: 'Slice 2 (2026-09-20): aggregate LLM spend. No in-repo caller (OI-17).' },
-  { id: 'app/api/admin/settings/platform-users/route.ts#GET', why: 'Slice 2 (2026-09-20): any signed-in user can list every platform user. Deleted by slice 7.' },
-  { id: 'app/api/admin/agent-generation-config/route.ts#GET', why: 'Slice 2 (2026-09-20): internal tuning read. Its PUT is gated in slice 1.' },
-  { id: 'app/api/admin/ais-config/route.ts#GET', why: 'Slice 2 (2026-09-20): internal tuning read. Its POST is gated in slice 1.' },
-  { id: 'app/api/admin/backfill-embeddings/route.ts#GET', why: 'Slice 2 (2026-09-20): job status read. Its POST is gated in slice 1.' },
-  { id: 'app/api/admin/helpbot-config/route.ts#GET', why: 'Slice 2 (2026-09-20): internal config read. Its PUT is gated in slice 1.' },
-  { id: 'app/api/admin/memory-config/route.ts#GET', why: 'Slice 2 (2026-09-20): internal config read. Its PUT is gated in slice 1.' },
-  { id: 'app/api/admin/memory-consolidation/route.ts#GET', why: 'Slice 2 (2026-09-20): internal read. Its POST is gated in slice 1.' },
-  { id: 'app/api/admin/onboarding-config/route.ts#GET', why: 'Slice 2 (2026-09-20): internal config read. Its PUT is gated in slice 1.' },
-  { id: 'app/api/admin/orchestration-config/route.ts#GET', why: 'Slice 2 (2026-09-20): internal config read. Its PUT is gated in slice 1.' },
-  { id: 'app/api/admin/ui-config/route.ts#GET', why: 'Slice 2 (2026-09-20): internal config read. Its POST is gated in slice 1.' },
 
-  // ── Slice 3 — reads with a (possible) customer-facing caller (2026-09-20) ─
-  // Isolated so that the ONE route with a real customer caller does not hold
-  // up the P0 slices. Slice 0's enumeration cleared three of the four; they
-  // stay here so slice 2 keeps its mechanical "cannot break a customer screen"
-  // guarantee (its diff must not list these files at all).
-  { id: 'app/api/admin/reward-config/route.ts#GET', why: 'Slice 3 (2026-09-20): the ONE confirmed customer-facing caller — both agent-detail pages read one boolean. Gate ships in the same commit as the replacement projection.' },
-  { id: 'app/api/admin/boost-packs/route.ts#GET', why: 'Slice 3 (2026-09-20): catalogue read. Slice 0 enumeration found only an admin-page caller; kept here so slice 2 stays provably customer-safe.' },
-  { id: 'app/api/admin/execution-tiers/route.ts#GET', why: 'Slice 3 (2026-09-20): catalogue read. Slice 0 enumeration found only an admin-page caller.' },
-  { id: 'app/api/admin/storage-tiers/route.ts#GET', why: 'Slice 3 (2026-09-20): catalogue read. Slice 0 enumeration found only an admin-page caller.' },
+/** R1 — admin route handlers not on `requireAdmin`. 27 open + 7 inline copies. */
+const R1_PARKED: ReadonlyArray<Exemption> = [
+  { id: 'app/api/admin/users/route.ts#GET', why: 'PARKED 2026-09-20 — lists every platform user. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/users/route.ts#HEAD', why: 'PARKED 2026-09-20 — empty-200 probe. Confirms route existence to anonymous callers. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/dashboard/route.ts#HEAD', why: 'PARKED 2026-09-20 — empty-200 probe. Confirms route existence to anonymous callers. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/token-usage/route.ts#HEAD', why: 'PARKED 2026-09-20 — empty-200 probe. Confirms route existence to anonymous callers. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/users/[id]/stats/route.ts#GET', why: 'PARKED 2026-09-20 — any named user\'s usage. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/onboarding-users/route.ts#GET', why: 'PARKED 2026-09-20 — user onboarding state. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/messages/route.ts#GET', why: 'PARKED 2026-09-20 — platform message log. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/dashboard/route.ts#GET', why: 'PARKED 2026-09-20 — platform-wide operating metrics. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/execution-stats/route.ts#GET', why: 'PARKED 2026-09-20 — platform-wide execution metrics. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/storage-stats/route.ts#GET', why: 'PARKED 2026-09-20 — platform-wide storage metrics. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/token-usage/route.ts#GET', why: 'PARKED 2026-09-20 — platform LLM spend. No in-repo caller (OI-17). — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/token-usage/drill-down/route.ts#GET', why: 'PARKED 2026-09-20 — per-user LLM spend. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/token-usage/stats/route.ts#GET', why: 'PARKED 2026-09-20 — aggregate LLM spend. No in-repo caller (OI-17). — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/settings/platform-users/route.ts#GET', why: 'PARKED 2026-09-20 — any signed-in user can list every platform user. Slice 7 would have deleted it; slice 7 is parked, so it remains. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/agent-generation-config/route.ts#GET', why: 'PARKED 2026-09-20 — internal tuning read. Its PUT is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/ais-config/route.ts#GET', why: 'PARKED 2026-09-20 — internal tuning read. Its POST is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/backfill-embeddings/route.ts#GET', why: 'PARKED 2026-09-20 — job status read. Its POST is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/helpbot-config/route.ts#GET', why: 'PARKED 2026-09-20 — internal config read. Its PUT is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/memory-config/route.ts#GET', why: 'PARKED 2026-09-20 — internal config read. Its PUT is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/memory-consolidation/route.ts#GET', why: 'PARKED 2026-09-20 — internal read. Its POST is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/onboarding-config/route.ts#GET', why: 'PARKED 2026-09-20 — internal config read. Its PUT is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/orchestration-config/route.ts#GET', why: 'PARKED 2026-09-20 — internal config read. Its PUT is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/ui-config/route.ts#GET', why: 'PARKED 2026-09-20 — internal config read. Its POST is gated in slice 1. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 2)' },
+  { id: 'app/api/admin/reward-config/route.ts#GET', why: 'PARKED 2026-09-20 — the ONE confirmed customer-facing caller — both agent-detail pages read one boolean. The planned fix (gate + a replacement customer-readable projection in one commit) was never built. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 3)' },
+  { id: 'app/api/admin/boost-packs/route.ts#GET', why: 'PARKED 2026-09-20 — catalogue read. Slice 0 enumeration found only an admin-page caller; it was held back so slice 2 stayed provably customer-safe; neither slice ran. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 3)' },
+  { id: 'app/api/admin/execution-tiers/route.ts#GET', why: 'PARKED 2026-09-20 — catalogue read. Slice 0 enumeration found only an admin-page caller. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 3)' },
+  { id: 'app/api/admin/storage-tiers/route.ts#GET', why: 'PARKED 2026-09-20 — catalogue read. Slice 0 enumeration found only an admin-page caller. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 3)' },
+  { id: 'app/api/admin/agents/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/audit-trail/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/business-os/llm-usage/route.ts#GET', why: 'PARKED 2026-09-20 — the inline precedent (lines 49-64) that requireAdminRoute.ts was extracted from. Slice 4 would have removed it; slice 4 is parked, so it remains. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/business-os/llm-usage/businesses/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/chat-usage/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/users/[id]/audit-logs/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/users/[id]/login-stats/route.ts#GET', why: 'PARKED 2026-09-20 — inline AdminAccessService copy. Behaviour already correct. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+];
 
-  // ── Slice 4 — already CORRECT, but hand-copied (2026-09-20) ──────────────
-  // These seven behave correctly today; they inline the gate instead of
-  // calling it. Listed here because R1 requires the canonical `requireAdmin`,
-  // and de-duplicating them is hygiene, not risk reduction — which is why it
-  // is deliberately sequenced after the P0 slices.
-  { id: 'app/api/admin/agents/route.ts#GET', why: 'Slice 4 (2026-09-20): inline AdminAccessService copy. Behaviour already correct.' },
-  { id: 'app/api/admin/audit-trail/route.ts#GET', why: 'Slice 4 (2026-09-20): inline AdminAccessService copy. Behaviour already correct.' },
-  { id: 'app/api/admin/business-os/llm-usage/route.ts#GET', why: 'Slice 4 (2026-09-20): THE inline precedent (lines 49-64) that requireAdminRoute.ts was extracted from. Deleted in slice 4.' },
-  { id: 'app/api/admin/business-os/llm-usage/businesses/route.ts#GET', why: 'Slice 4 (2026-09-20): inline AdminAccessService copy. Behaviour already correct.' },
-  { id: 'app/api/admin/chat-usage/route.ts#GET', why: 'Slice 4 (2026-09-20): inline AdminAccessService copy. Behaviour already correct.' },
-  { id: 'app/api/admin/users/[id]/audit-logs/route.ts#GET', why: 'Slice 4 (2026-09-20): inline AdminAccessService copy. Behaviour already correct.' },
-  { id: 'app/api/admin/users/[id]/login-stats/route.ts#GET', why: 'Slice 4 (2026-09-20): inline AdminAccessService copy. Behaviour already correct.' },
+/** R1 has no permanent exceptions: every admin route handler should be gated. */
+const R1_PERMANENT: ReadonlyArray<Exemption> = [];
+
+/** R2 — `route.ts` files importing `AdminAccessService` directly. */
+const R2_PARKED: ReadonlyArray<Exemption> = [
+  { id: 'app/api/admin/agents/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/audit-trail/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/business-os/llm-usage/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/business-os/llm-usage/businesses/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/chat-usage/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/users/[id]/audit-logs/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
+  { id: 'app/api/admin/users/[id]/login-stats/route.ts', why: 'PARKED 2026-09-20 — inline copy, replaced by requireAdmin. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 4)' },
 ];
 
 /**
- * R2 — `route.ts` files importing `AdminAccessService` directly.
- *
- * SHRINKS TO ONE. The surviving entry is a genuine, permanent exception and is
- * the reason this rule is an allow-list rather than a ban.
+ * The one genuine forever-exception in the whole guard, and the model for what
+ * a PERMANENT entry must argue: why the canonical tool is the WRONG tool here,
+ * not merely that an exception is convenient.
  */
-const R2_ALLOW: ReadonlyArray<Exemption> = [
+const R2_PERMANENT: ReadonlyArray<Exemption> = [
   {
     id: 'app/api/v2/calibrate/batch/route.ts',
     why:
-      'PERMANENT (2026-09-20). Not a route gate — a CAPABILITY FLAG. Line 116 resolves ' +
-      'isAdmin to decide whether to read the agent with the service-role client (admins ' +
-      'may calibrate agents they do not own) or the RLS client (everyone else). There is ' +
-      'no 401/403 to return, so requireAdmin is the wrong tool. Tracked as OI-3: ' +
-      'admin-capability surfaces outside /api/admin are not unified by this programme, ' +
-      'but this rule makes any NEW one visible in review.',
+      'PERMANENT \u2014 not a route gate but a CAPABILITY FLAG. `calibrate/batch` resolves ' +
+      'isAdmin to choose the service-role client (admins may calibrate agents they do ' +
+      'not own) over the RLS client. There is no 401/403 to return, so requireAdmin is ' +
+      'the wrong tool. Tracked as OI-3: admin-capability surfaces outside /api/admin are ' +
+      'not unified by this programme, but R2 makes any NEW one visible in review.',
   },
-  // ── Slice 4 removes the seven below (2026-09-20) ─────────────────────────
-  { id: 'app/api/admin/agents/route.ts', why: 'Slice 4 (2026-09-20): inline copy, replaced by requireAdmin.' },
-  { id: 'app/api/admin/audit-trail/route.ts', why: 'Slice 4 (2026-09-20): inline copy, replaced by requireAdmin.' },
-  { id: 'app/api/admin/business-os/llm-usage/route.ts', why: 'Slice 4 (2026-09-20): inline copy, replaced by requireAdmin.' },
-  { id: 'app/api/admin/business-os/llm-usage/businesses/route.ts', why: 'Slice 4 (2026-09-20): inline copy, replaced by requireAdmin.' },
-  { id: 'app/api/admin/chat-usage/route.ts', why: 'Slice 4 (2026-09-20): inline copy, replaced by requireAdmin.' },
-  { id: 'app/api/admin/users/[id]/audit-logs/route.ts', why: 'Slice 4 (2026-09-20): inline copy, replaced by requireAdmin.' },
-  { id: 'app/api/admin/users/[id]/login-stats/route.ts', why: 'Slice 4 (2026-09-20): inline copy, replaced by requireAdmin.' },
 ];
 
-/** R3 — route handlers under `app/admin/**`. Zero today. Keep it zero. */
-const R3_ALLOW: ReadonlyArray<Exemption> = [
-  /*
-   * EMPTY, and that is the correct state.
-   *
-   * A `route.ts` under `app/admin/` would be an unguarded admin surface INSIDE
-   * the guarded tree, because route handlers are NOT wrapped by layouts. The
-   * page guard on `app/admin/layout.tsx` gives inheritance for free to every
-   * `page.tsx`; it gives a route handler nothing at all.
-   *
-   * This is the one page-guard escape that is closed by construction rather
-   * than argued about, and it stays closed only while this list is empty.
-   */
-];
+/**
+ * R3 — route handlers under `app/admin/**`.
+ *
+ * **Genuinely zero, and that is a real result rather than an untested rule.** A
+ * `route.ts` here would be an unguarded admin surface INSIDE the page tree,
+ * because route handlers are NOT wrapped by layouts. It stays closed only while
+ * both lists are empty.
+ */
+const R3_PARKED: ReadonlyArray<Exemption> = [];
+const R3_PERMANENT: ReadonlyArray<Exemption> = [];
 
 /**
  * R4 — access decisions keyed on a `role` value.
  *
- * SHRINKS TO EMPTY IN SLICE 7. A repo-wide sweep for an access decision keyed
- * on `profiles.role` returns ZERO hits (verified twice, 2026-09-20), so this
- * rule is free to enforce and cannot be argued down as noisy. The two entries
- * below do NOT read `profiles` — they read a `role` field inside the
- * `system_settings_config.admin_users` JSON blob, which grants nothing. Both
- * files are deleted by slice 7.
+ * A repo-wide sweep for an access decision keyed on `profiles.role` returns
+ * ZERO hits (verified twice, 2026-09-20), so this rule is free to enforce and
+ * cannot be argued down as noisy. Neither entry below reads `profiles` — both
+ * read a `role` field inside the `system_settings_config.admin_users` JSON
+ * blob, which grants nothing.
  *
  * This is the rule that stops F5 (profile self-promotion) being reintroduced
- * through the other door while the separate P0 item is scheduled.
+ * through the other door.
  */
-const R4_ALLOW: ReadonlyArray<Exemption> = [
-  {
-    id: 'app/admin/settings/page.tsx',
-    why:
-      'Slice 7 deletes this file (2026-09-20). 4 occurrences (lines 322, 447, 457, 461) ' +
-      "compare a `role` from `system_settings_config.admin_users`, NOT `profiles.role`. " +
-      'The store grants no access; the screen is retired under BQ-2 option B.',
-  },
-  {
-    id: 'app/api/admin/settings/admin-users/route.ts',
-    why:
-      'Slice 7 deletes this file (2026-09-20). 2 occurrences (lines 210, 211); line 211 is ' +
-      "inside `.filter(a => a.role === 'super_admin')`. Same store, same non-grant. " +
-      '(Lines were 196/197 before slice 1 inserted the gate — D-Q4.)',
-  },
+const R4_PARKED: ReadonlyArray<Exemption> = [
+  { id: 'app/admin/settings/page.tsx', why: 'PARKED 2026-09-20 — 4 occurrences (lines 322, 447, 457, 461) compare a `role` from `system_settings_config.admin_users`, NOT `profiles.role`. The store grants no access; the screen is NOT retired \u2014 slice 7 is parked, so it still exists and still writes to a store that grants nothing. — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 7)' },
+  { id: 'app/api/admin/settings/admin-users/route.ts', why: 'PARKED 2026-09-20 — 2 occurrences (lines 210, 211); line 211 is inside `.filter(a => a.role === \'super_admin\')`. Same store, same non-grant. (Lines were 196/197 before slice 1 inserted the gate — D-Q4.) — not in flight; tracked in docs/workplans/admin-authz-unification.md § Parked slices (was slice 7)' },
 ];
+const R4_PERMANENT: ReadonlyArray<Exemption> = [];
 
-/** R5 — RLS policies keyed on `profiles.role`. */
-const R5_ALLOW: ReadonlyArray<Exemption> = [
-  /*
-   * EMPTY, and that is the correct state.
-   *
-   * `20260920a_lock_system_settings_and_pricing_rls.sql` REPLACED the two
-   * policies that trusted `profiles.role`. Their text survives only as a
-   * commented rollback block at lines 305-320 — which is precisely why
-   * `stripSqlComments` is load-bearing and is unit-tested against that file.
-   * Without the stripper this rule would be red on day one against a migration
-   * that is correct.
-   */
-];
+/**
+ * R5 — RLS policies keyed on `profiles.role`.
+ *
+ * **Genuinely zero.** `20260920a_lock_system_settings_and_pricing_rls.sql`
+ * REPLACED the two policies that trusted `profiles.role`; their text survives
+ * only as a commented rollback block, which is why `stripSqlComments` is
+ * load-bearing and is unit-tested against that exact file.
+ */
+const R5_PARKED: ReadonlyArray<Exemption> = [];
+const R5_PERMANENT: ReadonlyArray<Exemption> = [];
 
 /** R6 — the `/admin` page-tree guard. */
-const R6_ALLOW: ReadonlyArray<Exemption> = [
+const R6_PARKED: ReadonlyArray<Exemption> = [
   {
     id: 'app/admin/layout.tsx',
     why:
-      "Slice 5 fixes this (2026-09-20). Today it is a 'use client' layout with no guard, " +
-      'so all 21 admin pages render for anyone who types the URL. Slice 5 moves the chrome ' +
-      'verbatim to app/admin/components/AdminChrome.tsx and makes the layout an async ' +
-      'Server Component awaiting requireAdminPage(). Until then the API gate (slices 1-2) ' +
-      'is the only thing protecting the data behind those pages — which is why it goes first.',
+      'PARKED 2026-09-20 \u2014 all 21 admin pages have NO server-side guard at all and ' +
+      "render for anyone who types the URL; the layout is a 'use client' component. This " +
+      'is not in flight: slice 5 (async Server Component + AdminChrome) is parked. The API ' +
+      'gate is the only thing protecting the data behind those pages \u2014 and 27 handlers ' +
+      'are still open. Tracked in docs/workplans/admin-authz-unification.md \u00a7 Parked slices.',
   },
 ];
+const R6_PERMANENT: ReadonlyArray<Exemption> = [];
+
+// ── Hard caps ─────────────────────────────────────────────────────────────
+//
+// Derived from the tree on 2026-09-20 and asserted below. See THE RATCHET RULE
+// above: removing an exemption MUST lower the matching cap in the same commit.
+const CAPS = {
+  R1: { parked: 34, permanent: 0 },
+  R2: { parked: 7, permanent: 1 },
+  R3: { parked: 0, permanent: 0 },
+  R4: { parked: 2, permanent: 0 },
+  R5: { parked: 0, permanent: 0 },
+  R6: { parked: 1, permanent: 0 },
+} as const;
+
+const RULE_LISTS = {
+  R1: { parked: R1_PARKED, permanent: R1_PERMANENT },
+  R2: { parked: R2_PARKED, permanent: R2_PERMANENT },
+  R3: { parked: R3_PARKED, permanent: R3_PERMANENT },
+  R4: { parked: R4_PARKED, permanent: R4_PERMANENT },
+  R5: { parked: R5_PARKED, permanent: R5_PERMANENT },
+  R6: { parked: R6_PARKED, permanent: R6_PERMANENT },
+} as const;
+
+const R1_ALLOW = [...R1_PARKED, ...R1_PERMANENT];
+const R2_ALLOW = [...R2_PARKED, ...R2_PERMANENT];
+const R3_ALLOW = [...R3_PARKED, ...R3_PERMANENT];
+const R4_ALLOW = [...R4_PARKED, ...R4_PERMANENT];
+const R5_ALLOW = [...R5_PARKED, ...R5_PERMANENT];
+const R6_ALLOW = [...R6_PARKED, ...R6_PERMANENT];
 
 const ALL_EXEMPTIONS = [
   ...R1_ALLOW,
@@ -620,6 +693,46 @@ export function scanHandlers(code: string): HandlerScan {
     unparseable.push('`export *` — this guard cannot know which handlers it re-exports');
   }
 
+  /*
+   * D-Q3 (QA, 2026-09-20): catch a handler DECLARED in a shape none of the three
+   * strict forms matched.
+   *
+   * The zero-handler safety net below only fires when a file yields NOTHING. A
+   * file with one parseable handler and one unrecognised one has
+   * `handlers.length > 0`, so the net never fires and the unrecognised handler
+   * is invisible to R1. QA's examples:
+   *
+   *   export async function GET<T>(req) { … }   // generic — no form matches
+   *   export let GET; GET = async () => { … };  // declared, assigned later
+   *
+   * Generics on a route handler are contrived; the CLASS is not. It is exactly
+   * "we only recognise the shapes people currently write".
+   *
+   * So: re-scan with DELIBERATELY LOOSE patterns that do not require the `(` or
+   * the `=`, and flag any handler name they find that the strict forms did not
+   * attribute. Loose-but-flagging is the safe direction — the cost of a false
+   * positive here is one allow-list line with a reason.
+   */
+  const attributed = new Set(handlers.map((h) => h.name));
+  const alreadyFlagged = (name: string) => unparseable.some((u) => u.startsWith(`${name}:`));
+
+  const looseRes = [
+    new RegExp(`export\\s+(?:async\\s+)?function\\s+(${HANDLER_ALTERNATION})\\b`, 'g'),
+    new RegExp(`export\\s+(?:const|let|var)\\s+(${HANDLER_ALTERNATION})\\b`, 'g'),
+  ];
+  for (const re of looseRes) {
+    for (let m = re.exec(code); m; m = re.exec(code)) {
+      const name = m[1];
+      if (attributed.has(name) || alreadyFlagged(name)) continue;
+      unparseable.push(
+        `${name}: exported in a shape this guard does not recognise (a generic, a ` +
+          'deferred assignment, or something else). It cannot be proven gated, so it ' +
+          'is not assumed to be. Write it as `export async function NAME(req) { … }`.'
+      );
+      attributed.add(name); // report each name once
+    }
+  }
+
   return { handlers, unparseable };
 }
 
@@ -641,7 +754,21 @@ interface ScannedTs {
   isClient: boolean;
 }
 
-const TS_FILES = TS_SCAN_ROOTS.flatMap((r) => walk(path.join(REPO_ROOT, r), /\.(ts|tsx)$/));
+/*
+ * D-4 (SA, 2026-09-20): scan every extension Next.js accepts, not just the ones
+ * people currently write.
+ *
+ * `ROUTE_FILES` used to match only `/route.ts`, so a handler in `route.tsx`
+ * escaped R1, R2 and R3 entirely, and a `route.js` was never even read. None
+ * exists in the repo today — but "we only scan the extension people currently
+ * use" is the same shape as "we only scan the paths we already know about",
+ * which this guard's own header rejects. Widening is a no-op against the
+ * current tree and closes the hole for the next file.
+ */
+const CODE_EXT = /\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/;
+const ROUTE_FILE_RE = /\/route\.(ts|tsx|js|jsx|mts|cts|mjs|cjs)$/;
+
+const TS_FILES = TS_SCAN_ROOTS.flatMap((r) => walk(path.join(REPO_ROOT, r), CODE_EXT));
 
 const SCANNED: ScannedTs[] = TS_FILES.filter((f) => rel(f) !== SELF).map((f) => {
   const raw = fs.readFileSync(f, 'utf-8');
@@ -652,7 +779,7 @@ const SCANNED: ScannedTs[] = TS_FILES.filter((f) => rel(f) !== SELF).map((f) => 
   };
 });
 
-const ROUTE_FILES = SCANNED.filter((s) => s.file.endsWith('/route.ts'));
+const ROUTE_FILES = SCANNED.filter((s) => ROUTE_FILE_RE.test(s.file));
 const ADMIN_API_ROUTES = ROUTE_FILES.filter((s) => s.file.startsWith('app/api/admin/'));
 
 const SQL_FILES = SQL_SCAN_ROOTS.flatMap((r) => walk(path.join(REPO_ROOT, r), /\.sql$/)).map((f) => ({
@@ -688,6 +815,18 @@ describe('repo-wide guard: the admin authorization surface', () => {
       }
     });
 
+    it('D-4: scans every route-file extension Next.js accepts', () => {
+      // Latent today (the repo has only `route.ts`), so assert the MATCHER
+      // rather than the tree — otherwise this passes for the wrong reason.
+      for (const ext of ['ts', 'tsx', 'js', 'jsx', 'mts', 'cts']) {
+        expect(ROUTE_FILE_RE.test(`app/api/admin/thing/route.${ext}`)).toBe(true);
+        expect(CODE_EXT.test(`app/api/admin/thing/route.${ext}`)).toBe(true);
+      }
+      // …and does not match things that merely end in the word "route".
+      expect(ROUTE_FILE_RE.test('app/api/admin/thing/my-route.ts')).toBe(false);
+      expect(ROUTE_FILE_RE.test('app/api/admin/route.md')).toBe(false);
+    });
+
     it('found the admin API routes it exists to guard', () => {
       // The census measured 44 on 2026-09-20. A floor, not an equality: new
       // admin routes are expected, and each must be GATED, not counted.
@@ -711,6 +850,128 @@ describe('repo-wide guard: the admin authorization surface', () => {
       // FR-11: an exception is never the default, and never silent.
       const unreasoned = ALL_EXEMPTIONS.filter((e) => !e.why || e.why.trim().length < 20);
       expect(unreasoned.map((e) => e.id)).toEqual([]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('the ratchet — these lists may only shrink', () => {
+    /*
+     * This is what the guard delivers now that slices 1L/2/3/4/5/7 are parked.
+     * The old goal — "the allow-list is empty" — is unreachable, and claiming it
+     * would be false. What the caps make true instead:
+     *
+     *   THE REPO CAN NO LONGER GET DIRTIER WITHOUT SOMEONE SIGNING FOR IT.
+     *
+     * A new ungated admin route fails the build. So does a 35th R1 exemption.
+     * Raising a cap is possible — it is simply no longer possible to do it by
+     * accident, or without a reviewer seeing the number change.
+     */
+    /*
+     * D6-1 (SA, 2026-09-20): the hint must sit on the surface that FAILS.
+     *
+     * It used to ride on `expect({…}).toMatchObject({ count: expect.any(Number) })`
+     * — an assertion that can never fail, so Jest never printed it. The bare
+     * `toBeLessThanOrEqual` underneath then failed with nothing but
+     * `Expected: <= 34 / Received: 35`.
+     *
+     * That asymmetry is the whole problem. The GATING case also trips the
+     * equality test below, whose name and numbers lead you to the right action.
+     * The EXEMPTION-ADDING case trips only the cap, and with no hint the
+     * expedient response is to bump the cap to 35 and move on — which is
+     * precisely the erosion these caps exist to prevent.
+     *
+     * So: emit a violation OBJECT carrying the hint and compare it to `[]`, the
+     * same idiom the rule assertions use. Jest prints the received array in
+     * full, hint included.
+     */
+    const RATCHET_HINT =
+      'THE RATCHET RULE — this list may only SHRINK. If you GATED something: delete ' +
+      'its entry AND lower this cap by the same number, in the same commit. If you are ' +
+      'adding a GENUINELY NEW exemption: raise the cap in the same commit and justify ' +
+      'it in the PR body. Do not raise the cap to make this test pass — that is the ' +
+      'one move this check exists to make visible.';
+
+    for (const [rule, caps] of Object.entries(CAPS)) {
+      const lists = RULE_LISTS[rule as keyof typeof RULE_LISTS];
+
+      it(`${rule}: no more than ${caps.parked} PARKED exemptions`, () => {
+        const overCap =
+          lists.parked.length > caps.parked
+            ? [{ rule, parked: lists.parked.length, cap: caps.parked, ratchet: RATCHET_HINT }]
+            : [];
+
+        expect(overCap).toEqual([]);
+      });
+
+      it(`${rule}: no more than ${caps.permanent} PERMANENT exemption(s)`, () => {
+        // A PERMANENT entry must argue why the canonical tool is the WRONG tool,
+        // not merely that an exception is convenient. Adding one is a design
+        // decision and should be as hard as raising a cap.
+        const overCap =
+          lists.permanent.length > caps.permanent
+            ? [{ rule, permanent: lists.permanent.length, cap: caps.permanent, ratchet: RATCHET_HINT }]
+            : [];
+
+        expect(overCap).toEqual([]);
+      });
+    }
+
+    it('the caps match the lists exactly — a slack cap is as bad as no cap', () => {
+      // `<=` alone lets a cap drift above reality after something is gated,
+      // silently creating room nobody signed for. Equality is the ratchet.
+      //
+      // QA (2026-09-20): the ratchet hint belongs here too, not just on the
+      // over-cap test. This is the failure the GATING case hits — delete an
+      // entry, leave the cap at 34 — and it was previously the one path that
+      // printed bare numbers with no instruction. D6-1 fixed the
+      // exemption-adding direction; this closes the other one.
+      const drift = Object.entries(CAPS)
+        .map(([rule, caps]) => {
+          const l = RULE_LISTS[rule as keyof typeof RULE_LISTS];
+          return { rule, parked: l.parked.length, capParked: caps.parked, permanent: l.permanent.length, capPermanent: caps.permanent, ratchet: RATCHET_HINT };
+        })
+        .filter((r) => r.parked !== r.capParked || r.permanent !== r.capPermanent);
+
+      expect(drift).toEqual([]);
+    });
+
+    it('R3 and R5 are genuinely zero — a real result, not an untested rule', () => {
+      // Worth asserting separately: these two are the only rules with nothing
+      // exempted at all, so "green" for them means the repo is actually clean,
+      // not that everything was allow-listed.
+      expect(R3_PARKED.length + R3_PERMANENT.length).toBe(0);
+      expect(R5_PARKED.length + R5_PERMANENT.length).toBe(0);
+    });
+
+    it('no id appears in both the PARKED and PERMANENT list of a rule', () => {
+      // A duplicate would make a parked hole look architectural.
+      for (const [rule, lists] of Object.entries(RULE_LISTS)) {
+        const parked = new Set(lists.parked.map((e) => e.id));
+        const both = lists.permanent.filter((e) => parked.has(e.id)).map((e) => e.id);
+        expect({ rule, both }).toEqual({ rule, both: [] });
+      }
+    });
+
+    it('every PARKED reason says it is parked and where it is tracked', () => {
+      // These previously read "Slice 2 (2026-09-20): lists every platform user",
+      // which reads as IN FLIGHT. It is not in flight. The overclaim risk starts
+      // inside the code, so the wording is asserted rather than trusted.
+      const bad = Object.values(RULE_LISTS)
+        .flatMap((l) => l.parked)
+        .filter((e) => !/^PARKED \d{4}-\d{2}-\d{2} —/.test(e.why) || !/tracked in/i.test(e.why))
+        .map((e) => e.id);
+
+      expect(bad).toEqual([]);
+    });
+
+    it('every PERMANENT reason is labelled PERMANENT', () => {
+      const bad = Object.values(RULE_LISTS)
+        .flatMap((l) => l.permanent)
+        .filter((e) => !/^PERMANENT\b/.test(e.why))
+        .map((e) => e.id);
+
+      expect(bad).toEqual([]);
     });
   });
 
@@ -1008,6 +1269,36 @@ describe('repo-wide guard: the admin authorization surface', () => {
       expect(r.handlers[0].body).not.toContain('data: string[]');
     });
 
+    it('D-Q3: flags a generic handler that the strict forms cannot match', () => {
+      // QA's fixture. The file has one parseable GATED handler, so the
+      // zero-handler net never fired and the generic GET was invisible to R1.
+      const src = [
+        'export async function POST(request: NextRequest) {',
+        '  const gate = await requireAdmin(logger);',
+        '  return gate;',
+        '}',
+        'export async function GET<T>(request: NextRequest) {',
+        '  return NextResponse.json({ leaked: true });',
+        '}',
+      ].join('\n');
+
+      const r = scanHandlers(src);
+      expect(r.handlers.map((h) => h.name)).toEqual(['POST']);
+      expect(r.unparseable.join(' ')).toContain('GET');
+    });
+
+    it('D-Q3: flags `export let GET;` assigned later', () => {
+      const r = scanHandlers('export let GET;\nGET = async () => { return 1; };');
+      expect(r.handlers).toHaveLength(0);
+      expect(r.unparseable.join(' ')).toContain('GET');
+    });
+
+    it('D-Q3: does not double-report a handler the strict forms already flagged', () => {
+      const r = scanHandlers('export const GET = withAuth(async (req) => { return 1; });');
+      const mentions = r.unparseable.filter((u) => u.startsWith('GET:'));
+      expect(mentions).toHaveLength(1);
+    });
+
     it('D-1/D-2: every real admin route still parses with no unparseable exports', () => {
       // The on-disk assertion that stops these fixes rotting. If a future edit
       // to the parser starts guessing again, or stops recognising a real shape,
@@ -1253,7 +1544,8 @@ describe('repo-wide guard: the admin authorization surface', () => {
     it('app/admin/layout.tsx is a Server Component that calls the page guard', () => {
       const layout = 'app/admin/layout.tsx';
       if (R6_ALLOWED.has(layout)) {
-        // Allow-listed until slice 5. Assert the file still exists so the
+        // Allow-listed: slice 5 is PARKED, so this is not "until" anything.
+        // Assert the file still exists so the
         // exemption cannot outlive its subject.
         expect(fs.existsSync(path.join(REPO_ROOT, layout))).toBe(true);
         return;

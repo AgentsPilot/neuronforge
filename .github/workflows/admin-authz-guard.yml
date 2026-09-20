@@ -36,15 +36,58 @@
 # still runs and still reports on every PR, so it remains requireable.
 #
 # ── ⚠️ THIS IS NOT A BUILD GATE UNTIL IT IS A REQUIRED STATUS CHECK ────────
-# A red workflow blocks nothing by itself. Until the repository owner enables
-# this job under Settings → Branches → branch protection for `main` →
-# "Require status checks to pass before merging", an unguarded admin route can
-# still be merged with a red tick next to it.
+# A red workflow blocks nothing by itself. Until the repository owner performs
+# the manual step below, an unguarded admin route can still be merged with a
+# red tick next to it. Nobody but the repo owner can do this — it is a GitHub
+# setting, not a file in any diff.
 #
-# A required check is matched BY JOB NAME. Renaming the job below silently
-# un-gates the repository — the protection rule keeps waiting for a check that
-# no longer reports. If you rename it, update the branch protection rule in the
-# same change.
+#   1. Open a PR (or push) so this workflow RUNS AT LEAST ONCE. GitHub only
+#      offers check names it has actually seen.
+#   2. Settings → Branches → branch protection rule for `main`
+#      → "Require status checks to pass before merging"
+#   3. Search for and select:   Admin authz surface guard
+#
+#      ⚠️ That is the JOB name (see `jobs.admin-authz-guard.name` below), NOT
+#      the workflow name "Admin Authz Guard" at the top of this file. A required
+#      status check matches the JOB. Searching for the workflow name finds
+#      nothing, which is exactly the wrong moment to conclude "it isn't there".
+#
+#   4. PROVE IT: open a throwaway PR adding an ungated admin route and confirm
+#      the PR is BLOCKED FROM MERGING — not merely showing a red tick. Those are
+#      different states, and only the first one is a gate. Close the PR after.
+#
+# Renaming the job below silently un-gates the repository — the protection rule
+# keeps waiting for a check that no longer reports. If you rename it, update the
+# branch protection rule in the same change.
+#
+# ── ⚠️ RED ON A PR THAT HAS NOTHING TO DO WITH ADMIN AUTHZ? ────────────────
+# You have probably not broken anything. Read this before reaching for a skip.
+#
+# The exemption caps in the guard are asserted by EQUALITY, not "<=", so a cap
+# cannot quietly drift above reality after a route is gated and leave room
+# nobody signed for. The consequence — by design, but genuinely surprising the
+# first time you meet it — is that this check is sensitive to OTHER BRANCHES:
+#
+#   someone gates an admin route and deletes its exemption but does not lower
+#   the cap  ->  this job goes red on `main` for EVERYONE, including PRs that
+#                never touched admin code.
+#
+# The fix is never to raise the cap back up, and never to skip the job:
+#
+#   * an exemption was REMOVED (a route got gated) -> lower that list's cap by
+#     the same number, in the same commit. That is the ratchet rule.
+#   * an exemption was ADDED -> the cap must be raised deliberately and
+#     justified in the PR body, which is exactly the moment this check exists
+#     to create.
+#
+# The failing test names the rule, prints both numbers, and carries the ratchet
+# instruction in its output.
+#
+# ── What a green run does and does not mean ────────────────────────────────
+# GREEN means: no NEW ungated admin surface was added, and no exemption was
+# added without someone raising a cap and signing for it in the PR body.
+# GREEN does NOT mean the admin surface is secure. As of 2026-09-20, 27 of 72
+# admin handlers are knowingly open and exempted — see the guard's header.
 #
 # See docs/workplans/admin-authz-unification.md (slices 1 and 6).
 

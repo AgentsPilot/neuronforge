@@ -323,9 +323,38 @@ Benign today, because admin data access runs through `supabaseServer`. It is exa
 
 ---
 
+## Parked slices — 2026-09-20
+
+> ## ⚠️ READ THIS BEFORE ANY SLICE SECTION BELOW
+>
+> **On 2026-09-20 the user parked slices 1L, 2, 3, 4, 5 and 7.** Only **0, 1, 6 and 8** were delivered. Everything below describing a parked slice is a **plan that was not executed** — it is retained as the decision record, not as work in flight. Do not read it next quarter as a roadmap in progress (CLAUDE.md single-source-of-truth).
+
+| Slice | State | What that leaves open |
+|---|---|---|
+| **0** Pre-flight | ✅ **Done** | P-1 / P-3 remain with the deployment-access holder |
+| **1** Stop anonymous writes + CI guard | ✅ **Done** — PR #67 | — |
+| **1L** Logging conformance | 🔴 **PARKED 2026-09-20** | 202 `console.*` calls across 18 slice-1 files, incl. `reward-config` logging the request URL every GET |
+| **2** Stop cross-tenant reads | 🔴 **PARKED 2026-09-20** | **~20 handlers** anonymously readable: every platform user, per-user LLM spend, platform metrics, message log |
+| **3** Customer-visible config reads | 🔴 **PARKED 2026-09-20** | The **full reward ruleset including eligibility thresholds and anti-abuse caps is anonymously readable** |
+| **4** One gate, one implementation | 🔴 **PARKED 2026-09-20** | 7 handlers still hand-roll the admin check. Correct, duplicated |
+| **5** Server guard for `/admin` pages | 🔴 **PARKED 2026-09-20** | **All 21 admin pages have no server-side guard at all** |
+| **6** CI gate | ✅ **Done** — reframed, see below | Required-status-check step is the repo owner's |
+| **7** Retire admin management surface | 🔴 **PARKED 2026-09-20** | The Settings screen still exists: **gated but non-functional**, writing to a store that grants nothing |
+| **8** Correct the documentation | ✅ **Done** | — |
+
+**Slice 6 no longer means what it says below.** Its original deliverable — "the allow-list is empty" — is unreachable while six slices are parked, and claiming it would be false. What it delivers instead:
+
+> ### "The repo can no longer get dirtier without someone signing for it."
+
+A new ungated admin route fails the build; a 35th R1 exemption fails the build. Neither can happen by accident. It does **not** claim the admin surface is secure — **27 of 72 handlers are knowingly open**.
+
+---
+
 ## Slice Index
 
 ### The binding merge order (W-9)
+
+> ⚠️ **Superseded 2026-09-20.** Only 0 → 1 → 6 → 8 ran; the rest are parked (above). The ordering below is retained because it records *why* each dependency existed, and it applies again if the parked slices resume.
 
 > **0 → 1 → 1L → 2 → 2L → 3 → 4 → 5 → 7 → 6 → 8**
 
@@ -1466,6 +1495,12 @@ Per the user's standing instruction, anything outside the core task is documente
 | **OI-15** | **[W-6 / SA finding N-4] `GET /api/system-config` is unauthenticated, service-role-backed and takes arbitrary `keys`/`category`.** No `getUser()`, no gate, and `SystemConfigRepository` is built from `supabaseServer` (`lib/repositories/SystemConfigRepository.ts:5`) — so **RLS does not apply** and anyone on the internet can enumerate and read any `system_settings_config` row. RLS-level read-openness on that table is a deliberate documented decision; a service-role route with a caller-supplied key/category is broader than that decision covers. Predates this programme; closing it needs its own caller analysis. | **New item: "system-config read oracle"**. Out of scope here, but it is the second reason slice 3 routes around it. |
 | **OI-16** | **[finding E-1] `app/admin/messages/page.tsx:152` calls `/api/admin/messages/{id}/reply` — a route that does not exist.** The directory is `replay`, not `reply`. The admin "reply to message" button 404s today and did before this programme. A broken feature, not an authz defect.<br><br>⚠️ **WARNING — the obvious fix is dangerous (SA, 2026-09-20). Do not treat this as a typo.** Repointing the page at `replay` would wire an admin button to a handler whose job is **re-sending a platform communication to a real recipient** — a materially different action from replying. Whoever picks this up **must build or identify a real reply path**; renaming the URL would send mail to a customer from a button labelled "reply". | **New item: "admin message reply path"**. Stays tracked; does **not** come into this programme. |
 | **OI-18** | **`app/api/admin/audit-trail/route.ts:154` queries a table that does not exist.** `.from('users').select('id, email, full_name')` — PostgREST resolves this against `public`, **`public.users` does not exist** anywhere in `supabase/`, and it is the only `.from('users')` in the repository. The error is swallowed (`if (!usersError && users)`), so **every audit-log row returns `users: null`** and the admin audit screen has silently never shown a user's name. Correct target is `profiles` via `UserProfileRepository` for `full_name` (note `profiles` has **no email column**, so email must come from the auth admin API — the split `settings/admin-users` already performs). | **Folded into the repository-conformance follow-up** as a pre-existing display bug. Not an authz defect; this programme changes no behaviour. |
+| **OI-19** | **Error-response conformance — 26 of 44 admin route files leak a raw error `.message` to the client with no `NODE_ENV` guard.** Two shapes: `details: <err>.message` (**4 files**) and `message: error instanceof Error ? error.message : 'Unknown error'` on the catch path (**16 files**); only **4** files use the guarded form. Contradicts the Security Rule *"Never expose internal error details to client in production"*. Severity is reduced on gated routes (admin-only now) but not closed, and it is untouched on the 27 open handlers. | **New repo-wide hardening item.** Homeless now that 1L/2/3/4 are parked, so it must be tracked independently rather than waiting for a slice. Also recorded in the access doc's open items (#7). |
+| **OI-20** | **Guard precedence gap (D-5 + D-Q2), applying to all 38 gated handlers.** R1 proves `requireAdmin(` is **present** in a handler body — not that it runs **first**, nor that it runs at all (a gate inside a never-invoked closure satisfies it). QA demonstrated that moving a gate *below* `request.json()` leaves **all 5 oracle cases AND R1 green**. **QA's refinement, which must not be lost:** closing this needs the **oracle's instrumentation extended to cover the body parse** — `mockTablesTouched` records DB/RPC/auth-API calls, not `request.json()` — otherwise a precedence check is only half a check. Every route's own comment (*"Nothing above this line may touch a request body"*) is therefore true today but **enforced by no committed test**. | **Tracked independently.** Not folded into slice 6: a wrong precedence rule on a *required* status check is the single thing most likely to get the check switched off. 📌 **SA condition (2026-09-20): deferral accepted on the basis that OI-20 is the FIRST thing built when the parked slices resume** — the guard's authority grows once it is required, and precedence is the one place where green does not mean what a reader assumes. Also in the access doc § Known gaps in the guard itself (#8). |
+| **OI-22** | **The ratchet has no stale-exemption detection — it only bites if the author remembers to delete the entry.** QA probed it: gate a route and **leave** its R1 entry in place with the cap unchanged → fully green, 74/74. So the caps stop the lists getting *longer*, but nothing forces them to get *shorter* when a hole is actually closed. Consequence: the published **27 of 72** can drift — **conservatively** (the docs would understate how much is gated), which is the safe direction, but it makes the figures "stronger than a snapshot, weaker than an invariant". **This is the advisory step a ratchet is supposed to remove.** | **New guard task: assert every R1 entry's handler is still ungated** — i.e. an exemption whose subject is now gated fails the build, naming the entry to delete and the cap to lower. Natural companion to OI-20. |
+| **OI-23** | **`.claude/skills/bos-llm-call-standards/SKILL.md:46` now teaches something the guard rejects.** Two problems: (a) it cross-references `new-api-route/SKILL.md:118` for `app_metadata.role`, and that line no longer says it — the reference is stale; (b) it prescribes a **direct `AdminAccessService` call**, which is **exactly what guard rule R2 fails the build on inside a `route.ts`**. An agent following that skill writes code the new rule rejects. | **Fix the skill** to point at `requireAdmin` for route-level gating (a direct `AdminAccessService` call remains correct for a *capability flag*, as in `calibrate/batch`). Outside this branch's 6 files, so logged rather than fixed. |
+| **OI-24** | **`CLAUDE.md:228` (Security Rules table) and the new doc row at `:773` give different route-level instructions.** `:228` says "Admin authz via `AdminAccessService` — never `profiles.role`", which is true as a **source-of-truth** statement but is no longer the **route-level** instruction — that is `requireAdmin`. Minor, but it is the same "two ways to do one thing" shape this programme exists to remove, now in the rules table itself. | Reword `:228` to name `requireAdmin` for routes and `AdminAccessService` as the underlying source of truth. Untouched file region; logged. |
+| **OI-21** | **`app/admin/learning-system/page.tsx:233` still uses `console.error`** — the rule-3 cleanup around the `user-emails` feature is incomplete. | Housekeeping; access doc (#10). |
 | **OI-17** | **[findings E-2 / E-3] Five anonymous reads with no in-repo caller** — `token-usage`, `token-usage/stats`, `backfill-embeddings` (GET), `memory-consolidation` (GET), and `messages/[id]/replay` (which can re-send platform communications). Two of the five carry "No in-repo caller (OI-17)" inside their guard allow-list reason, so the observation travels with the code.<br><br>⚠️ **WARNING — this must NOT become a deletion (SA, 2026-09-20).** Two reasons. First, deleting a route is a **behaviour change**, and a security sweep is the wrong vehicle for one — the same argument that made slice 7 a separate, user-decided slice. Second, **"no in-repo caller" is exactly the claim BQ-5 exists to qualify**: an ops script or uptime monitor outside the repository is structurally invisible to a repo sweep, and `dashboard` / `execution-stats` / `token-usage` are *precisely* the shape of thing something polls. **Gate them in slice 2 as planned; revisit deletion only once BQ-5 is answered.** | **New item: "uncalled admin routes"**, blocked on the BQ-5 answer. |
 
 ---
@@ -1832,6 +1867,129 @@ D-1 must be fixed and its regression test added before this merges — it is the
 
 ---
 
+## SA Code Review — Slice 6 + 8
+
+**Reviewed by SA — 2026-09-20**
+**Status:** ✅ **APPROVED** — three Low/Medium comments, none blocking, all in one test file.
+**Scope:** 6 files. No application code changed (verified).
+
+> **Review-base note.** `git diff origin/main` is misleading on this branch: `origin/main` moved to `9d95a063` (PR #70, the auth-callback fix) after the fork at `7959b0dd`, so that diff shows `app/auth/callback/page.tsx` as a **phantom reverse-diff of someone else's merged work**. The real change set is `git diff HEAD` — 6 files, 670 insertions. Dev's "no application route changed" claim is **true**; anyone re-checking it with the same command will see the same phantom. **Rebase before merge** — and see the note under the equality ruling about why re-running the guard after rebasing matters here specifically.
+
+### Claim verification — all confirmed
+
+| # | Claim | SA verification |
+|---|---|---|
+| 1 | Census 72 = 38 + 7 + 27; R1 parked 34 = 27 + 7 | ✅ **Re-derived with my own parser: `TOTAL 72 = canonical 38 + inline 7 + open 27`, and `27 + 7 = 34`.** The identity is right and worth stating why: the 7 inline copies are *correct* but do not call `requireAdmin`, so R1 sees them exactly as it sees an ungated handler. R1's cap is therefore **not** "how many holes there are" — it is "how many handlers are not on the canonical gate". Two different facts that happen to share one number; the access doc keeps them separate, which is right. |
+| 2 | Caps R1 34/0, R2 7/1, R3 0/0, R4 2/0, R5 0/0, R6 1/0 | ✅ Counted directly from the lists. Matches my ruling exactly. |
+| 3 | Six breakages named file + remedy; breakage 6 failed 2 tests | ✅ **Cap spot-checked empirically** — I ran the exact assertion pair (35 vs 34) standalone: the `<=` test fails, and the equality test would also fail (35 ≠ 34). Two failures is the correct count and it is a *feature* — see the ruling. |
+| 4 | Guard 74/74, oracle 158/158, admin suites 364/364 | ✅ Ran guard (**74/74**) and `npx jest app/api/admin lib/admin` (**364/364, 12 suites**). |
+| 5 | No application route file changed | ✅ `git status` shows 6 files: the guard test, the workflow, the skill, `CLAUDE.md`, the access doc, this workplan. |
+
+**The 72-row handler table is genuinely verified, not hand-written.** I extracted it and set-compared it against the tree: **72 rows, numbered contiguously 1–72, `in tree not in doc: []`, `in doc not in tree: []`**, classifying as 27 OPEN / 7 inline / 38 gated. It is what I said it would be — the most valuable artefact in the programme under this plan — and it earns that by being checkable.
+
+---
+
+### Ruling: equality vs `<=` — **Dev is right, and the implementation is better than what I specified**
+
+First, a correction to the framing: **Dev did not replace `<=` with equality. Dev kept both.** Per-rule `toBeLessThanOrEqual` tests (`:885`, `:892`) plus one cross-rule equality test (`:896`). That is why breakage 6 fails *two* tests, and it is strictly better than either alone:
+
+| Design | Failure it misses |
+|---|---|
+| `<=` only (what I specified) | A cap left slack after something is gated. **Dev's diagnosis is correct** — my ratchet rule said "MUST lower the cap", but advisory text depends on someone remembering, which is precisely the property a ratchet exists to remove. |
+| Equality only | Nothing — but both directions collapse into one undifferentiated failure. |
+| **Both (shipped)** | — and the two directions surface as **separately named tests**: *"no more than 34 PARKED exemptions"* (you added one) vs *"the caps match the lists exactly"* (your cap is slack). Diagnostic separation, for free. |
+
+**Is "a well-intentioned security fix arrives red" the right trade? Yes — and it is the point, for a reason beyond the guard itself.**
+
+1. **The cap is what keeps the documentation honest.** "27 of 72 are open" is now published in four places — `CLAUDE.md`, the access doc's table, the workflow header, this workplan. If gating a route did not *force* the cap down, every one of those figures would silently become wrong the first time someone fixed something. The equality cap stops a cap drifting above reality, so the published numbers cannot silently grow slack. **It does not make them a build-enforced invariant** — QA showed that gating a route and *leaving* its exemption in place is fully green (see OI-22), so the figures can still drift conservatively, understating how much is gated. Stronger than a snapshot; weaker than an invariant.
+2. **The failure is deterministic, local, and one number.** Same file, same commit, obvious resolution. Compare the failure mode it replaces: silent slack, discovered months later, if ever.
+3. **The asymmetry is correct.** Making a security *improvement* one line more expensive is cheap. Making a security *regression* silent is not.
+
+**One consequence nobody has stated, and it should go in the workflow header: equality caps make this check sensitive to other branches.** Any PR that gates an admin route, or adds one, turns this check red on `main` for everyone until the cap is adjusted — including PRs with nothing to do with admin authz. That is by design and it is the ratchet working, but the first person to hit it will not expect it. Two practical follow-ons: **re-run the guard after rebasing this branch**, and add a line to the workflow header saying that a cap adjustment may legitimately belong in an otherwise-unrelated PR.
+
+**The precondition is that the failure explains itself.** It nearly does — see D6-1.
+
+---
+
+### Defects
+
+> **D6-1 — MEDIUM — the ratchet hint never reaches a human.**
+> `lib/admin/__tests__/admin-authz-surface.guard.test.ts:878-885`.
+>
+> The hint string (*"This list may only SHRINK… lower this cap by the same number in the same commit"*) is carried in an object passed to `expect({…}).toMatchObject({ count: expect.any(Number) })` at `:883`. **That assertion can never fail** — `count` is always a number — so Jest prints nothing for it. The assertion that *does* fail is `:885`, and its message is only:
+> ```
+> expect(received).toBeLessThanOrEqual(expected)
+> Expected: <= 34
+> Received:    35
+> ```
+> **Verified empirically** — I ran the exact pair standalone; the hint text does not appear in the failure output, and the code frame (2 lines of context) does not reach it either.
+>
+> This matters on the axis the mechanism depends on. In the two scenarios:
+> - **Someone gates a route** (parked 33, cap 34): the `<=` test passes; the *equality* test fails, named *"the caps match the lists exactly — a slack cap is as bad as no cap"*, printing `{ rule: 'R1', parked: 33, capParked: 34 }`. A competent reader lowers the cap. **This case is fine** — the name plus the numbers lead to the right action.
+> - **Someone adds an exemption** (parked 35, cap 34): the `<=` test fails with the bare numeric message, **and the hint is absent**. The expedient response is to bump the cap to 35 without justifying it in the PR — which is exactly the erosion this whole mechanism exists to prevent.
+>
+> **Fix:** move the hint into the surface that actually fails — e.g. include it in the objects the equality test's `drift` array builds, or make `:885` a message-bearing assertion — and **delete `:883`, which is dead code** (CLAUDE.md § Code Quality). One edit, same file.
+
+> **D6-2 — LOW — stale in-flight phrasing survives inside three parked reasons.**
+> `:203` (*"Deleted by slice 7."*), `:213` (*"Gate ships in the same commit as the replacement projection."*), `:214` (*"kept here so slice 2 stays provably customer-safe."*).
+>
+> The **wrapper** is correct and is asserted by a test (`:926`, which requires the `PARKED <date> —` prefix and a `tracked in` reference) — that is exactly what I asked for and it holds. But these three inner clauses are future-tense about work that is parked, and `:213` in particular promises a commit that will not come. They read as a plan in progress two inches from the words "not in flight".
+>
+> Suggest past/conditional framing — *"would have been gated by the parked slice N"* — and note that no mirror or projection was ever built.
+
+> **D6-3 — LOW — the one green tick that is not yet earned.**
+> `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md:46` — under **"What is true"**: *"A **new** admin route cannot ship ungated | ✅ True once the CI check is required"*.
+>
+> A ✅ in a "what is true" table next to a conditional is the single most generous statement in an otherwise scrupulous document. Until the repo owner performs the manual step, it is **not** true. Change the marker to 🟡 / **"Not yet"**, and move the row when the step is confirmed. This is small, but it is the one place an adversarial reader gets purchase.
+
+> **D6-4 — TRIVIAL — typo.** `:219`, `'PARKED 2026-09-20 — tHE inline precedent'`. Evidence the reasons were bulk-rewritten; harmless.
+
+---
+
+### Judged specifically
+
+**PARKED/PERMANENT split and the restated reasons — the concern is answered.** My worry was that uniformity launders entry 35. The split does the structural work (a parked hole can no longer sit in the same array as an architectural exception, and `:918` asserts no id appears in both), and every parked reason now opens with the status word and closes with a tracking location. Critically, **the wording is asserted, not trusted** (`:926`, `:938`) — so it cannot drift back to the in-flight phrasing over time. `R1_PERMANENT` being explicitly `[]` with the comment *"R1 has no permanent exceptions: every admin route handler should be gated"* is the right touch: it states the standard even where nothing is exempted. D6-2 is the residue, not a failure of the design.
+
+**The required-status-check procedure is correct and unusually well done.** Verified against the file: the workflow is named `Admin Authz Guard` (`:63`) and the **job** is `Admin authz surface guard` (`:87`) — the procedure names the job, spells it out, and adds *"Searching for the workflow name finds nothing, which is exactly the wrong moment to conclude 'it isn't there'"*, which is the sentence that saves the user ten minutes. Run-once-first is stated. Step 4 requires the throwaway PR to prove **BLOCKED, not merely red**, and calls them different states. The *"What a green run does and does not mean"* block is the part I would have asked for if it were missing.
+
+**Slice 8's honesty — all eight corrections are present, and the docs do not overclaim.** I read them adversarially. Every one of the statements I flagged is corrected: 44-files → 72-handlers; "cannot recur" → new surfaces only; pages "protected" → **no server guard at all**; "one way" → exists and enforced for new code, 7 copies still in use; Settings "retired" → **non-functional and gated**, with *"Never describe this as retired"*; mirror drift → replaced with the live fact that the reward ruleset including abuse caps is anonymously readable; the file table → the verified 72-row handler table; and the parked slices carry a banner in this workplan marking them a plan that was **not executed**.
+
+The caveat is carried on **four independent surfaces** — `CLAUDE.md`'s row (⚠️ 27 of 72, *"check § Parked slices before assuming a route is protected"*), the access doc's *"It is not, yet"* plus a struck-through **"What is NOT true"** table, the workflow header, and this workplan's banner. A reader would have to work hard to conclude the admin surface is secured. **No overclaiming found, with the single exception of D6-3.**
+
+Special mention for **"Known gaps in the guard itself"** in the access doc. Documenting that R1 proves *presence, not precedence* — in the document a future engineer reads to decide whether to trust the guard — is the opposite of the instinct that produced the original F6 stale doc. Keep that section.
+
+**The skill correction is complete and cannot be read as offering a choice.** Both sites fixed: `:25` ("a role check" → *"use the `requireAdmin` gate — **never a role check**"*) and the `app_metadata?.role` instruction, replaced by a full **Admin-only routes** section carrying the verbatim snippet, three rules, and — the part that matters — an explicit ⚠️ *"This section replaced an instruction that was wrong… Do not reintroduce it."* Naming the superseded pattern is what stops someone re-deriving it. The checklist line at `:186` closes the loop. This was the real answer to *"how does the next one know?"*, and it is now right.
+
+**`CLAUDE.md` — extending the existing row was the right call, not a close one.** A second admin row would itself have been a second source of truth in the file whose whole purpose is to be the one. The extended row carries what a newcomer needs: the gate's name and path, the first-statement rule, the three never-dos (`profiles.role`, `app_metadata.role`, hand-rolled `AdminAccessService`), the SQL-side predicate and the deliberate two-mechanism design, the CI workflow path, and the ⚠️ 27-of-72 warning with a pointer to the parked slices. Enough to act on without opening another file, and it tells the reader when *not* to assume.
+
+---
+
+### OI-20 (precedence, D-5 + D-Q2) deferred — **accepted**
+
+Confirmed, and for the same reason I accepted parking R7: a rule that is only half right, on a **required** status check, is the single thing most likely to get the check switched off — and QA sharpened the argument correctly. Proving a gate runs *first* needs statement-level parsing; proving it runs *at all* needs reachability; and until the oracle instruments `request.json()` (today `mockTablesTouched` records DB/RPC/auth-API calls, not the body parse), a precedence rule is only half a check. Building half of it now would buy a false sense of coverage on the surface where a false sense of coverage is most expensive.
+
+The residual risk is bounded and known: all 38 gated handlers were verified correct by **three independent parsers** (Dev's, QA's, mine) and by the oracle. What is unproven is the *next* handler, which review covers in the meantime.
+
+**One condition:** OI-20 is the **first** thing built when the parked slices resume. The guard's authority grows the moment it becomes a required check, and precedence is the one place where green does not mean what a reader will assume it means. That is recorded in the access doc's "Known gaps" section, which is the right home.
+
+---
+
+### Code Review Comments
+
+| # | Location | Issue | Priority |
+|---|---|---|---|
+| 1 | `lib/admin/__tests__/admin-authz-surface.guard.test.ts:878-885` | **D6-1** — ratchet hint unreachable (carried on a vacuous `toMatchObject`); absent from the failure a cap-raiser sees. `:883` is dead code. | **Medium** |
+| 2 | same file `:203, :213, :214` | **D6-2** — future-tense in-flight phrasing inside three parked reasons. | Low |
+| 3 | `docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md:46` | **D6-3** — ✅ on a conditional in the "What is true" table. Not true until the manual step is done. | Low |
+| 4 | guard test `:219` | **D6-4** — `tHE` typo. | Trivial |
+| 5 | `.github/workflows/admin-authz-guard.yml` header | Add a line: an equality cap can legitimately require a cap adjustment in an otherwise-unrelated PR. | Low |
+
+### Approved for QA: **Yes.**
+
+None of the above blocks merge — the guard catches what it must, the caps are right, the census reconciles, and the documentation is honest. I would fold **D6-1** into this PR because it sits on the exact axis the mechanism depends on and it is a one-line move, but I will not hold the programme's last PR for a test's error string. **Rebase on `origin/main` and re-run the guard before merging** — with equality caps, the result is a function of the whole tree, not of this diff.
+
+---
+
 ## QA Testing Report
 
 **Slice 0 + 1 — see [QA Report — Slice 0 + 1](#qa-report--slice-0--1) at the end of this document (QA, 2026-09-20): PASS WITH ISSUES.** Application code clean; 3 new latent guard defects (D-Q1/D-Q2/D-Q3) + 2 documentation defects (D-Q4/D-Q5). Later slices append here.
@@ -1850,6 +2008,7 @@ Branch: `feature/admin-authz-unification` (created by RM off `origin/main` @ `0d
 
 | Date | Change | Details |
 |------|--------|---------|
+| 2026-09-20 | **Slices 6 + 8 delivered; 1L/2/3/4/5/7 PARKED** (Dev) | **Programme closed in a partially-unified state, and the docs now say so.** Census re-derived independently and matches SA exactly: **72 handlers = 38 canonical + 7 correct-but-inline + 27 knowingly open**; R1's 34 parked entries reconcile as **27 open + 7 inline**. **Slice 6 reframed** — its old deliverable ("allow-list empty") was unreachable and would have been a false claim; it now delivers *"the repo can no longer get dirtier without someone signing for it."* Allow-lists **split into PARKED and PERMANENT** arrays (mixing them is how a new exemption looks normal); all 34 R1 reasons **restated** from the in-flight-sounding `"Slice 2 (2026-09-20): …"` to `"PARKED 2026-09-20 — … — tracked in …"`, asserted by a test so the wording cannot drift back; **hard caps asserted** (R1 34/0, R2 7/1, R3 0/0, R4 2/0, R5 0/0, R6 1/0) with **equality**, not `<=`, so a cap cannot go slack after something is gated; **the ratchet rule** written into the docstring and enforced — *removing an exemption must lower that cap in the same commit* — citing PR #69 (R1 35 → 34) as the worked example. **R7 parked deliberately** with SA's reasoning recorded in the guard header. **D-4** (scan every route extension Next.js accepts) and **D-Q3** (flag a handler declared in a shape no strict form matches, even when the file has another parseable handler) folded in with tests; **D-5/D-Q2 left recorded, not half-done** — a wrong precedence rule on a *required* check is the thing most likely to get the check switched off, and QA's refinement stands: closing it needs the oracle instrumented for the **body parse**. **Six deliberate breakages** all fail with a named file + remedy and revert to green. **Slice 8**: six would-be-false claims corrected in the access doc (44-files→72-handlers, "cannot recur"→new surfaces only, pages "protected"→**no server guard at all**, "one way"→one way enforced but 7 copies in use, Settings "retired"→**non-functional and gated**, mirror drift→**the full reward ruleset including abuse caps is anonymously readable**); the planned 44-row file table became the **72-row handler table**, the right unit now the split is per-verb. **`.claude/skills/new-api-route/SKILL.md` corrected** — it prescribed `user.app_metadata?.role === 'admin'`, a third parallel admin signal, so the answer to *"how does the next one know?"* was *"it is told to do the wrong thing"*; replaced with the canonical gate + verbatim snippet + three rules + a checklist line. **CLAUDE.md**: existing admin row extended (not duplicated) in the `tenant-isolation-guard` voice, incl. the 27-of-72 warning. New homeless items recorded: **OI-19** error-response leak (**26 of 44** files), **OI-20** precedence gap, **OI-21** stray `console.error`. |
 | 2026-09-20 | **QA — slices 0 + 1** (QA) | **PASS WITH ISSUES.** Re-derived rather than trusted: an independently written parser confirms **43 handlers / 30 gated / 13 deferred GETs** across the 22 files with **zero** body-parse, query, `searchParams` or `new URL(` before `requireAdmin(`; the 44-file census reconciles to **72 handlers = 37 gated + 35 allow-listed**, set-equal in both directions, no stale or missing entry. Suites re-run: guard **51/51**, oracle **153/153** (**204** together), admin surface **336/336** across 12 suites — and the 10 pre-existing admin suites import **none** of the 22 modified files, so they could not have caught a regression either way. Repo-wide `npx jest` shows 129 pre-existing failures, all in V6/pilot/orchestration/website-builder/featureFlags, none importing a modified file. **Oracle proven able to fail:** injecting a pre-gate `.from()` read into `system-limits` turned all four denial cases red (4 failed / 149 passed), reverted byte-identical — while the **guard stayed 51/51 green**, which is D-5 demonstrated live. **Guard attacked with 13 hostile fixtures**; D-1/D-2/D-3 fixes all hold (HOC wrapper, braced return type, trailing-comment stripper), `export { GET } from`, `export *`, bare re-export, expression-bodied arrow and odd whitespace all land in `unparseable` or R1, a **new `HEAD`/`OPTIONS` handler is caught**, and R2–R5 each fired on a fresh probe. **Three new latent defects, all in the guard, all permissive-direction:** **D-Q1** R1 accepts a `requireAdmin(` occurring only inside a string literal; **D-Q2** R1 accepts a `requireAdmin(` mentioned in a never-invoked closure — **not closed by D-5's recorded fix**, so slice 6 must scope it in; **D-Q3** an unrecognised handler shape is silently skipped whenever the file also has one parseable handler, because the zero-handler net only fires when the file yields nothing. Plus **D-Q4** (the R4 allow-list reason cites `admin-users/route.ts:196,197`; this diff moved them to **210, 211**) and **D-Q5** (slice 6 tells the repo owner to select the `Admin Authz Guard` job — the check name is **`Admin authz surface guard`**). No application-code defect found; 19 deletions all accounted for, `settings/admin-users`' service-role bootstrap branch now unreachable by a non-admin with an admin's prior behaviour preserved (`requireAdmin` returns the same `{id,email}` the handler used); callers re-enumerated — **slice 1 breaks no in-repo caller**, the only customer-facing callers are `reward-config` **GET**s which slice 1 does not gate, and both dev scripts issue a bare GET that breaks at slice 2. Flagged for TL: the requirement's Pre-flight Record states **P-3/BQ-5 blocks slices 1–2 from MERGING** and it is still unanswered — a contract decision, not a defect. Worktree left at exactly 29 `git status` entries; every probe deleted. |
 | 2026-09-20 | **"How does the next one know?" — two missing mechanisms folded into existing slices** (Dev, from the user) | From the user's question *"how do we ensure that every next page or every next capability or function knows how to incorporate the same `requireAdmin` method?"* Four mechanisms audited: pages are **structural** (slice 5), admin-path routes are **mechanical** (R1 + slice 6's required status check), and **two were gaps**. **No new slices.** → **Slice 6 gains R7, the inverted rule**: every `route.ts` under `app/api/` *except* `app/api/admin/**` that makes an admin **access decision** must route it through `requireAdmin` — specified to the R1–R4 standard, failing closed on anything it cannot categorise, and explicitly **distinguishing an access decision from an admin-set query** (`listAdminEmails` is a recipient list, not authorization — a naive import-based rule would flag it and be argued down as noise). Stated plainly for SA: **R7 narrows the blind spot, it cannot close it** — a new capability touching an admin-only table without any known signal stays invisible, which is what mechanism 4 covers. → **Slice 8 gains the authoring-time fixes.** Finding: `.claude/skills/new-api-route/SKILL.md:118` does not merely omit `requireAdmin`, it **prescribes `user.app_metadata?.role === 'admin'`** — a third parallel admin signal violating FR-1/FR-2 (not a privilege-escalation hole, since `app_metadata` is service-role-only, but a second source of truth, which is what G1 forbids). So the current answer to "how does the next one know?" is *"it is told to do the wrong thing."* Slice 8 corrects `:118` and `:25`, adds the canonical snippet verbatim, and **extends the existing `ADMIN_IDENTIFICATION_AND_ACCESS.md` row in CLAUDE.md** rather than adding a competing one. **Corrections to the brief:** the rule is **R7, not R5** (R5/R6 are taken — renumbering would invalidate every shipped allow-list reason and failure message); and **`app/api/plugins/action-schema/route.ts` does NOT reference admin access** — its only mention is a comment recording that the route is *intentionally unauthenticated and metadata-only*, so it needs **no allow-list entry** and R7 starts with **one** entry, not two. Standalone `admin-authz` skill: **recommended, after slice 8, as a thin front door that points at the doc** — not built here. |
 | 2026-09-20 | **Admin routes repository conformance documented as a follow-up programme** (Dev, from the user) | User: *"once we finish reviewing this code and commit, all these admin files that have direct access to DB need to go through repositories. See if we can reuse an existing repository. Document for now and we come back to it."* Documented as a first-class tracked follow-up starting **after slice 1 is committed** — not a slice of this programme, no estimate, no code. Verified **38 of 44** route files do direct DB access; **25** construct their own service-role client at module scope; **14 tables already have an owning repository** (reuse map included); **6 table groups** would need a new one. The blocking open question is recorded prominently: these are **cross-user admin reads by design**, so they need methods that are *not* the `.eq('user_id', userId)` shape the repository layer exists to enforce — SA must decide how that is expressed safely before any conversion begins, and slice 3's projection sets the precedent. **Corrections to the supplied figures:** *five* files already use repositories (not one) — four of them with **zero** direct access, including the three `system-config*` routes, which are a working precedent of gate + repository together; `agents/route.ts`'s three hits are two imports plus an **Auth Admin API** call, not table access; and `ui-config` is **not** uniquely the worst shape — **25 files** do the same thing. **New finding (OI-18):** `audit-trail/route.ts:154` queries `.from('users')` — `public.users` **does not exist**, PostgREST cannot reach `auth.users`, and the error is swallowed, so the admin audit screen has silently never shown a user's name. It needs `profiles` via `UserProfileRepository`, not a new repository — dropping that list from 7 groups to 6. |
