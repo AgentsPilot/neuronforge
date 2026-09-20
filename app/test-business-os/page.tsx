@@ -34,6 +34,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '@/components/UserProvider';
 import { BosModuleTester, type BosModule } from '@/components/test-business-os/BosModuleTester';
+import { TestAuthPanel } from '@/components/test-business-os/TestAuthPanel';
 import type { ActionSchema } from '@/lib/plugins/tester/tester-types';
 import type { ExecutionResult } from '@/lib/types/plugin-types';
 import { PurgeDangerZone } from '@/components/business-os/purge/PurgeDangerZone';
@@ -274,34 +275,18 @@ export default function TestBusinessOSPage() {
         ))}
       </div>
 
-      {/* Current User + Account Setup live on the Overview tab only — they are
-          account-level setup, not repeated on every feature tab. Seed a profile from
-          Overview, then switch to a feature tab (e.g. Modules) to use it. */}
+      {/* Session + Account Setup live on the Overview tab only — they are
+          account-level setup, not repeated on every feature tab. Sign in and seed a
+          profile from Overview, then switch to a feature tab (e.g. Modules). */}
       {activeTab === 'overview' && (
         <>
-      {/* Current User (session) panel */}
-      <div style={panelStyle}>
-        <h2 style={{ marginTop: 0 }}>Current User (session)</h2>
-        {authLoading ? (
-          <div style={{ color: '#666' }}>Loading session…</div>
-        ) : user ? (
-          <div style={{ fontSize: '14px' }}>
-            <div>
-              <span style={{ color: '#666' }}>User ID:</span>{' '}
-              <strong>{user.id}</strong>
-            </div>
-            <div>
-              <span style={{ color: '#666' }}>Email:</span>{' '}
-              <strong>{user.email || '(none)'}</strong>
-            </div>
-          </div>
-        ) : (
-          <div style={{ color: '#dc3545' }}>
-            Not signed in. Log in to the app first — Business OS APIs require an
-            authenticated session.
-          </div>
-        )}
-      </div>
+      {/* Session: who you are, and sign in / out without leaving the harness. */}
+      <TestAuthPanel
+        user={user}
+        authLoading={authLoading}
+        onLog={addDebugLog}
+        panelStyle={panelStyle}
+      />
 
       {/* Account setup: seed profile + CRM pipeline stages */}
       <div style={panelStyle}>
