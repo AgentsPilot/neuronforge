@@ -65,9 +65,10 @@ export function TestAuthPanel({ user, authLoading, onLog, panelStyle }: Props) {
     setMessage(null);
     onLog('info', 'Starting Google sign-in…');
     // Through /auth/callback, exactly as the product does: it ensures the
-    // profile row and writes the USER_LOGIN audit entry. It lands on
-    // /business-os or /onboarding-chat afterwards — come back here from there.
-    const result = await signInWithGoogle();
+    // profile row and writes the USER_LOGIN audit entry. `?next=` then returns
+    // here rather than dropping the tester on /business-os — except when
+    // onboarding is unfinished, which still wins and sends them to the chat.
+    const result = await signInWithGoogle('/auth/callback?next=/test-business-os');
     if (!result.ok) {
       report('err', `Google sign-in failed to start: ${result.error}`);
       setBusy(false);

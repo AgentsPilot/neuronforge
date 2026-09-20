@@ -67,7 +67,7 @@ export type AuditReadQuery = z.infer<typeof AuditReadQuerySchema>;
  */
 export const CLIENT_WRITABLE_EVENTS: readonly string[] = [
   AUDIT_EVENTS.USER_LOGIN, // auth/callback
-  AUDIT_EVENTS.USER_LOGOUT, // LogoutButton, business-os settings
+  AUDIT_EVENTS.USER_LOGOUT, // business-os settings, test-business-os harness
   AUDIT_EVENTS.USER_ONBOARDING_COMPLETED, // useOnboarding
   AUDIT_EVENTS.USER_ONBOARDING_FAILED, // useOnboarding
   AUDIT_EVENTS.SETTINGS_NOTIFICATIONS_UPDATED, // NotificationsTab (V1, V2)
