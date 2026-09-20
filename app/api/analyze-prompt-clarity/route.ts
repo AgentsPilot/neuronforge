@@ -442,7 +442,9 @@ export async function POST(request: NextRequest) {
           details: fetchError.message,
           ...fallbackWithAnalysis,
           connectedPlugins : connectedPluginsKeys,
-          connectedPluginsMetaData,
+          // SECURITY: project, never serialise the raw context — it aliases the
+          // env-substituted definition (real client_secret / STRIPE_SECRET_KEY).
+          connectedPluginsMetaData: connectedPluginsMetaData.map(p => p.toShortLLMContext()),
           sessionId: sessionId, // FIXED: Return consistent session ID
           agentId: agentId, // FIXED: Return consistent agent ID
           ...(pluginWarning && { pluginWarning })
@@ -463,7 +465,9 @@ export async function POST(request: NextRequest) {
           error: 'Empty AI response',
           ...fallbackWithAnalysis,
           connectedPlugins: connectedPluginsKeys,
-          connectedPluginsMetaData,
+          // SECURITY: project, never serialise the raw context — it aliases the
+          // env-substituted definition (real client_secret / STRIPE_SECRET_KEY).
+          connectedPluginsMetaData: connectedPluginsMetaData.map(p => p.toShortLLMContext()),
           sessionId: sessionId, // FIXED: Return consistent session ID
           agentId: agentId, // FIXED: Return consistent agent ID
           ...(pluginWarning && { pluginWarning })

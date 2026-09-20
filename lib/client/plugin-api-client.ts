@@ -2,6 +2,7 @@
 
 import { OAuthHandler } from './oauth-handler';
 import { PluginInfo, UserPluginStatus, LLMContext, ExecutionResult, ApiResponse } from '@/lib/types/plugin-types'
+import type { ClientSafeAuthConfig } from '@/lib/plugins/sanitize-plugin-definition';
 import { requestDeduplicator } from '@/lib/utils/request-deduplication';
 import { clientLogger } from '@/lib/logger/client';
 
@@ -29,6 +30,14 @@ export class PluginAPIClient {
       // test page) opt in. See docs/PLUGIN_VISIBILITY_SCOPING.md.
       const qs = options?.includeBusinessOs ? '?includeBusinessOs=true' : '';
       const response = await fetch(`${this.baseUrl}/api/plugins/available${qs}`);
+
+      // The registry requires a session. /test-plugins-v2 and /test-business-os are not
+      // auth-gated by middleware, so a logged-out visit lands here — surface something
+      // actionable rather than a generic failure.
+      if (response.status === 401) {
+        throw new Error('Not signed in - sign in to load the plugin registry');
+      }
+
       const result = await response.json();
 
       if (!result.success) {
@@ -341,12 +350,11 @@ export class PluginAPIClient {
     return plugin;
   }
 
-  // Get plugin auth configuration from server
-  private async getPluginAuthConfig(pluginKey: string): Promise<any> {
-    // Get plugin definition which includes processed auth_config
-    const plugin = await this.getPluginDefinition(pluginKey);
-
-    // The auth_config should be included in the plugin definition from server
+  // Get plugin auth configuration from server.
+  // The server sanitises this: only the client-safe allow-list ever arrives here, so
+  // nothing secret can reach the browser or the authorize URL.
+  private async getPluginAuthConfig(pluginKey: string): Promise<ClientSafeAuthConfig> {
+    const plugin: PluginInfo = await this.getPluginDefinition(pluginKey);
     return plugin.auth_config;
   }
 
