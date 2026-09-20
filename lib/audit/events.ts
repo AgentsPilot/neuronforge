@@ -167,6 +167,7 @@ export const AUDIT_EVENTS = {
   AI_PRICING_UPDATED: 'AI_PRICING_UPDATED',
   AI_PRICING_DELETED: 'AI_PRICING_DELETED',
   AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
+  AI_PRICING_ZERO_SET: 'AI_PRICING_ZERO_SET', // A price was saved as $0 — usage of that model is billed at nothing
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -748,6 +749,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'AI model pricing synced from external source',
+  },
+  // Critical, like AI_PRICING_DELETED: the revenue effect is comparable — every
+  // call to a zero-priced model is billed at $0 until someone notices.
+  [AUDIT_EVENTS.AI_PRICING_ZERO_SET]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'AI model price set to zero (usage billed at $0)',
   },
 
   // Workflow Pilot events
