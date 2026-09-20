@@ -4,7 +4,7 @@
 
 **Created by:** BA
 **Date:** 2026-09-19
-**Status:** SA-reviewed 2026-09-19 — CLEARED WITH CONDITIONS (see [SA Review](#sa-review)); ready for Dev workplan
+**Status:** SA-reviewed 2026-09-19 — CLEARED WITH CONDITIONS (see [SA Review](#sa-review)). **Slice 1** delivered in PR #56. **Slice 2 PARKED** 2026-09-19 (see [Slice 2 — Parked](#slice-2--parked))
 
 ## Overview
 
@@ -293,9 +293,21 @@ FR-2.11 assumed the page-load cleanup provides recovery today. It does not (§A,
 | Slice | Contents | Why |
 |---|---|---|
 | **1 — Security + UX (ship first, small)** | R1 in full. R3: delete `/initialize` and `/status`, reduce `/health` to liveness. Delete `lib/startup/initialize.ts` and `lib/cleanup/executionCleanup.ts` (FR-2.10's "or is deleted" branch). Update `PlatformShell` comment and `docs/VERCEL_ENV_SETUP.md`. ACs 1–4, 13–16, plus build/lint. | Closes a **High** unauthenticated cross-tenant read (F4) and an anonymous service-role write path (F6). Zero functional regression. `R1` and the `/initialize` deletion **must be in the same slice**: deleting the route alone would turn the success toast into a "System initialization failed" error toast on every page. |
-| **2 — Recovery cron** | R2 + R4 for the new route, repository methods, audit event, tests (ACs 5–12, 17). | New capability. Its first run will also unblock the 3 stuck scheduled agents (§D). |
+| **2 — Recovery cron** ⏸️ **PARKED** | R2 + R4 for the new route, repository methods, audit event, tests (ACs 5–12, 17). | New capability. Its first run will also unblock the 3 stuck scheduled agents (§D). *(Superseded 2026-09-19: those agents were cleared manually, see [Slice 2 — Parked](#slice-2--parked).)* |
 
 FR-2.11 is replaced by: *"Slice 1 must not ship later than Slice 2. Slice 2 may ship any time after Slice 1."*
+
+#### Slice 2 — Parked
+
+**Parked by the user on 2026-09-19.** Nothing in Slice 2 is being built.
+
+| Item | Detail |
+|---|---|
+| **Why parked** | Slice 2 recovers stuck `agent_executions` rows. Only the AgentsPilot agent platform (`run-agent`, `run-scheduled-agents`, `process-queue`) creates those rows. Current product focus is **Business OS only**. Business OS never creates agent executions: it only *counts* them in `app/api/business-os/stats/route.ts` and labels them in the reporting catalog. Its own background work (payment automations, reminders) runs on separate queues that already have a claim/reaper recovery step (PR #27, `2026-08-14_payment_*_claim.sql`). |
+| **Immediate impact resolved** | The 4 stuck rows were test agents owned by an internal user: "Complaints Monitoring", "Invoice and Expenses Classification - Testing", and "Critical/High Tasks Due Soon Emailer". On 2026-09-19, with the user's approval, the rows were marked `failed` and the 3 agents were soft-deleted (`status='deleted'`, `schedule_enabled=false`; restorable via `AgentRepository.restore`). None of the agents had a `qstash_schedule_id`. Afterwards, **0** non-terminal executions remained across all users. The platform is pre-production, so no owner notice was needed. |
+| **§E business decision** | Moot. No stuck agents remain to resume or pause. |
+| **What is preserved** | R2, FR-2.x, ACs 5–12, the SA decisions Q1–Q8 (§B) and the conditions (§D) stay valid as written. They are the ready-made spec if the work resumes. |
+| **Resume trigger** | The AgentsPilot agent platform comes back into active use, or any stuck `agent_executions` row blocks a scheduled agent again. On resume, re-run the live check first (§A counts are a 2026-09-19 snapshot), and remember the cron stays dormant until `CRON_SECRET` is set on Vercel. |
 
 ### D. Conditions Dev must meet
 
@@ -340,3 +352,4 @@ Everything else in this review is a technical decision and is resolved above.
 | 2026-09-19 | Created (Draft) | BA draft from the user's toast report and TL-verified investigation. Re-verified the evidence and added findings F1–F9: scheduler blocking, `pending`/`queued` gap, `ended_at` mismatch, unauthenticated cross-tenant `/api/system/status`. Ready for SA review. |
 | 2026-09-19 | SA review — CLEARED WITH CONDITIONS | SA verified the findings against the code and the live DB. `ended_at` does not exist, so the page-load recovery never succeeded. 4 stuck rows are blocking all 3 active scheduled agents. F4 rated High. F8 refuted: debug runs live in `workflow_executions`. Resolved Q1–Q8: 120-min threshold on `created_at`, new dedicated cron, conditional update instead of §8.1, delete `/status` and `/initialize`, `/health` reduced to liveness, new audit event, amended wording. Replaced FR-2.11 with a two-slice delivery (security fix first). Logged out-of-scope findings E-1 to E-4. One business decision surfaced (resuming 3 dormant agents). |
 | 2026-09-19 | SA amendment (Q6 body shape) | During the Slice 1 workplan review, changed the `/health` liveness body to the standard `{ success: true, data: { status, timestamp } }` envelope. This follows CLAUDE.md and keeps the old top-level `success` key for any body-parsing monitor. |
+| 2026-09-19 | Slice 2 parked | Parked by the user: agent-platform recovery isn't needed while the focus is Business OS only. The 4 stuck executions were cleared manually and their 3 test agents soft-deleted. Status line updated; added the "Slice 2 — Parked" subsection with the rationale and a resume trigger. Slice 1 is in PR #56. |
