@@ -1,0 +1,102 @@
+# Production Build Gate
+#
+# `next build` is the only gate that catches a whole class of breakage in this
+# repo: next.config.js sets typescript.ignoreBuildErrors and
+# eslint.ignoreDuringBuilds, and the repo carries thousands of pre-existing tsc
+# errors, so a full type check cannot be the gate. The build still fails on
+# module-scope crashes and missing modules during "Collecting page data" /
+# "Generating static pages" - which is exactly how a break reached main once
+# (PR #53).
+#
+# Deliberately a separate workflow from bos-llm-typecheck.yml:
+#   - branch protection requires check NAMES, so build and typecheck should be
+#     requireable independently and attribute their own failures;
+#   - this job needs placeholder service env (below) that the typecheck has no
+#     business holding;
+#   - the two have different runtimes, and running them as separate workflows
+#     costs no extra wall clock (they run in parallel).
+#
+# No path filter on purpose: almost any file in the repo can break the build.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: the job checks out and builds. It publishes nothing.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running build.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (next build)
+    runs-on: ubuntu-latest
+    # 3-7 min locally for 295 pages, cold. Generous headroom, but fail rather
+    # than hang.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node major comes from .nvmrc so CI, local nvm users and the Vercel
+      # project setting have one number to keep in step. It is pinned to the
+      # major Vercel builds this project with - NOT to the '18' the other two
+      # workflows still use, because a build gate that runs on a different
+      # major than production can be green while the deploy breaks. Vercel
+      # dropped Node 18 support in Sept 2025, and package.json's
+      # engines ">=18.17.0" is a floor, not a pin, so Vercel falls back to the
+      # project default (22.x). Confirm in Project Settings > Node.js Version
+      # if that ever changes, and update .nvmrc here.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No .next/cache step on purpose. The build output for 295 pages is
+      # hundreds of MB, and any key that actually tracks source would miss on
+      # every PR and re-save every run - churning through the repo-wide 10 GB
+      # LRU budget and evicting the npm caches the other two workflows rely on.
+      # A cold build is a fine price for a gate, and it is the build least
+      # able to hide a break behind reused artifacts.
+      #
+      # next build evaluates route modules, and several construct their service
+      # clients at module scope (Supabase admin, OpenAI, Stripe, QStash), so
+      # those vars must be PRESENT or the build dies collecting page data.
+      # Some routes also fetch during page-data collection: the log shows real
+      # `TypeError: fetch failed` against the placeholder host from
+      # /api/admin/onboarding-config and /api/admin/token-usage/stats, which
+      # stay green only because they catch and log it. So placeholders must
+      # point somewhere that can never resolve - hence the RFC-2606 `.invalid`
+      # TLD rather than a subdomain of a real provider domain.
+      #
+      # NEVER put real credentials here. This file is public. If the build ever
+      # starts needing a real value, that is a bug in the code being built (a
+      # module doing real I/O at import time), not a reason to add a secret.
+      - name: Build
+        env:
+          NODE_OPTIONS: '--max-old-space-size=6144'
+          NEXT_TELEMETRY_DISABLED: '1'
+          NEXT_PUBLIC_SUPABASE_URL: 'https://ci.invalid'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: 'ci-not-a-real-key'
+          SUPABASE_URL: 'https://ci.invalid'
+          SUPABASE_SERVICE_ROLE_KEY: 'ci-not-a-real-key'
+          OPENAI_API_KEY: 'ci-not-a-real-key'
+          STRIPE_SECRET_KEY: 'sk_test_ci-not-a-real-key'
+          QSTASH_TOKEN: 'ci-not-a-real-key'
+          QSTASH_CURRENT_SIGNING_KEY: 'sig_ci_not_a_real_key'
+          QSTASH_NEXT_SIGNING_KEY: 'sig_ci_not_a_real_key'
+        # No `|| true`, no continue-on-error: next build exits non-zero on a
+        # build error and that must fail the job.
+        run: npm run build
