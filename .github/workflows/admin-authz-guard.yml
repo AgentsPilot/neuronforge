@@ -27,6 +27,14 @@
 # reading; the cost of running it on every PR is far below the cost of the hole
 # it closes.
 #
+# The scope step below is NOT that filter. The guard scans app/, lib/,
+# components/, hooks/ and supabase/migrations + 'supabase/SQL Scripts', and the
+# skip rule covers only docs/, root-level *.md, scripts/ and .claude/ - none of
+# which the guard reads (the rule anchors `scripts/` at the repo root, so
+# 'supabase/SQL Scripts' never matches it). A new admin route, the change this
+# guard exists to catch, can never be classified as skippable. The job also
+# still runs and still reports on every PR, so it remains requireable.
+#
 # ── ⚠️ THIS IS NOT A BUILD GATE UNTIL IT IS A REQUIRED STATUS CHECK ────────
 # A red workflow blocks nothing by itself. Until the repository owner enables
 # this job under Settings → Branches → branch protection for `main` →
@@ -69,16 +77,58 @@ jobs:
     # The scan is seconds; fail fast if install or something else hangs.
     timeout-minutes: 15
     steps:
+      # fetch-depth 2 so HEAD^ resolves. On a merge landing on main HEAD^ is
+      # the previous main tip; on a pull_request (refs/pull/N/merge) HEAD^1 is
+      # the base tip. Either way HEAD^..HEAD is the whole change under review.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # The guard reads app/, lib/, components/, hooks/ and the SQL migration
+      # dirs. A change confined to docs/, scripts/ or .claude/ touches none.
+      #
+      # This is NOT a `paths:` filter. The job still runs on every PR and
+      # always reports a conclusion, so it stays safe to make a required
+      # status check - a `paths:` filter would leave the check pending
+      # forever and block the merge. The rule itself lives in
+      # .github/ci/non-deploying-change.sh (shared with vercel.json's
+      # ignoreCommand) and fails open: anything it cannot classify builds.
+      - name: Can this change affect an admin surface?
+        id: scope
+        env:
+          # Measure the WHOLE push, not just its last commit. At fetch-depth 2
+          # this sha resolves only when it IS HEAD^ - a single commit, which is
+          # what a squash or merge landing on main looks like. A bigger push
+          # (rebase-merge, merge queue batch, direct multi-commit push) cannot
+          # resolve it, and the script fails open to BUILD. Empty on
+          # pull_request, where the script's HEAD^ default is already the base
+          # tip of the merge ref.
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if bash .github/ci/non-deploying-change.sh "$BASE"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
+        if: steps.scope.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
       - name: Install dependencies
+        if: steps.scope.outputs.skip != 'true'
         run: npm ci
 
       - name: Run the admin authz surface guard
+        if: steps.scope.outputs.skip != 'true'
         run: npm run test:authz-guard
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped: every changed file is documentation, scripts or" >> "$GITHUB_STEP_SUMMARY"
+          echo "Claude Code config, so it cannot reach an environment." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rule: .github/ci/non-deploying-change.sh" >> "$GITHUB_STEP_SUMMARY"

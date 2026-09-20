@@ -16,7 +16,12 @@
 #   - the two have different runtimes, and running them as separate workflows
 #     costs no extra wall clock (they run in parallel).
 #
-# No path filter on purpose: almost any file in the repo can break the build.
+# No `paths:` filter on purpose: almost any file in the repo can break the
+# build. The one exception is handled INSIDE the job (see the scope step): a
+# change confined to docs/, root-level *.md, scripts/ or .claude/ cannot alter
+# what `next build` compiles, because nothing under app/ or lib/ imports
+# scripts/ and the rule deliberately refuses nested markdown - V6 reads its
+# system prompts from lib/agentkit/v6/**/prompts/*.md at runtime.
 
 name: Build
 
@@ -44,7 +49,39 @@ jobs:
     # than hang.
     timeout-minutes: 30
     steps:
+      # fetch-depth 2 so HEAD^ resolves. On a merge landing on main HEAD^ is
+      # the previous main tip; on a pull_request (refs/pull/N/merge) HEAD^1 is
+      # the base tip. Either way HEAD^..HEAD is the whole change under review.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # A documentation-only change cannot break `next build`, and a cold
+      # build of 295 pages is the most expensive job in this repo.
+      #
+      # This is NOT a `paths:` filter. The job still runs on every PR and
+      # always reports a conclusion, so it stays safe to make a required
+      # status check - a `paths:` filter would leave the check pending
+      # forever and block the merge. The rule itself lives in
+      # .github/ci/non-deploying-change.sh (shared with vercel.json's
+      # ignoreCommand) and fails open: anything it cannot classify builds.
+      - name: Can this change affect the build?
+        id: scope
+        env:
+          # Measure the WHOLE push, not just its last commit. At fetch-depth 2
+          # this sha resolves only when it IS HEAD^ - a single commit, which is
+          # what a squash or merge landing on main looks like. A bigger push
+          # (rebase-merge, merge queue batch, direct multi-commit push) cannot
+          # resolve it, and the script fails open to BUILD. Empty on
+          # pull_request, where the script's HEAD^ default is already the base
+          # tip of the merge ref.
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if bash .github/ci/non-deploying-change.sh "$BASE"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # Node major comes from .nvmrc so CI, local nvm users and the Vercel
       # project setting have one number to keep in step. It is pinned to the
@@ -56,12 +93,14 @@ jobs:
       # project default (22.x). Confirm in Project Settings > Node.js Version
       # if that ever changes, and update .nvmrc here.
       - name: Setup Node.js
+        if: steps.scope.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
 
       - name: Install dependencies
+        if: steps.scope.outputs.skip != 'true'
         run: npm ci
 
       # No .next/cache step on purpose. The build output for 295 pages is
@@ -85,6 +124,7 @@ jobs:
       # starts needing a real value, that is a bug in the code being built (a
       # module doing real I/O at import time), not a reason to add a secret.
       - name: Build
+        if: steps.scope.outputs.skip != 'true'
         env:
           NODE_OPTIONS: '--max-old-space-size=6144'
           NEXT_TELEMETRY_DISABLED: '1'
@@ -100,3 +140,10 @@ jobs:
         # No `|| true`, no continue-on-error: next build exits non-zero on a
         # build error and that must fail the job.
         run: npm run build
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped: every changed file is documentation, scripts or" >> "$GITHUB_STEP_SUMMARY"
+          echo "Claude Code config, so it cannot reach an environment." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rule: .github/ci/non-deploying-change.sh" >> "$GITHUB_STEP_SUMMARY"
