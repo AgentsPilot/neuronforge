@@ -1913,6 +1913,21 @@ export default function V2AgentDetailPage() {
         clientLogger.info('Agent shared successfully', { agentId: agent.id, qualityScore: finalScore.overall_score, creditsAwarded: rewardResult.creditsAwarded })
 
         setTimeout(() => setShowShareSuccess(false), 5000)
+      } else {
+        // P0-FT-RLS (SA RC9-7): the reward upsert writes `user_subscriptions`
+        // from the browser, which the lock-down migration blocks
+        // (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql).
+        // The share itself already succeeded, and RewardService returns before
+        // writing any `credit_transactions` / `user_rewards` row, so state stays
+        // clean and the reward can be back-filled. Never fall through silently:
+        // that left the Share button enabled and the next click claimed the
+        // agent was already shared.
+        setHasBeenShared(true)
+        clientLogger.error(
+          { err: new Error(rewardResult.error || rewardResult.message), agentId: agent.id },
+          'Agent shared but the sharing reward could not be applied'
+        )
+        alert('Agent shared. The credit reward could not be applied right now and will be credited later.')
       }
 
       await fetchAllData()
