@@ -1,13 +1,13 @@
-import { createClient } from '@supabase/supabase-js';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { logAIPricingSynced } from '@/lib/audit/admin-helpers';
 import { createLogger } from '@/lib/logger';
+import { aiModelPricingRepository } from '@/lib/repositories/AiModelPricingRepository';
 
 const logger = createLogger({ module: 'PricingSyncAPI' });
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 /**
  * POST /api/admin/system-config/pricing/sync
@@ -21,10 +21,28 @@ const supabase = createClient(
  *
  * Pricing is stored as cost per single token (not per 1K or per 1M)
  * For display, multiply by appropriate factor (e.g., * 1000 for per-1K pricing)
+ *
+ * The catalogue below is data, so it stays in the route; the write loop lives in
+ * `aiModelPricingRepository.syncMany` (the repository pattern — CLAUDE.md
+ * mandatory rule 1). It is deliberately not an upsert: the unique constraint is
+ * `(provider, model_name, effective_date)` and every run re-stamps the date, so
+ * an upsert would add a row per model per sync forever.
+ *
+ * ADMIN ONLY, gated here in the route (middleware does not protect `/api`)
+ * through `requireAdmin` -> AdminAccessService (the `admin_users` table), never
+ * the user-writable profile role field. Before Layer 2 Step 0 this handler was
+ * unauthenticated: anyone could overwrite the whole pricing table, which every
+ * credit charge is computed from.
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
-    logger.info('Starting pricing sync...');
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
+    requestLogger.info({ userId: gate.user.id }, 'Starting pricing sync...');
 
     const effectiveDate = new Date().toISOString();
 
@@ -374,59 +392,35 @@ export async function POST() {
       }
     ];
 
-    const updatedModels: string[] = [];
-    const createdModels: string[] = [];
-    const failedModels: string[] = [];
+    requestLogger.info({ totalModels: latestPricing.length }, 'Processing model pricing entries');
 
-    logger.info({ totalModels: latestPricing.length }, 'Processing model pricing entries');
+    const { data: result, error } = await aiModelPricingRepository.syncMany(latestPricing);
 
-    for (const pricing of latestPricing) {
-      // Check if model exists
-      const { data: existing } = await supabase
-        .from('ai_model_pricing')
-        .select('id')
-        .eq('provider', pricing.provider)
-        .eq('model_name', pricing.model_name)
-        .single();
+    if (error) throw error;
+    if (!result) throw new Error('Sync returned no result');
 
-      if (existing) {
-        // Update existing
-        const { error } = await supabase
-          .from('ai_model_pricing')
-          .update({
-            input_cost_per_token: pricing.input_cost_per_token,
-            output_cost_per_token: pricing.output_cost_per_token,
-            effective_date: pricing.effective_date
-          })
-          .eq('id', existing.id);
+    const { updated: updatedModels, created: createdModels, failed: failedModels } = result;
 
-        if (error) {
-          logger.error({ err: error, model: pricing.model_name, provider: pricing.provider }, 'Failed to update model pricing');
-          failedModels.push(pricing.model_name);
-        } else {
-          updatedModels.push(pricing.model_name);
-        }
-      } else {
-        // Create new
-        const { error } = await supabase
-          .from('ai_model_pricing')
-          .insert(pricing);
-
-        if (error) {
-          logger.error({ err: error, model: pricing.model_name, provider: pricing.provider }, 'Failed to create model pricing');
-          failedModels.push(pricing.model_name);
-        } else {
-          createdModels.push(pricing.model_name);
-        }
-      }
-    }
-
-    logger.info({
+    // The repository logs per row under its own service logger, so this one line
+    // is what keeps the sync on the request's correlation trail.
+    requestLogger.info({
+      userId: gate.user.id,
       updated: updatedModels.length,
       created: createdModels.length,
       failed: failedModels.length,
       total: latestPricing.length
     }, 'Pricing sync complete');
+
+    // This is the largest pricing write in the product — it rewrites every row
+    // that credit charges are computed from — so it is audited like the
+    // single-row writes (SA S-1, RC-W10). Awaited so the serverless invocation
+    // does not end mid-write, but a rejection can never fail a sync that already
+    // happened. Only emitted when the sync actually ran.
+    await logAIPricingSynced(gate.user.id, {
+      models_updated: updatedModels.length,
+      models_added: createdModels.length,
+      source: 'admin_catalog_sync'
+    }).catch((err) => requestLogger.error({ err }, 'Audit failed (non-blocking)'));
 
     return NextResponse.json({
       success: true,
@@ -440,11 +434,18 @@ export async function POST() {
     });
 
   } catch (error) {
-    logger.error({ err: error }, 'Error syncing pricing');
+    requestLogger.error({ err: error }, 'Error syncing pricing');
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to sync pricing'
+        error: 'Failed to sync pricing',
+        // Internal error text is for the server log and for development only.
+        details:
+          process.env.NODE_ENV === 'development'
+            ? error instanceof Error
+              ? error.message
+              : String(error)
+            : undefined
       },
       { status: 500 }
     );
