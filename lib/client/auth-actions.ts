@@ -175,9 +175,18 @@ export async function sendPasswordResetEmail(
  * afterwards; nothing here redirects.
  */
 export async function signOutUser(
-  opts: { scope?: 'global' | 'local'; user?: { id: string; email?: string | null } | null } = {}
+  opts: {
+    scope?: 'global' | 'local';
+    user?: { id: string; email?: string | null } | null;
+    /**
+     * Recorded as `details.method` on the USER_LOGOUT entry, so the audit trail
+     * still says WHICH control someone left through. Each call site passes its
+     * own — the values predate this module and are kept verbatim.
+     */
+    method?: string;
+  } = {}
 ): Promise<AuthActionResult> {
-  const { scope = 'local', user = null } = opts;
+  const { scope = 'local', user = null, method = 'in-app' } = opts;
 
   // Before the sign-out: afterwards there is no session to attribute it to.
   if (user?.id) {
@@ -185,7 +194,7 @@ export async function signOutUser(
       action: 'USER_LOGOUT',
       userId: user.id,
       resourceName: user.email || 'User',
-      details: { method: 'in-app', scope },
+      details: { method, scope },
       severity: 'info',
     });
   }

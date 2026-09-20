@@ -1,58 +1,48 @@
 'use client'
 
 import { supabase } from '@/lib/supabaseClient'
+import { clientLogger } from '@/lib/logger/client'
+import { signOutUser } from '@/lib/client/auth-actions'
 import { marketingLoginUrl } from '@/lib/utils/marketingUrl'
+
+const logger = clientLogger.child({ module: 'LogoutButton' })
 
 export default function LogoutButton() {
   /*
-   * Signing out ends on the marketing site's `/login`, which is a different
-   * application on a different origin — so `window.location.href`, not
-   * `router.push`, which cannot leave this app and would have resolved
-   * `/login` to a 404 here.
+   * The sign-out itself lives in `lib/client/auth-actions`, shared with the
+   * Business OS settings control and the test harness: one audit event, one
+   * definition of which browser-storage keys belong to a PERSON rather than the
+   * device. This button used to clear none of them, so the next account signed
+   * in on the browser inherited the previous one's onboarding state, cached
+   * profile and language.
+   *
+   * `scope: 'global'` is not a new choice — `supabase.auth.signOut()` with no
+   * arguments defaults to global, which is what this button has always done.
+   * It is spelled out because `signOutUser` defaults to `local`.
+   *
+   * Signing out ends on the marketing site's `/login`, a different application
+   * on a different origin — so `window.location.href`, not `router.push`, which
+   * cannot leave this app and would have resolved `/login` to a 404 here.
    */
   const handleLogout = async () => {
+    // Only to attribute the audit entry. If it fails, sign out anyway and
+    // accept an unattributed exit — nobody may be trapped in a session they
+    // asked to leave because a lookup failed.
+    let user: { id: string; email?: string | null } | null = null
     try {
-      // Get user before signing out (for audit logging)
-      const { data: { user } } = await supabase.auth.getUser()
-
-      // AUDIT TRAIL: Log logout
-      if (user) {
-        try {
-          await fetch('/api/audit/log', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-user-id': user.id
-            },
-            body: JSON.stringify({
-              action: 'USER_LOGOUT',
-              entityType: 'user',
-              entityId: user.id,
-              userId: user.id,
-              resourceName: user.email || 'User',
-              details: {
-                logout_timestamp: new Date().toISOString(),
-                method: 'manual'
-              },
-              severity: 'info',
-              complianceFlags: ['SOC2']
-            })
-          })
-          console.log('✅ Logout audit logged')
-        } catch (auditError) {
-          console.error('⚠️ Audit logging failed (non-critical):', auditError)
-        }
-      }
-
-      // Sign out
-      await supabase.auth.signOut()
-      window.location.href = marketingLoginUrl()
-    } catch (error) {
-      console.error('Logout error:', error)
-      // Even if audit fails, proceed with logout
-      await supabase.auth.signOut()
-      window.location.href = marketingLoginUrl()
+      user = (await supabase.auth.getUser()).data.user
+    } catch (err) {
+      logger.warn({ err }, 'Could not resolve user before sign-out (non-blocking)')
     }
+
+    const result = await signOutUser({ scope: 'global', user, method: 'manual' })
+    if (!result.ok) {
+      // Already cleared locally by `signOutUser`; the redirect below still
+      // takes them out. Logged so a failing server-side sign-out is visible.
+      logger.error({ err: result.error }, 'Sign-out reported an error — leaving anyway')
+    }
+
+    window.location.href = marketingLoginUrl()
   }
 
   return (
