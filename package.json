@@ -16,6 +16,7 @@
     "start": "next start",
     "lint": "next lint",
     "test": "jest",
+    "test:authz-guard": "jest lib/admin/__tests__/admin-authz-surface.guard.test.ts --ci",
     "schema:check": "tsx scripts/schema-check.ts",
     "typecheck:bos-llm": "tsx scripts/typecheck-bos-llm.ts",
     "backfill:intensity": "tsx scripts/backfill-agent-intensity.ts",

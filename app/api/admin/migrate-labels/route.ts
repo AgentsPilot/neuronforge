@@ -1,8 +1,12 @@
 // API endpoint to add labels to existing input_schema fields
 // Run once: POST /api/admin/migrate-labels
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { requireAdmin } from '@/lib/admin/requireAdminRoute'
+import { createLogger } from '@/lib/logger'
+
+const logger = createLogger({ module: 'MigrateLabelsAdminAPI' })
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
@@ -45,8 +49,19 @@ function generateLabel(fieldName: string): string {
     .join(' ')
 }
 
-export async function POST() {
+// `request` is unused by the handler body, but the gate needs a correlation id
+// and an unauthenticated bulk data migration is exactly the thing that should
+// be traceable.
+export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId })
+
   try {
+    // Admin gate. This route rewrites every agent's input_schema, so the check
+    // must precede any database access (FR-5).
+    const gate = await requireAdmin(requestLogger)
+    if (gate instanceof NextResponse) return gate
+
     console.log('[Migrate Labels] Starting migration...')
 
     // Fetch all agents with input_schema

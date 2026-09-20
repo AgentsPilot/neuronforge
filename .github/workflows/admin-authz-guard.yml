@@ -1,0 +1,84 @@
+# Admin Authorization Surface Guard
+#
+# Runs lib/admin/__tests__/admin-authz-surface.guard.test.ts, the repo-wide
+# static scan that fails when an admin surface ships without its guard:
+#   R1  an /api/admin route handler that does not use `requireAdmin`
+#   R2  ANY route.ts that imports AdminAccessService directly
+#   R3  a route.ts under app/admin/** (route handlers bypass layouts)
+#   R4  an access decision keyed on a `role` value (profiles.role is user-writable)
+#   R5  a migration adding an RLS policy that references profiles.role
+#   R6  app/admin/layout.tsx without its server-side page guard
+#
+# ── NO `paths:` FILTER, ON PURPOSE ─────────────────────────────────────────
+# This is the whole reason the job exists as its own workflow.
+#
+# `plugin-tests.yml` is path-filtered to lib/server/**, lib/plugins/** and
+# tests/plugins/**. A new file at `app/api/admin/new-thing/route.ts` — exactly
+# the change this guard exists to catch — matches none of those, so a filtered
+# workflow would be DEFEATED BY THE CHANGE IT GUARDS. It would go green by not
+# running.
+#
+# Neither existing workflow runs `npm test` either (`plugin-tests.yml` runs the
+# plugin suites; `bos-llm-typecheck.yml` runs a scoped tsc), so this guard has
+# nowhere else to attach. `bos-llm-typecheck.yml` made the same no-filter
+# choice deliberately and documents it in its own header.
+#
+# Do not add a `paths:` filter here. The guard is a few seconds of static file
+# reading; the cost of running it on every PR is far below the cost of the hole
+# it closes.
+#
+# ── ⚠️ THIS IS NOT A BUILD GATE UNTIL IT IS A REQUIRED STATUS CHECK ────────
+# A red workflow blocks nothing by itself. Until the repository owner enables
+# this job under Settings → Branches → branch protection for `main` →
+# "Require status checks to pass before merging", an unguarded admin route can
+# still be merged with a red tick next to it.
+#
+# A required check is matched BY JOB NAME. Renaming the job below silently
+# un-gates the repository — the protection rule keeps waiting for a check that
+# no longer reports. If you rename it, update the branch protection rule in the
+# same change.
+#
+# See docs/workplans/admin-authz-unification.md (slices 1 and 6).
+
+name: Admin Authz Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: the job checks out and runs one Jest file.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running check.
+concurrency:
+  group: admin-authz-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  # ⚠️ Renaming this job un-gates `main` if it is a required status check.
+  admin-authz-guard:
+    name: Admin authz surface guard
+    runs-on: ubuntu-latest
+    # The scan is seconds; fail fast if install or something else hangs.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the admin authz surface guard
+        run: npm run test:authz-guard

@@ -3,6 +3,8 @@
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
 import {
   snapshotNormalizationRanges,
   snapshotAllAgentScores,
@@ -14,6 +16,8 @@ import {
   logAISModeSwitch,
   logAISThresholdUpdate
 } from '@/lib/audit/admin-helpers';
+
+const logger = createLogger({ module: 'AisConfigAdminAPI' });
 
 // Initialize service role client for admin operations
 const supabaseServiceRole = createClient(
@@ -476,9 +480,19 @@ export async function GET() {
 
 // POST - Update AIS configuration
 export async function POST(req: Request) {
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
-    // TODO: Add admin role check here
-    // For now, using service role to update data (same as reward-config)
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
+    // The "TODO: add an admin role check" that stood here is now done, by the
+    // gate above. The service-role client below still bypasses RLS and the
+    // repository layer — deliberate and tracked (OI-5); this route is gated,
+    // not isolated.
 
     const body = await req.json();
     const { action, mode, threshold } = body;
