@@ -3,6 +3,9 @@
 import { useState, useCallback, useEffect } from 'react';
 // Import your Supabase client
 import { supabase } from '@/lib/supabaseClient';
+import { clientLogger } from '@/lib/logger/client';
+
+const logger = clientLogger.child({ module: 'useOnboarding' });
 
 // Types
 export interface ProfileData {
@@ -103,7 +106,7 @@ export const useOnboarding = () => {
         
         // If domain column doesn't exist, fall back to full_name and role only
         if (error && error.code === '42703') {
-          console.log('Domain column not found, falling back to full_name and role only');
+          logger.debug('Domain column not found, falling back to full_name and role only');
           const { data: fallbackProfile, error: fallbackError } = await supabase
             .from('profiles')
             .select('full_name, role')
@@ -115,7 +118,7 @@ export const useOnboarding = () => {
         }
         
         if (error && error.code !== '42703') {
-          console.error('Error fetching profile:', error);
+          logger.error({ err: error }, 'Error fetching profile');
         }
         
         setState(prev => ({
@@ -135,7 +138,7 @@ export const useOnboarding = () => {
           isLoading: false,
         }));
       } else {
-        console.log('No user found');
+        logger.debug('No user found');
         setState(prev => ({ 
           ...prev, 
           isInitialized: true, 
@@ -143,7 +146,7 @@ export const useOnboarding = () => {
         }));
       }
     } catch (error) {
-      console.error('Failed to load user data:', error);
+      logger.error({ err: error }, 'Failed to load user data');
       setState(prev => ({ 
         ...prev, 
         isInitialized: true, 
@@ -299,17 +302,17 @@ export const useOnboarding = () => {
         completedAt: new Date().toISOString(),
       };
 
-      console.log('🔍 DEBUG: About to save profile with data:', {
-        full_name: state.data.profile.fullName,
-        company: state.data.profile.company,
-        job_title: state.data.profile.jobTitle,
-        timezone: state.data.profile.timezone,
-        onboarding_goal: state.data.goal,
-        onboarding_mode: state.data.mode,
-        role: state.data.role,
-        domain: state.data.domain,
-        onboarding_data: onboardingData,
-      });
+      // Personal fields (name, company, job title) are deliberately not logged.
+      logger.debug(
+        {
+          timezone: state.data.profile.timezone,
+          goal: state.data.goal,
+          mode: state.data.mode,
+          role: state.data.role,
+          domain: state.data.domain,
+        },
+        'Saving onboarding profile'
+      );
 
       // Upsert (create or update) the profiles table with ALL onboarding data
       let { error: profileError } = await supabase
@@ -334,8 +337,10 @@ export const useOnboarding = () => {
 
       // If some columns don't exist, try fallback without them
       if (profileError && profileError.code === '42703') {
-        console.log('⚠️ Some onboarding columns not found in database. Saving minimal profile data.');
-        console.log('Please run migration: 20251118_add_onboarding_fields_to_profiles.sql');
+        logger.warn(
+          { migration: '20251118_add_onboarding_fields_to_profiles.sql' },
+          'Some onboarding columns not found in database; saving minimal profile data'
+        );
 
         const { error: fallbackError } = await supabase
           .from('profiles')
@@ -362,23 +367,20 @@ export const useOnboarding = () => {
       }
 
       if (profileError) {
-        console.error('❌ Profile update error:', profileError);
+        logger.error({ err: profileError }, 'Profile update error');
         throw new Error(`Failed to update profile: ${profileError.message}`);
       }
 
-      console.log('✅ Onboarding data saved successfully to profiles table:');
-      console.log('📝 Profile:', {
-        full_name: state.data.profile.fullName,
-        email: state.data.profile.email,
-        company: state.data.profile.company,
-        job_title: state.data.profile.jobTitle,
-        timezone: state.data.profile.timezone,
-      });
-      console.log('🎯 Goal:', state.data.goal);
-      console.log('⚡ Mode:', state.data.mode);
-      console.log('🏢 Domain:', state.data.domain);
-      console.log('👤 Role:', state.data.role);
-      console.log('💾 Complete data saved to onboarding_data JSONB column');
+      logger.info(
+        {
+          timezone: state.data.profile.timezone,
+          goal: state.data.goal,
+          mode: state.data.mode,
+          domain: state.data.domain,
+          role: state.data.role,
+        },
+        'Onboarding data saved to profiles table (incl. onboarding_data JSONB)'
+      );
 
       // Save to localStorage as backup
       localStorage.setItem('onboarding_completed', 'true');
@@ -390,7 +392,7 @@ export const useOnboarding = () => {
       return { success: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-      console.error('Failed to save onboarding data:', error);
+      logger.error({ err: error }, 'Failed to save onboarding data');
       setState(prev => ({ ...prev, error: errorMessage }));
       throw error;
     } finally {
@@ -409,32 +411,39 @@ export const useOnboarding = () => {
       // Save onboarding data (creates/updates profile)
       await saveOnboardingData();
 
-      // Allocate free tier quotas (tokens, storage, executions)
-      console.log('🎁 Allocating free tier quotas...');
+      // Allocate free tier quotas (tokens, storage, executions).
+      // The route grants to the signed-in session user only, once; no user id is sent (S-6 fix).
+      logger.debug('Allocating free tier quotas');
       try {
         const allocationResponse = await fetch('/api/onboarding/allocate-free-tier', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ userId: user.id }),
+          body: JSON.stringify({}),
         });
 
         const allocationResult = await allocationResponse.json();
 
-        if (allocationResult.success) {
-          console.log('✅ Free tier quotas allocated:', allocationResult.allocation);
+        if (allocationResult.success && allocationResult.alreadyGranted) {
+          // A repeat completion (e.g. a second tab) is a success: the grant happened earlier.
+          logger.info('Free tier quotas already granted');
+        } else if (allocationResult.success) {
+          logger.info({ allocation: allocationResult.allocation }, 'Free tier quotas allocated');
         } else {
-          console.error('⚠️ Failed to allocate free tier quotas:', allocationResult.error);
+          logger.error(
+            { status: allocationResponse.status, error: allocationResult.error },
+            'Failed to allocate free tier quotas'
+          );
           // Don't fail onboarding if allocation fails - user can contact support
         }
       } catch (allocationError) {
-        console.error('⚠️ Error during quota allocation:', allocationError);
+        logger.error({ err: allocationError }, 'Error during quota allocation');
         // Don't fail onboarding if allocation fails
       }
 
       // Seed pipeline stages based on user selection
-      console.log('📊 Seeding pipeline stages...');
+      logger.debug('Seeding pipeline stages');
       try {
         const pipelineStages = state.data.pipelineStages;
         const pipelineTemplate = state.data.pipelineTemplate;
@@ -458,9 +467,9 @@ export const useOnboarding = () => {
 
           const pipelineResult = await pipelineResponse.json();
           if (pipelineResult.success) {
-            console.log('✅ Custom pipeline stages created:', pipelineResult.stages?.length);
+            logger.info({ stageCount: pipelineResult.stages?.length }, 'Custom pipeline stages created');
           } else {
-            console.error('⚠️ Failed to create custom pipeline stages:', pipelineResult.error);
+            logger.error({ error: pipelineResult.error }, 'Failed to create custom pipeline stages');
           }
         } else if (pipelineTemplate) {
           // User selected a template but didn't customize - seed defaults
@@ -477,13 +486,13 @@ export const useOnboarding = () => {
 
           const pipelineResult = await pipelineResponse.json();
           if (pipelineResult.success) {
-            console.log('✅ Default pipeline stages seeded for:', pipelineTemplate);
+            logger.info({ pipelineTemplate }, 'Default pipeline stages seeded');
           } else {
-            console.error('⚠️ Failed to seed default pipeline stages:', pipelineResult.error);
+            logger.error({ error: pipelineResult.error, pipelineTemplate }, 'Failed to seed default pipeline stages');
           }
         }
       } catch (pipelineError) {
-        console.error('⚠️ Error during pipeline seeding:', pipelineError);
+        logger.error({ err: pipelineError }, 'Error during pipeline seeding');
         // Don't fail onboarding if pipeline seeding fails
       }
 
@@ -495,10 +504,10 @@ export const useOnboarding = () => {
       });
 
       if (metadataError) {
-        console.error('Failed to update onboarding status in metadata:', metadataError);
+        logger.error({ err: metadataError }, 'Failed to update onboarding status in metadata');
         // Don't fail - profile was created successfully, just log the error
       } else {
-        console.log('Onboarding completed successfully - metadata updated');
+        logger.info('Onboarding completed; metadata updated');
       }
 
       // Log onboarding completion to audit trail via API
@@ -528,12 +537,12 @@ export const useOnboarding = () => {
           })
         });
       } catch (auditError) {
-        console.error('Failed to log onboarding completion to audit trail:', auditError);
+        logger.error({ err: auditError }, 'Failed to log onboarding completion to audit trail');
       }
 
       return true;
     } catch (error) {
-      console.error('Failed to complete onboarding:', error);
+      logger.error({ err: error }, 'Failed to complete onboarding');
 
       // Log onboarding failure to audit trail via API
       try {
@@ -560,7 +569,7 @@ export const useOnboarding = () => {
           });
         }
       } catch (auditError) {
-        console.error('Failed to log onboarding error to audit trail:', auditError);
+        logger.error({ err: auditError }, 'Failed to log onboarding error to audit trail');
       }
 
       return false;

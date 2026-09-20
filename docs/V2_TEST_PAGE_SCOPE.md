@@ -481,46 +481,44 @@ Phase 4 → [If technical_inputs_required] → Collect Inputs → Re-run Phase 4
 ## Tab 4: Free Tier Users
 
 ### Purpose
-Create and manage free tier user subscriptions for testing and onboarding.
+Grant the one-time free tier to **the signed-in user**, exactly as onboarding does. Used to check the grant end to end.
+
+> **Behaviour change (2026-09-19, S-6 fix):** the tab used to take a typed user UUID and grant to **any** account, as many times as it was clicked. That was the vulnerability itself (anyone could top up any account and unfreeze frozen ones), so the input is gone. The button now grants to the logged-in account only, and only once. A tester whose account already received the grant sees `alreadyGranted: true`, which is expected. Granting to another user, if ever needed, belongs in a separate admin route behind `AdminAccessService`. See [ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md](/docs/workplans/ALLOCATE_FREE_TIER_S6_FIX_WORKPLAN.md).
 
 ### Features
 
 #### 4.1 Info Banner
-Explains the functionality:
-- Creates record in `user_subscriptions` table
-- User must exist in `auth.users` table
-- Shows all quotas that will be allocated
+- Explains that the grant targets the account you are signed in as and cannot target another user
+- Shows the signed-in account (email, or id)
+- Explains that a repeat grant returns `alreadyGranted: true` and changes nothing
 
-#### 4.2 User ID Input
-- **UUID Input Field**: Accepts user ID from auth.users table
-- **Placeholder**: Shows example UUID format
-- **Helper Text**: Explains where to find the user ID
-- **Validation**: Disables submit if empty
-
-#### 4.3 What Will Be Created
+#### 4.2 What Will Be Granted
 Information panel showing default allocations:
 - **Pilot Tokens**: 20,834 tokens (from `system_settings_config`)
 - **Storage Quota**: 1,000 MB (from `system_settings_config`)
-- **Execution Quota**: Unlimited (null)
+- **Execution Quota**: from `free_tier_executions` (`null` = unlimited)
 - **Free Tier Duration**: 30 days (from `system_settings_config`)
-- **Status**: active
-- **Account Frozen**: false
+- **Status**: active (new row only)
+- **Account Frozen**: false on a new row only; never changed on an existing row
 
-**Important Note:**
-If user already has a subscription, free tier allocation is ADDED to existing balance.
+**Rules:**
+- The grant happens **once per account** (`free_tier_granted_at` is the marker).
+- On an existing subscription, the tokens are added to the balance, `total_earned` grows by the same amount, and quotas are never lowered.
+- A frozen account that never had the grant is refused with `409` and stays frozen.
 
-#### 4.4 Action Buttons
-- **Create Free Tier Subscription**: Calls API to allocate quotas
-- **Reset Form**: Clears form and response
+#### 4.3 Action Buttons
+- **Grant Free Tier to Me**: calls the API for the signed-in user. Disabled when not signed in
+- **Reset Form**: clears the response
 
-#### 4.5 Response Display
+#### 4.4 Response Display
 **Success Response (Green):**
 - ✅ Success header
-- Allocation Details box showing:
+- If `alreadyGranted: true`: an "Already granted" note (nothing was changed)
+- Otherwise, an Allocation Details box showing:
   - Pilot Tokens allocated
   - Raw Tokens (LLM tokens)
-  - Storage MB
-  - Executions quota
+  - Storage MB (the effective quota written)
+  - Executions quota (the effective quota written)
   - Success message
 - Full JSON expansion
 
@@ -534,22 +532,22 @@ If user already has a subscription, free tier allocation is ADDED to existing ba
 - Expandable full API response
 
 **API Endpoint Used:**
-- `POST /api/onboarding/allocate-free-tier`
+- `POST /api/onboarding/allocate-free-tier` (requires a signed-in session)
 
 **Request Format:**
 ```json
-{
-  "userId": "550e8400-e29b-41d4-a716-446655440000"
-}
+{}
 ```
+The body may be empty. A `userId` field is accepted only if it equals the signed-in user's id (for cached pre-fix clients); any other id gets `403`, and any other field gets `400`.
 
-**Success Response Format:**
+**Success Response Format (granted):**
 ```json
 {
   "success": true,
+  "alreadyGranted": false,
   "allocation": {
     "pilot_tokens": 20834,
-    "raw_tokens": 208340000,
+    "raw_tokens": 208340,
     "storage_mb": 1000,
     "executions": null
   },
@@ -557,23 +555,33 @@ If user already has a subscription, free tier allocation is ADDED to existing ba
 }
 ```
 
+**Success Response Format (already granted):**
+```json
+{
+  "success": true,
+  "alreadyGranted": true,
+  "allocation": null,
+  "message": "Free tier already granted"
+}
+```
+
+**Other responses:**
+
+| Status | Body `error` | When |
+|---|---|---|
+| 401 | `Unauthorized` | Not signed in |
+| 403 | `Forbidden` | Body `userId` is not the signed-in user |
+| 400 | `Invalid input` | Malformed JSON, non-UUID `userId`, or extra fields |
+| 409 | `Free tier not available for this account` | Frozen account that never had the grant |
+| 503 | `Please try again` | Lost the race three times (concurrent balance changes) |
+| 500 | `Failed to allocate free tier` | Configuration or database error (`details` only in development) |
+
 **What Happens in Database:**
-1. Checks if `user_subscriptions` record exists for user
-2. If exists: Updates record, adds to balance
-3. If not exists: Creates new record with:
-   - `user_id`
-   - `balance` (raw tokens)
-   - `total_earned`
-   - `storage_quota_mb`
-   - `storage_used_mb`: 0
-   - `executions_quota`
-   - `executions_used`: 0
-   - `status`: 'active'
-   - `free_tier_granted_at`
-   - `free_tier_expires_at`
-   - `free_tier_initial_amount`
-   - `account_frozen`: false
-4. Logs to audit trail with action: `FREE_TIER_ALLOCATED`
+1. Reads the signed-in user's `user_subscriptions` row (one `SELECT`; a repeat call stops here)
+2. If there is no row: inserts one with `balance = total_earned = free_tier_initial_amount = raw tokens`, the quotas, `status: 'active'`, `free_tier_granted_at`, `free_tier_expires_at` and `account_frozen: false`
+3. If there is an ungranted row: one conditional update (`free_tier_granted_at IS NULL`, not frozen, balance unchanged since the read) adds the tokens, keeps `total_earned` cumulative, never lowers quotas, and sets `free_tier_expires_at` only if the row held no credits before
+4. Writes **no** `credit_transactions` row: the table's `activity_type` CHECK does not allow `free_tier_grant` (checked 2026-09-20), and reusing `welcome_bonus` / `reward_credit` would change Stripe behaviour. A grant is therefore visible through `free_tier_granted_at` / `free_tier_initial_amount` and the audit entry only
+5. Logs to the audit trail with action `FREE_TIER_ALLOCATED`, only on an actual grant
 
 ---
 
@@ -786,9 +794,9 @@ Present on all tabs:
 
 **Free Tier Users State:**
 ```typescript
-- freeTierUserId: string
 - freeTierResponse: any
 ```
+(No user-id state: the grant always targets the signed-in user.)
 
 **Debug Logs State:**
 ```typescript
@@ -823,8 +831,8 @@ Present on all tabs:
 - `downloadCommunicationHistory()` - Export JSON
 
 **Free Tier Users:**
-- `createFreeTierUser()` - Call allocation API
-- `resetFreeTierForm()` - Clear form
+- `createFreeTierUser()` - Call the allocation API for the signed-in user
+- `resetFreeTierForm()` - Clear the response
 
 **Agent Execution:**
 - `loadAgentDetails(agentId)` - Fetch agent with pilot_steps
@@ -890,12 +898,12 @@ Present on all tabs:
 7. Review Phase 3 enhanced prompt
 8. Download communication history
 
-### UC-6: Create Free Tier User
-1. Navigate to Free Tier Users tab
-2. Enter user UUID
+### UC-6: Grant Free Tier to the Signed-in User
+1. Sign in as the test account
+2. Navigate to Free Tier Users tab
 3. Review allocation details
-4. Click "Create Free Tier Subscription"
-5. View success/error response
+4. Click "Grant Free Tier to Me"
+5. View the response (`alreadyGranted: true` on any repeat)
 6. Check Debug Logs for details
 
 ### UC-7: Debug Mini-Cycle Workflow
@@ -1070,10 +1078,10 @@ Used for token conversion:
 - API communication failure
 
 **Free Tier Errors:**
-- User ID not found in auth.users
-- User already has active subscription
-- System config not found
-- Database constraint violation
+- Not signed in (401)
+- Frozen account that never had the grant (409)
+- Repeated lost races (503)
+- Invalid system config or database error (500)
 
 ### Error Display
 All errors are:
@@ -1112,7 +1120,7 @@ All errors are:
 - Sensitive data not logged to debug panel
 - Plugin credentials never exposed to client
 - API responses may contain user data (handle carefully)
-- Audit trail logs all free tier allocations
+- Audit trail logs every actual free tier grant (not repeat calls)
 
 ---
 
@@ -1157,11 +1165,11 @@ All errors are:
 - Clear thread and restart
 - Check for missing clarification answers
 
-### Issue: Free Tier Creation Fails
-- Verify user exists in auth.users
-- Check system_settings_config values
-- Ensure user doesn't have conflicting subscription
-- Review database constraint errors
+### Issue: Free Tier Grant Fails
+- Make sure you are signed in (401 otherwise)
+- `alreadyGranted: true` is not a failure: the account already had its one grant
+- 409: the account is frozen and never had the grant; it is not granted or unfrozen here
+- Check system_settings_config values (invalid values fail closed with 500)
 
 ---
 
@@ -1177,7 +1185,15 @@ All errors are:
 
 ## Changelog
 
-### Version 1.9.1 (Current)
+### Version 1.9.2 (Current)
+- **Free Tier Users tab — session user only (S-6 fix, 2026-09-19)**:
+  - Removed the user-UUID input. The button grants the one-time free tier to the signed-in user only
+  - Shows `alreadyGranted: true` responses as "Already granted"
+  - Documented the new request/response formats and status codes
+  - No `credit_transactions` ledger row is written (the table's `activity_type` CHECK has no `free_tier_grant` value)
+  - Converted the page's two `console.*` calls to the Pino `clientLogger`
+
+### Version 1.9.1
 - **User Decisions Summary Improvements**:
   - Enhanced `getV6UserDecisionsForPreview()` to look up human-readable labels from `v6AmbiguityReport`:
     - `confirmed_patterns` → looks up `must_confirm` items, uses `description` or `title`
@@ -1340,5 +1356,5 @@ For issues or questions about the Test Page:
 
 ---
 
-**Last Updated:** January 21, 2026 (User Decisions Summary Improvements)
+**Last Updated:** September 19, 2026 (Free Tier Users tab: session user only, S-6 fix)
 **Maintained By:** NeuronForge Development Team
