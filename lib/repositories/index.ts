@@ -10,6 +10,7 @@ export { ConfigRepository, configRepository } from './ConfigRepository';
 export { MemoryRepository, memoryRepository } from './MemoryRepository';
 export { PluginConnectionRepository, pluginConnectionRepository } from './PluginConnectionRepository';
 export { SystemConfigRepository, systemConfigRepository } from './SystemConfigRepository';
+export { AiModelPricingRepository, aiModelPricingRepository } from './AiModelPricingRepository';
 export { AgentConfigurationRepository, agentConfigurationRepository } from './AgentConfigurationRepository';
 export { AgentStatsRepository, agentStatsRepository } from './AgentStatsRepository';
 export { AgentLogsRepository, agentLogsRepository } from './AgentLogsRepository';
@@ -78,6 +79,11 @@ export type {
   RewardConfig,
   // Plugin connection types
   UpsertPluginConnectionInput,
+  // AI model pricing types
+  AiModelPricing,
+  CreateAiModelPricingInput,
+  AiModelPricingSyncEntry,
+  AiModelPricingSyncResult,
 } from './types';
 
 export { AgentStatusEnum, STATUS_TRANSITIONS } from './types';

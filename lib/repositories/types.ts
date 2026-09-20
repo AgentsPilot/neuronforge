@@ -344,6 +344,49 @@ export interface UpsertPluginConnectionInput {
   connected_at?: string;
 }
 
+/**
+ * A row of `ai_model_pricing` — platform-wide reference data (one price per
+ * provider/model/effective_date). There is no `user_id` column: see the header
+ * of `AiModelPricingRepository` for why the mandatory user scoping does not
+ * apply and what replaces it.
+ */
+export interface AiModelPricing {
+  id: string;
+  provider: string;
+  model_name: string;
+  /**
+   * `numeric` columns come back from PostgREST as strings on some paths and as
+   * numbers on others — `lib/ai/pricing.ts:23-24` types them as strings and
+   * `parseFloat`s them, while the admin screen treats them as numbers. The union
+   * is the honest type; the route passes rows through untouched so today's
+   * response bytes are unchanged.
+   */
+  input_cost_per_token: number | string;
+  output_cost_per_token: number | string;
+  effective_date: string;
+  retired_date: string | null;
+  created_at: string;
+}
+
+/** Everything needed to insert one pricing row. The caller owns the clock. */
+export interface CreateAiModelPricingInput {
+  provider: string;
+  model_name: string;
+  input_cost_per_token: number;
+  output_cost_per_token: number;
+  effective_date: string;
+}
+
+/** One catalogue entry handed to `syncMany`. Same shape as an insert. */
+export type AiModelPricingSyncEntry = CreateAiModelPricingInput;
+
+/** Per-model outcome of a sync run; the values are model names. */
+export interface AiModelPricingSyncResult {
+  updated: string[];
+  created: string[];
+  failed: string[];
+}
+
 export interface SystemSettingsConfig {
   id: string;
   key: string;
