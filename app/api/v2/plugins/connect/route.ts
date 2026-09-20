@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { getUser } from '@/lib/auth';
 import { createLogger } from '@/lib/logger';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 
 const logger = createLogger({ module: 'PluginConnectAPI' });
+
+const ConnectBodySchema = z.object({
+  plugin_key: z.string().min(1, 'plugin_key is required').max(100),
+});
 
 export async function POST(request: NextRequest) {
   const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
@@ -19,16 +24,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get plugin key from request
-    const body = await request.json();
-    const { plugin_key } = body;
-
-    if (!plugin_key) {
+    // Validate input
+    const parsed = ConnectBodySchema.safeParse(await request.json());
+    if (!parsed.success) {
       return NextResponse.json(
-        { success: false, error: 'Plugin key is required' },
+        {
+          success: false,
+          error: 'Plugin key is required',
+          details: process.env.NODE_ENV === 'development' ? parsed.error.flatten() : undefined,
+        },
         { status: 400 }
       );
     }
+    const { plugin_key } = parsed.data;
 
     requestLogger.info({ userId: user.id, pluginKey: plugin_key }, 'Initiating plugin OAuth connection');
 
@@ -88,7 +96,9 @@ export async function POST(request: NextRequest) {
       authUrl.searchParams.set('prompt', 'consent');
     }
 
-    requestLogger.info({ userId: user.id, pluginKey: plugin_key, authUrl: authUrl.toString() }, 'OAuth URL generated');
+    // Deliberately NOT logging authUrl: it carries client_id and the state parameter,
+    // which embeds user_id. pluginKey is enough to trace a connection attempt.
+    requestLogger.info({ userId: user.id, pluginKey: plugin_key }, 'OAuth URL generated');
 
     return NextResponse.json({
       success: true,

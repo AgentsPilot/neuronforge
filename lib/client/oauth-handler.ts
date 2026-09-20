@@ -1,13 +1,15 @@
 // lib/client/oauth-handler.ts
 
-interface OAuthConfig {
-  auth_url: string;
-  client_id: string;
-  redirect_uri: string;
-  required_scopes: string[];
-  user_scopes?: string[];
-  requires_pkce?: boolean;
-}
+import { clientLogger } from '@/lib/logger/client';
+import type { ClientSafeAuthConfig } from '@/lib/plugins/sanitize-plugin-definition';
+
+/**
+ * The browser only ever sees a sanitised auth config. These are exactly the fields this
+ * handler reads, and they are the reason the allow-list has the shape it does — see
+ * lib/plugins/sanitize-plugin-definition.ts. Nothing secret is needed to build an
+ * authorize URL: client_id is public by OAuth 2.0 design (RFC 6749 section 2.2).
+ */
+type OAuthConfig = ClientSafeAuthConfig;
 
 interface OAuthResult {
   success: boolean;
@@ -16,11 +18,9 @@ interface OAuthResult {
 }
 
 export class OAuthHandler {
-  private debug = process.env.NODE_ENV === 'development';
-
   // Initiate OAuth flow for a plugin
   async initiateOAuth(userId: string, pluginKey: string, authConfig: OAuthConfig): Promise<OAuthResult> {
-    if (this.debug) console.log(`DEBUG: Client - Initiating OAuth for ${pluginKey}`);
+    clientLogger.debug({ pluginKey }, 'Initiating OAuth');
 
     try {
       // Generate PKCE parameters if required (must be done before state generation)
@@ -30,7 +30,7 @@ export class OAuthHandler {
         codeVerifier = this.generateCodeVerifier();
         codeChallenge = await this.generateCodeChallenge(codeVerifier);
 
-        if (this.debug) console.log(`DEBUG: Client - Generated PKCE parameters for ${pluginKey}`);
+        clientLogger.debug({ pluginKey }, 'Generated PKCE parameters');
       }
 
       // Generate state parameter for security (includes code_verifier for PKCE)
@@ -59,7 +59,7 @@ export class OAuthHandler {
         authUrl.searchParams.set('prompt', 'consent');
       }
 
-      if (this.debug) console.log(`DEBUG: Client - Opening OAuth popup for ${pluginKey}`);
+      clientLogger.debug({ pluginKey }, 'Opening OAuth popup');
 
       // Open popup window
       const popup = window.open(
@@ -75,12 +75,12 @@ export class OAuthHandler {
       // Wait for OAuth completion
       const result = await this.waitForOAuthCompletion(popup, pluginKey);
 
-      if (this.debug) console.log(`DEBUG: Client - OAuth completed for ${pluginKey}:`, { success: result.success });
+      clientLogger.debug({ pluginKey, success: result.success }, 'OAuth completed');
 
       return result;
 
     } catch (error: any) {
-      console.error(`DEBUG: Client - OAuth error for ${pluginKey}:`, error);
+      clientLogger.error({ err: error, pluginKey }, 'OAuth error');
       return {
         success: false,
         error: error.message
@@ -102,31 +102,30 @@ export class OAuthHandler {
       };
 
       const messageHandler = (event: MessageEvent) => {
-        console.log(`[OAuth Handler] Received message:`, event.data);
-        console.log(`[OAuth Handler] Message origin: ${event.origin}, Expected: ${window.location.origin}`);
+        clientLogger.debug({ origin: event.origin, expectedOrigin: window.location.origin }, 'OAuth popup message received');
 
         // Security check - only accept messages from same origin
         if (event.origin !== window.location.origin) {
-          console.log(`[OAuth Handler] ⚠️ Ignoring message from different origin: ${event.origin}`);
+          clientLogger.warn({ origin: event.origin }, 'Ignoring OAuth message from different origin');
           return;
         }
 
-        console.log(`[OAuth Handler] Message type: ${event.data.type}, Plugin: ${event.data.plugin}, Expected plugin: ${pluginKey}`);
+        clientLogger.debug({ messageType: event.data?.type, plugin: event.data?.plugin, expectedPlugin: pluginKey }, 'OAuth message inspected');
 
         // Check if this is our plugin connection message
         if (event.data.type === 'plugin-connected' && event.data.plugin === pluginKey) {
-          console.log(`[OAuth Handler] ✅ Plugin connection message received for ${pluginKey}`);
+          clientLogger.debug({ pluginKey }, 'Plugin connection message received');
           messageReceived = true;
           cleanup();
 
           if (event.data.success) {
-            if (this.debug) console.log(`DEBUG: Client - OAuth successful for ${pluginKey}`);
+            clientLogger.debug({ pluginKey }, 'OAuth successful');
             resolve({
               success: true,
               data: event.data.data
             });
           } else {
-            console.error(`DEBUG: Client - OAuth failed for ${pluginKey}:`, event.data.error);
+            clientLogger.error({ pluginKey, err: event.data?.error }, 'OAuth failed');
             resolve({
               success: false,
               error: event.data.error
@@ -136,7 +135,7 @@ export class OAuthHandler {
       };
 
       // Listen for messages from popup
-      console.log(`[OAuth Handler] Setting up message listener for ${pluginKey}`);
+      clientLogger.debug({ pluginKey }, 'Setting up OAuth message listener');
       window.addEventListener('message', messageHandler);
 
       // Check if popup was closed manually
@@ -147,7 +146,7 @@ export class OAuthHandler {
             setTimeout(() => {
               if (!messageReceived) {
                 cleanup();
-                if (this.debug) console.log(`DEBUG: Client - OAuth popup closed by user for ${pluginKey}`);
+                clientLogger.debug({ pluginKey }, 'OAuth popup closed by user');
                 resolve({
                   success: false,
                   error: 'Authorization window was closed before completion'
@@ -163,7 +162,7 @@ export class OAuthHandler {
         if (!popup.closed && !messageReceived) {
           cleanup();
           popup.close();
-          if (this.debug) console.log(`DEBUG: Client - OAuth timeout for ${pluginKey}`);
+          clientLogger.debug({ pluginKey }, 'OAuth timed out');
           resolve({
             success: false,
             error: 'Authorization process timed out'
