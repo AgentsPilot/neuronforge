@@ -1,6 +1,10 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { SystemConfigService } from '@/lib/services/SystemConfigService'
+import { requireAdmin } from '@/lib/admin/requireAdminRoute'
+import { createLogger } from '@/lib/logger'
+
+const logger = createLogger({ module: 'HelpbotConfigAdminAPI' })
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -70,7 +74,15 @@ export async function GET() {
  * Update helpbot configuration
  */
 export async function PUT(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID()
+  const requestLogger = logger.child({ correlationId })
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger)
+    if (gate instanceof NextResponse) return gate
+
     const { config } = await request.json()
 
     if (!config) {
