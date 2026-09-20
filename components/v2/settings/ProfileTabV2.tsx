@@ -3,10 +3,12 @@
 import React, { useState, useMemo } from 'react'
 import { useAuth } from '@/components/UserProvider'
 import { supabase } from '@/lib/supabaseClient'
-import { Save, Loader2, CheckCircle, AlertCircle, User, Building, Briefcase, Clock, Search, X, Shield, Globe } from 'lucide-react'
+import { Save, Loader2, CheckCircle, AlertCircle, User, Building, Briefcase, Clock, Search, X } from 'lucide-react'
 import { UserProfile } from '@/types/settings'
 import AvatarUpload from '@/components/ui/AvatarUpload'
 import CurrencySelector from '@/components/settings/CurrencySelector'
+import { PROFILE_ROLE_OPTIONS, getProfileRoleConfig } from '@/components/v2/settings/profileRoleOptions'
+import { clientLogger } from '@/lib/logger/client'
 
 interface ProfileTabV2Props {
   profileForm: Partial<UserProfile>
@@ -36,33 +38,10 @@ export default function ProfileTabV2({
   const [jobTitleSearch, setJobTitleSearch] = useState('')
   const [isJobTitleDropdownOpen, setIsJobTitleDropdownOpen] = useState(false)
 
-  // Role options
-  const roleOptions = [
-    {
-      value: 'admin',
-      label: 'Administrator',
-      description: 'Full access to all features',
-      icon: Shield
-    },
-    {
-      value: 'user',
-      label: 'User',
-      description: 'Standard access',
-      icon: User
-    },
-    {
-      value: 'viewer',
-      label: 'Viewer',
-      description: 'Read-only access',
-      icon: Globe
-    }
-  ]
+  // Role options — see profileRoleOptions.ts for why 'admin' is not among them
+  const roleOptions = PROFILE_ROLE_OPTIONS
 
-  const getRoleConfig = (role: string) => {
-    return roleOptions.find(option => option.value === role) || roleOptions[1] // Default to 'user'
-  }
-
-  const currentRoleConfig = getRoleConfig(profileForm.role || 'user')
+  const currentRoleConfig = getProfileRoleConfig(profileForm.role || 'user')
 
   // Job title options - organized with common roles first
   const jobTitleOptions = [
@@ -273,13 +252,13 @@ export default function ProfileTabV2({
           })
         })
       } catch (auditError) {
-        console.error('Audit logging failed (non-critical):', auditError)
+        clientLogger.error({ err: auditError, userId: user.id }, 'Audit logging failed (non-critical)')
       }
 
       setSuccessMessage('Profile updated successfully!')
 
     } catch (error) {
-      console.error('Error saving profile:', error)
+      clientLogger.error({ err: error, userId: user.id }, 'Failed to save profile')
       setErrorMessage('Failed to save profile. Please try again.')
     } finally {
       setSaving(false)
