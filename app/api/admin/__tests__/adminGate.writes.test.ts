@@ -174,6 +174,7 @@ import * as adminUsersSettings from '../settings/admin-users/route';
 import * as storageTiers from '../storage-tiers/route';
 import * as systemLimits from '../system-limits/route';
 import * as uiConfig from '../ui-config/route';
+import * as userEmails from '../user-emails/route';
 
 const ADMIN = { id: '11111111-1111-4111-8111-111111111111', email: 'ops@example.com' };
 const CUSTOMER = { id: '22222222-2222-4222-8222-222222222222', email: 'customer@example.com' };
@@ -231,6 +232,14 @@ const CASES: Array<{ name: string; call: () => Promise<Response> }> = [
   // the list is empty. It is gated in the WRITE slice because it is a write.
   { name: 'GET /api/admin/settings/admin-users (writes!)', call: () => adminUsersSettings.GET(req('/api/admin/settings/admin-users', 'GET')) },
   { name: 'POST /api/admin/settings/admin-users', call: () => adminUsersSettings.POST(req('/api/admin/settings/admin-users', 'POST', { action: 'add', email: 'x@y.z' })) },
+
+  // ── Gated ahead of slice 2, on its own branch ────────────────────────────
+  // `user-emails` is a READ shaped as a POST, so it was sorted into the read
+  // slice — and slice 2 is parked. Until its gate, an ANONYMOUS caller could
+  // POST a list of user ids and receive their EMAIL ADDRESSES, read with the
+  // service role. It is a gated handler now, so it is proven here like any
+  // other: four denial cases, each asserting nothing was touched.
+  { name: 'POST /api/admin/user-emails', call: () => userEmails.POST(req('/api/admin/user-emails', 'POST', { userIds: ['11111111-1111-4111-8111-111111111111'] })) },
 ];
 
 beforeEach(() => {
@@ -244,7 +253,11 @@ describe('slice 1 — anonymous writes and destructive actions are refused', () 
   it('covers every handler the slice gates', () => {
     // A route quietly dropped from this list is a route nobody proved. The
     // count is asserted so deleting a case is a visible, deliberate act.
-    expect(CASES).toHaveLength(30);
+    //
+    // 30 from slice 1, + 1 for `user-emails#POST`, gated ahead of slice 2 on
+    // fix/admin-user-emails-gate because slice 2 is parked and the route
+    // handed platform email addresses to anonymous callers.
+    expect(CASES).toHaveLength(31);
   });
 
   describe.each(CASES)('$name', ({ call }) => {
