@@ -29,7 +29,7 @@ const logger = clientLogger.child({ module: 'AuthCallback' });
  */
 export default function AuthCallbackPage() {
   const router = useRouter();
-  const [status, setStatus] = useState<'verifying' | 'creating_profile' | 'redirecting' | 'error'>('verifying');
+  const [status, setStatus] = useState<'verifying' | 'redirecting' | 'error'>('verifying');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -67,43 +67,31 @@ export default function AuthCallbackPage() {
 
         logger.info({ userId: user.id, createdAt: user.created_at }, 'User resolved from session');
 
-        // Ensure profile exists (create if missing)
-        setStatus('creating_profile');
-        try {
-          const { data: existingProfile } = await supabase
-            .from('profiles')
-            .select('id, full_name')
-            .eq('id', user.id)
-            .single();
-
-          if (!existingProfile) {
-            logger.info({ userId: user.id }, 'Profile not found — creating');
-            const { error: profileError } = await supabase
-              .from('profiles')
-              .insert({
-                id: user.id,
-                full_name: user.user_metadata?.full_name || '',
-                role: 'user',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              });
-
-            if (profileError) {
-              // Don't fail - let onboarding handle it with upsert
-              logger.error(
-                { err: profileError, userId: user.id },
-                'Profile creation failed — onboarding will handle it'
-              );
-            } else {
-              logger.info({ userId: user.id }, 'Profile created');
-            }
-          } else {
-            logger.debug({ userId: user.id }, 'Profile already exists');
-          }
-        } catch (profileErr) {
-          // Don't fail - continue to onboarding
-          logger.error({ err: profileErr, userId: user.id }, 'Profile check/creation error');
-        }
+        /*
+         * No "ensure the profile row exists" step here any more, and none is
+         * needed: `create_user_settings_trigger` on `auth.users` (AFTER INSERT,
+         * FOR EACH ROW) inserts `public.profiles (id) … ON CONFLICT DO NOTHING`
+         * inside the signup transaction. The row exists before this page can
+         * run, which is also why the block that used to be here never fired.
+         *
+         * It was a client component reading and writing `profiles` directly —
+         * against Mandatory Rule 1 — and it could not be pointed at a
+         * repository, because repositories are server-only. The database was
+         * already doing the job, transactionally and without a race between two
+         * tabs finishing the callback at once.
+         *
+         * What it appeared to add, it did not: `full_name` from OAuth metadata
+         * was only written on the branch that never ran, and every reader
+         * (`lib/user-context/builders.ts`, the onboarding hook) already falls
+         * back to auth metadata. It also wrote `role: 'user'`, which is not a
+         * value that column takes — `profiles.role` holds an onboarding PERSONA
+         * (business_owner, consultant, …), and the literal "user" would have
+         * been fed to LLM personalization as if it meant something.
+         *
+         * The one dependency this creates: the trigger lives in the Supabase
+         * project, not in `supabase/migrations/`. A new environment needs it
+         * codified, or it will have no profile-creation path at all.
+         */
 
         // Check onboarding status from user metadata
         const onboardingCompleted = user.user_metadata?.onboarding_completed;
@@ -182,14 +170,6 @@ export default function AuthCallbackPage() {
               <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
             </div>
             <p className="text-lg">Verifying your email...</p>
-          </>
-        )}
-        {status === 'creating_profile' && (
-          <>
-            <div className="w-12 h-12 mx-auto mb-4">
-              <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-            </div>
-            <p className="text-lg">Setting up your account...</p>
           </>
         )}
         {status === 'redirecting' && (
