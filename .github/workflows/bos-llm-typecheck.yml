@@ -1,4 +1,9 @@
-# Business OS LLM Attribution Type Check
+# Business OS LLM Attribution Type Check + Model-Literal Check
+# Workflow and job NAMES are kept stable on purpose, so the check's identity
+# survives if branch protection ever adopts it. It is NOT a required check
+# today - `Admin authz surface guard` is the only one on `main` - so a red run
+# here does NOT block a merge. Until that changes, both gates below are
+# advisory: they tell a reviewer the truth, they do not enforce it.
 #
 # The call catalog (lib/business-os/llm/callCatalog.ts) turns a wrong area or
 # call name, or a missing account, into a TYPE error. Nothing else enforces
@@ -6,6 +11,10 @@
 # repo carries pre-existing tsc errors. This job fails only on NEW type errors
 # in the attribution scope (see scripts/typecheck-bos-llm.ts for how the scope
 # is derived and how the committed baseline works).
+#
+# A second step runs the Layer 2 literal gate
+# (scripts/check-bos-llm-literals.ts): no Business OS call site may hardcode a
+# model name or a temperature instead of resolving it (FR-15).
 #
 # No `paths:` filter on purpose: the scope is derived from the import graph
 # (the catalog, its importers, barrels, and their direct callers), so a new
@@ -94,6 +103,22 @@ jobs:
           # The program covers the whole repo so types resolve as in the editor.
           NODE_OPTIONS: '--max-old-space-size=6144'
         run: npm run typecheck:bos-llm
+
+      # Layer 2 (FR-15): no Business OS call site may write its own model name
+      # or temperature - it must resolve them, so an operator can change a model
+      # or switch an area off without a deploy. A re-hardcoded call site still
+      # works and still passes every attribution test; it just stops obeying its
+      # area row, and nobody finds out until an operator changes a setting and
+      # nothing happens. Same scope derivation as the step above
+      # (scripts/lib/bos-llm-scope.ts), no compile, ~20s.
+      #
+      # `!cancelled()` so a red type check cannot hide a literal regression:
+      # both verdicts appear in one run, and the job fails if either fails.
+      # (`always()` would also run after a cancel.) The skip condition is
+      # repeated because the step now runs even when an earlier one failed.
+      - name: Run model/temperature literal check
+        if: ${{ !cancelled() && steps.scope.outputs.skip != 'true' }}
+        run: npm run check:bos-llm-literals
 
       - name: Note the skip in the run summary
         if: steps.scope.outputs.skip == 'true'
