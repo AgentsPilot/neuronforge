@@ -900,7 +900,13 @@ export async function POST(request: NextRequest) {
             const websiteService = new WebsiteGenerationService();
 
             // AWAIT the website generation to ensure it completes before returning
-            const result = await websiteService.generateWebsite(user.id, { groupId: buildGroupId });
+            // Explicit: a business finishing onboarding gets a site either
+            // way. With the website area off, that is the starter copy rather
+            // than nothing (Layer 2 FR-14, RC-W3).
+            const result = await websiteService.generateWebsite(user.id, {
+              groupId: buildGroupId,
+              onAiDisabled: 'fallback',
+            });
             markGenerationResult(h, result);
 
             if (result.success) {
