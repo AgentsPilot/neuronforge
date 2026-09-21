@@ -1811,22 +1811,25 @@ and use those ids in the `business_profiles` / `onboarding_conversations` insert
 
 **Step 1 — apply the two migrations, in order, and time them.**
 ```bash
-time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20260921_business_os_entitlements.sql
-time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20260921b_business_os_entitlements_backfill.sql
+time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005_business_os_entitlements.sql
+time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005b_business_os_entitlements_backfill.sql
 ```
 *Use a clean branch database:* the DDL uses `CREATE TABLE IF NOT EXISTS`, so a half-applied earlier attempt is skipped silently rather than corrected (the constraints would be missing and only A-section checks would notice).
 *Pass:* both exit 0. *Fail:* any error; `lock_timeout` (`55P03`) means something held a lock on a parent table — retry when idle, and **record it**, because it is the failure mode M-1 is designed around.
-*Record:* wall-clock duration of **each** file, especially `20260921b` (it scans `onboarding_conversations` in full — this is the number RM needs before production).
+*Record:* wall-clock duration of **each** file, especially `20261005b` (it scans `onboarding_conversations` in full — this is the number RM needs before production).
 
 **Step 2 — run the verification script.**
 ```bash
 psql "$BOS_DB" -v ON_ERROR_STOP=1 -f scripts/verify-bos-entitlements-migration.sql
 ```
-*Expected:* the single row `business_os entitlements migration: all checks passed`, then `ROLLBACK`.
-*Expected TODAY:* **failure at B8** with `ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time` — that is **Q-1**, a defect in the RPC/script, **not** in the schema. Confirm the message matches, then either apply the Q-1 fix and re-run, or comment B8 out **for this run only** and record that B8 is unproven.
-*Pass/fail:* any other exception names the property that broke (`A1`…`C2`) — treat the name as the finding and stop.
+*Expected:* the single row `business_os entitlements migration: all checks passed`, then `ROLLBACK`, preceded by the `NOTICE` from C3 reporting how many backfilled rows were checked. **Record that number.**
+*Pass/fail:* every exception names the property that broke (`A1`…`A10`, `B1`…`B8c`, `M-2`…`M-5`, `R2-3`, `C0`…`C3`) — treat the name as the finding and stop.
+*Superseded (2026-09-22):* the earlier expectation that this run would die at B8 with `ON CONFLICT DO UPDATE command cannot affect row a second time` no longer applies — that was **Q-1**, fixed by the RPC's `GROUP BY`. If it still happens, the fix has been lost.
+*Checks added since the first QA pass, which this run is now also proving:* **A10** (`service_role` privileges), **B7**'s recovered facts, **B8/B8b/B8c**'s three-part arithmetic, and **C0/C3**'s non-vacuous backfill proof.
 
 **Step 3 — the checks the script does not make.**
+> ⚠️ **Run every query in step 3 in a separate psql session, outside the verification script.** The script's C0 creates a synthetic `origin = 'backfill'` row and then rolls the whole transaction back; counting from inside it would count that probe, and counting after it sees only what the real `20261005b` produced. That separation is what makes 3a evidence about the migration rather than about the script.
+
 3a. **Backfill non-vacuity (Q-3).**
 ```sql
 SELECT count(*) FILTER (WHERE origin = 'backfill')                                   AS backfilled,
@@ -1859,6 +1862,33 @@ WHERE NOT t.tgisinternal AND t.tgname LIKE 'business_os_plan_on_%';
 ```
 *Pass:* exactly two rows — `…_on_onboarding` on `onboarding_conversations`, `…_on_profile` on `business_profiles`, both AFTER INSERT FOR EACH ROW.
 
+3d. **The fact heal (QA Q-5's fix, and the one statement no database-side check exercises — QA Q-19).** The verification script proves the backfill's `INSERT` (C0) but never runs the `UPDATE … COALESCE` that fills a gap row's missing fact. Prove it directly, in its own transaction, and roll back:
+```sql
+BEGIN;
+-- A gap row: the profile trigger fired between the two migrations, so the row
+-- exists with ONE fact, and the backfill's INSERT skipped it on conflict.
+-- (Use a seeded tenant that has BOTH a transcript and a profile.)
+UPDATE public.business_os_account_plans
+   SET onboarding_started_at = NULL, cohort = 'trial', origin = 'profile_trigger',
+       updated_at = now() - interval '1 hour'
+ WHERE user_id = '<seed1>';
+
+-- …now run ONLY the heal statement from 20261005b (copy it verbatim from the file).
+-- Then:
+SELECT onboarding_started_at =
+         (SELECT min(created_at) FROM public.onboarding_conversations WHERE user_id = '<seed1>') AS fact_healed,
+       cohort   AS cohort_must_still_be_trial,
+       origin   AS origin_must_be_unchanged,
+       tier IS NULL AND trial_started_at IS NULL AND trial_ends_at IS NULL AS pins_untouched
+FROM public.business_os_account_plans WHERE user_id = '<seed1>';
+
+-- Inertness: run the same heal statement a second time and confirm updated_at
+-- does not move.
+ROLLBACK;
+```
+*Pass:* `fact_healed = true`, `cohort = 'trial'` (the heal must **not** promote a gap row to champion — that is the launch operation's job), `origin` unchanged, `pins_untouched = true`, and the second pass leaves `updated_at` where the first pass put it.
+*Fail:* a moved `updated_at` on the second pass means the `EXISTS` guards are not doing their job and the migration is not inert; a changed cohort means the heal is doing more than healing.
+
 **Step 4 — re-run the backfill and prove it is inert.**
 ```sql
 SELECT md5(string_agg(user_id::text || coalesce(cohort,'') || coalesce(origin,'') ||
@@ -1866,9 +1896,10 @@ SELECT md5(string_agg(user_id::text || coalesce(cohort,'') || coalesce(origin,''
      count(*) FROM public.business_os_account_plans;   -- before
 ```
 ```bash
-time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20260921b_business_os_entitlements_backfill.sql
+time psql "$BOS_DB" -v ON_ERROR_STOP=1 -f supabase/migrations/20261005b_business_os_entitlements_backfill.sql
 ```
 Re-run the fingerprint query. *Pass:* identical fingerprint and count; `INSERT 0 0` in the output. *Fail:* any change — the backfill is not idempotent.
+*Why this step matters more than it did:* the file now contains the fact-heal `UPDATE` as well as the insert, and SA's §13.4 is right that its inertness is a **property, not an accident** — it holds only because of the two `EXISTS` guards. The fingerprint includes `updated_at`, so a heal that rewrites rows on every run shows up here as a changed fingerprint with an unchanged row count. Record `UPDATE 0` from the second run as well as `INSERT 0 0`.
 
 **Step 5 — trigger-created rows stay trials, and the window hazard is measured (Q-5).**
 ```sql
@@ -1895,8 +1926,8 @@ WHERE p.origin IN ('onboarding_trigger','profile_trigger')
 
 | Measurement | Query / source |
 |---|---|
-| `20260921` duration | `time` output, step 1 |
-| **`20260921b` duration** | `time` output, step 1 — the number RM needs before production |
+| `20261005` duration | `time` output, step 1 |
+| **`20261005b` duration** | `time` output, step 1 — the number RM needs before production |
 | Rows created by the backfill | `SELECT count(*) FROM business_os_account_plans WHERE origin = 'backfill';` |
 | Tenants total | `SELECT count(*) FROM (SELECT user_id FROM business_profiles UNION SELECT user_id FROM onboarding_conversations) t;` |
 | Missing plan rows (must be 0) | the C1 query in the verification script |
@@ -1916,7 +1947,7 @@ WHERE p.origin IN ('onboarding_trigger','profile_trigger')
    *Pass:* the plan row comes back as JSON. *If* `Could not find the function … in the schema cache`: run `NOTIFY pgrst, 'reload schema';` and retry — and note it, because RM must do the same in production.
    Then the negative: the same call with the **anon** key must return `42883`/permission denied.
 
-**Exit criteria for the database phase:** steps 1–7 all pass, Q-1 is fixed and B8 proven, Q-3's non-vacuity count is non-zero, step 3b is all `true`, step 5b returns zero rows (or the healed rows are recorded), and the `20260921b` duration is written into §15 for RM.
+**Exit criteria for the database phase:** steps 1–7 all pass, B8/B8b/B8c prove the fold-and-sum arithmetic, C3's `NOTICE` count is non-zero, step 3a's count (measured **outside** the script) is non-zero, step 3b is all `true`, step 3d heals the fact without touching the cohort and is inert on a second pass, step 5b returns zero rows (or the healed rows are recorded), and the `20261005b` duration is written into §15 for RM.
 
 ---
 
@@ -1927,10 +1958,126 @@ WHERE p.origin IN ('onboarding_trigger','profile_trigger')
 3. **A branch database is still required.** Thirteen properties — including "a customer cannot reset their way into a fresh trial", the single most important guarantee in this component — remain unproven. §14.6 is written to be run unattended the moment one exists.
 4. **Q-9, the migration numbering**, is worth a decision before RM applies anything: the files sort ~40 positions before migrations that are already live.
 
-### Final Status
+### Final Status (2026-09-21 — superseded by §14.8.6)
 - [ ] All acceptance criteria pass — ready for commit
 - [x] **Issues found — Dev must address Q-1 (High) before commit; Q-2/Q-3/Q-4/Q-5 before the migration is applied anywhere.**
 - [x] **13 database-dependent checks remain BLOCKED.** Component 1 must not be applied to any database until §14.6 has been run on a branch database.
+
+### 14.7a Note on the file:line citations above
+
+§14.1 to §14.5 are the dated record of the 2026-09-21 pass and are left as written. The two migrations were **renamed** afterwards (Q-9), so every `20260921…` path in §14.4 refers to what is now `20261005_business_os_entitlements.sql` / `20261005b_business_os_entitlements_backfill.sql`, and the line numbers are pre-fix. §14.6 has been rewritten against the current tree and is the runnable one.
+
+### 14.8 Re-verification after Dev's fixes — QA, 2026-09-22
+
+Against Dev's §4.18 (workplan `0cc87014`) and SA's §13.4. Implementation still uncommitted. **Same constraint: no database in this environment, and production is out of bounds.** Everything below was re-run or re-read by QA; nothing is taken from Dev's report.
+
+**Verdict: ✅ READY FOR USER REVIEW AND COMMIT.** Every prior finding is fixed, and the fixes are real rather than cosmetic — three of them are checks that would now *fail* if the behaviour regressed. Four small things remain (§14.8.3), none blocking: one is SA's own F-5, two are further vacuity trims to the verification script, one is a guard hole this narrowing opened. **The database phase is unchanged in status and larger in scope** (§14.8.4).
+
+#### 14.8.1 What QA re-ran
+
+| Command | Result |
+|---|---|
+| `jest lib/repositories/__tests__ supabase/migrations/__tests__ lib/business-os/purge/__tests__ lib/business-os/__tests__/businessOwnedTables lib/admin/__tests__ --ci` | ✅ **35 suites, 462 tests, 0 failures** — Dev's number confirmed exactly |
+| `jest` over component 1's five suites only | ✅ **5 suites, 74 tests** — confirmed |
+| `jest lib/admin/__tests__/admin-authz-surface.guard.test.ts --ci` | ✅ **74 tests**, no new exemption (component 1 still adds no route) |
+| `eslint --config eslint.hooks.config.mjs --no-config-lookup --no-inline-config --max-warnings 0` over the seven changed/created `lib` files | ✅ exit 0 |
+| `console.*` in the touch set | ✅ **0**, including the new import guard |
+| **Typecheck, Dev's method, verified rather than accepted:** `NODE_OPTIONS=--max-old-space-size=8192 tsc --noEmit -p tsconfig.json --typeRoots <main>/node_modules/@types` | ✅ **exit 1, 2,030 diagnostics, 0 × TS2688** — Dev's numbers reproduced to the digit. **It genuinely examines the component's files:** the same run reports **3** errors in other `lib/repositories/*.ts` files (`CRMContactRepository`, `CalibrationSessionRepository`, `WebsiteContentRepository`) and **6** under `supabase/`, so those trees are in the program; **0** diagnostics fall in any component 1 file. Cross-checked against an independent TS program rooted only at the 11 changed files: **0 diagnostics**. Q-7 is genuinely fixed, and so is the method. |
+
+#### 14.8.2 Prior findings — re-verified one by one
+
+| # | Prior severity | Verdict | Evidence QA checked (not Dev's claim) |
+|---|---|---|---|
+| **Q-1** | High | ✅ **FIXED** | The RPC now aggregates before inserting. `GROUP BY r.user_id, r.capability, r.surface, r.outcome, r.rule, 6` — the `6` is the ordinal of the `COALESCE(r.day, …)` output column, which is valid and also folds a NULL `day` together with an explicit today. `now()` in the select list is legal ungrouped (it references no column). `(array_agg(x) FILTER (WHERE x IS NOT NULL))[1]` is valid subscripting of a parenthesised expression and yields NULL, not an error, when every sample is NULL. The `ON CONFLICT` arithmetic is untouched, so cross-call summing still works. **B8 is now three discriminating checks:** fold-within-call (5/6/9), sum-across-calls with a NULL sample not overwriting a stored one (9/8/9, `c1`), and two surfaces staying two rows — each with a number that a broken `GROUP BY` would miss. A guard test pins the `GROUP BY` and the `SUM`/`MAX` expressions. |
+| **Q-2** | Medium | ✅ **FIXED** | The reset's INSERT branch now carries `onboarding_started_at, profile_created_at` from `min(oc.created_at)` and the profile's `created_at`; the `DO UPDATE` branch still omits both, so an existing row's facts stay untouched. `business_profiles.user_id` is UNIQUE, so the scalar sub-select cannot raise "more than one row". B7 asserts the fact is recovered and that no profile fact is invented for an account with none — **but see Q-20: B7 cannot tell `min(created_at)` from `now()` on its own data.** |
+| **Q-3** | Medium | ✅ **FIXED (with one residue)** | C0 makes a genuine pre-existing tenant — history written with a **backdated** `created_at`, plan row deleted — runs the backfill statement over it, and asserts open-ended champion + facts from history + no tier. It cannot pass vacuously: an insert of nothing trips `C0 the backfill statement created no row`, and the backdated `2024-05-06` fact would not survive a `now()` implementation. C1's probe exclusion is correct, and the `WHERE user_id IS NOT NULL` inside it is load-bearing (see Q-21). **Residue:** C3 can only fail if C0 already failed, and neither says anything about the real `20261005b` having been applied to *this* database — that is what §14.6 step 3a, run outside the script, is for. The runbook now says so explicitly. |
+| **Q-4** | Medium | ✅ **FIXED** | The migration states `GRANT SELECT, INSERT, UPDATE … TO service_role` instead of inheriting it, and A10 asserts all three tables read/write plus EXECUTE on both callable functions, with an `n <> 2` non-vacuity count. Withholding DELETE matches the design (the module never deletes); SA's note that a future retention job must add it deliberately is the right consequence. |
+| **Q-5** | Medium | ✅ **FIXED, and fixed properly** | The heal fills only NULL facts, from the tenant's own history, and touches nothing else. QA traced the inertness claim: the `SET` writes both facts and `updated_at`, so inertness rests entirely on the `WHERE (fact IS NULL AND EXISTS …) OR …` — after one pass no row satisfies it, and a row whose fact is legitimately absent (no profile yet) never satisfies it at all. It cannot promote a gap row's cohort, so the trial-restart guarantee is untouched. Interaction with the live triggers is safe: a concurrent trigger contending for the same row waits at most its own `lock_timeout = 2s`, then raises into its `EXCEPTION WHEN OTHERS` and becomes a WARNING — the product write still succeeds. **No database-side check exercises it** (Q-19); §14.6 step 3d now does. |
+| **Q-6** | Low | ✅ **FIXED** | `updatePlan` clears the paired expiry when an assignment is cleared, and deliberately does not overrule an expiry the caller set explicitly. Two tests, both discriminating. Route obligation kept as S1-T12a. |
+| **Q-7** | Note | ✅ **FIXED** | `as unknown as`; 0 diagnostics over all 11 files. Dev also corrected §4.17's false "0 diagnostics" claim rather than quietly replacing it — that is the right handling of a wrong measurement. |
+| **Q-8** | Low | ✅ **FIXED** | A9 now joins `tgrelid`/`tgfoid` and masks `tgtype` for AFTER/INSERT/ROW (bit math verified: 1 = ROW, 2 = BEFORE, 4 = INSERT). The CHECK assertions compare `pg_get_constraintdef` against the expression each claims to enforce, so `CHECK (true)` under the same name now fails. The test stub **defines** `delete` and asserts it was never called, so the assertion is about the repository again. |
+| **Q-9** | Note | ✅ **FIXED** (one straggler) | Both files renamed; they now sort after `20261004`, and `20261005b` still sorts after `20261005`. **Not every in-repo reference was updated** — see Q-22. |
+| **Q-10** | Note | ✅ **FIXED** | The new import guard is symbol-level (correct: a barrel import names no file), scans five trees, has an **empty** application-code allow-list, and carries two meta-assertions — "more than 500 files scanned" (a broken walk would pass everything) and "every ALLOWED entry names a file that exists" (a stale entry would silently widen it). Both are the right guards on a guard. |
+| **Q-11** | Note | ✅ **FIXED** | The header now states the exception instead of a false universal, and names which reads are account-wide and why. |
+| **Q-12 / F-1** | Info | ✅ **RECORDED** | S1-T14 now requires **both** `supabase/migrations/__tests__` and `lib/repositories/__tests__` in the component 2 CI job. Still true today that no workflow runs either — confirmed again against the five workflows. |
+| **Q-13** | Low | ✅ **FIXED** | `ensurePlanRow` trims and refuses a blank cohort before touching the database, returning an error rather than throwing. Route-level `z.enum` kept as S1-T12a, which is the right split: the repository can refuse *blank*, only config can refuse *unknown*. |
+| **Q-14** | Note | ➖ **UNCHANGED, correctly** | Ownership is a deployment property; §14.6 step 3b records `proowner`. Agreed — no file change was available. |
+| **Q-15** | Low | ✅ **FIXED** | `updatePlan` logs a `warn` on a no-row update and documents that the route pre-checks; a test pins the contract. |
+
+**On the narrowed M-1 guard (the change SA and the coordinator both flagged for scrutiny).** QA re-derived it rather than trusting either. Two mental regressions:
+
+1. **A top-level backfill scan re-introduced into the DDL migration** — `INSERT INTO public.business_os_account_plans … SELECT … FROM public.business_profiles …`. **Still caught, twice:** `ddlTopLevel` (bodies stripped) matches `FROM public.business_profiles`, and the targeted check finds a top-level `INSERT … SELECT` into the plan table. ✅
+2. **A scan inside a function body** — the reset's fact recovery. **Correctly allowed:** it runs when the function is called, not inside the migration's transaction, so it never holds a trigger lock. The meta-assertion ("the un-stripped text contains what the stripped text does not") means the stripper cannot start hiding everything without the suite going red. ✅
+
+The narrowing is right. **But it opened one hole — Q-18 below.**
+
+#### 14.8.3 Remaining findings (none blocking; all Low)
+
+**Q-18 — the narrowed M-1 guard no longer catches a backfill hidden behind a top-level function *call*. Severity: Low.**
+- File: `supabase/migrations/__tests__/business-os-entitlements.migration.test.ts:49-51, 71-87`.
+- Stripping `$$ … $$` is right for a function *definition*. But a future edit could add `CREATE FUNCTION public.business_os_backfill() … $$ SELECT … FROM public.onboarding_conversations … $$;` **and then call it** — `SELECT public.business_os_backfill();` — at the top level of the same migration. The scan then runs inside the DDL transaction, while `CREATE TRIGGER` holds ACCESS EXCLUSIVE on both parent tables: the exact M-1 harm. The body is stripped, so `:76` passes; it is not an `INSERT … SELECT`, so `:83` passes. The old file-wide guard would have caught it by accident.
+- **Fix (cheap and strictly better than either version):** assert the schema migration contains **no top-level DML at all** — after stripping comments and bodies, every statement should start with `BEGIN`/`COMMIT`/`SET`/`CREATE`/`ALTER`/`REVOKE`/`GRANT`/`COMMENT`/`DROP TRIGGER`. Anything else (`INSERT`, `UPDATE`, `DELETE`, `SELECT`, `DO`, `CALL`) fails. That catches both regressions and states the actual rule: *this migration changes schema and nothing else.*
+
+**Q-19 — the fact heal has no database-side check. Severity: Low (was the highest-risk new SQL in this round).**
+- Files: `supabase/migrations/20261005b_business_os_entitlements_backfill.sql:79-96`; `scripts/verify-bos-entitlements-migration.sql` (no coverage).
+- C0 proves the backfill's `INSERT`; nothing runs the `UPDATE … COALESCE`. Its healing behaviour, its "never touches a cohort" property and its inertness are asserted only by regex in the Jest guard. SA is right that the inertness is a property rather than an accident, which is exactly why it deserves a behavioural check.
+- **Covered for now by §14.6 step 3d** (QA added it), and worth folding into the script as a `C4` so it runs with everything else.
+
+**Q-20 — B7's "is it the *first* message?" assertion cannot fail. Severity: Low.**
+- File: `scripts/verify-bos-entitlements-migration.sql:503-505`.
+- tenant2's only onboarding row is inserted in B4 with the default `created_at = now()`, and the whole script is one transaction, so `min(created_at)`, `now()` and the transaction timestamp are the same value. A repair that wrote `now()` instead of reading history would satisfy the comparison. The **first** assertion (`onboarding_started_at IS NULL`) still has teeth and is the one that catches the actual Q-2 bug, so the fix is proven — the *correctness of the recovered value* is not.
+- This is the same `now()`-inside-one-transaction trap B1 documents and works around by backdating, and C0 gets right.
+- **Fix:** before the reset in B7, insert an **older** message with an explicit `created_at` (e.g. `timestamptz '2021-03-04 05:06:07+00'`) and assert the recovered fact equals that literal.
+
+**Q-21 — C1's probe exclusion is one edit away from being permanently vacuous. Severity: Low (advisory).**
+- File: `scripts/verify-bos-entitlements-migration.sql:667`.
+- `NOT IN (SELECT user_id FROM _bos_probe WHERE user_id IS NOT NULL)` is correct **because** of that `WHERE`. `_bos_probe` does contain a row with a NULL `user_id` (`first_fact`), and `NOT IN` over a set containing NULL evaluates to NULL for every row — `missing` would be 0 forever and C1 would never fail again. Dev got it right; the point is that the correctness is invisible to the next reader.
+- **Fix:** use `NOT EXISTS (SELECT 1 FROM _bos_probe b WHERE b.user_id = tenants.user_id)`, which has no NULL trap to get wrong.
+
+**Q-22 — three in-repo references still name the deleted migration. Severity: Trivial.**
+- `lib/repositories/BusinessOsAccountPlanRepository.ts:7` and `lib/repositories/BusinessOsEntitlementShadowRepository.ts:7` — this is SA's **F-5**, still open in the working tree.
+- Additionally `docs/workplans/…§4.15 S1-T7` still names `20260921…`, so §4.18's "Every in-repo reference updated" is not quite true. §13.3's copies are a dated record and should stay.
+
+**Q-23 — two smaller notes.**
+- `scripts/verify-bos-entitlements-migration.sql:641-647`: C0's "a second backfill pass duplicated the row" cannot fail — `user_id` is the primary key, so `ON CONFLICT DO NOTHING` could not duplicate it however broken the statement were. Harmless, but it is not evidence; the real idempotency evidence is §14.6 step 4.
+- `…:590-620`: C0's INSERT is a hand-kept **copy** of the migration's statement (Dev says so in the comment). If `20261005b`'s `SELECT` changes and the copy does not, C0 keeps proving the old statement and keeps passing — the vacuity class this whole review is about. Worth a Jest assertion that the two statements match modulo the `WHERE` clause and whitespace. Not a blocker: the properties C0 asserts are the ones that matter, and the comment names the obligation.
+- Cosmetic: `stripFunctionBodies`'s replacement string `'$$<<function body omitted>>$$'` resolves to a single `$` on each side (JS `replace` treats `$$` as an escaped `$`). Nothing depends on it. Also noted by SA, along with the fact that a future `$tag$`-quoted body simply would not be stripped — which fails safe.
+
+#### 14.8.4 BLOCKED on a database — the current list
+
+Unchanged in status, larger in scope: the fixes added four more properties that only a database can prove. **`scripts/verify-bos-entitlements-migration.sql` has still never been executed.**
+
+| # | Property | Where it is proven |
+|---|---|---|
+| 1 | Both migrations apply cleanly, in order, on a clean branch database | §14.6 step 1 |
+| 2 | A1–A9: RLS on, zero policies, no client privileges, EXECUTE revoked, `search_path`/`lock_timeout` pinned, both triggers bound to the right table/event/function, three named CHECKs that check what they claim | script, step 2 |
+| 3 | **A10 (new): `service_role` can read/write all three tables and execute both functions** | script, step 2 + §14.6 step 3b |
+| 4 | B1/B3: the fact triggers record their fact, on one row, without overwriting `origin` | script |
+| 5 | **B2: a trial cannot be restarted by deleting the transcript and replaying it** — still the single most important claim in this component | script |
+| 6 | B4: a failing plan write never fails the product write | script |
+| 7 | B5: M-3 and S-4 reject the bad states | script |
+| 8 | B6: the reset ends overrides, rewrites in place, keeps `created_at` and the facts, moves `updated_at`, refuses blank cohort / NULL cohort / blank reason | script |
+| 9 | **B7 (extended): the repair recovers the facts** — with Q-20's caveat that "the *right* fact" is not yet proven | script |
+| 10 | **B8/B8b/B8c (new): duplicate keys folded in one call, summed across calls, distinct surfaces kept apart** | script |
+| 11 | **C0/C3 (new): the backfill statement proved against a real pre-existing tenant, non-vacuously** | script |
+| 12 | C1/C2 on data that actually has tenants, measured **outside** the script | §14.6 step 0 + 3a |
+| 13 | **The fact heal fills a gap row, touches no cohort/tier/pin, and is inert on a second pass** | §14.6 step 3d (Q-19) |
+| 14 | Backfill re-run safety, and its duration + row counts for RM | §14.6 step 4 + 6 |
+| 15 | The PostgREST round trip through supabase-js (`resetPlanState`, `recordEvents`), including a schema-cache reload, and the anon-key refusal | §14.6 step 7.3 |
+| 16 | A normal onboarding message and profile creation still succeed with the triggers live, with no `business_os_plan_fact_*` WARNINGs | §14.6 step 7 |
+
+#### 14.8.5 For the user
+
+1. **Component 1 is ready for your code review and for RM to commit.** Every QA finding is fixed, and the fixes are backed by checks that can fail.
+2. **It must still not be applied to any database until §14.6 has been run on a branch database.** Sixteen properties are unproven, including the trial-restart guarantee this whole component exists to provide.
+3. **One trivial fix is outstanding** — SA's F-5, two stale file references in the repository headers (Q-22). It changes no behaviour; RM can take it with the commit or Dev can fold it in first.
+4. Q-18 to Q-21 are **improvements to the tests, not to the product.** They can land with component 2 alongside the CI job that will finally run these suites (F-1). None of them changes what the migration does.
+
+#### 14.8.6 Final Status (supersedes the 2026-09-21 block above)
+
+- [x] **All findings from the first QA pass are fixed and independently re-verified — component 1 is ready for the user's code review and for RM to commit.** 35 suites / 462 tests green, component 1's own 74 green, admin authz guard green with no new exemption, hooks lint clean, 0 `console.*`, 0 typecheck diagnostics in the component's files under a typecheck that provably covers them.
+- [x] **Four Low findings remain open (Q-18 to Q-23), none blocking.** One is SA's F-5 (two stale file references); the rest are test-quality items best landed with component 2's CI job.
+- [x] **16 properties remain BLOCKED on a branch database** (§14.8.4). **Do not apply either migration anywhere until §14.6 has been run.** Committing the code and applying the migration are separate decisions, and only the first is unblocked.
 
 ## 15. Commit Info
 
@@ -1954,3 +2101,4 @@ _RM to populate._
 | 2026-09-21 | QA of component 1: PASS WITH FINDINGS, database phase BLOCKED (QA) | Added §14. Ran independently: the six component-1 suites (97 tests), the whole `lib/repositories/__tests__` folder (263) as a regression on the barrel change, the admin-authz guard + purge suites (132), `lint:hooks` and a scoped typecheck built from the changed files. M-1 to M-5 verified in the SQL text; RLS/revokes, DEFINER hardening, field allow-list, both-key override scoping and the F-4 race path all pass. **Q-1 (High): the shadow RPC raises `ON CONFLICT DO UPDATE command cannot affect row a second time` on two rows with the same key in one call, and the verification script's B8 sends exactly that — so §13.3 step 2 cannot complete, and component 4 can silently lose a batch; fix is to aggregate in the RPC.** Q-2: the reset's repair branch creates a row with NULL facts (against §4.3), and the M-1 guard regex is broad enough to forbid the fix. Q-3: C1/C2 pass vacuously on the clean branch database SA prescribes. Q-4: nothing asserts `service_role` still has access. Q-5: the gap between the two migrations can leave a pre-existing tenant as a trial with a missing fact. Plus Q-6..Q-15 (notes, weak assertions, TS2352 in a new test, F-1 confirmed, migration filename sorts ~40 files early). §14.6 is the exact runnable database script for SA's seven steps plus the four checks they do not cover. |
 | 2026-09-22 | Component 1: QA findings fixed (Dev) | Q-1 the shadow RPC folds duplicate keys (`GROUP BY`) instead of raising 21000 and losing the batch; the repository comment now matches the code. Q-2 the reset's repair branch recovers the facts again, and the M-1 guard was narrowed to top-level DDL (it had been forbidding a read inside a function body) with a meta-assertion that the narrowing hides nothing — **SA to confirm at re-review**. Q-3 the verification script proves the backfill non-vacuously (new C0/C3) and no longer depends on B7's ordering. Q-4 explicit `service_role` grants plus an A10 assertion. Q-5 the backfill heals facts the trigger could not fill, and §8 carries the RM ordering requirement. Q-9 migrations renamed to 20261005/20261005b. Q-8 trigger and constraint checks assert binding and definition, and the stub assertion is real. Q-7 fixed, and the typecheck method corrected: the worktree run had been aborting on TS2688 and checking nothing (2,030 baseline diagnostics, 0 in these files). Q-10 RC-15 import guard added. Q-11 scoping comments corrected. Q-13/Q-6/Q-15 hardened in the repository and recorded as binding route work in S1-T12a. F-1/Q-12 restated for component 2. Code still uncommitted. |
 | 2026-09-22 | SA confirmation of the QA-driven changes to component 1 (SA) | Added §13.4. Confirmed all three: narrowing the M-1 guard (a correction, not a weakening — the assertion SA approved forbade a function-body read that never runs under the trigger locks, and had silently removed approved behaviour; the meta-assertion stops the stripper passing vacuously), restoring the reset repair branch fact recovery (better than SA's §13.2 wording, since the repair branch has no row to preserve facts from and AFTER INSERT triggers could never fill them later), and the explicit `service_role` GRANT with DELETE withheld (plus the EXISTS-guarded backfill fact heal and the 20261005/20261005b rename). Approval of the migration SQL stands for the renamed files. Re-ran the suites: 7 suites, 114 tests, all green. One trivial fix F-5: the two repository headers still cite the old migration filename. |
+| 2026-09-22 | QA re-verification of component 1: READY FOR REVIEW AND COMMIT (QA) | Added §14.7a and §14.8; §14.6 updated for the renamed migrations and the four new database checks. Re-ran everything independently: 35 suites / 462 tests, component 1's own 74, the admin authz guard's 74 with no new exemption, hooks lint clean, 0 `console.*`. Reproduced Dev's corrected typecheck to the digit (2,030 project diagnostics, **0** TS2688, 0 in the component's files) and proved it really covers them (3 errors in other `lib/repositories` files, 6 under `supabase/`). Q-1 to Q-15 all verified fixed against the files, not the claims: the RPC's `GROUP BY` (ordinal 6 is the COALESCE'd day; `now()` is legally ungrouped; the FILTERed `array_agg` subscript is safe), the reset's recovered facts with the `DO UPDATE` branch still untouched, C0's backdated synthetic tenant, A10's positive privilege check, and the heal's inertness traced to its two `EXISTS` guards. Re-derived the narrowed M-1 guard both ways: a top-level backfill scan is still caught twice, a function-body scan is correctly allowed. Four Low findings remain, none blocking: **Q-18** the narrowing lets a backfill hidden behind a top-level function *call* through (fix: forbid top-level DML outright), **Q-19** no database-side check exercises the new fact heal (added as §14.6 step 3d), **Q-20** B7's "is it the first message" assertion cannot fail because `now()` and `min(created_at)` are the same value inside one transaction, **Q-21/Q-23** C1's probe exclusion is one edit from permanent vacuity and C0's copy of the backfill can drift. **Q-22: SA's F-5 is still open** — two repository headers cite the deleted `20260921…` file. BLOCKED list grew from 13 to 16 properties; the migration must still not be applied anywhere until §14.6 is run. |
