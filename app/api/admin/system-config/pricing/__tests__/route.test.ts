@@ -438,6 +438,52 @@ describe('zero-price policy (T0-9)', () => {
     await expect(response.json()).resolves.toMatchObject({ success: true });
   });
 
+  // Narrowed in Step 1 (D-14, QA D-Q9): these models are priced on input only,
+  // so a $0 output cost is correct and must not raise a critical entry — not
+  // even when only the input cost was edited, since the check reads the
+  // post-update row.
+  it('does not alert on an input-only embedding model whose output cost is 0', async () => {
+    const embeddingRow = {
+      ...ROW,
+      model_name: 'text-embedding-3-small',
+      input_cost_per_token: 0.00000002,
+      output_cost_per_token: 0,
+    };
+    mockResults.push({ data: embeddingRow, error: null }, { data: embeddingRow, error: null });
+
+    const response = await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 0.00000002 }));
+
+    expect(response.status).toBe(200);
+    expect(zeroLogged()).toBe(false);
+    expect(logAIPricingZeroCost).not.toHaveBeenCalled();
+  });
+
+  it('still alerts on a zero INPUT cost, embedding model or not', async () => {
+    const embeddingRow = {
+      ...ROW,
+      model_name: 'text-embedding-3-small',
+      input_cost_per_token: 0,
+      output_cost_per_token: 0,
+    };
+    mockResults.push({ data: embeddingRow, error: null }, { data: embeddingRow, error: null });
+
+    const response = await PUT(request('PUT', { id: ROW.id, input_cost_per_token: 0 }));
+
+    expect(response.status).toBe(200);
+    expect(zeroLogged()).toBe(true);
+    expect(logAIPricingZeroCost).toHaveBeenCalledTimes(1);
+  });
+
+  it('still alerts when a model that is not input-only has a zero output cost', async () => {
+    const freeOutput = { ...ROW, input_cost_per_token: 0.0000025, output_cost_per_token: 0 };
+    mockResults.push({ data: ROW, error: null }, { data: freeOutput, error: null });
+
+    const response = await PUT(request('PUT', { id: ROW.id, output_cost_per_token: 0 }));
+
+    expect(response.status).toBe(200);
+    expect(zeroLogged()).toBe(true);
+  });
+
   it('treats a numeric-as-string zero from PostgREST as zero', async () => {
     mockResults.push(
       { data: ROW, error: null },
