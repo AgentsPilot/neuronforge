@@ -260,6 +260,39 @@ describe(`${FILE}`, () => {
     expect(sql).toMatch(/GRANT INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER/);
   });
 
+  it('the ROLLBACK looks the twin up by the name Postgres actually stored (63-byte cap)', () => {
+    // Found in the production post-check, 2026-09-21. Postgres caps an
+    // identifier at NAMEDATALEN-1 = 63 bytes and truncates silently, so
+    // `'Users can manage their contacts saved payment methods' || ' (read-only)'`
+    // (65 chars) was stored as '... saved payment methods (read-onl' (63). The
+    // policy is correct and enforcing; what broke was the ROLLBACK, which looked
+    // the twin up by the untruncated 65-char string, never matched, raised
+    // `no read-only twin for ... on saved_payment_methods` and restored nothing
+    // for that table. Exactly one of the eight crosses the line today — this
+    // test pins both that fact and the fix.
+    const twins = ALL_POLICIES.map(([, policy]) => `${policy} (read-only)`);
+    expect(twins.filter((t) => t.length > 63)).toEqual([
+      'Users can manage their contacts saved payment methods (read-only)',
+    ]);
+
+    // The fix: one truncated value, used for the lookup AND the drop, so both
+    // agree with pg_policies. Not a prefix match — if a forward run were
+    // interrupted between the CREATE and the DROP, the writable ORIGINAL also
+    // matches the prefix and the rollback would drop it.
+    expect(sql).toContain("twin := left(r.pol || ' (read-only)', 63);");
+    expect(sql).toContain("AND p.policyname = twin;");
+    expect(sql).toContain("EXECUTE format('DROP POLICY %I ON public.%I', twin, r.tbl);");
+    expect(sql).not.toContain("p.policyname = r.pol || ' (read-only)'");
+    expect(sql).not.toContain("r.pol || ' (read-only)', r.tbl");
+    // The rejected alternative is explained, not used: a LIKE prefix match must
+    // not appear in the lookup itself (it is only named in the comment above it).
+    expect(sql).not.toMatch(/AND p\.policyname LIKE/);
+
+    // ... and the hazard is written down for the next conversion of this shape.
+    expect(sql).toMatch(/IDENTIFIER TRUNCATION \(63 bytes\)/);
+    expect(sql).toMatch(/ANY base name longer than 51 bytes yields a/);
+  });
+
   it('states the deploy order: no code ships first, but 20261001 must be applied first', () => {
     expect(sql).toMatch(/CODE THAT MUST SHIP FIRST: NONE/);
     expect(sql).toContain('20261001_user_subscriptions_write_lockdown.sql');
