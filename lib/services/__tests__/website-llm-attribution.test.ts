@@ -10,6 +10,20 @@
 
 // uuid@13 is ESM-only and ts-jest does not transform it. WebsiteGenerationService
 // imports it; the catalog deliberately does not.
+/*
+ * Layer 2 (Step 2): the call sites take their model, temperature and on/off
+ * switch from `resolveBosLlmSettings`. Pinned to the CODE DEFAULTS — today's
+ * values — so this file keeps asserting exactly what it asserted before, with
+ * no configuration read and no I/O.
+ */
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => actual.bosLlmCodeDefaults(area, callName),
+  };
+});
+
 jest.mock('uuid', () => ({ v4: () => '00000000-0000-4000-8000-000000000001' }));
 
 jest.mock('@/lib/logger', () => {

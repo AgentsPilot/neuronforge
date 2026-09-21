@@ -9,6 +9,20 @@
 import { NextRequest } from 'next/server';
 
 const getUser = jest.fn();
+/*
+ * Layer 2 (Step 2): the call sites take their model, temperature and on/off
+ * switch from `resolveBosLlmSettings`. Pinned to the CODE DEFAULTS — today's
+ * values — so this file keeps asserting exactly what it asserted before, with
+ * no configuration read and no I/O.
+ */
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => actual.bosLlmCodeDefaults(area, callName),
+  };
+});
+
 jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
 
 /** Every log call, serialized at call time as Pino would (OI-7 test below). */

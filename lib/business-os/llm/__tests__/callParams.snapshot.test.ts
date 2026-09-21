@@ -17,10 +17,21 @@
  *      returns the same table again. So applying the seed changes nothing
  *      (FR-16).
  *
- * The committed snapshot is the record itself. Steps 2 and 3 move each call
- * site onto the resolver; their T2-S / T3-S assertions compare the request the
- * site really makes with this table, and the evidence check below is replaced
- * as the last literal leaves each file (Step 4's FR-15 gate then forbids them).
+ * The committed snapshot is the record itself.
+ *
+ * LEG (A) IS A DRIFT ALARM, NOT A SOUNDNESS PROOF (SA ruling, 2026-09-21).
+ * Eleven false negatives were found in it, all of one class: the recorded text
+ * is still there but is not what reaches the provider. It gets no further
+ * hardening, and each call's entry is DELETED as its site is wired, because the
+ * guarantee then lives at the provider boundary instead:
+ *
+ *   - Step 2 (wired): `callParams.boundary.step2.test.ts` — spies at
+ *     `chatCompletion` / `complete` and asserts the whole request object plus
+ *     the call count for all nineteen non-chat call sites.
+ *   - Step 3 (still listed below): chat planner, chat analysis and images.
+ *
+ * Legs (B) and (C) still cover ALL twenty-two calls: they are about the
+ * resolver reproducing the table, not about reading source.
  */
 
 const mockGetPricing = jest.fn();
@@ -53,7 +64,6 @@ import { BOS_LLM_AREAS, type BosLlmArea } from '../callCatalog';
 import { __resetBosLlmSettingsForTests, resolveBosLlmSettings } from '../modelSettings';
 import { bosLlmAreaKey, bosLlmSettingsCallNames } from '../modelSettingsPolicy';
 import { SEEDED_ROWS } from '../__fixtures__/seededRows';
-import { OPENAI_MODELS } from '@/lib/ai/providers/openaiProvider';
 import { IMAGE_GENERATION_CONFIG_DEFAULTS } from '@/lib/repositories/SystemConfigRepository';
 
 const ROOT = path.resolve(__dirname, '../../../..');
@@ -102,39 +112,18 @@ const MODEL_ASSIGNMENT = /(?:^|[{(,]\s*)model\s*[,:]/gm;
 
 interface CallRecord {
   params: CallParams;
-  evidence: Evidence[];
+  /**
+   * Leg (A) evidence. ABSENT once the call site is wired to the resolver: the
+   * literal has left the file and the boundary test owns the guarantee.
+   */
+  evidence?: Evidence[];
   /** Set when the value comes from a stored key rather than a literal (F-3). */
   storedKey?: string;
 }
 
 const PLANNER = 'lib/business-os/bizql/planner/Planner.ts';
 const ANALYSIS = 'lib/business-os/bizql/analyse/AnalysisService.ts';
-const INSIGHTS = 'lib/business-os/insight/repository/InsightRepository.ts';
-const BRIEFING = 'lib/business-os/briefing/BriefingNarrator.ts';
-const WEBSITE_GEN = 'lib/services/WebsiteGenerationService.ts';
-const LANDING = 'app/api/website/landing-pages/generate/route.ts';
-const WEBSITE_AI = 'lib/services/WebsiteAIContentService.ts';
-const INTAKE = 'lib/services/IntakeGenerationService.ts';
-const INFER = 'app/api/intake/form/infer-question/route.ts';
-const LEADS = 'lib/business-os/leads/LeadReplyRecommender.ts';
-const ONBOARDING = 'lib/services/OnboardingConversationManager.ts';
 const IMAGES = 'lib/services/GeneratedImageService.ts';
-
-function literalCall(
-  file: string,
-  callName: string,
-  model: string,
-  temperature: number,
-  modelSource = `model: '${model}',`
-): CallRecord {
-  return {
-    params: { provider: 'openai', model, temperature },
-    evidence: [
-      { file, near: `callName: '${callName}'`, contains: modelSource, window: 45, singleModel: true },
-      { file, near: `callName: '${callName}'`, contains: `temperature: ${temperature},`, window: 45 },
-    ],
-  };
-}
 
 /**
  * The three calls whose model is READ FROM CONFIGURATION and passed as a
@@ -151,6 +140,11 @@ function passesResolvedVariable(file: string, near: string, window = 45): Eviden
 }
 
 /** The inventory, as code. One entry per configurable call. */
+/** A call whose site now takes its parameters from the resolver (leg A retired). */
+function wired(model: string, temperature: number | null): CallRecord {
+  return { params: { provider: 'openai', model, temperature } };
+}
+
 const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
   chat: {
     planner: {
@@ -172,57 +166,40 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
       ],
     },
   },
+  // Wired in Step 2. Their requests are proved at the provider boundary by
+  // `callParams.boundary.step2.test.ts`; the literals have left their files.
   insights: {
-    insight_content: literalCall(INSIGHTS, 'insight_content', 'gpt-4o-mini', 0.3),
-    correlated_insight: literalCall(INSIGHTS, 'correlated_insight', 'gpt-4o-mini', 0.4),
-    health_summary: literalCall(INSIGHTS, 'health_summary', 'gpt-4o-mini', 0.5),
+    insight_content: wired('gpt-4o-mini', 0.3),
+    correlated_insight: wired('gpt-4o-mini', 0.4),
+    health_summary: wired('gpt-4o-mini', 0.5),
   },
   briefing: {
-    daily_narration: literalCall(
-      BRIEFING,
-      'daily_narration',
-      'gpt-4o-mini',
-      0.3,
-      'model: OPENAI_MODELS.GPT_4O_MINI,'
-    ),
+    daily_narration: wired('gpt-4o-mini', 0.3),
   },
   website: {
-    full_site: literalCall(WEBSITE_GEN, 'full_site', 'gpt-4o', 0.7),
-    landing_page: literalCall(LANDING, 'landing_page', 'gpt-4o', 0.7),
-    field_regenerate: literalCall(WEBSITE_AI, 'field_regenerate', 'gpt-4o-mini', 0.7),
-    testimonial_enhance: literalCall(WEBSITE_AI, 'testimonial_enhance', 'gpt-4o-mini', 0.5),
-    hero_content: literalCall(WEBSITE_AI, 'hero_content', 'gpt-4o-mini', 0.7),
-    about_content: literalCall(WEBSITE_AI, 'about_content', 'gpt-4o-mini', 0.7),
-    faq_content: literalCall(WEBSITE_AI, 'faq_content', 'gpt-4o-mini', 0.7),
-    features_content: literalCall(WEBSITE_AI, 'features_content', 'gpt-4o-mini', 0.7),
+    full_site: wired('gpt-4o', 0.7),
+    landing_page: wired('gpt-4o', 0.7),
+    field_regenerate: wired('gpt-4o-mini', 0.7),
+    testimonial_enhance: wired('gpt-4o-mini', 0.5),
+    hero_content: wired('gpt-4o-mini', 0.7),
+    about_content: wired('gpt-4o-mini', 0.7),
+    faq_content: wired('gpt-4o-mini', 0.7),
+    features_content: wired('gpt-4o-mini', 0.7),
   },
   intake: {
-    form_generation: {
-      params: { provider: 'openai', model: 'gpt-4o', temperature: 0.3 },
-      evidence: [
-        { file: INTAKE, near: "const MODEL = 'gpt-4o';", contains: "const MODEL = 'gpt-4o';", window: 0 },
-        { file: INTAKE, near: "callName: 'form_generation'", contains: 'model: MODEL,', window: 45, singleModel: true },
-        { file: INTAKE, near: "callName: 'form_generation'", contains: 'temperature: 0.3,', window: 45 },
-      ],
-    },
-    question_inference: literalCall(INFER, 'question_inference', 'gpt-4o-mini', 0.2),
+    form_generation: wired('gpt-4o', 0.3),
+    question_inference: wired('gpt-4o-mini', 0.2),
   },
   leads: {
-    reply_recommendation: {
-      params: { provider: 'openai', model: 'gpt-4o-mini', temperature: 0.2 },
-      storedKey: 'lead_reply_recommender_model',
-      evidence: [
-        { file: LEADS, near: "getString(MODEL_KEY, 'gpt-4o-mini')", contains: "getString(MODEL_KEY, 'gpt-4o-mini')", window: 2 },
-        { file: LEADS, near: "callName: 'reply_recommendation'", contains: 'temperature: 0.2,', window: 45 },
-        passesResolvedVariable(LEADS, "callName: 'reply_recommendation'"),
-      ],
-    },
+    // No longer reads `lead_reply_recommender_model`: the seed copied it into
+    // the leads area row and the call resolves from there (Step 2).
+    reply_recommendation: wired('gpt-4o-mini', 0.2),
   },
   onboarding: {
-    business_story_extraction: onboardingExtractor('business_story_extraction'),
-    client_workflow_extraction: onboardingExtractor('client_workflow_extraction'),
-    client_tracking_extraction: onboardingExtractor('client_tracking_extraction'),
-    adjustment_intent_extraction: onboardingExtractor('adjustment_intent_extraction'),
+    business_story_extraction: wired('gpt-4o', null),
+    client_workflow_extraction: wired('gpt-4o', null),
+    client_tracking_extraction: wired('gpt-4o', null),
+    adjustment_intent_extraction: wired('gpt-4o', null),
   },
   images: {
     image_generation: {
@@ -237,18 +214,6 @@ const TODAY: { [A in BosLlmArea]: Record<string, CallRecord> } = {
     },
   },
 };
-
-/** All four send `model: 'gpt-4o'` and NO temperature (F-7, SA V-2). */
-function onboardingExtractor(callName: string): CallRecord {
-  return {
-    params: { provider: 'openai', model: 'gpt-4o', temperature: null },
-    evidence: [
-      // These four name the call first and build the request after it.
-      { file: ONBOARDING, near: `callContext(owner, '${callName}')`, contains: "model: 'gpt-4o',", window: 8, side: 'after' },
-      { file: ONBOARDING, near: `callContext(owner, '${callName}')`, absent: 'temperature', window: 10, side: 'after' },
-    ],
-  };
-}
 
 function seededRows() {
   return {
@@ -346,12 +311,25 @@ function evidenceRegion(lines: string[], anchor: number, item: Evidence): string
   return lines.slice(start, end + 1).join('\n');
 }
 
+/** The calls whose site still writes its own model or temperature (Step 3). */
+const UNWIRED_CALLS: Array<[BosLlmArea, string]> = ALL_CALLS.filter(
+  ([area, callName]) => TODAY[area][callName].evidence !== undefined
+);
+
 describe('A: every recorded value is still written at its call site', () => {
-  it.each(ALL_CALLS)('%s/%s', (area, callName) => {
+  it('covers exactly the calls Step 2 has not wired yet', () => {
+    expect(UNWIRED_CALLS.map(([area, call]) => `${area}/${call}`).sort()).toEqual([
+      'chat/analysis',
+      'chat/planner',
+      'images/image_generation',
+    ]);
+  });
+
+  it.each(UNWIRED_CALLS)('%s/%s', (area, callName) => {
     const record = TODAY[area][callName];
     expect(record).toBeDefined();
 
-    for (const item of record.evidence) {
+    for (const item of record.evidence ?? []) {
       const lines = fs.readFileSync(path.join(ROOT, item.file), 'utf8').split(/\r?\n/);
       const anchor = lines.findIndex((line) => line.includes(item.near));
       expect({ file: item.file, near: item.near, found: anchor >= 0 }).toEqual({
@@ -435,20 +413,14 @@ describe('A: every recorded value is still written at its call site', () => {
     });
   });
 
-  it('resolves the briefing constant to the model the table records', () => {
-    expect(OPENAI_MODELS.GPT_4O_MINI).toBe(TODAY.briefing.daily_narration.params.model);
-  });
-
   it('names a stored key for exactly the calls the inventory says read one (F-3)', () => {
     const withStoredKey = ALL_CALLS.filter(([area, call]) => TODAY[area][call].storedKey).map(
       ([area, call]) => `${area}/${call}`
     );
-    expect(withStoredKey.sort()).toEqual([
-      'chat/analysis',
-      'chat/planner',
-      'images/image_generation',
-      'leads/reply_recommendation',
-    ]);
+    // `leads/reply_recommendation` left this list in Step 2: its two keys were
+    // copied into the leads area row by the seed and the call resolves from
+    // there. The remaining three are wired in Step 3.
+    expect(withStoredKey.sort()).toEqual(['chat/analysis', 'chat/planner', 'images/image_generation']);
   });
 });
 
