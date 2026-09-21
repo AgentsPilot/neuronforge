@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
 
 - **Dynamic route param:** signature becomes `(request: NextRequest, { params }: { params: { id: string } })`. Validate the param with a separate `z.string().uuid()` check before using it.
 - **GET / list:** skip the body parse and Zod (use `request.nextUrl.searchParams` + a query schema). No audit log unless the read itself is sensitive.
-- **Admin-only:** after `getUser()`, also check `user.app_metadata?.role === 'admin'` and return 403 otherwise.
+- **Admin-only:** after `getUser()`, authorize with `AdminAccessService` (`lib/services/AdminAccessService.ts`) — the `admin_users` table is the only trusted admin signal — and return 403 otherwise. **Never** gate on `profiles.role` or `user.app_metadata?.role`: both are user-influenced and `profiles.role` is user-writable (self-promotion). See CLAUDE.md § Security Rules and [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
 - **Public route (e.g. webhooks):** skip `getUser`, but verify a signature/secret. Document why RLS is bypassed.
 
 ---
