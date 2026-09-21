@@ -1,0 +1,394 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`T3-S: the request each Step 3 call site puts on the wire (AC-2) chat/analysis 1`] = `
+[
+  [
+    {
+      "frequency_penalty": 0.3,
+      "max_tokens": 300,
+      "messages": [
+        {
+          "content": "sha256:2e2b8ea5e47d7bc52a0c5bed4ebff00434f5bd0521b6826730f6bf49b569baea (len 2731)",
+          "role": "system",
+        },
+        {
+          "content": "{"question":"how much revenue did I make","language":"en","currency":"USD","steps":[{"id":"s1","measure":"sum of transactions.net_amount","value":523}]}",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0,
+    },
+    {
+      "component": "analysis",
+      "feature": "business-os-chat",
+      "sessionId": "<turn>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T3-S: the request each Step 3 call site puts on the wire (AC-2) chat/planner 1`] = `
+[
+  [
+    {
+      "frequency_penalty": 0.3,
+      "max_tokens": 1500,
+      "messages": [
+        {
+          "content": "sha256:9150a9f1812d62c5478830559e8428afa694b8bee54492243f9311db751b6e8d (len 22721)",
+          "role": "system",
+        },
+        {
+          "content": "Today is 2026-09-21.
+Answer in language: en
+
+Request: show my contacts",
+          "role": "user",
+        },
+      ],
+      "model": "gpt-4o-mini",
+      "temperature": 0,
+      "tool_choice": "required",
+      "tools": [
+        {
+          "function": {
+            "description": "Emit the complete plan that answers the user request. Always call this exactly once.",
+            "name": "emit_plan",
+            "parameters": {
+              "properties": {
+                "answer": {
+                  "description": "sha256:3f0d863ad5fc19766f8e3bf967b9441e8cfe61dbc13f1787f1d68f2b491a8248 (len 1744)",
+                  "properties": {
+                    "primary_step": {
+                      "description": "Step id whose rows to display.",
+                      "type": "string",
+                    },
+                    "text": {
+                      "description": "One short sentence with placeholders, in the user language. Example: "You have {s1.count} unpaid invoices over $100."",
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "text",
+                  ],
+                  "type": "object",
+                },
+                "clarification": {
+                  "description": "Set INSTEAD of steps when the request is genuinely ambiguous. Ask one short question in the user language. Do not guess missing values.",
+                  "type": "string",
+                },
+                "steps": {
+                  "description": "sha256:b7cf7ca5f4c21a6373f520d11955babf052b14ee3c441d5ac771f746b406f4bc (len 451)",
+                  "items": {
+                    "properties": {
+                      "action": {
+                        "description": "Required for op=mutate. One of the actions listed for the entity (a:) — this list spans all offered entities, so pick one shown for YOUR entity.",
+                        "enum": [
+                          "cancel",
+                          "complete",
+                          "create",
+                          "create_and_send",
+                          "delete",
+                          "mark_paid",
+                          "no_show",
+                          "refund",
+                          "reschedule",
+                          "resend_confirmation",
+                          "send",
+                          "send_intake",
+                          "statement",
+                          "update",
+                          "void",
+                          "withdraw",
+                        ],
+                        "type": "string",
+                      },
+                      "agg": {
+                        "description": "Required for op=compute.",
+                        "properties": {
+                          "distinct": {
+                            "description": "sha256:7359a18c6ef212bb95dff556ac99ac53efe586e1dd38dc0ad19fff7c52d7eb0b (len 440)",
+                            "type": "boolean",
+                          },
+                          "field": {
+                            "type": "string",
+                          },
+                          "fn": {
+                            "enum": [
+                              "count",
+                              "sum",
+                              "avg",
+                              "min",
+                              "max",
+                            ],
+                            "type": "string",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      "data": {
+                        "description": "sha256:833ee5abb867fe423625d526c5f1378b0fafc24528203407a5d02843214d43c5 (len 600)",
+                        "type": "object",
+                      },
+                      "entity": {
+                        "enum": [
+                          "contacts",
+                          "transactions",
+                          "bookings",
+                          "invoices",
+                          "installments",
+                          "proposals",
+                        ],
+                        "type": "string",
+                      },
+                      "group_by": {
+                        "description": "sha256:05eb9ebe3d4c6ff4d0ee574a0a1247ab5697d4f73460cb23e9c4c53a7bf7ff3f (len 453)",
+                        "type": "string",
+                      },
+                      "id": {
+                        "description": "Step id, e.g. "s1".",
+                        "type": "string",
+                      },
+                      "include": {
+                        "description": "Attach related rows. Works in both directions.",
+                        "items": {
+                          "properties": {
+                            "relation": {
+                              "type": "string",
+                            },
+                            "select": {
+                              "items": {
+                                "type": "string",
+                              },
+                              "type": "array",
+                            },
+                          },
+                          "type": "object",
+                        },
+                        "type": "array",
+                      },
+                      "limit": {
+                        "type": "number",
+                      },
+                      "max": {
+                        "description": "Optional ceiling on how many rows to act on.",
+                        "type": "number",
+                      },
+                      "op": {
+                        "enum": [
+                          "find",
+                          "compute",
+                          "mutate",
+                          "for_each",
+                          "analyse",
+                        ],
+                        "type": "string",
+                      },
+                      "order_by": {
+                        "items": {
+                          "properties": {
+                            "dir": {
+                              "enum": [
+                                "asc",
+                                "desc",
+                              ],
+                              "type": "string",
+                            },
+                            "field": {
+                              "type": "string",
+                            },
+                          },
+                          "type": "object",
+                        },
+                        "type": "array",
+                      },
+                      "over": {
+                        "description": "Required for op=for_each. The id of an earlier find step whose rows to act on, e.g. "s1".",
+                        "type": "string",
+                      },
+                      "params": {
+                        "description": "sha256:21dabe485843b3feda7b6aa2fa484c2a93ead62a6e8581790ad87fc570142072 (len 255)",
+                        "type": "object",
+                      },
+                      "same_rows": {
+                        "description": "sha256:9d65c8c8e75f75c18b5d75b1a1acaba8f02fa9f2d51119c4f85aaa81f8e71a62 (len 352)",
+                        "type": "boolean",
+                      },
+                      "select": {
+                        "description": "Fields to return. Omit for sensible defaults.",
+                        "items": {
+                          "type": "string",
+                        },
+                        "type": "array",
+                      },
+                      "target": {
+                        "description": "sha256:d2074daf50c27285b6bfb393b4da742e2d79aed84040043bc5ac7fd8f2d77dd7 (len 438)",
+                        "properties": {
+                          "find": {
+                            "properties": {
+                              "where": {
+                                "items": {
+                                  "description": "sha256:7b92b8a9c75ad423c6c58a9fd5ae9d5363121f9b9eb8fce27f818ce61ee9a81f (len 274)",
+                                  "properties": {
+                                    "field": {
+                                      "description": "Field or derived-field name from the catalog.",
+                                      "type": "string",
+                                    },
+                                    "op": {
+                                      "enum": [
+                                        "eq",
+                                        "neq",
+                                        "gt",
+                                        "gte",
+                                        "lt",
+                                        "lte",
+                                        "in",
+                                        "not_in",
+                                        "contains",
+                                        "starts_with",
+                                        "is_null",
+                                        "is_not_null",
+                                      ],
+                                      "type": "string",
+                                    },
+                                    "quantifier": {
+                                      "enum": [
+                                        "any",
+                                        "none",
+                                      ],
+                                      "type": "string",
+                                    },
+                                    "relation": {
+                                      "description": "Relation name, when filtering on related rows.",
+                                      "type": "string",
+                                    },
+                                    "value": {
+                                      "description": "sha256:45e73a7c3d3bd2b521d8d8233d9b34ce218cfda60a759afbbe0a4dd6ee34a0be (len 822)",
+                                    },
+                                    "where": {
+                                      "description": "Nested filters.",
+                                      "items": {
+                                        "type": "object",
+                                      },
+                                      "type": "array",
+                                    },
+                                  },
+                                  "type": "object",
+                                },
+                                "type": "array",
+                              },
+                            },
+                            "type": "object",
+                          },
+                          "id": {
+                            "type": "string",
+                          },
+                        },
+                        "type": "object",
+                      },
+                      "where": {
+                        "items": {
+                          "description": "sha256:7b92b8a9c75ad423c6c58a9fd5ae9d5363121f9b9eb8fce27f818ce61ee9a81f (len 274)",
+                          "properties": {
+                            "field": {
+                              "description": "Field or derived-field name from the catalog.",
+                              "type": "string",
+                            },
+                            "op": {
+                              "enum": [
+                                "eq",
+                                "neq",
+                                "gt",
+                                "gte",
+                                "lt",
+                                "lte",
+                                "in",
+                                "not_in",
+                                "contains",
+                                "starts_with",
+                                "is_null",
+                                "is_not_null",
+                              ],
+                              "type": "string",
+                            },
+                            "quantifier": {
+                              "enum": [
+                                "any",
+                                "none",
+                              ],
+                              "type": "string",
+                            },
+                            "relation": {
+                              "description": "Relation name, when filtering on related rows.",
+                              "type": "string",
+                            },
+                            "value": {
+                              "description": "sha256:45e73a7c3d3bd2b521d8d8233d9b34ce218cfda60a759afbbe0a4dd6ee34a0be (len 822)",
+                            },
+                            "where": {
+                              "description": "Nested filters.",
+                              "items": {
+                                "type": "object",
+                              },
+                              "type": "array",
+                            },
+                          },
+                          "type": "object",
+                        },
+                        "type": "array",
+                      },
+                    },
+                    "required": [
+                      "id",
+                      "op",
+                      "entity",
+                    ],
+                    "type": "object",
+                  },
+                  "type": "array",
+                },
+              },
+              "required": [
+                "steps",
+                "answer",
+              ],
+              "type": "object",
+            },
+          },
+          "type": "function",
+        },
+      ],
+    },
+    {
+      "activity_type": "plan",
+      "component": "planner",
+      "feature": "business-os-chat",
+      "sessionId": "<turn>",
+      "userId": "<user>",
+    },
+  ],
+]
+`;
+
+exports[`T3-S: the request each Step 3 call site puts on the wire (AC-2) images/image_generation 1`] = `
+[
+  [
+    {
+      "model": "gpt-image-1",
+      "n": 1,
+      "prompt": "a calm studio. A natural, understated photograph. Real materials and daylight, shallow depth of field, no text, no logos, no watermarks, no people and no faces. Editorial, not advertising.",
+      "quality": "auto",
+      "size": "1536x1024",
+    },
+    {
+      "component": "image_generation",
+      "feature": "business-os-images",
+      "sessionId": "<group>",
+      "userId": "<user>",
+    },
+    [Function],
+  ],
+]
+`;

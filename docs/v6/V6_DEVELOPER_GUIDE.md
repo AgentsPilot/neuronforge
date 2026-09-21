@@ -129,34 +129,24 @@ async function generateWorkflowWithGrounding(
 
 ### Fetching Data Source Metadata
 
+> **The `/api/v6/fetch-plugin-data` endpoint this section used to document was DELETED on
+> 2026-09-21.** It read a `userId` from the request body and executed the named plugin action with
+> that account's stored OAuth tokens, with no authentication — so any anonymous caller could read
+> or write any user's connected services. It had no in-repo caller.
+
+Fetch grounding metadata **server-side**, by importing the executor directly — which is what every
+other server path in this repo already does:
+
 ```typescript
-// Use the fetch-plugin-data endpoint to get metadata
-async function fetchMetadataForGrounding(
-  userId: string,
-  pluginKey: string,
-  params: Record<string, any>
-) {
-  const response = await fetch('/api/v6/fetch-plugin-data', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userId,
-      plugin_key: pluginKey,
-      action_name: 'read_range',  // or appropriate action
-      parameters: params,
-      limit: 10  // Just need a few rows for metadata
-    })
-  })
+import { PluginExecuterV2 } from '@/lib/server/plugin-executer-v2'
 
-  const result = await response.json()
-
-  return {
-    type: 'tabular',
-    headers: result.metadata?.headers || [],
-    sample_rows: result.metadata?.sample_rows || []
-  }
-}
+// `userId` MUST come from the session (getUser()) or from
+// resolveActingUserIdentity() — never from a request body or header.
+const result = await new PluginExecuterV2().execute(userId, pluginKey, 'read_range', params)
 ```
+
+From the browser, call `POST /api/plugins/execute`, which resolves identity through
+`resolveActingUserIdentity()` and ignores any `userId` in the body.
 
 ### Step-by-Step Integration (Advanced)
 

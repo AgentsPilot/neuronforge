@@ -1,6 +1,7 @@
 // lib/types/plugin-definition-context.ts
 
 import { PluginDefinition, ActionDefinition, IPluginDefinitionContext, InputTemplate, OutputTemplate } from './plugin-types';
+import { sanitizeAuthConfig } from '@/lib/plugins/sanitize-plugin-definition';
 
 export interface IPluginContext {
   key: string;
@@ -49,6 +50,38 @@ export class PluginDefinitionContext implements IPluginDefinitionContext {
     
     this.inputTemplates = undefined;  // TO FIX
     this.outputTemplates = undefined; // TO FIX
+  }
+
+  /**
+   * Serialisation choke point (SECURITY).
+   *
+   * The constructor aliases the manager's cached definition.plugin onto this.plugin,
+   * and PluginManagerV2 has already substituted every env-var placeholder — so
+   * this.plugin.auth_config holds real OAuth client secrets and, for Stripe, the live
+   * STRIPE_SECRET_KEY. Any route that put a context instance into NextResponse.json
+   * therefore leaked them — which is exactly what the now-deleted deprecated user-plugins
+   * route and the two 500 fallbacks in the analyze-prompt-clarity route did.
+   *
+   * toJSON closes that class of bug for every current and future caller in one place:
+   * JSON.stringify (and NextResponse.json, which uses it) route through here, so only
+   * an allow-listed auth_config can ever be serialised. Explicit route-level
+   * projection is still required — this does not protect a direct
+   * definition.plugin.auth_config read, which the branded ClientSafeAuthConfig type
+   * guards instead.
+   *
+   * Verified before adding: no caller round-trips a context through
+   * JSON.parse(JSON.stringify(...)) expecting auth_config to survive.
+   */
+  toJSON(): Record<string, unknown> {
+    // Own enumerable fields only; methods live on the prototype and are not copied.
+    const ownFields = { ...this } as Record<string, unknown>;
+    return {
+      ...ownFields,
+      plugin: {
+        ...this.plugin,
+        auth_config: sanitizeAuthConfig(this.plugin?.auth_config),
+      },
+    };
   }
 
   /**

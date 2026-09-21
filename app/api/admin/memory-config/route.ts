@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/logger';
 
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
 const logger = createLogger({ module: 'MemoryConfigAPI' });
 
 const supabase = createClient(
@@ -23,7 +24,16 @@ export const revalidate = 0;
  * Fetch all memory and insights configuration settings
  */
 export async function GET() {
+  // No request object on this handler, so the correlation id is generated
+  // rather than propagated.
+  const requestLogger = logger.child({ correlationId: crypto.randomUUID() });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     // Fetch all memory and insights configuration from system_settings_config
     const { data: settings, error } = await supabase
       .from('system_settings_config')
@@ -231,7 +241,15 @@ export async function GET() {
  * Update memory configuration settings
  */
 export async function PUT(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message (FR-5).
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+
     const { config } = await request.json();
 
     if (!config) {

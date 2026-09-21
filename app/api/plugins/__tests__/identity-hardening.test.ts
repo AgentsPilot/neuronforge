@@ -31,9 +31,17 @@ const getDisconnectedPlugins = jest.fn();
 const getAllActivePlugins = jest.fn();
 const refreshToken = jest.fn();
 
+// GET /api/plugins/execute authenticates with getUser() rather than
+// resolveActingUserIdentity: it has no act-as dimension, it just needs a session.
+const getUser = jest.fn();
+jest.mock('@/lib/auth', () => ({ getUser: () => getUser() }));
+
+const getAvailablePlugins = jest.fn();
+
 jest.mock('@/lib/server/plugin-manager-v2', () => ({
   PluginManagerV2: {
     getInstance: async () => ({
+      getAvailablePlugins: () => getAvailablePlugins(),
       getPluginDefinition: (p: string) => getPluginDefinition(p),
       getActionDefinition: (p: string, a: string) => getActionDefinition(p, a),
       getConnectedPlugins: (...args: unknown[]) => getConnectedPlugins(...args),
@@ -73,7 +81,7 @@ jest.mock('@/lib/services/AuditTrailService', () => ({
 }));
 
 import { NextRequest } from 'next/server';
-import { POST as executePost } from '../execute/route';
+import { POST as executePost, GET as executeGet } from '../execute/route';
 import { POST as refreshTokenPost } from '../refresh-token/route';
 import { POST as disconnectPost, GET as disconnectGet } from '../disconnect/route';
 import { GET as userStatusGet } from '../user-status/route';
@@ -124,6 +132,8 @@ describe('plugin route identity hardening', () => {
     getDisconnectedPlugins.mockResolvedValue({});
     getAllActivePlugins.mockResolvedValue([]);
     refreshToken.mockResolvedValue({});
+    getUser.mockResolvedValue({ id: SESSION_ID, email: 'op@example.com' });
+    getAvailablePlugins.mockReturnValue({});
   });
 
   // T1 (SA C12) — the one hardened route whose side effect is an EXTERNAL OAuth token
@@ -290,6 +300,43 @@ describe('plugin route identity hardening', () => {
       expect(res.status).toBe(400);
       expect(resolveActingUserIdentity).not.toHaveBeenCalled();
       expect(execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/plugins/execute (catalogue)', () => {
+    // E-GET1 — anonymous callers could enumerate every plugin key and action name.
+    it('refuses an unauthenticated request and never reads the registry', async () => {
+      getUser.mockResolvedValue(null);
+
+      const res = await executeGet(getRequest('/api/plugins/execute'));
+
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ success: false, error: 'Unauthorized' });
+      expect(getAvailablePlugins).not.toHaveBeenCalled();
+      expect(getPluginDefinition).not.toHaveBeenCalled();
+      // QA-2 — the denial is session-dependent, so no shared cache may replay it.
+      expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(res.headers.get('Vary')).toBe('Cookie');
+    });
+
+    it('refuses the per-plugin form unauthenticated too', async () => {
+      getUser.mockResolvedValue(null);
+
+      const res = await executeGet(getRequest('/api/plugins/execute?plugin=google-mail'));
+
+      expect(res.status).toBe(401);
+      expect(getPluginDefinition).not.toHaveBeenCalled();
+    });
+
+    it('still serves the catalogue to a signed-in caller', async () => {
+      getAvailablePlugins.mockReturnValue({
+        'google-mail': { plugin: { name: 'Gmail' }, actions: { list_emails: {} } },
+      });
+
+      const res = await executeGet(getRequest('/api/plugins/execute'));
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ success: true, total_plugins: 1 });
     });
   });
 

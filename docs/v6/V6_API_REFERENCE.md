@@ -433,36 +433,19 @@ curl -X POST http://localhost:3000/api/v6/generate-ir-semantic \
 
 ---
 
-### POST /api/v6/fetch-plugin-data
+### ~~POST /api/v6/fetch-plugin-data~~ — REMOVED 2026-09-21
 
-**Purpose**: Fetch data from a plugin for metadata/grounding purposes.
+**Deleted, not deprecated.** The route took a `userId` straight from the request body and passed it
+to `PluginExecuterV2.execute()`, so an unauthenticated caller could run any plugin action against
+any account using that account's stored OAuth tokens. It had no in-repo caller.
 
-#### Request
+No replacement endpoint exists, and none is needed: every server-side path that needs plugin data
+imports `PluginExecuterV2` directly rather than calling itself over HTTP. A browser caller should
+use `POST /api/plugins/execute`, which resolves identity through
+`resolveActingUserIdentity()` (`lib/server/route-identity.ts`).
 
-```typescript
-{
-  userId: string
-  plugin_key: string
-  action_name: string
-  parameters: Record<string, any>
-  limit?: number  // Limit rows returned
-}
-```
-
-#### Response
-
-```typescript
-{
-  success: boolean
-  data?: any
-  metadata?: {
-    headers?: string[]
-    row_count?: number
-    sample_rows?: any[]
-  }
-  error?: string
-}
-```
+See `docs/workplans/IDENTITY_SWEEP_WORKPLAN.md` § Slice 0. Its removal is held in place by
+`app/api/plugins/__tests__/dead-plugin-routes-removed.guard.test.ts`.
 
 ---
 

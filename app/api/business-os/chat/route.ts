@@ -12,6 +12,9 @@ import { executeIntent, ExecutorContext } from '@/lib/business-os/ChatCommandExe
 import { schedulingServiceRepository } from '@/lib/repositories/SchedulingRepository';
 import type { PendingContext } from '@/lib/business-os/DraftManagerTypes';
 import { crmContactRepository } from '@/lib/repositories/CRMContactRepository';
+import { businessProfileRepository } from '@/lib/repositories/BusinessProfileRepository';
+import { isBosLlmAreaEnabled } from '@/lib/business-os/llm/modelSettings';
+import { chatUnavailableMessage } from '@/lib/business-os/llm/aiUnavailableMessages';
 
 const logger = createLogger({ module: 'BusinessOSChatAPI' });
 
@@ -81,6 +84,41 @@ export async function POST(request: NextRequest) {
     }
 
     const { message, history, context, pendingContext } = validationResult.data;
+
+    /*
+     * 2b. The chat area's AI is switched off (Layer 2 FR-14, RC-6).
+     *
+     * v1 reaches a model through `parseIntent`, so the same area switch has to
+     * stop it here or the kill switch would only cover the chat version the
+     * dashboard happens to be using. Placed after auth AND after validation:
+     * a malformed body should still get its 400, and a stranger their 401,
+     * rather than a sentence about the assistant.
+     *
+     * Nothing below this point runs, so no `IntentParser` call is made, no
+     * ledger row and no AI audit entry are written. The shape is this route's
+     * normal success shape, so no client needs a new branch.
+     *
+     * The language comes from the profile: v1 only learns a language from the
+     * intent it has not parsed yet.
+     */
+    if (!(await isBosLlmAreaEnabled('chat'))) {
+      const { data: profile } = await businessProfileRepository.findByUserId(user.id);
+      requestLogger.info(
+        { userId: user.id, area: 'chat', reason: 'disabled' },
+        'Chat request refused: the chat area AI is switched off'
+      );
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          response: chatUnavailableMessage(pendingContext?.entities?._language ?? profile?.language),
+          suggestions: [],
+          action: { type: 'clear_pending_context' },
+          intent: { type: 'unknown', confidence: 1.0 },
+        },
+      });
+    }
+
     requestLogger.info({
       userId: user.id,
       messageLength: message.length,

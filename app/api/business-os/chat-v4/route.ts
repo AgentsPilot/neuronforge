@@ -55,6 +55,10 @@ import { applyAlternative } from '@/lib/business-os/bizql/render/applyAlternativ
 import { explainEmptyTotal, siblingCounts } from '@/lib/business-os/bizql/render/siblingCounts';
 import { getVerifiedQuestions } from '@/lib/business-os/bizql/planner/VerifiedQuestions';
 import { getPlanCache, type CacheLayer } from '@/lib/business-os/bizql/cache/PlanCache';
+import { isUuid } from '@/lib/business-os/llm/callCatalog';
+import { isBosLlmAreaEnabled } from '@/lib/business-os/llm/modelSettings';
+import { chatUnavailableMessage } from '@/lib/business-os/llm/aiUnavailableMessages';
+import { runAiAction, type AiActionHandle } from '@/lib/business-os/llm/aiActionAudit';
 import {
   getConversationMemory,
   type ConversationContext,
@@ -323,16 +327,38 @@ interface ChatV4Response {
   };
 }
 
+/**
+ * One chat turn is one AI action (Layer 3, FR-9): its LLM calls — planner,
+ * analysis, repairs and embeddings — are summarised into ONE audit entry,
+ * grouped by the turn id. The turn itself is `handleChatTurn`, unchanged; this
+ * wrapper only opens the action and returns its response untouched.
+ */
 export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Response>> {
   // `x-correlation-id` is supplied by the caller and need not be a uuid, but
   // `token_usage.session_id` is a uuid column — a free-form value is dropped, and
   // with it the ability to group a turn's cost. Keep the caller's id for log
   // correlation, and use a uuid for the turn.
   const incomingCorrelationId = request.headers.get('x-correlation-id');
-  const isUuid = (v: string | null): v is string =>
-    !!v && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-
   const turnId = isUuid(incomingCorrelationId) ? incomingCorrelationId : crypto.randomUUID();
+
+  return runAiAction(
+    {
+      area: 'chat',
+      actionType: 'chat_turn',
+      groupId: turnId,
+      trigger: 'user',
+      correlationId: incomingCorrelationId ?? undefined,
+    },
+    (h) => handleChatTurn(request, turnId, h)
+  );
+}
+
+async function handleChatTurn(
+  request: NextRequest,
+  turnId: string,
+  h: AiActionHandle
+): Promise<NextResponse<ChatV4Response>> {
+  const incomingCorrelationId = request.headers.get('x-correlation-id');
   const correlationId = incomingCorrelationId ?? turnId;
   const requestLogger = logger.child({ correlationId });
 
@@ -353,6 +379,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     if (!user) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
     }
+    // The turn's audit entry is recorded against the session user (FR-3).
+    h.setAccount(user.id);
 
     // 2. Validate input
     const parsed = RequestSchema.safeParse(await request.json());
@@ -698,6 +726,61 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
       // Anything else: drop the stale confirmation and treat this as a new
       // request. Leaving it parked would let a later "yes" apply to it.
       await confirmations.clear(user.id);
+    }
+
+    /*
+     * 4a-bis. The chat area's AI is switched off (Layer 2 FR-14, RC-W2).
+     *
+     * Placed HERE, and the placement is the decision (SA ruling, Q-10):
+     *
+     *  - AFTER the in-progress fill (4a) and the confirm/cancel branch above,
+     *    so a write the owner already started can still be confirmed or
+     *    cancelled. Refusing those would strand a write over a setting the
+     *    owner did not change.
+     *  - BEFORE the budget refusal below, so chat-off wins over "you are out of
+     *    allowance": the second sentence is about a limit that will reset, and
+     *    it would send the owner to wait for something that is not the reason.
+     *  - BEFORE any planner, analysis or embedding call, which is the point —
+     *    this is a spend switch, so it must stop chat's spend.
+     *
+     * WHAT THIS DOES NOT STOP, SAID PLAINLY (SA, Step 3).
+     *
+     * The confirm branch above is not free. `applyFrozenWrites` replays the
+     * frozen steps, and one of them — `pages.create` with `page_type:
+     * 'landing'` (`MutateExecutor.ts`) — calls `generateWebsite`, which is a
+     * full `website/full_site` LLM call. So a write the owner confirmed WHILE
+     * CHAT IS OFF can still spend, on the website area.
+     *
+     * That is deliberate, not an oversight: it is website spend, it is stopped
+     * by the WEBSITE switch (`full_site` is switchable since Step 3, and the
+     * mutate path passes `onAiDisabled: 'fail'`), and the alternative is
+     * refusing a write the owner already approved. But "chat off means no model
+     * call from this route" is false, and a comment that says otherwise is the
+     * kind of thing an operator later relies on. `modelSettings.off.chat.test.ts`
+     * pins both halves: the confirm path still works with chat off, and it does
+     * reach the provider when the confirmed write is a landing page.
+     *
+     * Past this point, no LLM call is made: no ledger row and no AI audit entry
+     * are written (FR-14). The answer is the route's normal turn shape carrying
+     * the translated sentence, so the client needs no new branch.
+     */
+    if (!(await isBosLlmAreaEnabled('chat'))) {
+      requestLogger.info(
+        { userId: user.id, area: 'chat', reason: 'disabled' },
+        'Chat turn refused: the chat area AI is switched off'
+      );
+
+      return NextResponse.json({
+        success: true,
+        answer: {
+          text: chatUnavailableMessage(language),
+          rows: [],
+          truncated: false,
+          approximate: false,
+          collapsed: 0,
+        },
+        budget: budgetPayload,
+      });
     }
 
     // 4b. Out of allowance. Refused here, after the confirm/cancel branch above
@@ -1674,6 +1757,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ChatV4Res
     }
 
     requestLogger.error({ err: error }, 'Chat v4 turn failed');
+    h.markFailed('chat_error');
     return NextResponse.json(
       {
         success: false,

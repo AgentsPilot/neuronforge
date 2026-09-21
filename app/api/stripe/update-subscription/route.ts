@@ -3,9 +3,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { supabaseServer } from '@/lib/supabaseServer';
+import { createLogger } from '@/lib/logger';
 import { cookies } from 'next/headers';
 import { getStripeService } from '@/lib/stripe/StripeService';
 import { pilotCreditsToTokens, getPricingConfig } from '@/lib/utils/pricingConfig';
+
+const logger = createLogger({ module: 'StripeUpdateSubscriptionAPI' });
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,10 +54,10 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .single();
 
-    console.log('📋 [Update] User subscription:', { userSub, error: subError });
+    logger.debug({ userId: user.id, hasSubscription: !!userSub?.stripe_subscription_id, err: subError }, 'Loaded user subscription');
 
     if (subError || !userSub?.stripe_subscription_id) {
-      console.error('❌ [Update] No subscription found:', { subError, userSub });
+      logger.error({ userId: user.id, err: subError }, 'No active subscription found');
       return NextResponse.json(
         { error: 'No active subscription found. Please make sure you\'re logged in.' },
         { status: 404 }
@@ -74,14 +78,38 @@ export async function POST(request: NextRequest) {
       userSub.monthly_amount_usd || 0 // Pass current amount for upgrade/downgrade detection
     );
 
-    // Update database with both monthly_amount_usd AND monthly_credits
-    await supabase
+    // Update database with both monthly_amount_usd AND monthly_credits.
+    // P0-FT-RLS: `user_subscriptions` no longer accepts writes from
+    // `anon`/`authenticated` (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql),
+    // so this write uses the service role, like its sibling routes
+    // (cancel-subscription, reactivate-subscription, sync-subscription). It stays
+    // scoped to `user.id` from the verified session, and to those two columns.
+    const { error: subUpdateError } = await supabaseServer
       .from('user_subscriptions')
       .update({
         monthly_amount_usd: newAmountUsd,
         monthly_credits: newPilotCredits // Update the monthly credits displayed in UI
       })
       .eq('user_id', user.id);
+
+    // SA RC9-5: this statement is the only thing that persists a paid plan change
+    // locally - Stripe has already been charged by the call above. A silent
+    // failure here (42501 if the lock-down migration is applied before this code
+    // ships) would leave the user paying the new price while the app shows the
+    // old plan, so it fails loudly instead.
+    if (subUpdateError) {
+      logger.error(
+        { err: subUpdateError, userId: user.id, newPilotCredits },
+        'Stripe subscription was updated but the local user_subscriptions row was not'
+      );
+      return NextResponse.json(
+        {
+          error: 'Your plan was updated with our payment provider, but we could not update your account. Please contact support.',
+          details: process.env.NODE_ENV === 'development' ? subUpdateError.message : undefined
+        },
+        { status: 500 }
+      );
+    }
 
     // Log billing event
     const oldMonthlyAmount = userSub.monthly_amount_usd || 0;
@@ -106,7 +134,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error updating subscription:', error);
+    logger.error({ err: error }, 'Failed to update subscription');
     return NextResponse.json(
       { error: error.message || 'Failed to update subscription' },
       { status: 500 }

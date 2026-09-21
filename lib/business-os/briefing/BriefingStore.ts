@@ -15,6 +15,11 @@ import { supabaseServer } from '@/lib/supabaseServer';
 import { createLogger } from '@/lib/logger';
 import { narrateBriefing, PROMPT_VERSION, type BriefingLanguage, type BriefingSource, type BusinessType } from './BriefingNarrator';
 import type { BriefingFacts } from './BriefingFactsService';
+import { bosBriefingGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction, type AiTrigger } from '@/lib/business-os/llm/aiActionAudit';
+
+/** Who asked for the briefing: the daily email job, or the owner on My Day (FR-11, RC-8). */
+export type BriefingTrigger = Extract<AiTrigger, 'scheduled' | 'user'>;
 
 const logger = createLogger({ service: 'BriefingStore' });
 
@@ -35,6 +40,8 @@ export async function getBriefing(
   userId: string,
   facts: BriefingFacts,
   language: BriefingLanguage,
+  /** Required, so the scheduled path and the My Day path cannot be confused (RC-8, WC-3). */
+  trigger: BriefingTrigger,
   businessType: BusinessType = {}
 ): Promise<StoredBriefing> {
   const hash = hashFacts(facts, language, businessType);
@@ -48,7 +55,23 @@ export async function getBriefing(
     };
   }
 
-  const narration = await narrateBriefing(facts, language, userId, businessType);
+  // One narration, one AI action and audit entry, grouped by the briefing's
+  // day (Layer 3, FR-11). A quiet day or a cached briefing makes no call, so it
+  // writes none; a same-day re-narration writes a second entry in the same group.
+  const narration = await runAiAction(
+    {
+      area: 'briefing',
+      actionType: 'briefing_narration',
+      groupId: bosBriefingGroupId(userId, facts.day.date),
+      trigger,
+      accountId: userId,
+    },
+    async (h) => {
+      const narrated = await narrateBriefing(facts, language, userId, businessType);
+      if (narrated.source === 'fallback') h.markFailed('briefing_fallback');
+      return narrated;
+    }
+  );
 
   // Written after the fact so a storage outage cannot stop the card rendering.
   await writeCached(userId, facts, language, hash, narration.narrative, narration.source);

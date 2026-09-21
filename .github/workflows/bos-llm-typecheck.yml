@@ -7,10 +7,13 @@
 # in the attribution scope (see scripts/typecheck-bos-llm.ts for how the scope
 # is derived and how the committed baseline works).
 #
-# No path filter on purpose: the scope is derived from the import graph (the
-# catalog, its importers, barrels, and their direct callers), so a new file
-# anywhere that starts using the catalog or an attributed service is covered
-# automatically.
+# No `paths:` filter on purpose: the scope is derived from the import graph
+# (the catalog, its importers, barrels, and their direct callers), so a new
+# file anywhere that starts using the catalog or an attributed service is
+# covered automatically. The job does skip its own work for a change confined
+# to docs/, root-level *.md, scripts/ or .claude/ - see the scope step, which
+# carves scripts/typecheck-bos-llm.ts and its baseline back out precisely
+# because they ARE this gate.
 
 name: Business OS LLM Type Check
 
@@ -40,19 +43,61 @@ jobs:
     # The check takes ~1-2 minutes after install; fail fast if something hangs.
     timeout-minutes: 15
     steps:
+      # fetch-depth 2 so HEAD^ resolves. On a merge landing on main HEAD^ is
+      # the previous main tip; on a pull_request (refs/pull/N/merge) HEAD^1 is
+      # the base tip. Either way HEAD^..HEAD is the whole change under review.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # Nothing in the type scope can be reached from docs/, scripts/ or
+      # .claude/ - except this gate's own source, which the rule excludes.
+      #
+      # This is NOT a `paths:` filter. The job still runs on every PR and
+      # always reports a conclusion, so it stays safe to make a required
+      # status check - a `paths:` filter would leave the check pending
+      # forever and block the merge. The rule itself lives in
+      # .github/ci/non-deploying-change.sh (shared with vercel.json's
+      # ignoreCommand) and fails open: anything it cannot classify builds.
+      - name: Can this change affect attribution types?
+        id: scope
+        env:
+          # Measure the WHOLE push, not just its last commit. At fetch-depth 2
+          # this sha resolves only when it IS HEAD^ - a single commit, which is
+          # what a squash or merge landing on main looks like. A bigger push
+          # (rebase-merge, merge queue batch, direct multi-commit push) cannot
+          # resolve it, and the script fails open to BUILD. Empty on
+          # pull_request, where the script's HEAD^ default is already the base
+          # tip of the merge ref.
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if bash .github/ci/non-deploying-change.sh "$BASE"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
+        if: steps.scope.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
       - name: Install dependencies
+        if: steps.scope.outputs.skip != 'true'
         run: npm ci
 
       - name: Run scoped type check
+        if: steps.scope.outputs.skip != 'true'
         env:
           # The program covers the whole repo so types resolve as in the editor.
           NODE_OPTIONS: '--max-old-space-size=6144'
         run: npm run typecheck:bos-llm
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped: every changed file is documentation, scripts or" >> "$GITHUB_STEP_SUMMARY"
+          echo "Claude Code config, so it cannot reach an environment." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rule: .github/ci/non-deploying-change.sh" >> "$GITHUB_STEP_SUMMARY"

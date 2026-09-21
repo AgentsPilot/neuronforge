@@ -22,7 +22,7 @@ Before writing any code, confirm the following with the user. Ask only what isn'
 | Entity / repository | `AgentRepository` | Must already exist in `lib/repositories/` — if not, recommend creating one first |
 | Request body shape | `{ name: string, prompt: string }` | Used to build the Zod schema |
 | Audit action name | `AGENT_DUPLICATED` | SCREAMING_SNAKE_CASE; omit if no state change |
-| Auth model | user-scoped (default) / admin-only / public | Admin-only routes also need a role check; public routes skip `getUser` |
+| Auth model | user-scoped (default) / admin-only / public | Admin-only routes use the `requireAdmin` gate — **never a role check**, see [Admin-only routes](#admin-only-routes). Public routes skip `getUser` |
 
 If the matching repository doesn't exist, **stop and tell the user** — don't fall back to direct Supabase calls in the route.
 
@@ -115,8 +115,51 @@ export async function POST(request: NextRequest) {
 
 - **Dynamic route param:** signature becomes `(request: NextRequest, { params }: { params: { id: string } })`. Validate the param with a separate `z.string().uuid()` check before using it.
 - **GET / list:** skip the body parse and Zod (use `request.nextUrl.searchParams` + a query schema). No audit log unless the read itself is sensitive.
-- **Admin-only:** after `getUser()`, authorize with `AdminAccessService` (`lib/services/AdminAccessService.ts`) — the `admin_users` table is the only trusted admin signal — and return 403 otherwise. **Never** gate on `profiles.role` or `user.app_metadata?.role`: both are user-influenced and `profiles.role` is user-writable (self-promotion). See CLAUDE.md § Security Rules and [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
+- **Admin-only:** do **not** call `getUser()` yourself and do **not** check any role field — see [Admin-only routes](#admin-only-routes) below. The gate is `requireAdmin`.
 - **Public route (e.g. webhooks):** skip `getUser`, but verify a signature/secret. Document why RLS is bypassed.
+
+---
+
+## Admin-only routes
+
+> ⚠️ **This section replaced an instruction that was wrong.** It previously said
+> to check `user.app_metadata?.role === 'admin'`. That is a **third parallel
+> admin signal** alongside the `admin_users` table and `profiles.role`, and it
+> is not the one the platform trusts. Do not reintroduce it.
+
+An admin route uses the **one canonical gate** and nothing else:
+
+```typescript
+import { requireAdmin } from '@/lib/admin/requireAdminRoute';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'ExampleAdminAPI' });
+
+export async function POST(request: NextRequest) {
+  const correlationId = request.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
+  try {
+    // Admin gate. Nothing above this line may touch a request body,
+    // the database, a job queue, or an outbound message.
+    const gate = await requireAdmin(requestLogger);
+    if (gate instanceof NextResponse) return gate;
+    const { user } = gate;
+
+    // …handler work starts here…
+```
+
+Three rules, none of them optional:
+
+| Rule | Why |
+|---|---|
+| **`requireAdmin` is the FIRST statement in the handler** | Nothing may happen before the caller is known to be an admin — no `request.json()`, no query, no job trigger, no outbound message. A route that 403s *after* running its query has satisfied its status code and leaked the data anyway. |
+| **`AdminAccessService` / the `admin_users` table is the only trusted admin signal** | Never `profiles.role` (**user-writable** — a customer can PUT their own role), never `app_metadata.role`, never a hand-rolled `AdminAccessService` call. See [ADMIN_IDENTIFICATION_AND_ACCESS.md](/docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md). |
+| **Do not re-implement the 401/403 split or the fail-closed behaviour** | `requireAdmin` owns them: **401** signed out, **403** signed in but not an admin, and a check that throws is a **403**, never a 500. Self-gating admin UI relies on that distinction. |
+
+**CI checks this.** `.github/workflows/admin-authz-guard.yml` goes red on an `app/api/admin/**` handler that does not call `requireAdmin`, and on any `route.ts` anywhere that imports `AdminAccessService` directly. If you need a genuine exception, add it to the guard's allow-list with a written reason and raise that list's cap in the same commit — a deliberate, visible act.
+
+> ⚠️ **Do not rely on CI to catch this for you.** A red check only *blocks a merge* once **`Admin authz surface guard`** (the job name) has been made a **required status check** on `main` — a manual repository setting, described in the workflow header. **Until that is done a red check blocks nothing**, and an ungated admin route can be merged with a red tick beside it. Write the gate because it is correct, not because something will stop you.
 
 ---
 
@@ -142,6 +185,7 @@ Before reporting the task done, verify:
 - [ ] No direct `supabase.from(...)` — all DB access via the repository
 - [ ] Repository call passes `user.id` so the `.eq('user_id', userId)` filter is applied
 - [ ] Zod schema validates the full body before any business logic runs
+- [ ] **Admin route? `requireAdmin` is the first statement, and there is no other admin check anywhere in the file** (no `profiles.role`, no `app_metadata.role`, no direct `AdminAccessService`)
 - [ ] Audit log uses `.catch()` (non-blocking) — never `await` it in the success path
 - [ ] Error response uses `process.env.NODE_ENV === 'development'` guard for details
 - [ ] Integration test covers happy path + 401 + 400

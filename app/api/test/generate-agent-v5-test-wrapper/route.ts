@@ -2,13 +2,35 @@
  * V5 Workflow Generator Test API Wrapper
  *
  * Simplified test endpoint for V5WorkflowGenerator.
- * Used by plugins-test-v2 page for testing the LLM review flow.
+ * Used by the /test-plugins-v2 page for testing the LLM review flow.
  *
- * This is a TEST API - no authentication required.
- * Accepts userId directly in the request body.
+ * ── AUTHENTICATION IS REQUIRED. The old header here was wrong. ────────────
+ * This file used to say "This is a TEST API - no authentication required. Accepts userId
+ * directly in the request body." That documented a defect as though it were a design
+ * decision, which is a large part of why it survived.
+ *
+ * What it actually meant: an anonymous POST carrying a victim's UUID returned that
+ * account's connected-plugin inventory via `pluginManager.getAllActivePluginKeys(userId)`
+ * — the same disclosure that put the sibling `test/analyze-prompt` on the Gate list — and
+ * ran a V5 generation with a caller-chosen `provider` AND `model`, so the caller also
+ * chose the price of the LLM call.
+ *
+ * "Test API" is not a security boundary: `/api/test/*` is served in production exactly
+ * like every other route, and middleware does not authenticate `/api/*`
+ * (middleware.ts:83).
+ *
+ * Identity is now `getUser()` only; the body `userId` is not read. Generation always runs
+ * against the session user's own plugins.
+ *
+ * Found by SA (RF1) by applying Dev's D1 lesson to the rest of the harness: the
+ * /test-plugins-v2 page dispatches its services as ``fetch(`/api/${selectedAIService}`)``,
+ * so no route it drives can be judged unused — or safe — from a path grep.
+ *
+ * See docs/workplans/IDENTITY_SWEEP_WORKPLAN.md § Slice 0 / RF1.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getUser } from '@/lib/auth';
 import { PluginManagerV2 } from '@/lib/server/plugin-manager-v2';
 import {
   V5WorkflowGenerator,
@@ -31,8 +53,6 @@ interface V5TestWrapperRequest {
   enhancedPrompt?: string;
   /** Pre-built technical workflow - for LLM review path (string or object, only technical_workflow array needed) */
   technicalWorkflow?: string | Partial<TechnicalWorkflowInput>;
-  /** User ID to load connected plugins */
-  userId: string;
   /** AI provider (e.g., "anthropic", "openai") */
   provider: ProviderName;
   /** Model name (e.g., "claude-sonnet-4-20250514") */
@@ -65,20 +85,33 @@ export async function POST(req: NextRequest) {
   const startTime = Date.now();
 
   try {
+    // Gate before the body is parsed: this route reads plugin connections and spends an
+    // LLM call, neither of which an anonymous caller should reach.
+    const user = await getUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    // Plugins are always loaded for the SESSION user. A `userId` in the body is ignored —
+    // it was the whole vulnerability, and it is no longer part of the request type.
+    const userId = user.id;
+
     const body: V5TestWrapperRequest = await req.json();
 
     const {
       enhancedPrompt,
       technicalWorkflow,
-      userId,
       provider,
       model,
       skipDslBuilder,
     } = body;
 
-    // Collect missing required fields
+    // Collect missing required fields. `userId` is no longer among them: it comes from
+    // the session, so it can never be missing by the time we get here.
     const missingFields: string[] = [];
-    if (!userId) missingFields.push('userId');
     if (!provider) missingFields.push('provider');
     if (!model) missingFields.push('model');
 
@@ -304,8 +337,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: error.message || 'Internal server error',
+        error: 'Internal server error',
         latency_ms: latencyMs,
+        // Dev-guarded, matching the other Slice 0 500-paths: the raw message can carry
+        // provider and schema detail. The stack was already guarded.
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
       },
       { status: 500 }

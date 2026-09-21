@@ -4,6 +4,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/components/UserProvider';
 import { supabase } from '@/lib/supabaseClient';
+import { signOutUser } from '@/lib/client/auth-actions';
 import {
   ArrowLeft,
   Loader2,
@@ -393,56 +394,21 @@ function BusinessOSSettingsContent() {
   const handleLogout = async () => {
     setLoggingOut(true);
 
-    // Best-effort, and before the sign-out: afterwards there is no session to
-    // attribute it to. A failed audit entry must never trap someone in a
-    // session they asked to leave.
-    try {
-      if (user?.id) {
-        await fetch('/api/audit/log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-id': user.id },
-          body: JSON.stringify({
-            action: 'USER_LOGOUT',
-            entityType: 'user',
-            entityId: user.id,
-            userId: user.id,
-            resourceName: user.email || 'User',
-            details: { method: 'settings', scope: 'global' },
-            severity: 'info',
-            complianceFlags: ['SOC2'],
-          }),
-        });
-      }
-    } catch (err) {
-      logger.warn({ err }, 'Logout audit failed (non-blocking)');
-    }
-
-    try {
-      await supabase.auth.signOut({ scope: 'global' });
-    } catch (err) {
-      // Log it, then leave anyway. A user who pressed log out must end up
-      // logged out of this browser even if the server call failed.
-      logger.error({ err }, 'Global sign-out failed — clearing locally regardless');
-    }
-
-    try {
-      // Everything that belongs to a PERSON. `app-theme` and `v2-theme-mode`
-      // are left alone on purpose.
-      [
-        'onboarding_completed', 'onboarding_data', 'onboarding_goal',
-        'onboarding_mode', 'onboarding_build_complete', 'onboarding_build_settled',
-        'user_profile', 'user_domain',
-        'business-os-language', 'business-os-currency',
-        'agent_builder_session_key', 'agent_builder_user_view_preference',
-        'helpBotContext', 'helpBotOpen',
-        'sb-auth-token', 'supabase.auth.token',
-      ].forEach(key => {
-        localStorage.removeItem(key);
-        sessionStorage.removeItem(key);
-      });
-      sessionStorage.removeItem('onboarding_preview_data');
-    } catch {
-      // Private mode, or storage disabled. The sign-out above is what matters.
+    /*
+     * Points 1 and 2 above are `signOutUser`, shared with the other sign-out
+     * controls in the app. The audit entry (written before the sign-out, while
+     * there is still a session to attribute it to), the global scope and the
+     * person-scoped storage clearing all live there now — the key list in
+     * particular, because a second copy of it here drifts the moment a key is
+     * added and silently starts leaking one person's state to the next.
+     *
+     * Nothing it does can trap someone in a session they asked to leave: a
+     * failed audit write or a failed server sign-out is logged inside and the
+     * local state is cleared regardless.
+     */
+    const result = await signOutUser({ scope: 'global', user, method: 'settings' });
+    if (!result.ok) {
+      logger.error({ err: result.error }, 'Global sign-out failed — cleared locally regardless');
     }
 
     /*

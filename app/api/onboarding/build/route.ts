@@ -22,6 +22,7 @@ import { paymentPlanRepository } from '@/lib/repositories/PaymentPlanRepository'
 import { capabilityActivationService } from '@/lib/services/CapabilityActivationService';
 import { capabilityConditionEvaluator } from '@/lib/services/CapabilityConditionEvaluator';
 import { newBosGroupId } from '@/lib/business-os/llm/callCatalog';
+import { runAiAction, markGenerationResult } from '@/lib/business-os/llm/aiActionAudit';
 import { z } from 'zod';
 
 const logger = createLogger({ module: 'OnboardingBuildAPI' });
@@ -825,52 +826,9 @@ export async function POST(request: NextRequest) {
     const buildGroupId = newBosGroupId();
     requestLogger.info({ userId: user.id, groupId: buildGroupId }, 'Onboarding build usage group');
 
-    /*
-     * Write their intake form.
-     *
-     * AFTER the services exist, because the questions are built from what this
-     * business actually sells — a form generated before them would describe the
-     * trade in general rather than this business in particular.
-     *
-     * A DRAFT. It reaches nobody until the owner reads it and publishes, which
-     * is the first thing the readiness card will ask them to do.
-     *
-     * Only for businesses that said they collect intake. Generating one for
-     * everybody would put an unread draft and a standing "publish this" prompt
-     * in front of businesses that never asked for a form.
-     *
-     * Never fatal, and never awaited for its answer: a business whose onboarding
-     * failed because a model was slow has lost far more than an intake form.
-     */
-    if (configuration?.needs_intake) {
-      try {
-        const { intakeGenerationService } = await import('@/lib/services/IntakeGenerationService');
-        const intake = await intakeGenerationService.generateIntakeForm(user.id, {
-          groupId: buildGroupId,
-        });
-
-        requestLogger.info(
-          {
-            userId: user.id,
-            formId: intake.formId,
-            questions: intake.questionCount,
-            // 'fallback' means the model was not reachable and the questions
-            // are generic. Worth knowing here rather than discovering from a
-            // confused owner reading three stock questions.
-            contentSource: intake.contentSource,
-          },
-          intake.success ? 'Intake draft generated during onboarding' : 'Intake generation failed'
-        );
-      } catch (intakeError) {
-        requestLogger.error(
-          { err: intakeError, userId: user.id },
-          'Intake generation threw during onboarding (non-blocking)'
-        );
-      }
-    }
-
-    // 6. Trigger AI website generation
-    // Only trigger if user explicitly wants a website (full_website or website_only mode)
+    // Decided before the AI action below (which spans the intake draft and the
+    // website): only generate a website if the user explicitly wants one
+    // (full_website or website_only mode).
     const shouldGenerateWebsite =
       configuration?.online_presence_mode === 'full_website' ||
       configuration?.online_presence_mode === 'website_only';
@@ -878,35 +836,98 @@ export async function POST(request: NextRequest) {
     let websiteGenerated = false;
     let websiteError: string | null = null;
 
-    if (shouldGenerateWebsite) {
-      requestLogger.info({ userId: user.id, onlinePresenceMode: configuration?.online_presence_mode }, 'Starting AI website generation');
+    /*
+     * ONE AI action, one audit entry, for the whole build (Layer 3, FR-12): the
+     * intake draft and the website are both "build my business" and share the
+     * build's group. The entry's `areas` lists both, taken from the calls (WC-4).
+     */
+    await runAiAction(
+      { area: 'website', actionType: 'onboarding_build', groupId: buildGroupId, trigger: 'user', accountId: user.id, correlationId },
+      async (h) => {
+        /*
+         * Write their intake form.
+         *
+         * AFTER the services exist, because the questions are built from what this
+         * business actually sells — a form generated before them would describe the
+         * trade in general rather than this business in particular.
+         *
+         * A DRAFT. It reaches nobody until the owner reads it and publishes, which
+         * is the first thing the readiness card will ask them to do.
+         *
+         * Only for businesses that said they collect intake. Generating one for
+         * everybody would put an unread draft and a standing "publish this" prompt
+         * in front of businesses that never asked for a form.
+         *
+         * Never fatal, and never awaited for its answer: a business whose onboarding
+         * failed because a model was slow has lost far more than an intake form.
+         */
+        if (configuration?.needs_intake) {
+          try {
+            const { intakeGenerationService } = await import('@/lib/services/IntakeGenerationService');
+            const intake = await intakeGenerationService.generateIntakeForm(user.id, {
+              groupId: buildGroupId,
+            });
+            markGenerationResult(h, intake);
 
-      try {
-        // Import and call the service directly instead of making HTTP request
-        // This avoids auth cookie issues with internal fetch calls
-        const { WebsiteGenerationService } = await import('@/lib/services/WebsiteGenerationService');
-        const websiteService = new WebsiteGenerationService();
-
-        // AWAIT the website generation to ensure it completes before returning
-        const result = await websiteService.generateWebsite(user.id, { groupId: buildGroupId });
-
-        if (result.success) {
-          websiteGenerated = true;
-          requestLogger.info(
-            { userId: user.id, homepageId: result.homepageId, blocksCreated: result.blocksCreated },
-            'Website generation completed successfully'
-          );
-        } else {
-          websiteError = result.error || 'Unknown error';
-          requestLogger.warn({ userId: user.id, error: result.error }, 'Website generation failed');
+            requestLogger.info(
+              {
+                userId: user.id,
+                formId: intake.formId,
+                questions: intake.questionCount,
+                // 'fallback' means the model was not reachable and the questions
+                // are generic. Worth knowing here rather than discovering from a
+                // confused owner reading three stock questions.
+                contentSource: intake.contentSource,
+              },
+              intake.success ? 'Intake draft generated during onboarding' : 'Intake generation failed'
+            );
+          } catch (intakeError) {
+            requestLogger.error(
+              { err: intakeError, userId: user.id },
+              'Intake generation threw during onboarding (non-blocking)'
+            );
+          }
         }
-      } catch (err) {
-        websiteError = (err as Error).message;
-        requestLogger.error({ err, userId: user.id }, 'Website generation error');
+
+        // 6. Trigger AI website generation
+        if (shouldGenerateWebsite) {
+          requestLogger.info({ userId: user.id, onlinePresenceMode: configuration?.online_presence_mode }, 'Starting AI website generation');
+
+          try {
+            // Import and call the service directly instead of making HTTP request
+            // This avoids auth cookie issues with internal fetch calls
+            const { WebsiteGenerationService } = await import('@/lib/services/WebsiteGenerationService');
+            const websiteService = new WebsiteGenerationService();
+
+            // AWAIT the website generation to ensure it completes before returning
+            // Explicit: a business finishing onboarding gets a site either
+            // way. With the website area off, that is the starter copy rather
+            // than nothing (Layer 2 FR-14, RC-W3).
+            const result = await websiteService.generateWebsite(user.id, {
+              groupId: buildGroupId,
+              onAiDisabled: 'fallback',
+            });
+            markGenerationResult(h, result);
+
+            if (result.success) {
+              websiteGenerated = true;
+              requestLogger.info(
+                { userId: user.id, homepageId: result.homepageId, blocksCreated: result.blocksCreated },
+                'Website generation completed successfully'
+              );
+            } else {
+              websiteError = result.error || 'Unknown error';
+              requestLogger.warn({ userId: user.id, error: result.error }, 'Website generation failed');
+            }
+          } catch (err) {
+            websiteError = (err as Error).message;
+            requestLogger.error({ err, userId: user.id }, 'Website generation error');
+          }
+        } else {
+          requestLogger.info({ userId: user.id, onlinePresenceMode: configuration?.online_presence_mode }, 'Skipping website generation (not requested)');
+        }
       }
-    } else {
-      requestLogger.info({ userId: user.id, onlinePresenceMode: configuration?.online_presence_mode }, 'Skipping website generation (not requested)');
-    }
+    );
 
     /*
      * ─────────────────────────────────────────────────────────────────────────

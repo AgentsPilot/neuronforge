@@ -2,6 +2,7 @@
 // Self-learning support bot with FAQ → Cache → Groq fallback architecture
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getUser } from '@/lib/auth'
 import { GroqProvider } from '@/lib/ai/providers/groqProvider'
 import { createClient } from '@supabase/supabase-js'
 import { AIAnalyticsService } from '@/lib/analytics/aiAnalytics'
@@ -71,13 +72,15 @@ function hashQuestion(question: string): string {
 
 /**
  * Search for agents by name (fuzzy matching)
+ *
+ * `userId` is non-nullable on purpose: this is the one query in the file that reads
+ * user-owned rows through the service-role client above, so it must only ever be
+ * reachable with a server-derived session id (see POST).
  */
 async function searchAgents(
   query: string,
-  userId: string | null
+  userId: string
 ): Promise<Array<{ id: string; name: string; status: string }>> {
-  if (!userId) return []
-
   try {
     const { data: agents, error } = await supabase
       .from('agents')
@@ -673,6 +676,17 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now()
 
   try {
+    // Authenticate before anything else. This route holds a module-level service-role
+    // client (RLS bypassed) and its agent-search branch reads the caller's own rows, so
+    // identity has to be server-derived — the x-user-id header a client can set to any
+    // victim's id is ignored. The bot is only ever mounted on signed-in /v2 pages, and
+    // the anonymous path also spent Groq/embedding calls and wrote into the shared
+    // support_cache, so the whole route requires a session rather than just that branch.
+    const user = await getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { messages, pageContext, context } = await request.json()
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
@@ -694,7 +708,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ response, source: 'InputHelp' })
     }
 
-    const userId = request.headers.get('x-user-id') || null
+    const userId = user.id
     const question = lastMessage.content
     const questionHash = hashQuestion(question)
     const pagePath = pageContext?.path || '/v2/dashboard'
@@ -703,7 +717,7 @@ export async function POST(request: NextRequest) {
     // Step 1: Check if user is searching for a specific agent
     // ========================================================================
     const agentSearchQuery = detectAgentSearchQuery(question)
-    if (agentSearchQuery && userId) {
+    if (agentSearchQuery) {
       const foundAgents = await searchAgents(agentSearchQuery, userId)
 
       if (foundAgents.length > 0) {

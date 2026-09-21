@@ -45,7 +45,7 @@ import { buildV6AiContext } from './buildV6AiContext'
 import { buildCreationModels } from './buildCreationModels'
 import { buildV6Metadata } from './buildV6Metadata'
 import { formatScheduleDisplay } from '@/lib/utils/scheduleFormatter'
-import { useV6AgentGeneration, useMoveToCalibrationAfterCreation } from '@/lib/utils/featureFlags'
+import { isV6AgentGenerationEnabled, isMoveToCalibrationAfterCreationEnabled } from '@/lib/utils/featureFlags'
 import { createTimedThinkingWordCycler, getWordsForCategories } from '@/lib/ui/thinking-words'
 import { motion } from 'framer-motion'
 
@@ -1284,7 +1284,7 @@ function V2AgentBuilderContent() {
       }
 
       // Check if V6 generation is enabled
-      const useV6 = useV6AgentGeneration()
+      const useV6 = isV6AgentGenerationEnabled()
       let agentData: CreateAgentData
       // WP-47: captured from v6Data.ir.config_defaults inside the V6 block,
       // read after the V4/V6 branches merge to pre-populate resolvedInputs.
@@ -1626,7 +1626,7 @@ function V2AgentBuilderContent() {
         (agentData?.agent_name || enhancedPromptData?.plan_title || 'Your agent is ready.').toString().trim()
       addSuccessMessage(createdAgentName)
 
-      if (useMoveToCalibrationAfterCreation()) {
+      if (isMoveToCalibrationAfterCreationEnabled()) {
         // Flag ON: offer the user a choice to calibrate before going live.
         // Navigation happens ONLY on a button click (handleStartCalibration /
         // handleSkipCalibration) — never auto-redirect (workplan R3).
@@ -2584,7 +2584,7 @@ function V2AgentBuilderContent() {
 
                 {/* Step 8: Calibration Test Run — only when the post-creation
                     calibration feature is enabled (flag). */}
-                {useMoveToCalibrationAfterCreation() && (() => {
+                {isMoveToCalibrationAfterCreationEnabled() && (() => {
                   const isActive = showCalibrationPrompt && !calibrationChoice
                   const isCalibrating = calibrationChoice === 'accepted'
                   const isSkipped = calibrationChoice === 'declined'

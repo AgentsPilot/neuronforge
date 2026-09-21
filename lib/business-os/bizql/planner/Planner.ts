@@ -14,9 +14,17 @@
  *   here     1 call, ~267-token compressed catalog, one small stable tool, and
  *            the answer sentence rides in the plan so there is NO second call.
  *
- * The model is resolved from SystemConfigService, never hardcoded — chat-v3 had
+ * The model is resolved from configuration, never hardcoded — chat-v3 had
  * `gpt-4o-mini` inline at AIPlanner.ts:122, in violation of the project's own
- * provider-factory rule, which made comparing models a code change.
+ * provider-factory rule, which made comparing models a code change. Since
+ * Layer 2 that configuration is the `chat` area row, read through
+ * `resolveBosLlmSettings` (FR-12); the old `bizchat_planner_model` key was
+ * copied into it by the seed migration and nothing reads it any more.
+ *
+ * The planner has NO switch of its own (`switchable: false`, DEC-5/D-27): the
+ * chat area's switch is enforced at route entry, so a planner that runs at all
+ * is a planner the owner is allowed to have. Its temperature is locked to 0 in
+ * the policy for the reason spelled out beside the call below.
  *
  * @module lib/business-os/bizql/planner
  */
@@ -24,7 +32,8 @@
 import { createLogger } from '@/lib/logger';
 import { ProviderFactory } from '@/lib/ai/providerFactory';
 import { buildBosCallContext } from '@/lib/business-os/llm/callCatalog';
-import { SystemConfigService } from '@/lib/services/SystemConfigService';
+import { withModelFallback } from '@/lib/business-os/llm/modelFallback';
+import { resolveBosLlmSettings } from '@/lib/business-os/llm/modelSettings';
 import { supabaseServer } from '@/lib/supabaseServer';
 import { CATALOG, CATALOG_VERSION } from '@/lib/business-os/catalog';
 import { anchorizeInventedDates } from '../dates';
@@ -113,14 +122,6 @@ export interface PlanOutcome {
     /** Set on a cache hit, so the caller can report the outcome back. */
     cacheEntryId?: string;
   };
-}
-
-async function resolveModel(): Promise<string> {
-  return SystemConfigService.getString(
-    supabaseServer,
-    'bizchat_planner_model',
-    'gpt-4o-mini'
-  );
 }
 
 /**
@@ -327,13 +328,34 @@ export class BizQLPlanner {
 
     // Read this user's own configured values for any data-driven field, so the
     // planner never has to guess them and we never have to enumerate synonyms.
-    const [model, vocabulary] = await Promise.all([
-      resolveModel(),
+    const [settings, vocabulary] = await Promise.all([
+      resolveBosLlmSettings('chat', 'planner'),
       renderUserVocabulary(request.userId, supabaseServer, entities).catch((err) => {
         logger.warn({ err }, 'Could not load user vocabulary; planning without it');
         return '';
       }),
     ]);
+
+    /*
+     * `let`, and reassigned from `modelUsed` after every attempt (RC-W6).
+     *
+     * The repair loop below is up to three calls for ONE question, and every
+     * `fail(...)` and `diagnostics(...)` path reports this variable. If a
+     * configured model is refused and the FR-11 fallback runs the call on the
+     * code default, a repair must continue on the model that actually worked —
+     * otherwise attempt 2 re-sends the model attempt 1 proved unavailable — and
+     * the diagnostics must name it, or FR-13 reports a model that never ran.
+     */
+    let model = settings.model;
+
+    /**
+     * The model of the request most recently handed to the provider.
+     *
+     * Equal to `model` on every path that returns, and different from it on
+     * exactly one: a throw from INSIDE `withModelFallback`'s fallback attempt,
+     * where `model` has not been updated yet.
+     */
+    let lastModelOnWire = model;
 
     const conversation = request.context ? renderContextForPrompt(request.context) : '';
 
@@ -441,60 +463,91 @@ export class BizQLPlanner {
       let raw: Record<string, unknown>;
 
       try {
-        const provider = ProviderFactory.getProvider('openai');
-        const response = await provider.chatCompletion(
-          {
-            model,
-            messages,
-            tools: [tool],
-            tool_choice: 'required',
-            temperature: 0,
+        const provider = ProviderFactory.getProvider(settings.provider);
+        /*
+         * The request is built INSIDE the attempt, so the retry carries the
+         * model it is retrying on rather than the one that was refused
+         * (FR-11, RC-W4). `modelUsed` then becomes this loop's model.
+         */
+        const { result: response, modelUsed } = await withModelFallback(
+          { ...settings, model },
+          (attemptModel) => {
             /*
-             * What stops the runaway the cap below only made cheap.
+             * Recorded BEFORE the call, not after it (SA, Step 3).
              *
-             * Greedy decoding at temperature 0, under an instruction prompt this
-             * long, collapses into a repetition loop. It emitted a perfectly
-             * good `steps` array, reached `answer`, and then produced
-             * `"  " , "  " , "  " ,` until it hit the cap — invalid JSON, so the
-             * user was told "I couldn't understand the request" for something as
-             * ordinary as "how many meetings do I have tomorrow".
-             *
-             * Deterministic per question, which is why it looked like a parsing
-             * bug rather than a sampling one: count-plus-a-date failed every
-             * time, while counting alone and listing with a date were fine.
-             *
-             * Neither temperature (0.3 recovered 1 run in 4) nor tool_choice nor
-             * the schema made any difference. A frequency penalty did, because
-             * this is exactly the failure it exists for: measured across eight
-             * representative questions, 6/8 parsed without it and 8/8 with it,
-             * with nothing that previously worked regressed. Kept low — JSON is
-             * legitimately repetitive, and `"field"`/`"op"`/`"value"` must stay
-             * cheap to re-emit.
+             * `model` below is only updated once `withModelFallback` RETURNS.
+             * If the fallback attempt throws — a timeout on the code default
+             * after the configured model was refused — the catch would
+             * otherwise report the configured model, which is the one that did
+             * not run. Diagnostics that name the wrong model on a failure are
+             * exactly what FR-13 exists to prevent, and a failure is when
+             * someone actually reads them.
              */
-            frequency_penalty: 0.3,
-            // A plan is small — a handful of steps and one sentence. Without a
-            // cap the model can run away: one Hebrew case produced 16,384
-            // output tokens of invalid JSON, costing ~40x a normal turn and
-            // still failing. Capping makes a runaway fail fast and cheaply
-            // instead of expensively — this is the belt to the penalty's braces.
-            max_tokens: MAX_PLAN_TOKENS,
-          },
-          buildBosCallContext(
+            lastModelOnWire = attemptModel;
+            return provider.chatCompletion(
             {
-              userId: request.userId,
-              area: 'chat',
-              callName: 'planner',
-              groupId: request.turnId,
+              model: attemptModel,
+              messages,
+              tools: [tool],
+              tool_choice: 'required',
+              /*
+               * Locked to 0 in the Layer 2 policy, and sent from the resolved
+               * value so no temperature literal is left in this file (FR-15).
+               * The reason it is locked is below; it is not an operator's choice.
+               */
+              ...(settings.temperature !== undefined ? { temperature: settings.temperature } : {}),
+              /*
+               * What stops the runaway the cap below only made cheap.
+               *
+               * Greedy decoding at temperature 0, under an instruction prompt this
+               * long, collapses into a repetition loop. It emitted a perfectly
+               * good `steps` array, reached `answer`, and then produced
+               * `"  " , "  " , "  " ,` until it hit the cap — invalid JSON, so the
+               * user was told "I couldn't understand the request" for something as
+               * ordinary as "how many meetings do I have tomorrow".
+               *
+               * Deterministic per question, which is why it looked like a parsing
+               * bug rather than a sampling one: count-plus-a-date failed every
+               * time, while counting alone and listing with a date were fine.
+               *
+               * Neither temperature (0.3 recovered 1 run in 4) nor tool_choice nor
+               * the schema made any difference. A frequency penalty did, because
+               * this is exactly the failure it exists for: measured across eight
+               * representative questions, 6/8 parsed without it and 8/8 with it,
+               * with nothing that previously worked regressed. Kept low — JSON is
+               * legitimately repetitive, and `"field"`/`"op"`/`"value"` must stay
+               * cheap to re-emit.
+               */
+              frequency_penalty: 0.3,
+              // A plan is small — a handful of steps and one sentence. Without a
+              // cap the model can run away: one Hebrew case produced 16,384
+              // output tokens of invalid JSON, costing ~40x a normal turn and
+              // still failing. Capping makes a runaway fail fast and cheaply
+              // instead of expensively — this is the belt to the penalty's braces.
+              max_tokens: MAX_PLAN_TOKENS,
             },
-            {
-              // A repair is a SECOND full-prompt call for one question. Tagged so
-              // its overhead is visible: repairs were the dominant cost driver at
-              // several points during development and looked identical to first
-              // attempts in the data.
-              activity_type: repairAttempted ? 'repair' : 'plan',
-            }
-          )
+            buildBosCallContext(
+              {
+                userId: request.userId,
+                area: 'chat',
+                callName: 'planner',
+                groupId: request.turnId,
+              },
+              {
+                // A repair is a SECOND full-prompt call for one question. Tagged so
+                // its overhead is visible: repairs were the dominant cost driver at
+                // several points during development and looked identical to first
+                // attempts in the data.
+                activity_type: repairAttempted ? 'repair' : 'plan',
+              }
+            )
+          );
+          }
         );
+
+        // RC-W6. From here on — the repair calls, the cache entry, every
+        // `fail(...)` and `diagnostics(...)` — this is the model that RAN.
+        model = modelUsed;
 
         promptTokens = response.usage?.prompt_tokens ?? promptTokens;
         completionTokens = response.usage?.completion_tokens ?? completionTokens;
@@ -547,7 +600,9 @@ export class BizQLPlanner {
       } catch (err) {
         logger.error({ err, attempt }, 'Planner call failed');
         return this.fail((err as Error).message, {
-          model,
+          // The model that was last put on the wire, which after a fallback is
+          // the code default rather than the configured one.
+          model: lastModelOnWire,
           entities,
           repairAttempted,
           started,

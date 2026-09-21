@@ -40,7 +40,7 @@ Enhanced Prompt → Extract plugin SCHEMA from PluginManager → Use schema for 
 
 **Old behavior**:
 - Required `userId` parameter
-- Called `/api/v6/fetch-plugin-data` to get real user data
+- Called `/api/v6/fetch-plugin-data` to get real user data (that endpoint was DELETED 2026-09-21 — it executed plugin actions for any caller-supplied `userId` without authentication)
 - Failed silently when auth missing
 - Grounding phase skipped on failure
 

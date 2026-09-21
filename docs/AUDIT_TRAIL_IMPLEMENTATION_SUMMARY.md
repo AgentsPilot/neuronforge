@@ -7,6 +7,23 @@
 
 ---
 
+## Business OS AI activity (Layer 3, 2026-09-19)
+
+One audit entry per Business OS AI action or background job, summarising its LLM calls. The source is [BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md), and the design is in [the workplan](/docs/workplans/BUSINESS_OS_LLM_AUDIT_TRAIL_WORKPLAN.md).
+
+| Item | Value |
+|---|---|
+| Events | `BUSINESS_AI_ACTION_COMPLETED` (info, SOC2), `BUSINESS_AI_ACTION_FAILED` (warning, SOC2). Severity comes only from `EVENT_METADATA` |
+| Entity | `ai_action`; entity id = the action's usage grouping id, which links the entry to its `token_usage` rows |
+| Written by | `runAiAction` in `lib/business-os/llm/aiActionAudit.ts`, through `AuditTrailService.log()`, never awaited |
+| Areas wired | chat turn (plus the nested chat website operation), insight run per business, briefing narration, website (full site, landing page, field regeneration, testimonial), intake (form, question), onboarding turn, onboarding build (one entry, both areas), lead reply, image generation |
+| Recorded | Account, actor (the owner; the platform for scheduled and external jobs), area(s), action type, group, trigger, call count, failed calls, tokens, estimated cost, call names, models, outcome and error **code** |
+| Never recorded | Prompts, owner text, AI output, error messages, the business name, the HTTP request (IP address, session cookie) |
+| Owner visibility | **Operator-only** (user decision D-6). Excluded from `/monitoring`, its CSV and every owner read (`AuditTrailRepository.listOwnerEntries`). Hidden from owners' direct reads by the owner RLS policy (`supabase/migrations/20260930_audit_trail_owner_policy_hides_ai_actions.sql`). Browsers cannot write them |
+| Known risk (KI-B) | The audit service queues and batches writes, so an entry can be delayed or occasionally lost (for example, a serverless instance recycled before its batch is flushed). The calls are always in the usage ledger under the same group. A recommended later change is Layer 3 OI-D |
+
+---
+
 ## ✅ COMPLETED IMPLEMENTATIONS
 
 ### 1. Authentication Audit Trail (100% Complete)
@@ -596,5 +613,11 @@ For questions or issues:
 ---
 
 **Document Version:** 1.0
-**Last Updated:** 2025-01-29
+**Last Updated:** 2026-09-19
 **Next Review:** 2025-02-15
+
+## Change History
+
+| Date | Change | Details |
+|------|--------|---------|
+| 2026-09-19 | Business OS AI activity (Layer 3) | Added the section on the two `BUSINESS_AI_ACTION_*` events, the `ai_action` entity, what is and is not recorded, owner visibility (D-6) and the known risk KI-B |

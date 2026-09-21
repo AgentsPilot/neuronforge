@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { AuditTrail as auditTrail } from '@/lib/services/AuditTrailService';
 import { createLogger } from '@/lib/logger';
 import { createServerClient } from '@supabase/ssr';
+import { supabaseServer } from '@/lib/supabaseServer';
 import { cookies } from 'next/headers';
 import { getStripeService } from '@/lib/stripe/StripeService';
 
@@ -88,7 +89,15 @@ export async function POST(request: NextRequest) {
       }
 
       session = await stripeService.createCustomCreditSubscription({
-        supabase,
+        // P0-FT-RLS (W-4): this reaches StripeService.getOrCreateCustomer, which
+        // UPDATEs/INSERTs `user_subscriptions` to persist `stripe_customer_id`.
+        // That table no longer accepts writes from `anon`/`authenticated`
+        // (supabase/migrations/20261001_user_subscriptions_write_lockdown.sql), and
+        // neither result is checked, so with the cookie client it would fail 42501
+        // in silence: a paying user with no row would never be credited. `userId`
+        // below comes from the verified session and every statement inside is
+        // `.eq('user_id', userId)`.
+        supabase: supabaseServer,
         userId: user.id,
         email: user.email!,
         name: userName,
@@ -127,7 +136,8 @@ export async function POST(request: NextRequest) {
       }
 
       session = await stripeService.createBoostPackCheckout({
-        supabase,
+        // P0-FT-RLS (W-4): same `getOrCreateCustomer` write path as above.
+        supabase: supabaseServer,
         userId: user.id,
         email: user.email!,
         name: userName,

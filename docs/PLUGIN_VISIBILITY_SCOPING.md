@@ -1,6 +1,6 @@
 # Plugin Visibility Scoping (Business-OS-only plugins)
 
-> **Last Updated**: 2026-08-06
+> **Last Updated**: 2026-09-19
 
 ## Overview
 
@@ -54,6 +54,12 @@ isPluginDiscoverable(def, includeBusinessOs = false): boolean
 
 `getAvailablePlugins()` stays unfiltered. Its by-key consumers must keep resolving `crm`: `PluginResolver`, `ExecutionGraphCompiler` (param build / schema validation), `PluginParameterValidator` (which hard-errors `Plugin 'crm' not found` and fails compilation if the plugin is missing), `FieldReferenceValidator`, `/api/plugins/execute`, `getPluginDefinition` / `getActionDefinition` / `getAllPluginNames`.
 
+### Profile gate (upstream)
+
+Visibility is the **second** of two gates. The first is the active **plugin profile** (`lib/server/plugin-profile.ts`, see [BUSINESS_OS_PLUGIN_PROFILE_REQUIREMENT.md](/docs/requirements/BUSINESS_OS_PLUGIN_PROFILE_REQUIREMENT.md)). The profile decides which plugins are **loaded** at all; visibility decides which **loaded** plugins are **discoverable**. The rule above, "never gate resolution-by-key", applies to loaded plugins: a plugin outside the profile cannot be resolved because it was never loaded, which is intended and is not a visibility change. The profile never reads or sets `visibility`, and `plugin-visibility.ts` does not import the profile.
+
+Four metadata readers load definition JSON straight from disk by key: `ExecutionGraphCompiler.loadPluginAction`, `ExecutionSummaryCollector`, and the summary-metadata reads in `StepExecutor` and `WorkflowPilot`. They are read-only metadata for a step that already exists, not a load, discovery or execution gate. The profile is enforced where it matters: at `PluginManagerV2` load and at `PluginExecuterV2.execute` (which returns `plugin_not_enabled`).
+
 ## Interaction with the "standard V2 plugin, platform-wide" decision
 
 The internal CRM plugin remains a standard, V6-resolvable, executable plugin (decision #2). This scoping only makes **discovery** hidden-by-default. Promoting CRM platform-wide later is a **one-line flip** — set `visibility: 'public'` (or remove the field) and it reappears in all five discovery surfaces; resolution/execution were never touched. The opt-in seam (V6 sites keying off `servicesInvolved`) also allows explicit V6 invocation before any such flip, with no re-plumbing.
@@ -67,3 +73,4 @@ Contained to the five named sites + the metadata field + one predicate helper. E
 | Date | Change | Details |
 |------|--------|---------|
 | 2026-08-06 | Initial design | Added `plugin.visibility` (`public` \| `business_os`), gated the five discovery surfaces with a shared `isPluginDiscoverable` predicate + opt-in, and explicitly excluded `getAvailablePlugins()` and the V6 by-key resolution sites from filtering (SA correction). CRM set to `business_os`. |
+| 2026-09-19 | Profile gate (upstream) note | Added the relationship to the plugin profile (`lib/server/plugin-profile.ts`): profile = what is loaded, visibility = what loaded plugins are discoverable. Recorded the four disk-reading metadata readers as non-gates. |

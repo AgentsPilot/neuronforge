@@ -2,6 +2,7 @@
 // Handle user feedback (thumbs up/down) for cached support responses
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getUser } from '@/lib/auth'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -11,6 +12,15 @@ const supabase = createClient(
 
 export async function POST(request: NextRequest) {
   try {
+    // Same identity rule as the parent route. This handler moves thumbs_up/thumbs_down
+    // on the global support_cache through the service-role client above, and that signal
+    // decides which cached answers keep being served to everyone — so it must not be
+    // reachable without a session. Both callers are the signed-in help widgets.
+    const user = await getUser()
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { cacheId, feedbackType } = await request.json()
 
     if (!cacheId || !feedbackType) {

@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { createAuthenticatedServerClient } from '@/lib/supabaseServerAuth'
+import { supabaseServer } from '@/lib/supabaseServer'
 import { createLogger } from '@/lib/logger'
 import { runAgentWithContext } from '@/lib/utils/runAgentWithContext'
 import { extractPdfTextFromBase64 } from '@/lib/utils/extractPdfTextFromBase64'
@@ -85,7 +86,12 @@ export async function POST(req: Request) {
   logger.info('Agent execution request received')
 
   // Initialize repositories with authenticated Supabase client
-  const creditService = new CreditService(supabase)
+  // P0-FT-RLS: credits are the one exception. `user_subscriptions` no longer
+  // accepts writes from `anon`/`authenticated` (see
+  // supabase/migrations/20261001_user_subscriptions_write_lockdown.sql), so the
+  // charge below must run with the service role. Every CreditService call here
+  // is scoped to `user.id` from the verified session, never a body-supplied id.
+  const creditService = new CreditService(supabaseServer)
   const agentRepository = new AgentRepository(supabase)
   const agentStatsRepository = new AgentStatsRepository(supabase)
   const agentConfigurationRepository = new AgentConfigurationRepository(supabase)

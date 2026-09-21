@@ -1,5 +1,6 @@
 {
   "app/api/book/manage/[token]/reschedule/route.ts | TS2352 | Conversion of type '{ duration_minutes: any; advance_booking_days: any; min_notice_hours: any; availability: any; }[]' to type '{ duration_minutes: number; advance_booking_days: number; min_notice_hours: number; availability: Record<string, unknown>; }' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.": 1,
+  "app/api/business-os/chat/route.ts | TS2322 | Type '{ id: string; name: string; price: number | undefined; currency: ServiceCurrency; duration: number | null; }[]' is not assignable to type '{ id: string; name: string; price?: number | undefined; currency?: string | undefined; duration?: number | undefined; }[]'.": 1,
   "app/api/onboarding/build/route.ts | TS18047 | 'existingProfile.data' is possibly 'null'.": 3,
   "app/api/website/blocks/[blockId]/regenerate/route.ts | TS2322 | Type 'undefined | { company_name: any; vertical: any; description: any; }' is not assignable to type 'BusinessProfileData'.": 1,
   "lib/services/WebsiteBlockEnrichmentService.ts | TS2322 | Type '\"profile\"' is not assignable to type '\"ai\" | \"database\" | \"generated\" | \"template\"'.": 1,

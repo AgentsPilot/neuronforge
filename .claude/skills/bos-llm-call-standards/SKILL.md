@@ -1,6 +1,6 @@
 ---
 name: bos-llm-call-standards
-description: Make every Business OS AI call follow the LLM standards built in Layers 1, 1.1, 1.5, the logging clean-up and Layer 3. That means a catalogued call name, a server-side account, one grouping id per action, cost tracked through the provider layer, no owner text in logs, and (with Layer 3) one audit entry per action. Use when adding, changing or reviewing an LLM/AI call, embedding, image generation or AI feature in Business OS code — `lib/business-os/**`, `app/api/business-os/**`, and the Business OS services (`lib/services/Website*`, `Intake*`, `Onboarding*`, `LeadAlert*`, `GeneratedImage*`) and their routes. Does NOT apply to the agents side (`lib/agentkit/**` including V6, `lib/pilot/**`), which also uses `callWithTracking` / `ProviderFactory` under its own rules. It prevents the classic failures: spend landing on the platform account, ungroupable ledger rows, untracked cost, and owner text in production logs.
+description: Make every Business OS AI call follow the LLM standards built in Layers 1, 1.1, 1.5, the logging clean-up and Layer 3. That means a catalogued call name, a server-side account, one grouping id per action, cost tracked through the provider layer, no owner text in logs, and one audit entry per AI action (`runAiAction`). Use when adding, changing or reviewing an LLM/AI call, embedding, image generation or AI feature in Business OS code — `lib/business-os/**`, `app/api/business-os/**`, and the Business OS services (`lib/services/Website*`, `Intake*`, `Onboarding*`, `LeadAlert*`, `GeneratedImage*`) and their routes. Does NOT apply to the agents side (`lib/agentkit/**` including V6, `lib/pilot/**`), which also uses `callWithTracking` / `ProviderFactory` under its own rules. It prevents the classic failures: spend landing on the platform account, ungroupable ledger rows, untracked cost, and owner text in production logs.
 ---
 
 # bos-llm-call-standards
@@ -43,7 +43,7 @@ Use this whenever a Business OS feature **calls a model**: chat, embeddings, ima
 - **Services take a `BosLlmOwner` (`{ userId, groupId }`)** from their caller and pass it down to every call. A required owner parameter makes a missing account a compile error.
 - **Never target the platform account.** `lib/platformAccount.ts` is where the tracker lands a call with no valid account. That is a bug signal, not a destination (`isPlatformAccount` in the catalog).
 - **Service-role writes by a caller-supplied id** → use the `tenant-isolation-guard` skill.
-- **A new route** → the `new-api-route` skill. Its admin-only variation now points at `AdminAccessService` (fixed 2026-09-21; it previously told you to check `app_metadata.role` — Layer 1.1 F-4). Admin checks use `AdminAccessService`, per CLAUDE.md § Security Rules.
+- **A new route** → the `new-api-route` skill. Its admin-only variation is now correct: admin routes use the canonical `requireAdmin` gate (`lib/admin/requireAdminRoute.ts`) as their first statement — never `app_metadata.role` (the stale Layer 1.1 F-4 instruction) and never `profiles.role`, per CLAUDE.md § Security Rules.
 
 ## Standard 3: Grouping (one id per user action or job)
 
@@ -74,24 +74,40 @@ Use this whenever a Business OS feature **calls a model**: chat, embeddings, ima
 - **A model-returned label** is logged at info only if it is one of the known labels; otherwise log its length (`KNOWN_ADJUSTMENT_INTENTS` in the same file).
 - **Log redaction is not active** (open item OI-9 in the Layer 1.5 requirement). Never rely on it.
 
-## Standard 6: Audit trail (coming with Layer 3, steps 1–5; finalise when the pattern exists in code)
+## Standard 6: Audit trail (one entry per AI action)
 
-> **What exists on `main` today, and what does not.**
-> - **Decided** in `docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md` (OQ-2, OQ-3): the event names and the entity type.
-> - **Already on `main`** (step 0): the exclusion constants `AI_ACTION_ENTITY_TYPE` (`'ai_action'`) and `AI_ACTION_EVENT_PREFIX` (`'BUSINESS_AI_ACTION_'`) in `lib/audit/requestSchemas.ts`, and the owner-read exclusion (below).
-> - **Not on `main` yet:** the two events are not registered in `lib/audit/events.ts`, and there is no accumulator and no emitter.
->
-> The design is in `docs/workplans/BUSINESS_OS_LLM_AUDIT_TRAIL_WORKPLAN.md` §3. Update this section when step 3 lands.
+Every AI action writes exactly one `audit_trail` entry that summarises its LLM calls (Layer 3: `docs/requirements/BUSINESS_OS_LLM_AUDIT_TRAIL_REQUIREMENT.md`, design in `docs/workplans/BUSINESS_OS_LLM_AUDIT_TRAIL_WORKPLAN.md` §3).
 
-- **One audit entry per AI action or job, never per call.**
-  - The events are `BUSINESS_AI_ACTION_COMPLETED` / `BUSINESS_AI_ACTION_FAILED`, the entity type `ai_action`, and the entity id is the grouping id.
-  - The totals will come from an in-process accumulator: an `AsyncLocalStorage` scope that the provider layer's `callWithTracking` feeds. They never come from a ledger read-back. *(The module and wrapper names in the workplan are proposals.)*
-- **Only the agreed fields:** ids, counts, tokens, cost, call names, models, outcome, and an error **code**. Never a prompt, owner text, AI output, error message, business name or the HTTP request.
-- **`void AuditTrail.log(entry).catch(…)`.** Never `await` it (it can wait on a 100-row insert), never flush.
-- **Severity and compliance flags come only from `EVENT_METADATA`:** COMPLETED is info, FAILED is warning. The caller never passes them (Layer 3 RC-5).
-- **Before writing:** the account and actor are UUIDs, and the account is not the platform account. A bad row fails a whole shared batch.
-- **Background jobs:** the platform actor, with trigger `scheduled` (leads: `external`).
-- **AI entries are operator-only** *(live since step 0)*. Owner reads exclude them in the query, in `AuditTrailRepository.listOwnerEntries`.
+- **Wrap the function that performs ONE action in `runAiAction`** (`lib/business-os/llm/aiActionAudit.ts`). Pass:
+  - `area`;
+  - `actionType` (the `AiActionType` list);
+  - the action's `groupId`;
+  - `trigger` (`'user'`, `'scheduled'` or `'external'`);
+  - the server-side `accountId`.
+
+  It returns the action's own value, or rethrows its own error, unchanged.
+  - An account known only later (a route that authenticates inside the action): call `h.setAccount(user.id)`.
+  - An action that degrades without throwing (a fallback, an empty image): call `h.markFailed(code)` (`AiFailureCode`). For website and intake results, use `markGenerationResult(h, result)`.
+- **Worked references:**
+  - `app/api/business-os/chat-v4/route.ts`: a thin `POST` wrapping `handleChatTurn`;
+  - `app/api/cron/insight-detect/route.ts`: one action per business per run;
+  - `lib/business-os/briefing/BriefingStore.ts`: `getBriefing`'s required `trigger`;
+  - `app/api/onboarding/build/route.ts`: one action spanning two areas;
+  - `lib/business-os/bizql/mutate/MutateExecutor.ts`: a nested action with its own group.
+- **The totals come from the usage scope** (`lib/ai/usageScope.ts`), which `BaseAIProvider.callWithTracking` feeds once per call. There is **no ledger read-back**.
+  - Only calls whose `sessionId` is the action's group are counted. A Business OS call left out with a "different grouping id" warning is a wiring bug to fix; a left-out call from another product is expected.
+  - A nested `runAiAction` with its own group writes its own entry.
+  - An action with **no** LLM call writes **no** entry.
+- **The entry is built only by `buildAiAuditEntry`.**
+  - It carries event `BUSINESS_AI_ACTION_COMPLETED` / `_FAILED`, entity `ai_action`, and entity id = the grouping id.
+  - `details` holds ids, counts, tokens, the cost, call names, models, the outcome and an error **code**. `details.areas` (from the calls) is authoritative for multi-area actions.
+  - **Never** a prompt, owner text, AI output, an error message, the business name, or the HTTP request.
+  - Severity and flags come only from `EVENT_METADATA`: COMPLETED is info, FAILED is warning.
+- **It is written as `void AuditTrail.log(entry).catch(…)`,** inside `runAiAction`. Never `await` it (it can wait on a 100-row insert), never flush, never write one yourself.
+- **Identities are checked before writing** (`validateIdentities`): the group and account are UUIDs, and the account is never the platform account. Scheduled and external actions use the platform actor (`platformActorId`).
+- **AI entries are operator-only.** Owner reads exclude them in the query (`AuditTrailRepository.listOwnerEntries`). The owner RLS policy hides them from direct reads (`supabase/migrations/20260930_audit_trail_owner_policy_hides_ai_actions.sql`). A browser can never write one (the allow-list in `lib/audit/requestSchemas.ts`).
+- **Server-only:** `aiActionAudit.ts` reaches the provider layer and `node:async_hooks`. No `'use client'` module may import it, even indirectly (the PR #53 build failure). Keep pure helpers in dependency-free files, like `lib/business-os/briefing/briefingLines.ts`, and run `next build`.
+- **Known limit (KI-B):** the audit service queues and batches, so an entry can be delayed or occasionally lost; the calls are always in the usage ledger under the same group.
 
 ## Standard 7: Proof (the definition of done)
 
@@ -118,7 +134,7 @@ Use this whenever a Business OS feature **calls a model**: chat, embeddings, ima
 - [ ] A new area: catalog entry + empty legacy list + usage category
 - [ ] Tests: area / call name / account / group asserted; a sentinel shows raw text never logged
 - [ ] `typecheck:bos-llm` 0 new, baseline unchanged; the LLM Usage tab green; the usage snapshot unchanged
-- [ ] (Once Layer 3 lands) one non-awaited audit entry per action, with validated ids
+- [ ] The action is wrapped in `runAiAction` (one entry, never awaited); failures signalled with `markFailed`; no `'use client'` path imports it; `next build` passes
 
 ## Anti-patterns (probable bugs)
 

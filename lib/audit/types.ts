@@ -63,6 +63,11 @@ export const AUDIT_ENTITY_TYPES = [
   // only, and hidden from owners (lib/audit/requestSchemas.ts,
   // AuditTrailRepository).
   'ai_action',
+  // AI model pricing rows. Written by the admin pricing helpers in
+  // lib/audit/admin-helpers.ts, which have used this value since before the list
+  // was enforced; registered so their stored rows stay exactly as they were, and
+  // so AI_PRICING_ZERO_SET (Layer 2 Step 0) type-checks like its siblings.
+  'ai_pricing',
 ] as const;
 
 export type EntityType = (typeof AUDIT_ENTITY_TYPES)[number];

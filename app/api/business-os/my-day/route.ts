@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
     let briefing = null;
     try {
       const facts = await buildBriefingFacts(user.id, day);
-      briefing = await getBriefing(user.id, facts, language, {
+      briefing = await getBriefing(user.id, facts, language, 'user', {
         // What kind of business this is, so the narration uses the owner's own
         // word for the people they serve rather than the CRM's.
         vertical: profile?.vertical,

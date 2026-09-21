@@ -2,12 +2,14 @@
 // User profile management with audit logging
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 import { auditLog } from '@/lib/services/AuditTrailService';
 import { AUDIT_EVENTS } from '@/lib/audit/events';
 import { generateDiff } from '@/lib/audit/diff';
+import { createLogger } from '@/lib/logger';
+
+const logger = createLogger({ module: 'UserProfileAPI' });
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,6 +18,9 @@ export const dynamic = 'force-dynamic';
  * GET /api/user/profile - Get user profile
  */
 export async function GET(req: NextRequest) {
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
     // Authenticate user
     const cookieStore = await cookies();
@@ -45,7 +50,7 @@ export async function GET(req: NextRequest) {
       .single();
 
     if (error) {
-      console.error('Failed to fetch profile:', error);
+      requestLogger.error({ err: error, userId: user.id }, 'Failed to fetch profile');
       return NextResponse.json(
         { error: 'Failed to fetch profile', details: error.message },
         { status: 500 }
@@ -61,7 +66,7 @@ export async function GET(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error fetching profile:', error);
+    requestLogger.error({ err: error }, 'Error fetching profile');
     return NextResponse.json(
       { error: 'Failed to fetch profile', message: error.message },
       { status: 500 }
@@ -73,9 +78,39 @@ export async function GET(req: NextRequest) {
  * PUT /api/user/profile - Update user profile
  */
 export async function PUT(req: NextRequest) {
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+  const requestLogger = logger.child({ correlationId });
+
   try {
     const body = await req.json();
-    const { full_name, company, role, avatar_url, bio, timezone, language } = body;
+
+    /*
+     * `role` is deliberately NOT read from the body.
+     *
+     * This route writes with a user-scoped (anon-key) client, so it writes with
+     * the caller's own privileges — and the `profiles` UPDATE policy is
+     * `USING (auth.uid() = id)` with no WITH CHECK and no column restriction.
+     * Accepting `role` here therefore let any signed-in user PUT
+     * `{ "role": "admin" }` at their own profile. Nothing authorizes on
+     * `profiles.role` today, so nothing was exploitable — but the column looks
+     * exactly like an authorization field, and the next `WHERE role = 'admin'`
+     * anyone writes would make it one. Admin identity is `admin_users` via
+     * AdminAccessService (docs/admin/ADMIN_IDENTIFICATION_AND_ACCESS.md).
+     *
+     * Ignored rather than rejected, on purpose: every other column this route
+     * does not list (`job_title`, `domain`, `onboarding_*`) is already dropped
+     * without complaint, so a 400 here would make `role` the one field that
+     * fails a save instead of skipping it — and it would break the save the
+     * user actually asked for (their name, their timezone) over a field they
+     * never touched. Silent to the client, logged for us.
+     *
+     * The database enforces the same rule underneath every write path, not just
+     * this one — see
+     * supabase/migrations/20261002_profiles_role_privilege_guard.sql. That
+     * matters, because the settings UI writes `profiles` directly and never
+     * reaches this route at all.
+     */
+    const { full_name, company, avatar_url, bio, timezone, language } = body;
 
     // Authenticate user
     const cookieStore = await cookies();
@@ -97,7 +132,14 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    console.log(`👤 [PROFILE UPDATE] User ${user.id} updating profile`);
+    requestLogger.info({ userId: user.id }, 'Updating profile');
+
+    if (body.role !== undefined) {
+      requestLogger.warn(
+        { userId: user.id, attemptedRole: body.role },
+        'Ignoring `role` in profile update body — not a user-settable field'
+      );
+    }
 
     // Fetch current profile for audit trail
     const { data: currentProfile, error: fetchError } = await supabase
@@ -107,7 +149,7 @@ export async function PUT(req: NextRequest) {
       .single();
 
     if (fetchError) {
-      console.error('Failed to fetch current profile:', fetchError);
+      requestLogger.error({ err: fetchError, userId: user.id }, 'Failed to fetch current profile');
       return NextResponse.json(
         { error: 'Failed to fetch current profile', details: fetchError.message },
         { status: 500 }
@@ -121,7 +163,6 @@ export async function PUT(req: NextRequest) {
 
     if (full_name !== undefined) updateData.full_name = full_name;
     if (company !== undefined) updateData.company = company;
-    if (role !== undefined) updateData.role = role;
     if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
     if (bio !== undefined) updateData.bio = bio;
     if (timezone !== undefined) updateData.timezone = timezone;
@@ -136,14 +177,14 @@ export async function PUT(req: NextRequest) {
       .single();
 
     if (updateError) {
-      console.error('Failed to update profile:', updateError);
+      requestLogger.error({ err: updateError, userId: user.id }, 'Failed to update profile');
       return NextResponse.json(
         { error: 'Failed to update profile', details: updateError.message },
         { status: 500 }
       );
     }
 
-    console.log(`✅ [PROFILE UPDATE] Profile updated for user ${user.id}`);
+    requestLogger.info({ userId: user.id }, 'Profile updated');
 
     /*
      * The timezone lives in TWO columns, and both are read.
@@ -175,7 +216,10 @@ export async function PUT(req: NextRequest) {
         )
         .then(({ error: mirrorError }) => {
           if (mirrorError) {
-            console.error('Failed to mirror timezone to user_preferences:', mirrorError);
+            requestLogger.error(
+              { err: mirrorError, userId: user.id },
+              'Failed to mirror timezone to user_preferences'
+            );
           }
         });
     }
@@ -202,10 +246,10 @@ export async function PUT(req: NextRequest) {
           severity: 'info',
           complianceFlags: ['GDPR'], // Profile contains PII
         });
-        console.log('✅ Profile update audited');
+        requestLogger.debug({ userId: user.id }, 'Profile update audited');
       }
     } catch (auditError) {
-      console.error('⚠️ Audit logging failed (non-critical):', auditError);
+      requestLogger.error({ err: auditError, userId: user.id }, 'Audit logging failed (non-critical)');
     }
 
     return NextResponse.json({
@@ -215,7 +259,7 @@ export async function PUT(req: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('Error updating profile:', error);
+    requestLogger.error({ err: error }, 'Error updating profile');
     return NextResponse.json(
       { error: 'Failed to update profile', message: error.message },
       { status: 500 }

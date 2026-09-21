@@ -60,7 +60,8 @@ export type AiFailureCode =
   | 'image_failed'
   | 'image_no_data'
   | 'image_store_failed'
-  | 'chat_error';
+  | 'chat_error'
+  | 'generation_failed';
 
 export interface AiActionSpec {
   /** The action's declared primary area. `details.areas` (from the calls) is authoritative (WC-4). */
@@ -73,6 +74,22 @@ export interface AiActionSpec {
   accountId?: string;
   /** The request's correlation id, where the action has one. */
   correlationId?: string;
+}
+
+/**
+ * Mark a website or intake generation result that did not fully succeed:
+ * `success: false` → `generation_failed`; a `content_fallback` warning (the
+ * model's content was replaced by the static phrasebook) → `content_fallback`.
+ * Only the code is recorded, never the warning's text (FR-6).
+ */
+export function markGenerationResult(
+  handle: AiActionHandle,
+  result: { success: boolean; warning?: string; contentSource?: string }
+): void {
+  if (!result.success) handle.markFailed('generation_failed');
+  else if (result.warning?.includes('content_fallback') || result.contentSource === 'fallback') {
+    handle.markFailed('content_fallback');
+  }
 }
 
 export interface AiActionHandle {

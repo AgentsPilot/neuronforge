@@ -167,6 +167,7 @@ export const AUDIT_EVENTS = {
   AI_PRICING_UPDATED: 'AI_PRICING_UPDATED',
   AI_PRICING_DELETED: 'AI_PRICING_DELETED',
   AI_PRICING_SYNCED: 'AI_PRICING_SYNCED', // Synced from external source
+  AI_PRICING_ZERO_SET: 'AI_PRICING_ZERO_SET', // A price was saved as $0 — usage of that model is billed at nothing
 
   // ==========================================
   // MEMORY SYSTEM EVENTS
@@ -212,6 +213,8 @@ export const AUDIT_EVENTS = {
   SUBSCRIPTION_CANCELED: 'SUBSCRIPTION_CANCELED',
   SUBSCRIPTION_REACTIVATED: 'SUBSCRIPTION_REACTIVATED',
   CUSTOMER_PORTAL_ACCESSED: 'CUSTOMER_PORTAL_ACCESSED',
+  // One-time free-tier grant at onboarding (S-6 fix). Written only on an actual grant.
+  FREE_TIER_ALLOCATED: 'FREE_TIER_ALLOCATED',
 
   // Business OS money
   PAYMENT_REFUNDED: 'PAYMENT_REFUNDED',
@@ -747,6 +750,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     complianceFlags: ['SOC2'],
     description: 'AI model pricing synced from external source',
   },
+  // Critical, like AI_PRICING_DELETED: the revenue effect is comparable — every
+  // call to a zero-priced model is billed at $0 until someone notices.
+  [AUDIT_EVENTS.AI_PRICING_ZERO_SET]: {
+    severity: 'critical',
+    complianceFlags: ['SOC2'],
+    description: 'AI model price set to zero (usage billed at $0)',
+  },
 
   // Workflow Pilot events
   [AUDIT_EVENTS.PILOT_EXECUTION_STARTED]: {
@@ -899,6 +909,13 @@ export const EVENT_METADATA: Record<string, EventMetadata> = {
     severity: 'info',
     complianceFlags: ['SOC2'],
     description: 'Stripe customer portal opened',
+  },
+  // Free credits and quotas granted once, at onboarding. Same severity and flags
+  // as the Stripe billing events: it changes an account's credit balance.
+  [AUDIT_EVENTS.FREE_TIER_ALLOCATED]: {
+    severity: 'info',
+    complianceFlags: ['SOC2', 'FINANCIAL'],
+    description: 'Free-tier credits and quotas granted',
   },
 };
 

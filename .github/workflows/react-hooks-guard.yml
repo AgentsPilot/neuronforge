@@ -1,0 +1,131 @@
+# React Hooks Rules Guard
+#
+# Runs `npm run lint:hooks` — ESLint scoped to the single rule
+# `react-hooks/rules-of-hooks` over app/, lib/, components/ and hooks/.
+#
+# ── WHY A DEDICATED, RULE-SCOPED JOB ───────────────────────────────────────
+# 14 violations of this rule sat in the repository undetected until
+# 2026-09-20, when PR #76 deleted a shadow `eslint.config.js`. ESLint 9 loads
+# `eslint.config.js` in preference to `eslint.config.mjs`, and the shadow file
+# held eslintrc-style `{ extends: [...] }` that flat config ignores — so
+# `npm run lint` had been checking almost nothing for as long as it existed.
+#
+# Nothing prevents a recurrence, and nothing else would notice:
+#   * `next.config.js` sets `eslint.ignoreDuringBuilds: true`, so the
+#     `build.yml` gate (`npm run build`) does not lint at all;
+#   * it also sets `typescript.ignoreBuildErrors: true`, so the build does not
+#     typecheck either;
+#   * no workflow runs `npm run lint`, and no workflow runs `npm test` — so a
+#     Jest-based guard for this would never execute in CI.
+#
+# The rule scope is deliberate. The repository still carries 163 other ESLint
+# errors and ~8.9k warnings that PR #76 demoted to warnings on purpose, so a
+# blanket `npm run lint` gate would be red on arrival and would be disabled
+# within a week. This job is green on arrival and stays cheap.
+#
+# `--no-inline-config` is also deliberate: a source file must not be able to
+# `/* eslint-disable react-hooks/rules-of-hooks */` its way past the guard.
+# There were no such disables in the tree when this was added. If a genuine
+# exception ever arises it needs SA review, not a silent comment.
+#
+# ── NO `paths:` FILTER, ON PURPOSE ─────────────────────────────────────────
+# Same reasoning `admin-authz-guard.yml` documents at length. A hook-order bug
+# or a new `use*`-named plain function can appear in ANY file under app/, lib/,
+# components/ or hooks/ — so a path-filtered workflow would be defeated by the
+# very change it guards, going green by not running.
+#
+# The scope step below is NOT that filter: the job still runs and still
+# reports a conclusion on every PR, which is what keeps it safe to make a
+# required status check. A `paths:` filter would leave the check pending
+# forever and block merges instead.
+#
+# ── ⚠️ THIS IS NOT A BUILD GATE UNTIL IT IS A REQUIRED STATUS CHECK ────────
+# A red workflow blocks nothing by itself. Until the repository owner enables
+# this job under Settings → Branches → branch protection for `main` →
+# "Require status checks to pass before merging", a new violation can still be
+# merged with a red tick next to it.
+#
+# A required check is matched BY JOB NAME. Renaming the job below silently
+# un-gates the repository. If you rename it, update the branch protection rule
+# in the same change.
+#
+# See docs/workplans/REACT_HOOKS_RULES_VIOLATIONS_WORKPLAN.md (R-3).
+
+name: React Hooks Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: the job checks out and runs ESLint.
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes a running check.
+concurrency:
+  group: react-hooks-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  # ⚠️ Renaming this job un-gates `main` if it is a required status check.
+  react-hooks-guard:
+    name: React hooks rules guard
+    runs-on: ubuntu-latest
+    # The scoped lint is well under a minute; fail fast if install hangs.
+    timeout-minutes: 15
+    steps:
+      # fetch-depth 2 so HEAD^ resolves for the scope script below.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      # The guard reads app/, lib/, components/ and hooks/. A change confined
+      # to docs/, scripts/ or .claude/ touches none of them.
+      #
+      # This is NOT a `paths:` filter — see the header. The rule lives in
+      # .github/ci/non-deploying-change.sh (shared with vercel.json's
+      # ignoreCommand) and fails open: anything it cannot classify runs.
+      - name: Can this change affect a hook call site?
+        id: scope
+        env:
+          # Measure the WHOLE push, not just its last commit. At fetch-depth 2
+          # this sha resolves only when it IS HEAD^ — a single commit, which is
+          # what a squash or merge landing on main looks like. A bigger push
+          # cannot resolve it and the script fails open. Empty on
+          # pull_request, where the script's HEAD^ default is already the base
+          # tip of the merge ref.
+          BASE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if bash .github/ci/non-deploying-change.sh "$BASE"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.scope.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.scope.outputs.skip != 'true'
+        run: npm ci
+
+      - name: Run the react-hooks rules guard
+        if: steps.scope.outputs.skip != 'true'
+        run: npm run lint:hooks
+
+      - name: Note the skip in the run summary
+        if: steps.scope.outputs.skip == 'true'
+        run: |
+          echo "Skipped: every changed file is documentation, scripts or" >> "$GITHUB_STEP_SUMMARY"
+          echo "Claude Code config, so it cannot contain a React hook call." >> "$GITHUB_STEP_SUMMARY"
+          echo "Rule: .github/ci/non-deploying-change.sh" >> "$GITHUB_STEP_SUMMARY"

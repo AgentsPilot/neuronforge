@@ -10,6 +10,20 @@
 
 // uuid@13 is ESM-only and ts-jest does not transform it. WebsiteGenerationService
 // imports it; the catalog deliberately does not.
+/*
+ * Layer 2 (Step 2): the call sites take their model, temperature and on/off
+ * switch from `resolveBosLlmSettings`. Pinned to the CODE DEFAULTS — today's
+ * values — so this file keeps asserting exactly what it asserted before, with
+ * no configuration read and no I/O.
+ */
+jest.mock('@/lib/business-os/llm/modelSettings', () => {
+  const actual = jest.requireActual('@/lib/business-os/llm/modelSettings');
+  return {
+    ...actual,
+    resolveBosLlmSettings: async (area: string, callName: string) => actual.bosLlmCodeDefaults(area, callName),
+  };
+});
+
 jest.mock('uuid', () => ({ v4: () => '00000000-0000-4000-8000-000000000001' }));
 
 jest.mock('@/lib/logger', () => {
@@ -40,6 +54,12 @@ jest.mock('@/lib/supabaseServer', () => {
 
 const mockGetUser = jest.fn();
 jest.mock('@/lib/auth', () => ({ getUser: () => mockGetUser() }));
+
+// Layer 3: the AI audit entry is observed at AuditTrail.log.
+const mockAuditLog = jest.fn();
+jest.mock('@/lib/services/AuditTrailService', () => ({
+  AuditTrail: { log: (...a: unknown[]) => mockAuditLog(...a) },
+}));
 
 const profile = {
   user_id: '11111111-1111-4111-8111-111111111111',
@@ -78,6 +98,8 @@ import { WebsiteGenerationService } from '@/lib/services/WebsiteGenerationServic
 import { POST as enhanceTestimonialRoute } from '@/app/api/website/enhance-testimonial/route';
 import { POST as landingPageRoute } from '@/app/api/website/landing-pages/generate/route';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { BaseAIProvider, type CallContext } from '@/lib/ai/providers/baseProvider';
+import type { AIAnalyticsService } from '@/lib/analytics/aiAnalytics';
 
 const U1 = profile.user_id;
 const G1 = '33333333-3333-4333-8333-333333333333';
@@ -227,5 +249,62 @@ describe('grouping within a build', () => {
     await service().enrichBlocks(U1, [{ block_type: 'faq', content: {}, position: 0 }], 'en', false);
 
     expect(mockComplete).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Layer 3 (FR-12, dormant KI-3): enrichBlocks writes ONE AI audit entry when it
+ * minted the group itself (it is its own owner action). With a caller's group,
+ * the caller owns the action and its entry. The shared helper is faked to make
+ * real tracked calls through BaseAIProvider.callWithTracking.
+ */
+describe('block enrichment — AI audit entry (Layer 3, dormant)', () => {
+  class FakeProvider extends BaseAIProvider {
+    readonly defaultModel = 'm';
+    readonly defaultMaxTokens = 1;
+    readonly supportsResponseFormat = false;
+    getMaxOutputTokens(): number {
+      return 1;
+    }
+    async chatCompletion(): Promise<unknown> {
+      throw new Error('unused');
+    }
+  }
+  const provider = new FakeProvider({ trackAICall: async () => undefined } as unknown as AIAnalyticsService);
+  const service = () => new WebsiteBlockEnrichmentService({} as unknown as SupabaseClient);
+  const blocks = [
+    { block_type: 'hero', content: {}, position: 0 },
+    { block_type: 'about', content: {}, position: 1 },
+  ];
+
+  beforeEach(() => {
+    mockAuditLog.mockReset();
+    mockAuditLog.mockResolvedValue(undefined);
+    mockComplete.mockImplementation(async (_params: unknown, context: CallContext) => {
+      await provider.callWithTracking(context, 'openai', 'gpt-4o', 'chat/completions', async () => ({}), () => ({
+        inputTokens: 50,
+        outputTokens: 20,
+        cost: 0.0005,
+      }));
+      return { content: '{}' };
+    });
+  });
+
+  afterEach(() => mockComplete.mockReset());
+
+  it('a build that minted its own group writes one entry for all its blocks', async () => {
+    await service().enrichBlocks(U1, blocks, 'en', true);
+    expect(mockAuditLog).toHaveBeenCalledTimes(1);
+    expect(mockAuditLog.mock.calls[0][0]).toMatchObject({
+      entityType: 'ai_action',
+      entityId: contexts()[0].sessionId,
+      userId: U1,
+      details: expect.objectContaining({ area: 'website', actionType: 'website_block_enrichment', callCount: 2 }),
+    });
+  });
+
+  it('with a caller group, no entry here: the caller owns the action', async () => {
+    await service().enrichBlocks(U1, blocks, 'en', true, undefined, false, G1);
+    expect(mockAuditLog).not.toHaveBeenCalled();
   });
 });
